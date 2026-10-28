@@ -384,7 +384,9 @@ records for `/cycles`; `actors/<numeric GitHub ID>/vault-payments` and
 `projects/<project ID>/vault-payments` narrow that same projection. Reads use
 the retained D1 payment ledger, never live chain or GitHub requests. Security
 payment tables are separate and are not selected. Private or closed memberships
-do not appear in this projection, and an actor-specific read refuses them.
+do not appear in this projection; an actor-specific read for one returns the
+same empty page as a public actor without payments, so it never reveals the
+membership.
 
 Each record carries the project, recorded contribution month (or `null` when
 no matching monthly obligation exists), net base units, exact asset/decimals,

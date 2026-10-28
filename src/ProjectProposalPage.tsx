@@ -70,7 +70,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { ChangeReview } from "./OwnerPresentation";
-import { ProjectNav, RoutePageHeader } from "./Presentation";
+import { ProjectNav, RoutePageHeader, SignInPanel } from "./Presentation";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
@@ -2040,17 +2040,25 @@ const DRAFT_FIELDS = [
  * the current one, and the server refuses a stale base revision.
  */
 export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
-  const { allowed, checking } = useProjectMaintainer(project.id);
+  const { allowed, checking, session } = useProjectMaintainer(project.id);
   if (!allowed)
     return (
       <main className="shell route-main manage-page">
         <RoutePageHeader title="Project settings" />
         <ProjectNav project={project} current="settings" />
-        <p role="status">
-          {checking
-            ? "Checking access…"
-            : "Project settings are available only to signed-in maintainers."}
-        </p>
+        {checking ? (
+          <p role="status">Checking access…</p>
+        ) : session.status === "signed-out" || session.status === "error" ? (
+          <SignInPanel
+            state={session}
+            next={`/projects/${project.slug}/manage`}
+            purpose="Sign in with a maintainer account to change project settings."
+          />
+        ) : (
+          <p role="status">
+            Project settings are available only to this project's maintainers.
+          </p>
+        )}
       </main>
     );
   return <ProjectUpdateForm project={project} />;
