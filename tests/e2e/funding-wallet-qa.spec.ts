@@ -470,7 +470,7 @@ test("project navigation never reuses another project's vault balance", async ({
     route.fulfill({ status: 503, json: { error: "unavailable" } }),
   );
   await page.goto(`/projects/${first.slug}`);
-  const funding = page.locator("#funding").getByRole("region", {
+  const funding = page.locator("#funding:visible").getByRole("region", {
     name: "Project escrow",
     exact: true,
   });

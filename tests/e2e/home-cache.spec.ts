@@ -193,7 +193,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
   await expect(notice).toContainText("Projects may be outdated");
 
   // Pages that act on the current manifest never use the last good copy.
-  await page.goto(`/projects/${project.slug}/funding`, {
+  await page.goto(`/projects/${project.slug}/manage`, {
     waitUntil: "networkidle",
   });
   await expect(

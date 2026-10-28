@@ -186,6 +186,10 @@ test("history navigation never carries another project's clearance into agent se
   diagnostics,
 }, info) => {
   diagnostics.allowPreviewApiMisses();
+  // Leaving a route cancels its in-flight shared snapshot read.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/leaderboard\.json\?[^ ]+$/u,
+  );
   let holdClearance = false;
   let releaseClearance = () => {};
   const pendingClearance = new Promise<void>((resolve) => {

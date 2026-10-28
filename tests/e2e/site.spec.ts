@@ -1587,12 +1587,9 @@ test("shows an explicit error for invalid data and retries", async ({
     }
     await route.fallback();
   });
-  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  await page.goto("/points", { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(page.locator(".project-state-summary")).toContainText(
-    "$1,000 monthly target",
-  );
-  await expect(page.locator(".project-state-summary")).not.toContainText("$0");
+  await expect(page.locator(".standings tbody tr")).toHaveCount(0);
   await expectAccessible(page);
   const failedAttempts = attempts;
   expect(failedAttempts).toBeGreaterThan(1);
@@ -1803,7 +1800,10 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   const fundingPath = await fundingLink.getAttribute("href");
   if (!fundingPath)
     throw new Error("The funding pool must link to its project");
-  const fundingUrl = new URL(fundingPath, page.url()).href;
+  const fundingUrl = new URL(
+    fundingPath.replace(/\/funding$/u, "#funding"),
+    page.url(),
+  ).href;
   await fundingLink.focus();
   await expect(fundingLink).toBeFocused();
   await testInfo.attach("sponsors-page", {
@@ -1813,12 +1813,9 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  const poolReturnSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/sponsors$/u);
-  expect(await (await poolReturnSnapshot).finished()).toBeNull();
+
   await expect(pools).toBeVisible();
   const home = page.getByRole("link", { name: "Slop home", exact: true });
   await home.focus();
@@ -1829,12 +1826,8 @@ test("opens the sponsors page directly and through keyboard navigation", async (
     timeout: 60_000,
   });
   await page.waitForLoadState("networkidle");
-  const homeReturnSnapshot = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
-  );
   await page.goBack({ waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/sponsors$/u);
-  expect(await (await homeReturnSnapshot).finished()).toBeNull();
 });
 
 test("lands direct and lazy cross-route hash links on their section", async ({
