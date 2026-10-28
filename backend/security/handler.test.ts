@@ -49,6 +49,7 @@ type CaseReply = {
   awardState: string;
   receiptState: string;
   appealState: string;
+  viewerRoles: string[];
   allowedActions: string[];
   nextStep: string;
   award: {
@@ -198,8 +199,12 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
   // Runs before the next write batch, after the handler read the case.
   let beforeBatch: (() => void) | null = null;
   const securityDb = db as unknown as SecurityD1Database;
+  let statements = 0;
   const wrapped: SecurityD1Database = {
-    prepare: (sql) => securityDb.prepare(sql),
+    prepare: (sql) => {
+      statements += 1;
+      return securityDb.prepare(sql);
+    },
     batch: async (statements) => {
       const hook = beforeBatch;
       beforeBatch = null;
@@ -491,6 +496,10 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
     sqlite,
     fund,
     call,
+    statements: () => statements,
+    resetStatements: () => {
+      statements = 0;
+    },
     key,
     act,
     receive,
@@ -1852,3 +1861,28 @@ for (const fault of ["failed", "missing", "partial"] as const)
     ]);
     env.sqlite.close();
   });
+
+test("the case list reads every visible case in a bounded number of statements", async () => {
+  const env = open();
+  const listed = async (count: number) => {
+    for (let index = 0; index < count; index += 1)
+      await env.receive(
+        REPORTER,
+        `2026-10-19T09:${String(10 + index).padStart(2, "0")}:00.000Z`,
+      );
+    env.resetStatements();
+    const response = await env.call(REPORTER, "GET", "security-cases");
+    expect(response.status).toBe(200);
+    return { cases: response.body.cases ?? [], statements: env.statements() };
+  };
+  const one = await listed(1);
+  const many = await listed(10);
+  expect(many.cases).toHaveLength(11);
+  // Six reads per case before the batch: events, settlement, project,
+  // reservation, intake and the access-log statement the list already batches.
+  const perCase = (many.statements - one.statements) / 9;
+  expect(perCase).toBeLessThanOrEqual(2);
+  // The payload is unchanged: one entry per case, each with its own roles.
+  expect(new Set(many.cases.map((entry) => entry.id)).size).toBe(11);
+  expect(many.cases[0].viewerRoles).toEqual(["reporter"]);
+});
