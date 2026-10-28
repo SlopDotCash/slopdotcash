@@ -267,6 +267,46 @@ test("screening reports the category after exhausting transient retries", async 
   expect(TOTAL_MAXIMUM_MICRO_USD).toBe(MAXIMUM_ATTEMPTS * 1_000_000);
 });
 
+test("screening retries a committed provider error that names no served model", async () => {
+  // Surplus commits HTTP 200 before a long call ends. A later failure is an
+  // error envelope with its receipt but without a model field.
+  const committed = json({
+    type: "error",
+    error: { type: "api_error", message: "Upstream request failed" },
+    usage: { buyer_cost_micro: 75 },
+  });
+  const recovered = sequence([committed, ok]);
+  const result = await qualifySecurityScreening(
+    "synthetic-only",
+    false,
+    recovered.fetch,
+    noSleep,
+  );
+  expect(result.outcome).toBe("synthetic report classified legitimate");
+  expect(result.failedAttempts).toEqual([
+    {
+      attempt: 1,
+      category: "incomplete",
+      errorType: "api_error",
+      stopReason: null,
+      truncated: false,
+    },
+  ]);
+  expect(recovered.calls()).toBe(2);
+  const persistent = sequence([committed]);
+  const error = await failure(
+    qualifySecurityScreening(
+      "synthetic-only",
+      false,
+      persistent.fetch,
+      noSleep,
+    ),
+  );
+  expect(error.category).toBe("incomplete");
+  expect(error.detail.errorType).toBe("api_error");
+  expect(persistent.calls()).toBe(MAXIMUM_ATTEMPTS);
+});
+
 test("screening fails closed at once on a wrong decision or a rejected key", async () => {
   for (const verdict of ["needs-information", "spam"]) {
     const wrong = sequence([
