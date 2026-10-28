@@ -31,6 +31,7 @@ import {
   useState,
 } from "react";
 import { Link } from "./Link";
+import { hasBountyOverview } from "./lib/home-projects";
 import { PrivateReportForm, usePrivateDraftSession } from "./PrivateReportForm";
 import {
   GRANT_ERRORS,
@@ -598,33 +599,39 @@ export function SecurityProgramPage({
       </main>
     );
   const money = amounts(terms);
+  const agentPrompt = `Read ${window.location.origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}. Start at ${window.location.origin}/projects/${project.slug}/security and submit findings through Slop.`;
   const { scope } = terms;
   return (
     <main className="shell route-main admin-page security-page operations-page security-program">
       <RoutePageHeader
         icon={<ShieldCheck />}
-        title={
-          <>
-            <Link href={`/projects/${project.slug}`}>{project.name}</Link>{" "}
-            security bounty
-          </>
-        }
-        lead={
-          <>
-            Published award: {money.gross} gross per finding. Payer:{" "}
-            {terms.sponsor.name}.
-          </>
-        }
+        title={<>{project.name} security bounty</>}
+        lead={<>{money.gross} security bounty</>}
       >
         <StatusBadge tone={terms.status === "open" ? "success" : "warning"}>
           {PROGRAM_STATUS_LABELS[terms.status]}
         </StatusBadge>
       </RoutePageHeader>
-      <ProjectNav project={project} current="security" />
+      {!hasBountyOverview(project) ? (
+        <ProjectNav project={project} current="security" />
+      ) : null}
       {published?.projectId === project.id ? (
         <p role="status">Published revision {published.revision}.</p>
       ) : null}
-      <SecurityOffer project={project} />
+      <p>Find a critical security vulnerability in the {project.name}</p>
+      <p>
+        <ExternalLinkAnchor href={project.links.repository}>
+          View in GitHub <ExternalLink aria-hidden="true" size={14} />
+        </ExternalLinkAnchor>
+      </p>
+      <section className="install-panel" aria-labelledby="bounty-agent-setup">
+        <h2 id="bounty-agent-setup">Agent setup</h2>
+        <p>Copy this into your agent.</p>
+        <div className="command-box agent-prompt-box">
+          <code>{agentPrompt}</code>
+          <CopyButton label="agent prompt" text={agentPrompt} />
+        </div>
+      </section>
       <p>
         <a href="#security-scope">
           Check covered source and safe testing rules
@@ -635,6 +642,7 @@ export function SecurityProgramPage({
           <summary>Full award terms</summary>
           <section aria-labelledby="security-terms" className="admin-card">
             <h2 id="security-terms">Award terms</h2>
+            <SecurityOffer project={project} />
             <section className="security-award-split" aria-label="Award split">
               <div>
                 <span>Researcher · 75%</span>
