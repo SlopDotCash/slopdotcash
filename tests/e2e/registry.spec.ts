@@ -1646,25 +1646,31 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     fullPage: true,
   });
 
-  // Permission loss: Slopbot now reads only read access. The setup status
-  // names the next action, and the owner cannot publish another change.
+  // Lost repository access removes the form and the server also refuses writes.
   await setSlopbot(`${project.repository}/permission/e2e-owner/read`);
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${project.id}`);
   await page.reload({ waitUntil: "networkidle" });
-  const managed = page.locator(".project-setup-status");
-  await expect(managed.locator("h2")).toHaveText("Setup status: Action needed");
-  await expectSetupCheck(
-    managed,
-    "GitHub access",
-    "Not confirmed",
-    `@e2e-owner has read access to ${project.repository}. Write, maintain or admin access is required. Ask a maintainer with that access to finish setup.`,
+  await expect(
+    page.getByText(
+      "Project settings are available only to signed-in maintainers.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Short description", exact: true }),
+  ).toHaveCount(0);
+  const rejectedStatus = await page.evaluate(
+    async ({ id, manifest }) => {
+      const response = await fetch(`/api/v1/projects/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedRevision: 3, manifest }),
+      });
+      return response.status;
+    },
+    { id: project.id, manifest: switched },
   );
-  await page
-    .getByRole("textbox", { name: "Short description", exact: true })
-    .fill("A change from an account without write access");
-  await page.getByRole("button", { name: "Publish changes" }).click();
-  await expect(page.locator("form").getByRole("alert")).toContainText(
-    "Write, maintain or admin access is required",
-  );
+  expect(rejectedStatus).toBe(403);
   expect(diagnostics.count(refusedCreation)).toBe(1);
   expect(diagnostics.count(refusedPublish)).toBe(1);
   const history = await (

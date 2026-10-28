@@ -243,6 +243,10 @@ test("a failed snapshot refresh keeps the last good sponsor report with a stale 
   failSnapshot = true;
   await page.goBack();
   await expect(page).toHaveURL(/\/sponsors$/u);
+  await page
+    .locator("summary")
+    .filter({ hasText: "Audience report ·" })
+    .click();
   const notice = page
     .getByRole("main")
     .getByRole("status")
