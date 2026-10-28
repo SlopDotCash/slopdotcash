@@ -98,9 +98,9 @@ invent another authentication path. Follow the report privately at
 `https://slop.cash/inbox`; reconcile an uncertain submission instead of
 submitting a duplicate. Never publish the report or email its body.
 
-The owner decides validity and any award. An approved gross award splits 75%
-to the researcher and 25% to slop.cash, without the ordinary 2% fee. Never
-promise an award, sign payments or mark one paid. A fix, payment or expired
+The owner decides validity and any award. An approved award is paid under
+the program's published terms, including its researcher and slop.cash shares;
+the ordinary 2% fee does not apply. Never promise an award, sign payments or mark one paid. A fix, payment or expired
 deadline does not authorize disclosure.
 
 ## Build and prove

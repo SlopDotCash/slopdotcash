@@ -35,8 +35,11 @@ Read the project page for current scope, rewards and funding. Only these exist:
   shares instead; their page says so.
 - **Private security bounties.** Every registered project can receive a
   private report. Paid terms appear on the home page and on each project's
-  security page, for example Umia Protocol's award for a critical
-  loss-of-funds finding. Approved gross awards split 75% to the researcher and
+  security page. The current bounties are Umia Protocol
+  (`https://slop.cash/projects/umia-protocol/security`) and the Slop vault
+  contracts (`https://slop.cash/projects/slopdotcash/security`), each for a
+  critical loss-of-funds finding. Approved awards are paid under that
+  bounty's published terms: for example, Umia pays 75% to the researcher and
   25% to slop.cash, with no 2% fee.
 - **Evaluated awards.** A maintainer can award 1 to 8 Points for useful work
   that scored nothing else, through a reviewed Slop pull request. You cannot
