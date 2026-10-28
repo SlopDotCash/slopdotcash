@@ -2544,6 +2544,8 @@ async function planChange(
         related_party_review: outcome === "approve" ? "approved" : "refused",
         related_party_reviewer_github_id: actor.githubId,
       };
+      // A refusal is no award: like the owner's "none", it keeps no chosen
+      // amount. The proposal stays in the immutable award event.
       if (outcome === "refuse")
         return {
           kind: action,
@@ -2551,7 +2553,11 @@ async function planChange(
           reason,
           evidenceReference: null,
           detail: { outcome },
-          set: { ...reviewed, award_state: "ineligible" },
+          set: {
+            ...reviewed,
+            award_state: "ineligible",
+            award_gross_minor: null,
+          },
         };
       // An approval reserves the proposed amount now, if funds exist. A
       // review from before discretionary awards reserves the program amount.
