@@ -3,11 +3,12 @@
 // is labeled. Local HTTP fixtures exercise input and action controls only;
 // synthetic verdicts do not qualify model correctness.
 import { expect, test } from "bun:test";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { findProject } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { Job } from "./contracts";
+import worker from "./index";
 import type { D1Database } from "./persistence";
 import { type ReviewEnv, reviewItem } from "./review";
 
@@ -26,11 +27,15 @@ type SourceCase =
   | "unavailable"
   | "wrong-comparison"
   | "missing-pull"
-  | "changed-original";
+  | "changed-original"
+  | "large"
+  | "none"
+  | "provider-failure";
 
 async function reviewEmptyPull(
   status: "active" | "paused",
   source?: SourceCase,
+  throughQueue = false,
 ) {
   const { db, sqlite } = sqliteD1(
     readdirSync(new URL("../../migrations/", import.meta.url))
@@ -83,6 +88,7 @@ async function reviewEmptyPull(
   const writes: string[] = [];
   const reads: string[] = [];
   const prompts: string[] = [];
+  const comments: string[] = [];
   let targetSha = "c".repeat(40);
   const server = Bun.serve({
     port: 0,
@@ -95,6 +101,8 @@ async function reviewEmptyPull(
           messages: { content: { text: string }[] }[];
         };
         prompts.push(body.messages[0].content[1].text);
+        if (source === "provider-failure")
+          return new Response(null, { status: 401 });
         if (source === "moved") targetSha = "d".repeat(40);
         return Response.json({
           id: "local-input-control",
@@ -106,7 +114,7 @@ async function reviewEmptyPull(
             {
               type: "text",
               text: JSON.stringify({
-                category: "busywork",
+                category: source === "none" ? "none" : "busywork",
                 confidence: 0.6,
                 rule_refs: [],
                 evidence: [],
@@ -185,7 +193,10 @@ async function reviewEmptyPull(
             files: !source
               ? []
               : Array.from(
-                  { length: source === "saturated" ? 300 : 1 },
+                  {
+                    length:
+                      source === "saturated" ? 300 : source === "large" ? 2 : 1,
+                  },
                   (_, i) => ({
                     filename: path.endsWith("e".repeat(40))
                       ? "changed-original.ts"
@@ -193,7 +204,12 @@ async function reviewEmptyPull(
                     status: "modified",
                     ...(source === "missing"
                       ? {}
-                      : { patch: "+actual current change" }),
+                      : {
+                          patch:
+                            source === "large" && i === 0
+                              ? "+".repeat(120_001)
+                              : "+actual current change",
+                        }),
                   }),
                 ),
           });
@@ -201,8 +217,10 @@ async function reviewEmptyPull(
         return Response.json({ permission: "read" });
       if (path.endsWith("/issues/5/comments") && request.method === "GET")
         return Response.json([]);
-      if (path.endsWith("/issues/5/comments"))
+      if (path.endsWith("/issues/5/comments")) {
+        comments.push(((await request.json()) as { body: string }).body);
         return Response.json({ id: 900 }, { status: 201 });
+      }
       if (path.endsWith("/issues/5/labels"))
         return Response.json([{ name: "slopbot: empty" }]);
       return new Response(null, { status: 404 });
@@ -240,7 +258,64 @@ async function reviewEmptyPull(
   try {
     let outcome: string;
     try {
-      outcome = await reviewItem(env, job);
+      if (throughQueue) {
+        let acknowledgements = 0;
+        let retries = 0;
+        const jobs: Job[] = [];
+        const secret = "local-webhook-review-secret";
+        const queueEnv = {
+          ...env,
+          SLOPBOT_WEBHOOK_SECRET: secret,
+          SLOPBOT_QUEUE: {
+            async send(next: Job) {
+              jobs.push(next);
+            },
+          },
+        } as Parameters<typeof worker.fetch>[1];
+        for (let delivery = 0; delivery < 2; delivery++) {
+          const body = JSON.stringify({
+            action: "opened",
+            installation: { id: 1 },
+            repository: {
+              id: repositoryId,
+              name: repo,
+              private: false,
+              owner: { login: owner },
+            },
+            sender: { id: 42, type: "User" },
+            pull_request: { number: 5 },
+          });
+          const response = await worker.fetch(
+            new Request("https://slopbot.test/github/webhook", {
+              method: "POST",
+              body,
+              headers: {
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": `local-review-${delivery}`,
+                "X-Hub-Signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
+              },
+            }),
+            queueEnv,
+          );
+          if (response.status !== 202)
+            throw new Error(`webhook returned ${response.status}`);
+          await worker.queue(
+            {
+              messages: jobs.splice(0).map((body) => ({
+                body,
+                ack() {
+                  acknowledgements++;
+                },
+                retry() {
+                  retries++;
+                },
+              })),
+            },
+            queueEnv,
+          );
+        }
+        outcome = `acknowledged=${acknowledgements}, retried=${retries}`;
+      } else outcome = await reviewItem(env, job);
     } catch (error) {
       outcome = String(error);
     }
@@ -249,7 +324,7 @@ async function reviewEmptyPull(
         "SELECT status, action FROM slopbot_reviews WHERE item_node_id = 'PR_local'",
       )
       .get();
-    return { outcome, writes, review, prompts, reads };
+    return { outcome, writes, review, prompts, reads, comments };
   } finally {
     globalThis.fetch = nativeFetch;
     server.stop(true);
@@ -285,7 +360,7 @@ test("current target comparison replaces stale PR files and stale zero-file meta
 test("target movement after review prevents even an advisory write", async () => {
   const result = await reviewEmptyPull("active", "moved");
   expect(result.prompts).toHaveLength(1);
-  expect(result.outcome).toBe(
+  expect(result.outcome).toContain(
     "review source or authorization changed before action",
   );
   expect(result.review).toEqual({ status: "failed", action: "none" });
@@ -296,22 +371,14 @@ test("target movement after review prevents even an advisory write", async () =>
   ).toEqual([]);
 });
 
-test.each([
-  "missing",
-  "saturated",
-  "wrong-repo",
-  "unavailable",
-  "wrong-comparison",
-] as const)(
+test.each(["wrong-repo", "unavailable", "wrong-comparison"] as const)(
   "%s source cannot reach a model or GitHub action",
   async (source) => {
     const result = await reviewEmptyPull("active", source);
     expect(result.outcome).toContain(
       source === "wrong-repo"
         ? "target identity is unavailable"
-        : source === "missing" || source === "saturated"
-          ? "comparison is incomplete"
-          : "comparison is unavailable",
+        : "comparison is unavailable",
     );
     expect(result.prompts).toEqual([]);
     expect(result.review).toBeNull();
@@ -339,4 +406,58 @@ test("an unavailable PR cannot be reviewed as an issue without its source", asyn
   expect(result.writes.filter((w) => !w.endsWith("/access_tokens"))).toEqual(
     [],
   );
+});
+
+test.each(["missing", "saturated", "large"] as const)(
+  "%s comparison produces a recorded, visible limited review without enforcement",
+  async (source) => {
+    const result = await reviewEmptyPull("active", source);
+    expect(result.outcome).toBe("limited advisory review published");
+    expect(result.prompts).toHaveLength(1);
+    expect(result.review).toEqual({ status: "completed", action: "comment" });
+    expect(result.comments).toHaveLength(1);
+    expect(result.comments[0]).toContain("Slopbot limited review");
+    expect(result.comments[0]).toContain("Not reviewed:");
+    expect(result.comments[0]).toContain("No label or closure was applied");
+    expect(
+      result.writes.some(
+        (w) => w.endsWith("/labels") || w.endsWith("/pulls/5"),
+      ),
+    ).toBe(false);
+    if (source === "large")
+      expect(result.prompts[0]).toContain("+actual current change");
+  },
+);
+
+test("no-finding review publishes its result and limitations", async () => {
+  const result = await reviewEmptyPull("active", "none");
+  expect(result.outcome).toBe("review published (no finding)");
+  expect(result.review).toEqual({ status: "completed", action: "comment" });
+  expect(result.comments[0]).toContain("Slopbot review complete — no finding");
+  expect(result.comments[0]).toContain("not approval");
+});
+
+test("failed provider routes leave a visible retry notice and failed journal entry", async () => {
+  const result = await reviewEmptyPull("active", "provider-failure");
+  expect(result.outcome).toContain("every model route step failed");
+  expect(result.review).toEqual({ status: "failed", action: null });
+  expect(result.comments[0]).toContain("Slopbot review could not complete");
+  expect(result.comments[0]).not.toContain("401");
+});
+
+test("signed webhook and queue complete a large review once across two deliveries", async () => {
+  const result = await reviewEmptyPull("active", "large", true);
+  expect(result.outcome).toBe("acknowledged=2, retried=0");
+  expect(result.review).toEqual({ status: "completed", action: "comment" });
+  expect(result.prompts).toHaveLength(1);
+  expect(result.comments).toHaveLength(1);
+  expect(result.comments[0]).toContain("Slopbot limited review");
+});
+
+test("queue retries source movement and handles the current source on redelivery", async () => {
+  const result = await reviewEmptyPull("active", "moved", true);
+  expect(result.outcome).toBe("acknowledged=1, retried=1");
+  expect(result.review).toEqual({ status: "completed", action: "hold" });
+  expect(result.prompts).toHaveLength(2);
+  expect(result.comments).toHaveLength(1);
 });

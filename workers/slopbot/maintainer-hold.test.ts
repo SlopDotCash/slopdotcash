@@ -489,7 +489,7 @@ test("a pull request converted to draft during the window is not labeled", async
 });
 
 test.each([true, false])(
-  "an incomplete current comparison ends the hold only after a new head (newHead=%s)",
+  "an incomplete current comparison ends the hold without repeated retries (newHead=%s)",
   async (newHead) => {
     await uncertainReview(false, async (run) => {
       const start = Date.now();
@@ -499,17 +499,15 @@ test.each([true, false])(
       setSystemTime(new Date(start + 7 * day + 60_000));
       const due = await run.tick();
       expect(due.map((j) => j.kind)).toEqual(["maintainer_hold"]);
-      if (newHead) await run.deliver(due);
-      else
-        await expect(run.deliver(due)).rejects.toThrow("hold job was retried");
+      await run.deliver(due);
       expect(run.labels).toEqual([]);
       expect(run.writes.filter((w) => w.endsWith("/labels"))).toEqual([]);
       expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
-        { outcome: newHead ? "superseded" : null },
+        { outcome: "superseded" },
       ]);
       // A resolved hold is not queued again on later days.
       setSystemTime(new Date(start + 9 * day));
-      expect((await run.tick()).length).toBe(newHead ? 0 : 1);
+      expect((await run.tick()).length).toBe(0);
     });
   },
 );

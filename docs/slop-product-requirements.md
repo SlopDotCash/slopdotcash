@@ -60,6 +60,8 @@ Slopbot is always free. It runs only on repositories registered on slop.cash. In
 
 Review project contributions under the effective repository rules. Apply security, scope, and ignore rules first.
 
+Owner request, 28 October 2026: make review outcomes visible, including no findings, limited source coverage, and retryable failures. Large or binary evidence must not silently exhaust review attempts. A limited review identifies unreviewed content and cannot label, close, penalize, or claim full verification. Preserve repository opt-outs, exemptions, and source checks.
+
 Review exact source against approved base-branch rules. Run untrusted code only in approved isolation, without secrets or posting credentials. The recorded route is Surplus Opus 5.5, then GPT-6.1 Sol fallback.
 
 Slopbot reviews contributions, estimates each PR's size and value, and assigns its score. It closes clearly bad, fake, scam, or harmful Slop-skill contributions under the project rules. Uncertain findings go to the maintainer first. If no maintainer acts within 7 days, Slopbot applies its verdict as a label only; an uncertain finding never closes a contribution. Free service does not charge project vaults.
