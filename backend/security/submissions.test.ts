@@ -2247,6 +2247,43 @@ describe("optional GitHub forwarding of a saved report", () => {
     expect(again.body).toEqual({ state: "ok", received: 0 });
     expect(t.cases()).toHaveLength(2);
   });
+  test("an import leaves GitHub's copy of a full-length saved report to its case", async () => {
+    const t = setup({ durable: true });
+    // The longest description Slop accepts puts the reference line past the
+    // part of the text the import reader keeps for analysis.
+    const accepted = await t.create(REPORTER, {
+      report: {
+        ...REPORT,
+        description: REPORT.description.padEnd(65_000, "."),
+      },
+    });
+    expect(accepted.status).toBe(201);
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const authorization = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+    t.github.faults.create = "timeout-after-create";
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.body.submission?.state).toBe("uncertain");
+    expect(t.github.advisories).toHaveLength(1);
+    const imported = await t.call(MAINTAINER, "POST", "security-cases", {
+      mode: "import",
+      projectId: PROJECT,
+    });
+    expect(imported.body).toEqual({ state: "ok", received: 0 });
+    expect(t.cases()).toHaveLength(1);
+  });
   test("a human hold prevents forwarding even after earlier GitHub authorization", async () => {
     const t = setup({ durable: true });
     const accepted = await t.create(REPORTER, { report: REPORT });

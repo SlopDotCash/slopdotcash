@@ -1,6 +1,7 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import { GHSA, GITHUB_LOGIN, githubHeaders, nextLink } from "../github";
+import { markerLine } from "./github-advisories";
 
 /**
  * Reads a program repository's GitHub private vulnerability reports (PRD
@@ -23,6 +24,12 @@ export type GithubPrivateReport = {
   author: GithubActor;
   summary: string;
   description: string;
+  /**
+   * The description's Slop reference lines (`markerLine`), trimmed, read
+   * from the whole text: a forward of a saved report appends its line after
+   * a description that can be longer than `description` keeps.
+   */
+  referenceLines: string[];
   severity: string | null;
   cweIds: string[];
   packages: string[];
@@ -48,6 +55,7 @@ const MAX_PAGES = 20;
 const PAGE_SIZE = 100;
 /** Bounds what one report can contribute to the private analysis input. */
 const MAX_DESCRIPTION = 60_000;
+const REFERENCE_PREFIX = markerLine("");
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -58,6 +66,14 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function text(value: unknown, max: number): string {
   return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+function referenceLines(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  return value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(REFERENCE_PREFIX));
 }
 
 /**
@@ -96,6 +112,7 @@ export function parsePrivateReport(value: unknown): GithubPrivateReport | null {
     author: { githubId: String(author.id), githubLogin: author.login },
     summary: text(advisory.summary, 1024),
     description: text(advisory.description, MAX_DESCRIPTION),
+    referenceLines: referenceLines(advisory.description),
     severity: typeof advisory.severity === "string" ? advisory.severity : null,
     cweIds: Array.isArray(advisory.cwe_ids)
       ? advisory.cwe_ids
