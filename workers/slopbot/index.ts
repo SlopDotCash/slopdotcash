@@ -15,6 +15,7 @@ import {
   registeredHistoryProject,
   registeredHistoryRepository,
   registeredRepository,
+  reversalOnlyRegistration,
   reviewRegistration,
 } from "./registry";
 import { type ReopenItem, recordReopenSource } from "./reopen-source";
@@ -432,7 +433,18 @@ export default {
       const job = jobFor(event, deliveryId, payload, env.SLOPBOT_APP_USER_ID);
       if (job !== null) {
         // Paused projects stay registered: their review is security-only.
-        if ((await reviewRegistration(env.SLOPBOT_DB, job)) === null) {
+        // A retired project gets no review, but an appeal, a maintainer
+        // reopen or a moderator decision may still reverse an existing
+        // penalty there; the consumer permits nothing else.
+        if (
+          (await reviewRegistration(env.SLOPBOT_DB, job)) === null &&
+          !(
+            (job.kind === "appeal" ||
+              job.kind === "human_reopen" ||
+              job.kind === "appeal_command") &&
+            (await reversalOnlyRegistration(env.SLOPBOT_DB, job)) !== null
+          )
+        ) {
           await store.completeDelivery(env.SLOPBOT_DB, deliveryId);
           return new Response(
             "repository is not registered in the Slop registry",
