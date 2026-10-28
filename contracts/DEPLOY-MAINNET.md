@@ -957,7 +957,19 @@ Monitoring: the attester's five-minute cron run throws on any indexing or
 monthly authorization failure, which shows in the Cloudflare Workers logs of
 `slop-payments-base-mainnet-attester`
 (`./node_modules/.bin/wrangler tail --config "$CONFIG"`). No alerting service
-watches it.
+watches those Worker logs. The hourly
+[production watch](../.github/workflows/production-watch.yml)
+(`scripts/production-watch.ts`, on `main` only) detects one consequence from
+outside: it reads every vault in the public registry and fails when its
+cached finalized snapshot from `GET /api/v1/payments/projects/<id>/vault` is
+missing or older than the `staleAfterMs` that the response publishes. It also
+fails when `https://slop.cash/`, `GET /api/v1/projects` or
+`https://slopbot.slop.cash/health` returns a non-2xx status or does not answer
+within 20 seconds. It does not retry, uses no credentials, reads no chain RPC
+and does not see attester signing, binding, indexing or monthly authorization
+failures that leave the snapshot fresh. A failed run relies on GitHub's
+failed-workflow email. Cloudflare Worker error notifications and a confirmed
+delivery of that email to the responder remain owner steps.
 
 Destination bindings: the attester's five-minute cron run binds them. After
 it indexes the finalized vault events, it finds each reserved award on a
