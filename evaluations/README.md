@@ -19,6 +19,20 @@ sources, duplicate ids, symlinks, oversized files, awards outside the rolling
 window, and sources already rewarded by the ordinary GitHub ledger. The newest
 three valid awards per contributor and project can score in a window.
 
+## Retired evaluator manifests
+
+The registry migration in [#857](https://github.com/SlopDotCash/slopdotcash/pull/857)
+retired the earlier manifests without revoking their awards. The Points batch
+recorded on 20 October 2026 at 05:30:25.870 UTC incorrectly zeroed eleven of
+those awards when their projects returned to the registry.
+
+The generator recognizes that exact batch and the unchanged award chains,
+then appends recovery revisions with distinct provenance. It never rewrites
+history. A later correction or revocation ends this protection. Supplying a
+current manifest explicitly adopts its award, even when the amount stays the
+same; removing that manifest can then revoke it normally. Other zero revisions
+are not retirement evidence.
+
 ## Reviews that lead to closing a pull request
 
 A substantiated review-led closure can be a useful evaluated outcome even when

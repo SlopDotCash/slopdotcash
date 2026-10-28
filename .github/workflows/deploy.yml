@@ -153,6 +153,8 @@ jobs:
           if [ "$VITE_SLOP_ENVIRONMENT" = "staging" ]; then
             profile_origin="https://staging.slop.cash"
           fi
+          # Match the PR snapshot transport: compressed responses, bounded retries,
+          # and enough time for the multi-megabyte published history.
           previous_profiles="$RUNNER_TEMP/slop-previous-profiles.json"
           if [ "$BOOTSTRAP_STAGING_PROFILES" = "true" ]; then
             test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
@@ -161,8 +163,9 @@ jobs:
             cp data/profiles/seed.json "$previous_profiles"
             echo "First staging publication: start from the reviewed profile census."
           else
-            curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
-              --connect-timeout 10 --max-time 60 --max-filesize 8388608 \
+            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+              --retry 2 --retry-delay 2 --retry-max-time 600 \
               "$profile_origin/data/profiles.json" --output "$previous_profiles"
           fi
           # Selects the versioned value scoring policy for new work. Exit 75
@@ -185,8 +188,9 @@ jobs:
           if [ "$feed_status" -eq 75 ]; then
             echo "::warning::Hosted value feed still unavailable; keeping the last published leaderboard snapshot."
             mkdir -p public/data
-            curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
-              --connect-timeout 10 --max-time 60 --max-filesize 26214400 \
+            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 --max-filesize 26214400 \
+              --retry 2 --retry-delay 2 --retry-max-time 600 \
               "$profile_origin/data/leaderboard.json" \
               --output public/data/leaderboard.json
             test -s public/data/leaderboard.json
