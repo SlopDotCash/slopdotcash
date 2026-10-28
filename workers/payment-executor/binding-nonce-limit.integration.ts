@@ -34,6 +34,7 @@ import {
   type ExecutorEnvironment,
   type JournalStore,
   pendingStoredBindings,
+  runStoredBindings,
   STORED_BINDING,
 } from "./core";
 import { privateScopeJournal, testBindingNonceLimit } from "./index";
@@ -84,9 +85,14 @@ const nonce = async () =>
   );
 
 function calldata(signature: string, args: string[]) {
-  return execFileSync("cast", ["calldata", signature, ...args], {
+  const encoded = execFileSync("cast", ["calldata", signature, ...args], {
     encoding: "utf8",
   }).trim();
+  assert(
+    /^0x[0-9a-f]{8,}$/i.test(encoded),
+    `Local cast returned no calldata for ${signature}`,
+  );
+  return encoded;
 }
 async function read(to: string, signature: string, args: string[] = []) {
   return (await rpc("eth_call", [
@@ -266,6 +272,7 @@ interface Fixture {
   candidate: BindingCandidate;
   journal: ReturnType<typeof journalFixture>;
   signatures(): number;
+  nonces: number[];
   broadcasts: number;
   revertNext: boolean;
   revertedReceipt: Receipt | null;
@@ -295,6 +302,27 @@ const proxy = Bun.serve({
     assert(active, "Broadcast outside the local test fixture");
     const raw = body.params[0] as `0x${string}`;
     const tx = parseTransaction(raw);
+    if (tx.to?.toLowerCase() === attester.address.toLowerCase()) {
+      const cancellation = active.journal
+        .entries()
+        .find(
+          (row) =>
+            row.key.startsWith("binding-cancel:") &&
+            row.value.rawTransaction === raw,
+        );
+      assert(cancellation, "Cancellation must be retained before broadcast");
+      assert.equal(
+        tx.nonce,
+        parseTransaction(cancellation.value.original.rawTransaction).nonce,
+      );
+      assert.equal(tx.value ?? 0n, 0n);
+      assert.equal(tx.data ?? "0x", "0x");
+      active.broadcasts++;
+      return Response.json({
+        ...(await request(body.method, body.params)),
+        id: body.id,
+      });
+    }
     assert.equal(tx.to?.toLowerCase(), active.vault);
     const row = active.journal
       .entries()
@@ -314,6 +342,22 @@ const proxy = Bun.serve({
       assert(budget);
       assert.equal(budget.transactionId, keccak256(raw));
       assert.equal(budget.nonce, tx.nonce);
+    }
+    if (
+      JSON.parse(active.env.PAYMENT_DEPLOYMENTS)[0].bindingConsentNonceLimit ===
+      1
+    ) {
+      const budget = await active.env.JOURNAL.get<{
+        transactionId: string;
+        nonce: number;
+        nativeCeilingWei: string;
+      }>(row.value.bindingConsentBudgetKey);
+      assert(budget, "Consent budget must be retained before broadcast");
+      assert.equal(budget.transactionId, keccak256(raw));
+      assert.equal(budget.nonce, tx.nonce);
+      assert.equal(budget.nativeCeilingWei, "10000000000000");
+      assert(tx.gas !== undefined && tx.maxFeePerGas !== undefined);
+      assert(tx.gas * tx.maxFeePerGas <= BigInt(budget.nativeCeilingWei));
     }
     active.broadcasts++;
     if (!active.revertNext)
@@ -369,7 +413,10 @@ const anvilClosed = new Promise<void>((resolve) => {
 });
 let asset = "",
   factory = "";
-async function fixture(actor: string, limited: boolean): Promise<Fixture> {
+async function fixture(
+  actor: string,
+  limited: boolean | "consent",
+): Promise<Fixture> {
   const key = `0x${hash(`nonce-limit-project-${actor}`)}`;
   const source = `0x${hash(`nonce-limit-source-${actor}`)}`;
   const claimDigest = hash(`nonce-limit-claim-${actor}`);
@@ -476,6 +523,12 @@ async function fixture(actor: string, limited: boolean): Promise<Fixture> {
       now,
     );
   const deployment = {
+    ...(limited === "consent"
+      ? {
+          bindingConsentNonceLimit: 1 as const,
+          maxNativeCostWei: "10000000000000",
+        }
+      : {}),
     network: network as "base-sepolia",
     vault,
     programId: null,
@@ -497,6 +550,7 @@ async function fixture(actor: string, limited: boolean): Promise<Fixture> {
     evmUpgrade: await captureUpgrade(rpc, factory, vault),
   };
   let signatures = 0;
+  const nonces: number[] = [];
   const env: ExecutorEnvironment = {
     PAYMENTS_DB: db,
     PAYMENT_DEPLOYMENTS: JSON.stringify([
@@ -510,10 +564,11 @@ async function fixture(actor: string, limited: boolean): Promise<Fixture> {
       address: attester.address,
       async signTransaction(input) {
         signatures++;
+        nonces.push(input.nonce);
         return attester.signTransaction(input);
       },
     },
-    ...(limited ? { BINDING_NONCE_LIMIT: 1 as const } : {}),
+    ...(limited === true ? { BINDING_NONCE_LIMIT: 1 as const } : {}),
   };
   const candidate: BindingCandidate = {
     obligationId: award,
@@ -531,10 +586,65 @@ async function fixture(actor: string, limited: boolean): Promise<Fixture> {
     candidate,
     journal,
     signatures: () => signatures,
+    nonces,
     broadcasts: 0,
     revertNext: false,
     revertedReceipt: null,
   };
+}
+function setConsentLimit(fixture: Fixture, enabled: boolean) {
+  const deployments = JSON.parse(fixture.env.PAYMENT_DEPLOYMENTS);
+  if (enabled) deployments[0].bindingConsentNonceLimit = 1;
+  else delete deployments[0].bindingConsentNonceLimit;
+  fixture.env.PAYMENT_DEPLOYMENTS = JSON.stringify(deployments);
+}
+async function renewConsent(fixture: Fixture) {
+  const input = fixture.candidate;
+  const previous = fixture.sql
+    .query<{ expires: string }, []>(
+      "SELECT MAX(CAST(expires_at AS INTEGER)) expires FROM payment_binding_authorizations",
+    )
+    .get();
+  assert(previous);
+  const expires = String(Number(previous.expires) + 3600);
+  const typed = evmBindingTypedData(chainId, fixture.vault, {
+    githubUserId: input.githubUserId,
+    destination: input.destination,
+    expectedVersion: "0",
+    claimDigest: `0x${input.claimDigest}`,
+    expiresAt: expires,
+  });
+  const { EIP712Domain: _domain, ...types } = typed.types;
+  const signature = await wallet.signTypedData({
+    domain: {
+      ...typed.domain,
+      chainId: Number(chainId),
+      verifyingContract: fixture.vault,
+    },
+    types,
+    primaryType: typed.primaryType,
+    message: {
+      actorId: BigInt(input.githubUserId),
+      destination: input.destination,
+      expectedVersion: 0n,
+      claimDigest: `0x${input.claimDigest}`,
+      expiresAt: BigInt(expires),
+    },
+  } as never);
+  fixture.sql
+    .prepare(
+      "INSERT INTO payment_binding_authorizations(claim_id,github_user_id,network,vault,chain_id,expected_version,expires_at,signature,created_at) VALUES(?,?,?,?,?,'0',?,?,?)",
+    )
+    .run(
+      input.claimId,
+      input.githubUserId,
+      network,
+      fixture.vault,
+      String(chainId),
+      expires,
+      signature,
+      new Date().toISOString(),
+    );
 }
 async function successorClaim(fixture: Fixture): Promise<BindingCandidate> {
   const old = fixture.candidate;
@@ -679,7 +789,7 @@ try {
     (contract, args) => deploy(contract, args),
     [registrar, fee, attester.address, "0"],
   );
-  await send(asset, "mint(address,uint256)", [owner, "10000000"]);
+  await send(asset, "mint(address,uint256)", [owner, "20000000"]);
   await run(
     "concurrent opt-in triggers sign one nonce and retain budget before broadcast",
     async () => {
@@ -797,6 +907,131 @@ try {
     },
   );
   await run(
+    "consent opt-in atomically admits one concurrent nonce",
+    async () => {
+      active = await fixture("130", "consent");
+      const before = await nonce();
+      await Promise.allSettled([
+        bindStoredDestination(active.env, active.candidate),
+        bindStoredDestination(active.env, active.candidate),
+      ]);
+      await mine(64);
+      assert.deepEqual(active.nonces, [before]);
+      assert.equal(await nonce(), before + 1);
+      assert.equal(
+        active.journal
+          .entries()
+          .filter((row) => row.key.startsWith("bind:consent-nonce:")).length,
+        1,
+      );
+    },
+  );
+  await run(
+    "consent revert remains held after restart, retirement and opt-out",
+    async () => {
+      active = await fixture("131", "consent");
+      const before = await nonce();
+      active.revertNext = true;
+      await bindStoredDestination(active.env, active.candidate);
+      const original = active.journal
+        .entries()
+        .find((row) => row.key.startsWith(STORED_BINDING));
+      assert(original);
+      // Recreate the environment over the same durable SQLite store, as after a restart.
+      active.env = { ...active.env };
+      await assert.rejects(
+        bindStoredDestination(active.env, active.candidate),
+        /reverted/,
+      );
+      assert(
+        active.journal.entries().some((row) => row.key.includes(":reverted:")),
+      );
+      await reconcileBindingWinner(active.env, {
+        network,
+        vault: active.vault,
+        originalTransactionId: original.value.transactionId,
+        winnerTransactionId: original.value.transactionId,
+      });
+      assert.equal(await active.env.JOURNAL.get(original.key), null);
+      setConsentLimit(active, false);
+      await assert.rejects(
+        bindStoredDestination(active.env, active.candidate),
+        /consent nonce already consumed/,
+      );
+      assert.deepEqual(active.nonces, [before]);
+      assert.equal(await nonce(), before + 1);
+      assert(
+        await active.env.JOURNAL.get(original.value.bindingConsentBudgetKey),
+      );
+    },
+  );
+  await run(
+    "a new explicitly signed expiry has a separate consent budget",
+    async () => {
+      active = await fixture("132", "consent");
+      const before = await nonce();
+      active.revertNext = true;
+      await bindStoredDestination(active.env, active.candidate);
+      await renewConsent(active);
+      await bindStoredDestination(active.env, active.candidate);
+      await mine(64);
+      assert.deepEqual(active.nonces, [before, before + 1]);
+      const budgets = active.journal
+        .entries()
+        .filter((row) => row.key.startsWith("bind:consent-nonce:"));
+      assert.equal(budgets.length, 2);
+      assert.notEqual(
+        budgets[0].value.identity.at(-1),
+        budgets[1].value.identity.at(-1),
+      );
+      assert.equal(
+        (await bindStoredDestination(active.env, active.candidate)).state,
+        "current",
+      );
+    },
+  );
+  await run(
+    "consent opt-in refuses unmarked legacy and missing retained budgets",
+    async () => {
+      active = await fixture("133", false);
+      active.revertNext = true;
+      await bindStoredDestination(active.env, active.candidate);
+      setConsentLimit(active, true);
+      const before = await nonce();
+      const legacy = active.journal
+        .entries()
+        .find((row) => row.key.startsWith(STORED_BINDING));
+      assert(legacy);
+      const observedLegacy = await reconcileBindingWinner(active.env, {
+        network,
+        vault: active.vault,
+        originalTransactionId: legacy.value.transactionId,
+        winnerTransactionId: legacy.value.transactionId,
+      });
+      assert.equal(observedLegacy.state, "original_reverted");
+      await assert.rejects(
+        bindStoredDestination(active.env, active.candidate),
+        /Legacy binding consent/,
+      );
+      assert.equal(await nonce(), before);
+      assert.equal(active.signatures(), 1);
+      active = await fixture("134", "consent");
+      active.revertNext = true;
+      await bindStoredDestination(active.env, active.candidate);
+      const original = active.journal
+        .entries()
+        .find((row) => row.key.startsWith(STORED_BINDING));
+      assert(original);
+      active.journal.remove(original.value.bindingConsentBudgetKey);
+      await renewConsent(active);
+      await assert.rejects(
+        bindStoredDestination(active.env, active.candidate),
+        /consent budget differs/,
+      );
+      assert.equal(active.signatures(), 1);
+    },
+  );
+  await run(
     "observed legacy revert blocks a successor claim's new fingerprint",
     async () => {
       active = await fixture("127", false);
@@ -898,6 +1133,73 @@ try {
       );
       assert.equal(active.signatures(), 1);
       assert.equal(await nonce(), before);
+    },
+  );
+  await run(
+    "expired consent cancellation retains the single nonce admission",
+    async () => {
+      active = await fixture("135", "consent");
+      const before = await nonce();
+      await rpc("evm_setAutomine", [false]);
+      await bindStoredDestination(active.env, active.candidate);
+      const original = active.journal
+        .entries()
+        .find((row) => row.key.startsWith(STORED_BINDING));
+      assert(original);
+      await rpc("anvil_dropTransaction", [original.value.transactionId]);
+      await rpc("evm_setAutomine", [true]);
+      const consent = active.sql
+        .query<{ expires: number }, []>(
+          "SELECT MAX(CAST(expires_at AS INTEGER)) expires FROM payment_binding_authorizations",
+        )
+        .get();
+      assert(consent);
+      const expires = consent.expires;
+      await rpc("evm_setNextBlockTimestamp", [expires + 1]);
+      await mine(128);
+      const finalized = await rpc<{ timestamp: string }>(
+        "eth_getBlockByNumber",
+        ["finalized", false],
+      );
+      assert(
+        BigInt(finalized.timestamp) > BigInt(expires),
+        "Expiry must be finalized before cancellation",
+      );
+      // Removing the current native cap cannot release the consent's admitted
+      // bound or the original Attempt's bound. High-fee cancellation must hold.
+      const withoutNative = JSON.parse(active.env.PAYMENT_DEPLOYMENTS);
+      delete withoutNative[0].maxNativeCostWei;
+      active.env.PAYMENT_DEPLOYMENTS = JSON.stringify(withoutNative);
+      await rpc("anvil_setNextBlockBaseFeePerGas", ["0xee6b2800"]);
+      await mine(1);
+      const costly = await runStoredBindings(active.env, []);
+      assert.equal(costly.failed, 1);
+      assert.deepEqual(active.nonces, [before]);
+      assert(
+        !active.journal
+          .entries()
+          .some((row) => row.key.startsWith("binding-cancel:")),
+      );
+      await rpc("anvil_setNextBlockBaseFeePerGas", ["0x7"]);
+      await mine(1);
+      const first = await runStoredBindings(active.env, []);
+      assert.equal(first.failed, 0);
+      assert.equal(first.submitted.length, 1);
+      await mine(64);
+      const second = await runStoredBindings(active.env, []);
+      assert.equal(second.failed, 0);
+      assert.deepEqual(active.nonces, [before, before]); // Binding and inert same-nonce cancellation.
+      assert.equal(await nonce(), before + 1);
+      assert.equal(await active.env.JOURNAL.get(original.key), null);
+      setConsentLimit(active, false);
+      await assert.rejects(
+        bindStoredDestination(active.env, active.candidate),
+        /consent nonce already consumed/,
+      );
+      assert.deepEqual(active.nonces, [before, before]);
+      assert(
+        await active.env.JOURNAL.get(original.value.bindingConsentBudgetKey),
+      );
     },
   );
   console.log(
