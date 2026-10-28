@@ -67,6 +67,11 @@ test("retained awards URLs resolve during client navigation with query and fragm
       history.pushState({}, "", path);
       dispatchEvent(new PopStateEvent("popstate"));
     }, `/projects/eliza/awards${suffix}`);
+    // The embedded standings load after the route. Wait for their effects
+    // before checking that they did not overwrite the retained URL.
+    await expect(
+      page.getByRole("region", { name: "Contributor standings", exact: true }),
+    ).toBeVisible();
     await expect(page).toHaveURL(`/projects/eliza${expected}`);
     await expect(
       page.getByRole("heading", { name: "Eliza", exact: true }),
