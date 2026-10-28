@@ -550,6 +550,91 @@ describe("automatic scan and activation", () => {
     );
   });
 
+  test("intake refuses a reuse that cites a reused or non-clean assessment", async () => {
+    // PRD section 8 and #1461: a reused result clears only when it cites an
+    // original clean scan, never another reuse or a non-clean result.
+    const original = await activeProject();
+    const investigate = async () => {
+      const project = await projects.getProject("open-registry");
+      if (!project) throw new Error("missing project");
+      expect(
+        await queueAutomaticScan(
+          vettingDeps(),
+          project,
+          "Explicit security investigation",
+        ),
+      ).toBe("queued");
+      return (await vetting.pendingAssessments())[0].id;
+    };
+    const vettingState = async () =>
+      JSON.stringify((await (await publicProject()).json()).vetting);
+
+    // (a) A valid reuse of the original clean scan publishes.
+    const firstReuse = await investigate();
+    expect(
+      (
+        await postResult(
+          await scanFixture(
+            firstReuse,
+            "clean",
+            { runId: "scan-run-1", reusedAssessmentId: original },
+            false,
+          ),
+        )
+      ).status,
+    ).toBe(200);
+    // Evidence retained under the reuse itself, so only the chain rule can
+    // refuse a reuse that cites it.
+    await retained.retain(firstReuse, "scan-run-1");
+    const storedReuse = JSON.stringify(await vetting.getAssessment(firstReuse));
+
+    // (b) A reuse of that reuse is refused, though it carries the same
+    // report, inventory, template and policy as the original.
+    const chained = await investigate();
+    const before = await vettingState();
+    const reuseOfReuse = await postResult(
+      await scanFixture(
+        chained,
+        "clean",
+        { runId: "scan-run-1", reusedAssessmentId: firstReuse },
+        false,
+      ),
+    );
+    expect(reuseOfReuse.status).toBe(422);
+    expect((await reuseOfReuse.json()).error).toBe("reuse_mismatch");
+    expect(await vettingState()).toBe(before);
+    expect(JSON.stringify(await vetting.getAssessment(firstReuse))).toBe(
+      storedReuse,
+    );
+    expect((await vetting.getAssessment(chained))?.state).toBe("pending");
+
+    // (c) The refused investigation completes as incomplete; a clean reuse
+    // citing that non-clean assessment is refused and clears nothing.
+    expect(
+      (
+        await postResult(
+          await scanFixture(chained, "incomplete", { runId: "scan-run-1" }),
+        )
+      ).status,
+    ).toBe(200);
+    expect((await vetting.getAssessment(chained))?.state).toBe("incomplete");
+    const cleared = await investigate();
+    const beforeNonClean = await vettingState();
+    expect(JSON.parse(beforeNonClean).state).toBe("queued");
+    const reuseOfNonClean = await postResult(
+      await scanFixture(
+        cleared,
+        "clean",
+        { runId: "scan-run-1", reusedAssessmentId: chained },
+        false,
+      ),
+    );
+    expect(reuseOfNonClean.status).toBe(422);
+    expect((await reuseOfNonClean.json()).error).toBe("reuse_mismatch");
+    expect(await vettingState()).toBe(beforeNonClean);
+    expect((await vetting.getAssessment(cleared))?.state).toBe("pending");
+  });
+
   test("an incomplete or legacy result never clears", async () => {
     await listPausedProject();
     const [id] = (await refresh()).queued;
