@@ -850,7 +850,6 @@ small {
 
 .project-hero {
   padding-block: 36px 48px;
-  border-bottom: 1px solid var(--line);
 }
 
 .breadcrumb {
@@ -4002,6 +4001,9 @@ html:has(.security-page) {
 }
 
 .vault-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
   margin: 0;
   font-size: clamp(24px, 4vw, 36px);
 }
@@ -4197,10 +4199,6 @@ html:has(.security-page) {
 
 nav[aria-label="Project navigation"] {
   padding-top: 1.25rem;
-}
-
-.home-security-section {
-  padding-top: 0;
 }
 
 .vault-unconfigured {
