@@ -539,6 +539,8 @@ export async function caseRoles(
   preloaded?: {
     project: Awaited<ReturnType<typeof currentReportingProject>>;
     triager: boolean;
+    /** The project's repository authority, read once per list. */
+    authority: () => Promise<boolean>;
   },
 ): Promise<Set<Role>> {
   const project = preloaded
@@ -571,11 +573,13 @@ export async function caseRoles(
   ) {
     if (
       project &&
-      (await repositoryReportingAuthority(
-        deps.repositoryAccess,
-        project.manifest,
-        actor,
-      ))
+      (preloaded
+        ? await preloaded.authority()
+        : await repositoryReportingAuthority(
+            deps.repositoryAccess,
+            project.manifest,
+            actor,
+          ))
     )
       roles.add("security-maintainer");
   }
@@ -1276,6 +1280,23 @@ async function listCases(
       .all<{ case_id: string }>();
     for (const row of found.results ?? []) triagerIds.add(row.case_id);
   }
+  // One remote authority read per project, not per case.
+  const authorities = new Map<string, Promise<boolean>>();
+  const authority = (projectId: string) => () => {
+    let read = authorities.get(projectId);
+    if (!read) {
+      const project = projects.get(projectId);
+      read = project
+        ? repositoryReportingAuthority(
+            deps.repositoryAccess,
+            project.manifest,
+            actor,
+          )
+        : Promise.resolve(false);
+      authorities.set(projectId, read);
+    }
+    return read;
+  };
   const visible: { row: CaseRow; roles: Set<Role> }[] = [];
   for (const row of rows) {
     let roles: Set<Role>;
@@ -1283,6 +1304,7 @@ async function listCases(
       roles = await caseRoles(deps, row, actor, {
         project: projects.get(row.project_id) ?? null,
         triager: triagerIds.has(row.id),
+        authority: authority(row.project_id),
       });
     } catch (error) {
       if (!reportingAuthorityUnavailable(error)) throw error;
