@@ -288,3 +288,69 @@ test("an inactive network's old snapshot passes, but it must still exist", async
     ],
   ]);
 });
+
+test("a Solana snapshot that differs only by vault case does not stand in for the registered vault", async () => {
+  const flipped = `6nhxSaed6SF3uCAgzQViCZixETGpvxuFzo5eRGiaGM7`;
+  const withEliza = registry();
+  withEliza.projects.push({
+    schemaVersion: "1",
+    id: "eliza",
+    listingTier: "featured",
+    status: "active",
+    escrow: {
+      deployments: [
+        {
+          network: "solana-mainnet",
+          factory: "",
+          vault: SOLANA_VAULT,
+          asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        },
+      ],
+    },
+  });
+  const { failed } = await run({
+    [`${ORIGIN}/api/v1/projects`]: { body: withEliza },
+    [`${ORIGIN}/api/v1/payments/projects/eliza/vault`]: {
+      body: {
+        projectId: "eliza",
+        snapshots: [
+          {
+            projectId: "eliza",
+            network: "solana-mainnet",
+            chain: "solana",
+            vault: flipped,
+            observedAt: "2026-10-28T16:59:00.000Z",
+          },
+        ],
+        staleAfterMs: 1_800_000,
+        servedAt: NOW.toISOString(),
+      },
+    },
+  });
+  expect(failed.map((r) => [r.check, r.detail])).toEqual([
+    [
+      `vault eliza solana-mainnet ${SOLANA_VAULT}`,
+      "no cached snapshot for this vault",
+    ],
+  ]);
+});
+
+test("an EVM snapshot in checksummed case still matches the registered vault", async () => {
+  const checksummed = await run({
+    [`${ORIGIN}/api/v1/payments/projects/slopdotcash/vault`]: {
+      body: {
+        ...vault("2026-10-28T16:55:59.635Z"),
+        snapshots: [
+          {
+            projectId: "slopdotcash",
+            network: "base-mainnet",
+            chain: "base",
+            vault: "0x6C1297C3B96A00347CB501F572CB5811C2A8ED36",
+            observedAt: "2026-10-28T16:55:59.635Z",
+          },
+        ],
+      },
+    },
+  });
+  expect(checksummed.failed).toEqual([]);
+});
