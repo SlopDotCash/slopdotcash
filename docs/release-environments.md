@@ -58,6 +58,14 @@ Production continues to use `https://api.slop.cash` and
 production session. Public ledger snapshots remain public reference data;
 staging account and wallet writes are test records, not payout instructions.
 
+Points generation reads the branch's own published history. Production
+reconciles its D1 checkpoint and Pages journal. Staging retains its existing
+Pages journal when its own API explicitly reports `points_not_published`,
+because earlier staging releases published Points without a D1 checkpoint.
+Unavailable checkpoints, missing shards, bad digests and invalid awards still
+stop the build. Never import new production Points into staging's separate
+project inventory or discard an existing staging journal to start again.
+
 ## Setup
 
 The `slop-staging` GitHub environment permits only `development`. Store these
