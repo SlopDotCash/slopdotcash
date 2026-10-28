@@ -60,6 +60,24 @@ or erase evidence to make an incident appear resolved. The narrowly approved
 obsolete EVM binding cancellation is governed by the attester procedure and
 does not authorize other cancellations.
 
+## Detection
+
+The hourly [production watch](../.github/workflows/production-watch.yml) runs
+`scripts/production-watch.ts` on `main`. It fails when `https://slop.cash/`,
+the registry API (`GET /api/v1/projects`) or `https://slopbot.slop.cash/health`
+returns a non-2xx status or does not answer within 20 seconds. It also fails
+when any vault in the public registry has no cached snapshot, no observation
+time, or a snapshot older than the `staleAfterMs` published by
+`GET /api/v1/payments/projects/<id>/vault` (PRD sections 6 and 9). It does not
+retry, uses no credentials and reads no chain RPC.
+
+It does not cover Worker cron failures that leave those answers healthy,
+keeper, executor, fee, scanner or backup errors, or signed transactions. The
+only notice is GitHub's failed-workflow email. Cloudflare Worker error
+notifications and a confirmed delivery of that email to the primary and backup
+responders remain owner steps. A stale vault failure points to the payments
+Worker's scheduled snapshot refresh for that network.
+
 ## Recovery and verification
 
 - Check the actual Worker version and source SHA, configuration, queue state,
@@ -81,7 +99,7 @@ does not authorize other cancellations.
 
 ## Remaining operational acceptance
 
-This runbook records the primary/backup assignment but does not supply an alert
-delivery receipt, production D1 restore drill, or real scanner evidence recovery. Track those separately from source completion. The live
+This runbook records the primary/backup assignment and the production watch but
+does not supply an alert delivery receipt, production D1 restore drill, or real scanner evidence recovery. Track those separately from source completion. The live
 network qualification and service activation gates remain in the PRD and
 [mainnet runbook](../contracts/DEPLOY-MAINNET.md).
