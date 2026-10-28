@@ -216,6 +216,24 @@ test("raw merge evidence inside the checkout is refused before any write", async
   }
 });
 
+test("a dot-prefixed child cannot receive raw merge evidence", async () => {
+  const f = fixture();
+  const workspace = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const directory = mkdtempSync(join(workspace, "..merge-evidence-"));
+  try {
+    await expect(
+      createValueMergeBundle(
+        [f.input],
+        f.full,
+        join(directory, "proof.bundle"),
+      ),
+    ).rejects.toThrow("Raw merge evidence must stay outside the workspace");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a malformed extra object is refused even when reconstruction does not need it", () => {
   const f = fixture();
   try {

@@ -17,6 +17,7 @@ import {
   join,
   relative,
   resolve,
+  sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ValueMergeInput } from "../workers/slopbot/value-merge-profile";
@@ -44,7 +45,7 @@ export async function createValueMergeBundle(
   // path uses `\`, so the guard silently admitted evidence inside the checkout.
   const insideWorkspace = (() => {
     const rest = relative(workspace, parent);
-    return rest === "" || (!rest.startsWith("..") && !isAbsolute(rest));
+    return rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest);
   })();
   if (insideWorkspace)
     throw new Error("Raw merge evidence must stay outside the workspace");
