@@ -35,18 +35,35 @@ indicators, never confirmations. A match marks the check `flagged`.
 
 The flow for one queued assessment:
 
-1. `acquire.ts` and `queue.ts` fetch the exact queued commit and template
-   inputs without execution. `readAcquiredSource` rereads every stored object
-   by its SHA-256 and carries acquisition gaps (submodules, links, LFS) into
-   the scan.
-2. `inspectRepository` sorts files into surfaces and runs the checks. It is
-   pure and deterministic. It builds one evidence bundle of at most 1 MiB and
-   1,024 items. Content that does not fit, does not decode, exceeds 256 KiB or
-   was not acquired is a visibility gap, never a silent skip.
-3. `reviewScan` (`scanners.ts`, prompt `slop-scan-review-1`) runs one primary
-   model review of that bundle. Its risk is read from the review itself: any
-   suspected malice or high finding is `high`; any other finding or partial
-   coverage is `ambiguous`; otherwise `low`. No score threshold is used.
+1. `acquire.ts` and `queue.ts` fetch the exact queued commit (one shallow Git
+   fetch, [ACQUISITION.md](ACQUISITION.md)) and template inputs without
+   execution. There is no repository size limit (owner decision, 28 October
+   2026). `readAcquiredSource` rereads every stored object by its SHA-256 and
+   carries acquisition gaps (submodules, links, LFS) into the scan.
+2. `inspectRepository` sorts files into surfaces and runs every deterministic
+   check over the whole of every file, whatever its size. It is pure and
+   deterministic. A text file over 256 KiB is reviewed in consecutive parts.
+   Content that does not decode or was not acquired is a visibility gap,
+   never a silent skip. When the inventory exceeds one review call (1 MiB or
+   1,024 items), bulk content (dependency locks, data JSON, generated
+   bundles, vendored copies; never install scripts, agent instructions or
+   manifests) is covered by the deterministic checks instead of the model.
+   It is bound into the inventory by digest, and every rule match or
+   obfuscation signal in it is sent to the model in context as
+   `<path>#signals`.
+3. `reviewInventory` (`review-plan.ts`) runs the primary model review. An
+   inventory within one call is read by exactly one `reviewScan` call
+   (`scanners.ts`, prompt `slop-scan-review-1`), with the same bytes as
+   before. A larger one is split into batches of at most 150,000 estimated
+   tokens: install, CI, container, agent-instruction, manifest and
+   risk-signal content first, then source grouped by directory, then tests,
+   docs and locks. Identical bytes are reviewed once. One synthesis call
+   (`slop-scan-synthesis-1`) then reads the deterministic pre-pass and every
+   batch result. The combined review is complete only if every call
+   completed; its coverage is the weakest of any call. Risk is read from the
+   review itself: any suspected malice or high finding is `high`; any other
+   finding or partial coverage is `ambiguous`; otherwise `low`. No score
+   threshold is used.
 4. A second model or specialist review runs only when the result is
    ambiguous or high risk: a non-low primary review, a flagged check, a
    medium or worse finding, or an unreleased binary or download.
@@ -106,9 +123,10 @@ or spend provider tokens as a deployment fallback.
 
 A service failure publishes nothing: an unavailable source or a failed
 primary or specialist review leaves the assessment pending, and the next pass
-retries it. A policy refusal of the bound assignment, such as an entry or
-byte limit, instead publishes an incomplete result and notifies each owner
-once. It records the fixed refusal reason and observed limit counters. Every
+retries it. Repository size is never a refusal. A policy refusal of the bound
+assignment, such as an invalid tree path or a repository identity mismatch,
+instead publishes an incomplete result and notifies each owner once. It
+records the fixed refusal reason. Every
 surface is unsupported, every threat check is not run, and the configured
 primary review is explicitly not started; no source inspection or model call
 is claimed. This does not establish clearance or confirm malice. A clean
@@ -232,8 +250,8 @@ bun test scripts/vetting-scan-service.test.ts
 
 `vetting-scan-service.test.ts` runs complete scan passes against the real
 vetting, evidence and project handlers on the real migrations, with local
-workerd R2, a real local Git repository served through the GitHub Git API
-format, and a local server that answers in the Surplus Anthropic Messages and
+workerd R2, a real local Git repository fetched through the Git transport,
+and a local server that answers in the Surplus Anthropic Messages and
 OpenAI Responses formats. It proves that a provider outage leaves the scan
 pending and publishes nothing, that the next pass clears the project with one
 primary review and lets activation proceed, that an ambiguous primary review
@@ -241,7 +259,45 @@ runs the specialist once, that a failed specialist publishes nothing, that a
 clean result waits for its evidence while an incomplete one is published
 without it, that risky new content escalates to the specialist and stays
 quarantined, and that a two-flag pause is reinstated after the service's
-clean fresh scan.
+clean fresh scan. It also proves that a repository beyond every former
+acquisition limit (1,100 files and a 9 MiB data file) gets a complete batched
+review, clears and activates. `workers/vetting/review-plan.test.ts` proves
+that batches stay within their budget, include every reviewed item exactly
+once, put risky content first, combine coverage at its weakest, fail when any
+call fails, and resume from the optional cache without repeating calls.
+
+## Batched review cost
+
+A batch call's budget, parallel calls and an optional operator-private cache
+are `review.batchTokens` (default 150,000, at least 100,000),
+`review.concurrency` (default 4) and `review.cache` (`directory`,
+`maxCallsPerPass`) in the service configuration. Without a cache every call
+runs in one pass, bounded by the job time and a per-call timeout of 120 s
+plus 1 ms per estimated input token (at most 10 minutes). With a cache, a
+review larger than `maxCallsPerPass` keeps its completed calls and continues
+on the next pass (`retry` at step `review-batches`); it is never published
+partial. The scheduled controller runs on an ephemeral runner and sets no
+cache, so it completes each review in one pass.
+
+Estimated primary-review input at 3 bytes per token (real tokenizers report
+fewer), measured on the real acquisitions of 28 October 2026:
+
+| Repository    | Before: calls, outcome                                                                                       | After: reviewed text, bulk (deterministic only) | After: calls | After: est. input tokens |
+| ------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | ------------ | ------------------------ |
+| Small (≤1 MiB inventory) | 1 call                                                                                                   | unchanged; identical bytes                        | 1            | unchanged                |
+| delta-git     | 0: refused at 4,403 entries. Without the refusal, its 1.4 MiB inventory with 2,523 gaps exceeds one call   | 12.9 MB in 2,427 items; 133 files, 7.9 MB         | 34 + 1       | 4.68 M                   |
+| fly.ai        | 0: refused at 2,247 entries and 137 MB                                                                      | 4.6 MB in 478 items; 404 files, 13.9 MB           | 12 + 1       | 1.65 M                   |
+
+The specialist runs the same plan only for an ambiguous or high-risk result.
+fly.ai commits 9 binaries and has deterministic high findings, so it needs
+the specialist as well.
+
+An agentic review inside the sandbox is not used. The pinned transports send
+`tools: []` and the prompt forbids tools; the sandbox has no network and
+holds no provider key, so the model cannot run there without breaking its
+isolation. Tool-driven exploration would also decide for itself what to
+read, which cannot prove that every reviewed item was read. Batches make
+coverage a property of the plan instead.
 
 The worker tests use harmless fixtures and a real local HTTP server that
 answers in the Anthropic Messages format. They check surface coverage, threat
