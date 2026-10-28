@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import legacyProjects from "../src/lib/legacy-projects.json";
 import {
   carriedSecurityTerms,
+  fullAwardSelectable,
   initialSecuritySplit,
   PLATFORM_BOUNTY_DEPLOYMENTS,
   PLATFORM_BOUNTY_SOURCE_COMMIT,
@@ -230,26 +231,38 @@ describe("platform contract bounty (owner decision, 28 October 2026)", () => {
     expect(initialSecuritySplit(false, full)).toBe(SECURITY_SPLIT);
   });
 
-  test("selecting the full award drops an existing bounty vault settlement", () => {
+  test("a program with a registered bounty vault cannot select the full award", () => {
     const settlement = { chain: "base", deployments: [] };
     const existing = {
       ...platformProgram({ split: { ...SECURITY_SPLIT } }),
       settlement,
     } as unknown as SecurityBountyTerms;
+    // The API refuses any settlement change (security_vault_restricted), so
+    // the editor never offers a choice that could not publish.
+    expect(fullAwardSelectable(true, existing)).toBe(false);
+    expect(fullAwardSelectable(true, undefined)).toBe(true);
+    expect(
+      fullAwardSelectable(
+        true,
+        platformProgram() as unknown as SecurityBountyTerms,
+      ),
+    ).toBe(true);
+    expect(fullAwardSelectable(false, undefined)).toBe(false);
     const kept = carriedSecurityTerms(existing, false);
     expect(kept.settlement).toEqual(settlement as never);
     expect("fundingPolicy" in kept).toBe(false);
-    const dropped = carriedSecurityTerms(existing, true);
-    expect("settlement" in dropped).toBe(false);
+    // The vault is never silently dropped.
+    expect(() => carriedSecurityTerms(existing, true)).toThrow(
+      "keeps the 75/25 split",
+    );
     expect(carriedSecurityTerms(undefined, true)).toEqual({});
-    // The carried terms re-validate as a full-award program.
+    const full = carriedSecurityTerms(
+      platformProgram() as unknown as SecurityBountyTerms,
+      true,
+    );
     expect(
       assertSecurityBountyTerms(
-        {
-          ...dropped,
-          fundingPolicy: "after-approval",
-          split: { ...SECURITY_FULL_AWARD_SPLIT },
-        },
+        { ...full, fundingPolicy: "after-approval" },
         { projectId: "slopdotcash", repositories: PLATFORM, reward: REWARD },
       ).split,
     ).toEqual(SECURITY_FULL_AWARD_SPLIT);

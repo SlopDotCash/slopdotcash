@@ -7,6 +7,7 @@ import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import {
   carriedSecurityTerms,
+  fullAwardSelectable,
   initialSecuritySplit,
   PLATFORM_BOUNTY_DEPLOYMENTS,
   PLATFORM_BOUNTY_SOURCE_COMMIT,
@@ -79,8 +80,11 @@ export function SecurityProgramEditor({
   // program keeps its split. The owner chooses, reviews and publishes.
   const platform = isPlatformSecurityProgram(project.id, project.repositories);
   const defaults = platform && !existing ? PLATFORM_BOUNTY_TEXT : null;
-  const [fullAward, setFullAward] = useState(() =>
-    isFullAwardSplit(initialSecuritySplit(platform, existing)),
+  const canChooseFullAward = fullAwardSelectable(platform, existing);
+  const [fullAward, setFullAward] = useState(
+    () =>
+      canChooseFullAward &&
+      isFullAwardSplit(initialSecuritySplit(platform, existing)),
   );
   const programSplit = fullAward ? SECURITY_FULL_AWARD_SPLIT : SECURITY_SPLIT;
   // Session metadata (such as admin) is not part of a public contact record.
@@ -352,15 +356,30 @@ export function SecurityProgramEditor({
                   <option value="closed">Closed</option>
                 </select>
                 {platform && (
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={fullAward}
-                      onChange={(event) => setFullAward(event.target.checked)}
-                    />
-                    slop.cash sponsors the whole award (researcher 100%, Slop
-                    0%)
-                  </label>
+                  <>
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={fullAward}
+                        disabled={!canChooseFullAward}
+                        aria-describedby={
+                          canChooseFullAward
+                            ? undefined
+                            : "bounty-full-award-vault"
+                        }
+                        onChange={(event) => setFullAward(event.target.checked)}
+                      />
+                      slop.cash sponsors the whole award (researcher 100%, Slop
+                      0%)
+                    </label>
+                    {!canChooseFullAward && (
+                      <p id="bounty-full-award-vault">
+                        This program has a registered bounty vault, which pays
+                        75/25 and keeps its network. The whole-award option
+                        needs a program without a bounty vault.
+                      </p>
+                    )}
+                  </>
                 )}
                 <label className="checkbox-label">
                   <input
@@ -417,7 +436,7 @@ export function SecurityProgramEditor({
                 <select
                   id="bounty-network"
                   value={network ?? ""}
-                  disabled={!fullAward && Boolean(existing?.settlement)}
+                  disabled={Boolean(existing?.settlement)}
                   onChange={(event) =>
                     setNetwork((event.target.value || null) as typeof network)
                   }

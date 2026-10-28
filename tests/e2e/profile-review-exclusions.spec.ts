@@ -166,7 +166,7 @@ test("the current directory vetoes a renamed or recycled review-only login", asy
     waitUntil: "networkidle",
   });
   await expect(
-    page.getByText("This contributor could not be verified."),
+    page.getByText("Contributor records are unavailable."),
   ).toBeVisible();
   await page.route("**/data/profiles.json", (route) =>
     route.fulfill({
@@ -185,6 +185,6 @@ test("the current directory vetoes a renamed or recycled review-only login", asy
   );
   await page.reload({ waitUntil: "networkidle" });
   await expect(
-    page.getByText("This contributor could not be verified."),
+    page.getByText("Contributor records are unavailable."),
   ).toBeVisible();
 });

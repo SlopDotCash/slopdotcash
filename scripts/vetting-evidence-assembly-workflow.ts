@@ -4,7 +4,10 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
-import { EVIDENCE_CHUNK_BYTES } from "../backend/vetting/evidence-chunks";
+import {
+  EVIDENCE_CHUNK_BYTES,
+  evidenceLocation,
+} from "../backend/vetting/evidence-chunks";
 import { enlargeText } from "../tests/text-size";
 import {
   EVIDENCE_OWNER_GITHUB_ID,
@@ -639,12 +642,15 @@ if (import.meta.main) {
     )!;
     const stored = fixture.sqlite
       .query(
-        "SELECT object_key FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? AND sha256=?",
+        "SELECT object_key,sha256,storage FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? AND sha256=?",
       )
       .get(result.assessmentId, result.runId, removed.sha256) as {
       object_key: string;
+      sha256: string;
+      storage: string;
     };
-    await result.retained.bucket.delete(stored.object_key);
+    // Content-addressed rows (migration 0107) keep their bytes by digest.
+    await result.retained.bucket.delete(evidenceLocation(stored));
     await assert.rejects(
       result.retained.evidence.assemblyClosure(
         result.assessmentId,

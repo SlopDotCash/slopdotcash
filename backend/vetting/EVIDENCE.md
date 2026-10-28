@@ -95,7 +95,7 @@ This is closure of canonical captured evidence, not retention of every runtime
 input. Receipts also pin base disks, seed images, firmware, host toolchain
 executables, the guest collector and kernel policy. Those operator-controlled
 provenance inputs remain external; their
-large bytes are not implicitly copied into this 64 MiB capture store. The UI
+large bytes are not implicitly copied into this capture store. The UI
 states this boundary. The storage run immutably binds the assembly and captured
 VM digests; the current VM format does not independently assert a run ID.
 
@@ -118,11 +118,47 @@ retain their existing behavior. Public responses never contain captured source,
 private paths or URLs. Parse failures in the private overview return a fixed
 message rather than an excerpt of malformed raw evidence.
 
-Each upload part is at most 8 MiB. A complete object and run are at most 64 MiB,
-and a run has at most 1024 objects. Explicit policy can set lower limits; there
-are no live policy defaults. The current transport can retain the actual 23.6 MB
-fixture overlay. It does not claim support for the assembler's 2 GiB ceiling.
-Oversize evidence cannot be shortened or silently omitted to obtain clearance.
+Owner decision, 28 October 2026: scanner evidence has no object or run size
+limit (the former 64 MiB cap is removed). Only each request is bounded: every
+upload, read and backup step handles at most one 8 MiB part, and the signed
+1 MiB registration declares at most 1,024 objects, about 9,000 declared
+parts. Storage is not the binding limit, though: registration, finalization,
+intake and every clearance check reread and hash an object's whole bytes
+inside one Worker request, so the practical ceiling per object is that
+request's CPU budget; the maximum depends on the runtime and evidence
+layout. If verification cannot finish, a clean result stays pending rather
+than clearing. Oversize parts are refused, and
+evidence is never shortened or silently omitted to obtain clearance.
+
+Objects registered since migration 0107 are content-addressed. Their bytes
+live once in private R2 at `vetting/objects/<sha256>` (parts at
+`vetting/objects/<sha256>/chunks/<index>/<part-sha256>`), and D1 holds only
+each run's manifest, object rows, digests and chunk layout. `object_key`
+remains the unique per-row identity; `storage = 'content'` says where the
+bytes are. Rows from before migration 0107 keep their run-scoped keys. Every
+upload is checked against its digest before it is written and reread after,
+so a content-addressed key can only hold the bytes it names. Writes are
+create-only; a valid copy is never overwritten. The single exception repairs
+a content-addressed copy that is missing or fails its digest: newly verified
+bytes for that same digest replace it. Registration answers with `stored`: the
+digests whose complete bytes (every part) reread and hash correctly now. The
+scanner references them instead of uploading again. This is a hint only: a chunked
+object still needs this run's finalization, which rereads every part and the
+whole digest, and retention rereads every byte. A missing, changed or
+partial object fails closed for every run that references it.
+
+Release order: apply migration 0107, then deploy the vetting API and the
+backup worker (its cleanup reads `storage` and the deletion claim), then the
+scanner. A scanner that references stored digests before the API knows them
+leaves clean results pending until the API catches up.
+
+Retention deletion is reference-aware. An expired content-addressed
+reference gets its own deletion receipt, but its bytes are deleted only when
+no other reference without a receipt remains, so permanent admission evidence
+and open cases keep shared bytes. The intake parses a scan report or
+inventory whole; one larger than 32 MiB cannot be parsed in a Worker request
+and is refused as not retained (fail closed). This bounds those JSON
+documents only, never artifacts or total evidence.
 
 Objects above 8 MiB declare `chunks` in their immutable object receipt. Each entry
 has `index`, `sha256` and `sizeBytes`. Indices start at zero, parts are exactly
@@ -200,3 +236,14 @@ Console evidence checks keyboard access, accessibility, a 320 CSS-pixel mobile
 layout with 200% text enlargement, and 200% desktop zoom. A 390-pixel viewport at CSS zoom 2 has only 195 CSS
 pixels and exceeds the site's existing 320-pixel minimum; that case is not
 claimed to pass. Captures and raw input bytes stay outside Git.
+
+
+Shared-object cleanup and registration use a D1 deletion claim per digest.
+The claim is created atomically only when no other retained reference exists.
+A database trigger refuses new content references while the claim exists, so
+registration cannot observe reusable bytes that cleanup is about to delete.
+The API returns a retryable conflict and rolls back that registration.
+The single cleanup consumer keeps the claim across R2 failures and retries;
+there is no expiry that could let a delayed delete race a new registration.
+After deletion, its receipt and claim release commit together. A later run
+must upload the missing bytes instead of reusing the deleted copy.

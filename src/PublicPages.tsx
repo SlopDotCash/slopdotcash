@@ -178,14 +178,13 @@ export function HowItWorksPage() {
                 contribution rules. You do not need to claim an issue.
               </p>
               <p>
-                Non-code work counts on projects that opt in. The{" "}
-                <Link href="/projects/slopdotcash">Slop project</Link> does: a
-                tutorial, explainer, video, or support answer about Slop can
-                receive a reviewed award of 1 to 8 points.
-              </p>
-              <p>
-                Only your newest three awards on a project count. To submit
-                work, post the link and tag @SlopCash.
+                Non-code work counts only on projects that opt in. The{" "}
+                <Link href="/projects/slopdotcash">Slop project</Link> ran one
+                round for October 2026: a tutorial, explainer, video, or support
+                answer about Slop could receive a reviewed award of 1 to 8
+                points. That round closed on 28 October 2026. Check each
+                project's current contribution rules before preparing non-code
+                work.
               </p>
             </div>
           </article>

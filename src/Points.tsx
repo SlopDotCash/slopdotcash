@@ -108,6 +108,7 @@ type PointsContext = {
   state: State;
   me: Membership | null;
   session: "loading" | "ready" | "error";
+  refreshSession: () => void;
   refresh: () => void;
   requestPoints: () => void;
   setMe: (m: Membership | null) => void;
@@ -205,6 +206,7 @@ export function PointsProvider({
     productOrigin() ? "loading" : "ready",
   );
   const [attempt, setAttempt] = useState(0);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const [requested, setRequested] = useState(false);
   const shouldLoad = enabled || requested;
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt triggers an explicit reload.
@@ -230,9 +232,11 @@ export function PointsProvider({
       });
     return () => controller.abort();
   }, [shouldLoad, attempt]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionAttempt retries a failed identity read.
   useEffect(() => {
     const controller = new AbortController();
-    if (productOrigin())
+    if (productOrigin()) {
+      setSession("loading");
       void fetch("/api/v1/points/me", {
         signal: AbortSignal.any([
           controller.signal,
@@ -248,20 +252,22 @@ export function PointsProvider({
           }
           if (!r.ok) throw new Error("session unavailable");
           const m = await readBoundedJson(r, 16384, "points session");
-          if (m) setMe(member(m));
+          setMe(m ? member(m) : null);
           setSession("ready");
         })
         .catch(() => {
           if (!controller.signal.aborted) setSession("error");
         });
+    }
     return () => controller.abort();
-  }, []);
+  }, [sessionAttempt]);
   return (
     <Context.Provider
       value={{
         state,
         me,
         session,
+        refreshSession: () => setSessionAttempt((value) => value + 1),
         setMe,
         refresh: () => setAttempt((a) => a + 1),
         requestPoints: () => setRequested(true),
@@ -457,13 +463,15 @@ function Notice() {
 }
 /** Current membership identity, shared with the profile's history and wallet lookup. */
 export function useProfileMembership(login: string, enabled = true) {
-  const { me, session } = usePoints();
+  const { me, session, refreshSession } = usePoints();
+  const [attempt, setAttempt] = useState(0);
   const normalizedLogin = login.toLowerCase();
   const [lookup, setLookup] = useState<{
     login: string;
     status: "loading" | "unavailable" | "absent" | "ready";
     member: Membership | null;
   }>({ login: normalizedLogin, status: "loading", member: null });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries a failed membership read.
   useEffect(() => {
     if (!enabled) return;
     const c = new AbortController();
@@ -496,7 +504,7 @@ export function useProfileMembership(login: string, enabled = true) {
       })
       .catch(() => update("unavailable"));
     return () => c.abort();
-  }, [enabled, login, normalizedLogin]);
+  }, [attempt, enabled, login, normalizedLogin]);
   const signedInActor = session === "ready" ? me?.actor : undefined;
   const own =
     signedInActor?.login.toLowerCase() === normalizedLogin ? me : null;
@@ -507,6 +515,10 @@ export function useProfileMembership(login: string, enabled = true) {
     sessionStatus: session,
     joined: current?.member ?? null,
     joinStatus: current?.status ?? "loading",
+    retry: () => {
+      setAttempt((value) => value + 1);
+      if (session === "error") refreshSession();
+    },
   };
 }
 
@@ -587,7 +599,7 @@ export function ProfilePoints({
     named.length === 0
   )
     return (
-      <NotFound as="section" title="Contributor not found">
+      <NotFound as="section" title="No Slop contributor with this login">
         <p>Slop has no public record for {login}.</p>
       </NotFound>
     );

@@ -5,6 +5,7 @@ import {
   chunkKey,
   chunkLayout,
   EVIDENCE_CHUNK_BYTES,
+  evidenceLocation,
   verifiedPart,
 } from "../../backend/vetting/evidence-chunks";
 import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "../../backend/vetting/evidence-retention";
@@ -297,7 +298,7 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
     const rows =
       (
         await env.EVIDENCE_DATABASE.prepare(
-          `SELECT o.assessment_id,o.run_id,o.sha256,o.object_key,o.chunks,o.size_bytes
+          `SELECT o.assessment_id,o.run_id,o.sha256,o.object_key,o.chunks,o.size_bytes,o.storage
        FROM vetting_evidence_objects o JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id
        JOIN vetting_assessments a ON a.id=o.assessment_id
        WHERE julianday(c.closed_at,'+90 days') <= julianday('now')
@@ -314,6 +315,7 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
             object_key: string;
             chunks: string | null;
             size_bytes: number;
+            storage: string;
           }>()
       ).results ?? [];
     for (const row of rows) {
@@ -322,26 +324,61 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
         !/^[a-zA-Z0-9_-]{1,100}$/.test(row.run_id) ||
         !/^[a-f0-9]{64}$/.test(row.sha256) ||
         row.object_key !==
-          `vetting/${row.assessment_id}/${row.run_id}/${row.sha256}`
+          `vetting/${row.assessment_id}/${row.run_id}/${row.sha256}` ||
+        (row.storage !== "run" && row.storage !== "content")
       )
         throw new Error("Invalid retained evidence key");
+      const location = evidenceLocation(row);
+      // Atomically compete with registration for the shared digest. The
+      // insertion trigger refuses new references while this durable claim
+      // exists. No expiry can let a delayed R2 delete race a new reference.
+      // This worker has one queue consumer; a retry resumes its own claim.
+      let shared = false;
+      if (row.storage === "content") {
+        await env.EVIDENCE_DATABASE.prepare(
+          `INSERT OR IGNORE INTO vetting_evidence_cleanup_claims(sha256,object_key)
+           SELECT ?1,?2 WHERE NOT EXISTS (
+             SELECT 1 FROM vetting_evidence_objects o
+             WHERE o.storage='content' AND o.sha256=?1
+               AND NOT (o.assessment_id=?3 AND o.run_id=?4)
+               AND NOT EXISTS (SELECT 1 FROM vetting_evidence_deletions d
+                 WHERE d.assessment_id=o.assessment_id AND d.run_id=o.run_id AND d.sha256=o.sha256)
+           )`,
+        )
+          .bind(row.sha256, row.object_key, row.assessment_id, row.run_id)
+          .run();
+        const claim = await env.EVIDENCE_DATABASE.prepare(
+          "SELECT object_key FROM vetting_evidence_cleanup_claims WHERE sha256=?",
+        )
+          .bind(row.sha256)
+          .first<{ object_key: string }>();
+        shared = claim?.object_key !== row.object_key;
+      }
+      if (shared) {
+        await env.EVIDENCE_DATABASE.batch([
+          env.EVIDENCE_DATABASE.prepare(
+            "INSERT OR IGNORE INTO vetting_evidence_deletions(assessment_id,run_id,sha256,deleted_at) VALUES(?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+          ).bind(row.assessment_id, row.run_id, row.sha256),
+          env.EVIDENCE_DATABASE.prepare(
+            "UPDATE vetting_storage_cycles SET cleanup_after=? WHERE day=? AND phase='cleanup'",
+          ).bind(row.object_key, day),
+        ]);
+        continue;
+      }
       const parts =
         row.chunks === null
           ? [
               {
-                key: row.object_key,
+                key: location,
                 sha256: row.sha256,
                 sizeBytes: row.size_bytes,
               },
             ]
           : chunkLayout(JSON.parse(row.chunks), row.size_bytes).map((part) => ({
               ...part,
-              key: chunkKey(row.object_key, part),
+              key: chunkKey(location, part),
             }));
-      if (
-        row.chunks !== null &&
-        (await env.EVIDENCE_SOURCE.head(row.object_key))
-      )
+      if (row.chunks !== null && (await env.EVIDENCE_SOURCE.head(location)))
         throw new Error("Unexpected object at chunked evidence root");
       // A complete snapshot alone does not prove this exact inventory was copied.
       // Check each saved part before deleting any part of the source object.
@@ -390,6 +427,9 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
         env.EVIDENCE_DATABASE.prepare(
           "UPDATE vetting_storage_cycles SET cleanup_after=? WHERE day=? AND phase='cleanup'",
         ).bind(row.object_key, day),
+        env.EVIDENCE_DATABASE.prepare(
+          "DELETE FROM vetting_evidence_cleanup_claims WHERE sha256=? AND object_key=?",
+        ).bind(row.sha256, row.object_key),
       ]);
     }
     if (rows.length) {

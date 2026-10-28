@@ -209,8 +209,11 @@ Admission scans have no repository size limit (owner decision, 28 October
 2026, PRD section 8): acquisition is one shallow Git fetch of the exact commit,
 verified locally, and a large inventory is reviewed in token-budgeted batches
 with a repository-level synthesis (`workers/vetting/ACQUISITION.md`,
-`workers/vetting/review-plan.ts`). Never reintroduce an entry, file or total
-size refusal, and never record a partly reviewed repository as passed. Record the
+`workers/vetting/review-plan.ts`). Retained scanner evidence has no object or
+run size limit: objects are stored once by SHA-256 in private R2 in 8 MiB
+parts and referenced by every run that declares them
+(`backend/vetting/EVIDENCE.md`). Never reintroduce an entry, file, total or
+evidence size refusal, and never record a partly reviewed repository as passed. Record the
 existing-project exemption explicitly, never as a passed scan; its project-ID
 scope is unchanged. Flags, pauses, confirmed-malicious bans and fresh-scan
 reinstatement requirements still apply.

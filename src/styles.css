@@ -1146,7 +1146,11 @@ small {
   gap: 6px 16px;
 }
 
+/* Stacked identity links keep a 24px target on narrow screens (WCAG 2.5.8). */
 .profile-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   overflow-wrap: anywhere;
 }
 

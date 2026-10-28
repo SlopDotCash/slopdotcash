@@ -687,7 +687,7 @@ test("private retained bytes remain inspectable without granting clean clearance
   const result = await fixture(id, "clean");
   const run = result.environment.runId;
   const base = `/api/v1/operator/vetting-evidence/${id}/${run}/${result.traceSha256}`;
-  const key = `vetting/${id}/${run}/${result.traceSha256}`;
+  const key = `vetting/objects/${result.traceSha256}`;
   const operator = async (
     path: string,
     actor = EVIDENCE_OWNER_GITHUB_ID,
@@ -816,9 +816,7 @@ test("a clean result cannot omit a referenced retained artifact or replace an im
     await retained.request("POST", service, JSON.stringify(changed)),
   );
   expect(conflict?.status).toBe(409);
-  await retained.bucket.delete(
-    `vetting/${id}/${run}/${result.artifacts[0].sha256}`,
-  );
+  await retained.bucket.delete(`vetting/objects/${result.artifacts[0].sha256}`);
   expect((await postResult(result)).status).toBe(422);
   expect((await publicVetting()).state).toBe("queued");
   await retained.retain(id, run);
@@ -1112,13 +1110,192 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
   const interruptedReader = interrupted.body!.getReader();
   await interruptedReader.read();
   await retained.bucket.delete(
-    `vetting/${id}/${runId}/${digest}/chunks/1/${chunks[1].sha256}`,
+    `vetting/objects/${digest}/chunks/1/${chunks[1].sha256}`,
   );
   await expect(interruptedReader.read()).rejects.toThrow(
     "Declared evidence bytes are missing",
   );
   expect((await grant()).status).toBe(404);
 }, 60_000);
+
+test("evidence beyond the former 64 MiB run cap is stored once by digest, in bounded parts, and referenced by later runs", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  retained.evidence.deps.signed = (request, maximum) =>
+    signedVettingRequest(
+      request,
+      { resultPublicKeys: keys.publicKey, now: () => NOW },
+      maximum,
+    );
+  const hash = (value: Uint8Array) =>
+    createHash("sha256").update(value).digest("hex");
+  // 72 MiB in one object plus a second object: above every former limit.
+  const big = new Uint8Array(72 * 1024 * 1024);
+  for (let offset = 0; offset < big.length; offset += 4096)
+    big[offset] = (offset / 4096) % 251;
+  const small = new TextEncoder().encode('{"report":true}');
+  const layout = [];
+  for (let offset = 0; offset < big.length; offset += EVIDENCE_CHUNK_BYTES) {
+    const part = big.subarray(offset, offset + EVIDENCE_CHUNK_BYTES);
+    layout.push({
+      index: layout.length,
+      sha256: hash(part),
+      sizeBytes: part.length,
+    });
+  }
+  const bigSha = hash(big),
+    smallSha = hash(small);
+  const send = async (
+    method: string,
+    path: string,
+    body: string | Uint8Array,
+  ) =>
+    (await retained.evidence.handle(
+      new Request(`${ORIGIN}${path}`, {
+        method,
+        headers: await signedVettingHeaders(
+          keys.privateKey,
+          keys.raw,
+          method,
+          path,
+          body,
+          NOW,
+        ),
+        body: body as BodyInit,
+      }),
+    ))!;
+  const manifest = JSON.stringify({
+    traceSha256: smallSha,
+    objects: [
+      {
+        sha256: smallSha,
+        sizeBytes: small.length,
+        kind: "trace",
+        label: "Scan report",
+        contentType: "application/json",
+      },
+      {
+        sha256: bigSha,
+        sizeBytes: big.length,
+        kind: "artifact",
+        label: "Large committed binary",
+        contentType: "application/octet-stream",
+        chunks: layout,
+      },
+    ],
+  });
+  const first = `/api/v1/vetting/evidence/${id}/large-first`;
+  const registered = await send("POST", first, manifest);
+  expect(registered.status).toBe(201);
+  expect((await registered.json()).stored).toEqual([]);
+  expect((await send("PUT", `${first}/${smallSha}`, small)).status).toBe(200);
+  // A part above 8 MiB is refused; each request carries at most one part.
+  expect(
+    (
+      await send(
+        "PUT",
+        `${first}/${bigSha}/chunks/0`,
+        big.subarray(0, EVIDENCE_CHUNK_BYTES + 1),
+      )
+    ).status,
+  ).toBe(413);
+  for (const part of layout.slice(0, -1))
+    expect(
+      (
+        await send(
+          "PUT",
+          `${first}/${bigSha}/chunks/${part.index}`,
+          big.subarray(
+            part.index * EVIDENCE_CHUNK_BYTES,
+            part.index * EVIDENCE_CHUNK_BYTES + part.sizeBytes,
+          ),
+        )
+      ).status,
+    ).toBe(200);
+  // A partial upload cannot complete.
+  expect((await send("POST", `${first}/${bigSha}/finalize`, "{}")).status).toBe(
+    404,
+  );
+  const last = layout[layout.length - 1];
+  expect(
+    (
+      await send(
+        "PUT",
+        `${first}/${bigSha}/chunks/${last.index}`,
+        big.subarray(last.index * EVIDENCE_CHUNK_BYTES),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await send("POST", `${first}/${bigSha}/finalize`, "{}")).status).toBe(
+    200,
+  );
+  // One copy, under the digest, never under the run.
+  expect(
+    await retained.bucket.head(`vetting/objects/${smallSha}`),
+  ).not.toBeNull();
+  expect(
+    await retained.bucket.head(`vetting/${id}/large-first/${smallSha}`),
+  ).toBeNull();
+  // A later run declaring the same digests references the stored copy.
+  const second = `/api/v1/vetting/evidence/${id}/large-second`;
+  const referenced = await send("POST", second, manifest);
+  expect(referenced.status).toBe(201);
+  expect((await referenced.json()).stored.sort()).toEqual(
+    [bigSha, smallSha].sort(),
+  );
+  expect(
+    (await send("POST", `${second}/${bigSha}/finalize`, "{}")).status,
+  ).toBe(200);
+  const rows = sqlite
+    .query(
+      "SELECT run_id, storage FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=? ORDER BY run_id",
+    )
+    .all(id, bigSha);
+  expect(rows).toEqual([
+    { run_id: "large-first", storage: "content" },
+    { run_id: "large-second", storage: "content" },
+  ]);
+  // A changed stored part fails verification for every run that references it.
+  const partKey = `vetting/objects/${bigSha}/chunks/3/${layout[3].sha256}`;
+  await retained.bucket.delete(partKey);
+  const changed = new Uint8Array(layout[3].sizeBytes);
+  await retained.bucket.put(partKey, changed, {
+    onlyIf: { etagDoesNotMatch: "*" },
+    httpMetadata: { contentType: "application/octet-stream" },
+    customMetadata: { sha256: layout[3].sha256 },
+  });
+  const third = `/api/v1/vetting/evidence/${id}/large-third`;
+  const rechecked = await send("POST", third, manifest);
+  expect(rechecked.status).toBe(201);
+  // The changed copy is not offered for reference.
+  expect((await rechecked.json()).stored).toEqual([smallSha]);
+  expect((await send("POST", `${third}/${bigSha}/finalize`, "{}")).status).toBe(
+    409,
+  );
+  expect(
+    sqlite
+      .query(
+        "SELECT count(*) AS n FROM vetting_evidence_completions WHERE run_id='large-third'",
+      )
+      .get(),
+  ).toEqual({ n: 0 });
+  // Uploading the verified part again repairs the shared copy.
+  expect(
+    (
+      await send(
+        "PUT",
+        `${third}/${bigSha}/chunks/3`,
+        big.subarray(
+          3 * EVIDENCE_CHUNK_BYTES,
+          3 * EVIDENCE_CHUNK_BYTES + layout[3].sizeBytes,
+        ),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await send("POST", `${third}/${bigSha}/finalize`, "{}")).status).toBe(
+    200,
+  );
+}, 120_000);
 
 /** #1411 C-09: the scanner controller records its publication state through the
  * signed service, so the protected job holds no database credential of its own. */
