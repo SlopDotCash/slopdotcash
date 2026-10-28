@@ -22,6 +22,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { EVIDENCE_CHUNK_BYTES } from "../../backend/vetting/evidence-chunks";
 import { MAX_VETTING_RESULT_BYTES } from "../../backend/vetting/result";
 import {
   isScanResult,
@@ -264,6 +265,32 @@ async function retainEvidence(
     unique.set(await sha256Hex(object.bytes), object);
   const trace = [...unique].find(([, object]) => object.kind === "trace");
   if (!trace) throw new Error("The scan report is required");
+  // An object above one part is declared and sent as ordered 8 MiB parts,
+  // so no request carries more than one part whatever the evidence size.
+  const parts = new Map<
+    string,
+    { offset: number; size: number; sha256: string }[]
+  >();
+  for (const [sha256, object] of unique)
+    if (object.bytes.byteLength > EVIDENCE_CHUNK_BYTES) {
+      const layout = [];
+      for (
+        let offset = 0;
+        offset < object.bytes.byteLength;
+        offset += EVIDENCE_CHUNK_BYTES
+      ) {
+        const size = Math.min(
+          EVIDENCE_CHUNK_BYTES,
+          object.bytes.byteLength - offset,
+        );
+        layout.push({
+          offset,
+          size,
+          sha256: await sha256Hex(object.bytes.subarray(offset, offset + size)),
+        });
+      }
+      parts.set(sha256, layout);
+    }
   const path = `/api/v1/vetting/evidence/${assessmentId}/${runId}`;
   const register = await signedRequest(
     connection,
@@ -278,23 +305,87 @@ async function retainEvidence(
           kind: object.kind,
           label: object.label.slice(0, 200),
           contentType: object.contentType,
+          ...(parts.has(sha256)
+            ? {
+                chunks: (parts.get(sha256) ?? []).map((part, index) => ({
+                  index,
+                  sha256: part.sha256,
+                  sizeBytes: part.size,
+                })),
+              }
+            : {}),
         })),
       }),
     ),
     "application/json",
   );
-  await register.body?.cancel();
-  if (!register.ok) return false;
-  for (const [sha256, object] of unique) {
-    const upload = await signedRequest(
+  if (!register.ok) {
+    await register.body?.cancel();
+    return false;
+  }
+  // Bytes already stored under the same digest are referenced, not resent.
+  const registered = (await readBoundedJson(
+    register,
+    256 * 1024,
+    "evidence registration",
+  ).catch(() => null)) as { stored?: unknown } | null;
+  const stored = new Set(
+    Array.isArray(registered?.stored)
+      ? registered.stored.filter((sha) => typeof sha === "string")
+      : [],
+  );
+  const send = async (
+    method: "POST" | "PUT",
+    target: string,
+    body: Uint8Array,
+    type: string,
+  ) => {
+    const response = await signedRequest(
       connection,
-      "PUT",
-      `${path}/${sha256}`,
-      object.bytes,
-      object.contentType,
+      method,
+      target,
+      body,
+      type,
     );
-    await upload.body?.cancel();
-    if (!upload.ok) return false;
+    await response.body?.cancel();
+    return response.ok;
+  };
+  for (const [sha256, object] of unique) {
+    const layout = parts.get(sha256);
+    if (!layout) {
+      if (
+        !stored.has(sha256) &&
+        !(await send(
+          "PUT",
+          `${path}/${sha256}`,
+          object.bytes,
+          object.contentType,
+        ))
+      )
+        return false;
+      continue;
+    }
+    if (!stored.has(sha256))
+      for (const [index, part] of layout.entries())
+        if (
+          !(await send(
+            "PUT",
+            `${path}/${sha256}/chunks/${index}`,
+            object.bytes.subarray(part.offset, part.offset + part.size),
+            "application/octet-stream",
+          ))
+        )
+          return false;
+    // Finalization rereads every part and the whole digest for this run.
+    if (
+      !(await send(
+        "POST",
+        `${path}/${sha256}/finalize`,
+        encoder.encode("{}"),
+        "application/json",
+      ))
+    )
+      return false;
   }
   return true;
 }

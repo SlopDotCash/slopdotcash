@@ -25,6 +25,7 @@ import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-per
 import { projectRestriction } from "../backend/projects/enforcement";
 import { handleProjectApi } from "../backend/projects/handler";
 import { flaggerAuthority } from "../backend/projects/setup";
+import { evidenceLocation } from "../backend/vetting/evidence-chunks";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -620,6 +621,43 @@ test("source acquisition is one Git fetch; the GitHub credential reaches only th
   ).toBe(true);
   expect(await readdir(config.workDirectory)).toEqual([]);
 });
+
+test("evidence beyond the former 64 MiB run cap is retained in bounded parts", async () => {
+  // A committed 70 MiB binary is a named artifact the intake must retain.
+  const binary = new Uint8Array(70 * 1024 * 1024);
+  for (let offset = 0; offset < binary.length; offset += 4096)
+    binary[offset] = (offset / 4096) % 251;
+  await commit({ "models/weights.bin": binary }, "Commit a large binary");
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "incomplete",
+    outcome: "accepted",
+    evidence: "retained",
+  });
+  const assessment = await vetting.getAssessment(
+    (pass.assessments[0] as { assessmentId: string }).assessmentId,
+  );
+  const result = assessment?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing scan result");
+  const artifact = result.artifacts.find(
+    (entry) => entry.path === "models/weights.bin",
+  );
+  expect(artifact?.state).toBe("quarantined");
+  expect(await retained.evidence.retained(result)).toBe(true);
+  const stored = sqlite
+    .query(
+      "SELECT size_bytes, storage, chunks FROM vetting_evidence_objects WHERE sha256=?",
+    )
+    .get(artifact?.sha256 ?? "") as {
+    size_bytes: number;
+    storage: string;
+    chunks: string;
+  };
+  expect(stored.size_bytes).toBe(binary.length);
+  expect(stored.storage).toBe("content");
+  expect(JSON.parse(stored.chunks)).toHaveLength(9);
+}, 180_000);
 
 test("a repository beyond the former acquisition limits gets a complete batched review and clears", async () => {
   await commit(
@@ -1288,18 +1326,21 @@ for (const kind of [
       const original = await retainedNativeFixture();
       const row = sqlite
         .query(
-          "SELECT object_key, size_bytes FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
+          "SELECT object_key, sha256, storage, size_bytes FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
         )
         .get(original.result.assessmentId, original[kind]) as {
         object_key: string;
+        sha256: string;
+        storage: string;
         size_bytes: number;
       };
-      if (damage === "missing") await retained.bucket.delete(row.object_key);
+      const key = evidenceLocation(row);
+      if (damage === "missing") await retained.bucket.delete(key);
       else {
-        const object = await retained.bucket.head(row.object_key);
+        const object = await retained.bucket.head(key);
         if (!object) throw new Error("Missing fixture evidence");
         await retained.bucket.put(
-          row.object_key,
+          key,
           new Uint8Array(row.size_bytes).fill(42),
           // Deliberately bypass the fixture's immutable-write option to
           // simulate storage corruption, not an application upload.
@@ -1487,10 +1528,14 @@ test("scan reuse requires the original report to remain in private R2", async ()
   if (!original) throw new Error("Missing original scan");
   const object = sqlite
     .query(
-      "SELECT object_key FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
+      "SELECT object_key, sha256, storage FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
     )
-    .get(original.id) as { object_key: string };
-  await retained.bucket.delete(object.object_key);
+    .get(original.id) as {
+    object_key: string;
+    sha256: string;
+    storage: string;
+  };
+  await retained.bucket.delete(evidenceLocation(object));
   provider.calls = [];
   emptyCommit("Same source after evidence loss");
   await requestInvestigation();

@@ -2,8 +2,34 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
 
+/** Every upload, read and backup request handles at most one part this size. */
 export const EVIDENCE_CHUNK_BYTES = 8 * 1024 * 1024;
-export const EVIDENCE_RUN_BYTES = 64 * 1024 * 1024;
+/**
+ * Where an evidence row's bytes live in R2: its content-addressed key for
+ * `storage = 'content'`, otherwise its historical run-scoped `object_key`.
+ */
+export function evidenceLocation(row: {
+  object_key: string;
+  sha256: string;
+  storage?: string | null;
+}) {
+  return row.storage === "content"
+    ? evidenceObjectKey(row.sha256)
+    : row.object_key;
+}
+
+/**
+ * The content-addressed key of an evidence object registered since
+ * 28 October 2026. Its bytes are verified against the digest before any
+ * write is recorded, so one stored copy can serve every run that declares
+ * the same digest. Earlier runs keep their run-scoped
+ * `vetting/<assessment>/<run>/<sha256>` keys.
+ */
+export function evidenceObjectKey(sha256: string) {
+  if (!/^[a-f0-9]{64}$/u.test(sha256))
+    throw new Error("Invalid evidence object digest");
+  return `vetting/objects/${sha256}`;
+}
 export type EvidenceChunk = {
   index: number;
   sha256: string;
@@ -11,9 +37,11 @@ export type EvidenceChunk = {
 };
 
 export function chunkLayout(value: unknown, size: number): EvidenceChunk[] {
+  // No total size limit (owner decision, 28 October 2026); only each part is
+  // bounded.
   if (
     size <= EVIDENCE_CHUNK_BYTES ||
-    size > EVIDENCE_RUN_BYTES ||
+    !Number.isSafeInteger(size) ||
     !Array.isArray(value) ||
     value.length !== Math.ceil(size / EVIDENCE_CHUNK_BYTES)
   )
