@@ -73,6 +73,42 @@ async function retainValueInference<T>(
     .run();
 }
 
+/** Paid provider attempts one inference key may start (PRD section 5:
+ * immutable attempt records, duplicate refusal and queue limits). A retry
+ * after a provider failure or an invalid result is a new paid attempt, so it
+ * is bounded; a retained valid result is reused without any call.
+ */
+export const VALUE_INFERENCE_ATTEMPT_LIMIT = 3;
+
+/** Records one immutable attempt for this key, or refuses when the key has
+ * already used every attempt that reserved budget. A recorded attempt whose
+ * reservation was refused never reached the provider and does not count.
+ */
+async function admitValueAttempt(
+  db: D1Database,
+  key: string,
+  attemptId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `INSERT INTO slopbot_value_inference_attempts (attempt_id,inference_key,started_at)
+       SELECT ?1,?2,?3 WHERE (
+         SELECT COUNT(*) FROM slopbot_value_inference_attempts a
+         JOIN slopbot_value_budget_reservations r ON r.attempt_id=a.attempt_id
+         WHERE a.inference_key=?2) < ?4
+       AND NOT EXISTS (SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id=?1)
+       RETURNING attempt_id`,
+    )
+    .bind(
+      attemptId,
+      key,
+      new Date().toISOString(),
+      VALUE_INFERENCE_ATTEMPT_LIMIT,
+    )
+    .first();
+  return row !== null;
+}
+
 /** Supplied by the trusted consumer, never repository/model input. Capped mode
  * requires a maximum for the full route; alerts-only records costs without one.
  * No default authorizes expenditure.
@@ -127,6 +163,14 @@ export async function runValueInference<T>(
   );
   const retained = await readValueInference(budget.db, key, output.validate);
   if (retained) return { ...retained, blockReason: null };
+  if (!(await admitValueAttempt(budget.db, key, budget.attemptId)))
+    return {
+      verdict: null,
+      calls: [],
+      servedBy: null,
+      blocked: true,
+      blockReason: "attempts" as const,
+    };
   if (
     !(await reserveValueBudget(
       budget.db,

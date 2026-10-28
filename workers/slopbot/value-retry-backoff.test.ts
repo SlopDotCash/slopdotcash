@@ -10,6 +10,7 @@ import {
   claimValueRequest,
   finishValueRequest,
   nextValueRetryAt,
+  resumeParkedValueRequests,
 } from "./value-processing";
 
 const HOUR = 60 * 60 * 1000;
@@ -248,4 +249,84 @@ test("a settled sibling delivery is not credited with the claimed delivery's att
   expect(settled?.state).toBe("waiting");
   expect(settled?.outcome).toBe("source-incomplete");
   expect(settled?.attempts).toBe(0);
+});
+
+// A paused or retired project parks its requests: no retry time and no hourly
+// claim, until the live registry shows the repository active again.
+test("a parked request is never claimed until its project is active again", async () => {
+  const queue = database();
+  await seed(queue, [job, sibling]);
+  const at = new Date("2026-10-28T00:00:00.000Z");
+  const claim = await claimValueRequest(queue.db, job.deliveryId, at);
+  if (!claim) throw new Error("claim was refused");
+  await expect(
+    finishValueRequest(
+      queue.db,
+      claim,
+      "parked",
+      new Date(at.getTime() + HOUR),
+      at,
+    ),
+  ).rejects.toThrow("retry time does not match");
+  await finishValueRequest(queue.db, claim, "parked", null, at);
+  for (const deliveryId of [job.deliveryId, sibling.deliveryId])
+    expect(await row(queue, deliveryId)).toEqual({
+      attempts: 0,
+      state: "waiting",
+      outcome: "parked",
+      retry_at: null,
+    });
+  // A year of schedules claims nothing while the project stays paused.
+  const later = new Date(at.getTime() + 365 * 24 * HOUR);
+  const checked: unknown[] = [];
+  expect(
+    await resumeParkedValueRequests(
+      queue.db,
+      async (repository) => {
+        checked.push(repository);
+        return false;
+      },
+      later,
+    ),
+  ).toBe(0);
+  expect(checked).toEqual([
+    { owner: job.owner, repo: job.repo, repositoryId: job.repositoryId },
+  ]);
+  expect(await claimValueRequest(queue.db, job.deliveryId, later)).toBeNull();
+  // Reactivation gives every parked delivery of the repository a retry time.
+  expect(
+    await resumeParkedValueRequests(queue.db, async () => true, later),
+  ).toBe(2);
+  expect((await row(queue, job.deliveryId))?.retry_at).toBe(
+    later.toISOString(),
+  );
+  // A resumed row is not selected again by the next sweep.
+  expect(
+    await resumeParkedValueRequests(queue.db, async () => true, later),
+  ).toBe(0);
+  expect(
+    await claimValueRequest(queue.db, job.deliveryId, later),
+  ).not.toBeNull();
+});
+
+test("a missing pull request is a terminal, recorded outcome", async () => {
+  const queue = database();
+  await seed(queue);
+  const at = new Date("2026-10-28T00:00:00.000Z");
+  const claim = await claimValueRequest(queue.db, job.deliveryId, at);
+  if (!claim) throw new Error("claim was refused");
+  await finishValueRequest(queue.db, claim, "missing", null, at);
+  expect(await row(queue, job.deliveryId)).toEqual({
+    attempts: 0,
+    state: "completed",
+    outcome: "missing",
+    retry_at: null,
+  });
+  expect(
+    await claimValueRequest(
+      queue.db,
+      job.deliveryId,
+      new Date(at.getTime() + 365 * 24 * HOUR),
+    ),
+  ).toBeNull();
 });

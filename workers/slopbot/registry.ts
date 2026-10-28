@@ -151,6 +151,22 @@ export async function reviewRegistration(
     : null;
 }
 
+/** The project of a registered repository that permits no review (a retired
+ * project, owner decision D12), or null. It authorizes only the reversal of
+ * an existing Slopbot penalty through an appeal or a maintainer reopen: no
+ * model call, comment, label, close or reopen (protocol/slopbot-v2.md,
+ * "Penalty table": a debit reverses once, on an upheld appeal or a
+ * maintainer reopen).
+ */
+export async function reversalOnlyRegistration(
+  db: D1Database,
+  job: RepositoryJob,
+): Promise<{ projectId: string } | null> {
+  const { projectId, capabilities } = await repositoryCapabilities(db, job);
+  if (projectId === null || capabilities.mayReviewForSecurity) return null;
+  return { projectId };
+}
+
 /** True when the repository still permits the given scope. A contributor
  * review loses authority when the project is paused; a security review keeps
  * it while the repository stays registered.

@@ -10,15 +10,25 @@ export type ValueOutcome =
   | "current"
   | "open"
   | "historical"
+  | "missing"
+  | "attempts-exhausted"
   | "source-incomplete"
   | "authority"
+  | "parked"
   | "budget"
   | "retry";
+/** Final, recorded outcomes. `missing` is a pull request GitHub reports as
+ * absent (404) in a repository the installation still reads, and
+ * `attempts-exhausted` is a source digest that used every paid attempt. Neither
+ * is an assessment or implies a low value.
+ */
 const terminal = new Set<ValueOutcome>([
   "published",
   "current",
   "open",
   "historical",
+  "missing",
+  "attempts-exhausted",
 ]);
 const LEASE_MS = 10 * 60 * 1000;
 
@@ -133,16 +143,19 @@ export async function finishValueRequest(
   at = new Date(),
 ) {
   const complete = terminal.has(outcome);
+  // A parked request waits with no retry time until its project is active.
+  const parked = outcome === "parked";
   if (
-    (complete && retryAt !== null) ||
+    ((complete || parked) && retryAt !== null) ||
     (!complete &&
+      !parked &&
       (!retryAt || !Number.isFinite(retryAt.getTime()) || retryAt <= at))
   )
     throw new Error("Value request retry time does not match its outcome");
   // Only a blocked outcome advances the count. A transient 'retry' also carries
   // a retry time, and counting it would let a provider outage push a later,
-  // unrelated block straight to the day cap.
-  const blocked = !complete && outcome !== "retry";
+  // unrelated block straight to the day cap. Parking is not an attempt.
+  const blocked = !complete && !parked && outcome !== "retry";
   // One statement: without the current lease no row is selected or written.
   const row = await db
     .prepare(
@@ -185,4 +198,59 @@ export async function finishValueRequest(
     )
     .first();
   if (!row) throw new Error("Value request lease is no longer owned");
+}
+
+/** Gives parked requests a retry time again once their repository is active.
+ * Reads at most `limit` distinct repositories per run; the live registry is
+ * the authority, and a read failure propagates. Returns the resumed count.
+ */
+export async function resumeParkedValueRequests(
+  db: D1Database,
+  isActive: (repository: {
+    owner: string;
+    repo: string;
+    repositoryId: number;
+  }) => Promise<boolean>,
+  at = new Date(),
+  limit = 20,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT json_group_array(json_object('owner',owner,'repo',repo,
+         'repositoryId',repositoryId)) AS rows_json FROM (
+       SELECT DISTINCT r.owner,r.repo,r.repository_id AS repositoryId
+       FROM slopbot_value_processing p
+       JOIN slopbot_value_requests r ON r.delivery_id=p.delivery_id
+       WHERE p.outcome='parked' AND p.state='waiting' AND p.retry_at IS NULL
+       ORDER BY r.repository_id,r.owner,r.repo LIMIT ?)`,
+    )
+    .bind(limit)
+    .first<{ rows_json: string }>();
+  if (!row) throw new Error("Parked value requests are unreadable");
+  const repositories = JSON.parse(row.rows_json) as {
+    owner: string;
+    repo: string;
+    repositoryId: number;
+  }[];
+  let resumed = 0;
+  for (const repository of repositories) {
+    if (!(await isActive(repository))) continue;
+    const result = await db
+      .prepare(
+        `UPDATE slopbot_value_processing SET retry_at=?1,updated_at=?1
+         WHERE outcome='parked' AND state='waiting' AND retry_at IS NULL
+           AND delivery_id IN (
+           SELECT delivery_id FROM slopbot_value_requests
+           WHERE repository_id=?2 AND owner=?3 AND repo=?4)`,
+      )
+      .bind(
+        at.toISOString(),
+        repository.repositoryId,
+        repository.owner,
+        repository.repo,
+      )
+      .run();
+    resumed += result.meta?.changes ?? 0;
+  }
+  return resumed;
 }
