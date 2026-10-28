@@ -182,8 +182,9 @@ export function HowItWorksPage() {
                 <Link href="/projects/slopdotcash">Slop project</Link> ran one
                 round for October 2026: a tutorial, explainer, video, or support
                 answer about Slop could receive a reviewed award of 1 to 8
-                points. That round closed on 28 October 2026, and no project
-                currently accepts non-code submissions.
+                points. That round closed on 28 October 2026. Check each
+                project's current contribution rules before preparing non-code
+                work.
               </p>
             </div>
           </article>
