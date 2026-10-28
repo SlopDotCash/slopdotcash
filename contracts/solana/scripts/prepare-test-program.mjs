@@ -9,7 +9,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The caller supplies the trusted same-run build artifact. Its manifest is
@@ -83,7 +83,10 @@ export async function prepareTestProgram(
   await mkdir(evidence, { recursive: true });
   const programDirectory = await realpath(programRoot);
   for (const path of [output, evidence]) {
-    if (!(await realpath(path)).startsWith(`${programDirectory}/`))
+    // Compare through `path.relative`: a `${programDirectory}/` prefix uses the
+    // POSIX separator and matches nothing on Windows, where realpath uses `\`.
+    const rest = relative(programDirectory, await realpath(path));
+    if (rest === "" || rest.startsWith("..") || isAbsolute(rest))
       throw new Error("Solana test output escapes the program workspace");
   }
   const temporary = join(output, `.slop-escrow-${randomUUID()}.tmp`);
