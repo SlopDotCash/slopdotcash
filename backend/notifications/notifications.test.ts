@@ -686,6 +686,19 @@ describe("notifications API", () => {
       );
     });
     insert.run("project-revision:alpha:no-mail", APPLICANT, T, T);
+    // Exhausted without ever holding a destination: no provider was asked,
+    // so the recipient sees no email state rather than a failure.
+    insert.run("project-revision:alpha:never-sent", APPLICANT, T, T);
+    outbox.run(
+      "project-revision:alpha:never-sent",
+      APPLICANT,
+      "exhausted",
+      T,
+      null,
+      null,
+      T,
+      T,
+    );
     const response = (await call(
       new Request(`${origin}/api/v1/notifications`),
     )) as Response;
@@ -703,6 +716,8 @@ describe("notifications API", () => {
     });
     expect(byKey.has("project-revision:alpha:no-mail")).toBe(true);
     expect(byKey.get("project-revision:alpha:no-mail")).toBeUndefined();
+    expect(byKey.has("project-revision:alpha:never-sent")).toBe(true);
+    expect(byKey.get("project-revision:alpha:never-sent")).toBeUndefined();
     // The wallet notice queued its essential delivery with the source change.
     expect(byKey.get("wallet-claim:a")).toBe("queued");
   });

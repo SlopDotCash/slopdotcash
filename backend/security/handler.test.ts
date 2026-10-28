@@ -723,6 +723,78 @@ describe("automatic private intake", () => {
     expect(reads()).toHaveLength(2);
   });
 
+  test("listing dozens of cases stays inside the browser deadline when each read is slow", async () => {
+    const env = open();
+    const ids: string[] = [];
+    for (let i = 0; i < 24; i++) {
+      ids.push(
+        await env.receive(
+          REPORTER,
+          `2026-10-19T09:${String(10 + i).padStart(2, "0")}:00.000Z`,
+        ),
+      );
+      env.advance(60_000);
+    }
+    // Production D1 answers every statement over the network. A few
+    // milliseconds per read turns a sequential walk over the viewer's cases
+    // into seconds; the browser abandons the list after 15 seconds.
+    const DELAY_MS = 4;
+    type Statement = ReturnType<SecurityD1Database["prepare"]>;
+    const wait = () => new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+    const raw = new WeakMap<Statement, Statement>();
+    const slowStatement = (statement: Statement): Statement => {
+      const wrapped: Statement = {
+        bind: (...values: unknown[]) =>
+          slowStatement(statement.bind(...values)),
+        first: async <T>() => {
+          await wait();
+          return statement.first<T>();
+        },
+        all: async <T>() => {
+          await wait();
+          return statement.all<T>();
+        },
+        run: async () => {
+          await wait();
+          return statement.run();
+        },
+      };
+      raw.set(wrapped, statement);
+      return wrapped;
+    };
+    const slow: SecurityD1Database = {
+      prepare: (sql) => slowStatement(env.db.prepare(sql)),
+      batch: (statements) =>
+        env.db.batch(statements.map((entry) => raw.get(entry) ?? entry)),
+    };
+    const started = performance.now();
+    const response = await handleSecurityApi(
+      new Request(`${ORIGIN}/api/v1/security-cases`),
+      {
+        db: slow,
+        now: () => new Date("2026-10-19T10:00:00.000Z"),
+        randomId: () => "unused",
+        sessionActor: async () => REPORTER,
+        reportingRead: async () => ({ kind: "unavailable" }),
+        moderatorGithubIds: MODERATORS,
+      },
+    );
+    const elapsed = performance.now() - started;
+    expect(response?.status).toBe(200);
+    const body = (await response?.json()) as Reply;
+    expect(body.cases?.map((entry) => entry.id)).toEqual([...ids].reverse());
+    // Sequential: 24 cases x several reads x 4 ms is well over a second.
+    expect(Math.round(elapsed)).toBeLessThan(250);
+    expect(
+      env.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM security_case_access_log WHERE action = 'read' AND actor_github_id = ?",
+        )
+        .get(REPORTER.githubId),
+    ).toEqual({ n: 24 });
+    env.sqlite.close();
+  });
+
   test("a failed or missing analysis can be run again by the owner", async () => {
     const env = open();
     env.setAnalyzerConfigured(false);
