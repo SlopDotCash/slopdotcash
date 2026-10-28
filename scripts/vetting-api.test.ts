@@ -35,6 +35,7 @@ import {
   vettingResult,
 } from "../tests/vetting-fixtures";
 import { publishResult } from "../workers/vetting/publication";
+import { servicePublicationJournal } from "../workers/vetting/publication-journal";
 
 let retained: Awaited<ReturnType<typeof localVettingEvidence>>;
 afterEach(async () => {
@@ -1117,4 +1118,150 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
     "Declared evidence bytes are missing",
   );
   expect((await grant()).status).toBe(404);
+}, 60_000);
+
+/** #1411 C-09: the scanner controller records its publication state through the
+ * signed service, so the protected job holds no database credential of its own. */
+test("the journal route reserves and completes one publication per assessment", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const intent = {
+    assessmentId: id,
+    resultSha256: "a".repeat(64),
+    origin: ORIGIN,
+    disposition: "incomplete",
+  };
+  const post = async (payload: unknown) =>
+    vettingApi(
+      await signed("POST", "vetting/journal", JSON.stringify(payload)),
+    );
+
+  const before = await post({ operation: "has", assessmentId: id });
+  expect(before.status).toBe(200);
+  expect(await before.json()).toEqual({
+    schemaVersion: "slop-vetting-journal-v1",
+    present: false,
+  });
+
+  expect((await post({ operation: "reserve", ...intent })).status).toBe(200);
+  expect((await post({ operation: "reserve", ...intent })).status).toBe(409);
+
+  const after = await post({ operation: "has", assessmentId: id });
+  expect(await after.json()).toEqual({
+    schemaVersion: "slop-vetting-journal-v1",
+    present: true,
+  });
+
+  const receipt = {
+    operation: "complete",
+    ...intent,
+    outcome: "unknown",
+    httpStatus: null,
+  };
+  expect((await post(receipt)).status).toBe(200);
+  // One receipt per assessment, and it must match the reserved intent.
+  expect((await post(receipt)).status).toBe(409);
+  expect(
+    (await post({ ...receipt, resultSha256: "c".repeat(64) })).status,
+  ).toBe(422);
+  // An unsupported operation, an unknown assessment and an unsigned call are refused.
+  expect((await post({ operation: "purge", ...intent })).status).toBe(400);
+  expect(
+    (
+      await post({
+        operation: "reserve",
+        ...intent,
+        assessmentId: "vet_deadbeef",
+      })
+    ).status,
+  ).toBe(404);
+  // Unknown fields are refused, like the sibling signed routes.
+  expect(
+    (await post({ operation: "has", assessmentId: id, extra: 1 })).status,
+  ).toBe(400);
+  const unsigned = await vettingApi(
+    new Request(`${ORIGIN}/api/v1/vetting/journal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "has", assessmentId: id }),
+    }),
+  );
+  expect(unsigned.status).toBe(401);
+}, 60_000);
+
+/** #1411 C-09 review: two controllers racing one intent — exactly one reserve wins. */
+test("only one of two concurrent journal reservations of one assessment is accepted", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const intent = {
+    assessmentId: id,
+    resultSha256: "e".repeat(64),
+    origin: ORIGIN,
+    disposition: "incomplete",
+  };
+  const post = async (payload: unknown) =>
+    vettingApi(
+      await signed("POST", "vetting/journal", JSON.stringify(payload)),
+    );
+  const settled = await Promise.allSettled([
+    post({ operation: "reserve", ...intent }),
+    post({ operation: "reserve", ...intent }),
+  ]);
+  const statuses = settled
+    .map((result) => (result.status === "fulfilled" ? result.value.status : -1))
+    .sort((left, right) => left - right);
+  expect(statuses).toEqual([200, 409]);
+  const after = await post({ operation: "has", assessmentId: id });
+  expect(await after.json()).toEqual({
+    schemaVersion: "slop-vetting-journal-v1",
+    present: true,
+  });
+}, 60_000);
+
+/** #1411 C-09 review: the reservation must outlive a reply the client never saw. */
+test("a reservation whose reply is lost is still read as present by the next run", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const intent = {
+    assessmentId: id,
+    resultSha256: "f".repeat(64),
+    origin: ORIGIN,
+    disposition: "incomplete" as const,
+  };
+  const signer = {
+    privateKey: keys.privateKey,
+    publicKey: await crypto.subtle.importKey(
+      "raw",
+      keys.raw,
+      { name: "Ed25519" },
+      true,
+      ["verify"],
+    ),
+  };
+  const forwarding = servicePublicationJournal({
+    origin: ORIGIN,
+    signer,
+    now: () => NOW,
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await vettingApi(
+        new Request(input instanceof Request ? input : String(input), init),
+      );
+      expect(response.status).toBe(200);
+      throw new Error("journal reply lost in transit");
+    }) as unknown as typeof fetch,
+  });
+  await expect(forwarding.reserve(intent)).rejects.toThrow(
+    "journal reply lost in transit",
+  );
+  // The next controller run reads the intent the lost reply could not confirm.
+  const nextRun = servicePublicationJournal({
+    origin: ORIGIN,
+    signer,
+    now: () => NOW,
+    fetch: (async (input: string | URL | Request, init?: RequestInit) =>
+      vettingApi(
+        new Request(input instanceof Request ? input : String(input), init),
+      )) as unknown as typeof fetch,
+  });
+  expect(await nextRun.has(id)).toBe(true);
 }, 60_000);

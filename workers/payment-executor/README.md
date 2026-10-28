@@ -261,12 +261,16 @@ transaction. An operator cannot bypass this path.
 null. It checks the original database attempt and journal identity, and does
 not sign, broadcast, read a secret, or require the wallet claim still to be
 current. This lets the dispatcher reconcile a lost response even after the
-contributor has replaced the wallet. For a stored Solana signature it also
-reports whether the reviewed chain has observed that signature. A preflight
-refusal leaves the attempt retryable. Recovery also reopens an older row that
-incorrectly marked an unobserved signature submitted. The journal keeps its
-signed bytes; only the existing finalized-expiry checks permit a replacement.
-Signed transaction bytes are never returned.
+contributor has replaced the wallet. For a stored transaction it also reports
+whether the reviewed chain has observed it: the Solana signature status, or an
+EVM node that knows the exact hash. A refused Solana preflight or EVM broadcast
+(for example, an unfunded gas wallet) leaves the attempt retryable, and the
+dispatcher's retry resends the same signed bytes. An EVM attempt recorded as
+submitted without that observation would never be resent, and its unfilled
+nonce would stop every later relayer transaction. Recovery also reopens an
+older row that incorrectly marked an unobserved Solana signature submitted.
+The journal keeps its signed bytes; only the existing finalized-expiry checks
+permit a Solana replacement. Signed transaction bytes are never returned.
 
 Deploy the executor before, or together with, the payments Worker when adding
 this observation field. The updated payments Worker refuses an older executor

@@ -121,6 +121,7 @@ type Run = {
     release: () => void;
   };
   loseNextReopenResponse: () => void;
+  failNextCommentUpdate: () => void;
   loseNextAppealCommentResponse: (accepted?: boolean) => void;
   rejectNextAppealComment: (status: number) => void;
   pauseNextAppealComment: () => { entered: Promise<void>; release: () => void };
@@ -137,6 +138,8 @@ type Run = {
   comments: string[];
   labels: string[];
   sql: (q: string) => unknown;
+  suspendInstallation: (value: boolean) => void;
+  unregisterRepository: () => void;
   /** The worker's public HTTP routes, served in process. */
   feed: typeof fetch;
   job: (kind: string, extra: Record<string, unknown>) => Job;
@@ -246,6 +249,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseFindingLabel: (() => Promise<void>) | null = null;
   let loseFindingLabelResponse = false;
   let loseReopenResponse = false;
+  let failCommentUpdate = false;
   let appealResponse: "accepted" | "unknown" | null = null;
   let appealRejection: number | null = null;
   let pauseAppeal: (() => Promise<void>) | null = null;
@@ -565,6 +569,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return Response.json({ id: 900 + comments.length }, { status: 201 });
       }
       if (/\/issues\/comments\/\d+$/u.test(path)) {
+        if (failCommentUpdate) {
+          failCommentUpdate = false;
+          return new Response(null, { status: 502 });
+        }
         comments.push(((await request.json()) as { body: string }).body);
         return Response.json({ id: Number(path.split("/").pop()) });
       }
@@ -770,6 +778,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       loseNextReopenResponse: () => {
         loseReopenResponse = true;
       },
+      failNextCommentUpdate: () => {
+        failCommentUpdate = true;
+      },
       rejectNextAppealComment: (status) => {
         appealRejection = status;
       },
@@ -923,6 +934,13 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       beforeAppealResolution: (callback) => {
         beforeAppealResolution = callback;
       },
+      suspendInstallation: (value) =>
+        sqlite.run(
+          "UPDATE slopbot_installations SET suspended_at = ? WHERE installation_id = 1",
+          [value ? new Date().toISOString() : null],
+        ),
+      unregisterRepository: () =>
+        sqlite.run("DELETE FROM project_repositories"),
       ban: () =>
         seedParticipationBan(
           sqlite,
@@ -1705,6 +1723,71 @@ test("a rejected draft escalates, and an appeal unresolved for 7 days escalates 
   });
 });
 
+test("a due appeal is not consumed while the installation is suspended", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    const start = Date.now();
+    run.suspendInstallation(true);
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["appeal_due"]);
+    // The session gate fails gracefully, so nothing may be consumed: the
+    // appeal stays unescalated and the dispatcher queues it again a day
+    // later, exactly as it re-queues a lost message.
+    expect(await run.deliver(due[0])).toBe("installation removed or suspended");
+    expect(run.sql(APPEAL)).toEqual([
+      { draft: "deny", escalated: 0, resolution: null, resolved_by: null },
+    ]);
+    expect(run.labels).not.toContain("slopbot: moderator");
+    run.suspendInstallation(false);
+    setSystemTime(new Date(start + 8 * day + 60_000));
+    const retried = await run.tick();
+    expect(retried.map((j) => j.kind)).toEqual(["appeal_due"]);
+    expect(await run.deliver(retried[0])).toBe(
+      "appeal escalated: the appeal is unresolved 7 days after it opened",
+    );
+    expect(run.sql(APPEAL)).toEqual([
+      { draft: "deny", escalated: 1, resolution: null, resolved_by: null },
+    ]);
+    expect(run.labels).toContain("slopbot: moderator");
+    expect(await run.tick()).toEqual([]);
+  });
+});
+
+test("a due appeal still escalates when the repository leaves the registry", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    const start = Date.now();
+    run.unregisterRepository();
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    const due = await run.tick();
+    expect(due.map((j) => j.kind)).toEqual(["appeal_due"]);
+    // The refusal is permanent, so waiting cannot clear it: the escalation
+    // is recorded with its database-only moderator notices, and only the
+    // publication (which needs the session) is skipped — the appeal is not
+    // re-queued daily forever.
+    expect(await run.deliver(due[0])).toBe(
+      "appeal escalated; repository is not registered in the Slop registry",
+    );
+    expect(run.sql(APPEAL)).toEqual([
+      { draft: "deny", escalated: 1, resolution: null, resolved_by: null },
+    ]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM notifications WHERE kind = 'slopbot_appeal_review'",
+      ),
+    ).toEqual([{ n: 1 }]);
+    expect(run.labels).not.toContain("slopbot: moderator");
+    expect(await run.tick()).toEqual([]);
+  });
+});
+
 test("concurrent moderator decisions cannot deny an appeal after its uphold starts reopening the PR", async () => {
   await closedItem(async (run) => {
     run.model("scam", 0.97);
@@ -2264,6 +2347,48 @@ test("a scam notice write failure is recovered after GitHub has closed the item"
     await run.review();
     expect(run.sql(SCAM_NOTICES)).toHaveLength(1);
     expect(run.writes).toEqual(githubWrites);
+  });
+});
+
+test("an appeal reaches triage after a confirmed close whose comment update failed", async () => {
+  await closedItem(async (run) => {
+    // GitHub confirms the close and the debit is recorded, then the close
+    // comment update fails, so the run fails after the close.
+    run.failNextCommentUpdate();
+    await expect(run.review()).rejects.toThrow("returned 502");
+    expect(run.currentState()).toBe("closed");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The queue retry finds a closed item and has no review to repeat.
+    expect(await run.review()).toBe("item is not open");
+
+    // The author's appeal still reaches Slopbot triage, and the accepted
+    // uphold reopens the item and reverses the debit once.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("appeal upheld by the appellant");
+    expect(run.currentState()).toBe("open");
+    expect(run.labels).not.toContain("slopbot: spam");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "appeal_upheld",
+      },
+    ]);
   });
 });
 
