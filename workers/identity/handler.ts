@@ -96,11 +96,23 @@ function html(
     "content-security-policy",
     `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
   );
+  if (signedIn) {
+    // The originating tab polls the completed flow; the popup has no UI.
+    // Local development can use same-tab login when popups are unavailable.
+    const resumeLocal =
+      new URL(site).protocol === "http:"
+        ? `window.setTimeout(() => window.location.replace(${JSON.stringify(site)}), 100);`
+        : "";
+    return new Response(
+      `<!doctype html><html><head><meta charset="utf-8"><title></title></head><body><script nonce="${nonce}">window.close();${resumeLocal}</script></body></html>`,
+      { status, headers },
+    );
+  }
   // All content is fixed by this handler. No callback parameter or identity is rendered.
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>${title} · slop.cash</title><style>
 *{box-sizing:border-box}body{margin:0;min-height:100svh;background:${brand.color.bg};color:${brand.color.ink};font:16px/1.5 system-ui,sans-serif;display:grid;grid-template-rows:auto 1fr}header{padding:24px 32px;border-bottom:1px solid ${brand.color.line};font-weight:800;letter-spacing:-.04em;font-size:24px}header span{color:${brand.color.accent}}main{width:min(100%,480px);margin:auto;padding:48px 28px;text-align:center}h1{font-size:clamp(28px,6vw,36px);line-height:1.15;letter-spacing:-.035em;margin:0 0 16px}p{margin:0 0 28px;color:${brand.color.muted};text-wrap:pretty}a,button{font:inherit;display:flex;align-items:center;justify-content:center;min-height:48px;padding:12px 20px;border-radius:${brand.radius.medium};background:${brand.color.accent};color:${brand.color.onAccent};font-weight:700;text-decoration:none;border:0;width:100%;cursor:pointer}a:hover,button:hover{background:${brand.color.accentHover}}a:focus-visible,button:focus-visible{outline:3px solid ${brand.color.ink};outline-offset:4px}.note{font-size:14px;margin:20px 0 0}.status{width:52px;height:52px;display:grid;place-items:center;border:1px solid ${brand.color.lineStrong};border-radius:50%;margin:0 auto 24px;color:${brand.color.accent};font-size:28px}
-</style></head><body><header>slop<span>.</span>cash</header><main><div class="status" aria-hidden="true">${signedIn ? "✓" : "!"}</div><h1>${title}</h1><p>${message}</p>${signedIn && new URL(site).protocol === "https:" ? `<button id="close-window" type="button">Close window</button><a href="${site}">Return to Slop</a>` : `<a href="${site}">Return to Slop</a>`}${signedIn ? '<p class="note">If this window stays open, you can close it and return to your original tab or terminal.</p>' : ""}</main>${signedIn ? `<script nonce="${nonce}">const closeWindow = () => window.close(); document.getElementById("close-window")?.addEventListener("click", closeWindow); window.setTimeout(closeWindow, 800);</script>` : ""}</body></html>`,
+</style></head><body><header>slop<span>.</span>cash</header><main><div class="status" aria-hidden="true">!</div><h1>${title}</h1><p>${message}</p><a href="${site}">Return to Slop</a></main></body></html>`,
     { status, headers },
   );
 }
@@ -145,15 +157,37 @@ function validCapability(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{40,128}$/u.test(value);
 }
 
+/** Loopback destination is bound to the immutable random flow id, never a callback query. */
+function localFlowOrigin(id: string): string | null {
+  const match = /^flow_local_([il])_([0-9]{4,5})_[A-Za-z0-9_-]{32}$/u.exec(id);
+  if (!match) return null;
+  const origin = `http://${match[1] === "i" ? "127.0.0.1" : "localhost"}:${match[2]}`;
+  return isLocalDevelopmentOrigin(origin) ? origin : null;
+}
+
 async function startFlow(
   request: Request,
   deps: IdentityWorkerDependencies,
+  local = false,
 ): Promise<Response> {
   const body = await readJson(request);
-  if (!isIdentityAudience(body.audience) || Object.keys(body).length !== 1) {
+  if (
+    local &&
+    (!isLocalDevelopmentOrigin(body.returnOrigin) ||
+      body.audience !== POINTS_AUDIENCE)
+  )
+    fail(400, "invalid_request", "Invalid local return origin");
+  if (
+    !isIdentityAudience(body.audience) ||
+    Object.keys(body).sort().join() !==
+      (local ? "audience,returnOrigin" : "audience")
+  ) {
     fail(400, "invalid_request", "Invalid identity audience");
   }
-  const flowId = `flow_${deps.randomToken(18)}`;
+  const returnUrl = local ? new URL(body.returnOrigin as string) : null;
+  const flowId = returnUrl
+    ? `flow_local_${returnUrl.hostname === "127.0.0.1" ? "i" : "l"}_${returnUrl.port}_${deps.randomToken(24)}`
+    : `flow_${deps.randomToken(18)}`;
   const state = deps.randomToken(32);
   const pollCapability = deps.randomToken(32);
   const pkceVerifier = deps.randomToken(64);
@@ -324,7 +358,9 @@ async function oauthCallback(
       200,
       "Signed in",
       "You can return to your original tab or terminal. This window will try to close automatically.",
-      siteOf(deps),
+      localFlowOrigin(flow.id)
+        ? `${localFlowOrigin(flow.id)}/login`
+        : siteOf(deps),
     );
     clearStateCookie(response.headers);
     return response;
@@ -336,6 +372,7 @@ async function oauthCallback(
 async function pollFlow(
   request: Request,
   deps: IdentityWorkerDependencies,
+  local = false,
 ): Promise<Response> {
   const body = await readJson(request);
   const flowId = body.flowId;
@@ -356,6 +393,13 @@ async function pollFlow(
   );
   if (flow === null || flow.audience !== body.audience)
     fail(410, "flow_unavailable", "Identity flow is unavailable");
+  const returnOrigin = localFlowOrigin(flow.id);
+  if (Boolean(returnOrigin) !== local)
+    fail(
+      403,
+      "wrong_flow",
+      "This authorization belongs to another sign-in mode",
+    );
   if (flow.status === "pending" || flow.status === "callback_processing") {
     const response = json(202, {
       status: "pending",
@@ -370,6 +414,21 @@ async function pollFlow(
     flow.githubLogin === null
   ) {
     fail(410, "flow_consumed", "Identity flow was already consumed");
+  }
+  if (local) {
+    if (!flow.githubNodeId)
+      fail(502, "identity_incomplete", "GitHub identity is incomplete");
+    if (
+      !(await deps.persistence.markAssertionIssued(flow.id, now.toISOString()))
+    )
+      fail(410, "flow_consumed", "Identity flow was already consumed");
+    return json(200, {
+      status: "complete",
+      returnOrigin,
+      githubActorId: flow.githubActorId,
+      githubLogin: flow.githubLogin,
+      githubNodeId: flow.githubNodeId,
+    });
   }
   const assertion = await deriveAssertionToken(
     flow.id,
@@ -470,6 +529,10 @@ async function handleIdentityRequestCore(
     if (url.host !== new URL(publicOriginOf(deps)).host) {
       return json(404, { error: "not_found" });
     }
+    if (request.method === "POST" && url.pathname === "/v1/local/start")
+      return await startFlow(request, deps, true);
+    if (request.method === "POST" && url.pathname === "/v1/local/poll")
+      return await pollFlow(request, deps, true);
     if (request.method === "POST" && url.pathname === "/v1/oauth/start") {
       return await startFlow(request, deps);
     }
