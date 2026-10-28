@@ -2478,7 +2478,7 @@ test("two contributors flag through the agent API, pause the project and notify 
     (
       await fileFlag(APPLICANT_TOKEN, "credential-theft", firstEvidence)
     ).status(),
-  ).toBe(200);
+  ).toBe(201);
   const ownPath = `/api/v1/project-flags/${project.id}`;
   expect(await readPrivate(first, ownPath)).toMatchObject({
     restriction: "clear",
@@ -2505,7 +2505,7 @@ test("two contributors flag through the agent API, pause the project and notify 
         "Synthetic fixture: setup.sh runs an unverified downloaded script.",
       )
     ).status(),
-  ).toBe(200);
+  ).toBe(201);
   await second.reload({ waitUntil: "networkidle" });
   await expect(second.locator("main")).not.toContainText(firstEvidence);
   await expect(second.locator("#start")).toContainText(
