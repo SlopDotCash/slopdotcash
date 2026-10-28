@@ -1,9 +1,41 @@
 /** Browser coverage of private monthly allocations; the API rules are tested in backend/payments/monthly.test.ts. */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
+import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+
+test.beforeEach(async ({ page }) => {
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
+  );
+  const index = JSON.parse(
+    readFileSync(join(process.cwd(), "public/data/cycles/index.json"), "utf8"),
+  ) as CycleIndex;
+  const source = index.cycles.find(
+    (cycle) => cycle.projectId === "eliza" && cycle.cycleId === "2026-09",
+  );
+  if (!source) throw new Error("Missing monthly award fixture");
+  // The month selector uses published months. Supply the same November
+  // scenario as the private API fixtures, including consistent archive links.
+  const cycle = JSON.parse(
+    JSON.stringify(source).replace(/2026-(09|10)/gu, (_match, month) =>
+      month === "09" ? "2026-11" : "2026-12",
+    ),
+  );
+  const fixture = {
+    ...index,
+    generatedAt: "2026-12-02T12:00:00.000Z",
+    cycles: [cycle],
+  };
+  assertCycleIndex(fixture);
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: fixture }),
+  );
+});
 
 /** Monthly awards are on the funding page of a project that has a vault policy. */
 function projectWithVault() {
@@ -43,7 +75,14 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),
@@ -158,15 +197,15 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     history.pushState({}, "", "/projects/eliza/awards?keep=1");
     window.dispatchEvent(new PopStateEvent("popstate"));
   });
-  await expect(page).toHaveURL(
-    /\/projects\/eliza\/funding\?keep=1#monthly-awards$/u,
-  );
+  await expect(page).toHaveURL(/\/projects\/eliza\?keep=1#monthly-awards$/u);
   await expect(page.locator("#monthly-awards")).toBeInViewport();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(
     page.getByRole("heading", { name: "Monthly awards", exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Contribution month").fill("2026-11");
+  await expect(
+    page.getByRole("navigation", { name: "Contribution month" }),
+  ).toContainText("November 2026");
   const load = page.getByRole("button", {
     name: "Refresh awards",
     exact: true,
@@ -317,15 +356,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
       () => document.documentElement.scrollWidth <= innerWidth + 1,
     ),
   ).toBe(true);
-  await page.getByLabel("Contribution month").focus();
-  // Tab through the native control's month/year segments before the button.
-  for (
-    let remaining = 4;
-    remaining > 0 &&
-    !(await load.evaluate((button) => button === document.activeElement));
-    remaining--
-  )
-    await page.keyboard.press("Tab");
+  await load.focus();
   await expect(load).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(awards).toContainText(
@@ -347,7 +378,14 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   await page.route(
     /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
     (route) =>
-      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),

@@ -244,10 +244,7 @@ test("a failed snapshot refresh keeps the last good scores with a stale label", 
 
   // Leave for a snapshot-free route, then return: the shared read refreshes.
   failSnapshot = true;
-  await page
-    .getByRole("main")
-    .getByRole("link", { name: "Projects", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Slop home", exact: true }).click();
   await expect(page.locator(".project-card").first()).toBeVisible();
   // With no prior home snapshot, a failed first read is an error, never empty.
   await expect(

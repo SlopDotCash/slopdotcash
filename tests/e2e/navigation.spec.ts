@@ -8,7 +8,12 @@ const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
+test.use({ video: "on" });
+
 test.beforeEach(async ({ page }) => {
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
+  );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({ json: { session: null } }),
   );
@@ -62,13 +67,11 @@ test("retained awards URLs resolve during client navigation with query and fragm
       history.pushState({}, "", path);
       dispatchEvent(new PopStateEvent("popstate"));
     }, `/projects/eliza/awards${suffix}`);
-    await expect(page).toHaveURL(`/projects/eliza/funding${expected}`);
+    await expect(page).toHaveURL(`/projects/eliza${expected}`);
     await expect(
-      page.getByRole("heading", { name: "Eliza funding", exact: true }),
+      page.getByRole("heading", { name: "Eliza", exact: true }),
     ).toBeVisible();
-    await expect(
-      page.getByText("This project has no vault yet."),
-    ).toBeVisible();
+    await expect(page.locator(".project-overview")).toBeVisible();
   }
   await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("retained-awards-route.png") });
