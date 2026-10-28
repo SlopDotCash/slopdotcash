@@ -2440,8 +2440,38 @@ export async function escalateDueAppeal(
   const appeal = await appealByKey(db, job.appealKey);
   if (appeal === null || appeal.resolved_at !== null)
     return "appeal already resolved";
+  if (appeal.escalated_at === null && Date.parse(appeal.due_at) > Date.now())
+    return "appeal not due";
+  // Establish the session before publishing the escalation, as every
+  // sibling appeal path does: escalation is one-time (the due dispatcher
+  // selects only unescalated appeals), so consuming it before this gate
+  // would lose the publication permanently when the gate fails gracefully,
+  // e.g. a suspended installation. A transient failure leaves the appeal
+  // unescalated, so the dispatcher queues it again after a day. A
+  // permanent refusal — the repository left the registry, or the item is
+  // gone — never clears, so record the escalation (and its moderator
+  // notices, which are database-only) and skip only the publication,
+  // rather than re-queueing the appeal daily forever.
+  const session = await appealSession(env, job);
+  if (typeof session === "string") {
+    if (
+      appeal.escalated_at === null &&
+      (session === "repository is not registered in the Slop registry" ||
+        session === "ignored")
+    ) {
+      await escalateAppeal(
+        db,
+        job.appealKey,
+        `the appeal is unresolved ${APPEAL_RESOLUTION_DAYS} days after it opened`,
+        moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+      );
+      return `appeal escalated; ${session}`;
+    }
+    return appeal.escalated_at === null
+      ? session
+      : `appeal escalated; ${session}`;
+  }
   if (appeal.escalated_at === null) {
-    if (Date.parse(appeal.due_at) > Date.now()) return "appeal not due";
     await escalateAppeal(
       db,
       job.appealKey,
@@ -2451,8 +2481,6 @@ export async function escalateDueAppeal(
   }
   const current = await appealByKey(db, job.appealKey);
   if (current === null) throw new Error("Appeal is missing");
-  const session = await appealSession(env, job);
-  if (typeof session === "string") return `appeal escalated; ${session}`;
   await publishAppealState(env, job, session, current, "escalation");
   return `appeal escalated: ${current.escalation}`;
 }
