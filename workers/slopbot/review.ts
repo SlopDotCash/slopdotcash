@@ -2857,7 +2857,31 @@ export async function applyMaintainerHold(
     env,
     { ...job, kind: "review" },
     registration,
-  );
+  ).catch(async (error: unknown) => {
+    // A deleted target branch closes the pull request, and then GitHub never
+    // returns its comparison again. The item facts still end the hold.
+    // GitHub request failures and an unchanged open item are retried.
+    if (error instanceof GitHubError) throw error;
+    const github = await GitHubClient.forInstallation(
+      env.SLOPBOT_APP_ID,
+      env.SLOPBOT_APP_PRIVATE_KEY,
+      job.installationId,
+    );
+    const issue = await github.get<Issue>(
+      `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
+    );
+    const current = issue && (await itemRevision(github, job, issue));
+    if (
+      issue?.node_id === hold.item_node_id &&
+      issue.state === "open" &&
+      !current?.pull?.draft &&
+      !current?.pull?.merged &&
+      current?.revision === hold.revision
+    )
+      throw error;
+    return "changed" as const;
+  });
+  if (context === "changed") return supersede("item changed after the review");
   if (context?.limitations.length)
     return supersede("comparison coverage is incomplete");
   if (context === null || context.issue.node_id !== hold.item_node_id)
