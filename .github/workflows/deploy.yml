@@ -466,10 +466,11 @@ jobs:
 
   staging:
     name: Deploy verified development to staging
+    # A skipped optional sandbox must not suppress a successful quality gate.
     if: >-
-      needs.quality.result == 'success' &&
+      ${{ !cancelled() && needs.quality.result == 'success' &&
       github.ref == 'refs/heads/development' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     needs: [prepare, quality]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -647,10 +648,11 @@ jobs:
 
   deploy:
     name: Deploy trusted production bundle
+    # Override implicit success() across the optional skipped sandbox job.
     if: >-
-      needs.quality.result == 'success' &&
+      ${{ !cancelled() && needs.quality.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
     needs: [prepare, quality]
     env:
       RELEASE_SHA: ${{ github.sha }}
