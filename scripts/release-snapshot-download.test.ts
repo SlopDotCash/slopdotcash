@@ -45,7 +45,7 @@ for (const [index, download] of downloads.entries()) {
         }
         if (attempts === 1 && failure === "timeout") {
           // A stalled origin must not permanently block the release.
-          await Bun.sleep(300);
+          await Bun.sleep(1500);
         }
         expect(request.headers["accept-encoding"]).toContain("gzip");
         response.writeHead(200, {
@@ -66,15 +66,21 @@ for (const [index, download] of downloads.entries()) {
       try {
         // Run the workflow's actual curl command. Only substitute local HTTP
         // transport, output paths and shorter deadlines for this fixture.
+        // The output path goes through the environment, as in the workflow,
+        // so bash never parses it. An unquoted Windows path loses its
+        // backslashes and curl writes into the working directory.
+        // One healthy local attempt can take about 100 ms on Windows, so it
+        // gets a full second. A retry delay of 0 selects curl's default
+        // backoff (1 s, then 2 s), so 1 s is the shortest fixed delay.
         const command = download
           .replaceAll("$profile_origin", `http://127.0.0.1:${address.port}`)
-          .replaceAll("$previous_profiles", output)
-          .replaceAll("public/data/leaderboard.json", output)
+          .replaceAll("public/data/leaderboard.json", '"$previous_profiles"')
           .replace("'=https'", "'=http'")
-          .replace(/--max-time \d+/, "--max-time 0.1")
-          .replace(/--retry-delay \d+/, "--retry-delay 0")
+          .replace(/--max-time \d+/, "--max-time 1")
+          .replace(/--retry-delay \d+/, "--retry-delay 1")
           .replace(/--retry-max-time \d+/, "--retry-max-time 5");
         const process = Bun.spawn(["bash", "-euc", command], {
+          env: { ...Bun.env, previous_profiles: output },
           stdout: "pipe",
           stderr: "pipe",
         });

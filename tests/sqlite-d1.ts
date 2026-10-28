@@ -5,7 +5,7 @@
  * migrations. Each process applies one migration list once and gives every
  * in-memory caller its own copy of that image.
  */
-import { Database } from "bun:sqlite";
+import { Database, type Statement as SQLiteStatement } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
@@ -62,19 +62,34 @@ export function sqliteD1(
     sqlite = new Database(file);
     migrate(sqlite, migrations);
   }
+  // Finalize each statement after its one use. An unfinalized statement keeps
+  // a file database open after close() until garbage collection, and Windows
+  // then refuses to delete the file. query() does not prevent this: Bun
+  // caches only 20 statements and leaves later ones unfinalized.
+  const once = <R>(sql: string, use: (prepared: SQLiteStatement) => R): R => {
+    const prepared = sqlite.prepare(sql);
+    try {
+      return use(prepared);
+    } finally {
+      prepared.finalize();
+    }
+  };
   const statement = (sql: string, values: unknown[] = []): Statement => {
     const params = values as never[];
     const runSync = () => ({
       success: true,
-      meta: { changes: sqlite.prepare(sql).run(...params).changes },
+      meta: {
+        changes: once(sql, (prepared) => prepared.run(...params).changes),
+      },
     });
     return {
       bind: (...next: unknown[]) => statement(sql, next),
       first: async <T>() =>
-        (sqlite.prepare(sql).get(...params) as T | undefined) ?? null,
+        (once(sql, (prepared) => prepared.get(...params)) as T | undefined) ??
+        null,
       all: async <T>() => ({
         success: true,
-        results: sqlite.prepare(sql).all(...params) as T[],
+        results: once(sql, (prepared) => prepared.all(...params)) as T[],
       }),
       run: async () => runSync(),
       runSync,
