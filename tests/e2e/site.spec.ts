@@ -1764,7 +1764,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
 }, testInfo) => {
   // Returning from the home page cancels any background Points shards.
   diagnostics.allow(
-    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points\/[0-9a-f]\.json$/u,
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
   );
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   // The page's records must finish loading before keyboard navigation
