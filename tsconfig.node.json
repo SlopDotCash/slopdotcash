@@ -34,6 +34,7 @@
     "contracts/solana/monthly-reserve.ts",
     "contracts/vault-totals.ts",
     "src/lib/base58.ts",
+    "src/lib/platform-security-bounty.ts",
     "src/lib/vault-setup.ts",
     "src/lib/byte-encoding.ts",
     "src/lib/canonical-json.ts",

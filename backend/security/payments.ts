@@ -1,5 +1,6 @@
 import type {
   D1QueryStatement,
+  D1TransactionalDatabase,
   D1TransactionalDatabase as Database,
 } from "../d1";
 import type { PaymentLedgerPolicy } from "../payments/ledger";
@@ -88,7 +89,7 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { payoutFee } from "../../src/lib/payments/contracts";
-import { fail } from "../http";
+import { chunked, fail } from "../http";
 
 /** A private vault snapshot older than this does not prove free funds. */
 export const VAULT_SNAPSHOT_MAX_AGE_MS = 30 * 60_000;
@@ -210,29 +211,61 @@ export async function prepareSecuritySettlement(
     );
 }
 
-export async function securitySettlementView(db: Database, caseId: string) {
-  const row = await db
-    .prepare(`SELECT s.*,o.state,o.paid_transaction,q.state queue_state,
+type SettlementRow = {
+  case_id: string;
+  obligation_id: string;
+  source_digest: string;
+  deployment: string;
+  gross_base: string;
+  fee_base: string;
+  reporter_github_id: string;
+  state: string | null;
+  queue_state: string | null;
+  attempt_state: string | null;
+  paid_transaction: string | null;
+  submitted_transaction: string | null;
+};
+
+/** The settlement columns of one case, or of a bounded `IN (...)` batch. */
+const settlementSelect = (
+  placeholders: string,
+) => `SELECT s.*,o.state,o.paid_transaction,q.state queue_state,
       (SELECT state FROM security_payment_attempts a WHERE a.obligation_id=s.obligation_id ORDER BY created_at DESC LIMIT 1) attempt_state,
       (SELECT transaction_id FROM security_payment_attempts a WHERE a.obligation_id=s.obligation_id
        ORDER BY created_at DESC LIMIT 1) submitted_transaction
     FROM security_settlements s LEFT JOIN security_payment_obligations o ON o.id=s.obligation_id
-    LEFT JOIN security_payment_outbox q ON q.obligation_id=s.obligation_id WHERE s.case_id=?`)
+    LEFT JOIN security_payment_outbox q ON q.obligation_id=s.obligation_id WHERE s.case_id IN (${placeholders})`;
+
+export async function securitySettlementView(db: Database, caseId: string) {
+  const row = await db
+    .prepare(settlementSelect("?"))
     .bind(caseId)
-    .first<{
-      obligation_id: string;
-      source_digest: string;
-      deployment: string;
-      gross_base: string;
-      fee_base: string;
-      reporter_github_id: string;
-      state: string | null;
-      queue_state: string | null;
-      attempt_state: string | null;
-      paid_transaction: string | null;
-      submitted_transaction: string | null;
-    }>();
-  if (!row) return null;
+    .first<SettlementRow>();
+  return row ? settlementView(row) : null;
+}
+
+/** One settlement read per case, in a fixed number of statements. */
+export async function securitySettlementViews(
+  db: D1TransactionalDatabase<D1QueryStatement>,
+  caseIds: readonly string[],
+) {
+  const views = new Map<
+    string,
+    Awaited<ReturnType<typeof securitySettlementView>>
+  >();
+  for (const caseId of caseIds) views.set(caseId, null);
+  for (const part of chunked(caseIds)) {
+    const rows = await db
+      .prepare(settlementSelect(part.map(() => "?").join(",")))
+      .bind(...part)
+      .all<SettlementRow>();
+    for (const row of rows.results ?? [])
+      views.set(row.case_id, settlementView(row));
+  }
+  return views;
+}
+
+function settlementView(row: SettlementRow) {
   const deployment = JSON.parse(row.deployment) as ReturnType<
     typeof paymentDeploymentRecord
   >;

@@ -29,10 +29,7 @@ export interface SecurityBountyTerms {
   readonly rewardMode: "bounty-only" | "separate";
   readonly eligibility: "critical-loss-of-funds";
   readonly amount: SecurityBountyAmount;
-  readonly split: {
-    readonly researcherBasisPoints: 7500;
-    readonly slopBasisPoints: 2500;
-  };
+  readonly split: SecurityBountySplitPolicy;
   readonly sponsor: { readonly name: string; readonly githubId: string | null };
   readonly funding:
     | { readonly state: "pledged" }
@@ -89,7 +86,27 @@ export declare const SECURITY_SPLIT: Readonly<{
   researcherBasisPoints: 7500;
   slopBasisPoints: 2500;
 }>;
-export declare function securityBountySplit(grossMinor: string): {
+/** 75/25 for sponsored projects; the full award only for Slop's own program. */
+export type SecurityBountySplitPolicy =
+  | { readonly researcherBasisPoints: 7500; readonly slopBasisPoints: 2500 }
+  | { readonly researcherBasisPoints: 10000; readonly slopBasisPoints: 0 };
+export declare const SECURITY_FULL_AWARD_SPLIT: Readonly<{
+  researcherBasisPoints: 10000;
+  slopBasisPoints: 0;
+}>;
+export declare function isFullAwardSplit(
+  split: { researcherBasisPoints: number; slopBasisPoints: number } | undefined,
+): boolean;
+export declare const PLATFORM_SECURITY_REPOSITORY: "SlopDotCash/slopdotcash";
+export declare const PLATFORM_SECURITY_PROJECT_ID: "slopdotcash";
+export declare function isPlatformSecurityProgram(
+  projectId: string,
+  repositories: readonly { id: string }[],
+): boolean;
+export declare function securityBountySplit(
+  grossMinor: string,
+  split?: SecurityBountySplitPolicy,
+): {
   grossMinor: string;
   researcherMinor: string;
   slopMinor: string;
@@ -101,6 +118,7 @@ export declare function formatSecurityAmount(
 export declare function assertSecurityBountyTerms(
   value: unknown,
   context: {
+    projectId: string;
     repositories: readonly { id: string }[];
     reward: Record<string, unknown>;
   },

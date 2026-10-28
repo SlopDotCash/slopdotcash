@@ -18,7 +18,9 @@ to `"true"` after the explicit production qualification and activation review.
    flagged, quarantined or banned gets a security-only review: only a
    `scam` finding is labeled and commented, nothing is closed, and no value
    assessment runs (PRD section 5, owner decision D12). A retired project gets
-   no review. Unregistered repositories and replaced
+   no review: its appeal, maintainer-reopen and moderator events only reverse
+   an existing debit, with no model call or GitHub write, and its appeals go
+   straight to a moderator. Unregistered repositories and replaced
    repository IDs skip; database errors retry. Registry checks repeat for the
    same scope before inference and GitHub writes. The queue consumer
    then gets an installation token and re-reads the
@@ -66,7 +68,10 @@ to `"true"` after the explicit production qualification and activation review.
    - reviewed real cases and counterexamples recorded for production activation,
      with the separate verifier-profile qualification in `QUALITY.md` for
      objective `low_quality` closure;
-   - no circuit breaker and no daily cap hit;
+   - no circuit breaker and no daily cap hit. The reopen-rate breaker trips
+     when more than 10% of the repository's Slopbot closes in 7 days were
+     reversed: each item counts once, by a maintainer reopen or an upheld
+     appeal. An author's reopen or appeal alone is a dispute, not a reversal;
    - a confirming second verdict (Surplus, falling back to GPT-6.1 Sol);
    - no unresolved limitations in either verdict;
    - an unchanged item just before acting.
@@ -95,7 +100,9 @@ to `"true"` after the explicit production qualification and activation review.
    retries the hold.
 8. A confirmed close of a closure-eligible author records one debit from the
    published penalty table (`penalties.ts`, owner decision D7) in
-   `slopbot_penalties`. The row is written once per pull request and reverses
+   `slopbot_penalties`, in the UTC month of GitHub's `closed_at` from the
+   confirmed close response; a response without it is not a confirmed close.
+   The row is written once per pull request and reverses
    once, on an upheld appeal or a maintainer reopen. A `scam` close also adds
    the `slopbot: moderator` label for a moderator review of the account.
    Maintainers and authors without the closure evidence are never penalized.
@@ -130,9 +137,15 @@ to `"true"` after the explicit production qualification and activation review.
    `PROJECT_MODERATOR_GITHUB_IDS` decides an escalated appeal with
    `/slopbot uphold` or `/slopbot deny`, never their own. Unset, no moderator
    decision is possible. A maintainer reopen always wins.
+   An `uphold` draft's confidence is confidence in reversal: a `none`
+   verdict's confidence, the complement of a same-category verdict below the
+   closure bar, or 0 for a different category, which a moderator decides.
    The signature-verified webhook receipt binds a reopen to its item, sender,
    original revision and event time. Queue retries use that bound revision;
-   a changed head or issue text cannot inherit the decision. Older jobs without
+   a changed head or issue text cannot inherit the decision. An author push
+   before the queue runs does not drop a maintainer decision: it is recorded
+   for the reopened revision and reverses the debit, and only the cleanup of
+   Slopbot's close and labels requires that revision to still be current. Older jobs without
    that receipt make no decision. Confirm current GitHub maintainer authority
    and an open item before applying it. The existing same-revision protection
    also clears labels from reviews that raced with the reopen, including a
@@ -983,6 +996,12 @@ condition from fresh GitHub commits before adding the empty array. False values,
 nonempty resolution records and unknown source fields are refused.
 The Worker collects the evidence from GitHub; callers do not
 upload diff bodies. Results use the existing subscription result format.
+Every source must be closed and have been merged, or closed without a merge,
+before the API consumer's start: `SLOPBOT_VALUE_START_AT` when the value
+settings are valid, else `2026-11-01T00:00:00.000Z`. This is the same timestamp
+and cutoff as the consumer's `historical` outcome, so a delayed start never
+leaves work owned by neither route. Later or open work belongs to the paid API
+route (PRD section 5), so the importer refuses it before publication.
 Single predecessors are a
 digest or null; grouped predecessors are digest arrays. A successor requires a
 reason. Unknown envelope fields, API receipt claims and caller-supplied producer
@@ -1200,6 +1219,18 @@ cadence, so recovery from a temporary cause is not delayed (PRD section 5). Publ
 open-context dispositions and `historical` outcomes complete the request. A PR
 closed before the API start is `historical` (migration
 `0097_slopbot_value_historical.sql`): the subscription intake owns it.
+Migration `0105_slopbot_value_terminal_states.sql` adds three outcomes. A PR
+that GitHub answers with 404 in a repository the installation still reads is
+`missing`, a terminal recorded state. A paused, retired or unregistered project
+`parked`s its requests with no retry time, so they are never claimed hourly;
+each scheduled run first gives the parked requests of a now-active repository a
+retry time again. `attempts-exhausted` is terminal: migration
+`0104_slopbot_value_inference_attempts.sql` records one immutable row per paid
+provider attempt for an inference key (installation, source digest, prompt,
+schema and route), and a key that has used three attempts that reserved budget
+is refused before any provider call. A retained valid result is still reused
+with no call, and a changed source has a new key. None of these outcomes is an
+assessment or implies a low value.
 The consumer reads GitHub after its claim, so each outcome, including a retry
 time, also settles every unread or waiting delivery received by the claim time
 that has the same installation, repository ID, repository name and PR number.

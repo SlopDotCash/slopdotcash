@@ -1300,6 +1300,7 @@ function validateProjectDefinition(
   validateFunding(project.funding, id);
   if (project.securityBounty !== undefined)
     assertSecurityBountyTerms(project.securityBounty, {
+      projectId: id,
       repositories,
       reward: project.reward,
     });

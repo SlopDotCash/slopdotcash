@@ -70,6 +70,7 @@ type Body = {
   submissions?: Submission[];
   report?: typeof REPORT;
   case?: Case;
+  cases?: Case[];
 };
 
 function required<T>(value: T | null | undefined): T {
@@ -114,7 +115,8 @@ function program() {
   };
 }
 
-function fixture() {
+function fixture(overrides: Record<string, unknown> = {}) {
+  const terms = () => ({ ...program(), ...overrides });
   const { db, sqlite } = sqliteD1();
   const statementSql = new WeakMap<object, string>();
   let routeFails = false;
@@ -149,7 +151,7 @@ function fixture() {
   };
   const base = applicationManifest(PROJECT, REPOSITORY, {
     status: "active",
-    securityBounty: program(),
+    securityBounty: terms(),
   });
   let manifest = base;
   function publish(next: typeof manifest) {
@@ -338,7 +340,7 @@ function fixture() {
       publish({
         ...manifest,
         securityBounty: {
-          ...program(),
+          ...terms(),
           approvers: {
             technical: [OWNER, OTHER],
             financial: [FINANCE],
@@ -350,7 +352,7 @@ function fixture() {
       publish({
         ...manifest,
         securityBounty: {
-          ...program(),
+          ...terms(),
           approvers: { technical: [OTHER], financial: [FINANCE], dispute: [] },
         },
       }),
@@ -359,11 +361,13 @@ function fixture() {
       delete next.securityBounty;
       publish(next);
     },
+    publishProgram: (next: Record<string, unknown>) =>
+      publish({ ...manifest, securityBounty: next }),
     fund: () => {
       publish({
         ...manifest,
         securityBounty: {
-          ...program(),
+          ...terms(),
           funding: {
             state: "verified-available",
             evidence: "fixture-finalized-deposit",
@@ -645,6 +649,86 @@ describe("durable private report controls", () => {
     });
     expect(changed.status).toBe(409);
     expect(changed.body.error).toBe("award_amount_mismatch");
+    expect(
+      t.sqlite.query("SELECT * FROM security_award_reservations").all(),
+    ).toEqual([]);
+  });
+
+  test("a slop.cash full-award case pays the whole award and never reserves against a 75/25 vault", async () => {
+    const full = {
+      split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+      sponsor: { name: "slop.cash", githubId: null },
+      settlement: undefined,
+    };
+    const t = fixture(full);
+    const submission = required((await t.create()).body.submission);
+    const received = await t.call(
+      REPORTER,
+      "GET",
+      `security-cases/${submission.caseId}`,
+    );
+    expect(received.body.case?.terms).toMatchObject({
+      grossMinor: "10000000000",
+      researcherMinor: "10000000000",
+      slopMinor: "0",
+    });
+    expect(
+      (
+        await t.caseAction(submission.caseId, {
+          action: "decide",
+          outcome: "confirmed",
+          severity: "critical",
+          loss: "verified-potential",
+          inScope: true,
+          reason: "The isolated reproduction proves the qualifying finding.",
+          relatedParty: false,
+          rootCauseKey: "vault-drain",
+        })
+      ).status,
+    ).toBe(200);
+    // A later revision binds a funded 75/25 bounty vault. The case keeps its
+    // frozen full-award terms and must not reserve against that vault.
+    t.fund();
+    t.publishProgram({
+      ...program(),
+      funding: {
+        state: "verified-available",
+        evidence: "fixture-finalized-deposit",
+        verifiedAt: START,
+      },
+    });
+    const awarded = await t.caseAction(submission.caseId, {
+      action: "award",
+      decision: "amount",
+      grossMinor: "10000000000",
+      paymentDeadline: "2026-11-30T00:00:00.000Z",
+      confirmation: true,
+      reason: "Award the published platform bounty to the first reporter.",
+    });
+    expect(awarded.status).toBe(200);
+    expect(awarded.body.case).toMatchObject({
+      awardState: "pending",
+      award: {
+        grossMinor: "10000000000",
+        researcherMinor: "10000000000",
+        slopMinor: "0",
+      },
+    });
+    expect(
+      t.sqlite.query("SELECT * FROM security_award_reservations").all(),
+    ).toEqual([]);
+    // Even an approved full-award case has no payment path: the bounty vault
+    // pays 75/25, so preparation fails closed until a full-award rail exists.
+    t.sqlite.exec(
+      `UPDATE security_cases SET award_state='approved' WHERE id='${submission.caseId}'`,
+    );
+    const prepared = await t.caseAction(submission.caseId, {
+      action: "prepare-payment",
+      network: "base",
+      confirmation: true,
+    });
+    expect(prepared.status).toBe(409);
+    expect(prepared.body.error).toBe("rail_unavailable");
     expect(
       t.sqlite.query("SELECT * FROM security_award_reservations").all(),
     ).toEqual([]);
@@ -963,6 +1047,47 @@ describe("durable private report controls", () => {
       },
     );
     expect(review.status).toBe(404);
+  });
+
+  test("a case list reads repository authority once per project, not per case", async () => {
+    const t = fixture();
+    const ids: string[] = [];
+    for (const name of ["first-report", "second-report", "third-report"]) {
+      ids.push(required((await t.create(name)).body.submission).caseId);
+      t.advance(1000);
+    }
+    t.removePaidTerms();
+    const access = {
+      installation: "installed" as const,
+      installationId: 1,
+      permission: "admin" as const,
+      roleName: "admin",
+      repository: {
+        id: 123456789,
+        node_id: "R_example",
+        full_name: REPOSITORY,
+        private: false,
+        owner: {
+          id: 987654321,
+          node_id: "O_example",
+          login: "example",
+          type: "Organization" as const,
+        },
+      },
+    };
+    let reads = 0;
+    t.deps.repositoryAccess = async () => {
+      reads += 1;
+      return access;
+    };
+    const listed = await t.call(OWNER, "GET", "security-cases");
+    expect(listed.status).toBe(200);
+    expect(listed.body.authorityUnavailable).toBe(false);
+    expect(listed.body.cases?.map((row) => row.id).sort()).toEqual(
+      [...ids].sort(),
+    );
+    // One read selects the project's cases and one decides their roles.
+    expect(reads).toBe(2);
   });
 
   test("a candidate storage failure remains fatal instead of appearing as an authority outage", async () => {

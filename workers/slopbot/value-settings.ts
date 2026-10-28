@@ -4,6 +4,26 @@
  */
 export const VALUE_API_START_AT = "2026-11-01T00:00:00.000Z";
 
+/** The subscription intake covers only work accepted before the API start.
+ * It matches the API consumer: a closed pull's merge time, else close time,
+ * against the same configured start. Later work belongs to the API route, so a
+ * subscription record cannot score it.
+ */
+export function historicalSubscriptionSource(
+  pull: { state: string; merged_at: string | null; closed_at: string | null },
+  start: number,
+) {
+  if (pull.state !== "closed") return false;
+  const occurred = Date.parse(pull.merged_at ?? pull.closed_at ?? "");
+  return Number.isFinite(occurred) && occurred < start;
+}
+
+/** The consumer's configured start, or the fixed start when it refuses all
+ * inference. A delayed API start never leaves work owned by neither route.
+ */
+export const subscriptionCutoff = (env: ValueSettingsEnv) =>
+  valueSettings(env)?.start ?? Date.parse(VALUE_API_START_AT);
+
 export type ValueSettingsEnv = {
   SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD?: string;
   SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD?: string;
