@@ -3,10 +3,10 @@
  * registry tests exercise the actual tables and triggers. The database is in
  * memory unless `file` names one; a caller reopening a file passes no
  * migrations. Each process applies one migration list once and gives every
- * in-memory caller its own copy of that image.
+ * caller its own copy of that image, in memory or as a new file.
  */
 import { Database, type Statement as SQLiteStatement } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
 
@@ -30,7 +30,7 @@ function migrate(sqlite: Database, migrations: string[]) {
 // starts with them off, so each copy restores the migrated connection's value.
 const images = new Map<string, { bytes: Uint8Array; foreignKeys: number }>();
 
-function migratedCopy(migrations: string[]): Database {
+function migratedImage(migrations: string[]) {
   const key = migrations.join("\n");
   let image = images.get(key);
   if (!image) {
@@ -43,6 +43,23 @@ function migratedCopy(migrations: string[]): Database {
     source.close();
     images.set(key, image);
   }
+  return image;
+}
+
+// A file gets the image bytes in one write. Applying the migrations to the
+// file commits each statement separately, which takes about 10 seconds on
+// Windows and exceeds the test timeout. `wx` refuses an existing file, which
+// the migrations would also refuse.
+function migratedFile(migrations: string[], file: string): Database {
+  const image = migratedImage(migrations);
+  writeFileSync(file, image.bytes, { flag: "wx" });
+  const sqlite = new Database(file);
+  sqlite.exec(`PRAGMA foreign_keys = ${image.foreignKeys}`);
+  return sqlite;
+}
+
+function migratedCopy(migrations: string[]): Database {
+  const image = migratedImage(migrations);
   const sqlite = Database.deserialize(image.bytes);
   sqlite.exec(`PRAGMA foreign_keys = ${image.foreignKeys}`);
   return sqlite;
@@ -56,12 +73,9 @@ export function sqliteD1(
   sqlite: Database;
 } {
   let sqlite: Database;
-  if (file === ":memory:" && migrations.length > 0)
-    sqlite = migratedCopy(migrations);
-  else {
-    sqlite = new Database(file);
-    migrate(sqlite, migrations);
-  }
+  if (migrations.length === 0) sqlite = new Database(file);
+  else if (file === ":memory:") sqlite = migratedCopy(migrations);
+  else sqlite = migratedFile(migrations, file);
   // Finalize each statement after its one use. An unfinalized statement keeps
   // a file database open after close() until garbage collection, and Windows
   // then refuses to delete the file. query() does not prevent this: Bun
