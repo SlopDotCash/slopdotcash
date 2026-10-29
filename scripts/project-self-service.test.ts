@@ -84,6 +84,7 @@ const CLEARED: VettingClearance = {
     modelRuns: [],
     artifacts: 0,
     heldArtifacts: 0,
+    problems: [],
   },
 };
 

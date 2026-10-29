@@ -49,6 +49,12 @@ export type AssessmentSummary = {
   modelRuns: { reviewer: string; provider: string; model: string }[];
   artifacts: number;
   heldArtifacts: number;
+  /**
+   * Why a finished bounded scan did not clear the project, in the intake's
+   * own generic terms (no source, finding text or model output). Empty for a
+   * clean, pending or historical secure-VM result.
+   */
+  problems: string[];
 };
 
 /**

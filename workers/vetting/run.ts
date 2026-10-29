@@ -40,6 +40,7 @@ import {
   readAcquiredObject,
   readAcquiredSource,
   type ScanInputFile,
+  TEMPLATE_PREFIX,
 } from "./bounded-scan";
 import { inspectIsolatedArtifacts } from "./isolated-inspection";
 import { publishResult } from "./publication";
@@ -74,8 +75,9 @@ const COVERED_BY_BOUNDED_SCAN = new Set([
   "skill-template-inputs-not-acquired",
   "runtime-and-model-review-not-performed",
 ]);
+
 /** Template inputs are scanned under this prefix, apart from repository paths. */
-export const TEMPLATE_PREFIX = "slop-skill-template";
+export { TEMPLATE_PREFIX };
 
 /**
  * Fails closed unless the primary is the pinned Surplus `claude-opus-5.5`

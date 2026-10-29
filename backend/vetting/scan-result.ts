@@ -472,13 +472,30 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
 }
 
 /**
+ * A reviewer's own coverage call, as `scanners.ts` records it
+ * (`<reviewer>:<threat>:partial|missing`). It is advisory like a finding:
+ * it escalates a result to the specialist, and stays on the record, but the
+ * scanner's own inventory decides what was read. A failed review is recorded
+ * the same way; its status, not the gap, is what blocks clearance. PRD
+ * section 8: a scan is incomplete when a defined check did not run or when
+ * install- or execution-time content was not covered, never because a model
+ * hedged.
+ */
+const MODEL_COVERAGE_GAP = new RegExp(
+  `^(?:opus|astra):(?:(?:${SCAN_THREATS.join("|")}):(?:partial|missing)|review-failed-or-unavailable)$`,
+  "u",
+);
+export const isModelCoverageGap = (gap: string): boolean =>
+  MODEL_COVERAGE_GAP.test(gap);
+
+/**
  * True when the result is ambiguous or high risk and so needs a second model
  * or specialist before it can be clean. An ordinary clean project does not.
  */
 export function specialistRequired(result: VettingScanResult): boolean {
   const primary = result.primaryReview;
   return (
-    primary.verdict !== "no-findings" ||
+    // The risk already carries suspected malice, high, medium and coverage.
     primary.risk !== "low" ||
     SCAN_THREATS.some((threat) => result.checks[threat] === "flagged") ||
     result.findings.some((finding) =>
@@ -492,10 +509,9 @@ export function specialistRequired(result: VettingScanResult): boolean {
 
 /**
  * Reasons a bounded scan cannot carry its claimed disposition. An empty list
- * means the disposition is consistent with its own evidence. "clean" needs
- * every defined surface read completely, every defined check passed (or
- * cleared by a completed specialist), every artifact released after a clean
- * analysis and no high or critical finding.
+ * means the disposition is consistent with its own evidence; an `incomplete`
+ * disposition always is. `clearanceProblems` lists what keeps a result from
+ * clean whatever its disposition says.
  */
 export function scanProblems(result: VettingScanResult): string[] {
   const problems: string[] = [];
@@ -509,10 +525,29 @@ export function scanProblems(result: VettingScanResult): string[] {
   if (result.confirmation !== null)
     problems.push("Only a malicious disposition carries a confirmation");
   if (result.disposition === "incomplete") return problems;
+  problems.push(...clearanceProblems(result));
+  return problems;
+}
+
+/**
+ * What keeps a bounded scan from clean, read from its own evidence and not
+ * from its disposition, so an owner can see why a finished scan did not
+ * clear. "clean" needs every defined surface read completely, no visibility
+ * gap of the scanner's own (a reviewer's coverage call is advisory, see
+ * `isModelCoverageGap`), a completed primary review of the assessed inventory
+ * that does not suspect malice, every defined check passed, every artifact
+ * released after a clean analysis and no high or critical deterministic
+ * finding. An ambiguous or high-risk result (`specialistRequired`) also needs
+ * a completed specialist review of the same inventory that neither suspects
+ * malice nor reports a high or critical finding. Findings a reviewer rates
+ * medium or lower are advisory: they are retained and shown, never a block.
+ */
+export function clearanceProblems(result: VettingScanResult): string[] {
+  const problems: string[] = [];
   for (const surface of SCAN_SURFACES)
     if (result.coverage[surface].state !== "complete")
       problems.push(`The ${surface} surface was not read completely`);
-  if (result.visibilityGaps.length > 0)
+  if (result.visibilityGaps.some((gap) => !isModelCoverageGap(gap)))
     problems.push("The scan reported visibility gaps");
   const inventory = result.assessed.inputManifestSha256;
   const reviewProblems = (review: ScanReview, name: string) => {
@@ -530,7 +565,9 @@ export function scanProblems(result: VettingScanResult): string[] {
     reviewProblems(specialist, "specialist");
     if (
       escalated &&
-      (specialist.verdict !== "no-findings" || specialist.risk !== "low")
+      (specialist.status !== "completed" ||
+        specialist.verdict === "malicious-suspected" ||
+        specialist.risk === "high")
     )
       problems.push("The specialist review did not clear the escalated result");
   } else if (escalated)

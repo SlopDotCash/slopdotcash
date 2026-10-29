@@ -1,7 +1,7 @@
 # Independent model review transports
 
 The bounded malicious-code scan uses `reviewScan`: one primary review with the
-pinned `slop-scan-review-1` prompt, whose coverage areas are the scan's five
+pinned `slop-scan-review-2` prompt, whose coverage areas are the scan's five
 threat checks, and a second model or specialist review only for an ambiguous
 or high-risk result ([worker](README.md)). An inventory larger than one call
 is reviewed by `review-plan.ts` in token-budgeted batches with the same prompt,
@@ -49,10 +49,18 @@ Approved provider retention and private-data handling are operational gates.
 Each response must finish normally, return the pinned model and contain one
 JSON review. The review must cover all seven required areas and link every
 finding to supplied evidence ids. Missing or partial coverage stays in
-`visibilityGaps`. Findings remain advisory, including a model's suspicion of
-malice. The publisher must retain these gaps and reconcile both reviews with
-source and runtime evidence; it cannot use a completed model response alone as
-permission to clear a project.
+`visibilityGaps` as `<reviewer>:<area>:partial|missing`. Findings remain
+advisory, including a model's suspicion of malice. The publisher must retain
+these gaps and reconcile both reviews with source and runtime evidence; it
+cannot use a completed model response alone as permission to clear a project.
+A reviewer's coverage call and its info, low and medium findings escalate or
+annotate a result; they never decide it on their own. What the scan read is
+the scanner's own inventory (`bounded-scan.ts`), and `clearanceProblems` in
+`backend/vetting/scan-result.ts` lists what keeps a result from clean. The
+prompt tells the reviewer that coverage describes the supplied items, that the
+deterministic-coverage item lists files already read in full, and that files
+of class `template` there are Slop's own published skill template, which is
+never sent to the model.
 
 Each private record binds the prompt revision and digest, evidence digest,
 unique local run id, provider response id, returned model and response digest.

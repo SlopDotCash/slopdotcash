@@ -21,6 +21,7 @@ test("admin distinguishes retained admission from the current revision and can r
     modelRuns: [],
     artifacts: 1,
     heldArtifacts: 0,
+    problems: [],
   };
   let queued = false;
   await page.route("**/api/v1/project-session", (route) =>

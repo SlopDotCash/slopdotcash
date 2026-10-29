@@ -50,10 +50,15 @@ The flow for one queued assessment:
    manifests) is covered by the deterministic checks instead of the model.
    It is bound into the inventory by digest, and every rule match or
    obfuscation signal in it is sent to the model in context as
-   `<path>#signals`.
+   `<path>#signals`. The queued skill template (`slop-skill-template/`) is
+   always covered this way, whatever the inventory size: the deterministic
+   checks read it and any rule match flags the project's check, but it is
+   Slop's own published code, identical for every project, so the model
+   judges the project's files and the template carries no signal excerpt or
+   risk signal. The deterministic-coverage item lists it as class `template`.
 3. `reviewInventory` (`review-plan.ts`) runs the primary model review. An
    inventory within one call is read by exactly one `reviewScan` call
-   (`scanners.ts`, prompt `slop-scan-review-1`), with the same bytes as
+   (`scanners.ts`, prompt `slop-scan-review-2`), with the same bytes as
    before. A larger one is split into batches of at most 150,000 estimated
    tokens: install, CI, container, agent-instruction, manifest and
    risk-signal content first, then source grouped by directory, then tests,
@@ -61,13 +66,18 @@ The flow for one queued assessment:
    (`slop-scan-synthesis-1`) then reads the deterministic pre-pass and every
    batch result. The combined review is complete only if every call
    completed; its coverage is the weakest of any call. Risk is read from the
-   review itself: any suspected malice or high finding is `high`; any other
-   finding or partial coverage is `ambiguous`; otherwise `low`. No score
-   threshold is used.
+   review itself: any suspected malice or high finding is `high`; a medium
+   finding or partial coverage is `ambiguous`; info and low findings are
+   advisory and leave it `low`. No score threshold is used.
 4. A second model or specialist review runs only when the result is
    ambiguous or high risk: a non-low primary review, a flagged check, a
-   medium or worse finding, or an unreleased binary or download.
-   `composeScanResult` reports `needsSpecialist`.
+   medium or worse deterministic finding, or an unreleased binary or
+   download. `composeScanResult` reports `needsSpecialist`. The specialist
+   clears an escalated result when it completes on the same inventory
+   without suspecting malice or reporting a high or critical finding; its
+   own coverage call and lower findings stay on the record as advice.
+   A reviewer's coverage call is never by itself a reason to withhold
+   clearance: the scanner's inventory says what was read (PRD section 8).
 5. `composeScanResult` derives the disposition. A separate trusted reviewer's
    confirmation makes it `malicious`; a model label never does. Otherwise it
    is `clean` only if the intake rules accept clean, and `incomplete` in every

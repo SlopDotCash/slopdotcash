@@ -39,6 +39,7 @@ import {
 } from "../projects/enforcement";
 import type { VettingArtifact } from "./result";
 import {
+  clearanceProblems,
   isScanResult,
   type RecordedVettingResult,
   resultReviewers,
@@ -170,6 +171,12 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
     artifacts: artifacts.length,
     heldArtifacts: artifacts.filter((artifact) => artifact.state !== "released")
       .length,
+    problems:
+      assessment.state === "incomplete" &&
+      assessment.result &&
+      isScanResult(assessment.result)
+        ? clearanceProblems(assessment.result)
+        : [],
   };
 }
 

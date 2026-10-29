@@ -69,7 +69,7 @@ For nonexempt admission and required reinstatement:
 | `unverified` | Required evidence is unavailable, or a reinstatement pin cannot be verified | Blocked |
 | `stale` | Required reinstatement evidence does not cover the current pin | Blocked |
 | `queued` | Admission or an explicit investigation waits for a result | Blocked |
-| `quarantined` | Latest controlling assessment is incomplete | Blocked |
+| `quarantined` | Latest controlling assessment finished without clearing (its `problems` say why) | Blocked |
 | `cleared` | Retained clean admission evidence, or fresh qualified reinstatement evidence | Allowed subject to registry restrictions |
 | `banned` | Malicious evidence lacks an independent reinstatement decision | Blocked |
 
@@ -165,13 +165,19 @@ The API never upgrades a result:
 
 - `clean` needs all six surfaces (`source`, `manifests`, `dependencies`,
   `installScripts`, `downloads`, `agentInstructions`) read completely, no
-  visibility gap, no check `not-run`, a completed primary review of the
-  assessed inventory without suspected malice, every artifact released after a
-  clean analysis, and no high or critical finding. An ambiguous or high-risk
-  result (a non-low primary review, a flagged check, a medium or worse finding
-  or an unreleased artifact) also needs a completed specialist review of the
-  same inventory with no findings and low risk. An ordinary clean project
-  needs no second review.
+  visibility gap of the scanner's own (a reviewer's coverage call,
+  `<reviewer>:<area>:partial|missing`, is advisory and stays on the record),
+  no check `not-run`, a completed primary review of the assessed inventory
+  without suspected malice, every artifact released after a clean analysis,
+  and no high or critical deterministic finding. An ambiguous or high-risk
+  result (a non-low primary review, a flagged check, a medium or worse
+  deterministic finding or an unreleased artifact) also needs a completed
+  specialist review of the same inventory that neither suspects malice nor
+  reports a high or critical finding. A reviewer's info, low and medium
+  findings are retained and never block on their own. An ordinary clean
+  project needs no second review. `clearanceProblems` lists what keeps a
+  result from clean; the public assessment summary carries that list as
+  `problems` for an incomplete scan so an owner sees the failed stage.
 - Isolated execution is recorded only when it was needed, and the contract
   requires `secretsProvided: false` and default-deny egress.
 - A clean result needs its retained report, inventory, dependency locks and

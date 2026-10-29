@@ -38,6 +38,7 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
     modelRuns: [],
     artifacts: 1,
     heldArtifacts: 1,
+    problems: ["The scan reported visibility gaps"],
     requestedBy: { githubLogin: "operator" },
     requestReason: "Review flagged install scripts",
     result: {

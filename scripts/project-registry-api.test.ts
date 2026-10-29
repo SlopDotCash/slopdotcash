@@ -1979,6 +1979,7 @@ describe("project enforcement (ADM-06)", () => {
             modelRuns: [],
             artifacts: 0,
             heldArtifacts: 0,
+            problems: [],
           },
         }),
       }) as Promise<Response>;

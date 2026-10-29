@@ -165,7 +165,7 @@ export function notificationTitle(n: Notification): string {
     case "project_ready":
       return `The ${n.subject} project is open to contributors.`;
     case "project_scan_failed":
-      return `The security scan of ${n.subject} could not finish. Contributor work stays closed until a scan passes.`;
+      return `The security scan of ${n.subject} did not clear the project. Contributor work stays closed until a scan passes.`;
     case "project_installation_lost":
       return `Slopbot is no longer installed on a ${n.subject} repository. Install it again so reviews continue.`;
     case "project_revision":

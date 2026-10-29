@@ -243,12 +243,16 @@ function scanCheck(
         message:
           "The repository or skill template changed since the last scan.",
       };
-    case "quarantined":
+    case "quarantined": {
+      const problems = clearance.assessment?.problems ?? [];
       return {
         state: "quarantined",
         message:
-          "The last scan could not finish, so it did not clear the project.",
+          problems.length === 0
+            ? "The last scan finished but did not clear the project."
+            : `The last scan finished but did not clear the project: ${problems.join("; ")}.`,
       };
+    }
     case "banned":
       return {
         state: "banned",

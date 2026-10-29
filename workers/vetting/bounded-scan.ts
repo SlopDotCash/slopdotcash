@@ -431,12 +431,14 @@ export function textParts(text: string, size = MAX_TEXT_FILE_BYTES): string[] {
 
 /** The inventory item that lists bulk files; never a repository path. */
 export const DETERMINISTIC_COVERAGE_ID = "/slop-scan/deterministic-coverage";
+/** Path prefix of the queued skill-template inputs inside a scan's files. */
+export const TEMPLATE_PREFIX = "slop-skill-template";
 
 export type DeterministicRecord = {
   path: string;
   sha256: string;
   bytes: number;
-  class: "lockfile" | "data" | "generated" | "vendored";
+  class: "lockfile" | "data" | "generated" | "vendored" | "template";
   /** The model read every rule match and obfuscation signal as `<path>#signals`. */
   signals?: true;
 };
@@ -454,8 +456,9 @@ export type RepositoryInspection = {
   /** Download URLs install-time content references. */
   downloads: string[];
   /**
-   * Bulk content covered by every deterministic check but not sent to the
-   * model; empty unless the inventory exceeds one review call.
+   * Content covered by every deterministic check but not sent to the model:
+   * the queued Slop skill template always, and bulk content once the
+   * inventory exceeds one review call.
    */
   deterministic: DeterministicRecord[];
   /** Paths of reviewed items with a deterministic finding or obfuscation signal. */
@@ -566,8 +569,25 @@ export function inspectRepository(input: {
           : `${candidate.path}#part-${index + 1}-of-${parts.length}`;
       return { id, text, sha256: sha256(text) };
     });
-  let items = candidates.flatMap(itemsOf);
+  // The queued skill template is Slop's own published code, identical for
+  // every project and bound here by digest. The deterministic checks read it
+  // above; the model judges the project, not Slop's template.
+  const template = new Set<string>();
   const deterministic: DeterministicRecord[] = [];
+  for (const candidate of candidates)
+    if (candidate.path.startsWith(`${TEMPLATE_PREFIX}/`)) {
+      template.add(candidate.path);
+      deterministic.push({
+        path: candidate.path,
+        sha256: candidate.sha256,
+        bytes: candidate.bytes,
+        class: "template",
+      });
+    }
+  const reviewed = candidates.filter(
+    (candidate) => !template.has(candidate.path),
+  );
+  let items = reviewed.flatMap(itemsOf);
   const envelope = (list: typeof items) =>
     list.length > MAX_INVENTORY_ITEMS ||
     list.reduce(
@@ -580,7 +600,7 @@ export function inspectRepository(input: {
   const excerpted = new Set<string>();
   if (envelope(items)) {
     items = [];
-    for (const candidate of candidates) {
+    for (const candidate of reviewed) {
       const kind = bulkClass(candidate.path, candidate.surfaces);
       const excerpt =
         kind === null ? null : signalExcerpt(candidate.path, candidate.text);
@@ -614,7 +634,7 @@ export function inspectRepository(input: {
   // repository path, which never starts with "/".
   if (deterministic.length > 0) {
     const text = JSON.stringify({
-      note: "Files covered by every deterministic check and not sent to the model. A file with signals has a <path>#signals item with every rule match and obfuscation signal in context.",
+      note: "Files covered by every deterministic check and not sent to the model. A file with signals has a <path>#signals item with every rule match and obfuscation signal in context. Files of class template are the Slop skill template this project's skills are rendered from: Slop's own published code, the same for every project, bound here by digest.",
       files: deterministic,
     });
     items.unshift({
@@ -624,7 +644,7 @@ export function inspectRepository(input: {
     });
   }
   const bulk = new Set(deterministic.map((record) => record.path));
-  const riskSignals = candidates
+  const riskSignals = reviewed
     .filter(
       (candidate) =>
         excerpted.has(candidate.path) ||
@@ -712,7 +732,8 @@ export function executionInventory(inspection: RepositoryInspection) {
 /**
  * The intake form of one model review. Its risk is read from the review
  * itself, with no score threshold: any suspected malice or high finding is
- * high risk, any other finding or incomplete coverage is ambiguous.
+ * high risk; a medium finding or incomplete coverage is ambiguous; info and
+ * low findings are advisory and leave the review low risk.
  */
 export function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
@@ -723,7 +744,7 @@ export function scanReview(evidence: ScannerEvidence): ScanReview {
           ["high", "critical"].includes(finding.severity),
         )
       ? "high"
-      : evidence.review.verdict === "findings" ||
+      : evidence.findings.some((finding) => finding.severity === "medium") ||
           evidence.coverage === null ||
           SCAN_REVIEW_AREAS.some(
             (area) => evidence.coverage?.[area] !== "complete",

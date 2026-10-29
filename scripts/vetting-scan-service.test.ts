@@ -43,6 +43,7 @@ import { sqliteD1 } from "../tests/sqlite-d1";
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
 import {
   composeScanResult,
+  DETERMINISTIC_COVERAGE_ID,
   executionInventory,
   inspectRepository,
   readAcquiredObject,
@@ -125,7 +126,14 @@ let githubName = "example/open-registry";
 let provider: {
   up: boolean;
   specialistUp: boolean;
-  primary: "no-findings" | "findings" | "malicious-suspected";
+  primary:
+    | "no-findings"
+    | "findings"
+    | "malicious-suspected"
+    /** One low finding with complete coverage: advisory, low risk. */
+    | "advisory"
+    /** No finding, but every coverage area reported partial. */
+    | "hedged";
   /** False makes every evidence route answer 503. */
   evidenceUp: boolean;
   calls: { path: string; model: string; authorization: string | null }[];
@@ -166,6 +174,27 @@ async function commit(
 
 function review(items: { id: string }[], verdict: string) {
   const risky = items.find((item) => item.id === "scripts/postinstall.js");
+  if (verdict === "advisory" || verdict === "hedged")
+    return JSON.stringify({
+      verdict: verdict === "advisory" ? "findings" : "no-findings",
+      confidence: 0.7,
+      coverage: Object.fromEntries(
+        SCAN_REVIEW_AREAS.map((area) => [
+          area,
+          verdict === "advisory" ? "complete" : "partial",
+        ]),
+      ),
+      findings:
+        verdict === "advisory"
+          ? [
+              {
+                severity: "low",
+                summary: "The README links to an external site",
+                evidenceIds: [items[items.length - 1].id],
+              },
+            ]
+          : [],
+    });
   return JSON.stringify({
     verdict,
     confidence: 0.9,
@@ -971,6 +1000,81 @@ test("an ambiguous primary review runs the Surplus specialist once before public
   ]);
   const assessment = await vetting.getAssessment(assessmentId);
   expect(assessment?.state).toBe("clean");
+});
+
+test("a primary review with only low findings clears without a specialist; the template is never sent to the model", async () => {
+  provider.primary = "advisory";
+  const report = await runScanPass(config);
+  const [{ assessmentId }] = report.assessments;
+  expect(report.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  expect(provider.calls.map((call) => call.model)).toEqual(["claude-opus-5.5"]);
+  // The queued skill template is bound by digest and checked
+  // deterministically, but the model reviews the project's own files.
+  expect(
+    reviewedItems.some((item) => item.id.startsWith(`${TEMPLATE_PREFIX}/`)),
+  ).toBe(false);
+  const listing = reviewedItems.find(
+    (item) => item.id === DETERMINISTIC_COVERAGE_ID,
+  );
+  if (!listing) throw new Error("no deterministic coverage item");
+  const files = (
+    JSON.parse(listing.text) as { files: { path: string; class: string }[] }
+  ).files;
+  expect(files.length).toBeGreaterThan(0);
+  expect(
+    files.every(
+      (entry) =>
+        entry.class === "template" &&
+        entry.path.startsWith(`${TEMPLATE_PREFIX}/`),
+    ),
+  ).toBe(true);
+  const assessment = await vetting.getAssessment(assessmentId);
+  const result = assessment?.result;
+  if (!result || !isScanResult(result)) throw new Error("no bounded result");
+  expect(result.primaryReview).toMatchObject({
+    verdict: "findings",
+    risk: "low",
+    findingCount: 1,
+  });
+  expect(result.visibilityGaps).toEqual([]);
+  expect((await publicVetting()).state).toBe("cleared");
+});
+
+test("a reviewer's partial coverage call escalates to the specialist and clears; the call stays on the record", async () => {
+  provider.primary = "hedged";
+  const report = await runScanPass(config);
+  const [{ assessmentId }] = report.assessments;
+  expect(report.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      specialist: true,
+      evidence: "retained",
+    },
+  ]);
+  expect(provider.calls.map((call) => call.model)).toEqual([
+    "claude-opus-5.5",
+    "gpt-6.1-sol",
+  ]);
+  const assessment = await vetting.getAssessment(assessmentId);
+  const result = assessment?.result;
+  if (!result || !isScanResult(result)) throw new Error("no bounded result");
+  expect(result.primaryReview.risk).toBe("ambiguous");
+  expect(result.visibilityGaps).toEqual(
+    SCAN_REVIEW_AREAS.map((area) => `opus:${area}:partial`),
+  );
+  expect((await publicVetting()).state).toBe("cleared");
 });
 
 function emptyCommit(message: string) {
