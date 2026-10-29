@@ -50,9 +50,7 @@ test("Settings waits for identity and keeps current sign-out without individual 
       signouts++;
       signedIn = false;
       json = { signedOut: true };
-    } else if (path.endsWith("/x/me"))
-      json = { configured: false, account: null, award: null };
-    else if (path.endsWith("/me")) {
+    } else if (path === "/api/v1/points/me") {
       await identity;
       json = signedIn
         ? {
@@ -143,7 +141,8 @@ test("Settings waits for identity and keeps current sign-out without individual 
   ).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Connections", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.locator("#profile")).toHaveCount(0);
   await expect(
     page.locator("#security, #recovery, #close-account"),
   ).toHaveCount(0);
@@ -304,9 +303,7 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
           },
         ],
       };
-    else if (path.endsWith("/x/me"))
-      json = { configured: false, account: null, award: null };
-    else if (path.endsWith("/me")) json = signedIn ? me : null;
+    else if (path === "/api/v1/points/me") json = signedIn ? me : null;
     else throw new Error(`Unexpected account route: ${path}`);
     await route.fulfill({ json });
   });
@@ -371,8 +368,9 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
     profile.getByRole("button", { name: /with GitHub$/u }),
   ).toHaveCount(0);
   await expect(
-    profile.getByRole("region", { name: "Connections", exact: true }),
-  ).toBeVisible();
+    page.getByRole("region", { name: "Connections", exact: true }),
+  ).toHaveCount(0);
+  await expect(profile).toHaveCount(0);
   await authWindow.close();
   await expect(
     page.locator("#security, #recovery, #close-account"),
