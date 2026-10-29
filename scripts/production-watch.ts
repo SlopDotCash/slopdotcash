@@ -1,16 +1,18 @@
 /**
  * Read-only production watch (PRD sections 6 and 9). It checks that the public
- * site, the registry API and the Slopbot Worker answer, and that every vault
+ * site, identity, the registry API and the Slopbot Worker answer, and that every vault
  * registered in the D1 project registry has a cached finalized snapshot no
  * older than the staleAfterMs its own public response publishes. It uses no
  * credentials, never reads a chain RPC, and does not retry: one failed or slow
  * answer fails the run so the scheduled workflow reports it.
  */
 import { appendFileSync } from "node:fs";
+import { IDENTITY_PUBLIC_ORIGIN } from "../workers/identity/contracts";
 import { mainnetExecutionEnabled } from "../workers/payment-executor/mainnet-execution.mjs";
 
 export const SITE_ORIGIN = "https://slop.cash";
 export const SLOPBOT_HEALTH_URL = "https://slopbot.slop.cash/health";
+export const IDENTITY_PROBE_URL = `${IDENTITY_PUBLIC_ORIGIN}/v1/oauth/authorize`;
 export const REQUEST_TIMEOUT_MS = 20_000;
 
 export type RegisteredVault = {
@@ -151,6 +153,7 @@ async function request(
   fetcher: Fetcher,
   url: string,
   timeoutMs: number,
+  expectedStatus?: number,
 ): Promise<Answer> {
   const started = Date.now();
   let response: Response;
@@ -169,11 +172,20 @@ async function request(
     };
   }
   const detail = `HTTP ${response.status} (${Date.now() - started} ms)`;
-  return response.ok ? { ok: true, detail, response } : { ok: false, detail };
+  const ok =
+    expectedStatus === undefined
+      ? response.ok
+      : response.status === expectedStatus;
+  return ok ? { ok: true, detail, response } : { ok: false, detail };
 }
 
-async function requestJson(fetcher: Fetcher, url: string, timeoutMs: number) {
-  const answer = await request(fetcher, url, timeoutMs);
+async function requestJson(
+  fetcher: Fetcher,
+  url: string,
+  timeoutMs: number,
+  expectedStatus?: number,
+) {
+  const answer = await request(fetcher, url, timeoutMs, expectedStatus);
   if (!answer.ok) return answer;
   try {
     return {
@@ -192,17 +204,33 @@ export async function runProductionWatch({
   now = () => new Date(),
   origin = SITE_ORIGIN,
   slopbotHealthUrl = SLOPBOT_HEALTH_URL,
+  identityProbeUrl = IDENTITY_PROBE_URL,
   timeoutMs = REQUEST_TIMEOUT_MS,
 }: {
   fetcher?: Fetcher;
   now?: () => Date;
   origin?: string;
   slopbotHealthUrl?: string;
+  identityProbeUrl?: string;
   timeoutMs?: number;
 } = {}): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
   const home = await request(fetcher, `${origin}/`, timeoutMs);
   results.push({ ok: home.ok, check: "site home", detail: home.detail });
+
+  // With no flow or state, the existing OAuth route refuses before reading or
+  // creating identity state. This probes the public Worker, not OAuth completion.
+  const identity = await requestJson(fetcher, identityProbeUrl, timeoutMs, 400);
+  results.push(
+    identity.ok &&
+      (identity.body as { error?: unknown } | null)?.error !== "invalid_request"
+      ? {
+          ok: false,
+          check: "identity sign-in",
+          detail: "identity did not return its invalid-link refusal",
+        }
+      : { ok: identity.ok, check: "identity sign-in", detail: identity.detail },
+  );
 
   const slopbot = await requestJson(fetcher, slopbotHealthUrl, timeoutMs);
   results.push(
