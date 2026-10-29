@@ -1021,15 +1021,18 @@ describe("project registry API", () => {
       { robinhood: "https://rpc.fixture.invalid" },
     );
     const submit = () =>
-      create({
-        ...applicationManifest("open-registry", "example/open-registry"),
-        rewardAsset: {
-          network: "robinhood",
-          kind: "token",
-          address: TOKEN,
-          symbol: "OPEN",
+      create(
+        {
+          ...applicationManifest("open-registry", "example/open-registry"),
+          rewardAsset: {
+            network: "robinhood",
+            kind: "token",
+            address: TOKEN,
+            symbol: "OPEN",
+          },
         },
-      });
+        { monthlyAmount: "1000" },
+      );
     const unavailable = [
       async () => new Response("Too Many Requests", { status: 429 }),
       async () => new Response("Bad Gateway", { status: 502 }),
@@ -1062,6 +1065,73 @@ describe("project registry API", () => {
         "The reward token could not be verified on Robinhood Chain: No contract exists at that token address",
     });
     expect(await persistence.listProjects()).toEqual([]);
+    // A listed token keeps the submitted symbol when its answer is malformed.
+    const word = (value: string) => value.padStart(64, "0");
+    const symbolBytes = (bytes: number[]) =>
+      bytes
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")
+        .padEnd(64, "0");
+    let symbolAnswer = `0x${word("20")}${word("4")}${symbolBytes([0x4f, 0x50, 0x45, 0x4e])}`;
+    deps.readTokenMetadata = rpcTokenMetadataReader(
+      (async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as {
+          method: string;
+          params: [{ data: string }];
+        };
+        const result =
+          body.method === "eth_chainId"
+            ? "0x1237"
+            : body.method === "eth_getCode"
+              ? "0x6000"
+              : body.params[0].data === "0x313ce567"
+                ? `0x${word("12")}`
+                : symbolAnswer;
+        return Response.json({ jsonrpc: "2.0", id: 1, result });
+      }) as typeof fetch,
+      { robinhood: "https://rpc.fixture.invalid" },
+    );
+    const listed = await submit();
+    expect(listed.status, JSON.stringify(await listed.clone().json())).toBe(
+      201,
+    );
+    const changeAsset = async (index: number) => {
+      const current = await persistence.getProject("open-registry");
+      if (!current) throw new Error("listed token project disappeared");
+      access = ADMIN_ACCESS;
+      return call("PUT", "projects/open-registry", "applicant", {
+        manifest: {
+          ...current.manifest,
+          rewardAsset: {
+            ...current.manifest.rewardAsset,
+            address: `0x${String(index + 2).repeat(40)}`,
+          },
+        },
+        expectedRevision: current.revision,
+        monthlyAmount: "1000",
+      });
+    };
+    const malformedSymbols = [
+      // A declared length past the end of the answer has no complete body.
+      `0x${word("20")}${word("20")}${word("9")}4f50`,
+      // A string offset that is not a whole ABI word has no body to read.
+      `0x${"aa".repeat(31)}ff${word("20")}${word("4")}4f50454e`,
+      // An inner zero byte in a bytes32 symbol is not trailing padding.
+      `0x${symbolBytes([0x4f, 0x00, 0x50])}`,
+    ];
+    for (const [index, malformed] of malformedSymbols.entries()) {
+      symbolAnswer = malformed;
+      const changed = await changeAsset(index);
+      expect(changed.status, JSON.stringify(await changed.clone().json())).toBe(
+        200,
+      );
+      const stored = await persistence.getProject("open-registry");
+      expect(stored?.manifest.rewardAsset, malformed).toMatchObject({
+        symbol: "OPEN",
+        decimals: 18,
+      });
+      expect(stored?.manifest.reward.currency).toBe("OPEN");
+    }
   });
 
   test("refuses a project id too long for its reviewer skill name", async () => {
