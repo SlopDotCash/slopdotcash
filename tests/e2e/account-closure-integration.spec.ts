@@ -226,12 +226,20 @@ for (const withObligations of [false, true])
       expect(loaded?.headers()["content-security-policy"]).toContain(
         "script-src 'self'",
       );
-      const connections = page.getByRole("region", { name: "Connections" });
-      await expect(connections.getByRole("checkbox")).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "Connections", exact: true }),
+      ).toHaveCount(0);
+      await expect(page.locator("#profile")).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "Wallets", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("region", { name: "Email preferences", exact: true }),
+      ).toBeVisible();
       await expect(page.getByText(/Telegram/i)).toHaveCount(0);
       await expect(page.locator('a[href^="https://t.me/"]')).toHaveCount(0);
       await page.screenshot({
-        path: info.outputPath("account-connections.png"),
+        path: info.outputPath("account-settings.png"),
         fullPage: true,
       });
       await page.goto(
@@ -319,16 +327,18 @@ for (const withObligations of [false, true])
         })
         .click();
       const reopenWindow = await reopenPopup;
-      await expect(
-        page
-          .getByRole("status")
-          .filter({ hasText: "Your account is open again." }),
-      ).toBeVisible();
+      await expect(profile).toHaveCount(0);
       await expect(
         profile.getByRole("button", { name: /with GitHub$/u }),
       ).toHaveCount(0);
       await expect(
-        profile.getByRole("region", { name: "Connections", exact: true }),
+        page.getByRole("region", { name: "Connections", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "Wallets", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("region", { name: "Email preferences", exact: true }),
       ).toBeVisible();
       await expect.poll(() => reopenWindow.isClosed()).toBe(true);
       expect(page.isClosed()).toBe(false);
