@@ -158,10 +158,19 @@ test("history navigation never carries another project's clearance into agent se
   await expect(
     page.getByText("This project is not cleared for agents.", { exact: false }),
   ).toBeVisible();
-  await page
-    .getByRole("banner")
-    .getByRole("link", { name: "Slop home", exact: true })
-    .click();
+  // Finish home snapshot reads before the deliberate clearance/history race.
+  // holdClearance is still false while the home page settles.
+  const [summary] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/data/points-summary.json",
+    ),
+    page
+      .getByRole("banner")
+      .getByRole("link", { name: "Slop home", exact: true })
+      .click(),
+  ]);
+  expect(await summary.finished()).toBeNull();
   await page.locator('a.project-card[href="/projects/eliza"]').click();
   await expect(page).toHaveURL(/\/projects\/eliza$/u);
   await expect(
