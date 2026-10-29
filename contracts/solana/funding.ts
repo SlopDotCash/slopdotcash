@@ -194,15 +194,13 @@ export async function checkSolanaFunding(
     intent.wallet,
     msg,
     transactionId,
+    intent.operation === "deposit",
   );
   if (checked.status !== "finalized") return checked.status;
   const meta = checked.meta;
-  // The compiled message is already exact. Its compact account count fits one byte
-  // because the shared encoder permits at most 32 accounts.
-  const accountCount = msg[3];
-  const keys = Array.from({ length: accountCount }, (_, index) =>
-    solanaPubkey(msg, 4 + index * 32),
-  );
+  // Wallet guards can recompile the same action with different account indices.
+  // Token-balance metadata indexes the verified finalized message.
+  const keys = checked.accountKeys;
   function balances(value: unknown): Map<string, bigint> {
     if (!Array.isArray(value))
       throw new SolanaFundingError("Finalized token balances are missing.");
