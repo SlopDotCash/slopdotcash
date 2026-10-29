@@ -1,7 +1,7 @@
 # Slopbot worker
 
 Hosted GitHub App worker under [`protocol/slopbot-v2.md`](../../protocol/slopbot-v2.md)
-(PRD BOT-08 to BOT-13). Protected releases deploy it. Automatic closing stays
+(PRD section 5, Slopbot). Protected releases deploy it. Automatic closing stays
 off unless `SLOPBOT_CLOSURE_ENABLED` is `"true"` after an explicit production
 qualification and activation review (`wrangler.toml` ships it as `"false"`).
 
@@ -140,6 +140,18 @@ write, Pull requests write. No others.
 Events: Installation, Issues, Issue comment, Pull request, Pull request review,
 Pull request review comment. The review events queue a fresh value assessment
 when a review changes.
+
+## Local test GitHub App
+
+Do **not** put production App credentials in a local tree. For `wrangler dev`
+and model-route checks, create your own throwaway GitHub App and put its
+secrets in `workers/slopbot/.dev.vars` (gitignored). Use the same names as
+production (`SLOPBOT_WEBHOOK_SECRET`, `SLOPBOT_APP_ID`, `SLOPBOT_APP_USER_ID`,
+`SLOPBOT_APP_PRIVATE_KEY`, plus the model keys from
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md)). Point that App's webhook at your
+local tunnel only. The owner setup checklist below is for the registered
+production App (`slopdotcash`, App ID `5257625`) and Cloudflare deploy; it is
+not a contributor local-dev path.
 
 ## Setup checklist (owner)
 
