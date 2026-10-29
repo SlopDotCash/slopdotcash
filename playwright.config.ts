@@ -79,10 +79,15 @@ if (
   !/^[A-Za-z0-9+/]{43}=$/u.test(registryVettingKey)
 )
   throw new Error("SLOP_E2E_VETTING_PUBLIC_KEY must be a base64 Ed25519 key");
+// The web server command runs in a shell: sh on Linux and macOS, cmd.exe on
+// Windows. cmd.exe keeps single quotes in the argument, so a single-quoted
+// binding reaches wrangler under a different name. Double-quoted JSON strings
+// (no $, ` or %) give the same argument in both shells.
+const shellArgument = (value: string) => JSON.stringify(value);
 const registryArguments = registryPersistTo
   ? // Positive local registry workflows must explicitly select test networks;
     // the release configuration intentionally has no network enabled by default.
-    ` --persist-to ${JSON.stringify(registryPersistTo)} --binding 'PAYMENT_NETWORKS=["base-sepolia","solana-devnet"]'${
+    ` --persist-to ${JSON.stringify(registryPersistTo)} --binding ${shellArgument('PAYMENT_NETWORKS=["base-sepolia","solana-devnet"]')}${
       registryAdmins ? ` --binding ADMIN_GITHUB_IDS=${registryAdmins}` : ""
     }${
       registryModerators
@@ -96,7 +101,7 @@ const registryArguments = registryPersistTo
         : ""
     }${
       registryIntakeKey
-        ? ` --binding GITHUB_INTAKE_APP_ID=1 --binding 'GITHUB_INTAKE_APP_PRIVATE_KEY=${registryIntakeKey}'`
+        ? ` --binding GITHUB_INTAKE_APP_ID=1 --binding ${shellArgument(`GITHUB_INTAKE_APP_PRIVATE_KEY=${registryIntakeKey}`)}`
         : ""
     }${
       registryVettingKey
