@@ -63,6 +63,13 @@ async function rpc(
       throw new TokenMetadataError("The network RPC response is too large");
     throw error;
   }
+  if (
+    typeof body.error === "object" &&
+    body.error !== null &&
+    "code" in body.error &&
+    body.error.code === -32603
+  )
+    throw new Error("The network RPC reported an internal error");
   if (body.error !== undefined || !Object.hasOwn(body, "result"))
     throw new TokenMetadataError("The network RPC refused the request");
   return body.result;
