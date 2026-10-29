@@ -912,7 +912,7 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
     provider.connection.rpcEndpoint,
     async (event) => {
       await index(event);
-      if (event.kind === "reserved") {
+      if (event.kind === "paid") {
         signalPaused();
         await resume;
       }
