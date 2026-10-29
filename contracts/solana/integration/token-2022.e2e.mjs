@@ -11,18 +11,26 @@ import {
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import {
+  ComputeBudgetProgram,
   Keypair,
+  Message,
   PublicKey,
   SystemProgram,
   sendAndConfirmTransaction,
   Transaction,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import { readVaultTotals, solanaAwardId } from "../.local/adapter.mjs";
+import {
+  checkSolanaFunding,
+  prepareSolanaFunding,
+} from "../.local/funding.mjs";
 import {
   configAddress,
   configFees,
   configIdentity,
   ensureConfig,
+  expectedDeployment,
 } from "./deployment.mjs";
 
 const { AnchorProvider, Program, BN } = anchor;
@@ -82,8 +90,25 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
   assert.equal(await provider.connection.getAccountInfo(vault), null);
   await provider.connection.confirmTransaction(
     await initialize(tokenProgram),
-    "confirmed",
+    "finalized",
   );
+  const config = {
+    ...expectedDeployment,
+    rpcUrl: provider.connection.rpcEndpoint,
+    genesisHash: await provider.connection.getGenesisHash(),
+    network: "solana-localnet",
+    projectId: projectId.toString("hex"),
+    programId: program.programId.toBase58(),
+    projectPda: project.toBase58(),
+    vault: vault.toBase58(),
+    owner: payer.publicKey.toBase58(),
+    mint: mint.toBase58(),
+    networkDomain: network.toString("hex"),
+    identityAuthority: configIdentity.publicKey.toBase58(),
+    feeRecipient: configFees.publicKey.toBase58(),
+    bindingDelaySeconds: "0",
+    rotationDelaySeconds: "0",
+  };
   const balance = async (address) =>
     (await getAccount(provider.connection, address, "confirmed", tokenProgram))
       .amount;
@@ -102,9 +127,68 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
       })
       .rpc();
   await assert.rejects(deposit(TOKEN_PROGRAM_ID), /WrongMint/);
-  await provider.connection.confirmTransaction(
-    await deposit(tokenProgram),
-    "confirmed",
+  const funding = await prepareSolanaFunding(config, {
+    operation: "deposit",
+    wallet: payer.publicKey.toBase58(),
+    gross: deposited.toString(),
+  });
+  const depositTransaction = Transaction.from(
+    Buffer.from(funding.transaction, "base64"),
+  );
+  const originalKeys = depositTransaction.compileMessage().accountKeys;
+  depositTransaction.instructions.unshift(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1 }),
+  );
+  const compiled = depositTransaction.compileMessage();
+  // A wallet recompiles keys when it adds guards. Move the vault within the
+  // unsigned writable group so receipt indices differ from the review plan.
+  const accountKeys = [...compiled.accountKeys];
+  const vaultIndex = accountKeys.findIndex((key) => key.equals(vault));
+  const swapIndex = accountKeys.findIndex(
+    (_, index) =>
+      index >= compiled.header.numRequiredSignatures &&
+      index <
+        accountKeys.length - compiled.header.numReadonlyUnsignedAccounts &&
+      index !== vaultIndex,
+  );
+  [accountKeys[vaultIndex], accountKeys[swapIndex]] = [
+    accountKeys[swapIndex],
+    accountKeys[vaultIndex],
+  ];
+  const remap = (index) =>
+    accountKeys.findIndex((key) => key.equals(compiled.accountKeys[index]));
+  const walletMessage = new Message({
+    header: compiled.header,
+    recentBlockhash: compiled.recentBlockhash,
+    accountKeys,
+    instructions: compiled.instructions.map((instruction) => ({
+      ...instruction,
+      programIdIndex: remap(instruction.programIdIndex),
+      accounts: instruction.accounts.map(remap),
+    })),
+  });
+  assert.notEqual(
+    walletMessage.accountKeys.findIndex((key) => key.equals(vault)),
+    originalKeys.findIndex((key) => key.equals(vault)),
+  );
+  const signedDeposit = new VersionedTransaction(walletMessage);
+  signedDeposit.sign([payer]);
+  const depositSignature = await provider.connection.sendRawTransaction(
+    signedDeposit.serialize(),
+  );
+  await provider.connection.confirmTransaction(depositSignature, "finalized");
+  assert.equal(
+    await checkSolanaFunding(config, funding, depositSignature),
+    "finalized",
+  );
+  await assert.rejects(
+    checkSolanaFunding(
+      config,
+      { ...funding, gross: (deposited + 1n).toString() },
+      depositSignature,
+    ),
+    /does not match the pending wallet action/,
   );
   assert.equal(await balance(vault), deposited);
   assert.equal(await balance(source), before - deposited);
@@ -299,4 +383,33 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
   );
   assert.equal(await balance(feeAddress), 10_000_000n);
   assert.equal(await balance(vault), deposited - gross - reserved);
+
+  const unreviewedFunding = await prepareSolanaFunding(config, {
+    operation: "deposit",
+    wallet: payer.publicKey.toBase58(),
+    gross: "1",
+  });
+  const extraTransfer = Transaction.from(
+    Buffer.from(unreviewedFunding.transaction, "base64"),
+  );
+  extraTransfer.instructions.unshift(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+  );
+  extraTransfer.add(
+    SystemProgram.transfer({
+      fromPubkey: payer.publicKey,
+      toPubkey: recipient.publicKey,
+      lamports: 1_000_000,
+    }),
+  );
+  extraTransfer.sign(payer);
+  const extraSignature = await provider.connection.sendRawTransaction(
+    extraTransfer.serialize(),
+  );
+  await provider.connection.confirmTransaction(extraSignature, "finalized");
+  await assert.rejects(
+    checkSolanaFunding(config, unreviewedFunding, extraSignature),
+    /does not match the pending wallet action/,
+  );
+  assert.equal(await balance(vault), deposited - gross - reserved + 1n);
 });

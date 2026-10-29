@@ -79,7 +79,9 @@ incomplete raw evidence to be stored before assembly; its absence never permits
 clean admission. Existing receipts remain immutable and receive no inferred
 assembly. A new receipt uses a new run identity.
 
-The assembler and store share the canonical manifest parser. Closure verifies
+The store keeps the canonical manifest parser of the retired secure-VM
+assembler (owner decision, 29 October 2026, #1467 item 3.10(b)), so
+historical manifests stay verifiable. Closure verifies
 all declared captured-evidence file digests and lengths, the exact review input,
 source and dependency object references, artifact lineage, and the captured VM
 receipt/overlay/serial/disk-map references. An optional guest receipt must bind
@@ -106,8 +108,8 @@ and verifies their bytes before accepting the result. The
 [bounded scan rules](../../workers/vetting/README.md#bounded-malicious-code-scan)
 also govern coverage, model review and clearance; storage alone cannot pass a scan.
 
-Historical v1 results keep the original assembly rule. That assembler is
-explicitly incomplete and authorizes no provider calls or publication. Retention
+Historical v1 results keep the original assembly rule. That assembler was
+explicitly incomplete and authorized no provider calls or publication. Retention
 cannot remove its gaps or turn a legacy metadata-only claim into clearance.
 Unknown assembly states are refused. Incomplete evidence and malicious findings
 can still be recorded without permitting activation, skills or reinstatement.
@@ -212,25 +214,11 @@ queue acquisition fails closed before work starts if evidence storage is not bou
 Production binding, policy approval, external controls, actual collector/provider
 integration and live acceptance are not performed by this source change.
 
-The local retained-assembly workflow accepts real retained acquisition,
-analyzer, VM, guest-profile and dependency outputs:
-
-```sh
-bun run build
-bun scripts/vetting-evidence-assembly-workflow.ts \
-  SOURCE REPORTS VM PROFILE DEPENDENCIES PRIVATE_OUTPUT
-```
-
-It creates a new application, approval and queue through the actual handlers
-and SQLite adapter, then reads the signed queue and acquires the recorded Git
-bytes. Local session and repository-authority adapters are synthetic. It checks
-source-inventory byte equality before reuse of the retained analyzer and VM
-outputs. This is no new VM execution or independent runtime run-identity proof.
-The actual R2 workflow proves captured closure, missing-reference and
-assessment-mismatch refusal, signed false-clean rejection, and loss of retained
-bytes. The built console uses that same handler and store with an isolated
-operator-session adapter; the Pages browser suite separately checks routing and
-session behavior. No response data is substituted in the console.
+The local retained-assembly workflow that replayed secure-VM outputs was
+retired with that pipeline; no new assembly is produced. The built console uses
+the same handler and store with an isolated operator-session adapter; the Pages
+browser suite separately checks routing and session behavior. No response data
+is substituted in the console.
 
 Console evidence checks keyboard access, accessibility, a 320 CSS-pixel mobile
 layout with 200% text enlargement, and 200% desktop zoom. A 390-pixel viewport at CSS zoom 2 has only 195 CSS

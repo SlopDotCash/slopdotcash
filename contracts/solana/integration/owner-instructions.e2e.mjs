@@ -9,7 +9,12 @@ import {
   getOrCreateAssociatedTokenAccount,
   mintTo,
 } from "@solana/spl-token";
-import { PublicKey, Transaction } from "@solana/web3.js";
+import {
+  ComputeBudgetProgram,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
 import {
   checkSolanaFunding,
   prepareSolanaFunding,
@@ -235,6 +240,13 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       transaction.instructions.map(instructionRecord),
       referenceTx.instructions.map(instructionRecord),
     );
+    // A real wallet adds its priority fee and may recompile the account order.
+    // Creation recovery must still bind the exact application instructions.
+    if (choice.name === "on")
+      transaction.instructions.unshift(
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1 }),
+      );
     transaction.sign(owner);
     const signature = await provider.connection.sendRawTransaction(
       transaction.serialize(),
@@ -336,6 +348,44 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       10n,
     );
   }
+
+  // A successful creation plus an additional transfer is not the reviewed action.
+  const input = {
+    ...base,
+    projectDigest: hash("slop-project:edge-owner-extra-action"),
+    monthlyCap: "20",
+    automaticMonthly: true,
+  };
+  const prepared = await prepareSolanaVaultCreation(infrastructure, input);
+  const transaction = Transaction.from(
+    Buffer.from(prepared.transaction.transaction, "base64"),
+  );
+  transaction.instructions.unshift(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+  );
+  transaction.add(
+    SystemProgram.transfer({
+      fromPubkey: owner.publicKey,
+      toPubkey: configFees.publicKey,
+      lamports: 1_000_000,
+    }),
+  );
+  transaction.sign(owner);
+  const signature = await provider.connection.sendRawTransaction(
+    transaction.serialize(),
+  );
+  await provider.connection.confirmTransaction(signature, "finalized");
+  assert.notEqual(
+    await program.account.project.fetchNullable(
+      new PublicKey(prepared.projectPda),
+      "finalized",
+    ),
+    null,
+  );
+  await assert.rejects(
+    () => verifySolanaVaultCreation(infrastructure, input, signature),
+    /does not match the pending wallet action/,
+  );
 });
 
 function instructionRecord(instruction) {
