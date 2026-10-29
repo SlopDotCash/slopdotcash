@@ -1871,7 +1871,7 @@ function SubmissionsPanel({
   const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
-  if (shown.length === 0 && !grantError && !authorityUnavailable)
+  if (shown.length === 0 && !grantError && !authorityUnavailable && !error)
     return cases.length === 0 ? (
       <p className="admin-status">You have no private reports yet.</p>
     ) : null;
