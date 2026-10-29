@@ -9,7 +9,7 @@
  */
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { expect, test } from "./fixtures";
+import { escapeRegExp, expect, test } from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -23,6 +23,12 @@ test("failed preflight never enables an email switch that writes to a new accoun
 }) => {
   diagnostics.allowResponse(503, "GET", "/api/v1/project-session");
   diagnostics.allowResponse(403, "POST", "/api/v1/notifications/email");
+  diagnostics.allow(
+    new RegExp(
+      `^console Failed to load resource: the server responded with a status of (?:503 \\(.+\\) at ${escapeRegExp(site)}/api/v1/project-session|403 \\(.+\\) at ${escapeRegExp(site)}/api/v1/notifications/email)$`,
+      "u",
+    ),
+  );
   diagnostics.allowPreviewApiMisses();
   let sessionFail = true;
   let actor = "900000098";
@@ -147,11 +153,11 @@ test("failed preflight never enables an email switch that writes to a new accoun
   });
   await expect(email).toHaveCount(1);
   // Step 1: the identity preflight fails. The control stays unavailable
-  // and retryable; no switch is rendered and nothing is posted.
+  // and retryable; its existing switch stays disabled and nothing is posted.
   await expect(email.getByText(/The account check failed/)).toBeVisible();
   await expect(
     email.getByRole("switch", { name: "Activity email", exact: true }),
-  ).toHaveCount(0);
+  ).toBeDisabled();
   expect(posts).toHaveLength(0);
 
   // Step 2: retry with a working preflight. The preference loads for the
