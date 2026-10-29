@@ -760,13 +760,7 @@ function JoinPoints({
       const assertion = await requestIdentityAssertion({
         origin: identityPublicOrigin(
           // A local backend serves sign-in from the dev server's own origin.
-          localBackendOrigin ??
-            ([
-              "https://staging.slop.cash",
-              "https://slop-staging.pages.dev",
-            ].includes(window.location.origin)
-              ? import.meta.env.VITE_IDENTITY_PUBLIC_ORIGIN
-              : undefined),
+          localBackendOrigin ?? undefined,
           deploymentTier(import.meta.env.VITE_SLOP_ENVIRONMENT),
           { loopback: localBackendOrigin !== null },
         ),
