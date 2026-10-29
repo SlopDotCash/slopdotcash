@@ -141,7 +141,7 @@ test("project funding links open the consolidated overview", async ({
   await expectAccessible(page);
 });
 
-test("account navigation preserves sign-in destinations", async ({
+test("Settings Payouts and Inbox retain distinct sign-in destinations without account tabs", async ({
   diagnostics,
   page,
 }) => {
@@ -158,20 +158,24 @@ test("account navigation preserves sign-in destinations", async ({
   const accountNav = page.getByRole("navigation", {
     name: "Account navigation",
   });
-  await accountNav.getByRole("link", { name: "Payouts" }).click();
+  await expect(accountNav).toHaveCount(0);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/earnings$/u);
+  await expect(accountNav).toHaveCount(0);
   await expect(
     page.getByRole("main").getByRole("link", { name: "Sign in with GitHub" }),
   ).toHaveAttribute("href", "/login?next=earnings");
-  await accountNav.getByRole("link", { name: "Inbox" }).click();
+  await page.goto("/inbox", { waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/inbox$/u);
+  await expect(accountNav).toHaveCount(0);
   await expect(
     page.getByRole("main").getByRole("link", { name: "Sign in with GitHub" }),
   ).toHaveAttribute("href", /next=%2Finbox$/u);
-  await accountNav.getByRole("link", { name: "Settings" }).click();
+  await page.goto("/account", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("heading", { name: "Account", exact: true }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
+  await expect(accountNav).toHaveCount(0);
 
   await enlargeText(page.locator("body"));
   await expectAccessible(page);
@@ -1066,6 +1070,20 @@ test("reaches and reads older inbox notifications without losing the page", asyn
       },
     }),
   );
+  await page.route("**/api/v1/security-cases", (route) =>
+    route.fulfill({
+      json: {
+        viewer: { githubId: "4242", githubLogin: "example" },
+        programs: [],
+        cases: [],
+      },
+    }),
+  );
+  await page.route("**/api/v1/security-submissions", (route) =>
+    route.fulfill({
+      json: { recipientGithubId: "4242", automatic: false, submissions: [] },
+    }),
+  );
   const notifications = Array.from({ length: 101 }, (_, i) => ({
     eventKey: `project-revision:sample:${i}`,
     kind: "project_revision",
@@ -1085,7 +1103,7 @@ test("reaches and reads older inbox notifications without losing the page", asyn
     const last = entries.at(-1);
     return route.fulfill({
       json: {
-        recipientGithubId: "42",
+        recipientGithubId: "4242",
         notifications: entries,
         unread: notifications.filter((n) => n.readAt === null).length,
         nextCursor:
@@ -1105,6 +1123,9 @@ test("reaches and reads older inbox notifications without losing the page", asyn
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/inbox");
+  await expect(
+    page.getByRole("navigation", { name: "Inbox views" }),
+  ).toHaveCount(0);
   await expect(page.locator(".inbox-item")).toHaveCount(100);
   await page
     .getByRole("button", { name: "Mark shown as read", exact: true })
@@ -1189,7 +1210,7 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   await page.route(/\/api\/v1\/notifications(?:\?.*)?$/u, (route) =>
     route.fulfill({
       json: {
-        recipientGithubId: "42",
+        recipientGithubId: "4242",
         notifications,
         unread: 3,
         nextCursor: null,
@@ -1310,7 +1331,7 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   await expect(activityEmail).toBeEnabled();
   await expect(activityEmail).not.toBeChecked();
   await expectAccessible(page);
-  expect(paymentReads).toEqual([]);
+  expect(paymentReads.length).toBeGreaterThan(0);
 });
 
 test("an admin leaves an unset reward asset unchanged until choosing it", async ({

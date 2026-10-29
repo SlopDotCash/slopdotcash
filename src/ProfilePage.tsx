@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
-import { browserDeployment } from "./lib/browser-deployment";
+import {
+  browserDeployment,
+  localBackendOrigin,
+} from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
 import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
@@ -83,9 +86,11 @@ export function ProfilePage({
             </button>
           </>
         )}
-        <p>
-          <Link href="/points">Find a contributor</Link>
-        </p>
+        {!checking ? (
+          <p>
+            <Link href="/points">Find a contributor</Link>
+          </p>
+        ) : null}
       </main>
     );
   }
@@ -152,8 +157,6 @@ export function ProfilePage({
           </ExternalLinkAnchor>
         ) : currentWallet.status === "loading" ? (
           <span>Checking wallet…</span>
-        ) : membership.own ? (
-          <Link href="/account#wallets">Add a payout wallet</Link>
         ) : null}
       </ContributorIdentity>
       <ProfilePoints
@@ -373,7 +376,7 @@ function useCurrentWallet(
       WALLET_CLAIM_TIMEOUT_MS,
     );
     void fetch(
-      `${browserDeployment.api}/api/v1/wallet-claims/actors/${githubActorId}/current`,
+      `${localBackendOrigin ?? browserDeployment.api}/api/v1/wallet-claims/actors/${githubActorId}/current`,
       {
         cache: "no-store",
         headers: { Accept: "application/json" },

@@ -87,8 +87,10 @@ before displaying or retaining the response. A later session read does not
 establish who received an earlier response. Case lists already carry `viewer`
 for the same check.
 
-The private workspace also sends `x-slop-expected-github-id` on each report
-and case request. Authentication resolves the current actor first, then
+The private workspace also sends `x-slop-expected-github-id` on each report,
+case and notification action request. Notification reads bind to the actor
+when the preceding session read succeeds. Authentication resolves the current
+actor first, then
 refuses a malformed expectation or a different actor before private reads or
 writes. The header only narrows the authenticated session; it never supplies
 authority. Existing clients may omit it and retain the normal role checks.

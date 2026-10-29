@@ -565,12 +565,6 @@
 .asset-details code {
   overflow-wrap: anywhere;
 }
-.vault-ledger-details {
-  margin-top: 1rem;
-}
-.vault-ledger-details[open] > summary {
-  margin-bottom: 0.75rem;
-}
 .site-footer--compact {
   color: var(--ink);
   padding-block: 1.5rem;
@@ -603,24 +597,14 @@
   }
 }
 
-/* Small compatibility additions for lazy settings in the refreshed account design. */
-.account-wallets > summary,
-#notifications > summary,
+/* Compact settings sections and the remaining disclosures. */
 #sessions > summary,
 .standings-page #rules > summary {
   cursor: pointer;
   font-weight: 600;
 }
-.account-wallets > summary > h2 {
-  display: inline;
-  margin: 0;
-  font-size: inherit;
-}
 .account-wallets > .earnings-page {
-  padding-block: 1rem 0;
-}
-.account-page #security > #sessions {
-  margin-block: 1rem;
+  padding-block: 0;
 }
 .account-page #notifications .inbox-email-settings {
   margin-top: 1rem;

@@ -10,6 +10,7 @@ import {
 } from "../workers/slopbot/value-context";
 import { collectValueEvidence } from "../workers/slopbot/value-evidence";
 import { resolveGitHubToken } from "./github-token";
+import { isInsideDirectory } from "./path-containment";
 import {
   fetchProjectRegistry,
   renderProjectRevisions,
@@ -47,14 +48,11 @@ const output = resolve(directory);
 if (!isAbsolute(directory))
   throw new Error("Output directory must be absolute");
 const repositoryRoot = await realpath(resolve(import.meta.dir, ".."));
-if (output === repositoryRoot || output.startsWith(`${repositoryRoot}/`))
+if (isInsideDirectory(repositoryRoot, output))
   throw new Error("Raw evidence must be outside the repository");
 await mkdir(output, { recursive: true, mode: 0o700 });
 const canonicalOutput = await realpath(output);
-if (
-  canonicalOutput === repositoryRoot ||
-  canonicalOutput.startsWith(`${repositoryRoot}/`)
-)
+if (isInsideDirectory(repositoryRoot, canonicalOutput))
   throw new Error(
     "Raw evidence must be outside the repository, including through symlinks",
   );

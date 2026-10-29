@@ -14,6 +14,22 @@ test("verified activity email preference persists and can be withdrawn @registry
     recordVideo: { dir: test.info().outputPath("email-preference-video") },
   });
   const page = await context.newPage();
+  await page.route("**/api/v1/payments/me", (route) =>
+    route.fulfill({
+      json: {
+        githubUserId:
+          test.info().project.use.viewport?.width === 320
+            ? "900000104"
+            : "900000101",
+        wallets: [],
+        payments: [],
+        monthlyAwards: [],
+        balances: [],
+        directTransfers: [],
+        walletObservations: [],
+      },
+    }),
+  );
   const paymentReads: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/v1/payments/me")
@@ -35,6 +51,15 @@ test("verified activity email preference persists and can be withdrawn @registry
     .click();
   await expect(page).toHaveURL(/account#notifications$/);
   const preferences = page.getByRole("region", { name: "Email preferences" });
+  await expect(preferences).toHaveCount(1);
+  await expect(
+    page.locator("#wallets > summary, #notifications > summary"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Wallets", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Local preview only/u)).toHaveCount(0);
+  await expect(page.locator(".wallet-note")).toHaveCount(0);
   await expect(preferences).toContainText("applicant@example.com");
   const toggle = preferences.getByRole("switch", { name: "Activity email" });
   // Restore opt-out before exercising the complete consent workflow.
@@ -86,6 +111,6 @@ test("verified activity email preference persists and can be withdrawn @registry
   await expectAccessible(page);
   await page.reload({ waitUntil: "networkidle" });
   await expect(toggle).not.toBeChecked();
-  expect(paymentReads).toEqual([]);
+  expect(paymentReads.length).toBeGreaterThan(0);
   await context.close();
 });

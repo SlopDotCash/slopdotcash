@@ -369,23 +369,6 @@ textarea:focus-visible {
   text-underline-offset: 5px;
 }
 
-.connection-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 20px;
-  padding: 14px 0;
-  border-block: 1px solid var(--line);
-}
-
-.connection-row > span {
-  color: var(--muted);
-}
-
-.connection-row > button {
-  margin-left: auto;
-}
-
 .wallet-heading {
   margin: 28px 0 0;
 }
@@ -2102,7 +2085,7 @@ small {
   color: var(--ink);
   background: var(--paper);
 }
-.points-panel button:not(.button) {
+.points-panel button:not(.button, .email-switch) {
   margin: 0.3rem;
 }
 .points-panel button:disabled {
@@ -2194,7 +2177,7 @@ small {
 }
 
 @media (max-width: 680px) {
-  /* Standings fit a phone, so Points and Money received stay on screen. */
+  /* Keep the points standings inside a phone viewport. */
   .points-panel .points-table table {
     min-width: 0;
   }
@@ -2206,7 +2189,7 @@ small {
   .points-panel .points-table td:first-child {
     padding-left: 0;
   }
-  /* Headers wrap only between words: "Money received" takes two lines. */
+  /* Column headings wrap only between words. */
   .points-panel .points-table th,
   .points-panel .points-table th:last-child {
     overflow-wrap: normal;
@@ -2960,17 +2943,6 @@ a.payout-tx:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
-}
-
-.account-closure {
-  display: grid;
-  gap: 0.75rem;
-  max-width: 40rem;
-  margin-block: 1.5rem;
-}
-
-.account-closure .button {
-  justify-self: start;
 }
 
 /* Contributor profile: tiles, charts and payout states. */
@@ -4102,16 +4074,6 @@ html:has(.security-page) {
   font-family: inherit;
   font-size: 13px;
   font-weight: 500;
-}
-
-.vault-finality {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .vault-addresses {

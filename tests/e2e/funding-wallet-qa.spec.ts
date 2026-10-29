@@ -1,9 +1,10 @@
 /** Browser-only synthetic identity responses never register a real wallet. */
 import AxeBuilder from "@axe-core/playwright";
 import type { Page, TestInfo } from "@playwright/test";
-import { PROJECTS } from "../../src/lib/projects.mjs";
+import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
 import { expect, serveProjectCycleIndex, test } from "./fixtures";
+import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 test("legacy wallet links open Account Wallets on direct navigation and reload", {
   tag: ["@pages"],
@@ -20,6 +21,11 @@ test("legacy wallet links open Account Wallets on direct navigation and reload",
     const response = await page.goto(path, { waitUntil: "networkidle" });
     expect(response?.status()).toBe(200);
     await expect(page).toHaveURL(/\/account#wallets$/u);
+    await expect(
+      page.getByRole("region", { name: "Wallets", exact: true }),
+    ).toHaveCount(1);
+    await expect(page.locator("#wallets > summary")).toHaveCount(0);
+    await expect(page.locator(".wallet-note")).toHaveCount(0);
     await expect(
       page.getByRole("heading", { name: "Wallets", exact: true }),
     ).toBeInViewport();
@@ -119,6 +125,9 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
+  await page.route("**/api/v1/notifications/email", (route) =>
+    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+  );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({
       json: {
@@ -177,7 +186,7 @@ const BASE_USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const BASE_VAULT = "0x1000000000000000000000000000000000000001";
 
 /** Eliza with a registered Base vault: deployment facts only, no chain or wallet. */
-function baseVaultProject() {
+function baseVaultProject(): ProjectDefinition {
   const original = PROJECTS.find((entry) => entry.id === "eliza");
   if (original?.reward.kind !== "monthly-pool")
     throw new Error("Missing monthly project fixture");
@@ -271,7 +280,7 @@ test("vault totals stay current without a refresh button and keep each state dis
     "GET",
     "/api/v1/payments/projects/eliza/vault",
   );
-  const project = baseVaultProject();
+  let project = baseVaultProject();
   const start = Date.now();
   await page.clock.install({ time: start });
   await page.route(
@@ -327,29 +336,27 @@ test("vault totals stay current without a refresh button and keep each state dis
     .locator(".vault-stat")
     .filter({ hasText: "Available" });
   await expect(available).toContainText("600 USDC");
-  const reserved = section
-    .locator(".vault-stat")
-    .filter({ hasText: "Reserved for awards" });
-  await expect(reserved.getByRole("definition")).toHaveText([
-    "200 USDC",
-    "incl. 4 USDC fees",
+  await expect(section.getByText("Reserved for awards")).toHaveCount(0);
+  const paid = section.locator(".vault-stat").filter({ hasText: "Paid out" });
+  await expect(paid.getByRole("definition")).toHaveText([
+    "196 USDC",
+    "+ 4 USDC fees",
   ]);
   await expect(section.getByRole("alert")).toHaveCount(0);
-  const funding = section.getByRole("region", {
-    name: "Fund or withdraw · Base",
-  });
   await expect(
-    funding.getByRole("heading").locator('svg[data-network="base"]'),
-  ).toBeVisible();
-  await expect(funding).toContainText("Direct transfers are not credited");
-  // One wallet empty state for the section, and no refresh control.
-  await expect(section.getByText("No wallet found")).toHaveCount(1);
+    section.getByRole("region", { name: /^Fund or withdraw/u }),
+  ).toHaveCount(0);
+  await expect(
+    section.getByRole("region", { name: /^Vault monthly authorization/u }),
+  ).toHaveCount(0);
+  await expect(section.getByText("No wallet found")).toHaveCount(0);
   await expect(section.getByRole("button", { name: /refresh/i })).toHaveCount(
     0,
   );
-  const ledger = section.locator(".vault-ledger-details summary");
-  await keyboardTo(page, ledger);
-  await expect(ledger).toBeFocused();
+  await expect(section.locator(".vault-ledger-details")).toHaveCount(0);
+  await expect(
+    section.getByText("Ledger details", { exact: true }),
+  ).toHaveCount(0);
   await audit(page, info, "vault-totals-ready");
 
   // Returning to the page after the cache window reads the totals again.
@@ -365,14 +372,15 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(available).toContainText("700 USDC");
   expect(reads).toBe(2);
 
-  // When the snapshot turns stale, the page reads again and marks it.
+  // An older snapshot refreshes automatically without a timestamp badge.
   await page.waitForLoadState("networkidle");
   await page.clock.fastForward(31 * 60_000);
-  await expect(section.getByRole("alert")).toContainText("Outdated · read");
+  await expect(section.getByText(/^Outdated · read/u)).toHaveCount(0);
+  await expect(section.getByRole("alert")).toHaveCount(0);
   expect(reads).toBe(3);
   await expect(available).toContainText("700 USDC");
 
-  // A failed refresh keeps the last totals, marked stale, with a retry.
+  // A failed refresh keeps the last totals and explains the failed read.
   read = { status: 503, snapshots: [] };
   await page.waitForLoadState("networkidle");
   await page.clock.fastForward(61_000);
@@ -381,6 +389,7 @@ test("vault totals stay current without a refresh button and keep each state dis
     section.getByRole("alert").filter({ hasText: "unavailable" }),
   ).toContainText("Vault totals are unavailable.");
   await expect(available).toContainText("700 USDC");
+  await expect(section.getByText(/^Outdated · read/u)).toHaveCount(0);
   expect(diagnostics.count(unavailable)).toBe(1);
   read = {
     status: 200,
@@ -428,6 +437,42 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(available).toContainText("600 USDC");
   await doubleTextSize(page);
   await audit(page, info, "vault-totals-200-percent-text");
+
+  // Verified maintainers retain wallet actions in project settings.
+  await serveProjectMaintainer(page, () => project);
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  const funding = page.getByRole("region", {
+    name: "Fund or withdraw · Base",
+    exact: true,
+  });
+  await expect(
+    funding.getByRole("heading").locator('svg[data-network="base"]'),
+  ).toBeVisible();
+  await expect(funding).toContainText("Direct transfers are not credited");
+  await expect(funding.getByText("No wallet found")).toHaveCount(1);
+  await expect(
+    page.getByRole("region", { name: "Vault monthly authorization · Base" }),
+  ).toBeVisible();
+  await audit(page, info, "owner-vault-settings");
+
+  // An unset vault has no public section; its maintainer can still set it up.
+  if (!project.escrow) throw new Error("Missing escrow fixture");
+  project = {
+    ...project,
+    escrow: { ...project.escrow, deployments: [] },
+  };
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("region", { name: "Project escrow", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("The project vault is not set up.")).toHaveCount(
+    0,
+  );
+  await audit(page, info, "unconfigured-public-vault-hidden");
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("region", { name: "Set up project vault", exact: true }),
+  ).toBeVisible();
 });
 
 test("project navigation never reuses another project's vault balance", async ({

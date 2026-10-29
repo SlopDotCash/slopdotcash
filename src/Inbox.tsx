@@ -30,21 +30,9 @@ import {
   notificationTitle,
   parseNotificationsResponse,
 } from "./lib/notifications";
-import { currentProjectSession, projectApiRequest } from "./lib/project-api";
+import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
-import {
-  AccountNav,
-  formatDateTime,
-  RoutePageHeader,
-  SignInPanel,
-} from "./Presentation";
-import {
-  GRANT_ERRORS,
-  githubSubmissionStatus,
-  privateReportHref,
-  type Submission,
-  submissionStatus,
-} from "./PrivateReportSummary";
+import { formatDateTime, RoutePageHeader, SignInPanel } from "./Presentation";
 
 const SecurityInbox = lazy(() =>
   import("./SecurityBounty").then((module) => ({
@@ -66,7 +54,7 @@ async function loadInbox(
 ): Promise<InboxState> {
   // Signed out is an ordinary state. Read the session first so a signed-out
   // visit never sends a notifications request the browser logs as a 401. When
-  // the session read itself fails, the notifications request still decides.
+  // the first session read fails, the response still needs a fresh matching session.
   const session = await currentProjectSession().catch(() => undefined);
   if (session === null) return { status: "signed-out" };
   const response = await fetchWithDeadline(
@@ -75,26 +63,44 @@ async function loadInbox(
       credentials: "same-origin",
       cache: "no-store",
       redirect: "error",
+      headers:
+        session === undefined
+          ? undefined
+          : { "x-slop-expected-github-id": session.githubId },
       signal,
     },
   );
   if (response.status === 401) return { status: "signed-out" };
   if (!response.ok) throw new Error(UNAVAILABLE);
+  const value = parseNotificationsResponse(
+    await readBoundedJson(response, 1_048_576, "inbox"),
+  );
+  const current = await currentProjectSession();
+  if (current === null) return { status: "signed-out" };
+  if (
+    value.recipientGithubId !== current.githubId ||
+    (session !== undefined && session.githubId !== current.githubId)
+  )
+    throw new Error("The inbox account changed. Retry.");
   return {
     status: "ready",
-    value: parseNotificationsResponse(
-      await readBoundedJson(response, 1_048_576, "inbox"),
-    ),
+    value,
   };
 }
 
-async function markRead(eventKeys: string[]): Promise<"ok" | "signed-out"> {
+async function markRead(
+  eventKeys: string[],
+  expectedActorId: string,
+): Promise<"ok" | "signed-out"> {
   const response = await fetchWithDeadline("/api/v1/notifications/read", {
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
     redirect: "error",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-slop-expected-github-id": expectedActorId,
+    },
     body: JSON.stringify({ eventKeys }),
   });
   if (response.status === 401) return "signed-out";
@@ -105,6 +111,7 @@ async function markRead(eventKeys: string[]): Promise<"ok" | "signed-out"> {
 
 async function acknowledgeSecurity(
   notification: Notification,
+  expectedActorId: string,
 ): Promise<"ok" | "signed-out"> {
   const response = await fetchWithDeadline(
     `/api/v1/security-cases/${encodeURIComponent(notification.subject)}/acknowledge`,
@@ -113,7 +120,10 @@ async function acknowledgeSecurity(
       credentials: "same-origin",
       cache: "no-store",
       redirect: "error",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-slop-expected-github-id": expectedActorId,
+      },
       body: JSON.stringify({ eventKey: notification.eventKey }),
     },
   );
@@ -124,25 +134,6 @@ async function acknowledgeSecurity(
 }
 
 export default function InboxPage() {
-  const [view, setView] = useState(() => {
-    const query = new URLSearchParams(window.location.search);
-    if (query.get("view") === "notifications") return "notifications";
-    return query.get("view") === "reports" ||
-      query.has("case") ||
-      query.has("submission")
-      ? "reports"
-      : "notifications";
-  });
-  const [reports, setReports] = useState<Submission[]>([]);
-  const [reportsError, setReportsError] = useState<string | null>(null);
-  const [focusId, setFocusId] = useState(() => {
-    const id = new URLSearchParams(window.location.search).get("submission");
-    return id && /^ss_[A-Za-z0-9_-]{8,72}$/u.test(id) ? id : null;
-  });
-  const [grantError, setGrantError] = useState(() => {
-    const code = new URLSearchParams(window.location.search).get("intake");
-    return code && /^grant_[a-z_]{3,40}$/u.test(code) ? code : null;
-  });
   const [cursor, setCursor] = useState<string | null>(null);
   const [previousPages, setPreviousPages] = useState<(string | null)[]>([]);
   const [state, setState] = useState<InboxState>({ status: "loading" });
@@ -151,19 +142,11 @@ export default function InboxPage() {
   const generation = useRef(0);
   const [recipient, setRecipient] = useState<string | null>(null);
   const previousRecipient = useRef<string | null>(null);
-  const reportsGeneration = useRef(0);
-  const [reportOwner, setReportOwner] = useState<string | null>(null);
   const acceptRecipient = useCallback((id: string | null) => {
     const changed =
       previousRecipient.current !== null && previousRecipient.current !== id;
     if (id === null || changed) {
       clearAllDrafts();
-      reportsGeneration.current++;
-      setReports([]);
-      setReportsError(null);
-      setReportOwner(null);
-      setFocusId(null);
-      setGrantError(null);
       const url = new URL(window.location.href);
       for (const key of ["case", "submission", "intake"])
         url.searchParams.delete(key);
@@ -190,55 +173,6 @@ export default function InboxPage() {
     },
     [cursor, acceptRecipient],
   );
-  const needsReports =
-    view === "notifications" &&
-    (focusId !== null ||
-      (state.status === "ready" &&
-        state.value.notifications.some(
-          (notice) => notice.kind === "security_report_received",
-        )));
-  const loadReports = useCallback(() => {
-    const current = ++reportsGeneration.current;
-    if (recipient === null || !needsReports) return;
-    setReportsError(null);
-    void projectApiRequest<{
-      recipientGithubId: string;
-      submissions: Submission[];
-    }>("GET", "security-submissions")
-      .then(async (body) => {
-        if (body.recipientGithubId !== recipient)
-          throw new Error("Private report response belongs to another account");
-        const session = await currentProjectSession();
-        if (current !== reportsGeneration.current) return;
-        if (session?.githubId !== recipient) {
-          acceptRecipient(session?.githubId ?? null);
-          return;
-        }
-        setReportOwner(recipient);
-        setReports(body.submissions);
-      })
-      .catch(async () => {
-        if (current !== reportsGeneration.current) return;
-        try {
-          const session = await currentProjectSession();
-          if (current !== reportsGeneration.current) return;
-          if (session?.githubId !== recipient)
-            acceptRecipient(session?.githubId ?? null);
-          else setReportsError("Private report status could not load.");
-        } catch {
-          if (current === reportsGeneration.current) {
-            setRecipient(null);
-            setReportsError("Private report status could not load.");
-          }
-        }
-      });
-    return () => {
-      reportsGeneration.current++;
-    };
-  }, [recipient, acceptRecipient, needsReports]);
-  useEffect(loadReports, [loadReports]);
-  const visibleReports =
-    reportOwner === recipient && recipient !== null ? reports : [];
   const load = useCallback(() => {
     const current = ++generation.current;
     const controller = new AbortController();
@@ -249,13 +183,15 @@ export default function InboxPage() {
       },
       async () => {
         if (generation.current !== current) return;
-        setState({ status: "error", message: UNAVAILABLE });
         // Revalidate the account before retaining private metadata during an outage.
         try {
           const session = await currentProjectSession();
           if (generation.current !== current) return;
           if (session === null) receive({ status: "signed-out" });
-          else acceptRecipient(session.githubId);
+          else {
+            acceptRecipient(session.githubId);
+            setState({ status: "error", message: UNAVAILABLE });
+          }
         } catch {
           if (generation.current === current) {
             setRecipient(null);
@@ -285,19 +221,68 @@ export default function InboxPage() {
     [acceptRecipient, load],
   );
 
-  function act(action: () => Promise<"ok" | "signed-out">, done: string) {
+  function act(
+    action: (expectedActorId: string) => Promise<"ok" | "signed-out">,
+    done: string,
+  ) {
+    if (busy || recipient === null || state.status !== "ready") return;
+    const expectedActorId = recipient;
+    const previous = state;
+    const current = ++generation.current;
     setMessage("");
+    setState({ status: "loading" });
+    const ownsView = async () => {
+      try {
+        const session = await currentProjectSession();
+        if (generation.current !== current) return false;
+        if (session === null) {
+          receive({ status: "signed-out" });
+          return false;
+        }
+        if (session.githubId !== expectedActorId) {
+          acceptRecipient(session.githubId);
+          setState({
+            status: "error",
+            message: "Your account changed. Retry your inbox.",
+          });
+          return false;
+        }
+        return true;
+      } catch {
+        if (generation.current === current) {
+          setRecipient(null);
+          setState({
+            status: "error",
+            message: "The inbox and private session could not load. Retry.",
+          });
+        }
+        return false;
+      }
+    };
     return run(
       async () => {
-        if ((await action()) === "signed-out") {
-          receive({ status: "signed-out" });
-          return;
-        }
-        const current = ++generation.current;
-        const next = await loadInbox(new AbortController().signal, cursor);
-        if (generation.current === current) {
-          receive(next);
-          setMessage(done);
+        if (!(await ownsView())) return;
+        try {
+          if ((await action(expectedActorId)) === "signed-out") {
+            if (generation.current === current)
+              receive({ status: "signed-out" });
+            return;
+          }
+          if (!(await ownsView())) return;
+          const next = await loadInbox(new AbortController().signal, cursor);
+          if (generation.current === current) {
+            receive(next);
+            if (
+              next.status === "ready" &&
+              next.value.recipientGithubId === expectedActorId
+            )
+              setMessage(done);
+          }
+        } catch (caught) {
+          if (await ownsView()) {
+            setState(previous);
+            throw caught;
+          }
         }
       },
       (error) => errorMessage(error, UNAVAILABLE),
@@ -307,30 +292,6 @@ export default function InboxPage() {
   return (
     <main className="shell route-main inbox-page">
       <RoutePageHeader icon={<Inbox />} title="Inbox" />
-      <AccountNav current="inbox" />
-      <nav className="report-form-actions" aria-label="Inbox views">
-        {["reports", "notifications"].map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            className="button secondary-button"
-            aria-pressed={view === tab}
-            onClick={() => {
-              setView(tab);
-              load();
-              const query = new URLSearchParams(window.location.search);
-              query.set("view", tab);
-              window.history.replaceState(
-                window.history.state,
-                "",
-                `/inbox?${query}`,
-              );
-            }}
-          >
-            {tab === "reports" ? "Reports" : "Notifications"}
-          </button>
-        ))}
-      </nav>
       {state.status === "loading" ? (
         <p role="status">Loading your inbox…</p>
       ) : null}
@@ -352,7 +313,7 @@ export default function InboxPage() {
           </button>
         </div>
       ) : null}
-      {view === "reports" && recipient !== null ? (
+      {recipient !== null ? (
         <div hidden={state.status === "loading"}>
           <Suspense fallback={<p role="status">Loading reports…</p>}>
             <SecurityInbox
@@ -364,100 +325,63 @@ export default function InboxPage() {
           </Suspense>
         </div>
       ) : null}
-      {view === "notifications" ? (
-        <>
-          {grantError ? (
-            <p role="alert" className="form-error">
-              {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}{" "}
-              <a
-                href={`/security?${new URLSearchParams({ ...(focusId ? { submission: focusId } : {}), intake: grantError })}`}
-              >
-                Open private report
-              </a>
-            </p>
-          ) : null}
-          {reportsError && recipient !== null ? (
-            <div className="form-error" role="alert">
-              {reportsError}{" "}
-              <button
-                className="text-button"
-                type="button"
-                onClick={loadReports}
-              >
-                Retry report status
-              </button>
-            </div>
-          ) : null}
-          {state.status === "error" &&
-          focusId &&
-          visibleReports.find((report) => report.id === focusId) ? (
-            <ol className="inbox-list" aria-label="Private report receipt">
-              <PrivateReportItem
-                submission={
-                  visibleReports.find(
-                    (report) => report.id === focusId,
-                  ) as Submission
-                }
-              />
-            </ol>
-          ) : null}
-          {state.status === "ready" ? (
-            <InboxList
-              busy={busy}
-              response={state.value}
-              reports={visibleReports}
-              focusId={focusId}
-              onMark={(keys, done) => void act(() => markRead(keys), done)}
-              onAcknowledge={(notification) =>
-                void act(
-                  () => acknowledgeSecurity(notification),
-                  "Security notice acknowledged.",
-                )
-              }
-            />
-          ) : null}
-          {state.status === "ready" &&
-          (previousPages.length > 0 || state.value.nextCursor) ? (
-            <nav aria-label="Notification pages" className="handoff-actions">
-              <button
-                type="button"
-                className="button secondary-button"
-                disabled={busy || previousPages.length === 0}
-                onClick={() => {
-                  setCursor(previousPages.at(-1) ?? null);
-                  setPreviousPages((pages) => pages.slice(0, -1));
-                  setMessage("");
-                }}
-              >
-                Newer notifications
-              </button>
-              <button
-                type="button"
-                className="button secondary-button"
-                disabled={busy || !state.value.nextCursor}
-                onClick={() => {
-                  setPreviousPages((pages) => [...pages, cursor]);
-                  setCursor(state.value.nextCursor ?? null);
-                  setMessage("");
-                }}
-              >
-                Older notifications
-              </button>
-            </nav>
-          ) : null}
-          {message ? <p role="status">{message}</p> : null}
-          {actionError ? (
-            <p className="form-error" role="alert">
-              {actionError}
-            </p>
-          ) : null}
-          {state.status === "ready" ? (
-            <p>
-              <a href="/account#notifications">Email preferences</a>
-            </p>
-          ) : null}
-        </>
-      ) : null}
+      <>
+        {state.status === "ready" ? (
+          <InboxList
+            busy={busy}
+            response={state.value}
+            onMark={(keys, done) =>
+              void act((actorId) => markRead(keys, actorId), done)
+            }
+            onAcknowledge={(notification) =>
+              void act(
+                (actorId) => acknowledgeSecurity(notification, actorId),
+                "Security notice acknowledged.",
+              )
+            }
+          />
+        ) : null}
+        {state.status === "ready" &&
+        (previousPages.length > 0 || state.value.nextCursor) ? (
+          <nav aria-label="Notification pages" className="handoff-actions">
+            <button
+              type="button"
+              className="button secondary-button"
+              disabled={busy || previousPages.length === 0}
+              onClick={() => {
+                setCursor(previousPages.at(-1) ?? null);
+                setPreviousPages((pages) => pages.slice(0, -1));
+                setMessage("");
+              }}
+            >
+              Newer notifications
+            </button>
+            <button
+              type="button"
+              className="button secondary-button"
+              disabled={busy || !state.value.nextCursor}
+              onClick={() => {
+                setPreviousPages((pages) => [...pages, cursor]);
+                setCursor(state.value.nextCursor ?? null);
+                setMessage("");
+              }}
+            >
+              Older notifications
+            </button>
+          </nav>
+        ) : null}
+        {message ? <p role="status">{message}</p> : null}
+        {actionError ? (
+          <p className="form-error" role="alert">
+            {actionError}
+          </p>
+        ) : null}
+        {state.status === "ready" ? (
+          <p>
+            <a href="/account#notifications">Email preferences</a>
+          </p>
+        ) : null}
+      </>
     </main>
   );
 }
@@ -467,11 +391,7 @@ function InboxList({
   busy,
   onMark,
   onAcknowledge,
-  reports,
-  focusId,
 }: {
-  reports: Submission[];
-  focusId: string | null;
   response: NotificationsResponse;
   busy: boolean;
   onMark(eventKeys: string[], done: string): void;
@@ -481,17 +401,7 @@ function InboxList({
     .filter((n) => n.readAt === null)
     .map((n) => n.eventKey)
     .slice(0, MAX_NOTIFICATION_MARK);
-  const focused = reports.find((report) => report.id === focusId);
-  const forNotice = (notice: Notification) =>
-    notice.kind === "security_report_received"
-      ? reports.find((report) => report.caseId === notice.subject)
-      : undefined;
-  const ordered = [...response.notifications].sort(
-    (a, b) =>
-      Number(forNotice(b)?.id === focusId) -
-      Number(forNotice(a)?.id === focusId),
-  );
-  if (response.notifications.length === 0 && !focused)
+  if (response.notifications.length === 0)
     return <p className="inbox-empty">You have no notifications.</p>;
   return (
     <>
@@ -511,18 +421,11 @@ function InboxList({
         ) : null}
       </div>
       <ol className="inbox-list" aria-label="Notifications">
-        {focused &&
-        !response.notifications.some(
-          (notice) => forNotice(notice)?.id === focusId,
-        ) ? (
-          <PrivateReportItem submission={focused} />
-        ) : null}
-        {ordered.map((n) => (
+        {response.notifications.map((n) => (
           <InboxItem
             busy={busy}
             key={n.eventKey}
             notification={n}
-            submission={forNotice(n)}
             onMark={onMark}
             onAcknowledge={onAcknowledge}
           />
@@ -537,18 +440,14 @@ function InboxItem({
   busy,
   onMark,
   onAcknowledge,
-  submission,
 }: {
-  submission?: Submission;
   notification: Notification;
   busy: boolean;
   onMark(eventKeys: string[], done: string): void;
   onAcknowledge(notification: Notification): void;
 }) {
   const unread = n.readAt === null;
-  const title = submission
-    ? `Private report · ${submission.projectId}`
-    : notificationTitle(n);
+  const title = notificationTitle(n);
   const Icon =
     n.kind.startsWith("security_") || n.kind.startsWith("slopbot_")
       ? ShieldCheck
@@ -564,26 +463,20 @@ function InboxItem({
             ? FolderGit2
             : Bell;
   return (
-    <li
-      className={unread ? "inbox-item inbox-unread" : "inbox-item"}
-      aria-labelledby={submission ? `submission-${submission.id}` : undefined}
-    >
+    <li className={unread ? "inbox-item inbox-unread" : "inbox-item"}>
       <div className="inbox-item-heading">
         <span className="inbox-kind-icon">
           <Icon size={20} aria-hidden="true" />
         </span>
         <a
           className="inbox-title"
-          id={submission ? `submission-${submission.id}` : undefined}
-          href={submission ? privateReportHref(submission) : n.actionPath}
-          aria-label={`${title}: ${submission ? "Open case" : notificationAction(n)}`}
+          href={n.actionPath}
+          aria-label={`${title}: ${notificationAction(n)}`}
         >
           {title}
         </a>
       </div>
-      {submission ? (
-        <PrivateReportStatus submission={submission} />
-      ) : n.detail && n.detail !== title ? (
+      {n.detail && n.detail !== title ? (
         <p className="inbox-detail">{n.detail}</p>
       ) : null}
       <p className="inbox-meta">
@@ -601,11 +494,6 @@ function InboxItem({
         ) : null}
       </p>
       <div className="inbox-actions">
-        {submission ? (
-          <a className="text-button" href={privateReportHref(submission)}>
-            Open case
-          </a>
-        ) : null}
         {n.kind === "security_case" && n.acknowledgedAt !== undefined ? (
           n.acknowledgedAt ? null : (
             <button
@@ -631,50 +519,6 @@ function InboxItem({
           </button>
         ) : null}
       </div>
-    </li>
-  );
-}
-
-function PrivateReportStatus({ submission }: { submission: Submission }) {
-  return (
-    <div className="private-report-status">
-      {submission.intake ? (
-        <p className="inbox-meta">
-          Slop receipt ·{" "}
-          <time dateTime={submission.intake.receivedAt}>
-            {formatDateTime(submission.intake.receivedAt)}
-          </time>
-        </p>
-      ) : null}
-      <p className="inbox-detail">{submissionStatus(submission)}</p>
-      {submission.intake ? (
-        <span className="inbox-meta">
-          {submission.state === "draft"
-            ? "GitHub delivery optional · not sent"
-            : githubSubmissionStatus(submission)}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-function PrivateReportItem({ submission }: { submission: Submission }) {
-  return (
-    <li className="inbox-item" aria-labelledby={`submission-${submission.id}`}>
-      <div className="inbox-item-heading">
-        <ShieldCheck size={20} aria-hidden="true" />
-        <a
-          id={`submission-${submission.id}`}
-          className="inbox-title"
-          href={privateReportHref(submission)}
-        >
-          Private report · {submission.projectId}
-        </a>
-      </div>
-      <PrivateReportStatus submission={submission} />
-      <a className="text-button" href={privateReportHref(submission)}>
-        Open case
-      </a>
     </li>
   );
 }

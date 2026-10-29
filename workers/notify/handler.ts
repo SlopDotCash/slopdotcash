@@ -15,6 +15,7 @@ import {
   SLOPBOT_SPEND_NOTICE_PATH,
   type SlopbotFailureNotice,
   type SlopbotSpendNotice,
+  safeProviderFailure,
   validFailureNotice,
   validSpendNotice,
 } from "./contracts";
@@ -258,6 +259,7 @@ function noticeText(
         : "A Slopbot request to Surplus did not produce a valid result.",
       `Model: ${notice.model}. Recorded at: ${notice.occurredAt}.`,
       `Internal cost record: ${notice.callId}.`,
+      `Cause: ${safeProviderFailure(notice.failure)}.`,
       "The failed call remains recorded. A fallback may have completed the assessment; otherwise it stays pending for retry.",
       "Check provider availability and budget settings. Unknown charges remain unknown.",
       "This notice does not change a spending limit, publish a score or approve a payout.",

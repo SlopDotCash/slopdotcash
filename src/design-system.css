@@ -191,7 +191,8 @@ pre {
 }
 
 /* Plain buttons inside panels and forms share the secondary treatment. */
-.points-panel button:not(.button),
+.points-panel button:not(.button, .email-switch),
+.points-period button,
 .funding-workbench button:not(.button),
 .earnings-page button:not(.button),
 .login-page button:not(.button),
@@ -208,7 +209,8 @@ pre {
   cursor: pointer;
 }
 
-.points-panel button:not(.button):hover:not(:disabled),
+.points-panel button:not(.button, .email-switch):hover:not(:disabled),
+.points-period button:hover:not(:disabled),
 .funding-workbench button:not(.button):hover:not(:disabled),
 .earnings-page button:not(.button):hover:not(:disabled),
 .login-page button:not(.button):hover:not(:disabled),
@@ -217,7 +219,8 @@ pre {
   background: rgba(243, 239, 230, 0.06);
 }
 
-.points-panel button:not(.button):disabled,
+.points-panel button:not(.button, .email-switch):disabled,
+.points-period button:disabled,
 .funding-workbench button:not(.button):disabled,
 .earnings-page button:not(.button):disabled,
 .login-page button:not(.button):disabled,
@@ -643,42 +646,6 @@ label {
   color: var(--muted);
 }
 
-/* Eligible work under the project prompt reuses the project rows. */
-.open-work {
-  margin-top: 32px;
-}
-
-.open-work h3 {
-  margin: 0;
-  font-size: 22px;
-}
-
-.open-work p {
-  max-width: 62ch;
-  margin: 8px 0 16px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-/* Whole rows are links; only the running-text link keeps an underline. */
-.project-hero #start .open-work .project-row {
-  text-decoration: none;
-}
-
-.open-work .project-row-name strong {
-  font-size: 16px;
-  overflow-wrap: anywhere;
-}
-
-.open-work .project-row-name small {
-  white-space: normal;
-}
-
-.open-work p.open-work-more {
-  margin: 16px 0 0;
-}
-
 /* Home. */
 .hero {
   padding-block: clamp(72px, 10vw, 140px) clamp(72px, 9vw, 128px);
@@ -928,15 +895,7 @@ label {
   border: 0;
 }
 
-.points-period legend {
-  float: left;
-  width: 100%;
-  margin-bottom: 0.4rem;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.points-panel .points-period button {
+.points-period button {
   min-height: var(--brand-size-button-medium);
   margin: 0;
   border-color: var(--input-border);
@@ -946,7 +905,7 @@ label {
   font-weight: 600;
 }
 
-.points-panel .points-period button[aria-pressed="true"] {
+.points-period button[aria-pressed="true"] {
   border-color: var(--ink);
   color: var(--ink);
 }
@@ -1335,11 +1294,6 @@ main h2 {
   grid-column: 1 / -1;
   padding-top: 14px;
   border-top: 1px solid var(--line);
-}
-
-.wallet-note {
-  color: var(--muted);
-  font-size: 13px;
 }
 
 @keyframes wallet-spin {

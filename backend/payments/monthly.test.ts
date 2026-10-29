@@ -1015,6 +1015,54 @@ describe("monthly coordinator", () => {
     ]);
   });
 
+  test("a change that crosses the cutoff while loading its proposal cannot alter the frozen month", async () => {
+    clock = beforeCutoff;
+    const prepare = db.prepare.bind(db);
+    db.prepare = (query) => {
+      const statement = prepare(query);
+      if (
+        !query.startsWith(
+          "SELECT manifest,manifest_sha256,source_snapshot_sha256",
+        )
+      )
+        return statement;
+      return {
+        ...statement,
+        bind(...values: unknown[]) {
+          const bound = statement.bind(...values);
+          return {
+            ...bound,
+            async first<T>() {
+              const row = await bound.first<T>();
+              clock = afterCutoff;
+              return row;
+            },
+          };
+        },
+      };
+    };
+    try {
+      await rejects(
+        owner().changeAllocation(project.id, "2026-11", actor, {
+          githubUserId: B,
+          grossBase: "100",
+          expectedSequence: 0,
+        }),
+        "cutoff_passed",
+      );
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(count("monthly_allocation_changes")).toBe(0);
+    vault("1000");
+    await coordinate(afterCutoff);
+    const frozen = await owner().view(project.id, "2026-11", actor);
+    expect(frozen.run?.awards.map((award) => award.grossBase)).toEqual([
+      "600",
+      "400",
+    ]);
+  });
+
   test("a month before the first automatic period is never frozen automatically", async () => {
     const later = parseMonthlySchedule(
       '{"firstPeriod":"2026-12","cutoffSecondsAfterPeriodEnd":259200}',

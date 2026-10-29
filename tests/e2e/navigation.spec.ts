@@ -46,6 +46,9 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+  await page.route("**/api/v1/notifications/email", (route) =>
+    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+  );
 });
 
 test("retained awards URLs resolve during client navigation with query and fragment intact", async ({
@@ -86,7 +89,7 @@ test("retained awards URLs resolve during client navigation with query and fragm
   await page.screenshot({ path: info.outputPath("retained-awards-route.png") });
 });
 
-test("same-route fragment navigation opens the named account disclosure", async ({
+test("removed security fragments retain usable Settings without hidden forms", async ({
   page,
 }, info) => {
   // The membership service is intentionally inactive on loopback origins.
@@ -105,33 +108,36 @@ test("same-route fragment navigation opens the named account disclosure", async 
     });
   });
   await page.goto(`${site}/account`, { waitUntil: "networkidle" });
-  const closure = page.locator("#close-account");
-  await expect(closure).not.toHaveAttribute("open", "");
   await page.screenshot({
-    path: info.outputPath("account-disclosure-before.png"),
+    path: info.outputPath("settings-without-security.png"),
   });
-  // The pathname is unchanged, so the router must still notify its fragment
-  // observer. The fragment names the disclosure itself, not one of its children.
-  await page.evaluate(() => {
-    history.pushState({}, "", "/account#close-account");
-    dispatchEvent(new PopStateEvent("popstate"));
-  });
-  await expect(closure).toHaveAttribute("open", "");
-  await expect(
-    page.getByRole("form", { name: "Close account", exact: true }),
-  ).toBeVisible();
-  await expect(closure).toBeInViewport();
-  const confirmation = closure.getByRole("textbox");
-  await confirmation.fill("keep this draft");
-  await page.evaluate(() => {
-    history.pushState({}, "", "/account#recovery");
-    dispatchEvent(new PopStateEvent("popstate"));
-  });
-  await expect(page).toHaveURL(`${site}/account#recovery`);
-  await expect(confirmation).toHaveValue("keep this draft");
+  for (const fragment of ["close-account", "recovery", "security"]) {
+    await page.evaluate((hash) => {
+      history.pushState({}, "", `/account#${hash}`);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }, fragment);
+    await expect(page).toHaveURL(`${site}/account#${fragment}`);
+    await expect(
+      page.getByRole("heading", { name: "Settings", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator("#security, #recovery, #close-account"),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("form", { name: "Close account", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("region", { name: "Wallets", exact: true })
+        .getByRole("link", { name: "Sign in with GitHub", exact: true }),
+    ).toHaveAttribute("href", "/login?next=%2Faccount%23wallets");
+    await expect(
+      page.getByRole("switch", { name: "Activity email", exact: true }),
+    ).toBeVisible();
+  }
   await expectAccessible(page);
   await page.screenshot({
-    path: info.outputPath("account-disclosure-after.png"),
+    path: info.outputPath("removed-security-fragments.png"),
   });
 });
 
@@ -197,6 +203,10 @@ test("a walletless award leads to wallet setup without changing the award", asyn
     });
   });
   await page.goto(`${site}/earnings`, { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("navigation", { name: "Account navigation" }),
+  ).toHaveCount(0);
+  await expect(page.locator("#wallets")).toHaveCount(0);
   const award = page
     .getByRole("list", { name: "Awards and payments", exact: true })
     .getByRole("listitem")
@@ -209,13 +219,19 @@ test("a walletless award leads to wallet setup without changing the award", asyn
     .click();
   await expect(page).toHaveURL(`${site}/account#wallets`);
   await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Account navigation" }),
+  ).toHaveCount(0);
+  await expect(
     page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeVisible();
   expect(writes).toEqual([]);
   await expectAccessible(page);
 });
 
-test("signed-out account history navigation reveals lazy wallet setup", async ({
+test("signed-out account history navigation reveals wallet setup without a disclosure", async ({
   page,
   diagnostics,
 }) => {
@@ -228,14 +244,17 @@ test("signed-out account history navigation reveals lazy wallet setup", async ({
   );
   await page.goto("/account", { waitUntil: "networkidle" });
   await expect(
-    page.getByRole("heading", { name: "Account", exact: true }),
+    page.getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible();
   await expect(page.locator("#wallets")).toHaveCount(0);
   await page.evaluate(() => {
     history.pushState({}, "", "/account#wallets");
     dispatchEvent(new PopStateEvent("popstate"));
   });
-  await expect(page.locator("#wallets")).toHaveAttribute("open", "");
+  await expect(
+    page.getByRole("region", { name: "Wallets", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#wallets > summary")).toHaveCount(0);
   await expect(
     page.locator("#wallets").getByRole("link", { name: "Sign in with GitHub" }),
   ).toBeVisible();

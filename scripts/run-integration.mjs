@@ -11,6 +11,11 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const drivers = [
   [
+    "notifications-mark-read",
+    "node",
+    ["backend/notifications/mark-read.workflow.mjs"],
+  ],
+  [
     "reporting-readiness",
     "node",
     ["backend/security/reporting-readiness.workflow.mjs"],
@@ -37,6 +42,11 @@ const drivers = [
     "node",
     ["workers/payment-executor/staging-release.workflow.mjs"],
     childEnvironment(),
+  ],
+  [
+    "monthly-authority",
+    "node",
+    ["backend/payments/monthly-authority.workflow.mjs"],
   ],
 ];
 const runDriver = ([label, command, args, env = process.env]) =>

@@ -75,7 +75,6 @@ import {
 import { useAction } from "./lib/use-action";
 import { CopyButton, CopyIdentifier } from "./Operations";
 import {
-  AccountNav,
   ExternalLinkAnchor,
   formatNullableUtc as formatUtc,
   ProjectNav,
@@ -3394,7 +3393,6 @@ export function SecurityInbox({
   ) : (
     <main className="shell route-main admin-page security-page operations-page">
       <RoutePageHeader icon={<LockKeyhole />} title="Security cases" />
-      <AccountNav current="security" />
       {body}
     </main>
   );
@@ -3621,69 +3619,81 @@ function SecurityInboxContent({
             ) : null}
           </section>
         ) : null}
-        <details
-          className="security-reference"
-          open={
-            linkFallback ||
-            directUnavailable ||
-            window.location.hash === "#security-link"
-          }
-        >
-          <summary>Link or import a GitHub report</summary>
-          {automatic ? (
-            <section aria-labelledby="security-link" className="admin-section">
-              <h2 id="security-link">Already reported on GitHub? Verify it</h2>
-              <DirectVerifyForm
-                onUnavailable={() => setDirectUnavailable(true)}
-                programProjects={programProjects}
-              />
-              {linkFallback || directUnavailable ? (
-                <>
-                  <p className="admin-status">
-                    GitHub could not verify this report. Link it for a
-                    maintainer to verify.
-                  </p>
-                  <ClaimForm
-                    onCreated={created}
-                    programProjects={programProjects}
-                  />
-                </>
-              ) : null}
-            </section>
-          ) : automatic === false ? (
-            <section aria-labelledby="security-link" className="admin-section">
-              <h2 id="security-link">Link a report you submitted on GitHub</h2>
-              <p className="admin-status">A maintainer verifies the link.</p>
-              <ClaimForm
-                onCreated={created}
-                programProjects={programProjects}
-              />
-            </section>
-          ) : null}
-          {maintained.size > 0 ? (
-            <section
-              aria-labelledby="security-import"
-              className="admin-section"
-            >
-              <h2 id="security-import">Reports sent on GitHub directly</h2>
-              {automatic === false ? (
-                <RecordForm
+        {!embedded ? (
+          <details
+            className="security-reference"
+            open={
+              linkFallback ||
+              directUnavailable ||
+              window.location.hash === "#security-link"
+            }
+          >
+            <summary>Link or import a GitHub report</summary>
+            {automatic ? (
+              <section
+                aria-labelledby="security-link"
+                className="admin-section"
+              >
+                <h2 id="security-link">
+                  Already reported on GitHub? Verify it
+                </h2>
+                <DirectVerifyForm
+                  onUnavailable={() => setDirectUnavailable(true)}
+                  programProjects={programProjects}
+                />
+                {linkFallback || directUnavailable ? (
+                  <>
+                    <p className="admin-status">
+                      GitHub could not verify this report. Link it for a
+                      maintainer to verify.
+                    </p>
+                    <ClaimForm
+                      onCreated={created}
+                      programProjects={programProjects}
+                    />
+                  </>
+                ) : null}
+              </section>
+            ) : automatic === false ? (
+              <section
+                aria-labelledby="security-link"
+                className="admin-section"
+              >
+                <h2 id="security-link">
+                  Link a report you submitted on GitHub
+                </h2>
+                <p className="admin-status">A maintainer verifies the link.</p>
+                <ClaimForm
                   onCreated={created}
-                  programProjects={programProjects.filter((project) =>
-                    maintained.has(project.id),
-                  )}
+                  programProjects={programProjects}
                 />
-              ) : (
-                <ImportReports
-                  onImported={reload}
-                  projects={programProjects.filter((project) =>
-                    maintained.has(project.id),
-                  )}
-                />
-              )}
-            </section>
-          ) : null}
-        </details>
+              </section>
+            ) : null}
+            {maintained.size > 0 ? (
+              <section
+                aria-labelledby="security-import"
+                className="admin-section"
+              >
+                <h2 id="security-import">Reports sent on GitHub directly</h2>
+                {automatic === false ? (
+                  <RecordForm
+                    onCreated={created}
+                    programProjects={programProjects.filter((project) =>
+                      maintained.has(project.id),
+                    )}
+                  />
+                ) : (
+                  <ImportReports
+                    onImported={reload}
+                    projects={programProjects.filter((project) =>
+                      maintained.has(project.id),
+                    )}
+                  />
+                )}
+              </section>
+            ) : null}
+          </details>
+        ) : null}
       </>
     );
   }
