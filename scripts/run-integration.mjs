@@ -10,6 +10,7 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const drivers = [
+  ["monthly-order", "node", ["workers/payments/monthly-order.workflow.mjs"]],
   [
     "notifications-mark-read",
     "node",
