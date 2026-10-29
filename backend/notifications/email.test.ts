@@ -152,6 +152,47 @@ test("verified opt-in sends future activity once; opt-out cancels queued mail an
   h.sqlite.close();
 });
 
+test("slow earlier activity mail does not lose a later provider acceptance", async () => {
+  const h = setup();
+  try {
+    const current = await h.call("GET");
+    expect(
+      (
+        await h.call("POST", {
+          enabled: true,
+          destinationVersion: current.body.destinationVersion,
+        })
+      ).status,
+    ).toBe(200);
+    h.event("slow-first");
+    h.event("active-second");
+    const send = h.mail.sendEmail;
+    let calls = 0;
+    h.mail.sendEmail = async (from, to, mime) => {
+      calls += 1;
+      await send(from, to, mime);
+      if (calls === 1) h.advance(6 * 60_000);
+      if (calls === 2) await dispatchActivityMail(h.mail);
+    };
+    await dispatchActivityMail(h.mail);
+    expect(h.sent).toHaveLength(2);
+    expect(h.rows().map((row) => row.state)).toEqual([
+      "provider-accepted",
+      "provider-accepted",
+    ]);
+    expect(h.rows().map((row) => row.attempts)).toEqual([1, 1]);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS total FROM activity_notification_delivery_events WHERE state='provider-accepted'",
+        )
+        .get(),
+    ).toEqual({ total: 2 });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("an email preference write bound to another account is refused without changing the stored preference", async () => {
   const h = setup();
   const current = await h.call("GET");
