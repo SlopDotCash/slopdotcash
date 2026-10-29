@@ -43,14 +43,15 @@ function harness(rejectMail = false) {
     estimated: number,
     provider: number | null,
     outcome = "ok",
+    failure: string | null = null,
   ) =>
     sqlite
       .prepare(`
     INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,
-    input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at,provider_cost_micro_usd)
-    VALUES ('review',1,'triage',0,'surplus','model',?,0,0,0,0,'price',?,0,'estimated',?,?)
+    input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at,provider_cost_micro_usd,failure)
+    VALUES ('review',1,'triage',0,'surplus','model',?,0,0,0,0,'price',?,0,'estimated',?,?,?)
   `)
-      .run(outcome, estimated, `${month}-01T00:00:00.000Z`, provider);
+      .run(outcome, estimated, `${month}-01T00:00:00.000Z`, provider, failure);
   return { sqlite, db, mail, notify, add };
 }
 
@@ -334,6 +335,7 @@ test("alerts-only route retains unknown fallback costs without a reserve or dupl
     expect(h.mail).toHaveLength(2);
     expect(h.mail[1]).toContain("Surplus request failed");
     expect(h.mail[1]).toContain("claude-opus-5.5");
+    expect(h.mail[1]).toContain("Cause: schema-invalid verdict.");
     expect(h.mail[1]).not.toContain(prompt.item);
     expect(h.mail[1]).not.toContain("invalid JSON");
     expect(h.mail[1]).not.toContain("local-only");
@@ -444,36 +446,69 @@ test("attempt migration preserves populated children; known alerts-only costs re
   }
 });
 
-test("provider failure mail retains ambiguous delivery without a blind resend", async () => {
-  const h = harness(true);
+test("provider failure mail includes safe causes and retains ambiguous delivery without a blind resend", async () => {
+  const h = harness();
   try {
-    h.add("2026-11", 0, null, "failed");
-    await expect(dispatchFailureAlert(h.db, h.notify)).rejects.toThrow(
-      "operator reconciliation",
-    );
-    await dispatchFailureAlert(h.db, h.notify);
+    h.add("2026-11", 0, null, "failed", "provider returned HTTP 500");
+    await Promise.all([
+      dispatchFailureAlert(h.db, h.notify),
+      dispatchFailureAlert(h.db, h.notify),
+    ]);
     expect(h.mail).toHaveLength(1);
+    expect(h.mail[0]).toContain("Cause: provider returned HTTP 500.");
+    const privateFailure = "provider body with a private prompt and credential";
+    h.add("2026-11", 0, null, "failed", privateFailure);
+    await dispatchFailureAlert(h.db, h.notify);
+    expect(h.mail).toHaveLength(2);
+    expect(h.mail[1]).toContain("Cause: provider call failed.");
+    expect(h.mail[1]).not.toContain(privateFailure);
+
+    const legacyNotice = {
+      callId: 1,
+      model: "claude-opus-5.5",
+      kind: "request-failed",
+      occurredAt: "2026-11-01T00:00:00.000Z",
+    };
+    const send = (notice: unknown) =>
+      h.notify.fetch(
+        new Request("https://notify.internal/v1/slopbot-failure", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(notice),
+        }),
+      );
+    expect((await send(legacyNotice)).status).toBe(202);
+    expect(h.mail).toHaveLength(3);
+    expect(h.mail[2]).toContain("Cause: provider call failed.");
+    for (const unsafe of [
+      { ...legacyNotice, failure: privateFailure },
+      { ...legacyNotice, rawResponse: privateFailure },
+    ])
+      expect((await send(unsafe)).status).toBe(400);
+    expect(h.mail).toHaveLength(3);
+
+    h.add("2026-11", 0, null, "failed");
+    await expect(
+      dispatchFailureAlert(h.db, {
+        async fetch(request) {
+          await h.notify.fetch(request);
+          throw new Error("mail outcome unknown");
+        },
+      }),
+    ).rejects.toThrow("operator reconciliation");
+    await dispatchFailureAlert(h.db, h.notify);
+    expect(h.mail).toHaveLength(4);
     expect(
       h.sqlite
-        .query("SELECT outcome FROM slopbot_provider_failure_receipts")
-        .get(),
-    ).toEqual({ outcome: "ambiguous" });
-    const before = h.mail.length;
-    const response = await h.notify.fetch(
-      new Request("https://notify.internal/v1/slopbot-failure", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          callId: 1,
-          model: "claude-opus-5.5",
-          kind: "request-failed",
-          occurredAt: "2026-11-01T00:00:00.000Z",
-          rawResponse: "must not be mailed",
-        }),
-      }),
-    );
-    expect(response.status).toBe(400);
-    expect(h.mail).toHaveLength(before);
+        .query(
+          "SELECT outcome FROM slopbot_provider_failure_receipts ORDER BY call_id",
+        )
+        .all(),
+    ).toEqual([
+      { outcome: "accepted" },
+      { outcome: "accepted" },
+      { outcome: "ambiguous" },
+    ]);
   } finally {
     h.sqlite.close();
   }

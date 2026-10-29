@@ -337,7 +337,10 @@ Slopbot retains ambiguous outcomes rather than retrying accepted recipients.
 ## Slopbot provider failures
 
 `POST https://notify.internal/v1/slopbot-failure` accepts only `callId`, `model`,
-`kind` (`budget-exhausted` or `request-failed`) and canonical UTC `occurredAt`.
+`kind` (`budget-exhausted` or `request-failed`) and canonical UTC `occurredAt`,
+with an optional `failure` from the fixed model-route categories or an HTTP
+status. Earlier callers can omit `failure`. The email includes this safe cause;
+unknown ledger text becomes `provider call failed` before it leaves Slopbot.
 It uses the same configured admin recipients. It accepts no provider body,
 prompt, response, key or request identifier.
 
