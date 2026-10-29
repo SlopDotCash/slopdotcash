@@ -84,12 +84,41 @@ test("a browser without WebP encoding can upload and persist its project image",
     await expect(preview).toBeVisible();
     const uploaded = await preview.getAttribute("src");
     expect(uploaded).toMatch(/^data:image\/jpeg;base64,/u);
+    if (!uploaded) throw new Error("Missing encoded image");
+    expect(uploaded.length).toBeLessThanOrEqual(16_384);
     await page
       .getByRole("button", { name: "Publish changes", exact: true })
       .click();
     await expect
       .poll(async () => (await api.stored()).project.image)
       .toBe(uploaded);
+    const stored = await api.stored();
+    const jpeg = Buffer.from(uploaded.split(",")[1], "base64");
+    // A valid JPEG comment makes the actual browser image exceed the cap.
+    const oversized = `data:image/jpeg;base64,${Buffer.concat([
+      jpeg.subarray(0, 2),
+      Buffer.from([0xff, 0xfe, 0x40, 0x02]),
+      Buffer.alloc(16_384, 0x61),
+      jpeg.subarray(2),
+    ]).toString("base64")}`;
+    for (const image of [
+      uploaded.replace("image/jpeg", "image/webp"),
+      oversized,
+    ]) {
+      const origin = new URL(page.url()).origin;
+      const refused = await api.fetch(
+        new Request(`${origin}/api/v1/projects/eliza`, {
+          method: "PUT",
+          headers: { origin, "content-type": "application/json" },
+          body: JSON.stringify({
+            expectedRevision: stored.revision,
+            manifest: { ...stored.project, image },
+          }),
+        }),
+      );
+      expect(refused.status).toBe(422);
+    }
+    expect((await api.stored()).revision).toBe(stored.revision);
     await page.reload({ waitUntil: "networkidle" });
     await expect(preview).toHaveAttribute("src", uploaded ?? "");
     expect(

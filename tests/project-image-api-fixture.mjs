@@ -39,7 +39,7 @@ export default {async fetch(request,env) {
   sessionActor:async()=>(${JSON.stringify(actor)}),now:()=>new Date('2026-10-29T00:00:00.000Z'),
   randomId:()=>crypto.randomUUID(),github:{fetch:async()=>{throw new Error('No live GitHub read allowed')}},
   repositoryAccess:async()=>({installation:'installed',installationId:42,permission:'admin',roleName:'admin',repository:${JSON.stringify(facts)}}),
-  repositoryControl:async()=>({state:'matched'}),vettingClearance:async()=>({state:'unscanned'}),
+  repositoryControl:async()=>({state:'matched'}),vettingClearance:async()=>({state:'cleared',assessment:null,grandfathered:true}),
  });
  return response ?? new Response(null,{status:404});
 }};`,
