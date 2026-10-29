@@ -133,7 +133,7 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
       await db.batch([
         db
           .prepare(
-            "INSERT INTO monthly_reward_bases VALUES(?,?,?,?,?,?,'1',0,?)",
+          "INSERT INTO monthly_reward_bases VALUES(?,?,?,?,?,'1',0,?)",
           )
           .bind(id, period, text, hash, "d".repeat(64), time),
         db
