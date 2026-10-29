@@ -13,6 +13,17 @@ named by `assetAddress` and scaled by `assetDecimals`. One balance row exists
 per network and asset. Amounts of different assets are never summed and are
 never labelled as dollars.
 
+Browsers opt into disclosed-history pages with `x-slop-direct-history: paged`.
+The public project/actor `direct-transfers` routes then return at most 100
+transfers, a frozen rowid `through`, a `next` cursor, a frozen `total` count,
+and `totalMicro` for that page. Follow `?after=<next>&through=<through>` until
+`next` is null and verify the complete count before displaying the history.
+Legacy callers without the header retain the complete-list response.
+On authenticated `GET /me`, the same header omits the inline disclosed list
+and sets `directTransfersPaged: true`; the browser loads that actor's public
+history separately. Wallets, balances and award states retain their single
+database snapshot. The browser keeps its existing 1 MiB per-response limit.
+
 `POST /wallets/register` takes `chain` and `address` using the existing GitHub
 session. It writes the same canonical claim and atomic audit as the legacy
 wallet API; concurrent successor changes return a conflict.
@@ -61,7 +72,10 @@ finalized EVM logs (Base, Robinhood Chain) and Solana signature history, then
 reconciles submitted or
 uncertain attempts and dispatches ready obligations. Cursors advance only after
 every recognized event is verified and indexed. Base starts from the reviewed
-deployment transaction. Solana stores one finalized signature page per run in a durable discovery
+deployment transaction. EVM checkpoints cannot decrease when overlapping runs
+finish out of order; a failed page retains the last completed block. Run
+`node workers/payments/scanner-progress.workflow.mjs` for the native D1/public
+coverage regression. Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
@@ -139,6 +153,9 @@ signing implementations live in
 `workers/payment-executor`. Neither relayer key may approve awards or withdraw
 funds. A separate attester signs only a verified destination binding. Keys are
 runtime secrets; no production credentials are read by the local tests.
+
+Each dispatch lease uses the current clock after prior executor calls, so a
+slow batch does not give later work an already-expired lease.
 
 An ambiguous submission retains its attempt and idempotency key. The scheduler
 can recover a persisted transaction hash through the relayer's read-only journal
@@ -325,7 +342,10 @@ sections 6 and 7). Migration `0062` adds its private records.
    Publication is not a reservation or payment. A project-operated or
    permissionless executor must still submit the bounded commitment and
    reconcile finalized results. The payments scheduler sends published allocations
-   to the configured executor's `/v1/commit-monthly` service. Hosted relayers
+   to the configured executor's `/v1/commit-monthly` service. Its 50 fair-retry
+   candidates include any omitted current-period EVM V2 roots needed before
+   their older leaves, at most 50 extra calls. These roots run first; a failed
+   prerequisite does not block the original candidates. Hosted relayers
    accept this only on the test stack; production requires a separately operated
    executor. Legacy EVM reserves its awards in one transaction. EVM V2 reserves
    the remaining total, then commits bounded proven leaves. An admitted month

@@ -57,7 +57,13 @@ export function projectRewardSummaries(
                   ? asset.address.endsWith("pump")
                     ? `https://pump.fun/coin/${asset.address}`
                     : `https://solscan.io/token/${asset.address}`
-                  : `https://${asset.network === "base" ? "basescan.org" : "etherscan.io"}/token/${asset.address}`,
+                  : `https://${
+                      asset.network === "base"
+                        ? "basescan.org"
+                        : asset.network === "robinhood"
+                          ? "robinhoodchain.blockscout.com"
+                          : "etherscan.io"
+                    }/token/${asset.address}`,
             },
           }
         : { kind: "monthly-pool", amount: `$${amount}` },

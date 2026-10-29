@@ -7,7 +7,7 @@
  * that verify receipt. All findings and advisories are synthetic. Nothing
  * here reaches GitHub, a model provider, a chain, or an email provider.
  */
-import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import type { APIRequestContext, Locator, Page, Route } from "@playwright/test";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
 import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import {
@@ -2305,7 +2305,14 @@ test("private settlement requires visibility consent and produces an unsigned re
   await expect(
     page.getByRole("status").filter({ hasText: "Request copied." }),
   ).toHaveText("Request copied.");
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+  // The Windows clipboard stores line breaks as CRLF, so Chromium reads the
+  // copied request back with "\r\n".
+  expect(
+    (await page.evaluate(() => navigator.clipboard.readText())).replaceAll(
+      "\r\n",
+      "\n",
+    ),
+  ).toBe(
     await page
       .getByRole("textbox", { name: "Unsigned transaction request" })
       .inputValue(),
@@ -2926,6 +2933,59 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       fullPage: true,
     });
     expect(privateReads).toHaveLength(0);
+    // Keep the real stored report and its authorization route. Hide just its
+    // row from the recent projection, as the API does after 100 newer receipts.
+    // The API regression separately creates all 101 receipts with real migrations.
+    const withoutFocusedReceipt = async (route: Route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const body = await response.json();
+      body.submissions = body.submissions.filter(
+        (entry: { id: string }) => entry.id !== submissionId,
+      );
+      await route.fulfill({ response, json: body });
+    };
+    await page.route("**/api/v1/security-submissions", withoutFocusedReceipt);
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(report).toHaveClass(/is-focused/u);
+    await expect(report).toContainText("Slop receipt");
+    expect(privateReads.length).toBeGreaterThan(0);
+    expect(
+      privateReads.every(
+        (url) => new URL(url).searchParams.get("view") === "receipt",
+      ),
+    ).toBe(true);
+    await expect(page.locator(".security-report-text")).toHaveCount(0);
+    await page.unroute("**/api/v1/security-submissions", withoutFocusedReceipt);
+    const missingReceipt = "ss_missing_receipt_fixture";
+    diagnostics.allowResponse(
+      404,
+      "GET",
+      `/api/v1/security-submissions/${missingReceipt}?view=receipt`,
+    );
+    await page.goto(`/inbox?view=reports&submission=${missingReceipt}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(report).toBeVisible();
+    await expect(report).toContainText("Slop receipt");
+    await expect(
+      page.getByText(/Report status could not refresh/),
+    ).toBeVisible();
+    // A stale link must report its error even when this account has no reports.
+    await signIn(page, APPLICANT_TOKEN);
+    await page.goto(`/inbox?view=reports&submission=${missingReceipt}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByText(/Report status could not refresh/),
+    ).toBeVisible();
+    await expect(
+      page.getByText("You have no private reports yet."),
+    ).toHaveCount(0);
+    await signIn(page, reporterToken);
+    await page.goto(`/inbox?view=reports&submission=${submissionId}`, {
+      waitUntil: "networkidle",
+    });
     await report
       .getByRole("button", { name: "Open case", exact: true })
       .focus();
