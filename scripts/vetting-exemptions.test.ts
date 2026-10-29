@@ -451,7 +451,9 @@ describe("owner-approved admission exemptions", () => {
       "d".repeat(64),
       "fedcba9876543210fedcba9876543210",
     );
-    expect((await f.vetting.getAssessment(queued.id))?.state).toBe("pending");
+    expect((await f.vetting.getAssessment(queued.id))?.state).toBe(
+      "incomplete",
+    );
     await f.finish(latest, "malicious");
     expect(await f.clearance()).toMatchObject({ state: "banned" });
   });

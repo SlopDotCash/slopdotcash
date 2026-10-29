@@ -56,6 +56,8 @@ import type { VettingEvidence } from "./evidence";
 import type { ProjectFlagStore } from "./flags";
 import {
   type CloudflareVettingPersistence,
+  pendingPinIsStale,
+  stalePinGap,
   summarize,
   TEMPLATE_REPLACEMENT_REASON,
   type VettingAssessment,
@@ -552,14 +554,19 @@ async function requestAssessment(
  * queue assigns the exact commit and template digest (VET-07); a template retry
  * keeps the stored source assignment. The service cannot choose them, and a
  * result for any other commit is refused. Returns
- * "conflict" when this pin and active flag set already have a queued scan. Throws
+ * "conflict" when this pin and active flag set already have a queued scan.
+ * When a pending row is stuck on a stale pin (#1411 C-01), that row is
+ * terminalized as incomplete and a new row is queued at the live pin. Throws
  * `pin_unavailable` when the live pin cannot be read.
  */
 async function queueAssessment(
   deps: Pick<VettingApiDependencies, "livePin" | "now" | "randomId"> & {
     vetting: Pick<
       CloudflareVettingPersistence,
-      "createAssessment" | "getAssessment"
+      | "createAssessment"
+      | "getAssessment"
+      | "currentPending"
+      | "terminalizeStalePending"
     >;
   },
   project: ProjectRecord,
@@ -595,11 +602,34 @@ async function queueAssessment(
   };
   if (!/^vet_[a-f0-9]{32}$/u.test(assessment.id))
     fail(500, "internal_error", "Assessment id is invalid");
-  if (
-    (await deps.vetting.createAssessment(assessment, templateRetry?.id)) ===
-    "conflict"
-  )
-    return "conflict" as const;
+
+  // Template retries preserve replaces_assessment_id via create-first, then
+  // terminalize the unavailable queued row so it cannot stay as queue head.
+  if (templateRetry !== undefined) {
+    if (
+      (await deps.vetting.createAssessment(assessment, templateRetry.id)) ===
+      "conflict"
+    )
+      return "conflict" as const;
+    if (templateRetry.state === "pending") {
+      await deps.vetting.terminalizeStalePending(templateRetry, {
+        gap: stalePinGap(templateRetry, pin),
+        at: assessment.requestedAt,
+      });
+    }
+  } else {
+    const pending = await deps.vetting.currentPending(project.id);
+    if (pending !== null && pendingPinIsStale(pending, pin)) {
+      const terminalized = await deps.vetting.terminalizeStalePending(pending, {
+        gap: stalePinGap(pending, pin),
+        at: assessment.requestedAt,
+      });
+      if (terminalized === "conflict") return "conflict" as const;
+    }
+    if ((await deps.vetting.createAssessment(assessment)) === "conflict")
+      return "conflict" as const;
+  }
+
   const stored = await deps.vetting.getAssessment(assessment.id);
   if (stored === null) fail(500, "internal_error", "Assessment vanished");
   return stored;
@@ -653,7 +683,10 @@ export async function queueAutomaticScan(
 export function vettingScanRequester(input: {
   vetting: Pick<
     CloudflareVettingPersistence,
-    "createAssessment" | "getAssessment"
+    | "createAssessment"
+    | "getAssessment"
+    | "currentPending"
+    | "terminalizeStalePending"
   >;
   serviceAvailable: () => Promise<boolean>;
   livePin: (manifest: ProjectDefinition) => Promise<VettingPin>;

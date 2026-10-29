@@ -42,6 +42,10 @@ import {
   isScanResult,
   type RecordedVettingResult,
   resultReviewers,
+  SCAN_SURFACES,
+  SCAN_THREATS,
+  VETTING_SCAN_SCHEMA,
+  type VettingScanResult,
 } from "./scan-result";
 
 export type {
@@ -176,6 +180,97 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
 /** The request reason of a refresh that replaces an unavailable queued template. */
 export const TEMPLATE_REPLACEMENT_REASON =
   "Automatic replacement of an unavailable queued template";
+
+/** Policy marker for platform incomplete results that recover a stale queued pin. */
+export const STALE_PIN_POLICY_VERSION = "slop-stale-pin-v1";
+
+/** Stable signing-key digest material for stale-pin recovery (not a scanner key). */
+export const STALE_PIN_SIGNING_KEY_MARKER = "slop-vetting-stale-pin-recovery";
+
+/** SHA-256 of the empty string; used where a digest is required but no bytes exist. */
+const EMPTY_SHA256 =
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+/** True when a pending row's assigned pin differs from the pin about to be queued. */
+export function pendingPinIsStale(
+  pending: Pick<VettingAssessment, "commitSha" | "templateSha256">,
+  queued: Pick<VettingPin, "commitSha" | "templateSha256">,
+): boolean {
+  return (
+    pending.commitSha !== queued.commitSha ||
+    pending.templateSha256 !== queued.templateSha256
+  );
+}
+
+/** Human-readable gap recorded on a superseded stale pending row. */
+export function stalePinGap(
+  pending: Pick<VettingAssessment, "commitSha" | "templateSha256">,
+  live: VettingPin,
+): string {
+  return (
+    "Queued pin became stale before the scan finished " +
+    `(queued commit ${pending.commitSha.slice(0, 7)}, template ${pending.templateSha256.slice(0, 8)}; ` +
+    `live commit ${live.commitSha.slice(0, 7)}, template ${live.templateSha256.slice(0, 8)}).`
+  );
+}
+
+/** Incomplete scan result that satisfies the assessment CHECK and summary readers. */
+export function composeStalePinIncomplete(input: {
+  assessment: VettingAssessment;
+  gap: string;
+  at: string;
+}): VettingScanResult {
+  const { assessment, gap, at } = input;
+  return {
+    schemaVersion: VETTING_SCAN_SCHEMA,
+    assessmentId: assessment.id,
+    projectId: assessment.projectId,
+    revision: assessment.revision,
+    manifestSha256: assessment.manifestSha256,
+    disposition: "incomplete",
+    policyVersion: STALE_PIN_POLICY_VERSION,
+    assessed: {
+      repository: "unresolved",
+      commitSha: assessment.commitSha,
+      templateSha256: assessment.templateSha256,
+      inputManifestSha256: EMPTY_SHA256,
+      dependencyLocks: [],
+    },
+    scan: {
+      runId: `stale-pin-${assessment.id}`,
+      startedAt: assessment.requestedAt,
+      completedAt: at,
+      reportSha256: EMPTY_SHA256,
+    },
+    coverage: Object.fromEntries(
+      SCAN_SURFACES.map((surface) => [
+        surface,
+        { state: "unsupported" as const, items: 0 },
+      ]),
+    ) as VettingScanResult["coverage"],
+    checks: Object.fromEntries(
+      SCAN_THREATS.map((threat) => [threat, "not-run" as const]),
+    ) as VettingScanResult["checks"],
+    visibilityGaps: [gap],
+    execution: null,
+    reusedAssessmentId: null,
+    primaryReview: {
+      provider: "platform",
+      model: "none",
+      promptPolicyRevision: "stale-pin-recovery",
+      inputManifestSha256: EMPTY_SHA256,
+      runId: `not-started-stale-pin-${assessment.id}`,
+      status: "not-started",
+      verdict: null,
+      risk: null,
+      findingCount: 0,
+    },
+    specialistReview: null,
+    artifacts: [],
+    findings: [],
+    confirmation: null,
+  };
+}
 
 /** True when `next` only re-queues `previous` at a released template. */
 function replacesTemplate(
@@ -499,6 +594,76 @@ export class CloudflareVettingPersistence {
       .bind(assessmentId)
       .first<{ covered: number }>();
     return row?.covered === 1;
+  }
+
+  /**
+   * The project's current queue head: a pending row that is also the newest
+   * assessment row. Older pending rows are not served to the scanner.
+   */
+  async currentPending(projectId: string): Promise<VettingAssessment | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT ${COLUMNS} FROM vetting_assessments
+         WHERE project_id = ? AND state = 'pending' AND rowid = (
+           SELECT MAX(rowid) FROM vetting_assessments WHERE project_id = ?
+         )`,
+      )
+      .bind(projectId, projectId)
+      .first<AssessmentRow>();
+    return row === null ? null : fromRow(row);
+  }
+
+  /**
+   * Records a platform incomplete result for a pending row whose pin no longer
+   * matches the live queue target (#1411 C-01). Notifies project owners once.
+   */
+  async terminalizeStalePending(
+    assessment: VettingAssessment,
+    input: { gap: string; at: string },
+  ): Promise<"terminalized" | "conflict"> {
+    if (assessment.state !== "pending") return "conflict";
+    const result = composeStalePinIncomplete({
+      assessment,
+      gap: input.gap,
+      at: input.at,
+    });
+    const resultText = JSON.stringify(result);
+    const resultSha256 = await sha256Hex(new TextEncoder().encode(resultText));
+    const signingKeySha256 = await sha256Hex(
+      new TextEncoder().encode(STALE_PIN_SIGNING_KEY_MARKER),
+    );
+    try {
+      await this.db.batch([
+        this.db
+          .prepare(
+            `UPDATE vetting_assessments
+                SET state = ?, policy_version = ?, result = ?,
+                    result_sha256 = ?, signing_key_sha256 = ?, completed_at = ?
+              WHERE id = ? AND state = 'pending'`,
+          )
+          .bind(
+            result.disposition,
+            result.policyVersion,
+            resultText,
+            resultSha256,
+            signingKeySha256,
+            input.at,
+            assessment.id,
+          ),
+        notifyProjectScanFailed(this.db, assessment.id),
+      ]);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /a vetting result is recorded once|UNIQUE constraint/u.test(
+          error.message,
+        )
+      )
+        return "conflict";
+      throw error;
+    }
+    const stored = await this.getAssessment(assessment.id);
+    return stored?.state === "incomplete" ? "terminalized" : "conflict";
   }
 
   /** Refuses duplicate pins and stale replacements atomically. Older rows stay immutable. */

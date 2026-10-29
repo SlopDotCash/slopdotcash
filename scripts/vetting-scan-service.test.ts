@@ -755,7 +755,9 @@ test("a pending admission recovers from a replaced template without an admin req
       evidence: "retained",
     },
   ]);
-  expect(await vetting.getAssessment(original.id)).toEqual(original);
+  const superseded = await vetting.getAssessment(original.id);
+  expect(superseded?.state).toBe("incomplete");
+  expect(superseded?.policyVersion).toBe("slop-stale-pin-v1");
   expect(assessments).toHaveLength(2);
   expect(provider.calls).toHaveLength(1);
   expect((await activate()).status).toBe(200);
@@ -839,7 +841,7 @@ test("a pending investigation on an exempt project recovers without changing its
     manifestSha256: original.manifestSha256,
     templateSha256,
   });
-  expect(await vetting.getAssessment(original.id)).toEqual(original);
+  expect((await vetting.getAssessment(original.id))?.state).toBe("incomplete");
   expect(await clearance()).toEqual({
     state: "cleared",
     assessment: null,
@@ -1873,6 +1875,8 @@ test("a two-flag pause is reinstated automatically after the service's clean fre
   const report = await runScanPass(config);
   const [{ assessmentId }] = report.assessments;
   expect(assessmentId).not.toBe(oldId);
+  // Same live pin with a new flag set supersedes via the queue head only.
+  // The older pending row stays pending until a later pin move recovers it.
   expect((await vetting.getAssessment(oldId))?.state).toBe("pending");
   expect(report.assessments).toEqual([
     {
