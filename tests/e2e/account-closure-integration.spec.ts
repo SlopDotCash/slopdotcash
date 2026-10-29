@@ -234,9 +234,10 @@ for (const withObligations of [false, true])
         path: info.outputPath("account-connections.png"),
         fullPage: true,
       });
-      await page.goto(`${SITE}/points#people`);
+      await page.goto(
+        `${SITE}/points?q=${encodeURIComponent(started.login)}#people`,
+      );
       const people = page.getByRole("region", { name: "People", exact: true });
-      await page.getByLabel("Find a contributor").fill(started.login);
       await expect(
         people.getByRole("link", { name: "X · @closing_x" }),
       ).toBeVisible();
@@ -245,25 +246,40 @@ for (const withObligations of [false, true])
       expect((await readState()).connections).toEqual(before.connections);
       expect((await readState()).retained).toEqual(before.retained);
       await page.goto(`${SITE}/account`);
-      const recovery = page.locator("#recovery");
-      await page.locator("#close-account > summary").click();
       await expect(
-        recovery.getByRole("button", { name: "Close account", exact: true }),
-      ).toBeDisabled();
-      await recovery
-        .getByLabel(/Type your GitHub username/u)
-        .fill(started.login);
-      await recovery
-        .getByRole("button", { name: "Close account", exact: true })
-        .click();
+        page.locator("#security, #recovery, #close-account"),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("form", { name: "Close account", exact: true }),
+      ).toHaveCount(0);
+      await page.waitForLoadState("networkidle");
+      // The Settings control was removed. Exercise the retained authenticated
+      // API against this isolated real database without adding another UI path.
+      const closure = await page.evaluate(async (login) => {
+        try {
+          const response = await fetch("/api/v1/points/account/close", {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ login }),
+          });
+          return {
+            status: response.status,
+            body: await response.json(),
+            networkError: false,
+          };
+        } catch {
+          return { status: null, body: null, networkError: true };
+        }
+      }, started.login);
       if (withObligations) {
-        await expect(recovery.getByRole("alert")).toContainText(
-          "Could not confirm whether your account closed.",
-        );
-        await page.reload();
+        expect(closure.networkError).toBe(true);
       } else {
-        await expect(recovery).toContainText("Your account is closed");
+        expect(closure.status).toBe(200);
+        expect(closure.body.closed).toBe(true);
       }
+      await page.reload({ waitUntil: "networkidle" });
       const closed = await readState();
       expect(closed.retained).toEqual(before.retained);
       expect(closed.member.public).toBe(0);

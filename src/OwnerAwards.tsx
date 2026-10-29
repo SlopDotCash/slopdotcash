@@ -429,7 +429,7 @@ export default function OwnerAwards({
                   <p className="owner-award-authorization">
                     <strong>Vault payment authorization</strong>{" "}
                     <a
-                      href={`#vault-monthly-${authorizationDeployment.network}-${authorizationDeployment.vault}`}
+                      href={`/projects/${project.slug}/manage#vault-monthly-${authorizationDeployment.network}-${authorizationDeployment.vault}`}
                     >
                       Review current setting and cap
                     </a>

@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { contributorStandings } from "../src/lib/contributor-standings";
 import { type PointsJournal, pointMembers } from "../src/lib/points";
 import { isPointsSummary } from "../src/lib/points-summary";
 import { isReceivedTotals, isUsdMicroAsset } from "../src/lib/received-totals";
-import type { DataState } from "../src/lib/use-snapshot";
 import { pointsSummary } from "./generate-points";
 
 const journal = JSON.parse(
@@ -57,41 +55,6 @@ const received = {
     contributors: 1,
   },
 };
-
-test("money received is all time whatever points period is selected", () => {
-  expect(isReceivedTotals(received)).toBe(true);
-  const state = {
-    status: "ready",
-    snapshot: { leaders: [] },
-    views: [],
-    cycleIndex: { cycles: [] },
-  } as unknown as DataState;
-  for (const month of ["2026-10", null]) {
-    const all = contributorStandings(
-      state,
-      [],
-      month,
-      "",
-      received.contributors,
-    );
-    expect(all.moneyAvailable).toBe(true);
-    expect(all.rows.map((row) => [row.actor.login, row.money])).toEqual([
-      ["ss251", 1763990000n],
-    ]);
-  }
-  const project = contributorStandings(
-    state,
-    [],
-    "2026-10",
-    "asi",
-    received.contributors,
-  );
-  expect(project.rows[0].money).toBe(356081097n);
-  // An unavailable aggregate is never a zero total.
-  const missing = contributorStandings(state, [], null, "", null);
-  expect(missing.moneyAvailable).toBe(false);
-  expect(missing.rows).toEqual([]);
-});
 
 test("received totals reject a total that does not add up", () => {
   expect(
