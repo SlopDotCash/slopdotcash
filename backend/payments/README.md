@@ -72,7 +72,10 @@ finalized EVM logs (Base, Robinhood Chain) and Solana signature history, then
 reconciles submitted or
 uncertain attempts and dispatches ready obligations. Cursors advance only after
 every recognized event is verified and indexed. Base starts from the reviewed
-deployment transaction. Solana stores one finalized signature page per run in a durable discovery
+deployment transaction. EVM checkpoints cannot decrease when overlapping runs
+finish out of order; a failed page retains the last completed block. Run
+`node workers/payments/scanner-progress.workflow.mjs` for the native D1/public
+coverage regression. Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
