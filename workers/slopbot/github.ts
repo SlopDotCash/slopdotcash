@@ -117,15 +117,30 @@ export class GitHubClient {
     path: string,
     body?: unknown,
   ): Promise<{ status: number; data: T | null }> {
-    const response = await fetch(`${API}${path}`, {
-      method,
-      headers: {
-        ...headers(this.token),
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      redirect: "manual",
-    });
+    const send = (url: string) =>
+      fetch(url, {
+        method,
+        headers: {
+          ...headers(this.token),
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        redirect: "manual",
+      });
+    let response = await send(`${API}${path}`);
+    // A renamed or transferred repository keeps its original path as the
+    // registered id; GitHub answers that former name with a 301 to the
+    // immutable repository id. Follow only that one same-origin hop; callers
+    // still verify the repository id and node id they receive.
+    const location = response.headers.get("location");
+    if (method === "GET" && response.status === 301 && location) {
+      const moved = new URL(location, API);
+      if (
+        moved.origin === API &&
+        /^\/repositories\/[1-9]\d*(?:\/|$)/u.test(moved.pathname)
+      )
+        response = await send(moved.href);
+    }
     if (
       response.status === 204 ||
       response.status === 404 ||

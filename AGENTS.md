@@ -52,8 +52,10 @@ alias only.
     matches the admitted root but has the wrong total. Missing, healthy, stale,
     partly settled or already released allocations refuse. The owner separately
     signs the release transaction. The Worker never submits it or withdraws funds.
-  - One fee-wallet hot key per network (PRD TOK-07, MVP-07c, owner decision
-    of 18 October 2026). It controls only the network fee wallet. It signs
+  - One fee-wallet hot key for the shared EVM fee wallet of Base, Ethereum
+    and Robinhood Chain, and one for the Solana fee wallet (PRD TOK-07,
+    MVP-07c, owner decisions of 18 October 2026 and 29 October 2026, #1467
+    item 3.10e). Each key controls only its fee wallet. It signs
     only the conversion of fees received in that wallet to USDC, through
     allowlisted routes, within the slippage limit, with output to the same
     wallet. Robinhood Chain retains each received asset without conversion or
