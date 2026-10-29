@@ -325,7 +325,10 @@ sections 6 and 7). Migration `0062` adds its private records.
    Publication is not a reservation or payment. A project-operated or
    permissionless executor must still submit the bounded commitment and
    reconcile finalized results. The payments scheduler sends published allocations
-   to the configured executor's `/v1/commit-monthly` service. Hosted relayers
+   to the configured executor's `/v1/commit-monthly` service. Its 50 fair-retry
+   candidates include any omitted current-period EVM V2 roots needed before
+   their older leaves, at most 50 extra calls. These roots run first; a failed
+   prerequisite does not block the original candidates. Hosted relayers
    accept this only on the test stack; production requires a separately operated
    executor. Legacy EVM reserves its awards in one transaction. EVM V2 reserves
    the remaining total, then commits bounded proven leaves. An admitted month
