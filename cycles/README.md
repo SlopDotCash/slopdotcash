@@ -154,13 +154,17 @@ GitHub trust boundary, not permission granted by this report mechanism.
 ## October review payment basis
 
 For #683, October and later payment proposals use the source snapshot's
-`paymentReviewBasis` (`scr-05-payments-production-v1`). Ordinary reviews
-submitted before `2026-10-09T23:21:35.388Z` retain the previous payment rule.
-The public Score and Points ledger remains separate. Regenerate a source
-snapshot that lacks this basis before proposing payment; never substitute the
-score ledger. The same basis must drive identity and wallet collection,
-allocation and frozen-source verification. Earlier closed cycles are unchanged.
-This changes eligibility weights only, not funding, approval or settlement.
+`paymentReviewBasis` (`scr-05-payments-production-v1`) when present. Ordinary
+reviews submitted before `2026-10-09T23:21:35.388Z` retain the previous payment
+rule. The public Score and Points ledger remains separate. When the window has
+no formal review before that cutoff the publisher omits the basis and writes
+`paymentReviewBasisOmitted` (`no-pre-policy-reviews`) so payment can use the
+score ledger without treating legacy or incomplete snapshots as equal (#1411
+S3). When a basis is present it must drive identity and wallet collection,
+allocation and frozen-source verification; never substitute the score ledger
+for a published basis, and never accept a missing field as proof of omission.
+Earlier closed cycles are unchanged. This changes eligibility weights only, not
+funding, approval or settlement.
 
 The payment basis stores changed ledger and attribution records plus removed
 record IDs. Reconstruct it with `paymentReviewSnapshot`; its `ledger` field
