@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { localBackendOrigin, loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
-import { currentProjectSession } from "./lib/project-api";
+import { currentProjectSession, ProjectApiError } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 
 type Preference =
@@ -18,7 +18,7 @@ type Preference =
 type State =
   | { status: "loading" | "signed-out" }
   | { status: "error"; message: string }
-  | { status: "ready"; value: Preference; actor: string | null };
+  | { status: "ready"; value: Preference; actor: string };
 const PATH = "/api/v1/notifications/email";
 
 function preference(value: unknown): Preference {
@@ -50,7 +50,19 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
     setState({ status: "loading" });
     void (async () => {
       try {
-        const session = await currentProjectSession().catch(() => null);
+        // A failed identity check must not bind the control to no actor:
+        // with actor null, save would omit the expected-actor header and the
+        // server would write to whoever is signed in at POST time. Only a
+        // 401 keeps the signed-out path; any other failure shows the error
+        // state with its Retry button instead of a usable switch.
+        let session: Awaited<ReturnType<typeof currentProjectSession>>;
+        try {
+          session = await currentProjectSession();
+        } catch (caught) {
+          if (caught instanceof ProjectApiError && caught.status === 401)
+            session = null;
+          else throw new Error("The account check failed.");
+        }
         const response = await fetchWithDeadline(PATH, {
           credentials: "same-origin",
           cache: "no-store",
@@ -72,11 +84,14 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
         const value = preference(
           await readBoundedJson(response, 4096, "email preference"),
         );
+        // A preference read without a bound actor must not enable the
+        // switch: the next save would carry no expected-actor header.
+        if (session === null) throw new Error("The account check failed.");
         if (generation.current === current)
           setState({
             status: "ready",
             value,
-            actor: session?.githubId ?? null,
+            actor: session.githubId,
           });
       } catch (caught) {
         if (!controller.signal.aborted && generation.current === current)
@@ -93,6 +108,8 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
     // Send the actor captured when this view was rendered, not a fresh
     // session: if the account changed since load, the server refuses with
     // 403 actor_changed instead of writing to the newly signed-in account.
+    // Ready state always carries a concrete actor: load fails closed when
+    // the identity check fails, so save never posts without the header.
     const actor = state.actor;
     const enabled = !previous.enabled;
     if (enabled && previous.availability !== "verified") return;
@@ -105,7 +122,7 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           redirect: "error",
           headers: {
             "content-type": "application/json",
-            ...(actor === null ? {} : { "x-slop-expected-github-id": actor }),
+            "x-slop-expected-github-id": actor,
           },
           body: JSON.stringify(
             enabled && previous.availability === "verified"
