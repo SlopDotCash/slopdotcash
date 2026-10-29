@@ -1,11 +1,14 @@
 /** #1466: real collection, scoring, atomic output and Points replay over HTTP. */
 import { afterEach, expect, setSystemTime, test } from "bun:test";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   assertLeaderboardSnapshot,
+  hasMaterialTestChange,
   type LeaderboardSnapshot,
 } from "../src/lib/leaderboard";
 import {
@@ -19,6 +22,7 @@ import { findProject } from "../src/lib/projects.mjs";
 import {
   REGISTERED_REPOSITORIES,
   TARGET_REPOSITORIES,
+  type TargetRepository,
 } from "../src/lib/repositories.mjs";
 import {
   GENERATED_AT,
@@ -31,6 +35,11 @@ import {
   runGenerator,
   writeLeaderboardAtomically,
 } from "./generate-leaderboard";
+import {
+  type PullRequestGitFiles,
+  type PullRequestGitFilesInput,
+  readPullRequestGitFiles,
+} from "./pull-request-git-files";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -162,11 +171,132 @@ type Comparison =
   | "unavailable"
   | "invalid-range";
 
+type NativeFileFixture = {
+  directory: string;
+  head: string;
+  merge: PullRequestGitFilesInput["merge"];
+  earlierParent: string;
+  expected: PullRequestGitFiles;
+  unavailable: boolean;
+  invalid?: "missing-object" | "contradictory-parents";
+  recoveryRepository?: TargetRepository;
+};
+
+/** A genuine accepted Git merge beyond GitHub's 3,000-file REST limit. */
+async function nativeFileFixture(): Promise<NativeFileFixture> {
+  const directory = await mkdtemp(join(tmpdir(), "slop-large-pr-source-"));
+  const run = promisify(execFile);
+  const git = async (...args: string[]) =>
+    (
+      await run(
+        "git",
+        [
+          "-c",
+          "core.hooksPath=/dev/null",
+          "-c",
+          "commit.gpgSign=false",
+          ...args,
+        ],
+        {
+          cwd: directory,
+          env: {
+            PATH: process.env.PATH,
+            HOME: directory,
+            GIT_CONFIG_NOSYSTEM: "1",
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_AUTHOR_NAME: "Source fixture",
+            GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+            GIT_COMMITTER_NAME: "Source fixture",
+            GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+            GIT_AUTHOR_DATE: "2026-11-05T00:00:00Z",
+            GIT_COMMITTER_DATE: "2026-11-05T00:00:00Z",
+          },
+          maxBuffer: 1024 * 1024,
+        },
+      )
+    ).stdout.trim();
+  try {
+    await git("init", "--quiet", "--initial-branch=main", "--template=");
+    await writeFile(join(directory, "README.md"), "Initial source.\n");
+    await git("add", ".");
+    await git("commit", "--quiet", "-m", "Initial source");
+    const earlierParent = await git("rev-parse", "HEAD");
+    await git("checkout", "--quiet", "-b", "contribution");
+    await mkdir(join(directory, "src"));
+    await mkdir(join(directory, "zz-tests"));
+    const files = Array.from({ length: 3001 }, (_, index) => ({
+      path: `src/source-${String(index).padStart(4, "0")}.txt`,
+      additions: 1,
+      deletions: 0,
+    }));
+    for (let start = 0; start < files.length; start += 100)
+      await Promise.all(
+        files
+          .slice(start, start + 100)
+          .map((file) =>
+            writeFile(join(directory, file.path), "Accepted source.\n"),
+          ),
+      );
+    // The qualifying test file sorts after every file a capped API would return.
+    files.push({
+      path: "zz-tests/recovery.test.ts",
+      additions: 40,
+      deletions: 0,
+    });
+    await writeFile(
+      join(directory, "zz-tests/recovery.test.ts"),
+      Array.from(
+        { length: 40 },
+        (_, index) => `assert(${index} === ${index});\n`,
+      ).join(""),
+    );
+    await git("add", ".");
+    await git(
+      "commit",
+      "--quiet",
+      "-m",
+      "Accept complete source and regression evidence",
+    );
+    const head = await git("rev-parse", "HEAD");
+    await git("checkout", "--quiet", "main");
+    await writeFile(
+      join(directory, "main-only.txt"),
+      "Independent accepted work.\n",
+    );
+    await git("add", ".");
+    await git("commit", "--quiet", "-m", "Advance integration branch");
+    const firstParent = await git("rev-parse", "HEAD");
+    await git(
+      "merge",
+      "--quiet",
+      "--no-ff",
+      "contribution",
+      "-m",
+      "Accept contribution",
+    );
+    return {
+      directory,
+      head,
+      merge: {
+        sha: await git("rev-parse", "HEAD"),
+        parents: [{ sha: firstParent }, { sha: head }],
+      },
+      earlierParent,
+      expected: { files, additions: 3041, deletions: 0, changedFiles: 3002 },
+      unavailable: false,
+    };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function fixture(
   mode: "removed" | "persistent" | "joint" | "healthy" | "open-closure",
   failure?: Failure,
   productionProjects?: readonly string[],
   comparison?: Comparison,
+  nativeFiles?: NativeFileFixture,
 ) {
   let missingSeen = false;
   let requests = 0;
@@ -174,6 +304,8 @@ async function fixture(
   let repositoryReads = 0;
   let forbiddenSourceReads = 0;
   const comparisonPages: number[] = [];
+  const recoveredFiles: PullRequestGitFiles[] = [];
+  const recoveryInputs: PullRequestGitFilesInput[] = [];
   const range = Array.from({ length: 251 }, (_, index) => ({
     commit: {
       oid:
@@ -192,6 +324,27 @@ async function fixture(
         // page one. The complete comparison must retain both sets of commits.
         nodes: range.slice(-100),
         pageInfo: { hasNextPage: true, endCursor: "known-late-window" },
+      };
+    if (nativeFiles && pull.id === retained.id)
+      return {
+        ...node,
+        headRefOid: nativeFiles.head,
+        additions: nativeFiles.unavailable ? 0 : nativeFiles.expected.additions,
+        deletions: nativeFiles.unavailable ? 0 : nativeFiles.expected.deletions,
+        changedFiles: nativeFiles.unavailable
+          ? 0
+          : nativeFiles.expected.changedFiles,
+        files: nativeFiles.unavailable
+          ? null
+          : connection(nativeFiles.expected.files),
+        commits: connection([
+          {
+            commit: {
+              oid: nativeFiles.head,
+              author: { user: { ...pull.author, __typename: "User" } },
+            },
+          },
+        ]),
       };
     return node;
   };
@@ -216,6 +369,7 @@ async function fixture(
             name: string;
             searchQuery: string;
             ids: string[];
+            id: string;
           };
         };
         requests++;
@@ -231,6 +385,36 @@ async function fixture(
             id: nodeId(v.owner, v.name),
             isPrivate: false,
             updatedAt: retained.updatedAt,
+          };
+        } else if (query.includes("query LeaderboardMergedFileSource")) {
+          const source = required(nativeFiles);
+          const recoveryRepository = source.recoveryRepository ?? repository;
+          const parents = source.merge.parents.map((parent) => ({
+            oid: parent.sha,
+          }));
+          if (source.invalid === "contradictory-parents")
+            parents[0] = { oid: source.earlierParent };
+          data.node = {
+            __typename: "PullRequest",
+            id: v.id,
+            state: "MERGED",
+            mergedAt: retained.mergedAt,
+            headRefOid: source.head,
+            repository: {
+              id:
+                recoveryRepository.expectedNodeId ??
+                `R_${recoveryRepository.name}`,
+              databaseId: 123,
+              isPrivate: false,
+              nameWithOwner: `${recoveryRepository.owner}/${recoveryRepository.name}`,
+            },
+            mergeCommit: {
+              oid:
+                source.invalid === "missing-object"
+                  ? "f".repeat(40)
+                  : source.merge.sha,
+              parents: { totalCount: 2, nodes: parents },
+            },
           };
         } else if (query.includes("query LeaderboardSearchReferences")) {
           const isOurs = v.searchQuery.startsWith(
@@ -483,6 +667,19 @@ async function fixture(
   globalThis.fetch = transport;
   const client = new GitHubGraphqlClient("fixture-token", transport, {
     retryBaseDelayMs: 0,
+    ...(nativeFiles
+      ? {
+          recoverFiles: async (input: PullRequestGitFilesInput) => {
+            recoveryInputs.push(input);
+            const result = await readPullRequestGitFiles(
+              nativeFiles.directory,
+              input,
+            );
+            recoveredFiles.push(result);
+            return result;
+          },
+        }
+      : {}),
   });
   const directory = await mkdtemp(join(tmpdir(), "slop-source-recovery-"));
   const output = join(directory, "leaderboard.json");
@@ -496,6 +693,8 @@ async function fixture(
       repositoryReads,
       forbiddenSourceReads,
       comparisonPages,
+      recoveredFiles,
+      recoveryInputs,
     }),
     generate: () =>
       runGenerator(
@@ -987,5 +1186,162 @@ test("open work that closes after the listing leaves the queue instead of stoppi
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
   } finally {
     await f.close();
+  }
+});
+
+test("a merged null file connection recovers every native Git file without changing accepted credit", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const source = await nativeFileFixture();
+  try {
+    const baseline = await fixture(
+      "healthy",
+      undefined,
+      undefined,
+      undefined,
+      source,
+    );
+    let before: LeaderboardSnapshot;
+    try {
+      before = await baseline.generate();
+      expect(baseline.stats().recoveryInputs).toHaveLength(0);
+    } finally {
+      await baseline.close();
+    }
+    const recovered = await fixture(
+      "healthy",
+      undefined,
+      undefined,
+      undefined,
+      {
+        ...source,
+        unavailable: true,
+      },
+    );
+    try {
+      const snapshot = await recovered.generate();
+      const stats = recovered.stats();
+      expect(stats.recoveredFiles).toHaveLength(1);
+      const detail = required(stats.recoveredFiles[0]);
+      expect(detail).toMatchObject({
+        additions: 3041,
+        deletions: 0,
+        changedFiles: 3002,
+      });
+      expect(detail.files).toHaveLength(3002);
+      expect(detail.files.at(-1)).toEqual({
+        path: "zz-tests/recovery.test.ts",
+        additions: 40,
+        deletions: 0,
+      });
+      expect(hasMaterialTestChange(detail.files)).toBe(true);
+      expect(stats.recoveryInputs).toEqual([
+        {
+          repository: {
+            id: 123,
+            node_id: project.authority.repositoryNodeId,
+            private: false,
+            full_name: `${repository.owner}/${repository.name}`,
+          },
+          head: source.head,
+          merge: source.merge,
+        },
+      ]);
+      expect(snapshot.ledger).toEqual(before.ledger);
+      expect(snapshot.source.counts).toMatchObject({
+        mergedPullRequests: 2,
+        detailedMergedPullRequests: 2,
+      });
+      expect(snapshot.source.repositories).toEqual(before.source.repositories);
+      expect(
+        snapshot.ledger
+          .filter((event) => event.category === "merged-pull-request")
+          .map((event) => event.source.id)
+          .sort(),
+      ).toEqual([retained.id, unaffected.id].sort());
+      const written = JSON.parse(await readFile(recovered.output, "utf8"));
+      assertLeaderboardSnapshot(written);
+      expect(written.ledger).toEqual(snapshot.ledger);
+      expect(stats.forbiddenSourceReads).toBe(0);
+    } finally {
+      await recovered.close();
+    }
+  } finally {
+    await rm(source.directory, { recursive: true, force: true });
+  }
+});
+
+for (const invalid of ["missing-object", "contradictory-parents"] as const) {
+  test(`native ${invalid} file recovery preserves the previous published bytes`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const source = await nativeFileFixture();
+    const f = await fixture("healthy", undefined, undefined, undefined, {
+      ...source,
+      unavailable: true,
+      invalid,
+    });
+    try {
+      await expect(f.generate()).rejects.toThrow(
+        invalid === "missing-object"
+          ? "Native Git object read failed"
+          : "Git merge parents differ from the accepted source",
+      );
+      expect(f.stats().recoveryInputs).toHaveLength(1);
+      expect(f.stats().recoveredFiles).toHaveLength(0);
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+      expect(f.stats().forbiddenSourceReads).toBe(0);
+    } finally {
+      await f.close();
+      await rm(source.directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test("canonical merged file recovery binds to the census repository when no alias identity is configured", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const canonical = required(
+    TARGET_REPOSITORIES.find((row) => row.expectedNodeId === null),
+  );
+  const source = await nativeFileFixture();
+  const f = await fixture("healthy", undefined, undefined, undefined, {
+    ...source,
+    unavailable: true,
+    recoveryRepository: canonical,
+  });
+  try {
+    const censusRepositoryId = `R_${canonical.name}`;
+    const original = {
+      id: retained.id,
+      state: "MERGED",
+      mergedAt: retained.mergedAt,
+      headRefOid: source.head,
+    };
+    const recovered = await f.client.recoverPullRequestFiles(
+      canonical,
+      censusRepositoryId,
+      original,
+    );
+    expect(recovered.changedFiles).toBe(3002);
+    expect(recovered.files.at(-1)).toEqual({
+      path: "zz-tests/recovery.test.ts",
+      additions: 40,
+      deletions: 0,
+    });
+    expect(f.stats().recoveryInputs).toHaveLength(1);
+    expect(f.stats().recoveryInputs[0].repository.node_id).toBe(
+      censusRepositoryId,
+    );
+    await expect(
+      f.client.recoverPullRequestFiles(
+        canonical,
+        "R_changed_repository",
+        original,
+      ),
+    ).rejects.toThrow("Merged file source identity changed or is unavailable");
+    expect(f.stats().recoveryInputs).toHaveLength(1);
+    expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    expect(f.stats().forbiddenSourceReads).toBe(0);
+  } finally {
+    await f.close();
+    await rm(source.directory, { recursive: true, force: true });
   }
 });
