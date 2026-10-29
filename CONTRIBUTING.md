@@ -209,9 +209,12 @@ repositories. Bot closure and security enforcement still need reviewed
 protocol/permission changes before activation. It checks correctness, tests,
 scope, security, duplication, evidence, and usefulness. Slopbot may score,
 apply the published penalty table, label uncertain findings after the 7-day
-maintainer window, and triage appeals. A human decides merges, escalated
-disputes, exclusions, bounty awards, and any money outside the automatic
-monthly distribution.
+maintainer window, and triage appeals. A human decides escalated disputes,
+exclusions, bounty awards, confirmed-malicious bans, and any money outside the
+automatic monthly distribution. Maintainers decide merges in their own
+projects. In this repository, maintainers or authorized agents and automation
+may merge into `development` under the post-merge CI rule (owner decision,
+29 October 2026, PRD section 11).
 
 Run at minimum:
 
@@ -311,6 +314,12 @@ Release checks are engineering checks. Deployment identity, deployed-byte
 comparison, DNS, TLS, redirects, and security headers belong to the release
 PR from `development` to `main` and to the deployment workflow. Other PRs mark
 those rows `N/A - not a release`.
+
+Post-merge CI is accepted on `development` (owner decision, 29 October 2026,
+PRD section 11). Agents and automation may merge a reviewed PR into
+`development` before its hosted CI finishes. Fix or revert a failing
+post-merge check promptly. Batch promotions from `development` to `main`; the
+trusted `main` release still runs the full quality gate before it deploys.
 
 For documentation-only changes, verify instructions, links, PRD
 consistency, and the identical AGENTS/CLAUDE files. Application end-to-end
