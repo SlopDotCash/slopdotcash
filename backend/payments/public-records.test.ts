@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { deploymentOrigins } from "../../src/lib/deployment";
+import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1TransactionalDatabase } from "../d1";
 import { handlePaymentsApi } from "./handler";
@@ -18,6 +20,10 @@ function fixture() {
       privateBounty = false,
       corrupt = false,
       pad = 0,
+      network = "base-mainnet",
+      token = asset,
+      project = "project",
+      paymentVault = vault,
     } = {},
   ) {
     const id = `award-${n}`;
@@ -28,12 +34,14 @@ function fixture() {
       .query(`INSERT INTO ${prefix}payment_obligations
       (id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,
        gross_base,fee_base,source_digest,state,created_at,paid_transaction)
-      VALUES(?,'project',?,'base-mainnet','base',?,?,6,'10000','200',?,?,?,?)`)
+      VALUES(?,?,?,?,'base',?,?,6,'10000','200',?,?,?,?)`)
       .run(
         id,
+        project,
         actor,
-        vault,
-        asset,
+        network,
+        paymentVault,
+        token,
         digest,
         state,
         when,
@@ -44,16 +52,16 @@ function fixture() {
       transactionId: transaction,
       eventIndex: 0,
       obligationId: id,
-      projectId: "project",
-      network: "base-mainnet",
+      projectId: project,
+      network,
       chain: "base",
-      vault,
+      vault: paymentVault,
       githubUserId: actor,
       sourceDigest: digest,
       grossMicro: "10000",
       feeMicro: "200",
       netMicro: corrupt ? "9700" : "9800",
-      assetAddress: asset,
+      assetAddress: token,
       assetDecimals: 6,
       ...(pad ? { padding: "x".repeat(pad) } : {}),
     };
@@ -62,7 +70,7 @@ function fixture() {
         `INSERT INTO ${prefix}payment_events VALUES(?,?,0,'finalized-block',?,?,?,?)`,
       )
       .run(
-        "base-mainnet",
+        network,
         transaction,
         evidence.kind,
         id,
@@ -71,10 +79,13 @@ function fixture() {
       );
     return { id, digest, transaction };
   }
-  async function read(path = "vault-payments") {
+  async function read(
+    path = "vault-payments",
+    tier?: "staging" | "production",
+  ) {
     const response = await handlePaymentsApi(
-      new Request(`https://slop.cash/api/v1/payments/${path}`),
-      { db: database },
+      new Request(`${deploymentOrigins(tier).site}/api/v1/payments/${path}`),
+      { db: database, tier },
     );
     return { status: response.status, body: await response.json() };
   }
@@ -302,6 +313,58 @@ test("received totals add every disclosed transfer and finalized USDC vault paym
         ],
       },
     ]);
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("production received totals exclude testnet payments while staging retains them", async () => {
+  const f = fixture();
+  try {
+    f.payment(1, {
+      project: "main-usd",
+      paymentVault: `0x${"4".repeat(40)}`,
+      token: ESCROW_NETWORKS["base-mainnet"].assets[0].address,
+    });
+    f.payment(2);
+    f.payment(3, {
+      actor: "456",
+      project: "test-usd",
+      paymentVault: `0x${"5".repeat(40)}`,
+      network: "base-sepolia",
+      token: ESCROW_NETWORKS["base-sepolia"].assets[0].address,
+    });
+    f.payment(4, {
+      project: "test-token",
+      paymentVault: `0x${"6".repeat(40)}`,
+      network: "base-sepolia",
+    });
+
+    const production = await f.read("received", "production");
+    expect(production.status).toBe(200);
+    expect(production.body.totals.vaultPayments).toBe(2);
+    expect(production.body.totals.contributors).toBe(1);
+    expect(production.body.totals.usdMicro).toBe("9800");
+    expect(production.body.contributors[0].vaultPayments).toBe(2);
+    expect(production.body.contributors[0].otherAssets).toEqual([
+      {
+        network: "base-mainnet",
+        assetAddress: asset,
+        assetDecimals: 6,
+        netBase: "9800",
+      },
+    ]);
+
+    const staging = await f.read("received", "staging");
+    expect(staging.status).toBe(200);
+    expect(staging.body.totals.vaultPayments).toBe(4);
+    expect(staging.body.totals.contributors).toBe(2);
+    expect(staging.body.totals.usdMicro).toBe("19600");
+    expect(
+      staging.body.contributors.find(
+        (c: { githubUserId: string }) => c.githubUserId === "123",
+      ).otherAssets,
+    ).toHaveLength(2);
   } finally {
     f.sqlite.close();
   }
