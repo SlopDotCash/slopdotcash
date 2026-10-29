@@ -111,7 +111,13 @@ beforeAll(async () => {
   const linkBytes = join(root, "link-bytes");
   await writeFile(linkBytes, "../../private");
   const linkOid = git(repository, "hash-object", "-w", linkBytes);
-  git(repository, "update-index", "--add", "--cacheinfo", `120000,${linkOid},link`);
+  git(
+    repository,
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `120000,${linkOid},link`,
+  );
   // A gitlink is recorded, never fetched.
   git(
     repository,
