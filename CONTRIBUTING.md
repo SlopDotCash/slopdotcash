@@ -209,9 +209,12 @@ repositories. Bot closure and security enforcement still need reviewed
 protocol/permission changes before activation. It checks correctness, tests,
 scope, security, duplication, evidence, and usefulness. Slopbot may score,
 apply the published penalty table, label uncertain findings after the 7-day
-maintainer window, and triage appeals. A human decides merges, escalated
-disputes, exclusions, bounty awards, and any money outside the automatic
-monthly distribution.
+maintainer window, and triage appeals. A human decides escalated disputes,
+exclusions, bounty awards, confirmed-malicious bans, and any money outside the
+automatic monthly distribution. Maintainers decide merges in their own
+projects. In this repository, maintainers or authorized agents and automation
+may merge into `development` under the post-merge CI rule (owner decision,
+29 October 2026, PRD section 11).
 
 Run at minimum:
 
