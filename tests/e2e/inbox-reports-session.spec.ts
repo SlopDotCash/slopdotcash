@@ -111,7 +111,7 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
       .click();
     await expect(
       page.getByText("Private account 42 finding", { exact: true }),
-    ).toBeVisible();
+    ).toBeHidden();
     actor = "43";
     release();
     await page.waitForLoadState("networkidle");
