@@ -152,14 +152,15 @@ export function projectAppealState(
 }
 
 /**
- * True when records, oldest first, end with an undecided project appeal.
- * With `kept`, an appeal that confirmed malicious Bans kept also counts:
- * the moderator decision on those Bans closes it.
+ * The undecided project appeals in records (oldest first) after the last
+ * record that closed one; the next decision closes all of them. With `kept`,
+ * an appeal that confirmed malicious Bans kept also counts: the moderator
+ * decision on those Bans closes it.
  */
-function openProjectAppeal(
+function openProjectAppeals(
   records: ProjectEnforcement[],
   kept = false,
-): ProjectEnforcement | undefined {
+): ProjectEnforcement[] {
   const newestFirst = [...records].reverse();
   const boundary =
     newestFirst.find(
@@ -174,7 +175,7 @@ function openProjectAppeal(
           record.action,
         ),
     )?.sequence ?? 0;
-  return newestFirst.find(
+  return newestFirst.filter(
     (record) =>
       record.action === "request_reinstatement" &&
       record.actorRole !== "banned-account" &&
@@ -186,7 +187,7 @@ function projectAppealOpen(
   records: ProjectEnforcement[],
   kept = false,
 ): boolean {
-  return openProjectAppeal(records, kept) !== undefined;
+  return openProjectAppeals(records, kept).length > 0;
 }
 
 /** A shared project appeal must not claim that another account filed evidence. */
@@ -376,10 +377,12 @@ function requireIndependentModerator(
     (entry) => entry.githubId === actor.githubId,
   );
   // The appellant may be a moderator too; the panel still offers the
-  // decision, so the rule has to refuse it here.
-  const appealed =
-    openProjectAppeal(restriction.records, true)?.actor?.githubId ===
-    actor.githubId;
+  // decision, so the rule has to refuse it here. The decision closes every
+  // open project appeal, so a newer request from another account does not
+  // make the author of an earlier one independent.
+  const appealed = openProjectAppeals(restriction.records, true).some(
+    (record) => record.actor?.githubId === actor.githubId,
+  );
   if (placed || appealed)
     throw new EnforcementRefusal(
       403,
