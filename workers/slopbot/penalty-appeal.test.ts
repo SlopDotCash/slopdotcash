@@ -3258,3 +3258,49 @@ test("accepting an older head's uphold draft keeps a later head's finding label"
     ).toEqual([]);
   });
 });
+
+test("reverting the branch to the appealed head after a later head's close never reopens or removes the later finding", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    // Head b gets a spam label only: the owner has not consented to closure.
+    run.consent(false);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    // The author appeals head b, and triage drafts an uphold.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // The owner consents, the author pushes head d, and Slopbot closes d
+    // with a scam finding and debit. Head d has no appeal.
+    run.consent(true);
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
+    run.model("scam", 0.97);
+    expect(await run.review()).toBe("closed (scam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "scam", debit_thirds: 24, reversal: null },
+    ]);
+    // The author force-pushes the branch back to head b and accepts the old
+    // head-b draft. Head d's close, scam label and debit must still stand.
+    run.head("b".repeat(40));
+    const before = run.writes.length;
+    const result = await run.deliver(
+      run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+    );
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "scam", debit_thirds: 24, reversal: null },
+    ]);
+    expect(run.currentState()).toBe("closed");
+    expect(run.labels).toContain("slopbot: scam");
+    expect(
+      run.writes.slice(before).filter((write) => !write.endsWith("/comments")),
+    ).toEqual([]);
+    expect(result).toBe(
+      "appeal upheld by the appellant; newer item state kept",
+    );
+    expect(run.sql(APPEAL)).toMatchObject([
+      { resolution: "upheld", resolved_by: "appellant" },
+    ]);
+  });
+});
