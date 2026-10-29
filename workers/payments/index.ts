@@ -266,14 +266,14 @@ function executor(env: PaymentsWorkerEnvironment): PaymentExecutor {
 }
 export async function runPaymentDispatch(
   env: PaymentsWorkerEnvironment,
-  now = new Date(),
+  now = () => new Date(),
 ): Promise<void> {
   if (!env.EVM_PAYMENT_EXECUTOR && !env.SOLANA_PAYMENT_EXECUTOR)
     throw new Error("Payment execution service unavailable");
   const rows = await env.PAYMENTS_DB.prepare(
     "SELECT json_group_array(obligation_id) ids FROM (SELECT obligation_id FROM payment_outbox WHERE state='ready' OR (state='processing' AND lease_until<?) ORDER BY updated_at LIMIT 50)",
   )
-    .bind(now.toISOString())
+    .bind(now().toISOString())
     .first<{ ids: string }>();
   const failures: unknown[] = [];
   for (const id of JSON.parse(rows?.ids ?? "[]") as string[]) {
@@ -282,7 +282,7 @@ export async function runPaymentDispatch(
         env.PAYMENTS_DB,
         executor(env),
         id,
-        now,
+        now(),
         env.PAYMENT_SCOPE === "security-bounty"
           ? (id, at) => securityPaymentNotices(env.REGISTRY_DB, id, "held", at)
           : undefined,
