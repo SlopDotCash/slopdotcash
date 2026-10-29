@@ -362,7 +362,7 @@ Historical Points publication is on hold until the complete assessment journal a
 | Retired cleanup items | Owner decision, 29 October 2026 (#1467 items 3.10a–d): retire `protocol/wallet-possession.md`, the old isolated test identity stack and the v1 secure-VM vetting pipeline; detach `deck.slop.cash`; allow CI dependency caching, except in trusted publication jobs. This decision approves the cleanup; it does not perform it. |
 | Umia advisory delivery | Owner decision, 29 October 2026 (#1467): keep reporter-token forwarding of Umia private reports. The owner enables private vulnerability reporting on `SlopDotCash/umia-protocol`. The section 8 design is unchanged. |
 | Removed legacy raw URLs | Owner decision, 29 October 2026 (#1411 D2): `/data/cycles/eliza/2026-09/proposal.json` and `/downloads/contribute-to-eliza.skill` were removed intentionally and stay 404. |
-| Legacy community projects | Owner decision, 29 October 2026: the five legacy community projects stay retired. Their ids remain only in `src/lib/legacy-projects.json` for points and profile validation; they are never listed, collected, scored or paid. |
+| Legacy community projects | Owner decision, 29 October 2026: the legacy community projects removed before the registry stay retired. Their ids remain only in `src/lib/legacy-projects.json` for points and profile validation; they are never listed, collected, scored or paid. |
 
 Proposed, not approved by the owner (from #1154; do not implement or treat as decided): every new project draft uses 200 bps and vault-custody wording, including drafts without a vault; historical welcome and X-connection awards are removed from displayed totals.
 
