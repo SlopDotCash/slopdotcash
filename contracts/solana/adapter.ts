@@ -814,9 +814,15 @@ export function solanaPaymentAdapter(
         );
         const ownerOf = (address: string) => {
           const index = keys.indexOf(address);
-          const balance = list(meta.postTokenBalances)
-            .map(object)
-            .find((item) => item.accountIndex === index);
+          // A recipient can spend the payout and close its token account later
+          // in this transaction. The post-state then omits the closed account,
+          // but the finalized pre-state still attests to its mint and owner.
+          const balances = [meta.postTokenBalances, meta.preTokenBalances]
+            .flatMap(list)
+            .map(object);
+          const balance = balances.find(
+            (item) => item.accountIndex === index && item.mint === config.mint,
+          );
           if (index < 0 || !balance || balance.mint !== config.mint)
             throw new Error("Payout account balance missing");
           return string(balance.owner);

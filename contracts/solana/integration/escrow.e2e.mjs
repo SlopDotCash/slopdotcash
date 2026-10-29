@@ -6,7 +6,9 @@ import test from "node:test";
 import anchor from "@coral-xyz/anchor";
 import {
   createAccount,
+  createCloseAccountInstruction,
   createMint,
+  createTransferInstruction,
   freezeAccount,
   getAccount,
   mintTo,
@@ -3514,4 +3516,212 @@ test("vault totals refuse a vault holding less than free, reserved and accrued f
     }),
     /Vault balance is below free, reserved and accrued fees/,
   );
+});
+
+test("payment verification handles a destination token account closed in the payout transaction", async () => {
+  await ensureConfig(program);
+  const closingRecipient = Keypair.generate();
+  const closingMint = await createMint(
+    provider.connection,
+    payer,
+    payer.publicKey,
+    null,
+    6,
+  );
+  const closingSource = await createAccount(
+    provider.connection,
+    payer,
+    closingMint,
+    payer.publicKey,
+  );
+  const closingDestination = await createAccount(
+    provider.connection,
+    payer,
+    closingMint,
+    closingRecipient.publicKey,
+  );
+  await mintTo(
+    provider.connection,
+    payer,
+    closingMint,
+    closingSource,
+    payer,
+    20_000_000n,
+  );
+  const closingProject = pda(
+    seed("project"),
+    key(payer.publicKey),
+    Buffer.from(hash(`closed-account${RUN}`)),
+    purposeSeed(),
+  );
+  const closingVault = pda(seed("vault"), key(closingProject));
+  const closingActor = 401;
+  const closingSourceDigest = Buffer.from(hash("source:closed-account"));
+  const closingAward = Buffer.from(
+    solanaAwardId(
+      closingProject.toBase58(),
+      closingSourceDigest.toString("hex"),
+    ),
+    "hex",
+  );
+  const closingBinding = pda(
+    seed("wallet"),
+    key(closingProject),
+    actorSeed(closingActor),
+  );
+  const closingObligation = pda(
+    seed("award"),
+    key(closingProject),
+    closingAward,
+  );
+  const closingVeto = pda(
+    seed("veto"),
+    key(closingProject),
+    actorSeed(closingActor),
+    actorSeed(1),
+  );
+  await program.methods
+    .initialize(
+      hash(`closed-account${RUN}`),
+      network,
+      authority.publicKey,
+      feeOwner.publicKey,
+      bn(DELAY),
+      bn(ROTATION_DELAY),
+      ORDINARY,
+    )
+    .accountsStrict({
+      owner: payer.publicKey,
+      project: closingProject,
+      mint: closingMint,
+      vault: closingVault,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      config: configAddress(program.programId),
+    })
+    .rpc();
+  await program.methods
+    .deposit(bn(20_000_000))
+    .accountsStrict({
+      depositor: payer.publicKey,
+      project: closingProject,
+      mint: closingMint,
+      source: closingSource,
+      vault: closingVault,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .rpc();
+  await program.methods
+    .commit(
+      [...closingAward],
+      closingSourceDigest,
+      bn(closingActor),
+      bn(10_000_000),
+    )
+    .accountsStrict({
+      owner: payer.publicKey,
+      project: closingProject,
+      vault: closingVault,
+      obligation: closingObligation,
+      origin: pda(seed("origin"), key(closingProject), closingSourceDigest),
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+  await activate();
+  await program.methods
+    .bindWallet(
+      bn(closingActor),
+      network,
+      bn(0),
+      hash(`claim:${closingActor}:0`),
+      expiry(),
+    )
+    .accountsStrict({
+      payer: payer.publicKey,
+      identityAuthority: authority.publicKey,
+      destination: closingRecipient.publicKey,
+      project: closingProject,
+      binding: closingBinding,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([authority, closingRecipient])
+    .rpc();
+  await activate();
+  const signature = await sendAndConfirmTransaction(
+    provider.connection,
+    new Transaction().add(
+      await program.methods
+        .pay(bn(1))
+        .accountsStrict({
+          project: closingProject,
+          obligation: closingObligation,
+          binding: closingBinding,
+          mint: closingMint,
+          vault: closingVault,
+          destination: closingDestination,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          veto: closingVeto,
+        })
+        .instruction(),
+      createTransferInstruction(
+        closingDestination,
+        closingSource,
+        closingRecipient.publicKey,
+        9_800_000n,
+      ),
+      createCloseAccountInstruction(
+        closingDestination,
+        payer.publicKey,
+        closingRecipient.publicKey,
+      ),
+    ),
+    [payer, closingRecipient],
+  );
+  await provider.connection.confirmTransaction(signature, "finalized");
+  const transaction = await parsedTransaction(signature);
+  const destinationIndex =
+    transaction.transaction.message.accountKeys.findIndex(
+      (entry) => entry.pubkey === closingDestination.toBase58(),
+    );
+  assert.ok(destinationIndex >= 0);
+  assert.equal(
+    transaction.meta.postTokenBalances.find(
+      (entry) => entry.accountIndex === destinationIndex,
+    ),
+    undefined,
+  );
+  assert.equal(
+    transaction.meta.preTokenBalances.find(
+      (entry) => entry.accountIndex === destinationIndex,
+    )?.owner,
+    closingRecipient.publicKey.toBase58(),
+  );
+  const [payment] = escrowInvocations(
+    transaction,
+    program.programId.toBase58(),
+  );
+  const adapter = solanaPaymentAdapter({
+    rpcUrl: provider.connection.rpcEndpoint,
+    genesisHash: await provider.connection.getGenesisHash(),
+    programId: program.programId.toBase58(),
+    projectPda: closingProject.toBase58(),
+    projectId: "local-closed-account",
+    network: "solana:localnet",
+    networkDomain: Buffer.from(network).toString("hex"),
+    vault: closingVault.toBase58(),
+    mint: closingMint.toBase58(),
+    owner: payer.publicKey.toBase58(),
+    identityAuthority: authority.publicKey.toBase58(),
+    feeRecipient: feeOwner.publicKey.toBase58(),
+    ...expectedDeployment,
+    bindingDelaySeconds: String(DELAY),
+    rotationDelaySeconds: String(ROTATION_DELAY),
+  });
+  const normalized = await adapter.verifyFinalized({
+    transactionId: signature,
+    eventIndex: payment.index,
+    kind: "paid",
+    obligationId: closingAward.toString("hex"),
+  });
+  assert.equal(normalized.destination, closingRecipient.publicKey.toBase58());
 });
