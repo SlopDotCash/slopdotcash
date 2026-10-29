@@ -204,11 +204,14 @@ retain standard payment weight. Public Slop Score and Points keep the October
 1 rule above. New snapshots publish `paymentReviewBasis` with policy
 `scr-05-payments-production-v1`, its cutoff, and the separately validated
 allocation ledger when any formal review in the window was submitted before
-that cutoff. When the window has no such review, score and payment agree and
-the basis is omitted (#1411 S3). October and later payment proposals use the
-published basis when present; a missing basis means the score ledger is the
-payment ledger. A published basis with the wrong policy or cutoff fails closed.
-Earlier closed cycles remain unchanged.
+that cutoff. When the window has no such review, score and payment agree: the
+publisher omits the basis and writes `paymentReviewBasisOmitted` with the same
+policy, cutoff, and reason `no-pre-policy-reviews` (#1411 S3). October and later
+payment proposals use the published basis when present; a valid omission marker
+means the score ledger is the payment ledger. A snapshot that lacks both, or
+that carries both, or that carries a marker while the score ledger still has a
+pre-cutoff review, fails closed. A published basis with the wrong policy or
+cutoff also fails closed. Earlier closed cycles remain unchanged.
 
 Formal review collection is independent of the reviewed pull-request author's
 full-detail hydration cap. Before detail hydration, the generator performs a

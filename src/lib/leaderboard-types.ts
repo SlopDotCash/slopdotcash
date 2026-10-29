@@ -696,6 +696,17 @@ export interface LeaderboardSnapshot {
     attributionCoverage: AttributionCoverage;
     opportunities: ScoreOpportunity[];
   };
+  /**
+   * Publisher-verified omission of paymentReviewBasis (#1411 S3). Present only
+   * when the complete census has no formal review before the payment cutoff, so
+   * score and payment weights are identical. Mutually exclusive with
+   * paymentReviewBasis. Absent from older or incomplete snapshots.
+   */
+  paymentReviewBasisOmitted?: {
+    policy: "scr-05-payments-production-v1";
+    effectiveAt: string;
+    reason: "no-pre-policy-reviews";
+  };
   opportunities: ScoreOpportunity[];
   attributions: ModelAttribution[];
   invalidAttributionMarkers: InvalidAttributionMarker[];
