@@ -180,6 +180,30 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
     ["2026-12", "2026-11"],
   );
   assert.equal(requests.length, 52);
+  // A historical authorization from a replaced vault has no ordering
+  // dependency on this project's new vault. The old deployment is refused by
+  // the existing dispatcher guard; do not pull in its unrelated current root.
+  await db.batch([
+    db.prepare(
+      "INSERT INTO monthly_reward_bases SELECT project_id,'2026-11',manifest,manifest_sha256,source_snapshot_sha256,cap_base,recipient_count,created_at FROM monthly_reward_bases WHERE project_id='zz-unrelated' AND period='2026-12'",
+    ),
+    db
+      .prepare(
+        "INSERT INTO monthly_payment_runs SELECT project_id,'2026-11',trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,?,total_gross_base,frozen_at,obligations_created_at FROM monthly_payment_runs WHERE project_id='zz-unrelated' AND period='2026-12'",
+      )
+      .bind(`0x${"9".repeat(40)}`),
+    db
+      .prepare(
+        "INSERT INTO monthly_payment_authorizations SELECT project_id,'2026-11',network,snapshot_sha256,json_set(authorization,'$.plan.request.period','2026-11','$.plan.deployment.vault',?),published_at FROM monthly_payment_authorizations WHERE project_id='zz-unrelated' AND period='2026-12'",
+      )
+      .bind(`0x${"9".repeat(40)}`),
+  ]);
+  await db.prepare("DELETE FROM monthly_payment_execution").run();
+  requests.length = 0;
+  failCurrent = false;
+  assert.equal((await run()).status, 503);
+  assert.equal(requests.length, 52);
+  assert.ok(requests.every((row) => row.projectId !== "zz-unrelated"));
   const fk = await db.prepare("PRAGMA foreign_key_check").all();
   assert.equal(fk.results.length, 0);
   console.log(
@@ -190,6 +214,7 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
       selectedWithPrerequisites: 52,
       duplicateCalls: 0,
       unrelatedProjectIncluded: false,
+      replacedVaultRootIncluded: false,
       rootBeforeOlderLeaves: true,
       olderLeavesContinueAfterRootFailure: true,
       foreignKeysValid: true,
