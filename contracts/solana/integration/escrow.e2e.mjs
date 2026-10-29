@@ -5,13 +5,16 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import anchor from "@coral-xyz/anchor";
 import {
+  AuthorityType,
   createAccount,
   createCloseAccountInstruction,
   createMint,
+  createSetAuthorityInstruction,
   createTransferInstruction,
   freezeAccount,
   getAccount,
   mintTo,
+  setAuthority,
   TOKEN_PROGRAM_ID,
   thawAccount,
 } from "@solana/spl-token";
@@ -3518,9 +3521,10 @@ test("vault totals refuse a vault holding less than free, reserved and accrued f
   );
 });
 
-test("payment verification handles a destination token account closed in the payout transaction", async () => {
+async function verifyClosedPayout(changedPreOwner) {
   await ensureConfig(program);
   const closingRecipient = Keypair.generate();
+  const priorOwner = Keypair.generate();
   const closingMint = await createMint(
     provider.connection,
     payer,
@@ -3551,7 +3555,7 @@ test("payment verification handles a destination token account closed in the pay
   const closingProject = pda(
     seed("project"),
     key(payer.publicKey),
-    Buffer.from(hash(`closed-account${RUN}`)),
+    Buffer.from(hash(`closed-account:${changedPreOwner}:${RUN}`)),
     purposeSeed(),
   );
   const closingVault = pda(seed("vault"), key(closingProject));
@@ -3582,7 +3586,7 @@ test("payment verification handles a destination token account closed in the pay
   );
   await program.methods
     .initialize(
-      hash(`closed-account${RUN}`),
+      hash(`closed-account:${changedPreOwner}:${RUN}`),
       network,
       authority.publicKey,
       feeOwner.publicKey,
@@ -3647,9 +3651,28 @@ test("payment verification handles a destination token account closed in the pay
     .signers([authority, closingRecipient])
     .rpc();
   await activate();
+  if (changedPreOwner)
+    await setAuthority(
+      provider.connection,
+      payer,
+      closingDestination,
+      closingRecipient,
+      AuthorityType.AccountOwner,
+      priorOwner.publicKey,
+    );
   const signature = await sendAndConfirmTransaction(
     provider.connection,
     new Transaction().add(
+      ...(changedPreOwner
+        ? [
+            createSetAuthorityInstruction(
+              closingDestination,
+              priorOwner.publicKey,
+              AuthorityType.AccountOwner,
+              closingRecipient.publicKey,
+            ),
+          ]
+        : []),
       await program.methods
         .pay(bn(1))
         .accountsStrict({
@@ -3675,7 +3698,7 @@ test("payment verification handles a destination token account closed in the pay
         closingRecipient.publicKey,
       ),
     ),
-    [payer, closingRecipient],
+    [payer, closingRecipient, ...(changedPreOwner ? [priorOwner] : [])],
   );
   await provider.connection.confirmTransaction(signature, "finalized");
   const transaction = await parsedTransaction(signature);
@@ -3694,7 +3717,7 @@ test("payment verification handles a destination token account closed in the pay
     transaction.meta.preTokenBalances.find(
       (entry) => entry.accountIndex === destinationIndex,
     )?.owner,
-    closingRecipient.publicKey.toBase58(),
+    (changedPreOwner ? priorOwner : closingRecipient).publicKey.toBase58(),
   );
   const [payment] = escrowInvocations(
     transaction,
@@ -3717,11 +3740,20 @@ test("payment verification handles a destination token account closed in the pay
     bindingDelaySeconds: String(DELAY),
     rotationDelaySeconds: String(ROTATION_DELAY),
   });
-  const normalized = await adapter.verifyFinalized({
+  const verified = adapter.verifyFinalized({
     transactionId: signature,
     eventIndex: payment.index,
     kind: "paid",
     obligationId: closingAward.toString("hex"),
   });
-  assert.equal(normalized.destination, closingRecipient.publicKey.toBase58());
-});
+  if (changedPreOwner)
+    await assert.rejects(verified, /Payout account balance missing/);
+  else
+    assert.equal(
+      (await verified).destination,
+      closingRecipient.publicKey.toBase58(),
+    );
+}
+for (const changedPreOwner of [false, true])
+  test(`payment verification ${changedPreOwner ? "refuses a different pre-owner on a closed payout account" : "handles a destination token account closed in the payout transaction"}`, () =>
+    verifyClosedPayout(changedPreOwner));
