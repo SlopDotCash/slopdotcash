@@ -120,6 +120,8 @@ const localServerCommand =
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // Registry runs make the first service-binding call before the first test.
+  globalSetup: registryPersistTo ? "./tests/e2e/registry-warmup.ts" : undefined,
   metadata: {
     sourceRevision: execFileSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf8",
