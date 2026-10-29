@@ -71,6 +71,13 @@ time, or a snapshot older than the `staleAfterMs` published by
 `GET /api/v1/payments/projects/<id>/vault` (PRD sections 6 and 9). It does not
 retry, uses no credentials and reads no chain RPC.
 
+The same watch checks the identity Worker's existing
+`GET https://identity.slop.cash/v1/oauth/authorize` route without parameters.
+It expects HTTP 400 with `error: "invalid_request"`, the invalid-link refusal
+returned before identity state is read or created. A timeout, another status,
+or a different response fails the watch. This proves public-route availability,
+not a completed GitHub sign-in or database/provider readiness.
+
 It does not cover Worker cron failures that leave those answers healthy,
 keeper, executor, fee, scanner or backup errors, or signed transactions. The
 only notice is GitHub's failed-workflow email. Cloudflare Worker error
