@@ -673,3 +673,104 @@ test("a lone indirectly accepted PR reaches joint assessment", async () => {
     sqlite.close();
   }
 });
+
+/** PRD sections 4 and 5: an admin revision records a GitHub rename by keeping
+ * the original path as the manifest id and appending the current path as the
+ * alias and githubUrl. GitHub answers the former name with a 301 to the
+ * immutable `/repositories/:id` path, never with the repository itself
+ * (#1637). Webhooks name the current path, so valuation of the renamed
+ * repository must still read the pull request.
+ */
+test("a recorded repository rename still reaches the consumer", async () => {
+  const { db, sqlite, project } = liveRegistration();
+  const current = "fresh-registration/toolkit-renamed";
+  const renamed = JSON.stringify({
+    ...project,
+    repositories: [
+      {
+        ...project.repositories[0],
+        aliases: [...(project.repositories[0].aliases ?? []), current],
+        displayName: current,
+        githubUrl: `https://github.com/${current}`,
+      },
+    ],
+  });
+  const renamedDigest = createHash("sha256").update(renamed).digest("hex");
+  sqlite.run(
+    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,2,?,?,?,?)",
+    [project.id, renamed, renamedDigest, "Approved repository rename", at],
+  );
+  sqlite.run(
+    "UPDATE projects SET revision=2,manifest=?,manifest_sha256=?,updated_at=? WHERE id=?",
+    [renamed, renamedDigest, at, project.id],
+  );
+  sqlite.run(
+    "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
+    [current, project.id],
+  );
+  const renamedJob = {
+    ...job,
+    deliveryId: "renamed-delivery",
+    repo: "toolkit-renamed",
+  };
+  await recordDelivery(db, renamedJob.deliveryId, "pull_request");
+  await recordValueRequest(db, renamedJob);
+  const identity = {
+    id: job.repositoryId,
+    node_id: "R_example",
+    private: false,
+  };
+  const immutable = `/repositories/${job.repositoryId}`;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.origin !== "https://api.github.com")
+      throw new Error("No provider call is authorized in this test");
+    if (url.pathname === "/app/installations/1/access_tokens")
+      return Response.json({ token: "local-installation" });
+    if (url.pathname === "/installation/repositories")
+      return Response.json({ repositories: [identity] });
+    // The former name: GitHub redirects instead of answering.
+    if (
+      url.pathname === `/repos/${repository}` ||
+      url.pathname.startsWith(`/repos/${repository}/`)
+    )
+      return new Response(null, {
+        status: 301,
+        headers: {
+          location: `https://api.github.com${immutable}${url.pathname.slice(`/repos/${repository}`.length)}`,
+        },
+      });
+    const path = url.pathname.startsWith(`/repos/${current}`)
+      ? url.pathname.slice(`/repos/${current}`.length)
+      : url.pathname.startsWith(immutable)
+        ? url.pathname.slice(immutable.length)
+        : null;
+    if (path === "") return Response.json(identity);
+    if (path === "/pulls/1")
+      return Response.json({ state: "open", merged_at: null, closed_at: null });
+    throw new Error(`Unexpected GitHub request ${url.pathname}`);
+  }) as typeof fetch;
+  try {
+    const env: ValueConsumerEnv = {
+      SLOPBOT_DB: db,
+      SLOPBOT_APP_ID: "1",
+      SLOPBOT_APP_PRIVATE_KEY: privateKey,
+      SLOPBOT_APP_USER_ID: "2",
+      SURPLUS_API_KEY: "not-used-before-inference",
+      SLOPBOT_PRODUCER_REVISION: "a".repeat(40),
+      SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only",
+    };
+    expect(await consumeValueRequest(env, renamedJob)).toBe("open");
+    expect(
+      sqlite
+        .query(
+          "SELECT state,outcome FROM slopbot_value_processing WHERE delivery_id=?",
+        )
+        .get(renamedJob.deliveryId),
+    ).toEqual({ state: "completed", outcome: "open" });
+  } finally {
+    globalThis.fetch = original;
+    sqlite.close();
+  }
+});
