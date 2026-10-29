@@ -95,6 +95,13 @@ export async function lookupGitHubActor(
   if (!validGithubLogin(login)) return null;
   const user = await githubJson(fetcher, token, `/users/${login}`, apiOrigin);
   if (!user) return null;
+  // An organization or bot account exists, but it is not a person's account.
+  if (typeof user.type === "string" && user.type !== "User")
+    throw new GithubLookupError(
+      422,
+      "personal_account_required",
+      `@${login} is a GitHub ${user.type} account. Enter a person's GitHub account.`,
+    );
   if (
     user.type !== "User" ||
     !Number.isSafeInteger(user.id) ||
