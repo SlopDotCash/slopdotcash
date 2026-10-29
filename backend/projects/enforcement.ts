@@ -156,10 +156,10 @@ export function projectAppealState(
  * With `kept`, an appeal that confirmed malicious Bans kept also counts:
  * the moderator decision on those Bans closes it.
  */
-function projectAppealOpen(
+function openProjectAppeal(
   records: ProjectEnforcement[],
   kept = false,
-): boolean {
+): ProjectEnforcement | undefined {
   const newestFirst = [...records].reverse();
   const boundary =
     newestFirst.find(
@@ -174,13 +174,19 @@ function projectAppealOpen(
           record.action,
         ),
     )?.sequence ?? 0;
-  const request = newestFirst.find(
+  return newestFirst.find(
     (record) =>
       record.action === "request_reinstatement" &&
       record.actorRole !== "banned-account" &&
       record.sequence > boundary,
   );
-  return request !== undefined;
+}
+
+function projectAppealOpen(
+  records: ProjectEnforcement[],
+  kept = false,
+): boolean {
+  return openProjectAppeal(records, kept) !== undefined;
 }
 
 /** A shared project appeal must not claim that another account filed evidence. */
@@ -366,15 +372,21 @@ function requireIndependentModerator(
   restriction: ProjectRestriction,
   actor: GithubActor,
 ): void {
-  if (
-    restriction.restrictedBy.some(
-      (placed) => placed.githubId === actor.githubId,
-    )
-  )
+  const placed = restriction.restrictedBy.some(
+    (entry) => entry.githubId === actor.githubId,
+  );
+  // The appellant may be a moderator too; the panel still offers the
+  // decision, so the rule has to refuse it here.
+  const appealed =
+    openProjectAppeal(restriction.records, true)?.actor?.githubId ===
+    actor.githubId;
+  if (placed || appealed)
     throw new EnforcementRefusal(
       403,
       "independent_review_required",
-      "A moderator who did not place this restriction must decide the appeal",
+      placed
+        ? "A moderator who did not place this restriction must decide the appeal"
+        : "Another moderator must decide an appeal its author filed",
     );
 }
 
