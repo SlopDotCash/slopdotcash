@@ -250,9 +250,11 @@ test("one alias that cannot fit beside a near-limit source is not dropped", () =
 /** A provider that records each request and answers per call. */
 function provider(answer: (input: string, index: number) => Response | null) {
   const calls: string[] = [];
+  const inputs: string[] = [];
   const fetcher = (async (_url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
     const input = body.messages[0].content as string;
+    inputs.push(input);
     calls.push(body.system as string);
     const index = calls.length - 1;
     const custom = answer(input, index);
@@ -284,7 +286,7 @@ function provider(answer: (input: string, index: number) => Response | null) {
       },
     });
   }) as unknown as typeof fetch;
-  return { calls, fetcher };
+  return { calls, inputs, fetcher };
 }
 
 test("a batched review combines every call and fails when any batch fails", async () => {
@@ -359,6 +361,53 @@ test("a batched review combines every call and fails when any batch fails", asyn
   });
   expect(failed.evidence?.review.status).toBe("failed");
   expect(failing.calls).toHaveLength(1);
+});
+
+test("alias metadata batches complete the review without repeating source content", async () => {
+  const files = Array.from({ length: 1024 }, (_, index) =>
+    file(
+      `generated/${"x".repeat(900)}-${index}.ts`,
+      "export const shared = true;\n",
+    ),
+  );
+  const inspection = inspectRepository({ files });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const parsed = plan.batches.map(
+    (batch) =>
+      JSON.parse(batch.evidence) as {
+        items: { id: string }[];
+      },
+  );
+  const sourceId = parsed
+    .flatMap((value) => value.items)
+    .find((item) => !item.id.startsWith("same-bytes:"));
+  if (!sourceId) throw new Error("Expected one source item");
+  const review = provider(() => null);
+  const result = await reviewInventory({
+    inspection,
+    profile,
+    fetch: review.fetcher,
+    concurrency: 1,
+  });
+  expect(result.evidence?.review.status).toBe("completed");
+  expect(review.calls).toHaveLength(plan.batches.length + 1);
+  const batches = review.inputs.slice(0, -1).map((input) => JSON.parse(input));
+  expect(
+    batches.filter((batch) =>
+      batch.items.some((item: { id: string }) => item.id === sourceId.id),
+    ),
+  ).toHaveLength(1);
+  expect(
+    batches.filter((batch) =>
+      batch.items.some((item: { id: string }) =>
+        item.id.startsWith("same-bytes:"),
+      ),
+    ),
+  ).toHaveLength(plan.batches.length - 1);
+  expect(result.evidence?.coverage).toEqual(
+    Object.fromEntries(SCAN_REVIEW_AREAS.map((area) => [area, "complete"])),
+  );
 });
 
 test("a review larger than one pass resumes from its private cache without repeating calls", async () => {
