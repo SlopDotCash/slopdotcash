@@ -5,8 +5,8 @@
  * split into token-budgeted batches, risky content first and grouped by
  * directory, followed by one repository-level synthesis call over the
  * deterministic pre-pass and every batch result. Nothing is sampled or
- * shortened: every reviewed item is in exactly one batch, and the review is
- * complete only when every call completed.
+ * shortened: every source item is in exactly one batch, alias-only metadata
+ * follows when needed, and the review is complete only when every call completed.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -35,9 +35,12 @@ export const DEFAULT_BATCH_TOKENS = 150_000;
 export const BYTES_PER_TOKEN = 3;
 /** Fixed per-item JSON framing, counted like the single-call envelope. */
 const ITEM_OVERHEAD_BYTES = 160;
+/** Batch metadata, `sameBytesAs` framing and JSON punctuation. */
+const BATCH_OVERHEAD_BYTES = 2_048;
 const MAX_BUNDLE_GAPS = 100;
 
 type Item = { id: string; text: string; sha256: string };
+type PlannedItem = { item: Item; aliases: string[] };
 type Inventory = {
   items: Item[];
   artifacts: unknown[];
@@ -57,6 +60,12 @@ export type ReviewPlan =
 /** Serialized size, so escaping counts against the budget. */
 const itemBytes = (item: Item) =>
   Buffer.byteLength(JSON.stringify(item)) + ITEM_OVERHEAD_BYTES;
+const aliasBytes = (id: string, aliases: string[]) =>
+  aliases.length === 0
+    ? 0
+    : Buffer.byteLength(JSON.stringify({ [id]: aliases }));
+const plannedItemBytes = ({ item, aliases }: PlannedItem) =>
+  itemBytes(item) + aliasBytes(item.id, aliases);
 const tokens = (bytes: number) => Math.ceil(bytes / BYTES_PER_TOKEN);
 /** A larger input gets more time; an outage still fails as a retry. */
 export const callTimeoutMs = (estimatedTokens: number) =>
@@ -124,7 +133,8 @@ export function planReview(
   if (fits)
     return { mode: "single", call: planned(evidence, inventory.items.length) };
   const risky = new Set(inspection.riskSignals);
-  // Identical bytes are reviewed once; every other path is named beside it.
+  // Identical bytes are reviewed once; every other path is named beside it, or
+  // carried by a following metadata batch when the path list is too large.
   const first = new Map<string, Item>();
   const sameBytes = new Map<string, string[]>();
   for (const item of inventory.items) {
@@ -154,49 +164,131 @@ export function planReview(
     .sort((a, b) => a.tier - b.tier || a.position - b.position)
     .map((entry) => entry.item);
   const limit = Math.min(batchTokens * BYTES_PER_TOKEN, MAX_INVENTORY_BYTES);
-  const groups: Item[][] = [];
-  let current: Item[] = [];
-  let bytes = 0;
+  const batchEvidence = (
+    index: number,
+    count: number,
+    items: Item[],
+    aliases: Record<string, string[]>,
+  ) =>
+    JSON.stringify({
+      schemaVersion: INVENTORY_SCHEMA,
+      batch: {
+        index,
+        count,
+        inventorySha256: inspection.inventorySha256,
+        note: "One batch of a repository review; coverage refers to the supplied items. A repository-level synthesis follows.",
+      },
+      items,
+      ...(Object.keys(aliases).length > 0 ? { sameBytesAs: aliases } : {}),
+      artifacts: [],
+      visibilityGaps: [],
+    });
+  const aliasesFor = (item: Item, aliases: string[]) =>
+    aliases.length === 0 ? {} : { [item.id]: aliases };
+  const fitsWithSource = (item: Item, aliases: string[]) =>
+    Buffer.byteLength(
+      batchEvidence(
+        999_999_999,
+        999_999_999,
+        [item],
+        aliasesFor(item, aliases),
+      ),
+    ) <= limit;
+  const fittedAliases = (item: Item, aliases: string[]): string[] => {
+    const fitted: string[] = [];
+    for (const alias of aliases) {
+      if (!fitsWithSource(item, [...fitted, alias])) break;
+      fitted.push(alias);
+    }
+    return fitted;
+  };
+  const aliasMetadata = (
+    item: Item,
+    aliases: string[],
+    index: number,
+  ): Item => {
+    const text = JSON.stringify({
+      sourcePath: item.id,
+      sourceSha256: item.sha256,
+      sameBytesAs: aliases,
+    });
+    return {
+      id: `same-bytes:${item.sha256}:${index}`,
+      text,
+      sha256: sha256(text),
+    };
+  };
+  const aliasOnlyGroups = (item: Item, aliases: string[]): PlannedItem[][] => {
+    const groups: PlannedItem[][] = [];
+    let paths: string[] = [];
+    let index = 1;
+    const flush = () => {
+      if (paths.length === 0) return;
+      groups.push([{ item: aliasMetadata(item, paths, index), aliases: [] }]);
+      paths = [];
+      index += 1;
+    };
+    for (const alias of aliases) {
+      const candidate = [...paths, alias];
+      const evidence = batchEvidence(
+        999_999_999,
+        999_999_999,
+        [aliasMetadata(item, candidate, index)],
+        {},
+      );
+      if (paths.length > 0 && Buffer.byteLength(evidence) > limit) flush();
+      paths.push(alias);
+    }
+    flush();
+    return groups;
+  };
+  const groups: PlannedItem[][] = [];
+  let current: PlannedItem[] = [];
+  let bytes = BATCH_OVERHEAD_BYTES;
+  const flush = () => {
+    if (current.length > 0) groups.push(current);
+    current = [];
+    bytes = BATCH_OVERHEAD_BYTES;
+  };
   for (const item of ordered) {
-    const size = itemBytes(item);
+    const aliases = sameBytes.get(item.id) ?? [];
+    const fitted = fittedAliases(item, aliases);
+    const overflow = aliases.slice(fitted.length);
+    if (overflow.length > 0) {
+      flush();
+      groups.push([{ item, aliases: fitted }]);
+      groups.push(...aliasOnlyGroups(item, overflow));
+      continue;
+    }
+    const plannedItem: PlannedItem = { item, aliases };
+    const size = plannedItemBytes(plannedItem);
+    const repeatedContent = current.some(
+      ({ item }) => item.sha256 === plannedItem.item.sha256,
+    );
     if (
       current.length > 0 &&
-      (bytes + size > limit || current.length >= MAX_INVENTORY_ITEMS)
+      (bytes + size > limit ||
+        current.length >= MAX_INVENTORY_ITEMS ||
+        repeatedContent)
     ) {
-      groups.push(current);
-      current = [];
-      bytes = 0;
+      flush();
     }
-    current.push(item);
+    current.push(plannedItem);
     bytes += size;
   }
-  if (current.length > 0) groups.push(current);
-  const batches = groups.map((items, index) =>
-    planned(
-      JSON.stringify({
-        schemaVersion: INVENTORY_SCHEMA,
-        batch: {
-          index: index + 1,
-          count: groups.length,
-          inventorySha256: inspection.inventorySha256,
-          note: "One batch of a repository review; coverage refers to the supplied items. A repository-level synthesis follows.",
-        },
-        items,
-        ...(items.some((item) => sameBytes.has(item.id))
-          ? {
-              sameBytesAs: Object.fromEntries(
-                items
-                  .filter((item) => sameBytes.has(item.id))
-                  .map((item) => [item.id, sameBytes.get(item.id)]),
-              ),
-            }
-          : {}),
-        artifacts: [],
-        visibilityGaps: [],
-      }),
+  flush();
+  const batches = groups.map((plannedItems, index) => {
+    const items = plannedItems.map(({ item }) => item);
+    const aliases = Object.fromEntries(
+      plannedItems
+        .filter(({ aliases }) => aliases.length > 0)
+        .map(({ item, aliases }) => [item.id, aliases]),
+    );
+    return planned(
+      batchEvidence(index + 1, groups.length, items, aliases),
       items.length,
-    ),
-  );
+    );
+  });
   return { mode: "batched", batches, batchTokens };
 }
 
