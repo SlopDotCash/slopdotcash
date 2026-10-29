@@ -11,7 +11,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,9 +44,11 @@ const preflight = lines.slice(start, end).join("\n");
 const root = mkdtempSync(join(tmpdir(), "slop-fee-converter-preflight-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 mkdirSync(join(root, "workers/fee-converter"), { recursive: true });
-symlinkSync(
-  join(source, "workers/fee-converter/config.ts"),
+// Load the real parser and its dependencies without a file symlink, which
+// requires elevated privileges or Developer Mode on Windows.
+writeFileSync(
   join(root, "workers/fee-converter/config.ts"),
+  `export { parseConfig } from ${JSON.stringify(join(source, "workers/fee-converter/config.ts"))};\n`,
 );
 const reviewed = readFileSync(
   join(source, "workers/fee-converter/wrangler.toml"),
