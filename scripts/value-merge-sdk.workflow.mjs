@@ -209,9 +209,13 @@ try {
   git(["bundle", "create", file, "--all"]);
   git(["bundle", "verify", file]);
   const bundle = await readFile(file);
-  assert(bundle.length > 24_000_000 && bundle.length < 25 * 1024 * 1024);
+  // Record bytes before the window assert so a failed artifact still names the failing side.
   report.bundle = { bytes: bundle.length, sha256: sha(bundle) };
   report.gitVersion = fixture.gitVersion;
+  assert(
+    bundle.length > 24_000_000 && bundle.length < 25 * 1024 * 1024,
+    `public.bundle bytes ${bundle.length} outside (24000000, ${25 * 1024 * 1024})`,
+  );
   const inputs = fixture.sources.map((source) => source.input);
   await send("complete-public-merge", inputs, bundle, 200);
   await send("fresh-sandbox-repeat", inputs, bundle, 200);
