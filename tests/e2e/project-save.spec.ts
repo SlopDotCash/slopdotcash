@@ -1,3 +1,4 @@
+import { PROJECT_SKILL_TEMPLATES } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { projectImageApiFixture } from "../project-image-api-fixture.mjs";
@@ -18,6 +19,15 @@ test("a browser without WebP encoding can upload and persist its project image",
   const api = await projectImageApiFixture({
     ...registered,
     contribution: { ...CONTRIBUTION },
+    skill: {
+      ...registered.skill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.contributor,
+      publishAtRoot: false,
+    },
+    reviewSkill: {
+      ...registered.reviewSkill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.reviewer,
+    },
   });
   await page.addInitScript(() => {
     const encode = HTMLCanvasElement.prototype.toDataURL;
