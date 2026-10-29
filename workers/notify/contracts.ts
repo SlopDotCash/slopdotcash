@@ -21,14 +21,34 @@ export type SlopbotFailureNotice = {
   model: string;
   kind: "budget-exhausted" | "request-failed";
   occurredAt: string;
+  failure?: string;
 };
+
+/** Only fixed model-route categories may cross the notification boundary. */
+export function safeProviderFailure(value: unknown): string {
+  return typeof value === "string" &&
+    (value === "provider did not report the requested model" ||
+      value === "schema-invalid verdict" ||
+      value === "provider budget exhausted" ||
+      value === "provider deadline truncated the response" ||
+      value === "refusal" ||
+      value === "max_tokens" ||
+      /^provider returned HTTP [1-5][0-9]{2}$/u.test(value))
+    ? value
+    : "provider call failed";
+}
+
 export function validFailureNotice(
   value: unknown,
 ): value is SlopbotFailureNotice {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
+  const keys = Object.keys(v).sort().join();
   return (
-    Object.keys(v).sort().join() === "callId,kind,model,occurredAt" &&
+    (keys === "callId,kind,model,occurredAt" ||
+      (keys === "callId,failure,kind,model,occurredAt" &&
+        typeof v.failure === "string" &&
+        safeProviderFailure(v.failure) === v.failure)) &&
     Number.isSafeInteger(v.callId) &&
     Number(v.callId) > 0 &&
     typeof v.model === "string" &&
