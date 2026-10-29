@@ -10,6 +10,7 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const drivers = [
+  ["security-inbox-list", "node", ["backend/security/inbox-list.workflow.mjs"]],
   [
     "reporting-readiness",
     "node",
