@@ -191,7 +191,7 @@ pre {
 }
 
 /* Plain buttons inside panels and forms share the secondary treatment. */
-.points-panel button:not(.button),
+.points-panel button:not(.button, .email-switch),
 .points-period button,
 .funding-workbench button:not(.button),
 .earnings-page button:not(.button),
@@ -209,7 +209,7 @@ pre {
   cursor: pointer;
 }
 
-.points-panel button:not(.button):hover:not(:disabled),
+.points-panel button:not(.button, .email-switch):hover:not(:disabled),
 .points-period button:hover:not(:disabled),
 .funding-workbench button:not(.button):hover:not(:disabled),
 .earnings-page button:not(.button):hover:not(:disabled),
@@ -219,7 +219,7 @@ pre {
   background: rgba(243, 239, 230, 0.06);
 }
 
-.points-panel button:not(.button):disabled,
+.points-panel button:not(.button, .email-switch):disabled,
 .points-period button:disabled,
 .funding-workbench button:not(.button):disabled,
 .earnings-page button:not(.button):disabled,

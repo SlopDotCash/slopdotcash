@@ -186,18 +186,28 @@ for (const [next, expected] of [
     await (await popup).close();
     await expect(page).toHaveURL(expected);
     await page.goto(`${deployment.site}/account`);
-    // Signed in, the account page has no sign-in panel; the Connections
-    // region is the member's own.
-    const connections = page.getByRole("region", { name: "Connections" });
-    await expect(connections).toBeVisible();
-    await expect(page.locator("#profile")).toContainText("Connections");
+    // Signed in, Settings contains wallets and email without a sign-in or
+    // Connections panel.
+    const wallets = page.getByRole("region", { name: "Wallets", exact: true });
+    const email = page.getByRole("region", {
+      name: "Email preferences",
+      exact: true,
+    });
+    await expect(wallets).toBeVisible();
+    await expect(email).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Connections", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator("#profile")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Continue with GitHub", exact: true }),
     ).toHaveCount(0);
     // Membership is always public, so the account page offers no visibility choice.
     await expect(page.getByRole("main").getByRole("checkbox")).toHaveCount(0);
     await page.reload();
-    await expect(connections).toBeVisible();
+    await expect(wallets).toBeVisible();
+    await expect(email).toBeVisible();
+    await expect(page.locator("#profile")).toHaveCount(0);
     await page.goto(
       `${deployment.site}/login?next=${encodeURIComponent(next)}`,
     );
