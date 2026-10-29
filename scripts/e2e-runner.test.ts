@@ -42,14 +42,24 @@ test("a timed-out launcher stops its descendant server before returning failure"
   let completed = false;
   // Include cold launcher startup before exercising descendant termination.
   // Native Windows CI can spend the former five-second budget before ready.
-  const phase = runE2ePhase({
+  const options = {
     label: "timeout-regression",
     command: "node",
     args: ["-e", launcher],
     cwd: directory,
-    env: process.env,
     timeoutMs: 15_000,
-  }).then((status) => {
+  };
+  // Run the phase in Node, the runtime of `bun run test:e2e`. Bun 1.3.14 on
+  // Windows starts a spawnSync timeout from its previous spawnSync call, so
+  // in the full suite the taskkill cleanup fails at once with ETIMEDOUT.
+  const runner = pathToFileURL(
+    join(process.cwd(), "scripts/run-e2e-phase.mjs"),
+  ).href;
+  const script = `import { runE2ePhase } from ${JSON.stringify(runner)}; process.exitCode = await runE2ePhase({ ...${JSON.stringify(options)}, env: process.env });`;
+  const phase = Bun.spawn(["node", "--input-type=module", "-e", script], {
+    stdout: "inherit",
+    stderr: "inherit",
+  }).exited.then((status) => {
     completed = true;
     return status;
   });
