@@ -137,8 +137,9 @@ to `"true"` after the explicit production qualification and activation review.
    removes the finding label and reverses the penalty. A later human close
    stays. An upheld appeal binds the revision it was opened on: it reverses
    only a debit from that revision's close or one recorded before the appeal
-   opened, and it reopens and removes labels only while that revision is
-   current, never a later head's close. The appeal escalates to a moderator, with the
+   opened. It reopens only while that revision is current, never a later
+   head's close. It removes the finding label while the newest finding is
+   still that revision's, never a later head's label. The appeal escalates to a moderator, with the
    `slopbot: moderator` label, when the draft is rejected, the finding is
    `scam`, the appellant has an active participation ban, the debit at stake
    is 24 thirds or more, the draft confidence is below 0.9, or the appeal is

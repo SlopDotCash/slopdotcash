@@ -2033,6 +2033,43 @@ async function latestFinding(
   return row.category;
 }
 
+/** The newest Slopbot finding when it belongs to an appealed revision: its
+ * review is of that revision, or it was recorded at or before the appeal
+ * opened. A newer revision's finding returns null, so its label stays.
+ */
+async function appealedFinding(
+  db: store.D1Database,
+  itemNodeId: string,
+  covered: { revision: string; occurredAt: string },
+): Promise<Category | null> {
+  const row = await db
+    .prepare(
+      `SELECT category, at, revision FROM (
+         SELECT json_extract(verdict, '$.category') AS category,
+           completed_at AS at, review_key, revision FROM slopbot_reviews
+         WHERE item_node_id = ?1 AND status = 'completed' AND verdict IS NOT NULL
+           AND action IN ('close', 'label', 'hold')
+         UNION ALL
+         SELECT json_extract(a.detail, '$.category'), a.created_at, a.review_key,
+           (SELECT r.revision FROM slopbot_reviews r
+            WHERE r.review_key = a.review_key)
+         FROM slopbot_actions a WHERE a.item_node_id = ?1 AND a.action = 'close')
+       ORDER BY at DESC, review_key DESC LIMIT 1`,
+    )
+    .bind(itemNodeId)
+    .first<{
+      category: Category | null;
+      at: string | null;
+      revision: string | null;
+    }>();
+  if (row === null || row.category === null || row.category === "none")
+    return null;
+  const belongs =
+    row.revision === covered.revision ||
+    (row.at !== null && row.at <= covered.occurredAt);
+  return belongs ? row.category : null;
+}
+
 /** Whether the current close of this item is Slopbot's. GET issue supplies
  * GitHub's immutable closer ID for issues and PRs. Missing closer evidence
  * stays pending.
@@ -2669,6 +2706,15 @@ async function finishAppeal(
     // A retired project: reverse the debit, with no GitHub write.
     await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
   } else if (current.resolution === "upheld" && appealed !== session.revision) {
+    // Never reopen here. Remove the finding label only while the newest
+    // finding is still the appealed revision's, as on the current revision.
+    const finding = await appealedFinding(db, issue.node_id, covered);
+    if (finding !== null) {
+      for (const label of [categoryLabel(finding), UNCERTAIN_LABEL]) {
+        if (label !== UNCERTAIN_LABEL && !hasLabel(issue, label)) continue;
+        await removeLabel(env, job, session.github, label);
+      }
+    }
     await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
     await publishAppealState(env, job, session, current, "resolution");
     return `appeal ${current.resolution} by the ${current.resolved_by}; newer item state kept`;
