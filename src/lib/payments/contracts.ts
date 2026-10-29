@@ -86,6 +86,8 @@ export interface PaymentsAccount {
   balances: (PaymentAsset & { chain: PaymentChain; netBase: string })[];
   /** Imported from reviewed disclosures; never an escrow `paid` state. */
   directTransfers: DirectTransfer[];
+  /** Opt-in clients load disclosed history separately through its page API. */
+  directTransfersPaged?: boolean;
   /** Legacy README observations; history only, never a payout destination. */
   walletObservations: WalletObservation[];
 }
@@ -108,6 +110,14 @@ export interface DirectTransfer {
   amountMicro: string;
   transactionId: string;
   blockTime: string;
+}
+/** One append-boundary page of disclosed transfers; totalMicro is for this page. */
+export interface DirectTransferPage {
+  transfers: DirectTransfer[];
+  totalMicro: string;
+  through: number;
+  next: number | null;
+  total: number;
 }
 /** Public projection of an ordinary, finalized vault payment. */
 export interface PublicVaultPayment extends PaymentAsset {
