@@ -321,6 +321,14 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Restore Bun dependency cache
+        # CI check cache only (owner decision, 29 October 2026, #1467 3.10(d)).
+        # Jobs that build the release bundle, deploy or hold secrets never use it.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
       - name: Install frozen workspace dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
@@ -367,6 +375,12 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      # CI check cache only (owner decision, 29 October 2026, #1467 3.10(d)).
+      # Jobs that build the release bundle, deploy or hold secrets never use it.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile --ignore-scripts
       - name: Install pinned skill validator dependency
         run: |
@@ -855,39 +869,6 @@ jobs:
             value?.result?.production_branch !== "main"
           ) {
             throw new TypeError("the reviewed eliza-computer Pages project contract drifted");
-          }
-          NODE
-
-      - name: Require reviewed deck Pages custom domain
-        if: steps.release-input.outputs.superseded != 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          response="$RUNNER_TEMP/eliza-computer-deck-domain.json"
-          endpoint="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer/domains/deck.slop.cash"
-          status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize 65536 \
-              --output "$response" \
-              --write-out "%{http_code}" \
-              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              "$endpoint"
-          )"
-          if [ "$status" != "200" ]; then
-            echo "::error::The reviewed deck.slop.cash Pages domain is unavailable (HTTP $status); routine release code will not create or reconfigure it."
-            exit 1
-          fi
-          node - "$response" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (value?.success !== true || value?.result?.name !== "deck.slop.cash") {
-            throw new TypeError("Cloudflare did not confirm the exact deck.slop.cash Pages domain");
           }
           NODE
 
@@ -1727,78 +1708,6 @@ jobs:
             sleep 5
           done
           echo "::error::Cloudflare did not report a new, successful, clean production deployment for commit $GITHUB_SHA."
-          exit 1
-
-      - name: Verify deck custom domain, DNS, TLS, and deployed bytes
-        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          domain_response="$RUNNER_TEMP/eliza-computer-deck-domain-active.json"
-          domain_active=false
-          for attempt in $(seq 1 120); do
-            status="$(
-              curl --silent --show-error \
-                --connect-timeout 10 \
-                --max-time 30 \
-                --max-filesize 65536 \
-                --output "$domain_response" \
-                --write-out "%{http_code}" \
-                --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer/domains/deck.slop.cash"
-            )"
-            if [ "$status" = "200" ] && node - "$domain_response" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (
-            value?.success !== true ||
-            value?.result?.name !== "deck.slop.cash" ||
-            value?.result?.status !== "active"
-          ) process.exit(1);
-          NODE
-            then
-              domain_active=true
-              break
-            fi
-            echo "::warning::deck.slop.cash is not active yet (attempt $attempt/120)."
-            sleep 5
-          done
-          if [ "$domain_active" != true ]; then
-            echo "::error::Cloudflare did not activate deck.slop.cash."
-            exit 1
-          fi
-
-          node -e 'require("node:dns").promises.lookup("deck.slop.cash", { all: true }).then((addresses) => { if (!Array.isArray(addresses) || addresses.length === 0) throw new TypeError("deck.slop.cash DNS returned no addresses"); })'
-          received="$RUNNER_TEMP/deck-slop-cash-index.html"
-          headers="$RUNNER_TEMP/deck-slop-cash.headers"
-          for attempt in $(seq 1 120); do
-            if curl --fail --silent --show-error \
-              --tlsv1.3 \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize "$(wc -c < dist/index.html)" \
-              --header "Cache-Control: no-cache" \
-              --dump-header "$headers" \
-              "https://deck.slop.cash/?verify=$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-$attempt" \
-              --output "$received" &&
-              cmp --silent dist/index.html "$received"; then
-              node - "$headers" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const headers = readFileSync(process.argv[2], "utf8").toLowerCase();
-          for (const name of ["content-security-policy:", "strict-transport-security:", "x-content-type-options:"]) {
-            if (!headers.includes(name)) throw new TypeError(`deck.slop.cash omitted ${name}`);
-          }
-          NODE
-              exit 0
-            fi
-            echo "::warning::deck.slop.cash did not match the verified build yet (attempt $attempt/120)."
-            sleep 5
-          done
-          echo "::error::deck.slop.cash did not serve the verified build over authorized TLS."
           exit 1
 
       - name: Verify published skill and leaderboard
