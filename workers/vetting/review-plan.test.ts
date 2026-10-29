@@ -9,7 +9,12 @@ import {
   MAX_TEXT_FILE_BYTES,
   type ScanInputFile,
 } from "./bounded-scan";
-import { BYTES_PER_TOKEN, planReview, reviewInventory } from "./review-plan";
+import {
+  BYTES_PER_TOKEN,
+  planReview,
+  reviewInventory,
+  synthesisCall,
+} from "./review-plan";
 import {
   SCAN_REVIEW_AREAS,
   type ScannerProfile,
@@ -151,6 +156,38 @@ test("a large inventory is split into budgeted batches, risky first, with nothin
   expect(planReview(inspection)).toEqual(plan);
 });
 
+type ParsedBatch = {
+  items: { id: string; text: string; sha256: string }[];
+  sameBytesAs?: Record<string, string[]>;
+};
+
+/** Every path a batched plan accounts for, and where each one went. */
+function accounted(plan: ReturnType<typeof planReview>) {
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const parsed = plan.batches.map(
+    (batch) => JSON.parse(batch.evidence) as ParsedBatch,
+  );
+  const reviewed = parsed.flatMap((value) => value.items);
+  const beside = parsed.flatMap((value) =>
+    Object.values(value.sameBytesAs ?? {}).flat(),
+  );
+  const outside = plan.sameBytesOutsideBatches.flatMap((entry) => entry.paths);
+  // The real serialized size of every batch is within the byte budget.
+  for (const batch of plan.batches)
+    expect(Buffer.byteLength(batch.evidence)).toBeLessThanOrEqual(
+      plan.batchTokens * BYTES_PER_TOKEN,
+    );
+  // Each overflow entry names the batch that reviewed its exact bytes.
+  for (const entry of plan.sameBytesOutsideBatches) {
+    const index = Number(entry.batch.replace("batch-", "")) - 1;
+    const source = parsed[index].items.find(
+      (item) => item.id === entry.sourcePath,
+    );
+    expect(source?.sha256).toBe(entry.sourceSha256);
+  }
+  return { parsed, reviewed, beside, outside };
+}
+
 test("many byte-identical paths stay within the batch budget", () => {
   const files = Array.from({ length: 1024 }, (_, index) =>
     file(
@@ -161,39 +198,18 @@ test("many byte-identical paths stay within the batch budget", () => {
   const inspection = inspectRepository({ files });
   const plan = planReview(inspection);
   if (plan.mode !== "batched") throw new Error("Expected batches");
-  expect(plan.batches.length).toBeGreaterThan(1);
-  const parsed = plan.batches.map(
-    (batch) =>
-      JSON.parse(batch.evidence) as {
-        items: { id: string; text: string }[];
-        sameBytesAs?: Record<string, string[]>;
-      },
-  );
-  const aliases = parsed.flatMap((value) => {
-    const metadata = value.items
-      .filter((item) => item.id.startsWith("same-bytes:"))
-      .flatMap(
-        (item) =>
-          (
-            JSON.parse(item.text) as {
-              sameBytesAs: string[];
-            }
-          ).sameBytesAs,
-      );
-    return [...Object.values(value.sameBytesAs ?? {}).flat(), ...metadata];
-  });
-  const sourceIds = parsed.flatMap((value) =>
-    value.items.map((item) => item.id),
-  );
-  expect(sourceIds.filter((id) => !id.startsWith("same-bytes:"))).toHaveLength(
-    1,
-  );
+  const { reviewed, beside, outside } = accounted(plan);
+  // The shared bytes are sent to the model once, with no content-free batch.
+  expect(plan.batches).toHaveLength(1);
+  expect(reviewed.map((item) => item.id)).toEqual([files[0].path]);
+  expect(beside.length).toBeGreaterThan(0);
+  expect(outside.length).toBeGreaterThan(0);
+  const aliases = [...beside, ...outside];
   expect(aliases).toHaveLength(files.length - 1);
-  expect(new Set(aliases).size).toBe(files.length - 1);
-  for (const batch of plan.batches)
-    expect(Buffer.byteLength(batch.evidence)).toBeLessThanOrEqual(
-      plan.batchTokens * BYTES_PER_TOKEN,
-    );
+  expect(new Set(aliases)).toEqual(
+    new Set(files.slice(1).map((entry) => entry.path)),
+  );
+  expect(planReview(inspection)).toEqual(plan);
 });
 
 test("one alias that cannot fit beside a near-limit source is not dropped", () => {
@@ -211,40 +227,52 @@ test("one alias that cannot fit beside a near-limit source is not dropped", () =
   });
   const plan = planReview(inspection);
   if (plan.mode !== "batched") throw new Error("Expected batches");
-  const parsed = plan.batches.map(
-    (batch) =>
-      JSON.parse(batch.evidence) as {
-        items: { id: string; text: string }[];
-        sameBytesAs?: Record<string, string[]>;
-      },
-  );
-  const aliases = parsed.flatMap((value) => {
-    const metadata = value.items
-      .filter((item) => item.id.startsWith("same-bytes:"))
-      .flatMap(
-        (item) =>
-          (
-            JSON.parse(item.text) as {
-              sameBytesAs: string[];
-            }
-          ).sameBytesAs,
-      );
-    return [...Object.values(value.sameBytesAs ?? {}).flat(), ...metadata];
-  });
-  const contentItems = parsed
-    .flatMap((value) => value.items)
-    .filter(
-      (item) =>
-        !item.id.startsWith("same-bytes:") && item.text.length === 224_000,
-    );
+  const { reviewed, beside, outside } = accounted(plan);
+  const contentItems = reviewed.filter((item) => item.text.length === 224_000);
+  // Inventory order reviews the alias path's copy; the other path shares it.
   expect(contentItems).toHaveLength(1);
-  expect(new Set([contentItems[0].id, ...aliases])).toEqual(
+  expect(beside).toEqual([]);
+  expect(new Set([contentItems[0].id, ...outside])).toEqual(
     new Set([source.path, alias]),
   );
-  for (const batch of plan.batches)
-    expect(Buffer.byteLength(batch.evidence)).toBeLessThanOrEqual(
-      plan.batchTokens * BYTES_PER_TOKEN,
-    );
+  expect(plan.sameBytesOutsideBatches).toEqual([
+    {
+      sourcePath: contentItems[0].id,
+      sourceSha256: contentItems[0].sha256,
+      batch: expect.stringMatching(/^batch-\d+$/u),
+      paths: outside,
+    },
+  ]);
+  // The synthesis pre-pass lists the path beside the batch that reviewed it.
+  const synthesis = JSON.parse(
+    synthesisCall(
+      inspection,
+      plan.batches,
+      [],
+      plan.batchTokens,
+      plan.sameBytesOutsideBatches,
+    ).evidence,
+  ) as ParsedBatch;
+  const prepass = JSON.parse(
+    synthesis.items.find((item) => item.id === "prepass")?.text ?? "",
+  );
+  expect(prepass.sameBytesOutsideBatches).toEqual(plan.sameBytesOutsideBatches);
+});
+
+test("planning 20,000 identical small files stays linear", () => {
+  const files = Array.from({ length: 20_000 }, (_, index) =>
+    file(`generated/copy-${index}.ts`, "export const shared = true;\n"),
+  );
+  const inspection = inspectRepository({ files });
+  const started = performance.now();
+  const plan = planReview(inspection);
+  const elapsed = performance.now() - started;
+  expect(elapsed).toBeLessThan(3_000);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const { reviewed, beside, outside } = accounted(plan);
+  expect(reviewed.map((item) => item.id)).toEqual([files[0].path]);
+  expect(new Set([...beside, ...outside]).size).toBe(files.length - 1);
+  expect(beside.length + outside.length).toBe(files.length - 1);
 });
 
 /** A provider that records each request and answers per call. */
@@ -363,7 +391,7 @@ test("a batched review combines every call and fails when any batch fails", asyn
   expect(failing.calls).toHaveLength(1);
 });
 
-test("alias metadata batches complete the review without repeating source content", async () => {
+test("identical paths outside batches share the reviewed bytes without another call", async () => {
   const files = Array.from({ length: 1024 }, (_, index) =>
     file(
       `generated/${"x".repeat(900)}-${index}.ts`,
@@ -373,16 +401,7 @@ test("alias metadata batches complete the review without repeating source conten
   const inspection = inspectRepository({ files });
   const plan = planReview(inspection);
   if (plan.mode !== "batched") throw new Error("Expected batches");
-  const parsed = plan.batches.map(
-    (batch) =>
-      JSON.parse(batch.evidence) as {
-        items: { id: string }[];
-      },
-  );
-  const sourceId = parsed
-    .flatMap((value) => value.items)
-    .find((item) => !item.id.startsWith("same-bytes:"));
-  if (!sourceId) throw new Error("Expected one source item");
+  expect(plan.sameBytesOutsideBatches.length).toBeGreaterThan(0);
   const review = provider(() => null);
   const result = await reviewInventory({
     inspection,
@@ -391,20 +410,25 @@ test("alias metadata batches complete the review without repeating source conten
     concurrency: 1,
   });
   expect(result.evidence?.review.status).toBe("completed");
+  // One call per batch and the synthesis; no metadata-only model call.
   expect(review.calls).toHaveLength(plan.batches.length + 1);
-  const batches = review.inputs.slice(0, -1).map((input) => JSON.parse(input));
+  const batches = review.inputs
+    .slice(0, -1)
+    .map((input) => JSON.parse(input) as ParsedBatch);
   expect(
-    batches.filter((batch) =>
-      batch.items.some((item: { id: string }) => item.id === sourceId.id),
-    ),
-  ).toHaveLength(1);
-  expect(
-    batches.filter((batch) =>
-      batch.items.some((item: { id: string }) =>
-        item.id.startsWith("same-bytes:"),
-      ),
-    ),
-  ).toHaveLength(plan.batches.length - 1);
+    batches.flatMap((batch) => batch.items.map((item) => item.id)),
+  ).toEqual([files[0].path]);
+  // The synthesis pre-pass names every path that shares the reviewed bytes.
+  const synthesis = JSON.parse(review.inputs.at(-1) ?? "") as ParsedBatch;
+  const prepass = JSON.parse(
+    synthesis.items.find((item) => item.id === "prepass")?.text ?? "",
+  );
+  // This listing exceeds half a batch, so the pre-pass states its counts.
+  expect(prepass.sameBytesOutsideBatches).toEqual({
+    sources: 1,
+    paths: plan.sameBytesOutsideBatches[0].paths.length,
+    note: "Paths byte-identical to a reviewed item, listed in the retained inventory",
+  });
   expect(result.evidence?.coverage).toEqual(
     Object.fromEntries(SCAN_REVIEW_AREAS.map((area) => [area, "complete"])),
   );
