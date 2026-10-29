@@ -72,13 +72,21 @@ for (const [index, download] of downloads.entries()) {
         // One healthy local attempt can take about 100 ms on Windows, so it
         // gets a full second. A retry delay of 0 selects curl's default
         // backoff (1 s, then 2 s), so 1 s is the shortest fixed delay.
-        const command = download
-          .replaceAll("$profile_origin", `http://127.0.0.1:${address.port}`)
-          .replaceAll("public/data/leaderboard.json", '"$previous_profiles"')
-          .replace("'=https'", "'=http'")
-          .replace(/--max-time \d+/, "--max-time 1")
-          .replace(/--retry-delay \d+/, "--retry-delay 1")
-          .replace(/--retry-max-time \d+/, "--retry-max-time 5");
+        // On Windows, System32 curl lacks zlib/compression and shadows Git's curl;
+        // prepend /mingw64/bin in bash so curl supports --compressed.
+        const win32Prefix =
+          globalThis.process.platform === "win32"
+            ? 'export PATH="/mingw64/bin:$PATH"; '
+            : "";
+        const command =
+          win32Prefix +
+          download
+            .replaceAll("$profile_origin", `http://127.0.0.1:${address.port}`)
+            .replaceAll("public/data/leaderboard.json", '"$previous_profiles"')
+            .replace("'=https'", "'=http'")
+            .replace(/--max-time \d+/, "--max-time 1")
+            .replace(/--retry-delay \d+/, "--retry-delay 1")
+            .replace(/--retry-max-time \d+/, "--retry-max-time 5");
         const process = Bun.spawn(["bash", "-euc", command], {
           env: { ...Bun.env, previous_profiles: output },
           stdout: "pipe",
