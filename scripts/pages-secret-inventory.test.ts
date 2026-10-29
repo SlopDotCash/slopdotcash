@@ -22,10 +22,11 @@ function validate(names: string[]) {
 
 const required = ["OPERATOR_GITHUB_IDS", "TRACE_AUTH_SECRET"];
 
-test("production accepts the provisioned Solana mint RPC without weakening its inventory gate", () => {
+test("production accepts the provisioned Solana mint RPC and public GitHub read token without weakening its inventory gate", () => {
   const provisioned = [
     ...required,
     "REWARD_RPC_SOLANA",
+    "SLOP_GITHUB_READ_TOKEN",
     "PAYMENT_RPC_URLS",
     "GITHUB_INTAKE_APP_CLIENT_ID",
     "GITHUB_INTAKE_APP_CLIENT_SECRET",
