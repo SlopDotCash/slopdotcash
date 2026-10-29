@@ -125,6 +125,9 @@ test("funding and wallet keyboard flows remain accessible at 200 percent text si
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
+  await page.route("**/api/v1/notifications/email", (route) =>
+    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+  );
   await page.route("**/api/v1/payments/me", (route) =>
     route.fulfill({
       json: {
