@@ -257,6 +257,14 @@ registry for API changes, and a short smoke pass for documentation and release
 promotion. Installer and isolated-sandbox checks run when their sources change.
 The fast type, lint, unit, integration and build gates remain in place.
 
+When GitHub cannot return a merged pull request's file list, the collector
+reads the complete changes from public Git objects with the pinned Git tool.
+It checks the repository identity, accepted merge and submitted head. The
+accepted changes must exactly match the submitted changes. The collector uses
+the head's versioned file attributes for line counts. It does not use a partial
+REST file list, which GitHub limits to 3,000 files. Missing objects or a source
+mismatch stop publication and preserve the previous snapshot.
+
 Contract PRs run the affected chain's build and contract checks. The full escrow
 workflow, including validator lifecycles and wallet-browser recovery, runs nightly
 and through Actions → **Escrow accounting and recovery** → **Run workflow**.
