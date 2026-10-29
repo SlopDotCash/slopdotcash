@@ -1095,7 +1095,12 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   });
   await queueScan(moderator, project.id, "Confirm the reported finding", 3);
   await postVettingResult(request, project.id, project.repository, "malicious");
-  await moderator.reload({ waitUntil: "networkidle" });
+  // The restriction's author requests another review; the second moderator
+  // remains independent of both the restriction and the new appeal.
+  await signIn(moderator, ADMIN_TOKEN);
+  await moderator.goto(`/admin?project=${project.id}`, {
+    waitUntil: "networkidle",
+  });
   // The old request is kept in history but cannot authorize reinstatement.
   // The moderator can record a new project request through the same UI.
   await expect(
@@ -1138,6 +1143,10 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   await moderator.screenshot({
     path: test.info().outputPath("kept-appeal-requested.png"),
     fullPage: true,
+  });
+  await signIn(moderator, MODERATOR_TOKEN);
+  await moderator.goto(`/admin?project=${project.id}`, {
+    waitUntil: "networkidle",
   });
   await queueScan(
     moderator,
@@ -1183,13 +1192,12 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     410,
   );
 
-  // The applicant's first request notified this independent moderator. The
-  // moderator's own new request does not notify its author a second time.
+  // Both requests notified this independent moderator once each.
   await moderator.goto("/inbox", { waitUntil: "networkidle" });
   const review = moderator.locator(".inbox-item", {
     hasText: `A reinstatement request for ${project.id} needs your independent review.`,
   });
-  await expect(review).toHaveCount(1);
+  await expect(review).toHaveCount(2);
   for (const notice of await review.all())
     await expect(
       notice.getByRole("link", { name: "Open admin" }),
