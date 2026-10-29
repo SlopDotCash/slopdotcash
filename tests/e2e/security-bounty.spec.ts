@@ -7,7 +7,7 @@
  * that verify receipt. All findings and advisories are synthetic. Nothing
  * here reaches GitHub, a model provider, a chain, or an email provider.
  */
-import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import type { APIRequestContext, Locator, Page, Route } from "@playwright/test";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
 import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import {
@@ -2933,6 +2933,30 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       fullPage: true,
     });
     expect(privateReads).toHaveLength(0);
+    // Keep the real stored report and its authorization route. Hide just its
+    // row from the recent projection, as the API does after 100 newer receipts.
+    // The API regression separately creates all 101 receipts with real migrations.
+    const withoutFocusedReceipt = async (route: Route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const body = await response.json();
+      body.submissions = body.submissions.filter(
+        (entry: { id: string }) => entry.id !== submissionId,
+      );
+      await route.fulfill({ response, json: body });
+    };
+    await page.route("**/api/v1/security-submissions", withoutFocusedReceipt);
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(report).toHaveClass(/is-focused/u);
+    await expect(report).toContainText("Slop receipt");
+    expect(privateReads.length).toBeGreaterThan(0);
+    expect(
+      privateReads.every(
+        (url) => new URL(url).searchParams.get("view") === "receipt",
+      ),
+    ).toBe(true);
+    await expect(page.locator(".security-report-text")).toHaveCount(0);
+    await page.unroute("**/api/v1/security-submissions", withoutFocusedReceipt);
     await report
       .getByRole("button", { name: "Open case", exact: true })
       .focus();

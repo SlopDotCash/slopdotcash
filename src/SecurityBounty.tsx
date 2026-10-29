@@ -1817,10 +1817,23 @@ function SubmissionsPanel({
       submissions: Submission[];
       authorityUnavailable?: boolean;
     }>("GET", "security-submissions")
-      .then((body) => {
+      .then(async (body) => {
         if (current !== generation.current) return;
         if (body.recipientGithubId !== session.session.githubId)
           throw new Error("Your account changed. Reload your private reports.");
+        // The recent list is bounded. A receipt link still identifies an older
+        // report; resolve it through its own current authorization check.
+        if (
+          focusId &&
+          !body.submissions.some((entry) => entry.id === focusId)
+        ) {
+          const focused = await privateRequest<{ submission: Submission }>(
+            "GET",
+            `security-submissions/${encodeURIComponent(focusId)}?view=receipt`,
+          );
+          if (current !== generation.current) return;
+          body.submissions = [...body.submissions, focused.submission];
+        }
         // Report text is kept only while its submission can still be sent.
         pruneDrafts(body.submissions);
         setSubmissions(body.submissions);
@@ -1836,7 +1849,7 @@ function SubmissionsPanel({
     return () => {
       generation.current++;
     };
-  }, [onAvailability, session.session.githubId, privateRequest]);
+  }, [onAvailability, session.session.githubId, privateRequest, focusId]);
   useEffect(load, [load]);
   if (error && submissions === null)
     return (
