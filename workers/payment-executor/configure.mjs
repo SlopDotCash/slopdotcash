@@ -485,12 +485,6 @@ async function main() {
   await writeFile(resolve(output, "apply-test-backend.sh"), plan.join("\n"), {
     mode: 0o700,
   });
-  // The staging site's bindings live in wrangler.staging.toml.
-  if (staging) return;
-  await writeFile(
-    resolve(output, "pages-bindings.json"),
-    `${JSON.stringify({ network, note: "Merge only into isolated test Pages environment; never production.", d1_databases: [{ binding: "SLOP_DB", database_name: args["database-name"], database_id: args["database-id"] }], services: [{ binding: "SLOP_IDENTITY", service: "slop-identity-test" }], vars: { PAYMENTS_ALLOWED_ORIGIN: "https://slop-staging.pages.dev", PAYMENT_NETWORKS: JSON.stringify([network]) }, requiredSecretNames: ["TRACE_AUTH_SECRET"], optionalOperatorVariable: "OPERATOR_GITHUB_IDS" }, null, 2)}\n`,
-  );
 }
 
 if (
