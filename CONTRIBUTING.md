@@ -160,7 +160,7 @@ files. Never commit a value. Use test or staging credentials only.
 | `SURPLUS_API_KEY`, `SURPLUS_BASE_URL` | slopbot primary model (`.dev.vars`) | Required to test the primary slopbot model route. |
 | `SLOPBOT_WEBHOOK_SECRET`, `SLOPBOT_APP_ID`, `SLOPBOT_APP_USER_ID`, `SLOPBOT_APP_PRIVATE_KEY` | slopbot GitHub App (`.dev.vars`) | Only with your own test GitHub App. See `workers/slopbot/README.md`. |
 | `IDENTITY_STATE_KEY`, `IDENTITY_ASSERTION_KEY`, `TRACE_AUTH_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | identity Worker (`.dev.vars`) | Only for local identity and trace-upload tests. Generate your own random values and use your own OAuth app. |
-| `VITE_SLOP_ENVIRONMENT`, `VITE_IDENTITY_PUBLIC_ORIGIN` | browser build | Optional. Point a local build at staging identity. |
+| `VITE_SLOP_ENVIRONMENT` | browser build | Optional. Point a local build at staging identity. |
 | `SLOP_E2E_PORT`, `SLOP_E2E_WORKERS` | `bun run test:e2e` | Optional. Change the browser test port or worker count. |
 
 ### Test in more than one agent client
