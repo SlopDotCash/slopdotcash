@@ -39,7 +39,13 @@ export function apiRequest(
     body,
     signal,
     timeoutMs,
-  }: { body?: unknown; signal?: AbortSignal; timeoutMs: number },
+    headers,
+  }: {
+    body?: unknown;
+    signal?: AbortSignal;
+    timeoutMs: number;
+    headers?: Record<string, string>;
+  },
 ): Promise<Response> {
   const deadline = AbortSignal.timeout(timeoutMs);
   return fetch(`/api/v1/${path}`, {
@@ -47,8 +53,10 @@ export function apiRequest(
     credentials: "same-origin",
     redirect: "error",
     cache: "no-store",
-    headers:
-      body === undefined ? undefined : { "content-type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...headers,
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
   });
