@@ -420,7 +420,7 @@ export function repositoryIdentityMatches(
  * keeps the original path as the id and publishes the current path as
  * `githubUrl` and the appended alias (`assertRepositoryTransition`).
  */
-function currentRepositoryPath(
+export function currentRepositoryPath(
   repository: ProjectDefinition["repositories"][number],
 ): string {
   return new URL(repository.githubUrl).pathname.replace(/^\/|\/$/gu, "");
