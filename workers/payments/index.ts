@@ -347,13 +347,32 @@ export async function runMonthlyCommitments(
   const deployments = registry.deployments;
   const failures: unknown[] = [...registry.failures];
   const rows = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(authorization) items FROM (SELECT a.authorization FROM monthly_payment_current_authorizations a LEFT JOIN monthly_payment_execution x ON x.project_id=a.project_id AND x.period=a.period AND x.network=a.network WHERE coalesce(x.complete,0)=0 AND (a.period=? OR json_extract(a.authorization,'$.plan.family')='solana' OR json_extract(a.authorization,'$.plan.evmReservation.version')=2) AND a.network IN (SELECT value FROM json_each(?)) ORDER BY coalesce(x.last_attempt,''),a.period,a.project_id LIMIT 50)",
+    `WITH pending AS (
+       SELECT a.*,coalesce(x.last_attempt,'') last_attempt
+         FROM monthly_payment_current_authorizations a
+         LEFT JOIN monthly_payment_execution x ON x.project_id=a.project_id AND x.period=a.period AND x.network=a.network
+        WHERE coalesce(x.complete,0)=0
+          AND (a.period=? OR json_extract(a.authorization,'$.plan.family')='solana' OR json_extract(a.authorization,'$.plan.evmReservation.version')=2)
+          AND a.network IN (SELECT value FROM json_each(?))
+     ), selected AS (
+       SELECT project_id,period,network,authorization FROM pending ORDER BY last_attempt,period,project_id LIMIT 50
+     )
+     SELECT json_group_array(authorization) items FROM (
+       SELECT p.authorization FROM pending p
+        WHERE EXISTS(SELECT 1 FROM selected s WHERE s.project_id=p.project_id AND s.period=p.period AND s.network=p.network)
+           OR (p.period=? AND json_extract(p.authorization,'$.plan.family')='evm' AND json_extract(p.authorization,'$.plan.evmReservation.version')=2
+               AND EXISTS(SELECT 1 FROM selected s WHERE s.project_id=p.project_id AND s.network=p.network AND s.period<p.period
+                 AND json_extract(s.authorization,'$.plan.family')='evm' AND json_extract(s.authorization,'$.plan.evmReservation.version')=2))
+        ORDER BY p.last_attempt,p.period,p.project_id
+     )`,
   )
-    .bind(activePeriod, env.PAYMENT_NETWORKS)
+    .bind(activePeriod, env.PAYMENT_NETWORKS, activePeriod)
     .first<{ items: string }>();
   // Newest period first: only the newest month can be admitting, so its reservation is sent before
   // any older month's leaf in this pass. A leaf mined first would advance ordinarySourceSequence
-  // and revert the signed reservation with MonthlySourceChanged.
+  // and revert the signed reservation with MonthlySourceChanged. Include omitted current
+  // roots for the original 50 LRU candidates before sorting: at most 50 extra prerequisites.
+  // The original candidates retain their fairness and still run after a prerequisite failure.
   const period = (encoded: string) => {
     try {
       return String(JSON.parse(encoded).plan.request.period);
