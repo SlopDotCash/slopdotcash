@@ -141,7 +141,7 @@ export async function dispatchActivityMail(
   for await (const row of claimDueDeliveries<Delivery>(
     deps.db,
     "activity",
-    now,
+    deps.now,
   )) {
     if (row.event_key.startsWith("slopbot-appeal:")) {
       const appeal = await deps.db
