@@ -315,40 +315,23 @@ These tests do not prove a real provider review, the deployed scanner
 service, an approved isolated runner or live acceptance. No real provider
 call, key or project is used.
 
-## Other components
+## Retired secure-VM pipeline
 
-These earlier components remain available. They are no longer a prerequisite
-for an ordinary clean result:
+The offline secure-VM pipeline is retired (owner decision, 29 October 2026,
+#1467 item 3.10(b); #1411 Part G, C-19): the QEMU runner and guest collector,
+the Bubblewrap archive inventory, controlled dependency capture, source and
+release provenance comparison, syscall indexing and the evidence assembler.
+It was never a prerequisite for an ordinary clean result, and the scan
+service, controller and sandbox never called it. Its source remains in the
+repository history.
 
-- [Isolated artifact inventory](#isolated-artifact-inventory) (`artifacts.py`)
-  for recursive archive inspection.
-- [Offline VM evidence](VM.md), [assembly](ASSEMBLY.md),
-  [dependencies](DEPENDENCIES.md), [provenance](PROVENANCE.md) and
-  [events](EVENTS.md) for advanced detonation of risky artifacts.
-- `slop-vetting-result-v1` secure-VM results keep their parser and rules.
-  Old incomplete scans stay incomplete; nothing reinterprets them as clean.
-
-### Isolated artifact inventory
-
-`artifacts.py` inspects one supplied file recursively. It never executes or
-releases input. Run it on an unprivileged, dedicated Linux analysis host with
-Python 3.12 or later and Bubblewrap 0.9 or later:
-
-```sh
-python3 workers/vetting/artifacts.py /private/quarantine/object
-python3 workers/vetting/artifacts_workflow_test.py
-```
-
-Treat stdout as private evidence. The launcher copies at most 32 MiB from a
-regular file without following its final symlink, into separate user,
-process, mount and network namespaces with no home mount, host network,
-inherited environment or device passthrough. The parser reads ZIP and TAR
-members in memory, rejects links, special files, encrypted members, duplicate
-paths and traversal, and limits depth to 6, records to 1,024 and expanded
-bytes to 64 MiB. Failure returns an `incomplete` result with no partial
-inventory; every record stays `quarantined`. A host that blocks namespace
-creation fails closed. A namespace isolates this parser; it is not a hardware
-VM.
+Recorded `slop-vetting-result-v1` secure-VM results and their retained
+evidence stay readable: `backend/vetting/result.ts` keeps their parser and
+rules, and `backend/vetting/evidence.ts` still validates historical
+`slop-evidence-assembly-v1` manifests through `assembly-manifest.ts`,
+`filesystem-capture.ts` and `provenance-report.ts`. Old incomplete scans stay
+incomplete; nothing reinterprets them as clean. Risky native artifacts run
+only in the disposable Cloudflare sandbox described below.
 
 ## Deployment requirements and operator decisions
 
@@ -356,7 +339,7 @@ VM.
 | --- | --- |
 | Scanner service deployment | `run.ts` is the service source; this source does not deploy it. It needs a private host, its Ed25519 key, the public key in `VETTING_RESULT_PUBLIC_KEYS`, `SURPLUS_API_KEY` and the in-source evidence policy (`EVIDENCE_POLICY` in `evidence.ts`). |
 | Provider and model | Owner decision D16: Surplus `claude-opus-5.5` is the primary model and Surplus `gpt-6.1-sol` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
-| Isolated runner | Owner decision D16: Cloudflare Sandboxes/Containers, one disposable sandbox per risky artifact, with `enableInternet: false` set explicitly and no secrets. Adapting this worker from the Bubblewrap host to that runner is follow-up work. |
+| Isolated runner | Owner decision D16: Cloudflare Sandboxes/Containers, one disposable sandbox per risky artifact, with `enableInternet: false` set explicitly and no secrets. `workers/vetting-sandbox` implements it; see [Private artifact execution](#private-artifact-execution). |
 | Specialist authority | Owner decision D3: moderators confirm malice and release quarantined artifacts. A model label alone cannot; a signed malicious result restricts the project until a moderator decides. |
 | Live acceptance | Prove the clean, incomplete, malicious, flag and reinstatement paths on staging with the real services (PRD section 11). |
 
