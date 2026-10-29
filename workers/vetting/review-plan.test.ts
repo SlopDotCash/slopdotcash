@@ -105,7 +105,7 @@ test("a large inventory is split into budgeted batches, risky first, with nothin
     batch.items.map((item: { id: string }) => item.id),
   );
   const inventory = JSON.parse(new TextDecoder().decode(inspection.inventory));
-  // Every reviewed item exactly once, except identical bytes named beside it.
+  // Every distinct byte sequence once; the identical path is named beside it.
   expect(new Set(ids).size).toBe(ids.length);
   expect([...ids, "zzz/second-copy.ts"].sort()).toEqual(
     inventory.items.map((item: { id: string }) => item.id).sort(),
@@ -149,6 +149,102 @@ test("a large inventory is split into budgeted batches, risky first, with nothin
   }
   // Deterministic: the same inspection gives the same calls.
   expect(planReview(inspection)).toEqual(plan);
+});
+
+test("many byte-identical paths stay within the batch budget", () => {
+  const files = Array.from({ length: 1024 }, (_, index) =>
+    file(
+      `generated/${"x".repeat(900)}-${index}.ts`,
+      "export const shared = true;\n",
+    ),
+  );
+  const inspection = inspectRepository({ files });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  expect(plan.batches.length).toBeGreaterThan(1);
+  const parsed = plan.batches.map(
+    (batch) =>
+      JSON.parse(batch.evidence) as {
+        items: { id: string; text: string }[];
+        sameBytesAs?: Record<string, string[]>;
+      },
+  );
+  const aliases = parsed.flatMap((value) => {
+    const metadata = value.items
+      .filter((item) => item.id.startsWith("same-bytes:"))
+      .flatMap(
+        (item) =>
+          (
+            JSON.parse(item.text) as {
+              sameBytesAs: string[];
+            }
+          ).sameBytesAs,
+      );
+    return [...Object.values(value.sameBytesAs ?? {}).flat(), ...metadata];
+  });
+  const sourceIds = parsed.flatMap((value) =>
+    value.items.map((item) => item.id),
+  );
+  expect(sourceIds.filter((id) => !id.startsWith("same-bytes:"))).toHaveLength(
+    1,
+  );
+  expect(aliases).toHaveLength(files.length - 1);
+  expect(new Set(aliases).size).toBe(files.length - 1);
+  for (const batch of plan.batches)
+    expect(Buffer.byteLength(batch.evidence)).toBeLessThanOrEqual(
+      plan.batchTokens * BYTES_PER_TOKEN,
+    );
+});
+
+test("one alias that cannot fit beside a near-limit source is not dropped", () => {
+  const source = {
+    path: "src/near-limit.ts",
+    bytes: new TextEncoder().encode('"'.repeat(224_000)),
+  };
+  const alias = `alias/${"x".repeat(900)}.ts`;
+  const inspection = inspectRepository({
+    files: [
+      source,
+      { path: alias, bytes: source.bytes },
+      file("src/filler.ts", "a".repeat(160_000)),
+    ],
+  });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const parsed = plan.batches.map(
+    (batch) =>
+      JSON.parse(batch.evidence) as {
+        items: { id: string; text: string }[];
+        sameBytesAs?: Record<string, string[]>;
+      },
+  );
+  const aliases = parsed.flatMap((value) => {
+    const metadata = value.items
+      .filter((item) => item.id.startsWith("same-bytes:"))
+      .flatMap(
+        (item) =>
+          (
+            JSON.parse(item.text) as {
+              sameBytesAs: string[];
+            }
+          ).sameBytesAs,
+      );
+    return [...Object.values(value.sameBytesAs ?? {}).flat(), ...metadata];
+  });
+  const contentItems = parsed
+    .flatMap((value) => value.items)
+    .filter(
+      (item) =>
+        !item.id.startsWith("same-bytes:") && item.text.length === 224_000,
+    );
+  expect(contentItems).toHaveLength(1);
+  expect(new Set([contentItems[0].id, ...aliases])).toEqual(
+    new Set([source.path, alias]),
+  );
+  for (const batch of plan.batches)
+    expect(Buffer.byteLength(batch.evidence)).toBeLessThanOrEqual(
+      plan.batchTokens * BYTES_PER_TOKEN,
+    );
 });
 
 /** A provider that records each request and answers per call. */
