@@ -124,6 +124,17 @@ a PR, or implement a feature. The hard rules:
   and copy changes are not accepted, except a fix to a broken user flow with
   before and after video
   ([Slop bounty: what is accepted](CONTRIBUTING.md#slop-bounty-what-is-accepted)).
+- UI: do not change the interface unless it is necessary to fix a reproduced
+  broken user flow or deliver an explicitly approved MVP requirement. Preserve
+  the existing layout, style, labels, and controls in other work. Make the
+  smallest necessary change and explain why the existing interface cannot
+  meet the requirement. Do not add collapsible sections, accordions, eyebrow
+  labels, extra headings, explanatory text, helper copy, badges, cards, or
+  controls without a demonstrated need. Keep required actions, consent,
+  amounts, restrictions, and evidence visible. Review the actual UI diff and
+  reject unrelated changes or clutter; passing tests alone are insufficient.
+  Necessary UI changes require before and after video and the full UI checks
+  ([Preserve the user interface](CONTRIBUTING.md#preserve-the-user-interface)).
 - Real LLM calls: prove model-backed behavior with real provider calls, never
   with mocked or recorded output
   ([Test with real LLM calls](CONTRIBUTING.md#test-with-real-llm-calls)).

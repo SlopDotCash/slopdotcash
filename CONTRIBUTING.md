@@ -39,6 +39,29 @@ of blocking defects. A merged PR, a local test pass, partial rollout, or an
 agent's statement cannot close the MVP. After that record is approved, humans
 select and approve the next PRD phase before agents implement it.
 
+## Preserve the user interface
+
+Do not change the user interface (UI) unless it is necessary to fix a
+reproduced broken user flow or deliver an explicitly approved MVP requirement.
+Preserve the existing layout, visual style, labels, and controls in all other
+work. A backend fix, code cleanup, or test change does not authorize a UI change.
+Use the smallest interface change that restores the required result. Explain
+why the existing interface cannot support that result.
+
+Do not add decorative or speculative interface details. This includes
+collapsible sections, accordions, eyebrow labels (small labels above headings),
+extra headings, explanatory text, helper copy, badges, cards, and controls
+without a demonstrated need. Do not hide required actions, consent, amounts,
+restrictions, or evidence in a collapsible section. Keep necessary status and
+recovery messages concise. Reuse existing controls and remove redundant text
+in the affected flow instead of adding more structure.
+
+Reviewers must inspect the actual UI diff and reject unrelated interface
+changes or added clutter. A necessary UI fix must include before and after
+video of the broken and corrected flow, plus the desktop, mobile,
+accessibility, and browser evidence required below. Passing tests alone do
+not prove that a UI change is necessary or usable.
+
 ## Issues: owners and maintainers only
 
 Only project owners and maintainers open issues. This rule applies to this
