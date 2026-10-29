@@ -2,7 +2,8 @@
 // keeper can finish a step after this keeper signed its own transaction for
 // it. When this keeper's broadcast was refused (here: its gas wallet is empty),
 // those signed bytes still hold their nonce. If the keeper never offers them
-// again, every later transaction it signs waits behind that unused nonce.
+// again, every later transaction it signs waits behind that unused nonce. The
+// keeper's award payments hold their nonces the same way.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -33,6 +34,7 @@ import {
   type JournalStore,
   type PublicEvmExecutorEnvironment,
   submitEvmMonthly,
+  submitPermissionlessEvmPayment,
 } from "./core";
 import type { MonthlyAuthorization } from "./monthly";
 
@@ -120,6 +122,8 @@ const chain = {
   reserved: false,
   remaining: tree.total,
   awards: new Map<string, string>(),
+  /** Destination bindings by GitHub actor id. */
+  bindings: new Map<bigint, string>(),
   sent: new Map<Hex, Hex>(),
   /** Every accepted eth_sendRawTransaction, including repeats of known bytes. */
   broadcasts: [] as Hex[],
@@ -192,6 +196,8 @@ function answer(method: string, params: unknown[]) {
       const data = (params[0] as { data: string }).data;
       if (data.startsWith("0xe76af61d"))
         return `0x${chain.awards.get(`0x${data.slice(10)}`) ?? word(0n).repeat(6)}`;
+      if (data.startsWith("0xa45d1232"))
+        return `0x${chain.bindings.get(BigInt(`0x${data.slice(10)}`)) ?? word(0n).repeat(5)}`;
       const result = calls[data.slice(0, 10)];
       if (!result) throw new Error(`Unexpected call ${data.slice(0, 10)}`);
       return `0x${result()}`;
@@ -316,6 +322,7 @@ function reset(admitted: boolean) {
   if (admitted) admitElsewhere();
   chain.remaining = tree.total;
   chain.awards.clear();
+  chain.bindings.clear();
   chain.sent.clear();
   chain.broadcasts = [];
   chain.mined = null;
@@ -478,5 +485,56 @@ test("a legacy month another keeper committed still sends this keeper's signed c
   expect(await submitEvmMonthly(env, signed, true, 16)).toEqual({
     transactionId: null,
     alreadyCommitted: true,
+  });
+});
+
+/** The contributor's co-signed binding, active since the first block. */
+function bind(index: number, cancelled = false) {
+  chain.bindings.set(
+    BigInt(entries[index].githubUserId),
+    [address("c3"), 1n, `0x${"cd".repeat(32)}`, 1n, cancelled ? 1n : 0n]
+      .map(word)
+      .join(""),
+  );
+}
+
+test("an award whose binding the owner cancelled still sends this keeper's signed payment bytes", async () => {
+  reset(true);
+  commitElsewhere(0);
+  commitElsewhere(1);
+  bind(0);
+  bind(1);
+  const env = keeperEnvironment();
+  const pay = (index: number) =>
+    submitPermissionlessEvmPayment(env, {
+      network: "base-sepolia",
+      vault,
+      obligationId: awardId(index),
+    });
+  // The keeper signs award 0's payment, but the node refuses it: the gas wallet is empty.
+  await expect(pay(0)).rejects.toThrow();
+  expect(chain.sent.size).toBe(0);
+
+  // The project owner cancels award 0's binding during its review window. The
+  // operator then funds the wallet, and the keeper visits both awards.
+  bind(0, true);
+  chain.funded = true;
+  const first = await pay(0);
+  await pay(1);
+  // Award 0's journaled bytes fill nonce 0, so award 1's payment at nonce 1 can execute.
+  expect({
+    first: first.state,
+    payment0Sent:
+      "transactionId" in first &&
+      chain.sent.has(first.transactionId as Hex) &&
+      parseTransaction(chain.sent.get(first.transactionId as Hex) as Hex)
+        .nonce === 0,
+    sentNonces: sentNonces(),
+    executableNonce: executableNonce(),
+  }).toEqual({
+    first: "submitted",
+    payment0Sent: true,
+    sentNonces: [0, 1],
+    executableNonce: 2,
   });
 });
