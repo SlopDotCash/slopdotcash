@@ -15,6 +15,7 @@ import {
   Download,
   ExternalLink,
   LockKeyhole,
+  Plus,
   RotateCcw,
   ShieldCheck,
 } from "lucide-react";
@@ -1329,15 +1330,24 @@ type PrivateReport = {
   cvssVectorString?: string;
   cweIds?: string[];
 };
+/** One retained, immutable version of a private report (PRD section 8). */
+type ReportVersion = {
+  version: number;
+  createdAt: string;
+  contentSha256: string;
+  byteCount: number;
+};
 
 function RevisePrivateReport({
   submission,
   report,
   onUpdated,
+  open = false,
 }: {
   submission: Submission;
   report: PrivateReport;
   onUpdated: (submission: Submission) => void;
+  open?: boolean;
 }) {
   const privateRequest = usePrivateRequest();
   const [draft, setDraft] = useState<ReportDraft>(() => ({
@@ -1349,8 +1359,8 @@ function RevisePrivateReport({
   }));
   const { busy, error, run } = useAction();
   return (
-    <details className="security-reference">
-      <summary>Add evidence or correct report</summary>
+    <details className="security-reference" open={open}>
+      <summary>Add information or correct report</summary>
       <form
         className="security-form"
         onSubmit={(event) => {
@@ -1369,16 +1379,63 @@ function RevisePrivateReport({
         }}
       >
         <p>
-          The new version is screened again. Your original receipt time and
-          terms stay the same.
+          Add updates below the existing text, or correct it. Each saved version
+          is kept with its time and shown to the owner; the new version is
+          screened again. Your original receipt time and terms stay the same.
         </p>
         <ReportFields draft={draft} onChange={setDraft} />
         <button className="button primary-button" disabled={busy} type="submit">
-          {busy ? "Saving…" : "Save and screen again"}
+          {busy ? "Saving…" : "Save new version"}
         </button>
         <FormError message={error} />
       </form>
     </details>
+  );
+}
+
+/**
+ * Every saved version stays readable to the reporter and the current case
+ * authorities. The first version's receipt time decides priority.
+ */
+function ReportVersionHistory({
+  versions,
+  shown,
+  onSelect,
+}: {
+  versions: ReportVersion[];
+  shown: number;
+  onSelect: (version: number | null) => void;
+}) {
+  if (versions.length < 2) return null;
+  const latest = versions[versions.length - 1].version;
+  return (
+    <nav aria-label="Report versions" className="security-report-versions">
+      <p className="field-hint">
+        Version {shown} of {latest} shown. Every version is kept; the first
+        version's receipt time decides priority.
+      </p>
+      <ul className="security-report-version-list">
+        {versions.map((entry) => (
+          <li key={entry.version}>
+            {entry.version === shown ? (
+              <span aria-current="true">
+                Version {entry.version} · {formatUtc(entry.createdAt)}
+              </span>
+            ) : (
+              <button
+                className="text-button"
+                type="button"
+                onClick={() =>
+                  onSelect(entry.version === latest ? null : entry.version)
+                }
+              >
+                Version {entry.version} · {formatUtc(entry.createdAt)}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
 
@@ -1387,18 +1444,30 @@ function PrivateReportDetail({
   submission,
   onUpdated,
   expanded = false,
+  reviseOpen = false,
 }: {
   submission: Submission;
   onUpdated: (submission: Submission) => void;
   expanded?: boolean;
+  reviseOpen?: boolean;
 }) {
   const privateRequest = usePrivateRequest();
   const [opened, setOpened] = useState(expanded);
+  useEffect(() => {
+    if (reviseOpen) setOpened(true);
+  }, [reviseOpen]);
+  // null reads the current version; an earlier retained version is read-only.
+  const [version, setVersion] = useState<number | null>(null);
   const [detail, reload] = useSecurityData<{
     submission: Submission;
     report: PrivateReport;
+    versions?: ReportVersion[];
   }>(
-    opened ? `security-submissions/${encodeURIComponent(submission.id)}` : null,
+    opened
+      ? `security-submissions/${encodeURIComponent(submission.id)}${
+          version === null ? "" : `?version=${version}`
+        }`
+      : null,
   );
   const [reason, setReason] = useState("");
   const { busy, error, run } = useAction();
@@ -1431,11 +1500,17 @@ function PrivateReportDetail({
           {detail.value.report.severity ? (
             <p>Reported severity: {detail.value.report.severity}</p>
           ) : null}
-          {submission.intake?.canRevise ? (
+          <ReportVersionHistory
+            versions={detail.value.versions ?? []}
+            shown={version ?? submission.intake?.reportVersion ?? 1}
+            onSelect={setVersion}
+          />
+          {submission.intake?.canRevise && version === null ? (
             <RevisePrivateReport
               key={submission.intake.revision}
               submission={submission}
               report={detail.value.report}
+              open={reviseOpen}
               onUpdated={(updated) => {
                 onUpdated(updated);
                 reload();
@@ -1572,6 +1647,7 @@ function SubmissionCard({
   useEffect(() => {
     if (focused) setExpanded(true);
   }, [focused]);
+  const [reviseOpen, setReviseOpen] = useState(false);
   return (
     <article
       aria-labelledby={`submission-${submission.id}`}
@@ -1625,10 +1701,23 @@ function SubmissionCard({
             {submission.intake.reason ? (
               <p>{submission.intake.reason}</p>
             ) : null}
+            {submission.intake.canRevise && !reviseOpen ? (
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => {
+                  setExpanded(true);
+                  setReviseOpen(true);
+                }}
+              >
+                <Plus aria-hidden="true" /> Add information
+              </button>
+            ) : null}
             <PrivateReportDetail
               submission={submission}
               onUpdated={onUpdated}
               expanded={focused && readReport}
+              reviseOpen={reviseOpen}
             />
             {submission.intake.canRetryScreening ? (
               <button

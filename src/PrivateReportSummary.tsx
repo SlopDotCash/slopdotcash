@@ -36,6 +36,7 @@ export type Submission = {
     receivedAt: string;
     routingState?: "pending" | "routed";
     revision: number;
+    reportVersion?: number;
     reason: string | null;
     reviewedAt: string | null;
     canReview: boolean;

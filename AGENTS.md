@@ -355,8 +355,11 @@ never a public issue. See PRD section 8.
 
 The canonical skills direct researchers to the authenticated Slop interface.
 Accept and retain the report privately before optional GitHub forwarding;
-show its receipt and status in Inbox. Screen with the approved Surplus route
-before owner notification. Missing evidence, suspected spam and unavailable
+show its receipt and status in Inbox. The reporter may add information or
+correct the report until GitHub delivery or a final decision, including after
+screening; every version is immutable and readable, the first receipt decides
+priority, and a report keeps at most twenty versions (PRD section 8). Screen
+with the approved Surplus route before owner notification. Missing evidence, suspected spam and unavailable
 analysis stay recoverable for human review. A model never approves an award.
 Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is

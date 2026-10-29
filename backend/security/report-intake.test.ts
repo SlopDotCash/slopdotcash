@@ -43,6 +43,7 @@ type Intake = {
   canForward: boolean;
   canRetryScreening: boolean;
   canReview: boolean;
+  canRevise: boolean;
   reason: string | null;
 };
 type Submission = {
@@ -69,6 +70,7 @@ type Body = {
   submission?: Submission;
   submissions?: Submission[];
   report?: typeof REPORT;
+  versions?: { version: number; createdAt: string }[];
   case?: Case;
   cases?: Case[];
 };
@@ -385,6 +387,160 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("durable private report controls", () => {
+  test("a reporter adds information after screening; every version is retained and the owner reads the history", async () => {
+    const t = fixture();
+    const accepted = await t.create();
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(submission.intake.routingState).toBe("routed");
+    expect(submission.intake.canRevise).toBe(true);
+    expect(t.notices(OWNER)).toHaveLength(1);
+    t.advance(5 * 60_000);
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      {
+        expectedRevision: submission.intake.revision,
+        report: {
+          ...REPORT,
+          description: `${REPORT.description} Addendum: the owner can also drain the reserve through the fee path.`,
+        },
+      },
+    );
+    expect(revised.status).toBe(200);
+    const after = required(revised.body.submission);
+    expect(after.intake.reportVersion).toBe(2);
+    expect(after.intake.receivedAt).toBe(submission.intake.receivedAt);
+    expect(after.intake.state).toBe("legitimate");
+    expect(after.intake.routingState).toBe("routed");
+    expect(t.screeningCalls()).toBe(2);
+    expect(t.notices(OWNER)).toHaveLength(2);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT version, created_at FROM security_intake_reports WHERE submission_id=? ORDER BY version",
+        )
+        .all(submission.id),
+    ).toEqual([
+      { version: 1, created_at: START },
+      { version: 2, created_at: "2026-10-27T12:05:00.000Z" },
+    ]);
+    for (const reader of [REPORTER, OWNER]) {
+      const current = await t.call(
+        reader,
+        "GET",
+        `security-submissions/${submission.id}`,
+      );
+      expect(current.status).toBe(200);
+      expect(required(current.body.report).description).toContain("Addendum");
+      expect(current.body.versions).toEqual([
+        expect.objectContaining({ version: 1, createdAt: START }),
+        expect.objectContaining({
+          version: 2,
+          createdAt: "2026-10-27T12:05:00.000Z",
+        }),
+      ]);
+      const original = await t.call(
+        reader,
+        "GET",
+        `security-submissions/${submission.id}?version=1`,
+      );
+      expect(original.status).toBe(200);
+      expect(original.body.report).toEqual(REPORT);
+      expect(original.body.versions).toHaveLength(2);
+    }
+    const missing = await t.call(
+      REPORTER,
+      "GET",
+      `security-submissions/${submission.id}?version=3`,
+    );
+    expect(missing.status).toBe(404);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT count(*) AS reads FROM security_intake_access_log WHERE submission_id=? AND action='read'",
+        )
+        .get(submission.id),
+    ).toEqual({ reads: 4 });
+  });
+
+  test("an addition waits while screening is in progress", async () => {
+    const t = fixture();
+    let blocked: Awaited<ReturnType<typeof t.call>> | undefined;
+    t.beforeScreen(async () => {
+      const stored = t.sqlite
+        .query("SELECT submission_id, revision FROM security_submission_intake")
+        .get() as { submission_id: string; revision: number } | null;
+      if (!stored) return;
+      t.beforeScreen(null);
+      blocked = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${stored.submission_id}/report`,
+        {
+          expectedRevision: stored.revision,
+          report: { ...REPORT, description: `${REPORT.description} Early.` },
+        },
+      );
+    });
+    const accepted = await t.create();
+    expect(accepted.status).toBe(201);
+    expect(blocked?.status).toBe(409);
+    expect(blocked?.body.error).toBe("screening_in_progress");
+    expect(required(accepted.body.submission).intake.reportVersion).toBe(1);
+    expect(t.screeningCalls()).toBe(1);
+  });
+
+  test("a report keeps at most twenty versions", async () => {
+    const t = fixture();
+    const accepted = await t.create();
+    let submission = required(accepted.body.submission);
+    for (let index = 2; index <= 20; index++) {
+      // The rolling hourly budget still applies to each addition.
+      if (index === 11) t.advance(3_600_001);
+      const result = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/report`,
+        {
+          expectedRevision: submission.intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Version ${index}.`,
+          },
+        },
+      );
+      expect(result.status).toBe(200);
+      submission = required(result.body.submission);
+      expect(submission.intake.reportVersion).toBe(index);
+    }
+    expect(submission.intake.canRevise).toBe(false);
+    t.advance(3_600_001);
+    const refused = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      {
+        expectedRevision: submission.intake.revision,
+        report: {
+          ...REPORT,
+          description: `${REPORT.description} Twenty-one.`,
+        },
+      },
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("report_version_limit");
+    expect(t.screeningCalls()).toBe(20);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT count(*) AS versions FROM security_intake_reports WHERE submission_id=?",
+        )
+        .get(submission.id),
+    ).toEqual({ versions: 20 });
+  });
+
   test("a changed browser account cannot submit another reporter's prepared draft", async () => {
     const t = fixture();
     const response = await t.call(OTHER, "POST", "security-submissions", {

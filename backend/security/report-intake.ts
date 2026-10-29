@@ -68,6 +68,8 @@ export type StoredIntake = {
 };
 const MAX_REPORT_BYTES = 256 * 1024;
 const LOST_SCREEN_MS = 15 * 60 * 1000;
+/** A report keeps its first version plus at most nineteen additions (PRD section 8). */
+const MAX_REPORT_VERSIONS = 20;
 const encoder = new TextEncoder();
 
 /** Rolling admission precedes object writes and paid calls, including retries. */
@@ -147,13 +149,23 @@ function intakeView(
     canAuthorize:
       reporter && intakeQualified(row) && submission.advisory_ghsa === null,
     canRevise:
-      reporter &&
-      (row.review_decision === "request-information" ||
-        ["needs-information", "spam", "unavailable"].includes(
-          row.screening_state,
-        )) &&
-      submission.advisory_ghsa === null,
+      reporter && revisable(row, now) && submission.advisory_ghsa === null,
   };
+}
+/**
+ * The reporter may add information or correct the report at any point before
+ * GitHub delivery or a final case decision, including after screening, as long
+ * as screening is not running and the version limit is not reached. Each
+ * addition is a new immutable version with its own time; the first version's
+ * receipt time, bytes and terms stay the record of priority.
+ */
+function revisable(row: StoredIntake, now: Date): boolean {
+  if (row.report_version >= MAX_REPORT_VERSIONS) return false;
+  // A human routing review supersedes any screening still in flight.
+  if (row.review_decision !== null) return true;
+  if (row.screening_state === "queued") return false;
+  if (row.screening_state === "running") return screeningRecoverable(row, now);
+  return true;
 }
 async function accessFor(
   deps: SecurityApiDependencies,
@@ -173,7 +185,7 @@ function decorateStoredSubmission(
 ) {
   const view = intakeView(stored, roles, row, now);
   view.canRevise =
-    (view.canRevise || record.receipt_state === "needs-information") &&
+    view.canRevise &&
     roles.has("reporter") &&
     ["draft", "failed"].includes(row.state) &&
     ["received", "needs-information", "triaging"].includes(
@@ -265,12 +277,13 @@ export async function storedIntakeViewsForCases(
 async function reportVersion(
   deps: SecurityApiDependencies,
   row: StoredIntake,
+  version: number = row.report_version,
 ): Promise<ReportInput> {
   const reference = await deps.db
     .prepare(
       "SELECT object_key,content_sha256,byte_count FROM security_intake_reports WHERE submission_id=? AND version=?",
     )
-    .bind(row.submission_id, row.report_version)
+    .bind(row.submission_id, version)
     .first<{
       object_key: string;
       content_sha256: string;
@@ -928,15 +941,43 @@ export async function readStoredIntake(
   id: string,
 ): Promise<Response> {
   const { actor, stored, row } = await authorizedStored(request, deps, id);
+  const requested = new URL(request.url).searchParams.get("version");
+  let version = stored.report_version;
+  if (requested !== null) {
+    if (!/^[1-9][0-9]{0,2}$/u.test(requested))
+      fail(400, "invalid_request", "Provide a report version number.");
+    version = Number(requested);
+    if (version > stored.report_version)
+      fail(404, "not_found", "That report version does not exist.");
+  }
   await deps.db
     .prepare(
       "INSERT INTO security_intake_access_log(submission_id,actor_github_id,action,at) VALUES(?,?,'read',?)",
     )
     .bind(id, actor.githubId, deps.now().toISOString())
     .run();
+  const versions = (
+    await deps.db
+      .prepare(
+        "SELECT version,content_sha256,byte_count,created_at FROM security_intake_reports WHERE submission_id=? ORDER BY version",
+      )
+      .bind(id)
+      .all<{
+        version: number;
+        content_sha256: string;
+        byte_count: number;
+        created_at: string;
+      }>()
+  ).results.map((entry) => ({
+    version: entry.version,
+    createdAt: entry.created_at,
+    contentSha256: entry.content_sha256,
+    byteCount: entry.byte_count,
+  }));
   return json(200, {
     submission: await decorateSubmission(deps, await settle(deps, row), actor),
-    report: await reportVersion(deps, stored),
+    report: await reportVersion(deps, stored, version),
+    versions,
   });
 }
 function checkRevision(body: Record<string, unknown>, stored: StoredIntake) {
@@ -1023,17 +1064,21 @@ export async function actStoredIntake(
     if (
       !roles.has("reporter") ||
       !(["draft", "failed"] as string[]).includes(row.state) ||
-      row.advisory_ghsa !== null ||
-      !(
-        stored.review_decision === "request-information" ||
-        ["needs-information", "spam", "unavailable"].includes(
-          stored.screening_state,
-        ) ||
-        (await loadCase(deps, stored.case_id))?.receipt_state ===
-          "needs-information"
-      )
+      row.advisory_ghsa !== null
     )
       fail(409, "report_not_editable", "This report cannot be revised now.");
+    if (stored.report_version >= MAX_REPORT_VERSIONS)
+      fail(
+        409,
+        "report_version_limit",
+        `A report keeps at most ${MAX_REPORT_VERSIONS} versions.`,
+      );
+    if (!revisable(stored, deps.now()))
+      fail(
+        409,
+        "screening_in_progress",
+        "Screening is in progress. Add information once it finishes.",
+      );
     const record = await loadCase(deps, stored.case_id);
     if (
       !record ||

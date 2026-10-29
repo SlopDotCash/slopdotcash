@@ -176,9 +176,14 @@ retrying `/screen` on a legitimate report retries only idempotent routing.
 - `POST /:id/review` lets a current technical maintainer record `forward` or
   `request-information` with a private reason and the expected intake revision.
 - `POST /:id/report` lets the reporter add a new immutable report version and
-  rescreen before GitHub delivery or a final case decision. The original receipt
-  time, bytes and terms remain retained. An old model result cannot overwrite
-  the new version or a human routing review.
+  rescreen before GitHub delivery or a final case decision, including after a
+  completed screen and owner notice (PRD section 8, 29 October 2026). The
+  original receipt time, bytes and terms remain retained; every version stays
+  readable through `GET /:id?version=N` and the read lists all versions. A
+  report keeps at most twenty versions (`report_version_limit`); an addition
+  while screening is queued or running is refused (`screening_in_progress`)
+  unless a human routing review already superseded that screen. An old model
+  result cannot overwrite the new version or a human routing review.
 - The signed-in submissions list includes the reporter's reports and the
   current case authorities' reports. The normal case actions and private
   settlement work without a GitHub advisory.

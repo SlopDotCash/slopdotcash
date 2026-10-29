@@ -1517,6 +1517,21 @@ main h2 {
   background: var(--paper);
 }
 
+.security-report-versions {
+  margin-top: 0.75rem;
+}
+.security-report-version-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+.security-report-version-list [aria-current="true"] {
+  font-weight: 600;
+}
+
 .security-agent-setup {
   width: 100%;
 }
