@@ -5,8 +5,9 @@
  * split into token-budgeted batches, risky content first and grouped by
  * directory, followed by one repository-level synthesis call over the
  * deterministic pre-pass and every batch result. Nothing is sampled or
- * shortened: every source item is in exactly one batch, alias-only metadata
- * follows when needed, and the review is complete only when every call completed.
+ * shortened: every distinct byte sequence is in exactly one batch, every
+ * byte-identical path is named beside it or recorded with the plan as sharing
+ * its reviewed bytes, and the review is complete only when every call completed.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -53,9 +54,25 @@ export type PlannedCall = {
   items: number;
   estimatedTokens: number;
 };
+/**
+ * Paths byte-identical to a reviewed item that did not fit beside it in its
+ * batch. They share that item's reviewed bytes (the same SHA-256), so they are
+ * covered by its review without another model call.
+ */
+export type SameBytesOutsideBatches = {
+  sourcePath: string;
+  sourceSha256: string;
+  batch: string;
+  paths: string[];
+}[];
 export type ReviewPlan =
   | { mode: "single"; call: PlannedCall }
-  | { mode: "batched"; batches: PlannedCall[]; batchTokens: number };
+  | {
+      mode: "batched";
+      batches: PlannedCall[];
+      batchTokens: number;
+      sameBytesOutsideBatches: SameBytesOutsideBatches;
+    };
 
 /** Serialized size, so escaping counts against the budget. */
 const itemBytes = (item: Item) =>
@@ -133,18 +150,19 @@ export function planReview(
   if (fits)
     return { mode: "single", call: planned(evidence, inventory.items.length) };
   const risky = new Set(inspection.riskSignals);
-  // Identical bytes are reviewed once; every other path is named beside it, or
-  // carried by a following metadata batch when the path list is too large.
+  // Identical bytes are reviewed once. Every other path is named beside the
+  // reviewed copy while it fits that copy's batch; the rest are recorded with
+  // the plan and the synthesis pre-pass, never sent as content-free batches.
   const first = new Map<string, Item>();
   const sameBytes = new Map<string, string[]>();
   for (const item of inventory.items) {
     const original = first.get(item.sha256);
     if (original === undefined) first.set(item.sha256, item);
-    else
-      sameBytes.set(original.id, [
-        ...(sameBytes.get(original.id) ?? []),
-        item.id,
-      ]);
+    else {
+      const aliases = sameBytes.get(original.id);
+      if (aliases) aliases.push(item.id);
+      else sameBytes.set(original.id, [item.id]);
+    }
   }
   const unique = inventory.items.filter(
     (item) => first.get(item.sha256) === item,
@@ -154,9 +172,9 @@ export function planReview(
       item,
       position,
       // A shared copy is reviewed at the riskiest tier of any of its paths.
-      tier: Math.min(
+      tier: (sameBytes.get(item.id) ?? []).reduce(
+        (lowest, id) => Math.min(lowest, tier(id, risky)),
         tier(item.id, risky),
-        ...(sameBytes.get(item.id) ?? []).map((id) => tier(id, risky)),
       ),
     }))
     // Stable: within a tier, sorted inventory order groups each directory
@@ -183,66 +201,27 @@ export function planReview(
       artifacts: [],
       visibilityGaps: [],
     });
-  const aliasesFor = (item: Item, aliases: string[]) =>
-    aliases.length === 0 ? {} : { [item.id]: aliases };
-  const fitsWithSource = (item: Item, aliases: string[]) =>
-    Buffer.byteLength(
-      batchEvidence(
-        999_999_999,
-        999_999_999,
-        [item],
-        aliasesFor(item, aliases),
-      ),
-    ) <= limit;
+  /**
+   * The aliases that fit beside `item` in its own batch, measured exactly and
+   * in linear time: the serialized batch with an empty alias list (at the
+   * widest index and count), plus each alias's JSON bytes and its comma.
+   */
   const fittedAliases = (item: Item, aliases: string[]): string[] => {
-    const fitted: string[] = [];
+    let size = Buffer.byteLength(
+      batchEvidence(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, [item], {
+        [item.id]: [],
+      }),
+    );
+    let fitted = 0;
     for (const alias of aliases) {
-      if (!fitsWithSource(item, [...fitted, alias])) break;
-      fitted.push(alias);
+      size += Buffer.byteLength(JSON.stringify(alias)) + (fitted > 0 ? 1 : 0);
+      if (size > limit) break;
+      fitted += 1;
     }
-    return fitted;
-  };
-  const aliasMetadata = (
-    item: Item,
-    aliases: string[],
-    index: number,
-  ): Item => {
-    const text = JSON.stringify({
-      sourcePath: item.id,
-      sourceSha256: item.sha256,
-      sameBytesAs: aliases,
-    });
-    return {
-      id: `same-bytes:${item.sha256}:${index}`,
-      text,
-      sha256: sha256(text),
-    };
-  };
-  const aliasOnlyGroups = (item: Item, aliases: string[]): PlannedItem[][] => {
-    const groups: PlannedItem[][] = [];
-    let paths: string[] = [];
-    let index = 1;
-    const flush = () => {
-      if (paths.length === 0) return;
-      groups.push([{ item: aliasMetadata(item, paths, index), aliases: [] }]);
-      paths = [];
-      index += 1;
-    };
-    for (const alias of aliases) {
-      const candidate = [...paths, alias];
-      const evidence = batchEvidence(
-        999_999_999,
-        999_999_999,
-        [aliasMetadata(item, candidate, index)],
-        {},
-      );
-      if (paths.length > 0 && Buffer.byteLength(evidence) > limit) flush();
-      paths.push(alias);
-    }
-    flush();
-    return groups;
+    return aliases.slice(0, fitted);
   };
   const groups: PlannedItem[][] = [];
+  const outside: { item: Item; group: number; paths: string[] }[] = [];
   let current: PlannedItem[] = [];
   let bytes = BATCH_OVERHEAD_BYTES;
   const flush = () => {
@@ -252,27 +231,26 @@ export function planReview(
   };
   for (const item of ordered) {
     const aliases = sameBytes.get(item.id) ?? [];
-    const fitted = fittedAliases(item, aliases);
-    const overflow = aliases.slice(fitted.length);
-    if (overflow.length > 0) {
+    const fitted = aliases.length > 0 ? fittedAliases(item, aliases) : aliases;
+    if (fitted.length < aliases.length) {
+      // The reviewed copy fills its own batch; the remaining identical paths
+      // share its reviewed bytes and are recorded outside the model batches.
       flush();
       groups.push([{ item, aliases: fitted }]);
-      groups.push(...aliasOnlyGroups(item, overflow));
+      outside.push({
+        item,
+        group: groups.length,
+        paths: aliases.slice(fitted.length),
+      });
       continue;
     }
     const plannedItem: PlannedItem = { item, aliases };
     const size = plannedItemBytes(plannedItem);
-    const repeatedContent = current.some(
-      ({ item }) => item.sha256 === plannedItem.item.sha256,
-    );
     if (
       current.length > 0 &&
-      (bytes + size > limit ||
-        current.length >= MAX_INVENTORY_ITEMS ||
-        repeatedContent)
-    ) {
+      (bytes + size > limit || current.length >= MAX_INVENTORY_ITEMS)
+    )
       flush();
-    }
     current.push(plannedItem);
     bytes += size;
   }
@@ -289,7 +267,13 @@ export function planReview(
       items.length,
     );
   });
-  return { mode: "batched", batches, batchTokens };
+  const sameBytesOutsideBatches = outside.map(({ item, group, paths }) => ({
+    sourcePath: item.id,
+    sourceSha256: item.sha256,
+    batch: `batch-${group}`,
+    paths,
+  }));
+  return { mode: "batched", batches, batchTokens, sameBytesOutsideBatches };
 }
 
 const RANK = { "no-findings": 0, findings: 1, "malicious-suspected": 2 };
@@ -301,6 +285,7 @@ export function synthesisCall(
   batches: PlannedCall[],
   results: ScannerEvidence[],
   batchTokens: number,
+  sameBytesOutsideBatches: SameBytesOutsideBatches = [],
 ): PlannedCall {
   const inventory = JSON.parse(
     new TextDecoder().decode(inspection.inventory),
@@ -324,6 +309,22 @@ export function synthesisCall(
         ? (JSON.parse(batch.evidence) as Inventory).items.map((item) => item.id)
         : batch.items,
     })),
+    // Identical paths that did not fit beside their reviewed copy; each one
+    // shares the bytes reviewed in the named batch.
+    ...(sameBytesOutsideBatches.length > 0
+      ? {
+          sameBytesOutsideBatches: full
+            ? sameBytesOutsideBatches
+            : {
+                sources: sameBytesOutsideBatches.length,
+                paths: sameBytesOutsideBatches.reduce(
+                  (sum, entry) => sum + entry.paths.length,
+                  0,
+                ),
+                note: "Paths byte-identical to a reviewed item, listed in the retained inventory",
+              },
+        }
+      : {}),
     deterministicOnly: {
       count: inspection.deterministic.length,
       bytes: inspection.deterministic.reduce((sum, row) => sum + row.bytes, 0),
@@ -595,6 +596,7 @@ export async function reviewInventory(input: {
     plan.batches,
     results,
     plan.batchTokens,
+    plan.sameBytesOutsideBatches,
   );
   const final = await run(synthesis, "synthesis");
   if (!final) return { plan, evidence: null };
