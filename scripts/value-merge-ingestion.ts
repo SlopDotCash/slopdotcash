@@ -96,11 +96,11 @@ export async function withPublicGitObjects<T>(
       const command = publicGitProcess(directory, args);
       return run(command.file, command.args, {
         ...command.options,
-        // The complete PR 1069 graph exceeded two minutes while receiving
-        // 162,288 objects. Allow its public fetch ten minutes within the
-        // release preparation job's three-hour budget; other commands keep
-        // their existing two-minute deadline.
-        timeout: args[0] === "fetch" ? 600_000 : command.options.timeout,
+        // The complete PR 1069 graph has 162,288 objects and 4 GB of required
+        // changed blobs. Two- and ten-minute public fetches timed out. Allow
+        // thirty minutes within the release job's three-hour budget; other
+        // commands keep their existing two-minute deadline.
+        timeout: args[0] === "fetch" ? 1_800_000 : command.options.timeout,
         maxBuffer: 1024 * 1024,
       });
     };
