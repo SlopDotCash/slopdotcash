@@ -1740,7 +1740,16 @@ export async function preparePermissionlessEvmPayment(
   input: { network: string; vault: string; obligationId: string },
 ) {
   if (!BYTES32.test(input.obligationId)) throw new Error("Invalid award ID");
-  const deployment = await preflightEvmDeployment(env, input);
+  return readPermissionlessEvmPayment(
+    await preflightEvmDeployment(env, input),
+    input,
+  );
+}
+
+async function readPermissionlessEvmPayment(
+  deployment: Deployment,
+  input: { obligationId: string },
+) {
   const state = await call(
     deployment,
     `0xe76af61d${input.obligationId.slice(2)}`,
@@ -1779,8 +1788,8 @@ export async function submitPermissionlessEvmPayment(
   env: PublicEvmExecutorEnvironment,
   input: { network: string; vault: string; obligationId: string },
 ) {
-  const plan = await preparePermissionlessEvmPayment(env, input);
-  const { deployment } = plan;
+  if (!BYTES32.test(input.obligationId)) throw new Error("Invalid award ID");
+  const deployment = await preflightEvmDeployment(env, input);
   const roles = await Promise.all(
     ["0x13fa3c08", "0x8da5cb5b"].map((data) => call(deployment, data, 1)),
   );
@@ -1800,6 +1809,8 @@ export async function submitPermissionlessEvmPayment(
     ]),
   );
   const key = `keeper:pay:${fingerprint}`;
+  // Journaled bytes hold this signer's nonce even after the award stops being
+  // payable (the owner cancelled its binding), so send them before that check.
   const previous = await env.JOURNAL.get<Attempt>(key);
   if (
     previous &&
@@ -1813,6 +1824,7 @@ export async function submitPermissionlessEvmPayment(
       })),
     };
   }
+  const plan = await readPermissionlessEvmPayment(deployment, input);
   if (plan.state !== "ready") return { state: plan.state };
   return {
     state: "submitted" as const,
