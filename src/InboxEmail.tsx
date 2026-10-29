@@ -18,7 +18,7 @@ type Preference =
 type State =
   | { status: "loading" | "signed-out" }
   | { status: "error"; message: string }
-  | { status: "ready"; value: Preference };
+  | { status: "ready"; value: Preference; actor: string | null };
 const PATH = "/api/v1/notifications/email";
 
 function preference(value: unknown): Preference {
@@ -73,7 +73,11 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           await readBoundedJson(response, 4096, "email preference"),
         );
         if (generation.current === current)
-          setState({ status: "ready", value });
+          setState({
+            status: "ready",
+            value,
+            actor: session?.githubId ?? null,
+          });
       } catch (caught) {
         if (!controller.signal.aborted && generation.current === current)
           setState({ status: "error", message: errorMessage(caught) });
@@ -86,11 +90,14 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
   function save() {
     if (busy || state.status !== "ready") return;
     const previous = state.value;
+    // Send the actor captured when this view was rendered, not a fresh
+    // session: if the account changed since load, the server refuses with
+    // 403 actor_changed instead of writing to the newly signed-in account.
+    const actor = state.actor;
     const enabled = !previous.enabled;
     if (enabled && previous.availability !== "verified") return;
     void run(
       async () => {
-        const session = await currentProjectSession().catch(() => null);
         const response = await fetchWithDeadline(PATH, {
           method: "POST",
           credentials: "same-origin",
@@ -98,9 +105,7 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           redirect: "error",
           headers: {
             "content-type": "application/json",
-            ...(session === null
-              ? {}
-              : { "x-slop-expected-github-id": session.githubId }),
+            ...(actor === null ? {} : { "x-slop-expected-github-id": actor }),
           },
           body: JSON.stringify(
             enabled && previous.availability === "verified"
@@ -112,8 +117,10 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           setState({ status: "signed-out" });
           return;
         }
-        if (response.status === 403)
+        if (response.status === 403) {
+          load();
           throw new Error("The inbox account changed. Retry.");
+        }
         if (response.status === 409) {
           load();
           throw new Error(
@@ -131,7 +138,11 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           throw new Error(
             "The saved preference could not be verified. Please retry.",
           );
-        setState({ status: "ready", value: { ...previous, enabled } });
+        setState({
+          status: "ready",
+          value: { ...previous, enabled },
+          actor,
+        });
       },
       (cause) => errorMessage(cause, "Your preference could not be saved."),
     );
