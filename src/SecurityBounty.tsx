@@ -3329,9 +3329,17 @@ export function SecurityInbox({
           expectedActorGithubId: actorId,
         });
       } catch (cause) {
+        const missingReceipt =
+          method === "GET" &&
+          /^security-submissions\/ss_[A-Za-z0-9_-]+\?view=receipt$/u.test(
+            path,
+          ) &&
+          cause instanceof ProjectApiError &&
+          cause.status === 404;
         if (
           cause instanceof ProjectApiError &&
-          [401, 403, 404, 410].includes(cause.status)
+          [401, 403, 404, 410].includes(cause.status) &&
+          !missingReceipt
         ) {
           if (mounted.current) {
             setProblem(
@@ -3344,8 +3352,8 @@ export function SecurityInbox({
           }
           throw cause;
         }
-        // Only retain the old private view after a transient error when this
-        // request still belongs to the currently authenticated account.
+        // A missing receipt may be a stale deep link. Keep the fresh list,
+        // or a transient view, only after verifying the same account again.
         await verifyIdentity();
         throw cause;
       }
