@@ -2971,6 +2971,18 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await expect(
       page.getByText(/Report status could not refresh/),
     ).toBeVisible();
+    // A stale link must report its error even when this account has no reports.
+    await signIn(page, APPLICANT_TOKEN);
+    await page.goto(`/inbox?view=reports&submission=${missingReceipt}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByText(/Report status could not refresh/),
+    ).toBeVisible();
+    await expect(
+      page.getByText("You have no private reports yet."),
+    ).toHaveCount(0);
+    await signIn(page, reporterToken);
     await page.goto(`/inbox?view=reports&submission=${submissionId}`, {
       waitUntil: "networkidle",
     });
