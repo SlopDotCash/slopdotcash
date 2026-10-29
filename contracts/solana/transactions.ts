@@ -1,10 +1,11 @@
 /** Shared unsigned transaction encoding for wallet funding and the payment executor. */
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
+  solanaAssociatedTokenAddress as ata,
   solanaPublicKeyBytes as bytes,
   solanaProgramAddress as pda,
 } from "./adapter";
-import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
+import { CLASSIC_TOKEN_PROGRAM } from "./token";
 
 const TOKEN = CLASSIC_TOKEN_PROGRAM,
   ASSOCIATED = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
@@ -93,11 +94,6 @@ function message(
     short(compiled.length),
     ...compiled,
   );
-}
-function ata(mint: string, owner: string, tokenProgram = TOKEN) {
-  if (tokenProgram !== TOKEN && tokenProgram !== TOKEN_2022_PROGRAM)
-    throw new Error("Unsupported mint token program");
-  return pda(ASSOCIATED, [bytes(owner), bytes(tokenProgram), bytes(mint)]);
 }
 function createAta(
   payer: string,
