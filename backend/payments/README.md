@@ -218,8 +218,15 @@ in their wallet. A `review` request names `network`, `vault`, `wallet`,
 mint precision, verifies the current deployment and balances, simulates the
 unsigned transaction, and returns its review and blockhash lifetime. A `check`
 request instead supplies base-unit `gross`, the reviewed `blockhash`, and
-`transactionId`. It accepts only the exact wallet-signed message on the
-finalized chain, with matching token balance changes. It never signs, sends,
+`transactionId`. It verifies the wallet signature over the finalized message
+and requires the reviewed instructions, accounts, privileges and token deltas.
+Solana vault creation and deposits also accept a wallet-added compute-budget
+prefix and the bounded Lighthouse payer assertion implemented in
+`contracts/solana/wallet-transactions.ts`. The assertion may access only the
+System-owned, empty-data payer and make no inner calls. Extra actions, accounts,
+signers or privilege changes are refused. Token receipt indices come from the
+verified finalized message. Withdrawals and award actions keep exact message
+matching. This verifier never signs, sends,
 changes an award or writes payment state.
 
 Pages resolves the vault from the current D1 registry and `PAYMENT_NETWORKS`.

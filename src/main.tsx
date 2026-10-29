@@ -25,12 +25,6 @@ if (!root) {
   throw new Error("[Slop] #root is missing");
 }
 
-// The fundraising deck was retired on 10 Sep 2026. The reviewed
-// deck.slop.cash Pages domain still serves this bundle, so send visitors home.
-if (window.location.hostname === "deck.slop.cash") {
-  window.location.replace("https://slop.cash/");
-}
-
 type BootState =
   | { status: "loading" }
   | { status: "error" }

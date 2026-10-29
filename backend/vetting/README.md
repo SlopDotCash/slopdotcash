@@ -216,8 +216,8 @@ specialist profiles, the in-source evidence policy (`EVIDENCE_POLICY` in
 `evidence.ts`) and an accepted isolated runner
 for risky artifacts, after staging acceptance. Without them, no community
 project can be cleared, so no project skill is served for it. The earlier
-secure-VM components stay available for advanced detonation; they are no
-longer a prerequisite for an ordinary clean result.
+secure-VM components are retired (owner decision, 29 October 2026, #1467
+item 3.10(b)); risky artifacts run only in `workers/vetting-sandbox`.
 
 ## Two-contributor flags
 

@@ -40,6 +40,14 @@ jobs:
         with:
           bun-version: "1.3.14"
 
+      - name: Restore Bun dependency cache
+        # CI check cache only (owner decision, 29 October 2026, #1467 3.10(d)).
+        # Jobs that build the release bundle, deploy or hold secrets never use it.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
       - name: Install frozen dependencies without lifecycle scripts
         shell: bash
         run: bun install --frozen-lockfile --ignore-scripts
