@@ -7,6 +7,7 @@ import {
   type PayoutPolicy,
 } from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
+import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
 import {
   readTokenAccount,
   readTokenMint,
@@ -154,6 +155,23 @@ export function solanaVaultAddress(
   return programAddress(programId, [
     encoder.encode("vault"),
     publicKeyBytes(projectPda),
+  ]);
+}
+/** The canonical associated token account for this wallet, mint and token program. */
+export function solanaAssociatedTokenAddress(
+  mint: string,
+  owner: string,
+  tokenProgram = CLASSIC_TOKEN_PROGRAM,
+): string {
+  if (
+    tokenProgram !== CLASSIC_TOKEN_PROGRAM &&
+    tokenProgram !== TOKEN_2022_PROGRAM
+  )
+    throw new Error("Unsupported mint token program");
+  return programAddress("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", [
+    publicKeyBytes(owner),
+    publicKeyBytes(tokenProgram),
+    publicKeyBytes(mint),
   ]);
 }
 function digest(value: string): Uint8Array {
@@ -814,9 +832,25 @@ export function solanaPaymentAdapter(
         );
         const ownerOf = (address: string) => {
           const index = keys.indexOf(address);
-          const balance = list(meta.postTokenBalances)
-            .map(object)
-            .find((item) => item.accountIndex === index);
+          // A recipient can spend the payout and close its token account later
+          // in this transaction. The post-state then omits the closed account,
+          // but the finalized pre-state still attests to its mint and owner.
+          const balances = [meta.postTokenBalances, meta.preTokenBalances]
+            .flatMap(list)
+            .map(object);
+          // The escrow pays only the bound wallet's canonical associated
+          // account. Token ownership can change within the transaction, so an
+          // endpoint owner alone does not prove who received the payout.
+          const balance = balances.find(
+            (item) =>
+              item.accountIndex === index &&
+              item.mint === config.mint &&
+              solanaAssociatedTokenAddress(
+                config.mint,
+                string(item.owner),
+                mintReading.program,
+              ) === address,
+          );
           if (index < 0 || !balance || balance.mint !== config.mint)
             throw new Error("Payout account balance missing");
           return string(balance.owner);
