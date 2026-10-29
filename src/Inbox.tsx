@@ -63,6 +63,10 @@ async function loadInbox(
       credentials: "same-origin",
       cache: "no-store",
       redirect: "error",
+      headers:
+        session === undefined
+          ? undefined
+          : { "x-slop-expected-github-id": session.githubId },
       signal,
     },
   );
@@ -84,13 +88,19 @@ async function loadInbox(
   };
 }
 
-async function markRead(eventKeys: string[]): Promise<"ok" | "signed-out"> {
+async function markRead(
+  eventKeys: string[],
+  expectedActorId: string,
+): Promise<"ok" | "signed-out"> {
   const response = await fetchWithDeadline("/api/v1/notifications/read", {
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
     redirect: "error",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-slop-expected-github-id": expectedActorId,
+    },
     body: JSON.stringify({ eventKeys }),
   });
   if (response.status === 401) return "signed-out";
@@ -101,6 +111,7 @@ async function markRead(eventKeys: string[]): Promise<"ok" | "signed-out"> {
 
 async function acknowledgeSecurity(
   notification: Notification,
+  expectedActorId: string,
 ): Promise<"ok" | "signed-out"> {
   const response = await fetchWithDeadline(
     `/api/v1/security-cases/${encodeURIComponent(notification.subject)}/acknowledge`,
@@ -109,7 +120,10 @@ async function acknowledgeSecurity(
       credentials: "same-origin",
       cache: "no-store",
       redirect: "error",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-slop-expected-github-id": expectedActorId,
+      },
       body: JSON.stringify({ eventKey: notification.eventKey }),
     },
   );
@@ -207,19 +221,68 @@ export default function InboxPage() {
     [acceptRecipient, load],
   );
 
-  function act(action: () => Promise<"ok" | "signed-out">, done: string) {
+  function act(
+    action: (expectedActorId: string) => Promise<"ok" | "signed-out">,
+    done: string,
+  ) {
+    if (busy || recipient === null || state.status !== "ready") return;
+    const expectedActorId = recipient;
+    const previous = state;
+    const current = ++generation.current;
     setMessage("");
+    setState({ status: "loading" });
+    const ownsView = async () => {
+      try {
+        const session = await currentProjectSession();
+        if (generation.current !== current) return false;
+        if (session === null) {
+          receive({ status: "signed-out" });
+          return false;
+        }
+        if (session.githubId !== expectedActorId) {
+          acceptRecipient(session.githubId);
+          setState({
+            status: "error",
+            message: "Your account changed. Retry your inbox.",
+          });
+          return false;
+        }
+        return true;
+      } catch {
+        if (generation.current === current) {
+          setRecipient(null);
+          setState({
+            status: "error",
+            message: "The inbox and private session could not load. Retry.",
+          });
+        }
+        return false;
+      }
+    };
     return run(
       async () => {
-        if ((await action()) === "signed-out") {
-          receive({ status: "signed-out" });
-          return;
-        }
-        const current = ++generation.current;
-        const next = await loadInbox(new AbortController().signal, cursor);
-        if (generation.current === current) {
-          receive(next);
-          setMessage(done);
+        if (!(await ownsView())) return;
+        try {
+          if ((await action(expectedActorId)) === "signed-out") {
+            if (generation.current === current)
+              receive({ status: "signed-out" });
+            return;
+          }
+          if (!(await ownsView())) return;
+          const next = await loadInbox(new AbortController().signal, cursor);
+          if (generation.current === current) {
+            receive(next);
+            if (
+              next.status === "ready" &&
+              next.value.recipientGithubId === expectedActorId
+            )
+              setMessage(done);
+          }
+        } catch (caught) {
+          if (await ownsView()) {
+            setState(previous);
+            throw caught;
+          }
         }
       },
       (error) => errorMessage(error, UNAVAILABLE),
@@ -267,10 +330,12 @@ export default function InboxPage() {
           <InboxList
             busy={busy}
             response={state.value}
-            onMark={(keys, done) => void act(() => markRead(keys), done)}
+            onMark={(keys, done) =>
+              void act((actorId) => markRead(keys, actorId), done)
+            }
             onAcknowledge={(notification) =>
               void act(
-                () => acknowledgeSecurity(notification),
+                (actorId) => acknowledgeSecurity(notification, actorId),
                 "Security notice acknowledged.",
               )
             }
