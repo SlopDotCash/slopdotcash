@@ -226,7 +226,9 @@ contract MonthlyReserveV2Test {
         vm.prank(SUBMITTER);
         vm.expectRevert(ProjectEscrow.MonthlySourceChanged.selector);
         vault.reserveMonthly(NEXT_PERIOD, stale, signature);
-        require(vault.monthlyRoots(NEXT_PERIOD) == bytes32(0) && vault.freeBalance() == free, "old leaf invalidated root");
+        require(
+            vault.monthlyRoots(NEXT_PERIOD) == bytes32(0) && vault.freeBalance() == free, "old leaf invalidated root"
+        );
 
         reserve(ordered, NEXT_PERIOD, plan(ordered, newEntries, sum(newEntries)));
         leaf(ordered, PERIOD, oldEntries, 0);
