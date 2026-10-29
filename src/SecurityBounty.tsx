@@ -1792,6 +1792,7 @@ function SubmissionsPanel({
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
   const [authorityUnavailable, setAuthorityUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
   const generation = useRef(0);
   useEffect(() => {
     if (submissions === null) return;
@@ -1811,6 +1812,7 @@ function SubmissionsPanel({
   const load = useCallback(() => {
     const current = ++generation.current;
     setError(null);
+    setReceiptError(null);
     privateRequest<{
       recipientGithubId: string;
       automatic: boolean;
@@ -1823,20 +1825,29 @@ function SubmissionsPanel({
           throw new Error("Your account changed. Reload your private reports.");
         // The recent list is bounded. A receipt link still identifies an older
         // report; resolve it through its own current authorization check.
+        let missingReceipt: string | null = null;
         if (
           focusId &&
           !body.submissions.some((entry) => entry.id === focusId)
         ) {
-          const focused = await privateRequest<{ submission: Submission }>(
-            "GET",
-            `security-submissions/${encodeURIComponent(focusId)}?view=receipt`,
-          );
+          try {
+            const focused = await privateRequest<{ submission: Submission }>(
+              "GET",
+              `security-submissions/${encodeURIComponent(focusId)}?view=receipt`,
+            );
+            body.submissions = [...body.submissions, focused.submission];
+          } catch (cause) {
+            if (!(cause instanceof ProjectApiError) || cause.status !== 404)
+              throw cause;
+            missingReceipt =
+              "That receipt link is no longer available. Your recent reports are shown.";
+          }
           if (current !== generation.current) return;
-          body.submissions = [...body.submissions, focused.submission];
         }
         // Report text is kept only while its submission can still be sent.
         pruneDrafts(body.submissions);
         setSubmissions(body.submissions);
+        setReceiptError(missingReceipt);
         setAuthorityUnavailable(body.authorityUnavailable === true);
         onAvailability(body.automatic === true);
       })
@@ -1865,7 +1876,12 @@ function SubmissionsPanel({
   const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
-  if (shown.length === 0 && !grantError && !authorityUnavailable)
+  if (
+    shown.length === 0 &&
+    !grantError &&
+    !authorityUnavailable &&
+    !receiptError
+  )
     return cases.length === 0 ? (
       <p className="admin-status">You have no private reports yet.</p>
     ) : null;
@@ -1917,6 +1933,11 @@ function SubmissionsPanel({
       {error ? (
         <p className="form-error" role="alert">
           Report status could not refresh. The previous status is shown. {error}
+        </p>
+      ) : null}
+      {receiptError ? (
+        <p className="form-error" role="alert">
+          <CircleAlert aria-hidden="true" /> {receiptError}
         </p>
       ) : null}
       {grantError ? (
@@ -3323,9 +3344,19 @@ export function SecurityInbox({
           expectedActorGithubId: actorId,
         });
       } catch (cause) {
+        // A stale optional receipt does not invalidate the fresh recent list.
+        // Recheck identity below; every other access refusal still clears it.
+        const missingReceipt =
+          cause instanceof ProjectApiError &&
+          cause.status === 404 &&
+          method === "GET" &&
+          /^security-submissions\/ss_[A-Za-z0-9_-]{8,72}\?view=receipt$/u.test(
+            path,
+          );
         if (
           cause instanceof ProjectApiError &&
-          [401, 403, 404, 410].includes(cause.status)
+          [401, 403, 404, 410].includes(cause.status) &&
+          !missingReceipt
         ) {
           if (mounted.current) {
             setProblem(
