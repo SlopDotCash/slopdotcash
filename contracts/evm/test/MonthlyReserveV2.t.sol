@@ -209,6 +209,34 @@ contract MonthlyReserveV2Test {
         require(vault.freeBalance() == free && vault.monthlyRoots(PERIOD) == bytes32(0), "nothing reserved");
     }
 
+    function test_newMonthAdmissionMustPrecedeOlderLeaves() public {
+        vm.warp(NOVEMBER_OPENS - 30 days);
+        ProjectEscrow ordered = newVault(keccak256("ordered monthly dispatch"));
+        vm.warp(NOVEMBER_OPENS);
+        ProjectEscrow.MonthlyAward[] memory oldEntries = entries(2, 1);
+        ProjectEscrow.MonthlyAward[] memory newEntries = entries(2, 2);
+        reserve(vault, PERIOD, plan(vault, oldEntries, sum(oldEntries)));
+        reserve(ordered, PERIOD, plan(ordered, oldEntries, sum(oldEntries)));
+        vm.warp(NOVEMBER_CLOSES);
+
+        ProjectEscrow.MonthlyReservation memory stale = plan(vault, newEntries, sum(newEntries));
+        bytes memory signature = sign(vault, NEXT_PERIOD, stale);
+        leaf(vault, PERIOD, oldEntries, 0);
+        uint128 free = vault.freeBalance();
+        vm.prank(SUBMITTER);
+        vm.expectRevert(ProjectEscrow.MonthlySourceChanged.selector);
+        vault.reserveMonthly(NEXT_PERIOD, stale, signature);
+        require(
+            vault.monthlyRoots(NEXT_PERIOD) == bytes32(0) && vault.freeBalance() == free, "old leaf invalidated root"
+        );
+
+        reserve(ordered, NEXT_PERIOD, plan(ordered, newEntries, sum(newEntries)));
+        leaf(ordered, PERIOD, oldEntries, 0);
+        leaf(ordered, NEXT_PERIOD, newEntries, 0);
+        require(ordered.monthlyRoots(NEXT_PERIOD) != bytes32(0), "new month admitted first");
+        require(ordered.pendingMonthlyGross() == oldEntries[1].gross + newEntries[1].gross, "both months progress");
+    }
+
     function test_aZeroCountReservationSealsTheMonth() public {
         ProjectEscrow.MonthlyReservation memory r = ProjectEscrow.MonthlyReservation(
             keccak256("all funded"), keccak256("sealed"), 900e6, 0, 0, vault.ordinarySourceSequence()

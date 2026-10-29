@@ -848,13 +848,16 @@ export async function listStoredSubmissions(
       authorityUnavailable = true;
     }
   }
-  const placeholders = projects.map(() => "?").join(",");
   const candidates = (
     await deps.db
       .prepare(
-        `SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id JOIN security_cases c ON c.id=i.case_id WHERE s.reporter_github_id<>? AND (c.id IN (SELECT case_id FROM security_case_members WHERE github_id=? AND revoked_at IS NULL)${projects.length ? ` OR c.project_id IN (${placeholders})` : ""}${deps.moderatorGithubIds?.has(actor.githubId) ? " OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'" : ""}) ORDER BY s.created_at DESC LIMIT 100`,
+        `SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id JOIN security_cases c ON c.id=i.case_id WHERE s.reporter_github_id<>? AND (c.id IN (SELECT case_id FROM security_case_members WHERE github_id=? AND revoked_at IS NULL)${projects.length ? " OR c.project_id IN (SELECT value FROM json_each(?))" : ""}${deps.moderatorGithubIds?.has(actor.githubId) ? " OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'" : ""}) ORDER BY s.created_at DESC LIMIT 100`,
       )
-      .bind(actor.githubId, actor.githubId, ...projects)
+      .bind(
+        actor.githubId,
+        actor.githubId,
+        ...(projects.length ? [JSON.stringify(projects)] : []),
+      )
       .all<SubmissionRow>()
   ).results;
   const rows = await Promise.all(
@@ -934,8 +937,17 @@ export async function readStoredIntake(
     )
     .bind(id, actor.githubId, deps.now().toISOString())
     .run();
+  const submission = await decorateSubmission(
+    deps,
+    await settle(deps, row),
+    actor,
+  );
+  // A receipt deep link may be outside the recent list. Resolve its metadata
+  // under the same live access check without reading the technical report.
+  if (new URL(request.url).searchParams.get("view") === "receipt")
+    return json(200, { recipientGithubId: actor.githubId, submission });
   return json(200, {
-    submission: await decorateSubmission(deps, await settle(deps, row), actor),
+    submission,
     report: await reportVersion(deps, stored),
   });
 }

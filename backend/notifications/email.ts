@@ -1,6 +1,11 @@
 /** NOT-01: a session owner may opt in only to their currently verified destination. */
 import { readBoundedJson } from "../../src/lib/browser-json";
-import { isSameOriginJsonWrite, json } from "../http";
+import {
+  apiErrorResponse,
+  isSameOriginJsonWrite,
+  json,
+  requireActor,
+} from "../http";
 import type { NotificationsDependencies } from "./handler";
 
 export type EmailEligibility =
@@ -20,8 +25,29 @@ export async function handleEmailPreferences(
     return json(405, { error: "method_not_allowed" });
   if (request.method === "POST" && !isSameOriginJsonWrite(request))
     return json(403, { error: "origin_forbidden" });
-  const actor = await deps.sessionActor(request);
-  if (!actor) return json(401, { error: "not_signed_in" });
+  try {
+    // The email preference is a notification action: like the inbox handler,
+    // bind it to the account the client rendered. A client that omits the
+    // header keeps the plain session check; a mismatched header refuses.
+    const actor = await requireActor(request, deps);
+    return await handleEmailPreferenceForActor(request, deps, actor.githubId);
+  } catch (caught) {
+    return apiErrorResponse(caught, {
+      label: "notifications API failure",
+      respond: (status, { error }) =>
+        json(status, {
+          error: error === "unauthorized" ? "not_signed_in" : error,
+        }),
+    });
+  }
+}
+
+async function handleEmailPreferenceForActor(
+  request: Request,
+  deps: EmailPreferencesDependencies,
+  githubId: string,
+): Promise<Response> {
+  const actor = { githubId };
   if (request.method === "GET") {
     const rows = await deps.db
       .prepare(

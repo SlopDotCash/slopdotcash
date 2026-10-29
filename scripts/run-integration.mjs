@@ -10,11 +10,20 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const drivers = [
+  ["direct-history", "node", ["backend/payments/direct-history.workflow.mjs"]],
+  [
+    "scanner-progress",
+    "node",
+    ["workers/payments/scanner-progress.workflow.mjs"],
+  ],
+  ["monthly-order", "node", ["workers/payments/monthly-order.workflow.mjs"]],
+  ["dispatch-clock", "node", ["workers/payments/dispatch-clock.workflow.mjs"]],
   [
     "notifications-mark-read",
     "node",
     ["backend/notifications/mark-read.workflow.mjs"],
   ],
+  ["security-inbox-list", "node", ["backend/security/inbox-list.workflow.mjs"]],
   [
     "reporting-readiness",
     "node",
