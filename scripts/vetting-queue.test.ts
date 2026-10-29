@@ -2,7 +2,6 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  cp,
   mkdir,
   mkdtemp,
   readdir,
@@ -61,19 +60,8 @@ let server: ReturnType<typeof Bun.serve>;
 let connection: QueueConnection;
 let mode: "normal" | "manifest" | "template" | "identity" = "normal";
 const methods: string[] = [];
-const fixture = process.env.SLOP_VETTING_GUEST_FIXTURE;
-if (fixture && !["syscall", "artifact"].includes(fixture))
-  throw new Error("Only checked-in harmless guest fixtures are supported");
-const source = fixture
-  ? await readFile(
-      new URL(
-        `../workers/vetting/fixtures/${fixture}_probe.py`,
-        import.meta.url,
-      ),
-      "utf8",
-    )
-  : "Harmless source, never executed.";
-const sourcePath = fixture ? "fixture.py" : "README.txt";
+const source = "Harmless source, never executed.";
+const sourcePath = "README.txt";
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "slop-queue-workflow-"));
@@ -293,19 +281,6 @@ test("signed real queue and SQLite revision acquire exact Git and template bytes
   );
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
   expect(new Set(methods)).toEqual(new Set(["GET"]));
-  // Optional private capture lets the real analyzer/VM assembly workflow consume
-  // these handler-produced bytes. No keys or database are copied.
-  if (process.env.SLOP_VETTING_ACQUISITION_EVIDENCE) {
-    await cp(
-      acquired.directory,
-      process.env.SLOP_VETTING_ACQUISITION_EVIDENCE,
-      {
-        recursive: true,
-        errorOnExist: true,
-        force: false,
-      },
-    );
-  }
 });
 
 test("conflicting digests for a shared template path refuse acquisition", async () => {

@@ -507,11 +507,11 @@ does not retry deployments. This does not enable another network, create a
 payment dispatcher or authorize a transaction. Production deployment still
 uses the reviewed main-only release workflow.
 
-The generated `pages-bindings.json` is an integration fragment for an isolated test
-Pages environment, not permission to change an existing staging deployment. Bind its
-`SLOP_DB` to the exact same test D1 as the dispatcher; only one network/database may
-be selected for one frontend environment. Test identity is configured separately as
-below. Never add a public route to a payment signer or dispatcher.
+The generator no longer writes a Pages binding fragment: the isolated
+`slop-identity-test` login stack is retired (owner decision, 29 October 2026,
+#1467 item 3.10(b)). A browser test of a payment stack uses the staging site,
+whose bindings live in `wrangler.staging.toml`. Never add a public route to a
+payment signer or dispatcher.
 
 Set secret bindings only through the approved isolated test release process:
 
@@ -570,43 +570,6 @@ reviewed deployed escrow identities, actual test USDC, real GitHub OAuth, hosted
 private Worker deployment, and finalized public receipts. Mainnet enablement,
 production signing operations, lost-identity recovery, donation accounting,
 and independent security review remain separate gates.
-
-## Isolated GitHub login without production identity changes
-
-Use `node workers/identity/configure-test.mjs --public-origin "$TEST_IDENTITY_ORIGIN"
---database-id "$TEST_IDENTITY_D1_ID" --database-name slop-identity-test
---output evidence/test-identity`. The origin must be the account's exact
-`https://slop-identity-test.<account-subdomain>.workers.dev` URL. Use a separate
-identity D1 database and dedicated test secrets. No DNS or custom-domain changes are
-needed. This script creates configuration and an exact `oauth-registration.json`;
-it performs no remote operations.
-
-The remaining human registration is a dedicated GitHub OAuth application (or separate
-GitHub App OAuth client) with homepage `https://slop-staging.pages.dev` and callback
-`$TEST_IDENTITY_ORIGIN/v1/oauth/callback`. The existing protocol uses PKCE. Supply its client ID and
-secret as `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`; independently generate
-`IDENTITY_STATE_KEY` and `IDENTITY_ASSERTION_KEY` using the existing identity key
-requirements. Never copy production OAuth credentials. With the generated identity
-config, use pinned Wrangler to dry-run, apply D1 migrations remotely, deploy, and set
-those four secrets. The single shared test identity uses the exact database name `slop-identity-test`.
-Its hourly cron cleans expired identity state only and cannot renew production
-private-intake status. Invocation logs are disabled to avoid logging OAuth query data.
-
-Build the isolated frontend with `VITE_IDENTITY_PUBLIC_ORIGIN` set to the same origin.
-Run the identity config generator again with `--frontend-directory <isolated-dist>`
-after the build to replace the generated CSP's identity connect destination with that
-exact origin; source `public/_headers` remains unchanged. Bind test Pages
-`SLOP_IDENTITY` to `slop-identity-test`, set `PAYMENTS_ALLOWED_ORIGIN` to
-`https://slop-staging.pages.dev`, and supply a dedicated `TRACE_AUTH_SECRET` of at least
-32 characters for the login rate limiter. Set `OPERATOR_GITHUB_IDS` only if an operator
-admin test is needed. Production hosts ignore the test frontend override. Test identity
-accepts browser start/poll only from the exact supported staging hosts; production
-identity continues to reject them.
-
-Existing `slop-staging.pages.dev` is owned by another task: coordinate before changing
-its Pages bindings or deploying the isolated artifact. No live OAuth or hosted session
-claim is made until real GitHub sign-in, one-use assertion consumption, same-host cookie,
-wallet control signature, and finalized payout pass there. Use the new login/earnings
 
 ## Per-consent nonce restriction
 

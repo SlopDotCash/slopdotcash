@@ -84,8 +84,8 @@ export interface IdentityPersistence {
 }
 
 /**
- * Dedicated isolated test worker only; never arbitrary OAuth redirect hosts.
- * A local development origin is accepted only when `loopback` is set, which
+ * The canonical identity origin of the deployment tier; never arbitrary OAuth
+ * redirect hosts. A local development origin is accepted only when `loopback` is set, which
  * the local development backend and dev server alone do.
  */
 export function identityPublicOrigin(
@@ -96,12 +96,6 @@ export function identityPublicOrigin(
   const canonical = deploymentOrigins(tier).identity;
   if (value === undefined || value === canonical) return canonical;
   if (options.loopback === true && isLocalDevelopmentOrigin(value))
-    return value;
-  if (
-    /^https:\/\/slop-identity-test\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.workers\.dev$/.test(
-      value,
-    )
-  )
     return value;
   throw new Error("Unsupported identity public origin");
 }
