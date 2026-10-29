@@ -1,7 +1,9 @@
 /** Real Pages handler and session/registry tables; GitHub is the controlled external boundary. */
 import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
+import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { onRequest } from "../functions/api/v1/[[path]]";
+import { assertProjectPolicyTransition } from "../src/lib/project-policy.mjs";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { sha256Hex } from "../workers/identity/crypto";
@@ -11,7 +13,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test("organization maintainers reach private monthly awards through their own session; other actors and transferred repositories do not", async () => {
+test("organization maintainers reach private monthly awards after an approved rename; other actors and changed identities do not", async () => {
   const { db, sqlite } = sqliteD1(
     readdirSync("migrations")
       .filter((name) => name.endsWith(".sql"))
@@ -66,14 +68,24 @@ test("organization maintainers reach private monthly awards through their own se
     let permission = "maintain";
     let returnedActorId = 900000071;
     let ownerId = Number(project.steward.github.actorId);
+    let repositoryId = Number(project.authority.repositoryId);
+    let currentPath = project.repositories[0].id;
     const requests: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       requests.push(url.pathname);
-      const target = `/repos/${project.repositories[0].id}`;
+      const target = `/repos/${currentPath}`;
+      if (
+        currentPath !== project.repositories[0].id &&
+        url.pathname === `/repos/${project.repositories[0].id}`
+      )
+        return Response.redirect(
+          `https://api.github.com/repositories/${repositoryId}`,
+          301,
+        );
       if (url.pathname === target)
         return Response.json({
-          id: Number(project.authority.repositoryId),
+          id: repositoryId,
           node_id: project.authority.repositoryNodeId,
           owner: {
             id: ownerId,
@@ -144,10 +156,51 @@ test("organization maintainers reach private monthly awards through their own se
       error: "project_changed",
     });
     expect(requests).toHaveLength(2);
+    // An approved rename retains the immutable id but publishes a new URL.
+    // The historical name now redirects, so monthly authority must read the
+    // current name for both identity and the maintainer's permission.
+    currentPath = `${project.steward.github.login}/eliza-renamed`;
+    const renamed = structuredClone(project);
+    renamed.repositories[0].aliases = [
+      ...(renamed.repositories[0].aliases ?? []),
+      currentPath,
+    ];
+    renamed.repositories[0].displayName = currentPath;
+    renamed.repositories[0].githubUrl = `https://github.com/${currentPath}`;
+    assertProjectPolicyTransition(project, renamed);
+    const renamedText = JSON.stringify(renamed);
+    expect(
+      await new CloudflareProjectPersistence(db).appendProjectRevision(
+        {
+          projectId: project.id,
+          expectedRevision: 1,
+          manifest: renamed,
+          manifestText: renamedText,
+          manifestSha256: await sha256Hex(renamedText),
+          reason: "Approved repository rename",
+          actor: { githubId: "900000071", githubLogin: "human-maintainer" },
+          at: "2026-10-02T00:00:00.000Z",
+        },
+        0,
+      ),
+    ).toBe("updated");
+    requests.length = 0;
+    const afterRename = await request();
+    expect(afterRename.status).toBe(200);
+    expect(await afterRename.json()).toMatchObject({
+      projectId: project.id,
+      period: "2026-11",
+      proposal: null,
+    });
+    expect(requests).toEqual([
+      `/repos/${currentPath}`,
+      `/repos/${currentPath}/collaborators/human-maintainer/permission`,
+    ]);
     for (const failure of [
       "read-only",
       "different-human",
       "transferred-owner",
+      "replaced-repository",
     ]) {
       requests.length = 0;
       permission = failure === "read-only" ? "read" : "maintain";
@@ -156,8 +209,13 @@ test("organization maintainers reach private monthly awards through their own se
         failure === "transferred-owner"
           ? 900000073
           : Number(project.steward.github.actorId);
+      repositoryId =
+        Number(project.authority.repositoryId) +
+        (failure === "replaced-repository" ? 1 : 0);
       expect((await request()).status).toBe(
-        failure === "transferred-owner" ? 409 : 403,
+        failure === "transferred-owner" || failure === "replaced-repository"
+          ? 409
+          : 403,
       );
       // A failed authority check stops before any further GitHub read.
       expect(requests.length).toBeLessThanOrEqual(2);
