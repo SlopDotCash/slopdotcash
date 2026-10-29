@@ -88,14 +88,19 @@ test("a browser without WebP encoding can upload and persist its project image",
       ),
     ).toBe(128);
   } finally {
-    await page
-      .getByLabel("Project image (optional)", { exact: true })
-      .scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: info.outputPath("project-image.png"),
-      fullPage: true,
-    });
-    await api.dispose();
+    try {
+      if (!page.isClosed()) {
+        await page
+          .getByLabel("Project image (optional)", { exact: true })
+          .scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: info.outputPath("project-image.png"),
+          fullPage: true,
+        });
+      }
+    } finally {
+      await api.dispose();
+    }
   }
 });
 test("retains edits typed while a project revision is being published", async ({

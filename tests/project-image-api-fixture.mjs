@@ -106,7 +106,14 @@ export default {async fetch(request,env) {
         .bind(project.id, project.status, text, digest, when, when),
     ]);
     return {
-      fetch: (request) => runtime.dispatchFetch(request),
+      fetch: async (request) =>
+        runtime.dispatchFetch(request.url, {
+          method: request.method,
+          headers: Object.fromEntries(request.headers),
+          ...(request.method === "GET"
+            ? {}
+            : { body: await request.arrayBuffer() }),
+        }),
       async stored() {
         const row = await db
           .prepare("SELECT revision,manifest FROM projects WHERE id=?")
