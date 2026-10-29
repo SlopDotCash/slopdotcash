@@ -1617,6 +1617,7 @@ test("a concurrent project appeal refuses the stale account request and a fresh 
   accountAppealFlow(true));
 
 test("denying the project appeal leaves a banned account's appeal for its own decision", async () => {
+  const MOD_2 = "900000005";
   const t = registry();
   t.deps.moderatorGithubIds = new Set([ADMIN]);
   t.deps.github.fetch = async () =>
@@ -1683,10 +1684,10 @@ test("denying the project appeal leaves a banned account's appeal for its own de
   expect(await appeals(OTHER)).toEqual({
     appeals: [{ projectId: "denial", state: "banned", appeal: "requested" }],
   });
-  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
-  t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
-  // The first denial decides the project appeal only.
-  const projectDenial = await decide("deny_reinstatement", OWNER, 5);
+  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER, MOD_2]);
+  t.deps.adminGithubIds = new Set([ADMIN, OWNER, MOD_2]);
+  // OWNER filed the project appeal, so MOD_2 decides it.
+  const projectDenial = await decide("deny_reinstatement", MOD_2, 5);
   expect(projectDenial.status).toBe(200);
   expect(projectDenial.body.record).toMatchObject({
     action: "deny_reinstatement",
@@ -1696,7 +1697,7 @@ test("denying the project appeal leaves a banned account's appeal for its own de
     appeals: [{ projectId: "denial", state: "banned", appeal: "requested" }],
   });
   // With no project appeal open, the next denial decides the account appeal.
-  const accountDenial = await decide("deny_reinstatement", OWNER, 6);
+  const accountDenial = await decide("deny_reinstatement", MOD_2, 6);
   expect(accountDenial.status).toBe(200);
   expect(accountDenial.body.record).toMatchObject({
     appealAfter: "denied",
@@ -1708,11 +1709,12 @@ test("denying the project appeal leaves a banned account's appeal for its own de
 });
 
 test("an open account appeal survives later project restrictions and needs an independent account reviewer for each decision", async () => {
+  const MOD_2 = "900000005";
   const t = registry();
   // OTHER is also a moderator here, so the test can show that a banned
   // moderator cannot decide its own account appeal.
-  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER, OTHER]);
-  t.deps.adminGithubIds = new Set([ADMIN, OWNER, OTHER]);
+  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER, OTHER, MOD_2]);
+  t.deps.adminGithubIds = new Set([ADMIN, OWNER, OTHER, MOD_2]);
   t.deps.github.fetch = async () =>
     Response.json({ id: Number(OTHER), login: "other", type: "User" });
   expect((await t.create("clear-denial", "example/clear-denial")).status).toBe(
@@ -1793,7 +1795,7 @@ test("an open account appeal survives later project restrictions and needs an in
   expect(await otherAppeal()).toBe(200);
   // A moderator files the project appeal, and an independent moderator
   // reinstates the project. OTHER's account ban and appeal stay open.
-  expect((await decide("request_reinstatement", OWNER, 4)).status).toBe(200);
+  expect((await decide("request_reinstatement", MOD_2, 4)).status).toBe(200);
   const afterAppeal = await t.persistence.getProject(project.id);
   if (!afterAppeal) throw new Error("Project missing");
   expect(
@@ -1924,7 +1926,7 @@ test("an open account appeal survives later project restrictions and needs an in
       .all(
         `reinstatement-review:${(clearAppeal.body.record as { id: string }).id}`,
       ),
-  ).toEqual([{ recipient_github_id: OWNER }]);
+  ).toEqual([{ recipient_github_id: OWNER }, { recipient_github_id: MOD_2 }]);
   expect((await decide("ban", ADMIN, 17, [])).status).toBe(200);
   const accountOnlyReinstate = await decide("reinstate", OWNER, 18);
   expect(accountOnlyReinstate.status).toBe(409);
@@ -1942,13 +1944,15 @@ test("an open account appeal survives later project restrictions and needs an in
 
 /**
  * ADMIN placed the restriction and banned OTHER. OTHER's account appeal and
- * OWNER's project appeal are open when two confirmed malicious results keep
- * both appeals, so the next record has sequence 7.
+ * MOD_2's project appeal are open when two confirmed malicious results keep
+ * both appeals, so the next record has sequence 7. MOD_2 is a moderator, so
+ * OWNER is the independent decider in the tests below.
  */
 async function keptAppealFlow() {
+  const MOD_2 = "900000005";
   const t = registry();
-  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
-  t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
+  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER, MOD_2]);
+  t.deps.adminGithubIds = new Set([ADMIN, OWNER, MOD_2]);
   t.deps.github.fetch = async () =>
     Response.json({ id: Number(OTHER), login: "other", type: "User" });
   expect((await t.create("kept-appeal", "example/kept-appeal")).status).toBe(
@@ -2014,7 +2018,7 @@ async function keptAppealFlow() {
   expect(
     (await decide("ban", ADMIN, 2, [{ githubLogin: "other" }])).status,
   ).toBe(200);
-  // OTHER files an account appeal, and OWNER files the project appeal.
+  // OTHER files an account appeal, and MOD_2 files the project appeal.
   expect(
     (
       await t.call("POST", "project-appeals", OTHER, {
@@ -2024,12 +2028,12 @@ async function keptAppealFlow() {
       })
     ).status,
   ).toBe(200);
-  expect((await decide("request_reinstatement", OWNER, 4)).status).toBe(200);
+  expect((await decide("request_reinstatement", MOD_2, 4)).status).toBe(200);
   // Two new confirmed malicious results arrive before a decision. Each one
   // keeps both appeals open.
   expect(await vettingBan(5, "requested")).toBe("recorded");
   expect(await vettingBan(6, "requested")).toBe("recorded");
-  return { t, decide };
+  return { t, decide, MOD_2 };
 }
 
 test("a malicious decision that closes a kept project appeal needs an independent moderator while an account appeal is open", async () => {
@@ -2052,7 +2056,7 @@ test("a malicious decision that closes a kept project appeal needs an independen
 });
 
 test("admin state separates a kept appeal from a new project request without weakening review", async () => {
-  const { t, decide } = await keptAppealFlow();
+  const { t, decide, MOD_2 } = await keptAppealFlow();
   const state = async () => {
     const response = await t.call("GET", "admin/projects", OWNER);
     expect(response.status).toBe(200);
@@ -2068,7 +2072,7 @@ test("admin state separates a kept appeal from a new project request without wea
   const kept = await decide("reinstate", OWNER, 7);
   expect(kept.status).toBe(409);
   expect(kept.body.error).toBe("no_open_appeal");
-  expect((await decide("request_reinstatement", OWNER, 7)).status).toBe(200);
+  expect((await decide("request_reinstatement", MOD_2, 7)).status).toBe(200);
   expect(await state()).toMatchObject({
     appeal: "requested",
     projectAppeal: "requested",
@@ -2773,4 +2777,87 @@ test("an account-page appeal from a banned owner survives reload without opening
       { projectId: "account-page", state: "banned", appeal: "requested" },
     ],
   });
+});
+
+test("a steward who is also a moderator cannot decide the appeal they filed", async () => {
+  const t = registry();
+  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER]);
+  t.deps.adminGithubIds = new Set([ADMIN, OWNER]);
+  t.deps.github.fetch = async () =>
+    Response.json({ id: Number(OTHER), login: "other", type: "User" });
+  expect((await t.create("self-appeal", "example/self-appeal")).status).toBe(
+    201,
+  );
+  const project = await t.persistence.getProject("self-appeal");
+  if (!project) throw new Error("Project missing");
+  await t.persistence.appendEnforcement(
+    {
+      id: "enf_self_appeal_scan",
+      projectId: project.id,
+      sequence: 1,
+      action: "ban",
+      stateAfter: "banned",
+      appealAfter: "none",
+      reason: "Synthetic confirmed malicious scan",
+      evidenceReference: "private-case-fixture",
+      repositoryGithubId: "987654321",
+      repositoryKeys: ["example/self-appeal"],
+      actor: null,
+      actorRole: "vetting-service",
+      decisionSource: "standing-rule",
+      systemIssuer: {
+        kind: "vetting-service",
+        keySha256: "a".repeat(64),
+        assessmentId: "vet_fixture",
+        policyVersion: "fixture",
+        rule: "confirmed-malicious",
+      },
+      beforeRevision: project.revision,
+      beforeManifestSha256: project.manifestSha256,
+      afterRevision: null,
+      afterManifestSha256: null,
+      result: "revision_pending",
+      createdAt: NOW,
+    },
+    null,
+    [],
+  );
+  const appeal = await t.call("POST", "project-appeals", OWNER, {
+    projectId: "self-appeal",
+    reason: "The steward appeals as the project applicant",
+    evidenceReference: "private-owner-appeal-fixture",
+  });
+  expect(appeal.status).toBe(200);
+  const decision = await t.call(
+    "POST",
+    "admin/projects/self-appeal/enforcement",
+    OWNER,
+    {
+      action: "reinstate",
+      reason: "Revert landed",
+      evidenceReference: "private-project-review-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: 3,
+    },
+  );
+  expect(decision.status).toBe(403);
+  expect(decision.body).toMatchObject({
+    error: "independent_review_required",
+    message: "Another moderator must decide an appeal its author filed",
+  });
+  // Another moderator passes the gate and stops at the manifest instead.
+  const independent = await t.call(
+    "POST",
+    "admin/projects/self-appeal/enforcement",
+    ADMIN,
+    {
+      action: "reinstate",
+      reason: "Revert landed",
+      evidenceReference: "private-project-review-fixture",
+      expectedRevision: (await t.persistence.getProject(project.id))?.revision,
+      expectedSequence: 3,
+    },
+  );
+  expect(independent.status).toBe(409);
+  expect(independent.body).toMatchObject({ error: "revision_pending" });
 });

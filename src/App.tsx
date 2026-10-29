@@ -523,7 +523,7 @@ function monthlyPoolCapLabel(project: ProjectDefinition): string {
 }
 
 /**
- * Custom images are the 128px WebP avatars that ProjectImageField encodes
+ * Custom images are the 128px WebP or JPEG avatars that ProjectImageField encodes
  * into the immutable revision, so they arrive inline with the registry and
  * cost no request. Rows below the fold defer GitHub fallback avatars.
  */

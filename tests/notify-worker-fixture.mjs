@@ -74,7 +74,8 @@ export async function startNotifyWorkerFixture(root, persistTo, port) {
 
 /**
  * Starts `wrangler dev` for one local fixture Worker and waits until it
- * answers. Returns the function that stops it and runs `cleanup`.
+ * answers. Returns the function that stops it, waits for it to exit and
+ * then runs `cleanup`.
  */
 export async function startLocalWorker(
   root,
@@ -105,14 +106,20 @@ export async function startLocalWorker(
     stream.on("data", (chunk) => {
       diagnostic += String(chunk);
     });
-  const close = () => {
+  const exited = new Promise((resolve) => worker.once("exit", resolve));
+  // A running Worker keeps its --persist-to files open. Windows refuses to
+  // delete an open file, so callers remove those files only after close().
+  const close = async () => {
     worker.kill("SIGTERM");
+    const force = setTimeout(() => worker.kill("SIGKILL"), 10_000);
+    await exited;
+    clearTimeout(force);
     cleanup();
   };
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (worker.exitCode !== null) {
-      close();
+      await close();
       throw new Error(`Local ${label} Worker failed: ${diagnostic}`);
     }
     try {
@@ -123,6 +130,6 @@ export async function startLocalWorker(
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  close();
+  await close();
   throw new Error(`Local ${label} Worker did not start: ${diagnostic}`);
 }

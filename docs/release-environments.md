@@ -17,6 +17,13 @@ acceptance, open a promotion pull request from `development` into `main`.
 Both branches require the full build, browser, and policy checks. A failed check
 must prevent publication. Never publish a local build or a pull-request build.
 
+Owner decision, 29 October 2026 (PRD section 11): agents and automation may
+merge a pull request into `development` before its hosted CI finishes. Fix or
+revert a failing post-merge check promptly. Batch promotions from
+`development` into `main` so that one production release (about 45 minutes)
+can finish before a newer `main` push cancels it. The trusted `main` release
+still runs the full quality gate before it deploys.
+
 Trusted branch preparation keeps its running revision when another run starts.
 The newest pending revision replaces earlier pending work. Superseded pull
 request checks may still cancel. The combined quality gate skips cancelled

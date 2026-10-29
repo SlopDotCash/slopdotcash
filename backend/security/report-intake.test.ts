@@ -385,6 +385,53 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("durable private report controls", () => {
+  test("an older receipt resolves outside the recent list without reading report text or widening access", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    try {
+      let first = "";
+      for (let n = 0; n < 101; n++) {
+        const created = await t.create(
+          `old-receipt-${String(n).padStart(8, "0")}`,
+        );
+        expect(created.status).toBe(201);
+        if (n === 0) first = required(created.body.submission).id;
+        t.advance(7 * 60 * 1000);
+      }
+      const list = await t.call(REPORTER, "GET", "security-submissions");
+      expect(required(list.body.submissions)).toHaveLength(100);
+      expect(
+        required(list.body.submissions).some((row) => row.id === first),
+      ).toBe(false);
+      const path = `security-submissions/${first}?view=receipt`;
+      const storage = required(t.deps.reportStorage);
+      const get = storage.get;
+      storage.get = async () => {
+        throw new Error("A receipt read must not fetch technical report text");
+      };
+      const receipt = await t.call(REPORTER, "GET", path);
+      expect(receipt.status).toBe(200);
+      expect(receipt.body.recipientGithubId).toBe(REPORTER.githubId);
+      expect(required(receipt.body.submission).id).toBe(first);
+      expect(receipt.body.report).toBeUndefined();
+      expect((await t.call(OTHER, "GET", path)).status).toBe(404);
+      expect((await t.call(null, "GET", path)).status).toBe(401);
+      expect((await t.call(OWNER, "GET", path)).status).toBe(200);
+      t.revokeOwner();
+      expect((await t.call(OWNER, "GET", path)).status).toBe(404);
+      storage.get = get;
+      const full = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${first}`,
+      );
+      expect(full.status).toBe(200);
+      expect(full.body.report).toEqual(REPORT);
+    } finally {
+      t.sqlite.close();
+    }
+  });
+
   test("a changed browser account cannot submit another reporter's prepared draft", async () => {
     const t = fixture();
     const response = await t.call(OTHER, "POST", "security-submissions", {

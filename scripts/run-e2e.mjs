@@ -293,14 +293,25 @@ async function runRegistryPhase() {
     failed = true;
     failure = error;
   } finally {
-    const cleanup = await Promise.allSettled([
+    const closed = await Promise.allSettled([
       Promise.resolve().then(() => slopbot?.close()),
       Promise.resolve().then(() => notify?.close()),
       Promise.resolve().then(() => github?.close()),
+    ]);
+    // The fixture Workers hold the local D1 files until they exit, and
+    // Windows refuses to delete an open file. Windows can also release the
+    // stopped Pages server's handles a moment later, so retry with a bound.
+    const removed = await Promise.allSettled([
       Promise.resolve().then(() =>
-        rmSync(persistTo, { force: true, recursive: true }),
+        rmSync(persistTo, {
+          force: true,
+          recursive: true,
+          maxRetries: 10,
+          retryDelay: 200,
+        }),
       ),
     ]);
+    const cleanup = [...closed, ...removed];
     const errors = cleanup
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason);

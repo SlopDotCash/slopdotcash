@@ -1036,6 +1036,12 @@ describe("project registry API", () => {
     const unavailable = [
       async () => new Response("Too Many Requests", { status: 429 }),
       async () => new Response("Bad Gateway", { status: 502 }),
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32603, message: "Internal error" },
+        }),
       async () => {
         throw new TypeError("fetch failed");
       },

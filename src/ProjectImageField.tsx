@@ -40,8 +40,14 @@ export function ProjectImageField({
           128,
         );
         let image = canvas.toDataURL("image/webp", 0.8);
+        // Unsupported canvas formats fall back to PNG. Use the browser's
+        // JPEG encoder when WebP is unavailable instead of mislabelling bytes.
+        const format = image.startsWith("data:image/webp;")
+          ? "image/webp"
+          : "image/jpeg";
+        if (format === "image/jpeg") image = canvas.toDataURL(format, 0.8);
         if (image.length > MAX_PROJECT_IMAGE_LENGTH)
-          image = canvas.toDataURL("image/webp", 0.5);
+          image = canvas.toDataURL(format, 0.5);
         onChange(assertProjectImage(image));
       } finally {
         bitmap.close();

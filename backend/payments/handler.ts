@@ -38,6 +38,7 @@ import {
 } from "../http";
 import { sessionGithubActor } from "../points/handler";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
+import { directTransferPage } from "./direct-history";
 import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
@@ -54,6 +55,19 @@ import { publicReceivedTotals, publicVaultPayments } from "./public-records";
 import { handleSolanaFunding } from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
+
+/**
+ * Testnet award totals are reported only outside production; staging pays in
+ * testnet stablecoins, so it keeps them. Network classification comes from
+ * the escrow registry, mirroring the /received deployment-tier rule.
+ */
+function isTestnetNetwork(network: string): boolean {
+  return (
+    (ESCROW_NETWORKS as Record<string, { testnet: boolean } | undefined>)[
+      network
+    ]?.testnet === true
+  );
+}
 
 function isMonthlyCommitmentInput(
   body: unknown,
@@ -125,8 +139,11 @@ export interface PaymentDeploymentIdentity {
 }
 /** The attester must still have this long to submit a binding authorization. */
 const BINDING_SUBMISSION_WINDOW_SECONDS = 600;
-function directTransferQuery(column: "project_id" | "github_user_id") {
-  return `SELECT json_group_array(json_object('projectId',project_id,'contributionMonth',contribution_month,'githubUserId',github_user_id,'login',github_login,'network',network,'chain',chain,'recipient',recipient,'amountMicro',amount_micro,'transactionId',transaction_id,'blockTime',block_time)) items FROM (SELECT * FROM payment_direct_transfers WHERE ${column}=? ORDER BY block_time,transaction_id)`;
+function directTransferQuery(
+  column: "project_id" | "github_user_id",
+  separate = false,
+) {
+  return `SELECT json_group_array(json_object('projectId',project_id,'contributionMonth',contribution_month,'githubUserId',github_user_id,'login',github_login,'network',network,'chain',chain,'recipient',recipient,'amountMicro',amount_micro,'transactionId',transaction_id,'blockTime',block_time)) items FROM (SELECT * FROM payment_direct_transfers WHERE ${column}=?${separate ? " AND 0" : ""} ORDER BY block_time,transaction_id)`;
 }
 async function directTransfers(
   db: D1Database,
@@ -257,22 +274,34 @@ export async function handlePaymentsApi(
       const projectId = totalsRoute[1];
       // Indexed award totals, one row per network and asset. Amounts are
       // base units of that asset and are never summed across assets.
-      const rows = JSON.parse(
-        (
-          await deps.db
-            .prepare(
-              "SELECT json_group_array(json_object('network',network,'assetAddress',asset_address,'assetDecimals',asset_decimals,'gross',gross_base,'fee',fee_base,'state',state)) items FROM (SELECT * FROM payment_obligations WHERE project_id=? ORDER BY network,asset_address)",
-            )
-            .bind(projectId)
-            .first<{ items: string }>()
-        )?.items ?? "[]",
-      ) as (PaymentAsset & { gross: string; fee: string; state: string })[];
-      const cursor = await deps.db
+      const rows = (
+        JSON.parse(
+          (
+            await deps.db
+              .prepare(
+                "SELECT json_group_array(json_object('network',network,'assetAddress',asset_address,'assetDecimals',asset_decimals,'gross',gross_base,'fee',fee_base,'state',state)) items FROM (SELECT * FROM payment_obligations WHERE project_id=? ORDER BY network,asset_address)",
+              )
+              .bind(projectId)
+              .first<{ items: string }>()
+          )?.items ?? "[]",
+        ) as (PaymentAsset & { gross: string; fee: string; state: string })[]
+      ).filter(
+        (row) => deps.tier === "staging" || !isTestnetNetwork(row.network),
+      );
+      const storedCursor = await deps.db
         .prepare(
           "SELECT network,position,synced_at FROM payment_chain_cursors WHERE project_id=?",
         )
         .bind(projectId)
         .first<{ network: string; position: string; synced_at: string }>();
+      // A cursor on an excluded network is treated as absent, so the reported
+      // coverage stays consistent with the filtered amount rows under the same
+      // tier rule.
+      const cursor =
+        storedCursor &&
+        (deps.tier === "staging" || !isTestnetNetwork(storedCursor.network))
+          ? storedCursor
+          : null;
       if (!rows.length && !cursor)
         return json(503, { error: "project_payments_not_indexed" });
       const assets = new Map<
@@ -308,7 +337,7 @@ export async function handlePaymentsApi(
       }
       return json(200, {
         projectId,
-        network: cursor?.network ?? rows[0].network,
+        network: cursor?.network ?? rows[0]?.network ?? null,
         assets: [...assets.values()].map(
           ({ paidNet, paidFee, reservedNet, reservedFee, ...asset }) => ({
             ...asset,
@@ -377,6 +406,38 @@ export async function handlePaymentsApi(
         path,
       );
     if (directRoute && request.method === "GET") {
+      if (request.headers.get("x-slop-direct-history") === "paged") {
+        const query = new URL(request.url).searchParams;
+        const cursor = (key: string) => {
+          const raw = query.get(key);
+          return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
+            ? Number(raw)
+            : Number.NaN;
+        };
+        if (
+          [...query.keys()].some(
+            (key) => !["after", "through"].includes(key),
+          ) ||
+          (query.has("after") && !query.has("through"))
+        )
+          return json(400, { error: "invalid_payment_cursor" });
+        try {
+          return json(
+            200,
+            await directTransferPage(
+              deps.db,
+              directRoute[2] ? "github_user_id" : "project_id",
+              directRoute[2] ?? directRoute[1],
+              query.has("after") ? cursor("after") : 0,
+              query.has("through") ? cursor("through") : null,
+            ),
+          );
+        } catch (error) {
+          if (error instanceof RangeError)
+            return json(400, { error: "invalid_payment_cursor" });
+          throw error;
+        }
+      }
       const transfers = await directTransfers(
         deps.db,
         directRoute[2] ? "github_user_id" : "project_id",
@@ -1080,6 +1141,8 @@ export async function handlePaymentsApi(
       });
     }
     if (path === "/me" && request.method === "GET") {
+      const separateDirectHistory =
+        request.headers.get("x-slop-direct-history") === "paged";
       // An award moves from monthlyAwards to payments when its reservation is
       // indexed. Read both, and the rest of this account, in one SQLite snapshot.
       const accountRows = await deps.db
@@ -1087,7 +1150,7 @@ export async function handlePaymentsApi(
           (SELECT json_group_array(json_object('chain',w.chain,'claimId',w.id,'address',w.wallet_address,'authorized',json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END))) items FROM effective_payment_wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.github_user_id=?) AS wallets,
           (SELECT json_group_array(json_object('id',o.id,'vault',o.vault,'projectId',project_id,'network',network,'chain',chain,'assetAddress',asset_address,'assetDecimals',asset_decimals,'grossBase',gross_base,'feeBase',fee_base,'state',o.state,'transactionId',paid_transaction,'submittedTransactionId',(SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id=o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),'deliveryState',CASE WHEN o.state='paid' THEN 'paid' WHEN q.state='submitted' THEN 'submitted' WHEN q.state='held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END)) items FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id=o.id WHERE github_user_id=?) AS payments,
           (SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network,'assetAddress',asset,'assetDecimals',decimals,'grossBase',gross,'feeBase',fee,'netBase',net,'state',state)) items FROM (SELECT r.project_id,r.period,r.network,json_extract(r.snapshot,'$.asset') asset,COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id=r.project_id AND v.network=r.network AND v.vault=r.vault AND lower(v.asset_address)=lower(json_extract(r.snapshot,'$.asset'))),CASE WHEN lower(json_extract(b.manifest,'$.rewardAsset.address'))=lower(json_extract(r.snapshot,'$.asset')) THEN json_extract(b.manifest,'$.rewardAsset.decimals') END) decimals,json_extract(a.value,'$.grossBase') gross,json_extract(a.value,'$.feeBase') fee,json_extract(a.value,'$.netBase') net,CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network=r.network AND c.vault=r.vault AND c.source_digest=json_extract(a.value,'$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id=r.project_id AND b.period=r.period, json_each(r.snapshot,'$.awards') a WHERE json_extract(a.value,'$.githubUserId')=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id=r.project_id AND e.period=r.period AND e.source_digest=json_extract(a.value,'$.sourceDigest')) AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network=r.network AND o.vault=r.vault AND o.source_digest=json_extract(a.value,'$.sourceDigest') AND o.github_user_id=json_extract(a.value,'$.githubUserId') AND o.gross_base=json_extract(a.value,'$.grossBase')) ORDER BY r.period DESC,r.project_id)) AS monthlyAwards,
-          (${directTransferQuery("github_user_id")}) AS directTransfers,
+          (${directTransferQuery("github_user_id", separateDirectHistory)}) AS directTransfers,
           (SELECT json_group_array(json_object('chain',chain,'address',address,'proofLevel',proof_level,'sourceUrl',source_url,'observedAt',observed_at)) items FROM (SELECT * FROM wallet_observations WHERE github_user_id=? ORDER BY observed_at DESC)) AS walletObservations`)
         .bind(...Array(5).fill(member.githubId))
         .first<
@@ -1158,6 +1221,7 @@ export async function handlePaymentsApi(
         monthlyAwards,
         balances,
         directTransfers: JSON.parse(accountRows.directTransfers),
+        ...(separateDirectHistory ? { directTransfersPaged: true } : {}),
         walletObservations: JSON.parse(accountRows.walletObservations),
       };
       return json(200, account);
