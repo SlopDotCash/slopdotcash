@@ -2085,7 +2085,7 @@ small {
   color: var(--ink);
   background: var(--paper);
 }
-.points-panel button:not(.button) {
+.points-panel button:not(.button, .email-switch) {
   margin: 0.3rem;
 }
 .points-panel button:disabled {
