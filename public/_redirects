@@ -38,8 +38,8 @@
 /projects/:project/security / 200
 /projects/:project/security/ / 200
 /projects/:project/manage/ / 200
-/projects/:project/awards /projects/:project/funding 301
-/projects/:project/awards/ /projects/:project/funding 301
+/projects/:project/awards / 200
+/projects/:project/awards/ / 200
 /projects/:project / 200
 /projects/:project/ / 200
 /contributors/:login / 200

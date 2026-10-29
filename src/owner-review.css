@@ -1,3 +1,7 @@
+.owner-awards {
+  scroll-margin-top: calc(88px + 1rem);
+}
+
 .owner-change-review {
   display: grid;
   grid-template-columns: minmax(8rem, 0.7fr) minmax(0, 2fr);
