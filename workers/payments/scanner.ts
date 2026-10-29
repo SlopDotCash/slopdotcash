@@ -91,7 +91,7 @@ export async function scanEvmPayments(
   }
   await db
     .prepare(
-      "INSERT INTO payment_chain_cursors VALUES(?,?,?,?) ON CONFLICT(project_id,network) DO UPDATE SET position=excluded.position,synced_at=excluded.synced_at",
+      "INSERT INTO payment_chain_cursors VALUES(?,?,?,?) ON CONFLICT(project_id,network) DO UPDATE SET position=excluded.position,synced_at=excluded.synced_at WHERE length(excluded.position)>length(payment_chain_cursors.position) OR (length(excluded.position)=length(payment_chain_cursors.position) AND excluded.position>=payment_chain_cursors.position)",
     )
     .bind(
       deployment.projectId,

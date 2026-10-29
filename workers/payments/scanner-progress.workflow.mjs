@@ -68,8 +68,8 @@ export default {async fetch(request,env) {
           result = refuse
             ? [
                 {
-                  topics: ["0x" + "0".repeat(64)],
-                  transactionHash: "fixture",
+                  topics: [params[0].topics[0][0], `0x${"a".repeat(64)}`],
+                  transactionHash: `0x${"b".repeat(64)}`,
                   logIndex: "0x0",
                   blockNumber: "0xc9",
                 },
@@ -114,19 +114,25 @@ export default {async fetch(request,env) {
   refuse = true;
   assert.equal((await scan()).status, 503);
   assert.equal(await coverage(), "200");
+  refuse = false;
+  assert.equal((await scan()).status, 204);
+  assert.equal(await coverage(), "300");
+  assert.equal((await scan()).status, 204);
   assert.deepEqual(pages, [
     ["1", "100"],
     ["1", "100"],
     ["101", "200"],
     ["201", "300"],
+    ["201", "300"],
   ]);
   console.log(
     JSON.stringify({
       nativeD1: true,
-      publicCoverage: "200",
+      publicCoverage: "300",
       overlappingRuns: 3,
       oldCompletionCannotRewind: true,
       failedPageCannotAdvance: true,
+      failedPageRetried: true,
       nextPage: pages.at(-1),
       liveChain: false,
     }),
