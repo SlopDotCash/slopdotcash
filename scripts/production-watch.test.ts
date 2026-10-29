@@ -8,6 +8,7 @@ import { runProductionWatch } from "./production-watch";
 // staleAfterMs and servedAt fields.
 const ORIGIN = "https://slop.cash";
 const SLOPBOT = "https://slopbot.slop.cash/health";
+const IDENTITY = "https://identity.slop.cash/v1/oauth/authorize";
 const NOW = new Date("2026-10-28T17:00:00.000Z");
 const BASE_VAULT = "0x6c1297c3b96a00347cb501f572cb5811c2a8ed36";
 const SOLANA_VAULT = "6NhxSaed6SF3uCAgzQViCZixETGpvxuFzo5eRGiaGM7";
@@ -76,6 +77,7 @@ function site(overrides: Record<string, Route> = {}) {
   const routes: Record<string, Route> = {
     [`${ORIGIN}/`]: { body: "<!doctype html>" },
     [SLOPBOT]: { body: { service: "slopbot", ok: true } },
+    [IDENTITY]: { status: 400, body: { error: "invalid_request" } },
     [`${ORIGIN}/api/v1/projects`]: { body: registry() },
     [`${ORIGIN}/api/v1/payments/projects/slopdotcash/vault`]: {
       body: vault("2026-10-28T16:55:59.635Z"),
@@ -107,6 +109,7 @@ test("a fresh registered vault and healthy endpoints pass; vaultless projects ar
   expect(failed).toEqual([]);
   expect(results.map((r) => r.check)).toEqual([
     "site home",
+    "identity sign-in",
     "slopbot health",
     "registry api",
     `vault slopdotcash base-mainnet ${BASE_VAULT}`,
@@ -211,6 +214,49 @@ test("a non-2xx or unreachable endpoint fails its check", async () => {
   expect(vaultDown.failed.map((r) => r.check)).toEqual([
     `vault slopdotcash base-mainnet ${BASE_VAULT}`,
   ]);
+});
+
+test("an identity outage fails the watch even while the site and vault stay healthy", async () => {
+  let status = 503;
+  let body = { error: "unavailable" };
+  let calls = 0;
+  const identity = createServer((_request, response) => {
+    calls += 1;
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+  });
+  await new Promise<void>((resolve) =>
+    identity.listen(0, "127.0.0.1", resolve),
+  );
+  const { port } = identity.address() as AddressInfo;
+  const identityProbeUrl = `http://127.0.0.1:${port}/v1/oauth/authorize`;
+  const runWatch = () =>
+    runProductionWatch({
+      now: () => NOW,
+      fetcher: (url, init) =>
+        url === identityProbeUrl ? fetch(url, init) : site().fetcher(url),
+      identityProbeUrl,
+    });
+  try {
+    const unavailable = await runWatch();
+    expect(
+      unavailable.filter((result) => !result.ok).map((r) => r.check),
+    ).toEqual(["identity sign-in"]);
+    status = 400;
+    body = { error: "invalid_request" };
+    expect((await runWatch()).every((result) => result.ok)).toBe(true);
+    for (const invalidStatus of [200, 400]) {
+      status = invalidStatus;
+      body = { error: "unavailable" };
+      expect(
+        (await runWatch()).filter((r) => !r.ok).map((r) => r.check),
+      ).toEqual(["identity sign-in"]);
+    }
+    expect(calls).toBe(4);
+  } finally {
+    identity.closeAllConnections();
+    await new Promise<void>((resolve) => identity.close(() => resolve()));
+  }
 });
 
 test("a request that exceeds the bound times out as a failure, without retry", async () => {
