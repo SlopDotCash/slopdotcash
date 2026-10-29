@@ -2950,6 +2950,51 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     ).toBe(true);
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await page.unroute("**/api/v1/security-submissions", withoutFocusedReceipt);
+    const receiptUrl = page.url();
+    const missingReceiptId = "ss_missingreceipt001";
+    diagnostics.allowResponse(
+      404,
+      "GET",
+      `/api/v1/security-submissions/${missingReceiptId}?view=receipt`,
+    );
+    await page.goto(`/inbox?view=reports&submission=${missingReceiptId}`);
+    await expect(page.getByRole("alert")).toContainText(
+      "That receipt link is no longer available. Your recent reports are shown.",
+    );
+    await expect(report).toContainText("Slop receipt");
+    await expect(page.locator(".security-report-text")).toHaveCount(0);
+    // Missing optional metadata is recoverable. Authentication and actor
+    // refusals still remove every private card, even after a list succeeded.
+    const receiptPath = `/api/v1/security-submissions/${missingReceiptId}?view=receipt`;
+    diagnostics.allowResponse(403, "GET", receiptPath);
+    await page.route(`**${receiptPath}`, (route) =>
+      route.fulfill({ status: 403, json: { error: "actor_changed" } }),
+    );
+    await page.reload();
+    await expect(page.getByRole("alert")).toContainText(
+      "Private report access changed.",
+    );
+    await expect(page.locator("article.security-case")).toHaveCount(0);
+    await page.unroute(`**${receiptPath}`);
+    const signedOutLookup = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.endsWith(missingReceiptId) &&
+        response.status() === 401,
+    );
+    diagnostics.allowResponse(401, "GET", receiptPath);
+    await page.route(`**${receiptPath}`, async (route) => {
+      await context.clearCookies();
+      const headers = route.request().headers();
+      delete headers.cookie;
+      await route.continue({ headers });
+    });
+    await page.reload();
+    await signedOutLookup;
+    await expect(page.locator("article.security-case")).toHaveCount(0);
+    await page.unroute(`**${receiptPath}`);
+    await signIn(page, reporterToken);
+    await page.goto(receiptUrl);
+    await expect(report).toContainText("Slop receipt");
     await report
       .getByRole("button", { name: "Open case", exact: true })
       .focus();
