@@ -217,6 +217,61 @@ test("a case change queues once, sends generic per-role mail once, and needs exp
   h.sqlite.close();
 });
 
+test.each([
+  {
+    name: "slow earlier mail does not expire a new delivery claim",
+    slowDelivery: 1,
+    expectedState: "provider-accepted",
+    escalations: 0,
+  },
+  {
+    name: "a genuinely stale send still requires reconciliation",
+    slowDelivery: 2,
+    expectedState: "ambiguous",
+    escalations: 1,
+  },
+])("$name", async ({ slowDelivery, expectedState, escalations }) => {
+  const h = await setup();
+  try {
+    const send = h.deps.sendEmail;
+    let calls = 0;
+    h.deps.sendEmail = async (from, to, mime) => {
+      calls += 1;
+      await send(from, to, mime);
+      if (calls === slowDelivery) h.advance(6 * 60_000);
+      // A second scheduled invocation runs while the second send is active.
+      // Only time spent on this send may expire its claim.
+      if (calls === 2) await dispatchSecurityMail(h.deps);
+    };
+    await dispatchSecurityMail(h.deps);
+    expect(h.sent).toHaveLength(2);
+    const originals = h.rows().filter((row) => row.escalation_of === null);
+    const states = new Map(
+      originals.map((row) => [
+        h.deps.config.recipients[row.recipient_github_id].email,
+        row.state,
+      ]),
+    );
+    expect(h.sent.map(({ to }) => states.get(to))).toEqual([
+      "provider-accepted",
+      expectedState,
+    ]);
+    expect(originals.map((row) => row.attempts)).toEqual([1, 1]);
+    expect(h.rows().filter((row) => row.escalation_of !== null)).toHaveLength(
+      escalations,
+    );
+    expect(
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS total FROM security_notification_delivery_events WHERE state='provider-accepted'",
+        )
+        .get(),
+    ).toEqual({ total: escalations === 0 ? 2 : 1 });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("a report receipt is mailed generically and never escalates for a missing acknowledgment", async () => {
   const h = await setup();
   await dispatchSecurityMail(h.deps);

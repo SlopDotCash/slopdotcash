@@ -71,6 +71,10 @@ import {
   planReferencedArtifacts,
   verifyReferencedArtifacts,
 } from "./pr-evidence-artifacts.mjs";
+import {
+  type PullRequestGitFiles,
+  recoverPullRequestGitFiles,
+} from "./pull-request-git-files";
 import { verifyRunReceiptSignature } from "./run-receipt-crypto";
 
 export const SEARCH_SAFE_RESULT_LIMIT = 950;
@@ -264,6 +268,11 @@ export interface RateLimitSnapshot {
 }
 
 export interface GraphqlExecutor {
+  recoverPullRequestFiles?(
+    repository: TargetRepository,
+    repositoryId: string,
+    node: JsonRecord,
+  ): Promise<PullRequestGitFiles>;
   compareCommitPage?(
     repository: TargetRepository,
     base: string,
@@ -604,6 +613,23 @@ const PULL_REQUEST_DETAILS_QUERY = `
   }
   ${ACTOR_FRAGMENT}
   ${PULL_REQUEST_FRAGMENT}
+`;
+
+const MERGED_FILE_SOURCE_QUERY = `
+  query LeaderboardMergedFileSource($id: ID!) {
+    node(id: $id) {
+      __typename
+      ... on PullRequest {
+        id state mergedAt headRefOid
+        repository { id databaseId isPrivate nameWithOwner }
+        mergeCommit {
+          oid
+          parents(first: 2) { totalCount nodes { oid } }
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
 `;
 
 const MERGED_PULL_REQUEST_REVIEWS_QUERY = `
@@ -1397,6 +1423,7 @@ export interface GitHubGraphqlClientOptions {
   maxGenerationCost?: number;
   minimumRateLimitReserve?: number;
   retryBaseDelayMs?: number;
+  recoverFiles?: typeof recoverPullRequestGitFiles;
 }
 
 function isTransientNetworkError(value: unknown): boolean {
@@ -1561,6 +1588,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   readonly #maxGenerationCost: number;
   readonly #minimumRateLimitReserve: number;
   readonly #retryBaseDelayMs: number;
+  readonly #recoverFiles: typeof recoverPullRequestGitFiles;
   #requestCount = 0;
   #rateLimit: RateLimitSnapshot | null = null;
   #consumedCost = 0;
@@ -1607,6 +1635,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     this.#maxGenerationCost = maxGenerationCost;
     this.#minimumRateLimitReserve = minimumRateLimitReserve;
     this.#retryBaseDelayMs = retryBaseDelayMs;
+    this.#recoverFiles = options.recoverFiles ?? recoverPullRequestGitFiles;
   }
 
   async ensureBudget(requiredCost: number): Promise<void> {
@@ -1656,6 +1685,58 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   ): Promise<JsonRecord> {
     const path = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/compare/${base}...${head}?per_page=${GRAPHQL_PAGE_SIZE}&page=${page}`;
     return this.#executeRequest("", {}, path);
+  }
+
+  async recoverPullRequestFiles(
+    repository: TargetRepository,
+    repositoryId: string,
+    original: JsonRecord,
+  ): Promise<PullRequestGitFiles> {
+    const id = asString(original.id, "pull request.id");
+    const data = await this.execute(MERGED_FILE_SOURCE_QUERY, { id });
+    const node = child(data, "node", "data");
+    const source = child(node, "repository", "data.node");
+    if (
+      node.__typename !== "PullRequest" ||
+      node.id !== id ||
+      node.state !== "MERGED" ||
+      original.state !== "MERGED" ||
+      node.mergedAt !== original.mergedAt ||
+      node.headRefOid !== original.headRefOid ||
+      source.id !== repositoryId ||
+      (repository.expectedNodeId !== null &&
+        source.id !== repository.expectedNodeId) ||
+      source.isPrivate !== false
+    )
+      throw new Error("Merged file source identity changed or is unavailable");
+    const merge = child(node, "mergeCommit", "data.node");
+    const parents = child(merge, "parents", "data.node.mergeCommit");
+    if (parents.totalCount !== 2)
+      throw new Error("Merged file recovery requires complete merge parents");
+    return this.#recoverFiles({
+      repository: {
+        id: asNumber(source.databaseId, "data.node.repository.databaseId"),
+        node_id: asString(source.id, "data.node.repository.id"),
+        private: false,
+        full_name: asString(
+          source.nameWithOwner,
+          "data.node.repository.nameWithOwner",
+        ),
+      },
+      head: asFullCommitSha(node.headRefOid, "data.node.headRefOid"),
+      merge: {
+        sha: asFullCommitSha(merge.oid, "data.node.mergeCommit.oid"),
+        parents: asArray(
+          parents.nodes,
+          "data.node.mergeCommit.parents.nodes",
+        ).map((parent, index) => ({
+          sha: asFullCommitSha(
+            asRecord(parent, "merge parent").oid,
+            `data.node.mergeCommit.parents.nodes[${index}].oid`,
+          ),
+        })),
+      },
+    });
   }
 
   async #executeRequest(
@@ -2977,12 +3058,42 @@ async function hydratePullRequests(
   expectedState: ExpectedRecordState,
   onProgress: (progress: GenerationProgress) => void,
   phase: GenerationProgress["phase"],
+  repository: TargetRepository,
+  repositoryId: string,
 ): Promise<PullRequestRecord[]> {
   const pending: PendingPullRequestRecord[] = [];
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
     const hydratedBatch = await retryOpenBatch(expectedState, async () => {
       const ids = batch.map((reference) => reference.id);
       const data = await client.execute(PULL_REQUEST_DETAILS_QUERY, { ids });
+      if (expectedState === "merged") {
+        const nodes = asArray(data.nodes, "data.nodes");
+        for (const [index, value] of nodes.entries()) {
+          const node = asRecord(value, `data.nodes[${index}]`);
+          if (node.files !== null) continue;
+          if (
+            node.__typename !== "PullRequest" ||
+            node.id !== ids[index] ||
+            node.state !== "MERGED" ||
+            !client.recoverPullRequestFiles
+          )
+            throw new Error("Complete merged file evidence is unavailable");
+          const recovered = await client.recoverPullRequestFiles(
+            repository,
+            repositoryId,
+            node,
+          );
+          nodes[index] = {
+            ...node,
+            ...recovered,
+            files: {
+              totalCount: recovered.changedFiles,
+              nodes: recovered.files,
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          };
+        }
+      }
       const parsed = parseDetailBatch(
         data,
         ids,
@@ -3338,6 +3449,8 @@ async function collectOpenPullRequests(
     "open",
     onProgress,
     "open-pull-requests",
+    targetRepository,
+    repositoryId,
   );
 }
 
@@ -3908,6 +4021,8 @@ export async function generateLeaderboardFromGitHub(
         "closed",
         onProgress,
         "merged-pull-requests",
+        repository,
+        preflight.id,
       );
       if (closed.some((pull) => pull.mergedAt !== null || !pull.closedAt))
         throw new Error("Closed unmerged census changed during hydration");
@@ -4046,6 +4161,8 @@ export async function generateLeaderboardFromGitHub(
       "merged",
       onProgress,
       "merged-pull-requests",
+      collection.repository,
+      collection.preflight.id,
     );
     const reviewedPullRequests = [
       ...(await hydrateReviewedMergedPullRequests(
