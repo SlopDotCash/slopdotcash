@@ -974,13 +974,9 @@ export function AccountPage() {
   return (
     <main className="shell route-main account-page">
       <RoutePageHeader icon={<UserRound />} title="Settings" />
-      {me || !walletEntry || signedIn ? (
+      {!me && (!walletEntry || signedIn) ? (
         <div id="profile">
-          {me ? (
-            <SocialConnections />
-          ) : (
-            <JoinPoints onSignedIn={setSignInNotice} />
-          )}
+          <JoinPoints onSignedIn={setSignInNotice} />
         </div>
       ) : null}
       {me && signInNotice ? <p role="status">{signInNotice}</p> : null}
@@ -1333,13 +1329,7 @@ function xAccount(value: unknown): XAccount {
     throw new Error("Invalid X identity");
   return x;
 }
-function XAccountLink({
-  account,
-  showService = true,
-}: {
-  account: XAccount;
-  showService?: boolean;
-}) {
+function XAccountLink({ account }: { account: XAccount }) {
   return (
     <a
       href={`https://x.com/intent/user?user_id=${encodeURIComponent(account.id)}`}
@@ -1347,7 +1337,7 @@ function XAccountLink({
       rel="noreferrer"
       title={`Account connected ${account.verifiedAt.slice(0, 10)}`}
     >
-      {showService ? "X · " : ""}@{account.username}
+      X · @{account.username}
     </a>
   );
 }
@@ -1376,137 +1366,6 @@ function PublicXLink({ actorId }: { actorId: string }) {
   ) : failed ? (
     <small>X link unavailable</small>
   ) : null;
-}
-function SocialConnections() {
-  const { me, setMe } = usePoints();
-  const [data, setData] = useState<{
-    configured: boolean;
-    account: (XAccount & { public: number }) | null;
-  } | null>(null);
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [version, setVersion] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version explicitly refreshes the server state after account mutations.
-  useEffect(() => {
-    setData(null);
-    setMessage("");
-    if (!me || !productOrigin()) return;
-    const c = new AbortController();
-    void requestJson("/api/v1/points/x/me", { signal: c.signal })
-      .then((value) => {
-        const v = value as NonNullable<typeof data>;
-        if (
-          typeof v.configured !== "boolean" ||
-          (v.account && ![0, 1].includes(v.account.public))
-        )
-          throw new Error("Invalid connection state");
-        if (v.account) xAccount(v.account);
-        setData(v);
-      })
-      .catch(() => {
-        if (!c.signal.aborted) setMessage("X details unavailable.");
-      });
-    return () => c.abort();
-  }, [me, version]);
-  const outcome = new URLSearchParams(window.location.search).get("x");
-  async function action(path: string, body: unknown) {
-    setBusy(true);
-    setMessage("");
-    try {
-      const value = await requestJson(`/api/v1/points/x/${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (path === "start") {
-        const url = new URL(
-          (value as { authorizationUrl: string }).authorizationUrl,
-        );
-        if (
-          url.origin !== "https://x.com" ||
-          url.pathname !== "/i/oauth2/authorize"
-        )
-          throw new Error("Invalid authorization");
-        window.location.assign(url.href);
-        return;
-      }
-      setVersion((v) => v + 1);
-      if (me) setMe({ ...me });
-      setMessage("X disconnected.");
-    } catch {
-      setMessage("X request failed. Retry.");
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (!me) return null;
-  return (
-    <section id="connections" className="points-panel" aria-label="Connections">
-      <h2>Connections</h2>
-      {outcome === "connected" ? (
-        <p role="status">X connected.</p>
-      ) : outcome === "cancelled" ? (
-        <p role="status">X connection cancelled.</p>
-      ) : outcome === "failed" ? (
-        <p role="status">
-          X could not be connected. An X account linked to another member cannot
-          be reused.
-        </p>
-      ) : null}
-      {!data ? (
-        <>
-          <p role="status">{message || "Loading connection details…"}</p>
-          {message ? (
-            <button type="button" onClick={() => setVersion((v) => v + 1)}>
-              Retry X details
-            </button>
-          ) : null}
-        </>
-      ) : (
-        <>
-          {!data.account && data.configured ? (
-            <p>Connecting X is optional. Your X profile link will be public.</p>
-          ) : null}
-          <div className="connection-row">
-            <strong>X</strong>
-            <span>
-              {data.account ? (
-                <>
-                  Connected ·{" "}
-                  <XAccountLink account={data.account} showService={false} />
-                </>
-              ) : (
-                "Not connected"
-              )}
-            </span>
-            {data.account ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void action("disconnect", {})}
-              >
-                Disconnect X
-              </button>
-            ) : data.configured ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void action("start", { public: true })}
-              >
-                {busy ? "Connecting…" : "Connect X"}
-              </button>
-            ) : (
-              <span>Unavailable</span>
-            )}
-          </div>
-          {data.account && !me.public ? (
-            <p>Hidden while your membership is private.</p>
-          ) : null}
-          <p role="status">{message}</p>
-        </>
-      )}
-    </section>
-  );
 }
 type Person = {
   actor: ActorRef;
