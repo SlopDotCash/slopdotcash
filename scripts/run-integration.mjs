@@ -12,6 +12,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const drivers = [
   ["direct-history", "node", ["backend/payments/direct-history.workflow.mjs"]],
   [
+    "scanner-progress",
+    "node",
+    ["workers/payments/scanner-progress.workflow.mjs"],
+  ],
+  [
     "notifications-mark-read",
     "node",
     ["backend/notifications/mark-read.workflow.mjs"],
