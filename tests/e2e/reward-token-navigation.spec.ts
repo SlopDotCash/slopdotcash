@@ -33,6 +33,9 @@ test("a Robinhood reward token opens its own chain explorer", async ({
       verifiedAt: "2026-10-25T00:00:00.000Z",
     },
   };
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
+  );
   await page.route("**/data/fixture-project-registry.json", (route) =>
     route.fulfill({
       json: {
