@@ -209,9 +209,10 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
   console.log(
     JSON.stringify({
       nativeD1: true,
-      pending: 53,
+      initialPending: 53,
+      replacedVaultScenarioPending: 54,
       originalLruCandidates: 50,
-      selectedWithPrerequisites: 52,
+      initialSelectedWithPrerequisites: 52,
       duplicateCalls: 0,
       unrelatedProjectIncluded: false,
       replacedVaultRootIncluded: false,
