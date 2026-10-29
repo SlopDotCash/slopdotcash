@@ -2791,7 +2791,13 @@ export function createLeaderboardSnapshot(
     input,
     OUTCOME_FIRST_POLICY_AT,
   );
-  if (parseIsoTime(input.windowTo) > parseIsoTime(OUTCOME_FIRST_POLICY_AT)) {
+  // Payment weights only diverge for reviews submitted before the SCR-05
+  // production cutoff. Skip the second pass and the basis payload when the
+  // window has none (#1411 S3).
+  if (
+    parseIsoTime(input.windowTo) > parseIsoTime(OUTCOME_FIRST_POLICY_AT) &&
+    inputHasFormalReviewBefore(input, PAYMENT_REVIEW_POLICY_AT)
+  ) {
     const payments = createSnapshotWithReviewCutoff(
       input,
       PAYMENT_REVIEW_POLICY_AT,
@@ -2826,6 +2832,34 @@ export function createLeaderboardSnapshot(
   }
   assertPublishableLeaderboardSnapshot(snapshot);
   return snapshot;
+}
+
+/** True when any formal review in the census was submitted before cutoff. */
+function inputHasFormalReviewBefore(
+  input: LeaderboardInput,
+  cutoff: string,
+): boolean {
+  const cutoffMs = parseIsoTime(cutoff);
+  const pools = [
+    input.mergedPullRequests,
+    input.reviewedMergedPullRequests ?? [],
+    input.closedUnmergedPullRequests ?? [],
+    input.openPullRequests,
+    input.valueContextPullRequests ?? [],
+  ];
+  for (const pulls of pools) {
+    for (const pull of pulls) {
+      for (const review of pull.reviews) {
+        if (
+          review.submittedAt !== null &&
+          parseIsoTime(review.submittedAt) < cutoffMs
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 /** Reuse the complete eligibility pipeline; only ordinary review timing differs. */
@@ -7665,13 +7699,19 @@ function applyPaymentRecords<T extends { id: string }>(
   return [...records.values()];
 }
 
-/** Payment callers must never silently use the retroactive score ledger. */
+/**
+ * Payment callers must use the published basis when present; never invent
+ * payment weights. A missing basis means the publisher found no formal review
+ * before the payment cutoff, so the score ledger is the payment ledger.
+ */
 export function paymentReviewSnapshot(
   snapshot: LeaderboardSnapshot,
 ): LeaderboardSnapshot {
   const basis = snapshot.paymentReviewBasis;
+  if (!basis) {
+    return snapshot;
+  }
   if (
-    !basis ||
     basis.policy !== PAYMENT_REVIEW_POLICY ||
     basis.effectiveAt !== PAYMENT_REVIEW_POLICY_AT
   ) {
