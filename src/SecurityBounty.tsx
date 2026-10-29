@@ -1817,15 +1817,34 @@ function SubmissionsPanel({
       submissions: Submission[];
       authorityUnavailable?: boolean;
     }>("GET", "security-submissions")
-      .then((body) => {
+      .then(async (body) => {
         if (current !== generation.current) return;
         if (body.recipientGithubId !== session.session.githubId)
           throw new Error("Your account changed. Reload your private reports.");
-        // Report text is kept only while its submission can still be sent.
-        pruneDrafts(body.submissions);
+        // Keep the successful list if a stale receipt link is no longer readable.
         setSubmissions(body.submissions);
         setAuthorityUnavailable(body.authorityUnavailable === true);
         onAvailability(body.automatic === true);
+        // The recent list is bounded. A receipt link still identifies an older
+        // report; resolve it through its own current authorization check.
+        if (
+          focusId &&
+          !body.submissions.some((entry) => entry.id === focusId)
+        ) {
+          try {
+            const focused = await privateRequest<{ submission: Submission }>(
+              "GET",
+              `security-submissions/${encodeURIComponent(focusId)}?view=receipt`,
+            );
+            if (current !== generation.current) return;
+            body.submissions = [...body.submissions, focused.submission];
+            setSubmissions(body.submissions);
+          } catch (caught) {
+            if (current === generation.current) setError(errorMessage(caught));
+          }
+        }
+        // Keep a linked report's draft until its authorization check resolves.
+        if (current === generation.current) pruneDrafts(body.submissions);
       })
       .catch((caught: unknown) => {
         if (current !== generation.current) return;
@@ -1836,7 +1855,7 @@ function SubmissionsPanel({
     return () => {
       generation.current++;
     };
-  }, [onAvailability, session.session.githubId, privateRequest]);
+  }, [onAvailability, session.session.githubId, privateRequest, focusId]);
   useEffect(load, [load]);
   if (error && submissions === null)
     return (
@@ -1852,7 +1871,7 @@ function SubmissionsPanel({
   const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
-  if (shown.length === 0 && !grantError && !authorityUnavailable)
+  if (shown.length === 0 && !grantError && !authorityUnavailable && !error)
     return cases.length === 0 ? (
       <p className="admin-status">You have no private reports yet.</p>
     ) : null;
@@ -3310,9 +3329,17 @@ export function SecurityInbox({
           expectedActorGithubId: actorId,
         });
       } catch (cause) {
+        const missingReceipt =
+          method === "GET" &&
+          /^security-submissions\/ss_[A-Za-z0-9_-]+\?view=receipt$/u.test(
+            path,
+          ) &&
+          cause instanceof ProjectApiError &&
+          cause.status === 404;
         if (
           cause instanceof ProjectApiError &&
-          [401, 403, 404, 410].includes(cause.status)
+          [401, 403, 404, 410].includes(cause.status) &&
+          !missingReceipt
         ) {
           if (mounted.current) {
             setProblem(
@@ -3325,8 +3352,8 @@ export function SecurityInbox({
           }
           throw cause;
         }
-        // Only retain the old private view after a transient error when this
-        // request still belongs to the currently authenticated account.
+        // A missing receipt may be a stale deep link. Keep the fresh list,
+        // or a transient view, only after verifying the same account again.
         await verifyIdentity();
         throw cause;
       }

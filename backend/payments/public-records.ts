@@ -1,4 +1,7 @@
-import { isEscrowChain } from "../../src/lib/escrow-policy.mjs";
+import {
+  ESCROW_NETWORKS,
+  isEscrowChain,
+} from "../../src/lib/escrow-policy.mjs";
 import {
   isBaseUnits,
   type PublicVaultPayment,
@@ -316,6 +319,11 @@ export async function publicReceivedTotals(
   }
   for (const row of vaultRows) {
     const record = publicRecord(row);
+    if (
+      !includeTestnets &&
+      ESCROW_NETWORKS[record.network as keyof typeof ESCROW_NETWORKS]?.testnet
+    )
+      continue;
     const value = person(row.githubUserId);
     value.login ??= row.memberLogin;
     value.vaultPayments++;
@@ -384,7 +392,10 @@ export async function publicReceivedTotals(
       directMicro: directMicro.toString(),
       vaultUsdMicro: vaultUsdMicro.toString(),
       directTransfers: directRows.length,
-      vaultPayments: vaultRows.length,
+      vaultPayments: contributors.reduce(
+        (total, c) => total + c.vaultPayments,
+        0,
+      ),
       contributors: contributors.length,
     },
   };

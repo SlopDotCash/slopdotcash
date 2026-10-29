@@ -1,8 +1,10 @@
 /** Real page + deterministic wallet/API fixtures. Live chain acceptance is recorded separately. */
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { privateKeyToAccount } from "viem/accounts";
 import { verifyEvmBindingSignature } from "../../backend/payments/possession";
 import { evmBindingTypedData } from "../../contracts/evm/adapter";
+import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -16,6 +18,101 @@ const binding = {
   expiresAt: "2000000000",
 };
 const typed = evmBindingTypedData(8453n, vault, binding);
+
+test("payouts publish direct history only after every page verifies", async ({
+  page,
+}) => {
+  const { site } = deploymentOrigins(
+    deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+  );
+  await page.route(`${site}/**`, (route) =>
+    new URL(route.request().url()).pathname.startsWith("/api/")
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
+    }),
+  );
+  await page.route("**/api/v1/project-appeals", (route) =>
+    route.fulfill({ json: { appeals: [] } }),
+  );
+  await page.route("**/api/v1/referrals/me", (route) =>
+    route.fulfill({ json: { enabled: false } }),
+  );
+  const transfers = [1, 2].map((id) => ({
+    projectId: "eliza",
+    contributionMonth: "2026-08",
+    githubUserId: "123",
+    login: "qa",
+    network: "base-mainnet",
+    chain: "base",
+    recipient: recipient.address,
+    amountMicro: "1000000",
+    transactionId: `0x${id.toString(16).padStart(64, "0")}`,
+    blockTime: "2026-09-17T12:00:00.000Z",
+  }));
+  let incomplete = true;
+  await page.route("**/api/v1/payments/**", (route) => {
+    const request = route.request();
+    expect(request.method()).toBe("GET");
+    expect(request.headers()["x-slop-direct-history"]).toBe("paged");
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/me"))
+      return route.fulfill({
+        json: {
+          githubUserId: "123",
+          wallets: [],
+          payments: [],
+          balances: [],
+          monthlyAwards: [],
+          directTransfers: [],
+          directTransfersPaged: true,
+          walletObservations: [],
+        },
+      });
+    expect(url.pathname).toBe("/api/v1/payments/actors/123/direct-transfers");
+    const second = url.searchParams.has("after");
+    if (second) expect(url.searchParams.get("through")).toBe("2");
+    const rows = second && incomplete ? [] : [transfers[second ? 1 : 0]];
+    return route.fulfill({
+      json: {
+        transfers: rows,
+        totalMicro: String(rows.length * 1_000_000),
+        through: 2,
+        total: 2,
+        next: second ? null : 1,
+      },
+    });
+  });
+  await page.goto(`${site}/earnings`, { waitUntil: "networkidle" });
+  await expect(page.getByRole("alert")).toContainText(
+    "Incomplete direct payment history",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Direct transfers", exact: true }),
+  ).toHaveCount(0);
+  incomplete = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Direct transfers", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "Direct transfers", exact: true })
+      .getByRole("listitem"),
+  ).toHaveCount(2);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
 
 async function setup(
   page: Page,

@@ -152,6 +152,60 @@ test("verified opt-in sends future activity once; opt-out cancels queued mail an
   h.sqlite.close();
 });
 
+test("an email preference write bound to another account is refused without changing the stored preference", async () => {
+  const h = setup();
+  const current = await h.call("GET");
+  expect(
+    (
+      await h.call("POST", {
+        enabled: true,
+        destinationVersion: current.body.destinationVersion,
+      })
+    ).status,
+  ).toBe(200);
+  expect((await h.call("GET")).body.enabled).toBe(true);
+  const refused = await handleEmailPreferences(
+    new Request("https://slop.test/api/v1/notifications/email", {
+      method: "POST",
+      headers: {
+        origin: "https://slop.test",
+        "content-type": "application/json",
+        "x-slop-expected-github-id": "202",
+      },
+      body: JSON.stringify({ enabled: false }),
+    }),
+    {
+      db: h.db as unknown as NotificationsDependencies["db"],
+      sessionActor: async () => ({ githubId: "101" }),
+      now: h.now,
+      eligibility: async () => null,
+    },
+  );
+  expect(refused?.status).toBe(403);
+  expect(await refused?.json()).toEqual({ error: "actor_changed" });
+  expect((await h.call("GET")).body.enabled).toBe(true);
+  const matched = await handleEmailPreferences(
+    new Request("https://slop.test/api/v1/notifications/email", {
+      method: "POST",
+      headers: {
+        origin: "https://slop.test",
+        "content-type": "application/json",
+        "x-slop-expected-github-id": "101",
+      },
+      body: JSON.stringify({ enabled: false }),
+    }),
+    {
+      db: h.db as unknown as NotificationsDependencies["db"],
+      sessionActor: async () => ({ githubId: "101" }),
+      now: h.now,
+      eligibility: async () => null,
+    },
+  );
+  expect(matched?.status).toBe(200);
+  expect((await h.call("GET")).body.enabled).toBe(false);
+  h.sqlite.close();
+});
+
 test("unverified and changed destinations cannot inherit activity consent", async () => {
   const h = setup();
   expect((await h.call("GET", undefined, "202")).body.availability).toBe(

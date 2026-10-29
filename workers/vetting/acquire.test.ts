@@ -8,7 +8,6 @@ import {
   readFile,
   rm,
   stat,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -106,8 +105,19 @@ beforeAll(async () => {
     join(repository, "model.bin"),
     "version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n",
   );
-  await symlink("../../private", join(repository, "link"));
   git(repository, "add", ".");
+  // The scanner consumes Git objects, never a working-tree symlink. Record
+  // the same real symlink blob without requiring Windows symlink privileges.
+  const linkBytes = join(root, "link-bytes");
+  await writeFile(linkBytes, "../../private");
+  const linkOid = git(repository, "hash-object", "-w", linkBytes);
+  git(
+    repository,
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `120000,${linkOid},link`,
+  );
   // A gitlink is recorded, never fetched.
   git(
     repository,
@@ -197,7 +207,7 @@ test("fetches the exact commit and stores inert objects without checkout, hooks,
   expect(
     (await stat(join(acquired.directory, "objects", payload.sha256))).mode &
       0o777,
-  ).toBe(0o400);
+  ).toBe(process.platform === "win32" ? 0o444 : 0o400);
   // The link is its target bytes, never followed.
   expect(
     await readFile(
