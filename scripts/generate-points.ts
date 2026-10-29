@@ -448,6 +448,32 @@ export function pointsSummary(
   };
 }
 
+/**
+ * Reads a leaderboard snapshot file. A fresh clone has no
+ * `public/data/leaderboard.json` (it is a git-ignored build input), so a bare
+ * ENOENT there used to surface as an opaque build failure. Surface the
+ * preparation step instead, without masking read errors for other paths.
+ */
+export async function readLeaderboardSnapshotBytes(
+  path: string,
+): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (
+      path === "public/data/leaderboard.json" &&
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      throw new Error(
+        "[Slop] public/data/leaderboard.json is missing — prepare the ledger first (bun run leaderboard:generate, or the README local-review snapshot preparation)",
+      );
+    }
+    throw error;
+  }
+}
+
 export async function generatePoints(
   options: {
     online?: boolean;
@@ -478,7 +504,7 @@ export async function generatePoints(
     ...(await archivePaths("cycles")),
     "public/data/leaderboard.json",
   ]) {
-    const bytes = await readFile(path, "utf8");
+    const bytes = await readLeaderboardSnapshotBytes(path);
     const snapshot: unknown = JSON.parse(bytes);
     assertLeaderboardSnapshot(snapshot);
     snapshots.push({ snapshot, digest: hash(bytes) });

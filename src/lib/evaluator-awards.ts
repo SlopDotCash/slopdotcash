@@ -212,7 +212,9 @@ export function assertEvaluatorAwardManifest(
   });
   const project = findHistoricalProject(projectId);
   if (!project)
-    throw new TypeError(`Unknown evaluator-award project: ${projectId}`);
+    throw new TypeError(
+      `Unknown evaluator-award project: ${projectId} — one possible cause is an out-of-date project registry; try running \`bun run projects:sync\` first, and check that the project is registered`,
+    );
   const repository = text(manifest.repository, "evaluator award.repository", {
     max: 200,
   });
