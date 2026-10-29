@@ -59,6 +59,12 @@ const timestamp = now.toISOString();
 const expiresAt = "2026-10-14T00:15:00.000Z";
 const baseWallet = privateKeyToAccount(`0x${"1".padStart(64, "0")}`);
 const solanaSeed = new Uint8Array(32).fill(1);
+// The worker compares the lease against the real clock, not the fixture one.
+const leaseUntil = new Date(Date.now() + 60_000).toISOString();
+// Unsigned attempts a dispatcher still holds. The executor journal serializes
+// retirement and signing, so a retired attempt is never signed and the
+// dispatcher's submit fails on the tombstone; these entries answer that pair.
+const retirements = new Map<string, string>();
 type PaymentRow = {
   id: string;
   attemptState: string;
@@ -72,6 +78,148 @@ function rows(database: Database = sql) {
       "SELECT a.id,a.state attemptState,a.transaction_id transactionId,o.state obligationState,b.state outboxState FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id JOIN payment_outbox b ON b.obligation_id=o.id ORDER BY a.rowid",
     )
     .all();
+}
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((settle, fail) => {
+    resolve = settle;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+/** Park the dispatcher on one query so recovery can run inside its window. */
+function gatedFirst(
+  database: D1Database,
+  prefix: string,
+  reached: () => void,
+  gate: Promise<void>,
+): D1Database {
+  return {
+    ...database,
+    prepare(query) {
+      const statement = database.prepare(query);
+      if (!query.startsWith(prefix)) return statement;
+      return {
+        bind(...values: unknown[]) {
+          const bound = statement.bind(...values);
+          return {
+            run: () => bound.run(),
+            async first<T>() {
+              const result = await bound.first<T>();
+              reached();
+              await gate;
+              return result;
+            },
+          };
+        },
+      } as ReturnType<D1Database["prepare"]>;
+    },
+  };
+}
+function digest() {
+  return crypto.randomUUID().replaceAll("-", "").repeat(2).slice(0, 64);
+}
+function claim(
+  id: string,
+  actor: string,
+  login: string,
+  wallet: string,
+  supersedes: string | null,
+) {
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      id,
+      actor,
+      login,
+      wallet,
+      "d1_registry",
+      digest(),
+      timestamp,
+      digest(),
+      supersedes,
+      timestamp,
+      "base",
+    );
+}
+function authorize(claimId: string, actor: string) {
+  sql
+    .query(
+      "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(?,?,?,?,?,?)",
+    )
+    .run(`challenge-${claimId}`, claimId, actor, claimId, expiresAt, timestamp);
+  sql
+    .query(
+      "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,?,?)",
+    )
+    .run(claimId, actor, timestamp, `challenge-${claimId}`, "signature");
+}
+/** A reserved award whose attempt a dispatcher is about to pick up, with an
+ * authorized successor wallet. `retired` is the claim the attempt hangs on: the
+ * old one puts the dispatcher on the held branch, the current one lets it sign
+ * while `rotate` replaces the wallet under it. */
+function leasedAttempt(
+  suffix: string,
+  actor: string,
+  wallet: string,
+  retired: "old" | "current" = "old",
+) {
+  const old = `old-${suffix}`;
+  const current = `current-${suffix}`;
+  const next = `next-${suffix}`;
+  const obligation = `obligation-${suffix}`;
+  const attempt = `attempt-${suffix}`;
+  claim(old, actor, `fixture-${suffix}`, wallet, null);
+  claim(current, actor, `fixture-${suffix}`, wallet, old);
+  authorize(current, actor);
+  sql
+    .query(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
+    )
+    .run(
+      obligation,
+      `fixture-${suffix}`,
+      actor,
+      `base-${suffix}`,
+      "base",
+      `vault-${suffix}`,
+      "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      6,
+      "100000000",
+      "2000000",
+      digest(),
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES(?,?,?,?,'prepared')",
+    )
+    .run(attempt, obligation, retired === "old" ? old : current, timestamp);
+  sql
+    .query(
+      "INSERT INTO payment_outbox(obligation_id,state,updated_at) VALUES(?,'ready',?)",
+    )
+    .run(obligation, timestamp);
+  retirements.set(attempt, obligation);
+  return {
+    attempt,
+    obligation,
+    current,
+    // A further authorized wallet makes the attempt's claim a retired one.
+    rotate() {
+      claim(
+        next,
+        actor,
+        `fixture-${suffix}`,
+        "0x0000000000000000000000000000000000000007",
+        current,
+      );
+      authorize(next, actor);
+    },
+  };
 }
 try {
   sql.exec("PRAGMA foreign_keys=ON");
@@ -231,13 +379,27 @@ try {
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
-      const chain = new URL(request.url).pathname.split("/")[1];
-      assert.equal(
-        new URL(request.url).pathname,
-        `/${chain}/v1/attempt-status`,
-      );
+      const parts = new URL(request.url).pathname.split("/");
+      const chain = parts[1];
+      const route = `${parts[2]}/${parts[3]}`;
       assert.equal(request.method, "POST");
-      assert.deepEqual(await request.json(), {
+      assert(["v1/attempt-status", "v1/cancel-unsubmitted"].includes(route));
+      const body = (await request.json()) as {
+        idempotencyKey: string;
+        obligationId: string;
+        network: string;
+        vault: string;
+      };
+      if (retirements.has(body.idempotencyKey)) {
+        assert.equal(body.obligationId, retirements.get(body.idempotencyKey));
+        return Response.json(
+          route === "v1/cancel-unsubmitted"
+            ? { retired: true, transactionId: null }
+            : { transactionId: null },
+        );
+      }
+      assert.equal(route, "v1/attempt-status");
+      assert.deepEqual(body, {
         idempotencyKey: `attempt-${chain}`,
         obligationId: `obligation-${chain}`,
         network: `${chain}-local`,
@@ -364,8 +526,313 @@ try {
       .get()?.count,
     0,
   );
+  // A dispatcher that already took the outbox lease and wrote its prepared
+  // attempt is mid-submit. Retirement of that attempt must not free the lease:
+  // the dispatcher's own completion batch matches on the lease token, and its
+  // attempt update does not accept the failed state retirement writes.
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "old-lease",
+      "303",
+      "fixture-lease",
+      "0x0000000000000000000000000000000000000002",
+      "d1_registry",
+      "9".repeat(64),
+      timestamp,
+      "8".repeat(64),
+      null,
+      timestamp,
+      "base",
+    );
+  sql
+    .query(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
+    )
+    .run(
+      "obligation-lease",
+      "fixture-lease",
+      "303",
+      "base-local",
+      "base",
+      "vault-lease",
+      "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      6,
+      "100000000",
+      "2000000",
+      "7".repeat(64),
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES(?,?,?,?,'prepared')",
+    )
+    .run("attempt-lease", "obligation-lease", "old-lease", timestamp);
+  retirements.set("attempt-lease", "obligation-lease");
+  sql
+    .query(
+      "INSERT INTO payment_outbox(obligation_id,state,lease_token,lease_until,updated_at) VALUES(?,'processing',?,?,?)",
+    )
+    .run("obligation-lease", "lease-holder", leaseUntil, timestamp);
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "successor-lease",
+      "303",
+      "fixture-lease",
+      "0x0000000000000000000000000000000000000003",
+      "d1_registry",
+      "6".repeat(64),
+      timestamp,
+      "5".repeat(64),
+      "old-lease",
+      timestamp,
+      "base",
+    );
+  sql
+    .query(
+      "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(?,?,?,?,?,?)",
+    )
+    .run(
+      "challenge-lease",
+      "successor-lease",
+      "303",
+      "lease fixture",
+      expiresAt,
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,?,?)",
+    )
+    .run("successor-lease", "303", timestamp, "challenge-lease", "signature");
+  await recoverUncertainAttempts(env);
+  assert.deepEqual(
+    sql
+      .query<
+        { attemptState: string; lease: string | null; outboxState: string },
+        []
+      >(
+        "SELECT a.state attemptState,b.lease_token lease,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.id='attempt-lease'",
+      )
+      .get(),
+    {
+      attemptState: "failed",
+      lease: "lease-holder",
+      outboxState: "processing",
+    },
+    "Retiring an attempt must leave the dispatcher's live lease in place",
+  );
+  // A dispatcher that read the old attempt just before retirement must not hold
+  // the row with only a failed attempt behind it.
+  const hold = leasedAttempt(
+    "hold",
+    "404",
+    "0x0000000000000000000000000000000000000004",
+  );
+  const previousRead = deferred();
+  const releaseRead = deferred();
+  const heldRun = dispatchPayment(
+    gatedFirst(
+      db,
+      "SELECT id,claim_id FROM payment_attempts",
+      () => previousRead.resolve(undefined),
+      releaseRead.promise,
+    ),
+    {
+      async submit() {
+        throw new Error("A retired attempt must not reach the chain");
+      },
+    },
+    hold.obligation,
+    new Date(),
+  );
+  await previousRead.promise;
+  await recoverUncertainAttempts(env);
+  releaseRead.resolve();
+  assert.equal(await heldRun, "unavailable");
+  assert.deepEqual(
+    sql
+      .query<
+        {
+          attemptState: string;
+          transactionId: string | null;
+          lease: string | null;
+          outboxState: string;
+        },
+        [string]
+      >(
+        "SELECT a.state attemptState,a.transaction_id transactionId,b.lease_token lease,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.obligation_id=?",
+      )
+      .all(hold.obligation),
+    [
+      {
+        attemptState: "failed",
+        transactionId: null,
+        lease: null,
+        outboxState: "ready",
+      },
+    ],
+    "A held branch that lost its attempt to retirement must free the row",
+  );
+  const destinations: string[] = [];
+  assert.equal(
+    await dispatchPayment(
+      db,
+      {
+        async submit(input) {
+          destinations.push(input.destination);
+          return { transactionId: "hold-retry" };
+        },
+      },
+      hold.obligation,
+      new Date(),
+    ),
+    "submitted",
+  );
+  assert.deepEqual(destinations, [
+    "0x0000000000000000000000000000000000000004",
+  ]);
+  assert.equal(
+    sql
+      .query<{ count: number }, [string]>(
+        "SELECT count(*) count FROM payment_attempts WHERE obligation_id=?",
+      )
+      .get(hold.obligation)?.count,
+    2,
+    "The successor claim must dispatch once, without repeating the retired attempt",
+  );
+  // A submit that returns after retirement keeps its receipt on the same row.
+  const late = leasedAttempt(
+    "late",
+    "505",
+    "0x0000000000000000000000000000000000000005",
+    "current",
+  );
+  const submitReached = deferred();
+  const submitResult = deferred<{ transactionId: string }>();
+  const lateRun = dispatchPayment(
+    db,
+    {
+      async submit() {
+        submitReached.resolve(undefined);
+        return submitResult.promise;
+      },
+    },
+    late.obligation,
+    new Date(),
+  );
+  await submitReached.promise;
+  late.rotate();
+  await recoverUncertainAttempts(env);
+  submitResult.resolve({ transactionId: "late-journal-transaction" });
+  assert.equal(await lateRun, "submitted");
+  assert.deepEqual(
+    sql
+      .query<
+        {
+          attemptState: string;
+          transactionId: string | null;
+          lease: string | null;
+          outboxState: string;
+        },
+        [string]
+      >(
+        "SELECT a.state attemptState,a.transaction_id transactionId,b.lease_token lease,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.obligation_id=?",
+      )
+      .all(late.obligation),
+    [
+      {
+        attemptState: "submitted",
+        transactionId: "late-journal-transaction",
+        lease: null,
+        outboxState: "submitted",
+      },
+    ],
+    "A submission that lands after retirement must keep its transaction on the retired row",
+  );
+  assert.equal(
+    sql
+      .query<{ kind: string }, [string]>(
+        "SELECT json_extract(evidence_json,'$.kind') kind FROM payment_attempt_failures WHERE attempt_id=?",
+      )
+      .get(late.attempt)?.kind,
+    "unsigned-attempt-retired",
+  );
+  // The contract case: the tombstone wins, so the submit reports an uncertain
+  // failure. The attempt stays failed and the freed row dispatches again.
+  const uncertain = leasedAttempt(
+    "uncertain",
+    "606",
+    "0x0000000000000000000000000000000000000006",
+    "current",
+  );
+  const rejectReached = deferred();
+  const rejectResult = deferred<{ transactionId: string }>();
+  const rejectedRun = dispatchPayment(
+    db,
+    {
+      async submit() {
+        rejectReached.resolve(undefined);
+        return rejectResult.promise;
+      },
+    },
+    uncertain.obligation,
+    new Date(),
+  );
+  await rejectReached.promise;
+  uncertain.rotate();
+  await recoverUncertainAttempts(env);
+  rejectResult.reject(new Error("Retired before signing"));
+  await assert.rejects(rejectedRun, /Retired before signing/);
+  assert.deepEqual(
+    sql
+      .query<
+        {
+          attemptState: string;
+          transactionId: string | null;
+          lease: string | null;
+          outboxState: string;
+        },
+        [string]
+      >(
+        "SELECT a.state attemptState,a.transaction_id transactionId,b.lease_token lease,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.obligation_id=?",
+      )
+      .all(uncertain.obligation),
+    [
+      {
+        attemptState: "failed",
+        transactionId: null,
+        lease: null,
+        outboxState: "ready",
+      },
+    ],
+    "An uncertain submit against a retirement must leave a retryable row",
+  );
+  const uncertainDestinations: string[] = [];
+  assert.equal(
+    await dispatchPayment(
+      db,
+      {
+        async submit(input) {
+          uncertainDestinations.push(input.destination);
+          return { transactionId: "uncertain-retry" };
+        },
+      },
+      uncertain.obligation,
+      new Date(),
+    ),
+    "submitted",
+  );
+  assert.deepEqual(uncertainDestinations, [
+    "0x0000000000000000000000000000000000000007",
+  ]);
   console.log(
-    "Payment recovery integration passed: Base outage remains reported; held Solana attempt recovers durably; restored Base recovers once. Local journal evidence only, no chain submission or finality.",
+    "Payment recovery integration passed: Base outage remains reported; held Solana attempt recovers durably; restored Base recovers once; a live lease survives retirement and both dispatcher outcomes leave a dispatchable row. Local journal evidence only, no chain submission or finality.",
   );
 } finally {
   server?.stop(true);

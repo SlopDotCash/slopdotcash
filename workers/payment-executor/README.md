@@ -289,7 +289,14 @@ successor exists. Its journal transaction either finds a previously signed
 transaction and returns that identity, or writes a retirement tombstone. Every
 signer transaction checks the tombstone before signing. The dispatcher may mark
 the old attempt failed only after confirmed retirement; a null lookup alone is
-never proof that signing cannot race the lookup.
+never proof that signing cannot race the lookup. The tombstone check and the
+signed bytes commit in the same journal transaction, so retirement and signing
+are serialized: a signature that commits first wins and the cancellation returns
+it, and a cancellation that commits first makes an in-flight submit fail with
+`Attempt retired before signing`. Either outcome leaves the payment row
+dispatchable — a completion that lands on a retired row keeps its transaction,
+and a submit that the tombstone refused leaves the row ready for the successor
+wallet.
 
 Signer keys must be dedicated to these Workers. The attester may automatically
 cancel only its own journaled EVM wallet binding after a D1 successor replaces

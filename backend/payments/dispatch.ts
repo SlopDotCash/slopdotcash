@@ -60,13 +60,18 @@ export async function dispatchPayment(
     : null;
   // Missing wallet authorization and a changed destination share the held transition.
   // A changed destination never starts a competing transfer while the old attempt is uncertain.
+  // Recovery may retire that attempt while this dispatcher holds the lease: it then writes
+  // `failed` and leaves the live lease alone. Retirement and signing share the executor
+  // journal, so a retired attempt is never signed and the submit below fails on its tombstone.
+  // Freeing the row here keeps that pair dispatchable; holding it would leave `held` next to
+  // a `failed` attempt, which neither recovery nor the dispatch guard picks up again.
   if (!payment || (previous && previous.claim_id !== payment.claimId)) {
     await db.batch([
       db
         .prepare(
-          "UPDATE payment_outbox SET state='held',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=?",
+          "UPDATE payment_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='failed' AND transaction_id IS NULL) THEN 'ready' ELSE 'held' END,lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=?",
         )
-        .bind(timestamp, obligationId, lease),
+        .bind(previous?.id ?? "", timestamp, obligationId, lease),
       ...(heldNotices
         ? await heldNotices(obligationId, timestamp)
         : [
@@ -90,7 +95,9 @@ export async function dispatchPayment(
     await db.batch([
       db
         .prepare(
-          "UPDATE payment_attempts SET state='submitted',transaction_id=? WHERE id=? AND state IN ('prepared','unknown','submitted')",
+          // A retirement that raced this completion leaves the row `failed`
+          // without a transaction; the signature that landed keeps its receipt.
+          "UPDATE payment_attempts SET state='submitted',transaction_id=? WHERE id=? AND (state IN ('prepared','unknown','submitted') OR (state='failed' AND transaction_id IS NULL))",
         )
         .bind(result.transactionId, id),
       db
