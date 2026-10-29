@@ -55,6 +55,19 @@ import { handleSolanaFunding } from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
+/**
+ * Testnet award totals are reported only outside production; staging pays in
+ * testnet stablecoins, so it keeps them. Network classification comes from
+ * the escrow registry, mirroring the /received deployment-tier rule.
+ */
+function isTestnetNetwork(network: string): boolean {
+  return (
+    (ESCROW_NETWORKS as Record<string, { testnet: boolean } | undefined>)[
+      network
+    ]?.testnet === true
+  );
+}
+
 function isMonthlyCommitmentInput(
   body: unknown,
 ): body is MonthlyCommitmentInput {
@@ -257,22 +270,34 @@ export async function handlePaymentsApi(
       const projectId = totalsRoute[1];
       // Indexed award totals, one row per network and asset. Amounts are
       // base units of that asset and are never summed across assets.
-      const rows = JSON.parse(
-        (
-          await deps.db
-            .prepare(
-              "SELECT json_group_array(json_object('network',network,'assetAddress',asset_address,'assetDecimals',asset_decimals,'gross',gross_base,'fee',fee_base,'state',state)) items FROM (SELECT * FROM payment_obligations WHERE project_id=? ORDER BY network,asset_address)",
-            )
-            .bind(projectId)
-            .first<{ items: string }>()
-        )?.items ?? "[]",
-      ) as (PaymentAsset & { gross: string; fee: string; state: string })[];
-      const cursor = await deps.db
+      const rows = (
+        JSON.parse(
+          (
+            await deps.db
+              .prepare(
+                "SELECT json_group_array(json_object('network',network,'assetAddress',asset_address,'assetDecimals',asset_decimals,'gross',gross_base,'fee',fee_base,'state',state)) items FROM (SELECT * FROM payment_obligations WHERE project_id=? ORDER BY network,asset_address)",
+              )
+              .bind(projectId)
+              .first<{ items: string }>()
+          )?.items ?? "[]",
+        ) as (PaymentAsset & { gross: string; fee: string; state: string })[]
+      ).filter(
+        (row) => deps.tier === "staging" || !isTestnetNetwork(row.network),
+      );
+      const storedCursor = await deps.db
         .prepare(
           "SELECT network,position,synced_at FROM payment_chain_cursors WHERE project_id=?",
         )
         .bind(projectId)
         .first<{ network: string; position: string; synced_at: string }>();
+      // A cursor on an excluded network is treated as absent, so the reported
+      // coverage stays consistent with the filtered amount rows under the same
+      // tier rule.
+      const cursor =
+        storedCursor &&
+        (deps.tier === "staging" || !isTestnetNetwork(storedCursor.network))
+          ? storedCursor
+          : null;
       if (!rows.length && !cursor)
         return json(503, { error: "project_payments_not_indexed" });
       const assets = new Map<
@@ -308,7 +333,7 @@ export async function handlePaymentsApi(
       }
       return json(200, {
         projectId,
-        network: cursor?.network ?? rows[0].network,
+        network: cursor?.network ?? rows[0]?.network ?? null,
         assets: [...assets.values()].map(
           ({ paidNet, paidFee, reservedNet, reservedFee, ...asset }) => ({
             ...asset,
