@@ -15,6 +15,7 @@ for (const path of [
   "skills/slop/SKILL.md",
   "src/lib/project-skill.mjs",
   "src/lib/project-skill-publication.mjs",
+  "src/lib/install-command.ts",
   "scripts/skill-source-matches-commit.mjs",
   "scripts/skill-python.mjs",
   "scripts/skill-validation/quick_validate.py",
