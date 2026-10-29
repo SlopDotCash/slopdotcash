@@ -140,10 +140,10 @@ signing implementations live in
 funds. A separate attester signs only a verified destination binding. Keys are
 runtime secrets; no production credentials are read by the local tests.
 
+Each dispatch lease uses the current clock after prior executor calls, so a
+slow batch does not give later work an already-expired lease.
+
 An ambiguous submission retains its attempt and idempotency key. The scheduler
-samples the current clock for each dispatch lease after prior executor calls,
-so a slow batch does not give later work an already-expired lease.
-The scheduler
 can recover a persisted transaction hash through the relayer's read-only journal
 status API even after a wallet change. Missing receipts remain uncertain. Only
 proved finalized reverts permit a fresh payment attempt; the failure evidence is
