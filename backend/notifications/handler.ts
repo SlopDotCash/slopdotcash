@@ -269,13 +269,13 @@ export async function handleNotificationsApi(
         `UPDATE notifications SET read_at = ?
           WHERE recipient_github_id = ? AND read_at IS NULL
             AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)
-            AND event_key IN (${keys.map(() => "?").join(", ")})`,
+            AND event_key IN (SELECT value FROM json_each(?))`,
       )
       .bind(
         deps.now().toISOString(),
         actor.githubId,
         moderator ? 1 : 0,
-        ...keys,
+        JSON.stringify(keys),
       )
       .run();
     const marked = result.meta?.changes;

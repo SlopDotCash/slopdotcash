@@ -11,6 +11,11 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const drivers = [
   [
+    "notifications-mark-read",
+    "node",
+    ["backend/notifications/mark-read.workflow.mjs"],
+  ],
+  [
     "reporting-readiness",
     "node",
     ["backend/security/reporting-readiness.workflow.mjs"],
