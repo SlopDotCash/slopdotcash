@@ -104,8 +104,11 @@ function setup(
     pvr?: boolean;
     noProgram?: boolean;
     durable?: boolean;
+    /** A recorded GitHub rename of REPO: the current repository path. */
+    renamedTo?: string;
   } = {},
 ) {
+  const current = options.renamedTo ?? REPO;
   const { db, sqlite } = sqliteD1(migrations);
   const owner = options.noProgram
     ? {
@@ -123,7 +126,18 @@ function setup(
   const manifest = JSON.stringify({
     id: PROJECT,
     status: "active",
-    repositories: [{ id: REPO, githubUrl: `https://github.com/${REPO}` }],
+    // A recorded rename keeps the original path as the id and publishes the
+    // current path as the alias and githubUrl (`assertRepositoryTransition`).
+    repositories: [
+      options.renamedTo
+        ? {
+            id: REPO,
+            aliases: [current],
+            displayName: current,
+            githubUrl: `https://github.com/${current}`,
+          }
+        : { id: REPO, githubUrl: `https://github.com/${REPO}` },
+    ],
     authority: { repositoryId: "700000001", repositoryNodeId: "R_700000001" },
     steward: { github: owner },
     ...(options.noProgram ? {} : { securityBounty: PROGRAM }),
@@ -152,7 +166,8 @@ function setup(
   let enabled = options.pvr ?? true;
   let freshReadCount = 0;
   const github = fakeGithub({ now: clock });
-  github.install(REPO);
+  github.install(current);
+  if (options.renamedTo) github.rename(REPO, 700000001);
   const intake: IntakeConfig = {
     mode: options.mode ?? "on",
     grantKey: GRANT_KEY,
@@ -169,12 +184,13 @@ function setup(
     analyzer: deterministicAnalyzer,
   };
   const reportingRead = async (target: {
+    repository: string;
     repositoryId: string | null;
     repositoryNodeId: string | null;
   }): Promise<ReportingObservation> => {
     freshReadCount += 1;
     if (reportingFailure) return { kind: reportingFailure };
-    if ((await intake.installation.installed(REPO)) !== "yes")
+    if ((await intake.installation.installed(target.repository)) !== "yes")
       return { kind: "app-not-installed" };
     return {
       kind: "verified",
@@ -300,7 +316,9 @@ function setup(
         fetch: async (request) => {
           const url = new URL(request.url);
           expect(url.searchParams.get("repositoryId")).toBe(
-            repository.path === REPO ? "700000001" : "700000002",
+            [REPO, current].includes(repository.path)
+              ? "700000001"
+              : "700000002",
           );
           expect(url.searchParams.get("githubId")).toBe(actor.githubId);
           if (accessUnavailable || unavailableRepositories.has(repository.path))
@@ -312,8 +330,12 @@ function setup(
               actor.githubId === MAINTAINER.githubId ? permission : "read",
             roleName: null,
             repository: {
-              id: repository.path === REPO ? repositoryId : 700000002,
-              node_id: repository.path === REPO ? "R_700000001" : "R_700000002",
+              id: [REPO, current].includes(repository.path)
+                ? repositoryId
+                : 700000002,
+              node_id: [REPO, current].includes(repository.path)
+                ? "R_700000001"
+                : "R_700000002",
               full_name: repository.path,
               private: false,
               owner: {
@@ -1092,6 +1114,32 @@ describe("registered project without paid bounty terms", () => {
     // Provider failure cannot hide the reporter's own receipt.
     expect((await t.call(REPORTER, "GET", path)).status).toBe(200);
   });
+});
+
+describe("private intake: recorded repository rename", () => {
+  for (const noProgram of [true, false])
+    test(`a report reaches the renamed repository and its receipt is verified (${noProgram ? "reporting only" : "paid program"})`, async () => {
+      const renamed = "example/renamed";
+      const t = setup({ noProgram, renamedTo: renamed });
+      await t.refresh();
+      const readiness = await t.call(
+        REPORTER,
+        "GET",
+        `security-programs/${PROJECT}/intake`,
+      );
+      expect(readiness.body).toMatchObject({
+        state: "ready",
+        automatic: "ready",
+      });
+      const submission = await t.ready();
+      const sent = await t.send(submission.id, 1);
+      expect(sent.status).toBe(200);
+      expect(sent.body.submission?.state).toBe("receipt-verified");
+      expect(t.github.advisories.map((entry) => entry.repository)).toEqual([
+        renamed,
+      ]);
+      expect(t.cases()).toHaveLength(1);
+    });
 });
 
 describe("private intake: send outcomes", () => {

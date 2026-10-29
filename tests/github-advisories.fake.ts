@@ -55,6 +55,8 @@ export function fakeGithub(options: { now: () => Date }) {
   /** OAuth code to the account it authorizes and the PKCE verifier. */
   const codes = new Map<string, { id: number; login: string }>();
   const installed = new Set<string>();
+  /** Former repository path to its numeric id, as after a GitHub rename. */
+  const moved = new Map<string, number>();
   const faults: { create: CreateFault; list: ListFault; get: GetFault } = {
     create: "ok",
     list: "ok",
@@ -150,6 +152,20 @@ export function fakeGithub(options: { now: () => Date }) {
     }
     if (target.origin !== FAKE_API) return reply(404);
     const path = target.pathname;
+    // GitHub answers a renamed or transferred repository's former path with
+    // a redirect to its numeric id: 301 for GET, 307 for other methods.
+    const former = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/u.exec(path);
+    const movedId = former
+      ? moved.get(decodeURIComponent(former[1]).toLowerCase())
+      : undefined;
+    if (former && movedId !== undefined)
+      return reply(
+        method === "GET" ? 301 : 307,
+        { message: "Moved Permanently" },
+        {
+          location: `${FAKE_API}/repositories/${movedId}${former[2] ?? ""}${target.search}`,
+        },
+      );
     const installation = /^\/repos\/([^/]+\/[^/]+)\/installation$/u.exec(path);
     if (installation)
       return installed.has(decodeURIComponent(installation[1]).toLowerCase())
@@ -254,7 +270,11 @@ export function fakeGithub(options: { now: () => Date }) {
         `${FAKE_API}/repos/${repository}/installation`,
         {},
       );
-      return response.status === 200 ? "yes" : "no";
+      return response.status === 200
+        ? "yes"
+        : response.status === 404
+          ? "no"
+          : "unknown";
     },
   };
   const client: PrivateAdvisoryClient = githubAdvisoryClient({
@@ -271,6 +291,8 @@ export function fakeGithub(options: { now: () => Date }) {
     counts,
     advisories,
     install: (repository: string) => installed.add(repository.toLowerCase()),
+    /** Renames `from`: GitHub then redirects its old path to the id. */
+    rename: (from: string, id: number) => moved.set(from.toLowerCase(), id),
     /** Issues an OAuth code that authorizes `account`. */
     issueCode: (account: { id: number; login: string }) => {
       const code = `code_${codes.size + 1}_${account.id}`;
