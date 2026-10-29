@@ -1,6 +1,7 @@
 import {
   SLOPBOT_FAILURE_NOTICE_PATH,
   type SlopbotFailureNotice,
+  safeProviderFailure,
   validFailureNotice,
 } from "../notify/contracts";
 import type { D1Database } from "./persistence";
@@ -13,16 +14,17 @@ export async function dispatchFailureAlert(
   db: D1Database,
   notify: { fetch(request: Request): Promise<Response> },
 ) {
-  const notice = await db
+  const row = await db
     .prepare(`
-    SELECT c.id AS callId,c.requested_model AS model,c.created_at AS occurredAt,
+    SELECT c.id AS callId,c.requested_model AS model,c.created_at AS occurredAt,c.failure,
       CASE WHEN c.failure='provider budget exhausted' THEN 'budget-exhausted'
         ELSE 'request-failed' END AS kind
     FROM slopbot_provider_failure_notices n JOIN slopbot_costs c ON c.id=n.call_id
     WHERE n.claimed_at IS NULL ORDER BY n.call_id LIMIT 1
   `)
-    .first<SlopbotFailureNotice>();
-  if (!notice) return;
+    .first<Omit<SlopbotFailureNotice, "failure"> & { failure: unknown }>();
+  if (!row) return;
+  const notice = { ...row, failure: safeProviderFailure(row.failure) };
   if (!validFailureNotice(notice))
     throw new Error("Invalid provider failure metadata");
   const claimed = await db
