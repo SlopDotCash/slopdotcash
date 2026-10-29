@@ -161,9 +161,11 @@ bun run projects:sync
 bun --bun vite --port 4466
 ```
 
-The dev server then reads the project registry, public direct-payment totals,
-and any published snapshot in `/data/` that is not generated locally from
-`https://slop.cash`, read-only. Do not commit the synced registry files.
+The dev server reads the project registry, finalized vault totals, public
+direct-payment totals, and missing published snapshots in `/data/` from
+`https://slop.cash`, read-only. It also proxies public actor wallet-claim
+metadata from `https://api.slop.cash`. These public read proxies forward no
+cookies or authorization headers. Do not commit the synced registry files.
 
 ### Local sign-in
 

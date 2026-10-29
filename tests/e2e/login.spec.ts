@@ -131,6 +131,26 @@ for (const [next, expected] of [
         await route.fulfill({ json: member });
         return;
       }
+      if (url.pathname === "/api/v1/notifications/email") {
+        await route.fulfill({
+          json: { enabled: false, availability: "unverified" },
+        });
+        return;
+      }
+      if (url.pathname === "/api/v1/payments/me") {
+        await route.fulfill({
+          json: {
+            githubUserId: "123",
+            wallets: [],
+            payments: [],
+            monthlyAwards: [],
+            balances: [],
+            directTransfers: [],
+            walletObservations: [],
+          },
+        });
+        return;
+      }
       if (url.pathname.startsWith("/api/")) {
         await route.fulfill({ status: 404, json: {} });
         return;
@@ -166,18 +186,28 @@ for (const [next, expected] of [
     await (await popup).close();
     await expect(page).toHaveURL(expected);
     await page.goto(`${deployment.site}/account`);
-    // Signed in, the account page has no sign-in panel; the Connections
-    // region is the member's own.
-    const connections = page.getByRole("region", { name: "Connections" });
-    await expect(connections).toBeVisible();
-    await expect(page.locator("#profile")).toContainText("Connections");
+    // Signed in, Settings contains wallets and email without a sign-in or
+    // Connections panel.
+    const wallets = page.getByRole("region", { name: "Wallets", exact: true });
+    const email = page.getByRole("region", {
+      name: "Email preferences",
+      exact: true,
+    });
+    await expect(wallets).toBeVisible();
+    await expect(email).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Connections", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator("#profile")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Continue with GitHub", exact: true }),
     ).toHaveCount(0);
     // Membership is always public, so the account page offers no visibility choice.
     await expect(page.getByRole("main").getByRole("checkbox")).toHaveCount(0);
     await page.reload();
-    await expect(connections).toBeVisible();
+    await expect(wallets).toBeVisible();
+    await expect(email).toBeVisible();
+    await expect(page.locator("#profile")).toHaveCount(0);
     await page.goto(
       `${deployment.site}/login?next=${encodeURIComponent(next)}`,
     );

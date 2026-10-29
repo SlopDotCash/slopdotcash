@@ -1,13 +1,14 @@
 /** Browser contract checks use synthetic sessions; the API suite uses real SQLite. */
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const { site, identity: identityOrigin } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 );
 
-test("Account waits for identity and keeps current sign-out without individual session controls", async ({
+test("Settings waits for identity and keeps current sign-out without individual session controls", async ({
   page,
 }, info) => {
   let signedIn = true;
@@ -49,9 +50,7 @@ test("Account waits for identity and keeps current sign-out without individual s
       signouts++;
       signedIn = false;
       json = { signedOut: true };
-    } else if (path.endsWith("/x/me"))
-      json = { configured: false, account: null, award: null };
-    else if (path.endsWith("/me")) {
+    } else if (path === "/api/v1/points/me") {
       await identity;
       json = signedIn
         ? {
@@ -67,7 +66,7 @@ test("Account waits for identity and keeps current sign-out without individual s
   await page.route(`${site}/api/v1/payments/me`, (route) =>
     route.fulfill({
       json: {
-        githubUserId: "123",
+        githubUserId: "900000098",
         wallets: [],
         payments: [],
         monthlyAwards: [],
@@ -77,18 +76,163 @@ test("Account waits for identity and keeps current sign-out without individual s
       },
     }),
   );
-  await page.goto(`${site}/account#wallets`, { waitUntil: "domcontentloaded" });
+  await page.route(`${site}/api/v1/notifications/email`, (route) =>
+    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+  );
+  await page.route(`${site}/api/v1/notifications`, (route) =>
+    route.fulfill({
+      json: {
+        recipientGithubId: "900000098",
+        notifications: [],
+        unread: 0,
+        nextCursor: null,
+      },
+    }),
+  );
+  await page.route(`${site}/api/v1/security-cases`, (route) =>
+    route.fulfill({
+      json: {
+        viewer: { githubId: "900000098", githubLogin: "session-test" },
+        programs: [],
+        cases: [],
+      },
+    }),
+  );
+  await page.route(`${site}/api/v1/security-submissions`, (route) =>
+    route.fulfill({
+      json: {
+        recipientGithubId: "900000098",
+        automatic: false,
+        submissions: [],
+      },
+    }),
+  );
+  await page.route(`${site}/api/v1/referrals/me`, (route) =>
+    route.fulfill({ json: { enabled: false } }),
+  );
+  await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("#wallets")).toContainText("Checking your account");
   releaseIdentity();
   await expect(
     page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  const wallets = page.getByRole("region", { name: "Wallets", exact: true });
+  const email = page.getByRole("region", {
+    name: "Email preferences",
+    exact: true,
+  });
+  await expect(wallets).toHaveCount(1);
+  await expect(email).toHaveCount(1);
+  await expect(
+    page.locator("#wallets > summary, #notifications > summary"),
+  ).toHaveCount(0);
+  await expect(
+    email.getByRole("switch", { name: "Activity email", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".wallet-note")).toHaveCount(0);
+  await expect(page.getByText(/Local preview only/u)).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: info.outputPath("settings-wallets.png") });
+  await expect(
+    page.getByRole("navigation", { name: "Account navigation", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Connections", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator("#profile")).toHaveCount(0);
+  await expect(
+    page.locator("#security, #recovery, #close-account"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", {
+      name: "Request private account recovery",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("form", { name: "Close account", exact: true }),
+  ).toHaveCount(0);
   await expect(page.locator("#sessions")).toHaveCount(0);
-  await expect(page.locator("#close-account > summary")).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Activity email", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("account-without-navigation.png"),
+  });
   await page.screenshot({
     path: info.outputPath("account-without-session-controls.png"),
     fullPage: true,
   });
+  await page.getByRole("button", { name: "Your account", exact: true }).click();
+  const menu = page.getByRole("region", {
+    name: "Your account details",
+    exact: true,
+  });
+  await expect(
+    menu.getByRole("link", { name: "Payouts", exact: true }),
+  ).toHaveAttribute("href", "/earnings");
+  await expect(
+    menu.getByRole("link", { name: "Inbox", exact: true }),
+  ).toHaveAttribute("href", "/inbox");
+  await expect(
+    menu.getByRole("link", { name: "Wallets", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    menu.getByRole("link", { name: "Settings", exact: true }),
+  ).toHaveAttribute("href", "/account");
+  await page.screenshot({
+    path: info.outputPath("account-menu-distinct-pages.png"),
+  });
+  await menu.getByRole("link", { name: "Inbox", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(`${site}/inbox`);
+  await expect(
+    page.getByText("You have no notifications.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Account navigation" }),
+  ).toHaveCount(0);
+  await expect(page.locator("#wallets")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("inbox-distinct-page.png") });
+  await page.getByRole("button", { name: "Your account", exact: true }).click();
+  await menu.getByRole("link", { name: "Payouts", exact: true }).click();
+  await expect(page).toHaveURL(`${site}/earnings`);
+  await expect(
+    page.getByRole("heading", { name: "Payouts", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Account navigation" }),
+  ).toHaveCount(0);
+  await expect(page.locator("#wallets")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("payouts-distinct-page.png") });
+  await page.getByRole("button", { name: "Your account", exact: true }).click();
+  await menu.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page).toHaveURL(`${site}/account`);
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Connect EVM wallet", exact: true }),
+  ).toBeVisible();
+  await expect(
+    email.getByRole("switch", { name: "Activity email", exact: true }),
+  ).toBeVisible();
+  const restore = await enlargeText(page.locator("main"));
+  await expectAccessible(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("settings-wallets-text200.png"),
+  });
+  await restore();
   await page.getByRole("button", { name: "Your account", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(
@@ -97,12 +241,11 @@ test("Account waits for identity and keeps current sign-out without individual s
   expect(signouts).toBe(1);
 });
 
-// A member with a project ban signs in on the Account page itself. Appeals
-// follow the site session, which also changes at sign-in and at closure.
-test("Account shows appeals after an in-page sign-in and hides them after closure", async ({
+test("Settings keeps its remaining controls after in-page sign-in without recovery or appeal UI", async ({
   page,
 }) => {
   let signedIn = false;
+  let appealReads = 0;
   const me = {
     actor: { id: "U_appeal_test", login: "appeal-test" },
     joinedAt: "2026-10-01T00:00:00Z",
@@ -133,6 +276,7 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
     }),
   );
   await page.route(`${site}/api/v1/project-appeals`, (route) => {
+    appealReads++;
     expect(signedIn).toBe(true);
     return route.fulfill({
       json: {
@@ -146,9 +290,9 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
     if (path.endsWith("/join")) {
       signedIn = true;
       json = me;
-    } else if (path.endsWith("/account/close")) {
+    } else if (path.endsWith("/signout")) {
       signedIn = false;
-      json = { closed: true, closedAt: "2026-10-26T12:00:00.000Z" };
+      json = { signedOut: true };
     } else if (path.endsWith("/sessions"))
       json = {
         sessions: [
@@ -159,9 +303,7 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
           },
         ],
       };
-    else if (path.endsWith("/x/me"))
-      json = { configured: false, account: null, award: null };
-    else if (path.endsWith("/me")) json = signedIn ? me : null;
+    else if (path === "/api/v1/points/me") json = signedIn ? me : null;
     else throw new Error(`Unexpected account route: ${path}`);
     await route.fulfill({ json });
   });
@@ -177,6 +319,9 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
         walletObservations: [],
       },
     }),
+  );
+  await page.route(`${site}/api/v1/notifications/email`, (route) =>
+    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
   );
   // Explicit identity double, as in login.spec.ts.
   const expiresAt = new Date(
@@ -211,7 +356,6 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
       });
   });
   await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
-  const security = page.locator("#security");
   const appeals = page.getByRole("heading", { name: "Appeals", exact: true });
   const profile = page.locator("#profile");
   const signIn = profile.getByRole("button", { name: "Continue with GitHub" });
@@ -224,25 +368,24 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
     profile.getByRole("button", { name: /with GitHub$/u }),
   ).toHaveCount(0);
   await expect(
-    profile.getByRole("region", { name: "Connections", exact: true }),
-  ).toBeVisible();
+    page.getByRole("region", { name: "Connections", exact: true }),
+  ).toHaveCount(0);
+  await expect(profile).toHaveCount(0);
   await authWindow.close();
-  await expect(security).toBeVisible();
-  await expect(appeals).toBeVisible();
   await expect(
-    security.getByRole("form", { name: "Account appeal for demo" }),
+    page.locator("#security, #recovery, #close-account"),
+  ).toHaveCount(0);
+  await expect(appeals).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Wallets", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Email preferences", exact: true }),
+  ).toBeVisible();
+  expect(appealReads).toBe(0);
   await expectAccessible(page);
-  const recovery = page.locator("#recovery");
-  await recovery
-    .locator("summary")
-    .filter({ hasText: /^Close account$/u })
-    .click();
-  await recovery
-    .getByLabel("Type your GitHub username, appeal-test, to confirm")
-    .fill("appeal-test");
-  await recovery.getByRole("button", { name: "Close account" }).click();
-  await expect(recovery).toContainText("Your account is closed");
+  await page.getByRole("button", { name: "Your account", exact: true }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(
     page.getByText("You’re signed in.", { exact: true }),
   ).toHaveCount(0);
@@ -251,4 +394,10 @@ test("Account shows appeals after an in-page sign-in and hides them after closur
     page.getByRole("form", { name: "Account appeal for demo" }),
   ).toHaveCount(0);
   await expect(signIn).toBeEnabled();
+  await expect(
+    page.getByRole("region", { name: "Wallets", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Email preferences", exact: true }),
+  ).toHaveCount(0);
 });

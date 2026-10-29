@@ -18,7 +18,6 @@ import {
   useState,
 } from "react";
 import { identityPublicOrigin } from "../workers/identity/contracts";
-import { AccountAppeals } from "./AccountAppeals";
 import { InboxEmail } from "./InboxEmail";
 import { Link } from "./Link";
 import {
@@ -31,8 +30,6 @@ import {
   readBoundedJson,
   readBoundedText,
 } from "./lib/browser-json";
-import { CONTACT_MAILTO } from "./lib/contact";
-import { contributorStandings } from "./lib/contributor-standings";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
@@ -59,15 +56,11 @@ import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
-import { useReceivedTotals } from "./lib/use-received-totals";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
-  AccountNav,
   Avatar,
   DataNotice,
   Disclosure,
-  formatDateTime,
-  formatMicroUsdc,
   NotFound,
   Pager,
   RoutePageHeader,
@@ -208,15 +201,31 @@ export function PointsProvider({
   const [attempt, setAttempt] = useState(0);
   const [sessionAttempt, setSessionAttempt] = useState(0);
   const [requested, setRequested] = useState(false);
+  const loadedAttempt = useRef<{
+    attempt: number;
+    completedAt: number;
+  } | null>(null);
+  const sessionRequest = useRef<AbortController | null>(null);
+  const updateMembership = useCallback((value: Membership | null) => {
+    // A successful account action supersedes any earlier session read.
+    sessionRequest.current?.abort();
+    sessionRequest.current = null;
+    setMe(value);
+    setSession("ready");
+  }, []);
   const shouldLoad = enabled || requested;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt triggers an explicit reload.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: profile session checks also recheck the public journal's age.
   useEffect(() => {
     if (!shouldLoad) return;
+    const loaded = loadedAttempt.current;
+    const age = loaded ? Date.now() - loaded.completedAt : -1;
+    if (loaded?.attempt === attempt && age >= 0 && age < 60_000) return;
     const controller = new AbortController();
     setState({ status: "loading" });
     void loadPoints(controller.signal)
       .then((value) => {
         if (controller.signal.aborted) return;
+        loadedAttempt.current = { attempt, completedAt: Date.now() };
         setState({
           status: "ready",
           journal: value,
@@ -231,10 +240,11 @@ export function PointsProvider({
           });
       });
     return () => controller.abort();
-  }, [shouldLoad, attempt]);
+  }, [shouldLoad, attempt, sessionAttempt]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionAttempt retries a failed identity read.
   useEffect(() => {
     const controller = new AbortController();
+    sessionRequest.current = controller;
     if (productOrigin()) {
       setSession("loading");
       void fetch("/api/v1/points/me", {
@@ -245,6 +255,7 @@ export function PointsProvider({
         cache: "no-store",
       })
         .then(async (r) => {
+          if (controller.signal.aborted) return;
           if (r.status === 401) {
             setMe(null);
             setSession("ready");
@@ -252,6 +263,7 @@ export function PointsProvider({
           }
           if (!r.ok) throw new Error("session unavailable");
           const m = await readBoundedJson(r, 16384, "points session");
+          if (controller.signal.aborted) return;
           setMe(m ? member(m) : null);
           setSession("ready");
         })
@@ -259,8 +271,25 @@ export function PointsProvider({
           if (!controller.signal.aborted) setSession("error");
         });
     }
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (sessionRequest.current === controller) sessionRequest.current = null;
+    };
   }, [sessionAttempt]);
+  useEffect(() => {
+    const recheckProfileSession = () => {
+      if (
+        !productOrigin() ||
+        !/^\/contributors\/[^/]+\/?$/u.test(window.location.pathname)
+      )
+        return;
+      sessionRequest.current?.abort();
+      setSession("loading");
+      setSessionAttempt((value) => value + 1);
+    };
+    window.addEventListener("popstate", recheckProfileSession);
+    return () => window.removeEventListener("popstate", recheckProfileSession);
+  }, []);
   return (
     <Context.Provider
       value={{
@@ -268,7 +297,7 @@ export function PointsProvider({
         me,
         session,
         refreshSession: () => setSessionAttempt((value) => value + 1),
-        setMe,
+        setMe: updateMembership,
         refresh: () => setAttempt((a) => a + 1),
         requestPoints: () => setRequested(true),
       }}
@@ -430,11 +459,8 @@ export function PointsNav() {
           <a href="/earnings" onClick={navigate}>
             Payouts
           </a>
-          <Link href="/account#wallets" onNavigate={navigate}>
-            Wallets
-          </Link>
           <a href="/account" onClick={navigate}>
-            Account settings
+            Settings
           </a>
           <AdminAccountLink onNavigate={navigate} />
           <button type="button" onClick={signout} disabled={busy}>
@@ -941,33 +967,26 @@ export function AccountPage() {
       window.removeEventListener("popstate", update);
     };
   }, []);
-  const [closedNotice, setClosedNotice] = useState("");
   const [signInNotice, setSignInNotice] = useState("");
   useEffect(() => {
-    if (me) setClosedNotice("");
-    else setSignInNotice("");
+    if (!me) setSignInNotice("");
   }, [me]);
   return (
     <main className="shell route-main account-page">
-      <RoutePageHeader icon={<UserRound />} title="Account" />
-      <AccountNav current="account" />
-      {me || !walletEntry || signedIn ? (
+      <RoutePageHeader icon={<UserRound />} title="Settings" />
+      {!me && (!walletEntry || signedIn) ? (
         <div id="profile">
-          {me ? (
-            <SocialConnections />
-          ) : (
-            <JoinPoints onSignedIn={setSignInNotice} />
-          )}
+          <JoinPoints onSignedIn={setSignInNotice} />
         </div>
       ) : null}
       {me && signInNotice ? <p role="status">{signInNotice}</p> : null}
       {session === "loading" || signedIn || walletEntry ? (
-        <Disclosure
+        <section
           id="wallets"
           className="points-panel account-wallets"
-          summary={<h2 id="wallets-heading">Wallets</h2>}
-          lazy
+          aria-labelledby="wallets-heading"
         >
+          <h2 id="wallets-heading">Wallets</h2>
           {session === "loading" ? (
             <p role="status">Checking your account…</p>
           ) : (
@@ -977,151 +996,40 @@ export function AccountPage() {
               key={me?.actor.id ?? "signed-out"}
             />
           )}
-        </Disclosure>
+        </section>
       ) : null}
       {signedIn ? (
-        <Disclosure
+        <section
           id="notifications"
           className="points-panel"
-          summary={<h2 id="notifications-heading">Email preferences</h2>}
-          lazy
+          aria-labelledby="notifications-heading"
         >
+          <h2 id="notifications-heading">Email preferences</h2>
           <InboxEmail headingId="notifications-heading" />
-        </Disclosure>
+        </section>
       ) : null}
-      <section id="security" className="points-panel">
-        <h2>{me ? "Security" : "Recovery"}</h2>
-        {accountSession.status === "signed-in" ? <AccountAppeals /> : null}
-        <div id="recovery">
-          {closedNotice ? <p role="status">{closedNotice}</p> : null}
-          <p>
-            Lost access to your account?{" "}
-            <a href={`${CONTACT_MAILTO}?subject=Account%20recovery`}>
-              Request private account recovery
-            </a>
-            .
-          </p>
-          {me ? (
-            <Disclosure
-              id="close-account"
-              className="account-close-details"
-              summary={<span id="close-account-heading">Close account</span>}
-              revealFor={["recovery"]}
-            >
-              <AccountClosure
-                headingId="close-account-heading"
-                login={me.actor.login}
-                onClosed={setClosedNotice}
-              />
-            </Disclosure>
-          ) : null}
-        </div>
-      </section>
     </main>
   );
 }
 
-/**
- * Self-service closure (PRD section 3). Closing ends every session and
- * removes optional connections; obligations and records stay, and signing in
- * again with the same GitHub account can reopen it.
- */
-function AccountClosure({
-  headingId,
-  login,
-  onClosed,
-}: {
-  headingId: string;
-  login: string;
-  onClosed: (notice: string) => void;
-}) {
-  const { setMe } = usePoints();
-  const [confirmation, setConfirmation] = useState("");
-  const { busy, error, run } = useAction();
-  const inputId = useId();
-  const matches = confirmation.trim().toLowerCase() === login.toLowerCase();
-  return (
-    <form
-      className="account-closure"
-      aria-labelledby={headingId}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!matches || busy) return;
-        void run(
-          async () => {
-            await requestJson("/api/v1/points/account/close", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ login: confirmation.trim() }),
-            });
-            onClosed(
-              "Your account is closed and every session is signed out. Sign in with GitHub to reopen it.",
-            );
-            setMe(null);
-          },
-          (caught) =>
-            caught instanceof PointsRequestError &&
-            caught.code === "confirmation_mismatch"
-              ? "The username does not match this account."
-              : caught instanceof PointsRequestError && caught.status === 401
-                ? "Your session ended. Sign in again to close your account."
-                : "Could not confirm whether your account closed. Reload this page before trying again.",
-        );
-      }}
-    >
-      <p>Closing your account:</p>
-      <ul>
-        <li>signs out every session;</li>
-        <li>removes your X connection and turns off activity email;</li>
-        <li>hides your membership from Slop people lists and profiles.</li>
-      </ul>
-      <p>
-        Unpaid awards, wallets, payment records, private cases and points
-        history are kept. Sign in again to reopen.
-      </p>
-      <label htmlFor={inputId}>
-        Type your GitHub username, {login}, to confirm
-      </label>
-      <input
-        id={inputId}
-        autoComplete="off"
-        spellCheck={false}
-        value={confirmation}
-        onChange={(event) => setConfirmation(event.target.value)}
-      />
-      <button
-        className="button danger-button"
-        type="submit"
-        disabled={!matches || busy}
-      >
-        {busy ? "Closing account…" : "Close account"}
-      </button>
-      {error ? <p role="alert">{error}</p> : null}
-    </form>
-  );
-}
 /** Categories from protocol/points-v1.md: activity and points. */
 const HISTORICAL_POINT_CATEGORIES: readonly (readonly [string, string])[] = [
   ["Merged PR before scoring began", "10 each"],
   ["Verified payout", "25 per project and month"],
 ];
-function readPeopleView() {
-  return (
-    new URLSearchParams(window.location.search).get("view") === "people" ||
-    window.location.hash === "#people"
-  );
+function readPointsView() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    people:
+      params.get("view") === "people" || window.location.hash === "#people",
+    query: params.get("q") ?? "",
+  };
 }
 export function PointsPage() {
-  const [peopleView, setPeopleView] = useState(readPeopleView);
-  const [peopleVisited, setPeopleVisited] = useState(readPeopleView);
-  const [query, setQuery] = useState(
-    () => new URLSearchParams(window.location.search).get("q") ?? "",
-  );
+  const [view, setView] = useState(readPointsView);
+  const [peopleVisited, setPeopleVisited] = useState(() => view.people);
   useEffect(() => {
-    const restore = () => {
-      setPeopleView(readPeopleView());
-      setQuery(new URLSearchParams(window.location.search).get("q") ?? "");
-    };
+    const restore = () => setView(readPointsView());
     window.addEventListener("popstate", restore);
     window.addEventListener("hashchange", restore);
     return () => {
@@ -1130,58 +1038,24 @@ export function PointsPage() {
     };
   }, []);
   useEffect(() => {
-    if (peopleView) setPeopleVisited(true);
-    const url = new URL(window.location.href);
-    if (peopleView) url.searchParams.set("view", "people");
-    else {
-      url.searchParams.delete("view");
-      if (url.hash === "#people") url.hash = "";
-    }
-    if (query) url.searchParams.set("q", query);
-    else url.searchParams.delete("q");
-    window.history.replaceState(window.history.state, "", url);
-  }, [peopleView, query]);
+    if (view.people) setPeopleVisited(true);
+  }, [view.people]);
+  const renderHeader = (periodControls?: ReactNode) => (
+    <RoutePageHeader
+      icon={<ChartNoAxesColumnIncreasing />}
+      title="Leaderboard"
+      actions={periodControls}
+    />
+  );
   return (
     <main className="shell route-main points-page standings-page">
-      <RoutePageHeader
-        icon={<ChartNoAxesColumnIncreasing />}
-        title="Leaderboard"
-      />
-      <div className="points-controls" id="people">
-        <fieldset className="points-period">
-          <legend>View</legend>
-          <button
-            type="button"
-            className="button secondary-button"
-            aria-pressed={!peopleView}
-            onClick={() => setPeopleView(false)}
-          >
-            Rankings
-          </button>
-          <button
-            type="button"
-            className="button secondary-button"
-            aria-pressed={peopleView}
-            onClick={() => setPeopleView(true)}
-          >
-            People
-          </button>
-        </fieldset>
-        <label>
-          Find a contributor
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-      </div>
-      <div hidden={peopleView}>
-        <ContributorStandings searchQuery={query} />
+      {view.people ? renderHeader() : null}
+      <div hidden={view.people}>
+        <ContributorStandings renderHeader={renderHeader} />
       </div>
       {peopleVisited ? (
-        <div hidden={!peopleView}>
-          <People query={query} />
+        <div hidden={!view.people}>
+          <People query={view.query} />
         </div>
       ) : null}
       <Disclosure
@@ -1213,79 +1087,19 @@ export function PointsPage() {
     </main>
   );
 }
-const countFormat = new Intl.NumberFormat("en-US");
-
-/** The bounds and source counts the published snapshot states, verbatim. */
-function StandingsCoverage({
-  state,
-  month,
-  projectId,
-}: {
-  state: Extract<DataState, { status: "ready" }>;
-  /** The ranked UTC month, or null for recorded history. */
-  month: string | null;
-  projectId: string;
-}) {
-  const { snapshot, cycleIndex } = state;
-  const { counts } = snapshot.source;
-  const closedCycles = cycleIndex.cycles.filter(
-    (cycle) => !projectId || cycle.projectId === projectId,
-  ).length;
-  // "This month" ranks only the snapshot entries inside the UTC month, so its
-  // exact period starts at the later of the month start and the window start.
-  const monthStart = month === null ? null : `${month}-01T00:00:00.000Z`;
-  const rankedFrom =
-    monthStart === null
-      ? null
-      : Date.parse(monthStart) > Date.parse(snapshot.window.from)
-        ? monthStart
-        : snapshot.window.from;
-  return (
-    <Disclosure
-      summary={
-        <>
-          Updated {formatDateTime(snapshot.generatedAt)} ·{" "}
-          {countFormat.format(snapshot.repositories.length)} repositories
-        </>
-      }
-      className="points-coverage-details"
-    >
-      <p className="points-meta points-coverage">
-        {rankedFrom !== null &&
-        Date.parse(rankedFrom) < Date.parse(snapshot.window.to)
-          ? `This month ranks ${formatDateTime(rankedFrom)} to ${formatDateTime(snapshot.window.to)}. `
-          : null}
-        Snapshot window: {formatDateTime(snapshot.window.from)} to{" "}
-        {formatDateTime(snapshot.window.to)}. Source
-        {projectId ? " (all projects)" : ""}:{" "}
-        {countFormat.format(counts.mergedPullRequests)} merged pull requests and{" "}
-        {countFormat.format(counts.closedIssues)} closed issues across{" "}
-        {countFormat.format(snapshot.repositories.length)} repositories.
-        {(counts.unavailableSources ?? 0) > 0
-          ? ` GitHub reported ${countFormat.format(counts.unavailableSources ?? 0)} unavailable sources. ${countFormat.format(counts.heldWorkUnits ?? 0)} joint assessments are held while required sources are unavailable.`
-          : null}
-        {month === null
-          ? ` Includes ${countFormat.format(closedCycles)} closed ${closedCycles === 1 ? "cycle" : "cycles"}.`
-          : null}
-      </p>
-    </Disclosure>
-  );
-}
-
 export function ContributorStandings({
   scoreState,
   retryScore,
   projectId,
   compact = false,
   title,
-  searchQuery,
+  renderHeader,
   showDataNotice = !scoreState,
 }: {
   projectId?: string;
   compact?: boolean;
   title?: string;
-  /** A page-level search shared by rankings and the people directory. */
-  searchQuery?: string;
+  renderHeader?: (periodControls: ReactNode) => ReactNode;
   scoreState?: DataState;
   retryScore?: () => void;
   /** Shows score loading, error and stale states for a caller's shared read. */
@@ -1295,11 +1109,9 @@ export function ContributorStandings({
   const scores = scoreState ?? loadedScore;
   const readFilters = useCallback(() => {
     const params = new URLSearchParams(window.location.search);
-    const sort = params.get("sort");
     const period = params.get("period");
     // `period=new` was an earlier link to recorded history.
     return {
-      sort: sort === "money" ? ("money" as const) : ("points" as const),
       period: period === "lifetime" || period === "new" ? "lifetime" : "month",
       query: params.get("q") ?? "",
       project: projectId ?? findProject(params.get("project") ?? "")?.id ?? "",
@@ -1310,27 +1122,14 @@ export function ContributorStandings({
     };
   }, [projectId]);
   const [filters, setFilters] = useState(readFilters);
-  const { sort, period, page } = filters;
-  const query = searchQuery ?? filters.query;
-  const previousQuery = useRef(searchQuery);
-  useEffect(() => {
-    if (previousQuery.current !== searchQuery) {
-      previousQuery.current = searchQuery;
-      setFilters((current) => ({ ...current, page: 0 }));
-    }
-  }, [searchQuery]);
+  const { period, page } = filters;
+  const query = filters.query;
   const project = projectId ?? filters.project;
-  const fullView = new URLSearchParams({ period, sort });
+  const fullView = new URLSearchParams({ period });
   if (project) fullView.set("project", project);
   if (query) fullView.set("q", query);
-  const setSort = (sort: "points" | "money") =>
-    setFilters((v) => ({ ...v, sort, page: 0 }));
   const setPeriod = (period: string) =>
     setFilters((v) => ({ ...v, period, page: 0 }));
-  const setQuery = (query: string) =>
-    setFilters((v) => ({ ...v, query, page: 0 }));
-  const setProject = (project: string) =>
-    setFilters((v) => ({ ...v, project, page: 0 }));
   const setPage = (page: number) => setFilters((v) => ({ ...v, page }));
   useEffect(() => {
     const restore = () => setFilters(readFilters());
@@ -1340,7 +1139,7 @@ export function ContributorStandings({
   useEffect(() => {
     const url = new URL(window.location.href);
     for (const [key, value] of Object.entries({
-      sort: sort === "points" ? "" : sort,
+      sort: "",
       period: period === "month" ? "" : period,
       q: query,
       project: projectId ? "" : project,
@@ -1358,7 +1157,7 @@ export function ContributorStandings({
       else url.searchParams.delete(key);
     }
     window.history.replaceState(window.history.state, "", url);
-  }, [sort, period, query, project, page, projectId, compact]);
+  }, [period, query, project, page, projectId, compact]);
   const { state } = usePoints();
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
@@ -1368,286 +1167,153 @@ export function ContributorStandings({
       project || undefined,
     );
   }, [state, project]);
-  const metric = (
-    m: ReturnType<typeof contributorStandings>["rows"][number],
-  ) => (sort === "points" ? m.points : m.money);
-  const [received, retryReceived] = useReceivedTotals();
-  const projection = contributorStandings(
-    scores,
-    state.status === "ready" ? members : null,
-    period === "month" ? new Date().toISOString().slice(0, 7) : null,
-    project,
-    received.status === "ready" ? received.received.contributors : null,
+  const currentActors = new Map(
+    scores.status === "ready"
+      ? scores.snapshot.leaders.map(({ actor }) => [actor.id, actor] as const)
+      : [],
   );
-  // Loading and failed sources stay distinct in each column.
-  const pointsMissing = state.status === "loading" ? "Loading…" : "Unavailable";
-  const moneyMissing =
-    scores.status === "loading" || received.status === "loading"
-      ? "Loading…"
-      : "Unavailable";
-  const ranked = projection.rows
-    .filter((m) => metric(m) !== null)
+  const ranked = members
+    .map((member) => ({
+      actor: currentActors.get(member.actor.id) ?? member.actor,
+      points: period === "month" ? member.monthly : member.total,
+    }))
+    .filter((member) => member.points > 0)
     .sort((a, b) => {
-      const left = metric(a) ?? 0;
-      const right = metric(b) ?? 0;
-      return (
-        (left < right ? 1 : left > right ? -1 : 0) ||
-        a.actor.id.localeCompare(b.actor.id)
-      );
+      return b.points - a.points || a.actor.id.localeCompare(b.actor.id);
     });
   const ranks = new Map<string, number>();
-  let previous: number | bigint | null = null;
+  let previous: number | null = null;
   let rank = 0;
   ranked.forEach((m, i) => {
-    if (metric(m) !== previous) rank = i + 1;
-    previous = metric(m);
+    if (m.points !== previous) rank = i + 1;
+    previous = m.points;
     ranks.set(m.actor.id, rank);
   });
-  const rows = ranked.filter(
-    (m) =>
-      ((m.points ?? 0) > 0 || (m.money ?? 0n) > 0n) &&
-      m.actor.login.toLowerCase().includes(query.toLowerCase()),
+  const rows = ranked.filter((m) =>
+    m.actor.login.toLowerCase().includes(query.toLowerCase()),
   );
   const pageSize = compact ? 10 : 25;
   const currentPage = Math.min(
     page,
     Math.max(0, Math.ceil(rows.length / pageSize) - 1),
   );
-  return (
-    <section
-      className="points-panel"
-      aria-label={title ?? "Contributor standings"}
-    >
-      {compact ? (
-        projectId ? (
-          <h2>{title ?? "Contributor standings"}</h2>
-        ) : (
-          <div className="points-panel-heading">
-            <h2>{title ?? "Contributor standings"}</h2>
-            <Link href={`/points?${fullView.toString()}`}>
-              View leaderboard
-            </Link>
-          </div>
-        )
-      ) : null}
-      {showDataNotice ? (
-        <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
-      ) : null}
-      <Notice />
-      <p className="points-meta">Money received is the all-time total.</p>
-      {received.status === "error" ? (
-        <p role="status">
-          <span>Payment records unavailable.</span>{" "}
-          <button type="button" onClick={retryReceived}>
-            Retry payment records
-          </button>
-        </p>
-      ) : received.status === "ready" && received.refreshError ? (
-        <p role="status">
-          <span>
-            Money received is from{" "}
-            {formatDateTime(received.received.generatedAt)}; the latest refresh
-            failed.
-          </span>{" "}
-          <button type="button" onClick={retryReceived}>
-            Retry payment records
-          </button>
-        </p>
-      ) : !compact && received.status === "loading" && sort === "money" ? (
-        <p role="status">Loading payment records…</p>
-      ) : null}
-      {!compact ? (
-        <div className="points-controls">
-          <fieldset className="points-period">
-            <legend>Period</legend>
-            {(
-              [
-                ["month", "This month (UTC)"],
-                ["lifetime", "Recorded history"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                aria-pressed={period === value}
-                key={value}
-                onClick={() => setPeriod(value)}
-                type="button"
-              >
-                {label}
-              </button>
-            ))}
-          </fieldset>
-          {!projectId ? (
-            <label>
-              Project
-              <select
-                aria-label="Project"
-                value={project}
-                onChange={(e) => {
-                  setProject(e.target.value);
-                  setPage(0);
-                }}
-              >
-                <option value="">All projects</option>
-                {PROJECTS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {searchQuery === undefined ? (
-            <label>
-              Find a contributor
-              <input
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setPage(0);
-                }}
-                type="search"
-              />
-            </label>
-          ) : null}
-        </div>
-      ) : null}
-      {!compact && scores.status === "ready" ? (
-        <StandingsCoverage
-          month={
-            period === "month" ? new Date().toISOString().slice(0, 7) : null
-          }
-          projectId={project}
-          state={scores}
-        />
-      ) : null}
+  const periodControls = !compact ? (
+    <fieldset className="points-period" aria-label="Leaderboard period">
       {(
-        sort === "points"
-          ? state.status === "ready"
-          : scores.status === "ready"
-      ) ? (
-        <>
-          <section
-            className="points-table"
-            aria-label="Contributor standings table"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll all table columns.
-            tabIndex={0}
-          >
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Rank</th>
-                  <th scope="col">Contributor</th>
-                  {(
-                    [
-                      ["points", "Points"],
-                      ["money", "Money received"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <th
-                      aria-sort={sort === key ? "descending" : "none"}
-                      key={key}
-                      scope="col"
-                    >
-                      <button
-                        className="points-sort"
-                        onClick={() => setSort(key)}
-                        type="button"
-                      >
-                        {label}
-                        {sort === key ? (
-                          <ArrowDown aria-hidden="true" size={14} />
-                        ) : null}
-                      </button>
-                      {(key === "money" && !projection.moneyAvailable) ||
-                      (key === "points" && state.status !== "ready") ? (
-                        <small
-                          className="points-column-status"
-                          aria-hidden="true"
-                        >
-                          {key === "money" ? moneyMissing : pointsMissing}
-                        </small>
-                      ) : null}
+        [
+          ["month", "This month"],
+          ["lifetime", "All time"],
+        ] as const
+      ).map(([value, label]) => (
+        <button
+          aria-pressed={period === value}
+          key={value}
+          onClick={() => setPeriod(value)}
+          type="button"
+        >
+          {label}
+        </button>
+      ))}
+    </fieldset>
+  ) : null;
+  return (
+    <>
+      {renderHeader?.(periodControls)}
+      <section
+        className="points-panel"
+        aria-label={title ?? "Contributor standings"}
+      >
+        {compact ? (
+          projectId ? (
+            <h2>{title ?? "Contributor standings"}</h2>
+          ) : (
+            <div className="points-panel-heading">
+              <h2>{title ?? "Contributor standings"}</h2>
+              <Link href={`/points?${fullView.toString()}`}>
+                View leaderboard
+              </Link>
+            </div>
+          )
+        ) : null}
+        {showDataNotice ? (
+          <DataNotice state={scores} retry={retryScore ?? retryLoadedScore} />
+        ) : null}
+        <Notice />
+        {!renderHeader ? periodControls : null}
+        {state.status === "ready" ? (
+          <>
+            <section
+              className="points-table"
+              aria-label="Contributor standings table"
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll all table columns.
+              tabIndex={0}
+            >
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Rank</th>
+                    <th scope="col">Contributor</th>
+                    <th aria-sort="descending" scope="col">
+                      <span className="points-sort">
+                        Points <ArrowDown aria-hidden="true" size={14} />
+                      </span>
                     </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows
-                  .slice(currentPage * pageSize, (currentPage + 1) * pageSize)
-                  .map((m) => (
-                    <tr key={m.actor.id}>
-                      <td className="points-rank">{ranks.get(m.actor.id)}</td>
-                      <td>
-                        <a
-                          className="points-person"
-                          href={`/contributors/${encodeURIComponent(m.actor.login)}`}
-                        >
-                          {compact ? (
-                            <img
-                              alt=""
-                              height={40}
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.hidden = true;
-                              }}
-                              src={`https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`}
-                              width={40}
-                            />
-                          ) : (
-                            <Avatar
-                              actor={{
-                                login: m.actor.login,
-                                avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`,
-                              }}
-                              size="medium"
-                            />
-                          )}
-                          {m.actor.login}
-                        </a>
-                      </td>
-                      <td className="points-value">
-                        {m.points === null ? (
-                          <>
-                            <span aria-hidden="true">—</span>
-                            <span className="visually-hidden">
-                              {pointsMissing}
-                            </span>
-                          </>
-                        ) : (
-                          `${m.points.toLocaleString()}${compact ? " pts" : ""}`
-                        )}
-                      </td>
-                      <td className="points-value">
-                        {m.money === null ? (
-                          <>
-                            <span aria-hidden="true">—</span>
-                            <span className="visually-hidden">
-                              {moneyMissing}
-                            </span>
-                          </>
-                        ) : (
-                          formatMicroUsdc(m.money.toString())
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </section>
-          {rows.length === 0 &&
-          (sort !== "money" || projection.moneyAvailable) ? (
-            <p>No contributors match this view.</p>
-          ) : null}
-          {rows.length > pageSize ? (
-            <Pager
-              onPage={setPage}
-              page={currentPage}
-              pages={Math.ceil(rows.length / pageSize)}
-            />
-          ) : null}
-        </>
-      ) : null}
-    </section>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows
+                    .slice(currentPage * pageSize, (currentPage + 1) * pageSize)
+                    .map((m) => (
+                      <tr key={m.actor.id}>
+                        <td className="points-rank">{ranks.get(m.actor.id)}</td>
+                        <td>
+                          <Link
+                            className="points-person"
+                            href={`/contributors/${encodeURIComponent(m.actor.login)}`}
+                          >
+                            {compact ? (
+                              <img
+                                alt=""
+                                height={40}
+                                loading="lazy"
+                                onError={(event) => {
+                                  event.currentTarget.hidden = true;
+                                }}
+                                src={`https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`}
+                                width={40}
+                              />
+                            ) : (
+                              <Avatar
+                                actor={{
+                                  login: m.actor.login,
+                                  avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`,
+                                }}
+                                size="medium"
+                              />
+                            )}
+                            {m.actor.login}
+                          </Link>
+                        </td>
+                        <td className="points-value">
+                          {`${m.points.toLocaleString()}${compact ? " pts" : ""}`}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </section>
+            {rows.length === 0 ? <p>No contributors match this view.</p> : null}
+            {rows.length > pageSize ? (
+              <Pager
+                onPage={setPage}
+                page={currentPage}
+                pages={Math.ceil(rows.length / pageSize)}
+              />
+            ) : null}
+          </>
+        ) : null}
+      </section>
+    </>
   );
 }
 
@@ -1663,13 +1329,7 @@ function xAccount(value: unknown): XAccount {
     throw new Error("Invalid X identity");
   return x;
 }
-function XAccountLink({
-  account,
-  showService = true,
-}: {
-  account: XAccount;
-  showService?: boolean;
-}) {
+function XAccountLink({ account }: { account: XAccount }) {
   return (
     <a
       href={`https://x.com/intent/user?user_id=${encodeURIComponent(account.id)}`}
@@ -1677,7 +1337,7 @@ function XAccountLink({
       rel="noreferrer"
       title={`Account connected ${account.verifiedAt.slice(0, 10)}`}
     >
-      {showService ? "X · " : ""}@{account.username}
+      X · @{account.username}
     </a>
   );
 }
@@ -1706,137 +1366,6 @@ function PublicXLink({ actorId }: { actorId: string }) {
   ) : failed ? (
     <small>X link unavailable</small>
   ) : null;
-}
-function SocialConnections() {
-  const { me, setMe } = usePoints();
-  const [data, setData] = useState<{
-    configured: boolean;
-    account: (XAccount & { public: number }) | null;
-  } | null>(null);
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [version, setVersion] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version explicitly refreshes the server state after account mutations.
-  useEffect(() => {
-    setData(null);
-    setMessage("");
-    if (!me || !productOrigin()) return;
-    const c = new AbortController();
-    void requestJson("/api/v1/points/x/me", { signal: c.signal })
-      .then((value) => {
-        const v = value as NonNullable<typeof data>;
-        if (
-          typeof v.configured !== "boolean" ||
-          (v.account && ![0, 1].includes(v.account.public))
-        )
-          throw new Error("Invalid connection state");
-        if (v.account) xAccount(v.account);
-        setData(v);
-      })
-      .catch(() => {
-        if (!c.signal.aborted) setMessage("X details unavailable.");
-      });
-    return () => c.abort();
-  }, [me, version]);
-  const outcome = new URLSearchParams(window.location.search).get("x");
-  async function action(path: string, body: unknown) {
-    setBusy(true);
-    setMessage("");
-    try {
-      const value = await requestJson(`/api/v1/points/x/${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (path === "start") {
-        const url = new URL(
-          (value as { authorizationUrl: string }).authorizationUrl,
-        );
-        if (
-          url.origin !== "https://x.com" ||
-          url.pathname !== "/i/oauth2/authorize"
-        )
-          throw new Error("Invalid authorization");
-        window.location.assign(url.href);
-        return;
-      }
-      setVersion((v) => v + 1);
-      if (me) setMe({ ...me });
-      setMessage("X disconnected.");
-    } catch {
-      setMessage("X request failed. Retry.");
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (!me) return null;
-  return (
-    <section id="connections" className="points-panel" aria-label="Connections">
-      <h2>Connections</h2>
-      {outcome === "connected" ? (
-        <p role="status">X connected.</p>
-      ) : outcome === "cancelled" ? (
-        <p role="status">X connection cancelled.</p>
-      ) : outcome === "failed" ? (
-        <p role="status">
-          X could not be connected. An X account linked to another member cannot
-          be reused.
-        </p>
-      ) : null}
-      {!data ? (
-        <>
-          <p role="status">{message || "Loading connection details…"}</p>
-          {message ? (
-            <button type="button" onClick={() => setVersion((v) => v + 1)}>
-              Retry X details
-            </button>
-          ) : null}
-        </>
-      ) : (
-        <>
-          {!data.account && data.configured ? (
-            <p>Connecting X is optional. Your X profile link will be public.</p>
-          ) : null}
-          <div className="connection-row">
-            <strong>X</strong>
-            <span>
-              {data.account ? (
-                <>
-                  Connected ·{" "}
-                  <XAccountLink account={data.account} showService={false} />
-                </>
-              ) : (
-                "Not connected"
-              )}
-            </span>
-            {data.account ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void action("disconnect", {})}
-              >
-                Disconnect X
-              </button>
-            ) : data.configured ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void action("start", { public: true })}
-              >
-                {busy ? "Connecting…" : "Connect X"}
-              </button>
-            ) : (
-              <span>Unavailable</span>
-            )}
-          </div>
-          {data.account && !me.public ? (
-            <p>Hidden while your membership is private.</p>
-          ) : null}
-          <p role="status">{message}</p>
-        </>
-      )}
-    </section>
-  );
 }
 type Person = {
   actor: ActorRef;
@@ -1942,7 +1471,7 @@ function People({ query }: { query: string }) {
   const pages = Math.max(1, Math.ceil(matches.length / PEOPLE_PAGE_SIZE));
   const current = Math.min(page, pages - 1);
   return (
-    <section className="points-panel" aria-labelledby="people-h">
+    <section className="points-panel" id="people" aria-labelledby="people-h">
       <h2 id="people-h">People</h2>
       {census.state.status === "loading" ? (
         <p role="status">Loading contributors…</p>

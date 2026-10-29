@@ -25,6 +25,9 @@ async function payments(page: Page, wallets: SavedWallet[] = []) {
   await page.route("**/api/v1/project-appeals", (route) =>
     route.fulfill({ json: { appeals: [] } }),
   );
+  await page.route("**/api/v1/notifications/email", (route) =>
+    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+  );
   await page.route("**/api/v1/payments/**", async (route) => {
     const path = new URL(route.request().url()).pathname.split("/payments/")[1];
     if (path === "me") {

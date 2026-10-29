@@ -75,34 +75,48 @@ function word(hex: string, index: number): bigint {
   return BigInt(`0x${slice}`);
 }
 
-/** Decodes an ABI `string` or a legacy `bytes32` symbol; null when neither. */
+/**
+ * Decodes an ABI `string` or a legacy `bytes32` symbol; null when neither.
+ * The offset and length are checked before reading, so a short answer fails.
+ * A bytes32 symbol loses only its trailing zero padding, not inner bytes.
+ */
 function decodeSymbol(result: unknown): string | null {
-  if (typeof result !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(result))
-    return null;
-  try {
-    let bytes: number[];
-    if (result.length === 66) {
-      bytes = [...result.slice(2).matchAll(/../gu)]
-        .map((pair) => Number.parseInt(pair[0], 16))
-        .filter((byte) => byte !== 0);
-    } else {
-      const offset = Number(word(result, 0));
-      const length = Number(word(result, offset / 32));
-      if (length > 64) return null;
-      const start = 2 + (offset + 32) * 2;
-      bytes = [...result.slice(start, start + length * 2).matchAll(/../gu)].map(
-        (pair) => Number.parseInt(pair[0], 16),
+  if (typeof result !== "string" || !result.startsWith("0x")) return null;
+  const hex = result.slice(2);
+  if (hex.length % 2 !== 0) return null;
+  const bytes: number[] = [];
+  for (let index = 0; index < hex.length; index += 2) {
+    const pair = hex.slice(index, index + 2);
+    if (!/^(?:[0-9a-fA-F]{2})$/u.test(pair)) return null;
+    bytes.push(Number.parseInt(pair, 16));
+  }
+  if (bytes.length === 32) {
+    let end = bytes.length;
+    while (end > 0 && bytes[end - 1] === 0) end -= 1;
+    try {
+      const symbol = new TextDecoder("utf-8", { fatal: true }).decode(
+        Uint8Array.from(bytes.slice(0, end)),
       );
+      return SYMBOL.test(symbol) ? symbol : null;
+    } catch {
+      return null;
     }
+  }
+  if (bytes.length < 64) return null;
+  const offset = word(result, 0);
+  if (offset < 32n || offset % 32n !== 0n) return null;
+  const length = word(result, Number(offset / 32n));
+  if (length > 64n || offset + 32n + length > BigInt(bytes.length)) return null;
+  const body = Number(offset + 32n);
+  try {
     const symbol = new TextDecoder("utf-8", { fatal: true }).decode(
-      Uint8Array.from(bytes),
+      Uint8Array.from(bytes.slice(body, body + Number(length))),
     );
     return SYMBOL.test(symbol) ? symbol : null;
   } catch {
     return null;
   }
 }
-
 async function evmMetadata(
   fetcher: typeof fetch,
   url: string,

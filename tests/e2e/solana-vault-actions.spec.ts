@@ -44,6 +44,7 @@ import {
   serveProjectCycleIndex,
   test,
 } from "./fixtures";
+import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 // Dependencies are installed by the existing Solana contract test command.
 const requireSolana = createRequire(
@@ -471,13 +472,8 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
         },
       }),
   );
-  await page.route("**/api/v1/projects/eliza", (route) =>
-    route.fulfill({ json: { project, revision: 1 } }),
-  );
+  await serveProjectMaintainer(page, () => project);
   await serveProjectCycleIndex(page, [project.id]);
-  await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
-  );
   await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
     route.fulfill({
       json: {
@@ -525,7 +521,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       });
     },
   );
-  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   const actions = page.getByRole("region", {
     name: "Fund or withdraw · Solana Devnet (test)",
     exact: true,
@@ -789,7 +785,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       });
     },
   );
-  await page.goto("/projects/eliza/funding");
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
@@ -1160,12 +1156,9 @@ async function ownerSetupWorkflow(
       )
         failedRequests.push(`${response.status()} ${response.url()}`);
     });
-    await page.goto(
-      `${origin}/projects/${project.slug}/${bounty ? "manage" : "funding"}`,
-      {
-        waitUntil: "networkidle",
-      },
-    );
+    await page.goto(`${origin}/projects/${project.slug}/manage`, {
+      waitUntil: "networkidle",
+    });
     if (bounty) await openProjectSecuritySettings(page);
     const setup = page.getByRole("region", {
       name: bounty ? "Set up bounty vault" : "Set up project vault",
@@ -1357,11 +1350,13 @@ async function ownerSetupWorkflow(
       .click();
     await expect(setup).toHaveCount(0);
     if (!bounty) {
-      const monthlyTarget = page.locator(".project-reward-status");
-      await expect(monthlyTarget).toHaveText(
-        /2k\s*\$TEST monthly target, split between contributors/u,
-      );
-      await expect(monthlyTarget).toBeVisible();
+      await page
+        .locator("summary")
+        .filter({ hasText: /^Monthly rewards$/u })
+        .click();
+      await expect(
+        page.getByRole("textbox", { name: /^Monthly amount/u }),
+      ).toHaveValue("2000");
       await expect(
         page
           .getByRole("status")

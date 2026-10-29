@@ -273,7 +273,7 @@ export function ProjectSetupStatusPanel({
                         ]?.name ?? setup.funding.network}
                       </NetworkName>
                     </span>
-                    <a href={`/projects/${setup.slug}/funding`}>
+                    <a href={`/projects/${setup.slug}/manage#project-vault`}>
                       Vault funding
                     </a>
                   </>

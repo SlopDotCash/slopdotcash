@@ -8,11 +8,13 @@ import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type ProxyOptions } from "vite";
+import { deploymentOrigins } from "./src/lib/deployment";
 
 const publicDirectory = `${fileURLToPath(new URL("./public", import.meta.url))}${sep}`;
 // Local UI development reads the registry and the published snapshots from one
 // public origin, so the snapshots validate against the registry they cite.
-const localReadOrigin = "https://slop.cash";
+const { site: localReadOrigin, api: localApiOrigin } =
+  deploymentOrigins("production");
 
 export default defineConfig(({ command, isPreview }) => {
   // Local development owns its sign-in backend. Built artifacts never enable it.
@@ -204,11 +206,26 @@ export default defineConfig(({ command, isPreview }) => {
       ? { "import.meta.env.VITE_SLOP_LOCAL_BACKEND": JSON.stringify("1") }
       : {},
     // Local UI development reads the public registry, independently of build
-    // outputs, and the public payment records behind "Money received".
+    // outputs, finalized vault totals, and the public payment records behind
+    // "Money received".
     // The legacy file URL is also supported for existing sessions.
     server: {
       proxy: {
-        "^/(?:api/v1/projects|api/v1/payments/[^?]+/direct-transfers|api/v1/payments/received|\\.well-known/slop/projects\\.json|data/project-registry\\.json)(?:\\?.*)?$":
+        "^/api/v1/wallet-claims/actors/[1-9][0-9]*/current(?:\\?.*)?$": {
+          target: localApiOrigin,
+          changeOrigin: true,
+          bypass: (request) =>
+            request.method === "GET" || request.method === "HEAD"
+              ? undefined
+              : false,
+          configure: (proxy) => {
+            proxy.on("proxyReq", (request) => {
+              request.removeHeader("cookie");
+              request.removeHeader("authorization");
+            });
+          },
+        },
+        "^/(?:api/v1/projects|api/v1/payments/projects/[^/?]+/vault|api/v1/payments/[^?]+/direct-transfers|api/v1/payments/received|\\.well-known/slop/projects\\.json|data/project-registry\\.json)(?:\\?.*)?$":
           {
             target: localReadOrigin,
             changeOrigin: true,

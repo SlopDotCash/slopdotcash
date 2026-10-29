@@ -1309,8 +1309,10 @@ Email each crossed $500 spending milestone in alerts-only mode. All attempts,
 known costs and unknown costs remain recorded. Migration `0085` queues each new
 failed Surplus request for the existing private notify service. A cron claims
 one pending notice before sending it. The notice includes only its cost-record
-ID, model, fixed failure category and time. A failed primary request still gets
-a notice if the fallback succeeds. Historical failures are not queued again.
+ID, model, fixed failure category, safe cause and time. The cause distinguishes
+an HTTP error from an invalid verdict without including provider response text.
+Unknown ledger text becomes `provider call failed`. A failed primary request
+still gets a notice if the fallback succeeds. Historical failures are not queued again.
 An ambiguous email result stays recorded and is not blindly resent. An email
 outage does not stop the scheduled assessment; the cron still reports the
 notification failure. This source change does not set production variables, deploy a Worker or prove a live assessment.

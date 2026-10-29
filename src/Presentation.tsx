@@ -115,25 +115,6 @@ export function ProjectNav({
   );
 }
 
-export function AccountNav({
-  current,
-}: {
-  current: "account" | "payouts" | "inbox" | "security";
-}) {
-  return (
-    <SectionNav
-      label="Account navigation"
-      current={current}
-      links={[
-        { id: "payouts", label: "Payouts", href: "/earnings" },
-        { id: "inbox", label: "Inbox", href: "/inbox" },
-        { id: "security", label: "Security cases", href: "/security" },
-        { id: "account", label: "Settings", href: "/account" },
-      ]}
-    />
-  );
-}
-
 /** Page framing for inner routes; no global or homepage typography changes. */
 export function RoutePageHeader({
   title,
