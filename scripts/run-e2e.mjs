@@ -25,6 +25,7 @@ import {
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -301,15 +302,15 @@ async function runRegistryPhase() {
     // The fixture Workers hold the local D1 files until they exit, and
     // Windows refuses to delete an open file. Windows can also release the
     // stopped Pages server's handles a moment later, so retry with a bound.
+    // Use the asynchronous rm: on Windows, rmSync throws EPERM at once and
+    // does not use maxRetries.
     const removed = await Promise.allSettled([
-      Promise.resolve().then(() =>
-        rmSync(persistTo, {
-          force: true,
-          recursive: true,
-          maxRetries: 10,
-          retryDelay: 200,
-        }),
-      ),
+      rm(persistTo, {
+        force: true,
+        recursive: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      }),
     ]);
     const cleanup = [...closed, ...removed];
     const errors = cleanup
