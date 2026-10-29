@@ -159,11 +159,16 @@ export default {async fetch(request,env){
     rows.results.map((row) => row.state),
     ["submitted", "submitted"],
   );
+  const attempts = await db
+    .prepare("SELECT COUNT(*) total FROM payment_attempts")
+    .first();
+  assert.equal(attempts.total, 2);
   console.log(
     JSON.stringify({
       nativeD1: true,
       ...result,
       outboxStates: rows.results.map((row) => row.state),
+      paymentAttempts: attempts.total,
       liveChain: false,
     }),
   );
