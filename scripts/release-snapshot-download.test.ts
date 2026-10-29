@@ -72,11 +72,11 @@ for (const [index, download] of downloads.entries()) {
         // One healthy local attempt can take about 100 ms on Windows, so it
         // gets a full second. A retry delay of 0 selects curl's default
         // backoff (1 s, then 2 s), so 1 s is the shortest fixed delay.
-        // On Windows, System32 curl lacks zlib/compression and shadows Git's curl;
-        // prepend /mingw64/bin in bash so curl supports --compressed.
+        // On Windows, System32 curl lacks zlib/compression and shadows Git's curl.
+        // Fall back to Git for Windows' curl when the selected curl rejects --compressed.
         const win32Prefix =
           globalThis.process.platform === "win32"
-            ? 'export PATH="/mingw64/bin:$PATH"; '
+            ? 'if ! curl --compressed --version >/dev/null 2>&1 && [ -x /mingw64/bin/curl.exe ] && /mingw64/bin/curl.exe --compressed --version >/dev/null 2>&1; then export PATH="/mingw64/bin:$PATH"; fi; '
             : "";
         const command =
           win32Prefix +
