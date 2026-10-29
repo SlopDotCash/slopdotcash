@@ -1253,14 +1253,19 @@ async function listCases(
     if (roles.size) currentRoles.set(id, roles);
   }
   const projectIds = [...currentRoles.keys()];
-  const placeholders = projectIds.map(() => "?").join(", ");
   const result = await deps.db
     .prepare(
       `SELECT ${CASE_COLUMNS} FROM security_cases WHERE reporter_github_id = ? OR id IN (SELECT case_id FROM security_case_members WHERE github_id = ? AND revoked_at IS NULL)${
-        projectIds.length > 0 ? ` OR project_id IN (${placeholders})` : ""
+        projectIds.length > 0
+          ? " OR project_id IN (SELECT value FROM json_each(?))"
+          : ""
       }${deps.moderatorGithubIds?.has(actor.githubId) ? " OR appeal_state <> 'none' OR related_party_review <> 'not-applicable'" : ""} ORDER BY created_at DESC LIMIT 500`,
     )
-    .bind(actor.githubId, actor.githubId, ...projectIds)
+    .bind(
+      actor.githubId,
+      actor.githubId,
+      ...(projectIds.length > 0 ? [JSON.stringify(projectIds)] : []),
+    )
     .all<CaseRow>();
   const rows = result.results ?? [];
   // Every per-case read of the list, in a fixed number of statements: one list
