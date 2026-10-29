@@ -2657,9 +2657,21 @@ async function finishAppeal(
     return "a Slop moderator decides this appeal";
   }
   const { issue } = session;
+  // An appeal binds the revision it was opened on. Like a maintainer reopen,
+  // it reverses only that revision's debit or one recorded before it opened,
+  // and it cleans up only while that revision is current. A newer head's
+  // close, finding label and debit stand.
+  const appealed = current.appeal_key.slice(
+    current.appeal_key.lastIndexOf(":") + 1,
+  );
+  const covered = { revision: appealed, occurredAt: current.opened_at };
   if (current.resolution === "upheld" && session.reversalOnly) {
     // A retired project: reverse the debit, with no GitHub write.
-    await reversePenalty(db, issue.node_id, "appeal_upheld");
+    await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
+  } else if (current.resolution === "upheld" && appealed !== session.revision) {
+    await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
+    await publishAppealState(env, job, session, current, "resolution");
+    return `appeal ${current.resolution} by the ${current.resolved_by}; newer item state kept`;
   } else if (current.resolution === "upheld") {
     const closedBySlopbot = await store.count(
       db,
@@ -2685,7 +2697,7 @@ async function finishAppeal(
       if (label !== UNCERTAIN_LABEL && !hasLabel(issue, label)) continue;
       await removeLabel(env, job, session.github, label);
     }
-    await reversePenalty(db, issue.node_id, "appeal_upheld");
+    await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
   }
   await publishAppealState(env, job, session, current, "resolution");
   return `appeal ${current.resolution} by the ${current.resolved_by}`;
