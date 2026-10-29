@@ -214,7 +214,7 @@ export async function scanSolanaPayments(
     err: unknown;
   }[];
   const chunk = signatures.slice(0, SOLANA_TRANSACTIONS_PER_RUN);
-  for (const item of chunk) {
+  for (const [processed, item] of chunk.entries()) {
     if (!item.err) {
       const tx = (await solanaRpc({ rpcUrl }, "getTransaction", [
         item.signature,
@@ -258,35 +258,41 @@ export async function scanSolanaPayments(
         });
       }
     }
+    // A scheduled invocation can end before all 100 reads finish. Retain each
+    // fully verified transaction, never a partially indexed transaction.
+    const remaining = signatures.slice(processed + 1);
+    const checkpoint = await db.batch([
+      db
+        .prepare(
+          `INSERT INTO payment_chain_cursors SELECT ?,?,?,? WHERE ${fence} ON CONFLICT(project_id,network) DO UPDATE SET position=excluded.position,synced_at=excluded.synced_at`,
+        )
+        .bind(
+          deployment.projectId,
+          deployment.network,
+          item.signature,
+          new Date().toISOString(),
+          ...expected,
+        ),
+      remaining.length
+        ? db
+            .prepare(
+              `UPDATE payment_solana_scan_pages SET signatures_json=? WHERE project_id=? AND network=? AND generation=? AND page=? AND ${fence}`,
+            )
+            .bind(JSON.stringify(remaining), ...keys, page.page, ...expected)
+        : db
+            .prepare(
+              `DELETE FROM payment_solana_scan_pages WHERE project_id=? AND network=? AND generation=? AND page=? AND ${fence}`,
+            )
+            .bind(...keys, page.page, ...expected),
+      db
+        .prepare(
+          "UPDATE payment_solana_scans SET revision=revision+1 WHERE project_id=? AND network=? AND generation=? AND revision=?",
+        )
+        .bind(...expected),
+    ]);
+    // A concurrent run advanced this interval. Its prefix is authoritative;
+    // do not fetch further transactions using this run's stale page.
+    if (checkpoint[2].meta?.changes !== 1) return;
+    expected[3] = ++scan.revision;
   }
-  const remaining = signatures.slice(chunk.length);
-  await db.batch([
-    db
-      .prepare(
-        `INSERT INTO payment_chain_cursors SELECT ?,?,?,? WHERE ${fence} ON CONFLICT(project_id,network) DO UPDATE SET position=excluded.position,synced_at=excluded.synced_at`,
-      )
-      .bind(
-        deployment.projectId,
-        deployment.network,
-        chunk[chunk.length - 1].signature,
-        new Date().toISOString(),
-        ...expected,
-      ),
-    remaining.length
-      ? db
-          .prepare(
-            `UPDATE payment_solana_scan_pages SET signatures_json=? WHERE project_id=? AND network=? AND generation=? AND page=? AND ${fence}`,
-          )
-          .bind(JSON.stringify(remaining), ...keys, page.page, ...expected)
-      : db
-          .prepare(
-            `DELETE FROM payment_solana_scan_pages WHERE project_id=? AND network=? AND generation=? AND page=? AND ${fence}`,
-          )
-          .bind(...keys, page.page, ...expected),
-    db
-      .prepare(
-        "UPDATE payment_solana_scans SET revision=revision+1 WHERE project_id=? AND network=? AND generation=? AND revision=?",
-      )
-      .bind(...expected),
-  ]);
 }

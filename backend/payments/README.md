@@ -81,10 +81,12 @@ oldest first, at most 100 transactions per run. Migration `0012` adds the pendin
 pages and generation/revision checkpoints. Indexing verifies only this project's
 escrow instructions. Cursor advancement and removal of verified page entries
 share an atomic checkpoint; stale overlapping runs cannot rewind it. Restarted
-runs may reverify an event through the existing idempotent ledger. New arrivals
+runs retain every fully verified transaction rather than replaying a whole
+interrupted chunk. A transaction interrupted during indexing may reverify an
+event through the existing idempotent ledger. New arrivals
 wait for the next interval, and verified pages are removed. A failed or
-unavailable RPC never advances coverage. A failure in one deployment or step is
-reported but does not stop the other deployments, recovery, reconciliation, or
+unavailable RPC never advances coverage past that transaction. A failure in one
+deployment or step is reported but does not stop the other deployments, recovery, reconciliation, or
 dispatch. Queue ingestion remains available for faster event delivery and uses
 the same verification.
 
