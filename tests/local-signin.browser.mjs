@@ -119,7 +119,7 @@ try {
           !(
             request.failure()?.errorText === "net::ERR_ABORTED" &&
             request.method() === "GET" &&
-            /^\/api\/v1\/(?:project-session|points\/(?:me|x\/me|sessions)|payments\/me|notifications\/email)$/.test(
+            /^\/api\/v1\/(?:project-session|points\/(?:me|sessions)|payments\/me|notifications\/email)$/.test(
               new URL(request.url()).pathname,
             )
           )
@@ -162,7 +162,6 @@ try {
           "GET /api/v1/notifications/email",
           "POST /api/v1/points/join",
           "GET /api/v1/points/me",
-          "GET /api/v1/points/x/me",
           "GET /api/v1/points/sessions",
         ]);
         if (!allowed.has(`${method} ${path}`)) {
@@ -188,8 +187,6 @@ try {
           json = member;
         } else if (path === "/api/v1/points/me")
           json = signedIn ? member : null;
-        else if (path === "/api/v1/points/x/me")
-          json = { configured: false, account: null, award: null };
         else if (path === "/api/v1/points/sessions") json = { sessions: [] };
         return route.fulfill({ json });
       });
@@ -271,14 +268,19 @@ try {
         await page
           .getByRole("heading", { name: "Settings", exact: true })
           .waitFor({ state: "visible" });
-        if (name === "inline-account")
-          await page.locator("#profile").waitFor({ state: "visible" });
-        else {
-          const wallets = page.locator("#wallets");
-          await wallets.waitFor({ state: "visible" });
-          assert.equal(await wallets.locator("summary").count(), 0);
-          await wallets
-            .getByRole("heading", { name: "Wallets", exact: true })
+        await page.locator("#profile").waitFor({ state: "detached" });
+        assert.equal(
+          await page
+            .getByRole("region", { name: "Connections", exact: true })
+            .count(),
+          0,
+        );
+        for (const name of ["Wallets", "Email preferences"]) {
+          const section = page.getByRole("region", { name, exact: true });
+          await section.waitFor({ state: "visible" });
+          assert.equal(await section.locator("summary").count(), 0);
+          await section
+            .getByRole("heading", { name, exact: true })
             .waitFor({ state: "visible" });
         }
         const loadedFonts = await page.evaluate(async () => {
