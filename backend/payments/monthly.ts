@@ -99,7 +99,8 @@ export async function verifyProjectAuthority(
   async function github(path: string, label: string) {
     const response = await fetch(`https://api.github.com/${path}`, {
       headers: githubHeaders(token, "Slop-monthly-awards"),
-      redirect: "error",
+      // Workers support manual, not error; the status check below refuses redirects.
+      redirect: "manual",
       signal: AbortSignal.timeout(30000),
     });
     if (!response.ok)
