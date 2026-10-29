@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { localBackendOrigin, loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
+import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 
 type Preference =
@@ -49,10 +50,15 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
     setState({ status: "loading" });
     void (async () => {
       try {
+        const session = await currentProjectSession().catch(() => null);
         const response = await fetchWithDeadline(PATH, {
           credentials: "same-origin",
           cache: "no-store",
           redirect: "error",
+          headers:
+            session === null
+              ? undefined
+              : { "x-slop-expected-github-id": session.githubId },
           signal: controller.signal,
         });
         if (generation.current !== current) return;
@@ -60,6 +66,8 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           setState({ status: "signed-out" });
           return;
         }
+        if (response.status === 403)
+          throw new Error("The inbox account changed. Retry.");
         if (!response.ok) throw new Error("Email preferences are unavailable.");
         const value = preference(
           await readBoundedJson(response, 4096, "email preference"),
@@ -82,12 +90,18 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
     if (enabled && previous.availability !== "verified") return;
     void run(
       async () => {
+        const session = await currentProjectSession().catch(() => null);
         const response = await fetchWithDeadline(PATH, {
           method: "POST",
           credentials: "same-origin",
           cache: "no-store",
           redirect: "error",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(session === null
+              ? {}
+              : { "x-slop-expected-github-id": session.githubId }),
+          },
           body: JSON.stringify(
             enabled && previous.availability === "verified"
               ? { enabled, destinationVersion: previous.destinationVersion }
@@ -98,6 +112,8 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           setState({ status: "signed-out" });
           return;
         }
+        if (response.status === 403)
+          throw new Error("The inbox account changed. Retry.");
         if (response.status === 409) {
           load();
           throw new Error(
