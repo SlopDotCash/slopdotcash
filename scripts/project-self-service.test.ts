@@ -2083,6 +2083,26 @@ test("admin state separates a kept appeal from a new project request without wea
   expect(unscanned.body.error).toBe("vetting_required");
 });
 
+test("a newer project request does not let the author of the kept appeal decide it", async () => {
+  const { decide, MOD_2 } = await keptAppealFlow();
+  // OWNER files a new project request after the kept appeal. A decision
+  // closes both, so MOD_2, who filed the kept appeal, is still not independent.
+  expect((await decide("request_reinstatement", OWNER, 7)).status).toBe(200);
+  for (const action of ["ban", "reinstate"]) {
+    const own = await decide(
+      action,
+      MOD_2,
+      8,
+      action === "ban" ? [] : undefined,
+    );
+    expect(own.status).toBe(403);
+    expect(own.body).toMatchObject({
+      error: "independent_review_required",
+      message: "Another moderator must decide an appeal its author filed",
+    });
+  }
+});
+
 test("an account release leaves the kept project appeal for an independent malicious decision", async () => {
   const { decide } = await keptAppealFlow();
   // OWNER did not ban OTHER, so OWNER can release OTHER. The release decides
