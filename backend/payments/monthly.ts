@@ -974,16 +974,6 @@ export function monthlyOwnerService(deps: {
       // were at the cutoff until the coordinator freezes them.
       const schedule = deps.schedule();
       const cutoff = schedule ? monthlyCutoff(schedule, period) : null;
-      if (
-        cutoff &&
-        deps.now().getTime() >= cutoff.getTime() &&
-        (await automaticMonthlyPayment(deps.db, project.id))
-      )
-        throw new MonthlyPaymentError(
-          409,
-          "cutoff_passed",
-          "The cutoff for this month has passed. The automatic process pays the current allocations.",
-        );
       const base = await loadBase(deps.db, project.id, period);
       if (!base)
         throw new MonthlyPaymentError(
@@ -1025,6 +1015,18 @@ export function monthlyOwnerService(deps: {
           );
         throw error;
       }
+      // Proposal reads may cross the cutoff. Use the write's time, after
+      // those reads, for both eligibility and the recorded change.
+      const automatic = cutoff
+        ? await automaticMonthlyPayment(deps.db, project.id)
+        : false;
+      const changedAt = deps.now();
+      if (cutoff && automatic && changedAt.getTime() >= cutoff.getTime())
+        throw new MonthlyPaymentError(
+          409,
+          "cutoff_passed",
+          "The cutoff for this month has passed. The automatic process pays the current allocations.",
+        );
       let changed: number | undefined;
       try {
         const inserted = await deps.db
@@ -1038,7 +1040,7 @@ export function monthlyOwnerService(deps: {
             change.githubUserId,
             change.grossBase,
             actor.githubId,
-            deps.now().toISOString(),
+            changedAt.toISOString(),
             actor.githubId,
           )
           .run();
