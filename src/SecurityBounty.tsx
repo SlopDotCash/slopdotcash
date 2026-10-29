@@ -1821,24 +1821,30 @@ function SubmissionsPanel({
         if (current !== generation.current) return;
         if (body.recipientGithubId !== session.session.githubId)
           throw new Error("Your account changed. Reload your private reports.");
+        // Keep the successful list if a stale receipt link is no longer readable.
+        setSubmissions(body.submissions);
+        setAuthorityUnavailable(body.authorityUnavailable === true);
+        onAvailability(body.automatic === true);
         // The recent list is bounded. A receipt link still identifies an older
         // report; resolve it through its own current authorization check.
         if (
           focusId &&
           !body.submissions.some((entry) => entry.id === focusId)
         ) {
-          const focused = await privateRequest<{ submission: Submission }>(
-            "GET",
-            `security-submissions/${encodeURIComponent(focusId)}?view=receipt`,
-          );
-          if (current !== generation.current) return;
-          body.submissions = [...body.submissions, focused.submission];
+          try {
+            const focused = await privateRequest<{ submission: Submission }>(
+              "GET",
+              `security-submissions/${encodeURIComponent(focusId)}?view=receipt`,
+            );
+            if (current !== generation.current) return;
+            body.submissions = [...body.submissions, focused.submission];
+            setSubmissions(body.submissions);
+          } catch (caught) {
+            if (current === generation.current) setError(errorMessage(caught));
+          }
         }
-        // Report text is kept only while its submission can still be sent.
-        pruneDrafts(body.submissions);
-        setSubmissions(body.submissions);
-        setAuthorityUnavailable(body.authorityUnavailable === true);
-        onAvailability(body.automatic === true);
+        // Keep a linked report's draft until its authorization check resolves.
+        if (current === generation.current) pruneDrafts(body.submissions);
       })
       .catch((caught: unknown) => {
         if (current !== generation.current) return;

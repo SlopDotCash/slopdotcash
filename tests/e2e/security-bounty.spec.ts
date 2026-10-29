@@ -2957,6 +2957,23 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     ).toBe(true);
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await page.unroute("**/api/v1/security-submissions", withoutFocusedReceipt);
+    const missingReceipt = "ss_missing_receipt_fixture";
+    diagnostics.allowResponse(
+      404,
+      "GET",
+      `/api/v1/security-submissions/${missingReceipt}?view=receipt`,
+    );
+    await page.goto(`/inbox?view=reports&submission=${missingReceipt}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(report).toBeVisible();
+    await expect(report).toContainText("Slop receipt");
+    await expect(
+      page.getByText(/Report status could not refresh/),
+    ).toBeVisible();
+    await page.goto(`/inbox?view=reports&submission=${submissionId}`, {
+      waitUntil: "networkidle",
+    });
     await report
       .getByRole("button", { name: "Open case", exact: true })
       .focus();
