@@ -362,6 +362,7 @@ export async function runMonthlyCommitments(
         WHERE EXISTS(SELECT 1 FROM selected s WHERE s.project_id=p.project_id AND s.period=p.period AND s.network=p.network)
            OR (p.period=? AND json_extract(p.authorization,'$.plan.family')='evm' AND json_extract(p.authorization,'$.plan.evmReservation.version')=2
                AND EXISTS(SELECT 1 FROM selected s WHERE s.project_id=p.project_id AND s.network=p.network AND s.period<p.period
+                 AND json_extract(s.authorization,'$.plan.deployment.vault')=json_extract(p.authorization,'$.plan.deployment.vault')
                  AND json_extract(s.authorization,'$.plan.family')='evm' AND json_extract(s.authorization,'$.plan.evmReservation.version')=2))
         ORDER BY p.last_attempt,p.period,p.project_id
      )`,
