@@ -126,13 +126,14 @@ export function parseSecurityMailConfig(
 export async function* claimDueDeliveries<T extends { id: string }>(
   db: SecurityD1Database,
   channel: "security" | "activity",
-  now: Date,
+  now: () => Date,
 ): AsyncGenerator<T> {
-  const at = now.toISOString();
+  const startedAt = now();
+  const at = startedAt.toISOString();
   await db
     .prepare(`UPDATE ${channel}_notification_outbox SET state = 'ambiguous', updated_at = ?
     WHERE state = 'sending' AND claimed_at < ?`)
-    .bind(at, new Date(now.getTime() - 5 * 60_000).toISOString())
+    .bind(at, new Date(startedAt.getTime() - 5 * 60_000).toISOString())
     .run();
   const pending = await db
     .prepare(
@@ -141,10 +142,12 @@ export async function* claimDueDeliveries<T extends { id: string }>(
     .bind(at)
     .all<T>();
   for (const row of pending.results ?? []) {
+    // Earlier sends must not consume this delivery's five-minute claim.
+    const claimedAt = now().toISOString();
     const claim = await db
       .prepare(`UPDATE ${channel}_notification_outbox SET state = 'sending', claimed_at = ?, updated_at = ?, attempts = attempts + 1
       WHERE id = ? AND state IN ('queued','retrying') AND next_attempt_at <= ?`)
-      .bind(at, at, row.id, at)
+      .bind(claimedAt, claimedAt, row.id, at)
       .run();
     if (claim.meta?.changes === 1) yield row;
   }
@@ -293,7 +296,7 @@ export async function dispatchSecurityMail(
   for await (const row of claimDueDeliveries<Delivery>(
     deps.db,
     "security",
-    now,
+    deps.now,
   )) {
     let access: Awaited<ReturnType<typeof securityNotificationAccess>>;
     try {
