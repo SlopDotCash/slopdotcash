@@ -934,8 +934,17 @@ export async function readStoredIntake(
     )
     .bind(id, actor.githubId, deps.now().toISOString())
     .run();
+  const submission = await decorateSubmission(
+    deps,
+    await settle(deps, row),
+    actor,
+  );
+  // A receipt deep link may be outside the recent list. Resolve its metadata
+  // under the same live access check without reading the technical report.
+  if (new URL(request.url).searchParams.get("view") === "receipt")
+    return json(200, { recipientGithubId: actor.githubId, submission });
   return json(200, {
-    submission: await decorateSubmission(deps, await settle(deps, row), actor),
+    submission,
     report: await reportVersion(deps, stored),
   });
 }
