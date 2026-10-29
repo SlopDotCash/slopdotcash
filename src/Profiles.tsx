@@ -36,9 +36,10 @@ import {
 } from "./Presentation";
 
 async function loadProfiles(signal: AbortSignal) {
+  // Reuse stored bytes only after the server revalidates the identity directory.
   const response = await fetchWithDeadline("/data/profiles.json", {
     signal,
-    cache: "no-store",
+    cache: "no-cache",
   });
   if (!response.ok) throw Error("Profiles unavailable");
   const index = await readBoundedJson(response, 8 * 1024 * 1024, "profiles");

@@ -44,9 +44,9 @@ export function ProjectBountyFunding({
   const [project, setProject] = useState(initial);
   const { allowed } = useProjectMaintainer(project.id);
   const terms = project.securityBounty;
-  if (!terms) return null;
+  const deployments = terms?.settlement?.deployments ?? [];
+  if (!terms || deployments.length === 0) return null;
   const chain = terms.settlement?.chain ?? terms.amount.network;
-  const deployments = terms.settlement?.deployments ?? [];
   return (
     <section
       id="funding"
@@ -71,10 +71,6 @@ export function ProjectBountyFunding({
           compact
           onRegistered={({ project: updated }) => setProject(updated)}
         />
-      ) : deployments.length === 0 ? (
-        <p className="vault-unconfigured" role="status">
-          The project vault is not set up.
-        </p>
       ) : (
         <div className="vault-totals">
           {deployments.map((deployment) => (

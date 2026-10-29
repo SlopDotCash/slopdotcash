@@ -39,6 +39,7 @@ import {
   serveProjectCycleIndex,
   test,
 } from "./fixtures";
+import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 test.skip(
   process.env.SLOP_E2E_VAULT_ACTIONS !== "1",
@@ -327,9 +328,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       }),
   );
   await serveProjectCycleIndex(page, [project.id]);
-  await page.route("**/api/v1/projects/eliza", (route) =>
-    route.fulfill({ json: { project, revision: 1 } }),
-  );
+  await serveProjectMaintainer(page, () => project);
   await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
     route.fulfill({
       json: {
@@ -340,17 +339,17 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       },
     }),
   );
-  await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
-  );
-  // The overview exposes the same vault controls as the retained funding URL.
+  // Public totals remain visible without exposing owner wallet controls.
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const summary = page.getByRole("region", { name: "Project escrow" });
   await expect(summary).toContainText("Totals not read yet");
   await expect(
     page.getByRole("region", { name: /^Fund or withdraw/u }),
-  ).toBeVisible();
-  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: /^Vault monthly authorization/u }),
+  ).toHaveCount(0);
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(
     page.getByText("Vault: Not set up", { exact: true }),
   ).toHaveCount(0);
@@ -648,7 +647,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       return route.fulfill({ json: commitment });
     },
   );
-  await page.goto("/projects/eliza/funding");
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
@@ -835,9 +834,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
       }),
   );
   await serveProjectCycleIndex(page, [project.id]);
-  await page.route("**/api/v1/projects/eliza", (route) =>
-    route.fulfill({ json: { project, revision: 1 } }),
-  );
+  await serveProjectMaintainer(page, () => project);
   await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
     route.fulfill({
       json: {
@@ -847,9 +844,6 @@ test("owner turns automatic monthly payment on by default, then opts out", async
         servedAt: new Date().toISOString(),
       },
     }),
-  );
-  await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
   );
   const monthlyState = parseAbi([
     "function monthlyCap() view returns (uint128)",
@@ -878,7 +872,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     rewardAsset: { ...project.rewardAsset, address: otherToken.toLowerCase() },
   };
   const cap = formatBaseUnits(project.reward.monthlyCapMinor, 6);
-  await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   const monthly = page.getByRole("region", {
     name: "Vault monthly authorization · Base Sepolia (test)",
   });
@@ -897,6 +891,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
       },
     }),
   );
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page
     .getByRole("button", { name: "Review monthly awards", exact: true })
     .click();
@@ -906,7 +901,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   });
   await expect(authorizationLink).toHaveAttribute(
     "href",
-    `#vault-monthly-${deployment.network}-${deployment.vault}`,
+    `/projects/eliza/manage#vault-monthly-${deployment.network}-${deployment.vault}`,
   );
   await authorizationLink.click();
   await expect(monthly).toBeInViewport();
@@ -1319,7 +1314,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
           failedRequests.push(`${r.status()} ${r.url()}`);
       });
     watch(page);
-    await page.goto(`${origin}/projects/${project.slug}/funding`, {
+    await page.goto(`${origin}/projects/${project.slug}/manage`, {
       waitUntil: "networkidle",
     });
     let setup = page.getByRole("region", { name: "Set up project vault" });
@@ -1401,7 +1396,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     // no saved creation request. Recover the already-sent vault without sending.
     const recoveryPage = await page.context().newPage();
     watch(recoveryPage);
-    await recoveryPage.goto(`${origin}/projects/${project.slug}/funding`, {
+    await recoveryPage.goto(`${origin}/projects/${project.slug}/manage`, {
       waitUntil: "networkidle",
     });
     const recoverySetup = recoveryPage.getByRole("region", {
@@ -1509,14 +1504,17 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toHaveText(
       "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
     );
-    const monthlyTarget = recoveryPage.locator(".project-reward-status");
-    await expect(monthlyTarget).toHaveText(
-      /2k\s*\$TEST monthly target, split between contributors/u,
-    );
-    await expect(monthlyTarget).toBeVisible();
+    await recoveryPage
+      .locator("summary")
+      .filter({ hasText: /^Monthly rewards$/u })
+      .click();
+    await expect(
+      recoveryPage.getByRole("textbox", { name: /^Monthly amount/u }),
+    ).toHaveValue("2000");
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
-    expect(state.scanReads).toBe(afterEdit.scanReads);
+    // Settings refresh the registered revision and read its retained clearance once.
+    expect(state.scanReads).toBe(afterEdit.scanReads + 1);
     expect(state.revisions.n).toBe(3);
     expect(state.project.manifest.reward.monthlyCapMinor).toBe("2000000000");
     const created = state.project.manifest.escrow.deployments[0];

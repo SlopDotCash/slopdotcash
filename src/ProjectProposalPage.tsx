@@ -10,6 +10,7 @@ import {
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectImageField } from "./ProjectImageField";
 import "./owner-review.css";
+import { EscrowFunding } from "./EscrowFunding";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
@@ -2704,11 +2705,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
                 0 ? (
                 <>
                   {" "}
-                  <a
-                    href={`/projects/${submission.result.project.manifest.slug}/funding`}
-                  >
-                    Set up vault
-                  </a>
+                  <a href="#project-vault">Set up vault</a>
                 </>
               ) : null}
             </p>
@@ -2720,6 +2717,14 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
+      {current.escrow && current.reward.kind !== "external-prize-share" ? (
+        <div id="project-vault">
+          <EscrowFunding
+            project={current}
+            onRegistered={() => setReload((count) => count + 1)}
+          />
+        </div>
+      ) : null}
       <p id="security-settings">
         <Link href={`/projects/${current.slug}/security#security-settings`}>
           Manage security program and private bounty funds

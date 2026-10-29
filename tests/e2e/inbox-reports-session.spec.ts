@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, expectAccessible, test } from "./fixtures";
 
 const record = (id: string) => ({
   id: `sc_actor_${id}_private`,
@@ -26,7 +26,7 @@ const record = (id: string) => ({
   disclosureState: "embargoed",
 });
 
-test("reports follow the recipient confirmed by the parent Inbox", async ({
+test("one Inbox shows reports and notifications for its confirmed recipient", async ({
   page,
 }) => {
   let actor = "42";
@@ -88,16 +88,30 @@ test("reports follow the recipient confirmed by the parent Inbox", async ({
     await expect(
       page.getByText("Private account 42 finding", { exact: true }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Notifications", exact: true })
-      .click();
+    await expect(
+      page.getByRole("navigation", { name: "Inbox views" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /^(Reports|Notifications)$/u }),
+    ).toHaveCount(0);
+    const notifications = page.getByRole("list", { name: "Notifications" });
+    await expect(notifications).toContainText(
+      "A base payout wallet was added to your account.",
+    );
+    await expect(
+      page.getByText("Link or import a GitHub report", { exact: true }),
+    ).toHaveCount(0);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("unified-inbox.png"),
+      fullPage: false,
+    });
     await page
       .getByRole("button", { name: "Mark shown as read", exact: true })
       .click();
-    await page.getByRole("button", { name: "Reports", exact: true }).click();
     await expect(
       page.getByText("Private account 42 finding", { exact: true }),
-    ).toBeVisible();
+    ).toBeHidden();
     actor = "43";
     release();
     await page.waitForLoadState("networkidle");
@@ -107,6 +121,7 @@ test("reports follow the recipient confirmed by the parent Inbox", async ({
     await expect(
       page.getByText("Private account 43 finding", { exact: true }),
     ).toBeVisible();
+    await expect(notifications).toHaveCount(0);
   } finally {
     release();
   }

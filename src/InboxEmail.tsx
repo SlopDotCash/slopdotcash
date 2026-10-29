@@ -146,13 +146,10 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
 
   return (
     <section
-      aria-labelledby={headingId ?? "inbox-email-heading"}
+      aria-labelledby={headingId ? undefined : "inbox-email-heading"}
       className="inbox-email-settings email-card"
     >
       {headingId ? null : <h2 id="inbox-email-heading">Email preferences</h2>}
-      {localBackendOrigin ? (
-        <p role="status">Local preview only. No email is sent.</p>
-      ) : null}
       {state.status === "signed-out" ? (
         <p>
           Your session expired.{" "}

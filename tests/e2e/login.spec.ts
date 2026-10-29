@@ -131,6 +131,26 @@ for (const [next, expected] of [
         await route.fulfill({ json: member });
         return;
       }
+      if (url.pathname === "/api/v1/notifications/email") {
+        await route.fulfill({
+          json: { enabled: false, availability: "unverified" },
+        });
+        return;
+      }
+      if (url.pathname === "/api/v1/payments/me") {
+        await route.fulfill({
+          json: {
+            githubUserId: "123",
+            wallets: [],
+            payments: [],
+            monthlyAwards: [],
+            balances: [],
+            directTransfers: [],
+            walletObservations: [],
+          },
+        });
+        return;
+      }
       if (url.pathname.startsWith("/api/")) {
         await route.fulfill({ status: 404, json: {} });
         return;
