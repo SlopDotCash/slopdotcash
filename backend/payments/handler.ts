@@ -284,12 +284,20 @@ export async function handlePaymentsApi(
       ).filter(
         (row) => deps.tier === "staging" || !isTestnetNetwork(row.network),
       );
-      const cursor = await deps.db
+      const storedCursor = await deps.db
         .prepare(
           "SELECT network,position,synced_at FROM payment_chain_cursors WHERE project_id=?",
         )
         .bind(projectId)
         .first<{ network: string; position: string; synced_at: string }>();
+      // A cursor on an excluded network is treated as absent, so the reported
+      // coverage stays consistent with the filtered amount rows under the same
+      // tier rule.
+      const cursor =
+        storedCursor &&
+        (deps.tier === "staging" || !isTestnetNetwork(storedCursor.network))
+          ? storedCursor
+          : null;
       if (!rows.length && !cursor)
         return json(503, { error: "project_payments_not_indexed" });
       const assets = new Map<

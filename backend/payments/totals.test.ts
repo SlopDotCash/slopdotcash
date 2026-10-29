@@ -28,9 +28,23 @@ function insertObligation(
     .run(id, project, network, vault, asset, digest, when, `0x${digest}`);
 }
 
+function insertCursor(
+  sqlite: ReturnType<typeof sqliteD1>["sqlite"],
+  project: string,
+  network: string,
+) {
+  sqlite
+    .query(
+      `INSERT INTO payment_chain_cursors (project_id,network,position,synced_at)
+       VALUES(?,?,?,?)`,
+    )
+    .run(project, network, "12345", when);
+}
+
 interface TotalsBody {
   assets?: { network: string }[];
   error?: string;
+  network?: string | null;
 }
 
 async function totals(
@@ -72,5 +86,23 @@ test("project totals exclude testnet networks in production but keep them in sta
 
   const staging = await totals(database, "project-test", "staging");
   expect(staging.status).toBe(200);
+  expect(networks(staging.body)).toContain("base-sepolia");
+});
+
+test("project totals ignore a testnet chain cursor in production but keep it in staging", async () => {
+  const { db, sqlite } = sqliteD1();
+  const database = db as unknown as D1TransactionalDatabase;
+  insertObligation(sqlite, "project-test", "base-sepolia");
+  insertCursor(sqlite, "project-test", "base-sepolia");
+
+  // The stored testnet cursor must not keep a testnet-only project reportable
+  // in production: no amount rows and no usable cursor reads as not indexed.
+  const production = await totals(database, "project-test");
+  expect(production.status).toBe(503);
+  expect(production.body).toEqual({ error: "project_payments_not_indexed" });
+
+  const staging = await totals(database, "project-test", "staging");
+  expect(staging.status).toBe(200);
+  expect(staging.body.network).toBe("base-sepolia");
   expect(networks(staging.body)).toContain("base-sepolia");
 });
