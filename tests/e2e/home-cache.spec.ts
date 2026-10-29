@@ -217,6 +217,8 @@ test("a failed snapshot refresh keeps the last good sponsor report with a stale 
   page,
 }) => {
   diagnostics.allowPreviewApiMisses();
+  const start = Date.now();
+  await page.clock.setFixedTime(start);
   // The refused snapshot reads below; each cancels its paired cycle index
   // read.
   diagnostics.allow(
@@ -225,11 +227,12 @@ test("a failed snapshot refresh keeps the last good sponsor report with a stale 
     /^net::ERR_ABORTED GET http:\/\/[^ ]+\/data\/cycles\/index\.json\?\S*$/u,
   );
   let failSnapshot = false;
-  await page.route("**/data/leaderboard.json?*", (route) =>
-    failSnapshot
-      ? route.fulfill({ status: 503, json: { error: "unavailable" } })
-      : route.fallback(),
-  );
+  let failedSnapshotReads = 0;
+  await page.route("**/data/leaderboard.json?*", (route) => {
+    if (!failSnapshot) return route.fallback();
+    failedSnapshotReads++;
+    return route.fulfill({ status: 503, json: { error: "unavailable" } });
+  });
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   const scoreRows = page
     .getByRole("list", { name: "Project funding pools" })
@@ -241,6 +244,8 @@ test("a failed snapshot refresh keeps the last good sponsor report with a stale 
   await page.getByRole("link", { name: "How it works", exact: true }).click();
   await expect(page).toHaveURL(/\/how-it-works$/u);
   failSnapshot = true;
+  // Expire the 60-second public cache before testing a failed refresh.
+  await page.clock.setFixedTime(start + 61_000);
   await page.goBack();
   await expect(page).toHaveURL(/\/sponsors$/u);
   await page
@@ -252,6 +257,7 @@ test("a failed snapshot refresh keeps the last good sponsor report with a stale 
     .getByRole("status")
     .filter({ has: page.getByRole("button", { name: "Retry" }) });
   await expect(notice).toContainText("Points may be outdated");
+  expect(failedSnapshotReads).toBeGreaterThan(0);
   await expect(notice.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(scoreRows).toHaveCount(rowCount);
   await expect(page.getByText("Data could not load.")).toHaveCount(0);
