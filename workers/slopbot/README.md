@@ -88,11 +88,13 @@ current behavior.
 
 ## Project consent
 
-Repository `.github/slopbot.json` selects per-category `off` / `label` /
-`close` (`contracts.ts`). Defaults match the published penalty table's label
-vs close split for consent categories. Missing or invalid config fails closed
-to label-only review. Universal categories (`spam`, `scam`, `empty`,
-`duplicate`) may close without repository guidance when other gates pass.
+Consent is the project's automatic-closure setting, which starts unchecked;
+installing the App or registering the project does not grant it
+([PRD section 5](../../docs/slop-product-requirements.md)). A repository
+`.github/slopbot.json` is optional. If it is absent, the project setting
+decides. If it is present and valid, its `closure` flag and per-category
+`off` / `label` / `close` restrictions still apply (`contracts.ts`). If it is
+present but invalid, review falls back to label-only with no closure.
 
 ## Free reviews, budget blocks, spend
 
