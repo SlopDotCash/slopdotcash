@@ -3150,3 +3150,111 @@ test("a delayed old-head reopen never reverses a later head's close and debit", 
     expect(run.currentState()).toBe("closed");
   });
 });
+
+test("accepting an older head's uphold draft never reverses a later head's close and debit", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    // Head b gets a spam label only: the owner has not consented to closure.
+    run.consent(false);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    // The author appeals head b, and triage drafts an uphold.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // The owner consents, the author pushes head d, and Slopbot closes d
+    // with a debit. Head d has no appeal.
+    run.consent(true);
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
+    run.model("spam", 0.97);
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    const before = run.writes.length;
+    // The author accepts the head-b draft. The decision is recorded for b,
+    // but the close, label and debit of head d stand.
+    const result = await run.deliver(
+      run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+    );
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    expect(run.currentState()).toBe("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    expect(
+      run.writes.slice(before).filter((write) => !write.endsWith("/comments")),
+    ).toEqual([]);
+    expect(result).toBe(
+      "appeal upheld by the appellant; newer item state kept",
+    );
+    expect(run.sql(APPEAL)).toMatchObject([
+      { resolution: "upheld", resolved_by: "appellant" },
+    ]);
+  });
+});
+
+test("accepting an older head's uphold draft removes that head's label when a later head adds no finding", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    // Head b gets a spam label only: the owner has not consented to closure.
+    run.consent(false);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // The author pushes a clean head d. Its review publishes no finding, so
+    // head b's label is still the newest finding on the item.
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
+    run.model("none", 0.95);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    const before = run.writes.length;
+    const result = await run.deliver(
+      run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+    );
+    expect(result).toBe(
+      "appeal upheld by the appellant; newer item state kept",
+    );
+    // Head b's label goes; nothing reopens.
+    expect(run.labels).not.toContain("slopbot: spam");
+    const writes = run.writes
+      .slice(before)
+      .filter((write) => !write.endsWith("/comments"));
+    expect(writes.some((write) => write.startsWith("DELETE"))).toBe(true);
+    expect(writes.filter((write) => write.startsWith("PATCH"))).toEqual([]);
+    expect(run.sql(APPEAL)).toMatchObject([
+      { resolution: "upheld", resolved_by: "appellant" },
+    ]);
+  });
+});
+
+test("accepting an older head's uphold draft keeps a later head's finding label", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.consent(false);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // Head d gets its own label-only spam finding after the appeal opened.
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
+    run.model("spam", 0.97);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    const before = run.writes.length;
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("appeal upheld by the appellant; newer item state kept");
+    expect(run.labels).toContain("slopbot: spam");
+    expect(
+      run.writes.slice(before).filter((write) => !write.endsWith("/comments")),
+    ).toEqual([]);
+  });
+});
