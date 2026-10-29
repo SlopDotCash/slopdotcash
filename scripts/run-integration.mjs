@@ -23,6 +23,7 @@ const drivers = [
     "node",
     ["backend/notifications/mark-read.workflow.mjs"],
   ],
+  ["security-inbox-list", "node", ["backend/security/inbox-list.workflow.mjs"]],
   [
     "reporting-readiness",
     "node",
