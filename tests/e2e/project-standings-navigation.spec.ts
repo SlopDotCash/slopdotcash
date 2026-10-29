@@ -2,6 +2,14 @@
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import {
+  appendPointAwards,
+  emptyPointsJournal,
+  pointKey,
+  pointMembers,
+} from "../../src/lib/points";
+import { PROJECTS } from "../../src/lib/projects.mjs";
+import { sha256Hex } from "../../src/lib/sha256";
 import { cycleIndexFixture } from "../fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -9,28 +17,40 @@ const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
 ).site;
 const instant = "2026-10-16T12:00:00.000Z";
-const contributors = {
-  eliza: { id: "101", login: "synthetic-eliza", amount: "111110000" },
-  slopdotcash: { id: "202", login: "synthetic-slop", amount: "222220000" },
-};
+const contributors = [
+  {
+    projectId: "eliza",
+    id: "U_navigation_eliza",
+    login: "synthetic-eliza",
+    points: 111,
+  },
+  {
+    projectId: "slopdotcash",
+    id: "U_navigation_slop",
+    login: "synthetic-slop",
+    points: 222,
+  },
+  {
+    projectId: "slopdotcash",
+    id: "U_navigation_tie",
+    login: "synthetic-tie",
+    points: 222,
+  },
+];
 
-async function fixtures(page: Page, paymentsAvailable = () => true) {
+async function fixtures(page: Page, paymentRead = () => {}) {
   await page.clock.setFixedTime(new Date(instant));
   await page.route(`${site}/**`, (route) =>
-    // Money received falls back to the shared empty aggregate (fixtures.ts).
-    new URL(route.request().url()).pathname === "/api/v1/payments/received"
-      ? route.fallback()
-      : route.fulfill({
-          path: join(
-            process.cwd(),
-            "dist",
-            route.request().resourceType() === "document"
-              ? "index.html"
-              : new URL(route.request().url()).pathname,
-          ),
-        }),
+    route.fulfill({
+      path: join(
+        process.cwd(),
+        "dist",
+        route.request().resourceType() === "document"
+          ? "index.html"
+          : new URL(route.request().url()).pathname,
+      ),
+    }),
   );
-  // Preview has no executable agent discovery; D1 coverage is in registry.spec.ts.
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
@@ -49,137 +69,126 @@ async function fixtures(page: Page, paymentsAvailable = () => true) {
   await page.route("https://avatars.githubusercontent.com/**", (route) =>
     route.fulfill({ path: join(process.cwd(), "public/slop-mark.svg") }),
   );
-  // Project payment history still lists each project's own disclosures.
-  await page.route(
-    "**/api/v1/payments/projects/*/direct-transfers",
-    (route) => {
-      const projectId = new URL(route.request().url()).pathname.split("/")[5];
-      const actor = contributors[projectId as keyof typeof contributors];
-      return route.fulfill({
-        json: {
-          totalMicro: actor?.amount ?? "0",
-          transfers: actor
-            ? [
-                {
-                  projectId,
-                  githubUserId: actor.id,
-                  login: actor.login,
-                  amountMicro: actor.amount,
-                  contributionMonth: "2026-10",
-                  network: "base-sepolia",
-                  chain: "base",
-                  recipient: "synthetic-recipient",
-                  transactionId: `synthetic-${projectId}`,
-                  blockTime: instant,
-                },
-              ]
-            : [],
-        },
-      });
-    },
+  // Payment history remains separate from the points-only leaderboard.
+  await page.route("**/api/v1/payments/projects/*/direct-transfers", (route) =>
+    route.fulfill({ json: { totalMicro: "0", transfers: [] } }),
   );
-  // One edge-cached aggregate carries all-time money received for every page.
   await page.route("**/api/v1/payments/received", (route) => {
-    if (!paymentsAvailable())
-      return route.fulfill({
-        status: 503,
-        body: "Payment source unavailable",
-      });
-    const rows = Object.entries(contributors).map(([projectId, actor]) => ({
-      githubUserId: actor.id,
-      login: actor.login,
-      usdMicro: actor.amount,
-      directMicro: actor.amount,
-      vaultUsdMicro: "0",
-      directTransfers: 1,
-      vaultPayments: 0,
-      projects: [{ projectId, usdMicro: actor.amount }],
-      otherAssets: [],
-    }));
-    return route.fulfill({
+    paymentRead();
+    return route.fulfill({ status: 503, body: "Payment source unavailable" });
+  });
+  const journal = appendPointAwards(
+    emptyPointsJournal(instant),
+    contributors.map((entry) => {
+      const sourceId = `PR_${entry.id}`;
+      const repository = PROJECTS.find(
+        (project) => project.id === entry.projectId,
+      )?.links.repository;
+      if (!repository) throw new Error("Missing standings project fixture");
+      return {
+        key: pointKey(
+          entry.projectId,
+          entry.id,
+          "merged-pull-request",
+          sourceId,
+        ),
+        actor: { id: entry.id, login: entry.login },
+        projectId: entry.projectId,
+        category: "merged-pull-request" as const,
+        amount: entry.points,
+        occurredAt: instant,
+        sourceId,
+        sourceUrl: `${repository}/pull/1`,
+        workUnitId: sourceId,
+        provisional: false,
+      };
+    }),
+    "a".repeat(64),
+    "github-merged-history-v1",
+    instant,
+  );
+  const parts = Array.from({ length: 16 }, (_, index) =>
+    JSON.stringify(
+      journal.revisions
+        .map((revision, sequence) => ({ sequence, revision }))
+        .filter(({ revision }) =>
+          revision.award.key.startsWith(index.toString(16)),
+        ),
+    ),
+  );
+  const index = {
+    schemaVersion: "1",
+    ruleVersion: journal.ruleVersion,
+    generatedAt: instant,
+    coverage: journal.coverage,
+    revisionCount: journal.revisions.length,
+    shards: parts.map((part, position) => ({
+      path: `/data/points/${position.toString(16)}.json`,
+      sha256: sha256Hex(part),
+      count: JSON.parse(part).length,
+    })),
+  };
+  await page.route("**/data/points.json", (route) =>
+    route.fulfill({ json: index }),
+  );
+  for (const [position, part] of parts.entries())
+    await page.route(`**/data/points/${position.toString(16)}.json`, (route) =>
+      route.fulfill({ contentType: "application/json", body: part }),
+    );
+  const members = pointMembers(journal);
+  await page.route("**/data/points-summary.json", (route) =>
+    route.fulfill({
       json: {
         schemaVersion: "1",
+        ruleVersion: journal.ruleVersion,
         generatedAt: instant,
-        contributors: rows,
+        indexDigest: sha256Hex(JSON.stringify(index)),
         totals: {
-          usdMicro: rows
-            .reduce((sum, row) => sum + BigInt(row.usdMicro), 0n)
-            .toString(),
-          directMicro: "333330000",
-          vaultUsdMicro: "0",
-          directTransfers: rows.length,
-          vaultPayments: 0,
-          contributors: rows.length,
+          contributors: members.length,
+          points: members.reduce((sum, member) => sum + member.total, 0),
         },
+        contributors: members.map(({ actor, total }) => ({ actor, total })),
       },
-    });
-  });
+    }),
+  );
 }
 
-test("Money received standings preserve unavailable data and recover on retry", async ({
-  diagnostics,
+test("point rankings and ties do not depend on payment availability", async ({
   page,
 }, info) => {
-  // The payment source outage asserted below.
-  diagnostics.allow(
-    /^console Failed to load resource: the server responded with a status of 503 .*\/api\/v1\/payments\/received$/u,
-  );
-  let available = false;
-  const failures: string[] = [];
-  page.on("response", (response) => {
-    if (response.status() >= 400)
-      failures.push(`${response.status()} ${response.url()}`);
-  });
-  await fixtures(page, () => available);
+  let paymentReads = 0;
+  await fixtures(page, () => paymentReads++);
   await page.goto(`${site}/points?sort=money&period=lifetime`);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
     exact: true,
   });
+  await expect(standings.getByRole("columnheader")).toHaveText([
+    "Rank",
+    "Contributor",
+    "Points",
+  ]);
   await expect(
-    standings.getByText("Payment records unavailable."),
-  ).toBeVisible();
-  await expect(standings.locator("tbody tr")).toHaveCount(0);
-  await expect(
-    standings.getByText("No contributors match this view."),
+    standings.getByText(/Money received|Payment records unavailable/u),
   ).toHaveCount(0);
-  expect(failures.length).toBeGreaterThan(0);
-  expect(
-    failures.every(
-      (failure) =>
-        failure.startsWith("503 ") &&
-        failure.endsWith("/api/v1/payments/received"),
-    ),
-  ).toBe(true);
-  await page.screenshot({ path: info.outputPath("payments-unavailable.png") });
-  // Other metrics remain usable while the independent payment source fails.
-  await standings.getByRole("button", { name: "Points", exact: true }).click();
-  await expect(standings.locator("tbody tr").first()).toBeVisible();
-  await expect(
-    standings.locator("tbody tr").first().locator("td").last(),
-  ).toContainText("Unavailable");
-  await standings
-    .getByRole("button", { name: "Money received", exact: true })
-    .click();
-  available = true;
-  failures.length = 0;
-  const retry = standings.getByRole("button", {
-    name: "Retry payment records",
-  });
-  await retry.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-slop" }),
-  ).toContainText("$222.22");
-  await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
-  ).toContainText("$111.11");
+  await expect(standings.locator("tbody tr")).toHaveCount(3);
   await expect(standings.locator("tbody tr").first()).toContainText(
     "synthetic-slop",
   );
-  await expect(retry).toHaveCount(0);
-  expect(failures).toEqual([]);
-  await page.screenshot({ path: info.outputPath("payments-recovered.png") });
+  await expect(standings.locator("tbody tr td:first-child")).toHaveText([
+    "1",
+    "1",
+    "3",
+  ]);
+  await expect(
+    standings.getByRole("link", { name: "synthetic-slop", exact: true }),
+  ).toHaveAttribute("href", "/contributors/synthetic-slop");
+  await expect(page).not.toHaveURL(/sort=money/u);
+  expect(paymentReads).toBe(0);
+  await page.screenshot({
+    path: info.outputPath("points-only-rankings.png"),
+    fullPage: true,
+  });
   await expectAccessible(page);
 });
 
@@ -187,7 +196,7 @@ test("history navigation keeps contributor standings scoped to the current proje
   page,
 }, info) => {
   await fixtures(page);
-  await page.goto(`${site}/projects/slopdotcash?sort=money&period=lifetime`);
+  await page.goto(`${site}/projects/slopdotcash?project=eliza&period=lifetime`);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
     exact: true,
@@ -196,7 +205,7 @@ test("history navigation keeps contributor standings scoped to the current proje
   const eliza = standings
     .getByRole("row")
     .filter({ hasText: "synthetic-eliza" });
-  await expect(slop).toContainText("$222.22");
+  await expect(slop).toContainText("222 pts");
   await expect(eliza).toHaveCount(0);
   await standings.scrollIntoViewIfNeeded();
   const document = await page.evaluate(() => performance.timeOrigin);
@@ -205,10 +214,7 @@ test("history navigation keeps contributor standings scoped to the current proje
     .getByRole("link", { name: "Slop home", exact: true })
     .click();
   await page.locator('a.project-card[href="/projects/eliza"]').click();
-  await standings
-    .getByRole("button", { name: "Money received", exact: true })
-    .click();
-  await expect(eliza).toContainText("$111.11");
+  await expect(eliza).toContainText("111 pts");
   await page.evaluate(() => history.go(-2));
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
   await standings.scrollIntoViewIfNeeded();
@@ -223,17 +229,17 @@ test("history navigation keeps contributor standings scoped to the current proje
     }),
     contentType: "application/json",
   });
-  await expect(slop).toContainText("$222.22");
+  await expect(slop).toContainText("222 pts");
   await expect(eliza).toHaveCount(0);
   await expectAccessible(page);
   await page.evaluate(() => history.go(2));
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
-  await expect(eliza).toContainText("$111.11");
+  await expect(eliza).toContainText("111 pts");
   await expect(slop).toHaveCount(0);
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(document);
 });
 
-test("global standings still accept project, sort and contributor filters", async ({
+test("legacy project and contributor URLs keep points-only ranking", async ({
   page,
 }) => {
   await fixtures(page);
@@ -256,30 +262,36 @@ test("global standings still accept project, sort and contributor filters", asyn
     name: "Contributor standings",
     exact: true,
   });
-  await standings
-    .getByRole("button", { name: "Money received", exact: true })
-    .click();
-  const project = standings.getByLabel("Project", { exact: true });
-  await project.selectOption("eliza");
-  await expect(project).toHaveValue("eliza");
+  await expect(standings.getByLabel("Project", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Find a contributor")).toHaveCount(0);
+  await expect(page.locator(".points-coverage-details")).toHaveCount(0);
+  await page.goto(`${site}/points?period=lifetime&project=eliza`);
   await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
-  ).toContainText("$111.11");
+    standings
+      .getByRole("row")
+      .filter({ hasText: "synthetic-eliza" })
+      .locator("td")
+      .last(),
+  ).toHaveText("111");
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-slop" }),
   ).toHaveCount(0);
-  await project.selectOption("slopdotcash");
+  await page.goto(`${site}/points?period=lifetime&project=slopdotcash`);
   await expect(
-    standings.getByRole("row").filter({ hasText: "synthetic-slop" }),
-  ).toContainText("$222.22");
+    standings
+      .getByRole("row")
+      .filter({ hasText: "synthetic-slop" })
+      .locator("td")
+      .last(),
+  ).toHaveText("222");
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
   ).toHaveCount(0);
-  await project.selectOption("");
+  await page.goto(`${site}/points?period=lifetime`);
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
   ).toBeVisible();
-  await page.getByLabel("Find a contributor").fill("synthetic-slop");
+  await page.goto(`${site}/points?period=lifetime&q=synthetic-slop`);
   await expect(
     standings.getByRole("row").filter({ hasText: "synthetic-eliza" }),
   ).toHaveCount(0);
@@ -287,19 +299,14 @@ test("global standings still accept project, sort and contributor filters", asyn
     standings.getByRole("row").filter({ hasText: "synthetic-slop" }),
   ).toBeVisible();
   await expect(page).toHaveURL(/q=synthetic-slop/);
-  await standings.getByRole("button", { name: "Points", exact: true }).click();
   await expect(
     standings.getByRole("columnheader", { name: "Points", exact: true }),
   ).toHaveAttribute("aria-sort", "descending");
-  await standings
-    .getByRole("button", { name: "Money received", exact: true })
-    .click();
-  await expect(
-    standings.getByRole("columnheader", {
-      name: "Money received",
-      exact: true,
-    }),
-  ).toHaveAttribute("aria-sort", "descending");
-  await expect(page).toHaveURL(/sort=money/);
+  await expect(standings.getByRole("columnheader")).toHaveText([
+    "Rank",
+    "Contributor",
+    "Points",
+  ]);
+  await expect(page).not.toHaveURL(/sort=money/u);
   await expectAccessible(page);
 });

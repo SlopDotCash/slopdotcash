@@ -1402,20 +1402,48 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   await expect(returning.locator("main")).not.toContainText("steals tokens");
   await expect(returning.locator("main")).not.toContainText(evidence);
   await returning.goto("/account", { waitUntil: "networkidle" });
-  const appealForm = returning.getByRole("form", {
-    name: `Account appeal for ${project.id}`,
-  });
-  await appealForm
-    .getByLabel("Reason for appeal")
-    .fill("The account is not responsible for this code");
-  await appealForm.getByLabel("Evidence reference").fill(evidence);
-  await appealForm.getByRole("button", { name: "Send account appeal" }).click();
-  await expect(appealForm.getByRole("status")).toContainText("Appeal recorded");
+  await expect(
+    returning.locator("#security, #recovery, #close-account"),
+  ).toHaveCount(0);
+  await expect(
+    returning.getByRole("form", {
+      name: `Account appeal for ${project.id}`,
+    }),
+  ).toHaveCount(0);
+  // The Settings appeal form is gone; its existing authenticated API still
+  // records account appeals for independent review in this isolated local D1.
+  const accountAppeal = await returning.request.post(
+    "/api/v1/project-appeals",
+    {
+      headers: {
+        origin: new URL(returning.url()).origin,
+        cookie: `__Host-slop_points=${token}`,
+      },
+      data: {
+        projectId: project.id,
+        appealScope: "account",
+        reason: "The account is not responsible for this code",
+        evidenceReference: evidence,
+      },
+    },
+  );
+  expect(accountAppeal.status()).toBe(200);
   await returning.reload();
-  await expect(appealForm.getByRole("status")).toContainText("Appeal recorded");
+  const storedAppeal = await returning.request.get("/api/v1/project-appeals", {
+    headers: { cookie: `__Host-slop_points=${token}` },
+  });
+  expect(storedAppeal.status()).toBe(200);
+  expect((await storedAppeal.json()).appeals).toContainEqual({
+    projectId: project.id,
+    state: "banned",
+    appeal: "requested",
+  });
+  await expect(
+    returning.getByRole("form", { name: `Account appeal for ${project.id}` }),
+  ).toHaveCount(0);
   await expectAccessible(returning);
   await returning.screenshot({
-    path: test.info().outputPath("account-appeal-submitted.png"),
+    path: test.info().outputPath("account-appeal-api-retained.png"),
     fullPage: true,
   });
   await returningContext.close();
@@ -2013,10 +2041,13 @@ test("an owner initializes a legacy monthly project without shortening its accep
     await vaultSetupLink.focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(
-      new RegExp(`/projects/${project.id}#funding$`),
+      new RegExp(`/projects/${project.id}/manage#project-vault$`),
     );
     await expect(
       page.getByRole("heading", { name: /Project vault.*Solana/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Set up project vault", exact: true }),
     ).toBeVisible();
     await page.screenshot({
       path: test.info().outputPath("published-vault-funding.png"),

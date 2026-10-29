@@ -54,6 +54,9 @@ test("social membership preserves past points and discloses public connections w
   await page.route(`${site}/api/v1/project-appeals`, (route) =>
     route.fulfill({ json: { appeals: [] } }),
   );
+  await page.route(`${site}/api/v1/notifications/email`, (route) =>
+    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+  );
   await page.route(`${site}/api/v1/project-session`, (route) =>
     route.fulfill({
       json: {
@@ -173,8 +176,19 @@ test("social membership preserves past points and discloses public connections w
   await header.click({ position: { x: 1, y: 1 } });
   await expect(accountPanel).toHaveCount(0);
   await accountButton.click();
-  await accountPanel.getByRole("link", { name: "Account settings" }).click();
+  await expect(
+    accountPanel.getByRole("link", { name: "Wallets", exact: true }),
+  ).toHaveCount(0);
+  await accountPanel
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
   await expect(page).toHaveURL(`${site}/account`);
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Account navigation" }),
+  ).toHaveCount(0);
   await expect(page.getByRole("table")).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "People", exact: true }),
@@ -189,8 +203,7 @@ test("social membership preserves past points and discloses public connections w
     fullPage: true,
   });
   const community = page.getByRole("region", { name: "People", exact: true });
-  await page.goto(`${site}/points#people`);
-  await page.getByLabel("Find a contributor").fill("social-member");
+  await page.goto(`${site}/points?q=social-member#people`);
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toBeVisible();
@@ -210,8 +223,7 @@ test("social membership preserves past points and discloses public connections w
     .getByRole("button", { name: "Disconnect X", exact: true })
     .click();
   await disconnected;
-  await page.goto(`${site}/points#people`);
-  await page.getByLabel("Find a contributor").fill("social-member");
+  await page.goto(`${site}/points?q=social-member#people`);
   await expect(
     community.getByRole("link", { name: "X · @social_member" }),
   ).toHaveCount(0);

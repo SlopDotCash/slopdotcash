@@ -108,7 +108,7 @@ test("an unavailable registry with no last good copy shows an error, never an em
   await expect(page.locator("#projects")).toHaveCount(0);
   await expectAccessible(page);
   for (const [path, heading] of [
-    ["/account", "Account"],
+    ["/account", "Settings"],
     ["/login", "Log in"],
   ]) {
     await page.goto(path);
@@ -207,7 +207,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
   // Account routes do not depend on the registry and show no label.
   await page.goto("/account", { waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "Account",
+    "Settings",
   );
   await expect(notice).toHaveCount(0);
 });

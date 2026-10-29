@@ -6,7 +6,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   diagnostics,
 }, info) => {
   const id = "ss_unsaved_correction";
-  const caseId = "sc_selected_reference";
+  const caseId = "sc_unsaved_correction";
   const cursor = JSON.stringify(["2026-10-27T12:00:00.000Z", "report:older"]);
   const olderPath = `/api/v1/notifications?${new URLSearchParams({ cursor })}`;
   const report = {
@@ -25,7 +25,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
     advisory: null,
     githubCreatedAt: null,
     failureCode: null,
-    caseId: "sc_unsaved_correction",
+    caseId,
     retryAllowed: false,
     reconcileAfter: null,
     intake: {
@@ -90,8 +90,22 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
           mode === "ready"
             ? {
                 recipientGithubId: actor,
-                notifications: [],
-                unread: 0,
+                notifications:
+                  actor === "42"
+                    ? [
+                        {
+                          eventKey: `security-report:${id}:received`,
+                          kind: "security_report_received",
+                          subject: caseId,
+                          detail: null,
+                          actionPath: `/inbox?view=reports&submission=${id}`,
+                          sourceAt: "2026-10-27T12:00:00.000Z",
+                          createdAt: "2026-10-27T12:00:00.000Z",
+                          readAt: null,
+                        },
+                      ]
+                    : [],
+                unread: actor === "42" ? 1 : 0,
                 nextCursor: url.search ? null : cursor,
               }
             : { error: mode },
@@ -137,8 +151,13 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   await page.goto(`/inbox?view=notifications&submission=${id}`, {
     waitUntil: "networkidle",
   });
-  const receipt = page.getByRole("list", { name: "Private report receipt" });
+  const receipt = page.locator(`[aria-labelledby="submission-${id}"]`);
   await expect(receipt).toContainText("More evidence needed");
+  await expect(receipt).toHaveCount(1);
+  await expect(page.locator(".security-case-choice")).toHaveCount(0);
+  await expect(
+    page.getByRole("navigation", { name: "Inbox views" }),
+  ).toHaveCount(0);
   await expect(page.getByText(report.description, { exact: true })).toHaveCount(
     0,
   );
@@ -159,9 +178,18 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByRole("list", { name: "Notifications" })).toContainText(
-    "More evidence needed",
+  await expect(receipt).toContainText("More evidence needed");
+  const notifications = page.getByRole("list", { name: "Notifications" });
+  await expect(notifications.locator(".inbox-item")).toHaveCount(1);
+  await expect(notifications).toContainText(
+    `Your private report ${caseId} was received.`,
   );
+  await expect(notifications.locator(".inbox-state")).toHaveText("Unread");
+  await expect(
+    page.getByRole("button", { name: "Mark shown as read", exact: true }),
+  ).toBeVisible();
+  await expect(receipt).toHaveCount(1);
+  await expect(page.locator(".security-case-choice")).toHaveCount(0);
   blocked = new Promise<void>((resolve) => {
     release = resolve;
   });
@@ -205,9 +233,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   await page.goto(`/inbox?view=notifications&submission=${id}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("list", { name: "Notifications" })).toContainText(
-    "More evidence needed",
-  );
+  await expect(receipt).toContainText("More evidence needed");
   mode = "signed-out";
   diagnostics.allowResponse(401, "GET", olderPath);
   diagnostics.allowResponse(401, "GET", "/api/v1/notifications");

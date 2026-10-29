@@ -95,6 +95,256 @@ async function profileRecords(
   };
 }
 
+test("warm profiles reuse public records until expiry and recover a failed refresh", async ({
+  diagnostics,
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { snapshot, current, walletRequests } = await profileRecords(page);
+  await page.clock.install({ time: Date.now() });
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/leaderboard\.json\?attempt=\d+&retry=\d+$/u,
+  );
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+    route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  );
+  const reads = {
+    ledger: 0,
+    index: 0,
+    shards: 0,
+    directory: 0,
+    session: 0,
+    member: 0,
+  };
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === "/data/leaderboard.json") reads.ledger++;
+    if (path === "/data/points.json") reads.index++;
+    if (/^\/data\/points\/[0-9a-f]\.json$/u.test(path)) reads.shards++;
+    if (path === "/data/profiles.json") reads.directory++;
+    if (path === "/api/v1/points/me") reads.session++;
+    if (path === "/api/v1/points/member") reads.member++;
+  });
+  let unavailable = false;
+  await page.route("**/data/leaderboard.json?**", (route) =>
+    unavailable
+      ? route.fulfill({ status: 503, body: "Snapshot unavailable" })
+      : route.fulfill({ json: snapshot }),
+  );
+  await page.goto(`${site}/contributors/${current.login}`, {
+    waitUntil: "networkidle",
+  });
+  const history = page
+    .getByRole("listitem")
+    .filter({ hasText: "Archived cycle" });
+  await expect(history).toBeVisible();
+  await expect(page.locator(".profile-totals strong").last()).toHaveText(
+    /^[\d,]+$/u,
+  );
+  const initial = { ...reads, wallet: walletRequests.length };
+  expect(initial.ledger).toBeGreaterThan(0);
+  expect(initial.shards).toBe(16);
+  const document = await page.evaluate(() => performance.timeOrigin);
+  async function revisit() {
+    await page
+      .getByRole("banner")
+      .getByRole("link", { name: "Slop home", exact: true })
+      .click();
+    await page
+      .getByRole("region", { name: "Top sloperators", exact: true })
+      .getByRole("table")
+      .waitFor({ state: "visible" });
+    await page.waitForLoadState("networkidle");
+    await page.goBack({ waitUntil: "networkidle" });
+  }
+  await revisit();
+  await expect(history).toBeVisible();
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(document);
+  expect(reads.ledger).toBe(initial.ledger);
+  expect(reads.index).toBe(initial.index);
+  expect(reads.shards).toBe(initial.shards);
+  expect(reads.directory).toBeGreaterThan(initial.directory);
+  expect(reads.session).toBeGreaterThan(initial.session);
+  expect(reads.member).toBeGreaterThan(initial.member);
+  expect(walletRequests.length).toBeGreaterThan(initial.wallet);
+  const warm = { ...reads };
+
+  await page.clock.fastForward(61_000);
+  unavailable = true;
+  await revisit();
+  const failedRefresh = page
+    .locator("main > .data-notice")
+    .filter({ hasText: "Points may be outdated" });
+  await expect(
+    failedRefresh.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeVisible();
+  await expect(history).toBeVisible();
+  await expect(page.locator(".profile-totals strong").last()).toHaveText(
+    /^[\d,]+$/u,
+  );
+  expect(reads.ledger).toBeGreaterThan(warm.ledger);
+  expect(reads.index).toBeGreaterThan(warm.index);
+  expect(reads.shards).toBeGreaterThan(warm.shards);
+  const expired = { ...reads };
+  unavailable = false;
+  await failedRefresh
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
+  await expect(failedRefresh).toHaveCount(0);
+  await expect(history).toBeVisible();
+  expect(reads.ledger).toBeGreaterThan(expired.ledger);
+  await info.attach("public-cache-read-counts", {
+    body: JSON.stringify({ initial, warm, expired, recovered: reads }),
+    contentType: "application/json",
+  });
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("warm-profile-cache-recovered.png"),
+    fullPage: true,
+  });
+});
+
+test("warm reassigned handles wait for fresh identity before wallet and history reads", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { profiles, current, walletRequests } = await profileRecords(page);
+  let hold = false;
+  let releaseDirectory = () => {};
+  let releaseMembership = () => {};
+  let releaseSession = () => {};
+  const directoryReady = new Promise<void>((resolve) => {
+    releaseDirectory = resolve;
+  });
+  const membershipReady = new Promise<void>((resolve) => {
+    releaseMembership = resolve;
+  });
+  const sessionReady = new Promise<void>((resolve) => {
+    releaseSession = resolve;
+  });
+  await page.route("**/data/profiles.json", async (route) => {
+    if (hold) await directoryReady;
+    await route.fulfill({ json: profiles });
+  });
+  await page.route(`${site}/api/v1/points/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (hold && path.endsWith("/me")) await sessionReady;
+    if (hold && path.endsWith("/member")) await membershipReady;
+    await route.fulfill({
+      json:
+        hold && path.endsWith("/member")
+          ? {
+              actor: { id: "MDQ6VXNlcjI=", login: current.login },
+              joinedAt: "2026-10-17T00:00:00.000Z",
+              public: true,
+              welcome: 5,
+            }
+          : null,
+    });
+  });
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+    route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  );
+  const actorReads: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/\/api\/v1\/(?:wallet-claims|payments)\/actors\//u.test(path))
+      actorReads.push(path);
+  });
+  try {
+    await page.goto(`${site}/contributors/${current.login}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    ).toBeVisible();
+    expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/1/current"]);
+    await page
+      .getByRole("banner")
+      .getByRole("link", { name: "Slop home", exact: true })
+      .click();
+    await page
+      .getByRole("region", { name: "Top sloperators", exact: true })
+      .getByRole("table")
+      .waitFor({ state: "visible" });
+    await page.waitForLoadState("networkidle");
+    actorReads.length = 0;
+    walletRequests.length = 0;
+    profiles.people[0].login = `${current.login}-renamed`;
+    profiles.people.push({
+      id: "MDQ6VXNlcjI=",
+      login: current.login,
+      avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
+      repositories: [],
+    });
+    assertProfiles(profiles);
+    hold = true;
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByText("Checking contributor…", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Find a contributor", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    ).toHaveCount(0);
+    expect(actorReads).toEqual([]);
+    const sessionResponse = page.waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith("/points/me"),
+    );
+    const memberResponse = page.waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith("/points/member"),
+    );
+    releaseSession();
+    releaseMembership();
+    await (await sessionResponse).finished();
+    await (await memberResponse).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(
+      page.getByText("Checking contributor…", { exact: true }),
+    ).toBeVisible();
+    expect(actorReads).toEqual([]);
+    releaseDirectory();
+    await page.waitForLoadState("networkidle");
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    ).toHaveCount(0);
+    await expect(page.getByText(/Past wallet/u)).toHaveCount(0);
+    await expect(page.getByText("total points", { exact: true })).toHaveCount(
+      0,
+    );
+    expect(actorReads).toEqual([]);
+    expect(walletRequests).toEqual([]);
+    await info.attach("warm-reassigned-handle", {
+      body: JSON.stringify({ actorReads, walletRequests }),
+      contentType: "application/json",
+    });
+    await page.screenshot({
+      path: info.outputPath("warm-reassigned-handle-refused.png"),
+      fullPage: true,
+    });
+  } finally {
+    releaseDirectory();
+    releaseMembership();
+    releaseSession();
+  }
+});
+
 test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   const { current } = await profileRecords(page);
   await page.goto(`/contributors/${current.login}`);

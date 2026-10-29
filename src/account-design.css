@@ -25,9 +25,7 @@
   line-height: 1.55;
 }
 .account-page .points-panel,
-.account-page > #sessions,
-.account-page > #appeals,
-.account-page > #recovery {
+.account-page > #sessions {
   margin-block: 1rem;
   padding: 1.25rem;
   border: 1px solid var(--line);
@@ -43,13 +41,11 @@
   font-size: 1.3rem;
   line-height: 1.25;
 }
-.route-section-nav,
-.account-page .account-sections {
+.route-section-nav {
   gap: 0.4rem;
   margin-bottom: 1.5rem;
 }
-.route-section-nav a,
-.account-page .account-sections a {
+.route-section-nav a {
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--line);
   border-radius: var(--brand-radius-small);
@@ -59,9 +55,7 @@
 }
 .route-section-nav a:hover,
 .route-section-nav a:focus-visible,
-.route-section-nav a[aria-current="page"],
-.account-page .account-sections a:hover,
-.account-page .account-sections a:focus-visible {
+.route-section-nav a[aria-current="page"] {
   color: var(--ink);
   border-color: var(--orange);
 }
@@ -89,35 +83,16 @@
   color: #8fd8ad;
   font-size: 0.9rem;
 }
-.account-close-details {
-  border-top: 1px solid var(--line);
-  padding-top: 1rem;
-  margin-top: 1rem;
-}
-.account-close-details > summary {
-  color: #ffb1a4;
-  width: fit-content;
-  cursor: pointer;
-}
-.account-close-details .account-closure {
-  margin-top: 1rem;
-  border: 0;
-  padding: 0;
-}
-.points-coverage-details {
-  margin: 0.75rem 0 1rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.points-coverage-details > summary {
-  cursor: pointer;
-}
-.points-coverage-details .points-coverage {
-  margin-block: 0.6rem 0;
-}
 .standings-page .points-controls {
   gap: 0.75rem;
   align-items: end;
+}
+.standings-page .route-page-header {
+  align-items: center;
+}
+.standings-page .route-page-actions {
+  justify-content: flex-end;
+  margin-left: auto;
 }
 .standings-page .points-period {
   flex: 0 1 auto;
@@ -409,9 +384,7 @@
     padding-top: 1.5rem;
   }
   .account-page .points-panel,
-  .account-page > #sessions,
-  .account-page > #appeals,
-  .account-page > #recovery {
+  .account-page > #sessions {
     padding: 1rem;
   }
   .inbox-item-heading {
@@ -482,14 +455,6 @@
 
 .points-panel-heading > a {
   font-size: 0.85rem;
-}
-
-.points-column-status {
-  display: block;
-  margin-top: 0.25rem;
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: normal;
 }
 
 /* Keep hidden status text inside the scrollable table cell at 200% text. */
