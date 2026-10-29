@@ -43,6 +43,11 @@ const drivers = [
     ["workers/payment-executor/staging-release.workflow.mjs"],
     childEnvironment(),
   ],
+  [
+    "monthly-authority",
+    "node",
+    ["backend/payments/monthly-authority.workflow.mjs"],
+  ],
 ];
 const runDriver = ([label, command, args, env = process.env]) =>
   runE2ePhase({
