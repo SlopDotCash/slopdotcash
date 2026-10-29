@@ -31,7 +31,10 @@ import {
 } from "./lib/payments/contracts";
 import { apiRequest, currentProjectSession } from "./lib/project-api";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
-import { isDirectTransfer } from "./lib/use-direct-transfers";
+import {
+  isDirectTransfer,
+  loadDirectTransfers,
+} from "./lib/use-direct-transfers";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { shortAddress } from "./lib/wallets";
 import { CompactIdentifier } from "./Operations";
@@ -96,6 +99,7 @@ async function request(path: string, body?: unknown, signal?: AbortSignal) {
     body,
     signal,
     timeoutMs: 30_000,
+    headers: path === "me" ? { "x-slop-direct-history": "paged" } : undefined,
   });
   if (response.status === 401) throw new SignedOutError();
   if (!response.ok) {
@@ -239,7 +243,17 @@ export function EarningsPage({
       const session = await currentProjectSession().catch(() => undefined);
       if (controller.signal.aborted) return undefined;
       if (session === null) throw new SignedOutError();
-      return account(await request("me", undefined, controller.signal));
+      const signal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(30_000),
+      ]);
+      const value = account(await request("me", undefined, signal));
+      if (value.directTransfersPaged)
+        value.directTransfers = await loadDirectTransfers(
+          `actors/${value.githubUserId}`,
+          signal,
+        );
+      return value;
     })()
       .then((value) => {
         if (!controller.signal.aborted && value !== undefined) {
