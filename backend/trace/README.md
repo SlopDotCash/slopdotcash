@@ -168,10 +168,13 @@ the D1 migration, private R2 access, limited identity exchange, and fail-closed
 behavior. Do not enable an R2 public domain or lifecycle expiry.
 
 The current API has strict body and capability bounds but no durable per-actor
-admission quota for run, event, intent, upload, or wallet writes. Production
-trace uploads must remain disabled until a reviewed D1-backed policy bounds
-authenticated storage and write amplification without relying on an
-eventually-consistent edge counter.
+admission quota for run, event, intent, upload, or wallet writes. The owner
+accepts this risk for the MVP (owner decision, 29 October 2026, PRD section 11,
+#1411 B4): an authenticated actor can add storage and write amplification up
+to the per-request bounds without a per-actor limit. The bounded size,
+authentication, and checksum rules above remain unchanged. A later quota needs
+a reviewed D1-backed policy that does not rely on an eventually-consistent edge
+counter.
 
 Operational renewal, designated-reviewer unavailability, full-cycle
 verification, and rollback are documented in
