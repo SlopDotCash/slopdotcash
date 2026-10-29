@@ -13,6 +13,17 @@ named by `assetAddress` and scaled by `assetDecimals`. One balance row exists
 per network and asset. Amounts of different assets are never summed and are
 never labelled as dollars.
 
+Browsers opt into disclosed-history pages with `x-slop-direct-history: paged`.
+The public project/actor `direct-transfers` routes then return at most 100
+transfers, a frozen rowid `through`, a `next` cursor, a frozen `total` count,
+and `totalMicro` for that page. Follow `?after=<next>&through=<through>` until
+`next` is null and verify the complete count before displaying the history.
+Legacy callers without the header retain the complete-list response.
+On authenticated `GET /me`, the same header omits the inline disclosed list
+and sets `directTransfersPaged: true`; the browser loads that actor's public
+history separately. Wallets, balances and award states retain their single
+database snapshot. The browser keeps its existing 1 MiB per-response limit.
+
 `POST /wallets/register` takes `chain` and `address` using the existing GitHub
 session. It writes the same canonical claim and atomic audit as the legacy
 wallet API; concurrent successor changes return a conflict.
