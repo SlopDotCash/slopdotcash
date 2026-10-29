@@ -1,8 +1,10 @@
 /** Real page + deterministic wallet/API fixtures. Live chain acceptance is recorded separately. */
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { privateKeyToAccount } from "viem/accounts";
 import { verifyEvmBindingSignature } from "../../backend/payments/possession";
 import { evmBindingTypedData } from "../../contracts/evm/adapter";
+import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -20,6 +22,22 @@ const typed = evmBindingTypedData(8453n, vault, binding);
 test("payouts publish direct history only after every page verifies", async ({
   page,
 }) => {
+  const { site } = deploymentOrigins(
+    deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+  );
+  await page.route(`${site}/**`, (route) =>
+    new URL(route.request().url()).pathname.startsWith("/api/")
+      ? route.fallback()
+      : route.fulfill({
+          path: join(
+            process.cwd(),
+            "dist",
+            route.request().resourceType() === "document"
+              ? "index.html"
+              : new URL(route.request().url()).pathname,
+          ),
+        }),
+  );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
       json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
@@ -76,7 +94,7 @@ test("payouts publish direct history only after every page verifies", async ({
       },
     });
   });
-  await page.goto("/earnings", { waitUntil: "networkidle" });
+  await page.goto(`${site}/earnings`, { waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
     "Incomplete direct payment history",
   );
