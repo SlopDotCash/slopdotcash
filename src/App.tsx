@@ -4,7 +4,6 @@ import {
   Check,
   ChevronRight,
   Clipboard,
-  ExternalLink,
   Plus,
 } from "lucide-react";
 import {
@@ -32,7 +31,6 @@ import {
   hasBountyOverview,
   homeProjects,
 } from "./lib/home-projects";
-import type { ProjectView } from "./lib/project-view";
 import {
   findProject,
   PROJECTS,
@@ -63,7 +61,6 @@ import {
   NotFound,
   RoutePageHeader,
   reviewBudgetLabel,
-  stale,
 } from "./Presentation";
 
 /**
@@ -1000,15 +997,7 @@ function AgentPromptBox({
   );
 }
 
-function ProjectParticipation({
-  project,
-  view,
-  outdated = false,
-}: {
-  project: ProjectDefinition;
-  view?: ProjectView;
-  outdated?: boolean;
-}) {
+function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   if (project.participation?.state === "archived") {
     const successor = findProject(project.participation.successorProjectId);
     return (
@@ -1058,14 +1047,7 @@ function ProjectParticipation({
     );
   }
   // Clearance gates contribution; missing score or funding history does not.
-  return (
-    <ProjectInstallPanel
-      key={project.id}
-      project={project}
-      view={view}
-      outdated={outdated}
-    />
-  );
+  return <ProjectInstallPanel key={project.id} project={project} />;
 }
 
 function InstallPanel() {
@@ -1083,15 +1065,7 @@ function InstallPanel() {
  * confirms this project, the panel offers the generic agent prompt, which
  * selects only cleared projects itself.
  */
-function ProjectInstallPanel({
-  project,
-  view,
-  outdated,
-}: {
-  project: ProjectDefinition;
-  view: ProjectView | undefined;
-  outdated: boolean;
-}) {
+function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
@@ -1127,7 +1101,7 @@ function ProjectInstallPanel({
   }, [projectId]);
   const ready = eligibility === "ready";
   return (
-    <div className="install-panel" id="start">
+    <div id="start">
       <div className="install-heading">
         <h2>Copy this into your agent.</h2>
       </div>
@@ -1152,74 +1126,7 @@ function ProjectInstallPanel({
         openIn
         prompt={ready ? projectAgentPrompt(project) : bootstrapAgentPrompt()}
       />
-      {ready && view ? (
-        <ProjectOpenWork project={project} view={view} outdated={outdated} />
-      ) : null}
     </div>
-  );
-}
-
-const OPEN_WORK_LIMIT = 5;
-
-/**
- * PRD section 7: the contributor goes from the project to eligible work. Only
- * items whose published selection decision is "candidate" appear, so
- * assignees, claims, drafts, review requests, approvals, requested changes,
- * security labels, blocked or untriaged issues and epics stay out. The list
- * appears only for a project cleared for agents, and agents recheck GitHub.
- */
-function ProjectOpenWork({
-  project,
-  view,
-  outdated,
-}: {
-  project: ProjectDefinition;
-  view: ProjectView;
-  outdated: boolean;
-}) {
-  const candidates = [
-    ...view.workQueue.issues,
-    ...view.workQueue.pullRequests,
-  ].filter((item) => item.selection.status === "candidate");
-  const shown = candidates.slice(0, OPEN_WORK_LIMIT);
-  return (
-    <section aria-labelledby="open-work-heading" className="open-work">
-      <h3 id="open-work-heading">Open work</h3>
-      <p>
-        {outdated ? "May be outdated. " : ""}Issues ready for a fix and pull
-        requests ready for review, read from GitHub{" "}
-        {formatDateTime(view.generatedAt)}. Your agent checks each item again
-        before it starts.
-      </p>
-      {shown.length === 0 ? (
-        <EmptyState text="No open issue or pull request is ready for new work now." />
-      ) : (
-        <ul className="project-rows">
-          {shown.map((item) => (
-            <li key={item.id}>
-              <ExternalLinkAnchor className="project-row" href={item.url}>
-                <span className="project-row-name">
-                  <strong>{item.title}</strong>
-                  <small>
-                    {item.kind === "issue" ? "Issue" : "Pull request to review"}{" "}
-                    · {item.repository}#{item.number}
-                  </small>
-                </span>
-                <ExternalLink aria-hidden="true" />
-              </ExternalLinkAnchor>
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="open-work-more">
-        {candidates.length > shown.length
-          ? `${shown.length} of ${candidates.length} shown. `
-          : ""}
-        <ExternalLinkAnchor href={project.links.issues}>
-          All issues on GitHub
-        </ExternalLinkAnchor>
-      </p>
-    </section>
   );
 }
 
@@ -1360,11 +1267,9 @@ function ProjectPaymentHistory({
 function ProjectFundsAndAwards({
   project,
   state,
-  onRegistered,
 }: {
   project: ProjectDefinition;
   state: DataState;
-  onRegistered: (project: ProjectDefinition) => void;
 }) {
   return (
     <section
@@ -1376,7 +1281,7 @@ function ProjectFundsAndAwards({
         <p>The organizer pays this prize.</p>
       ) : project.escrow ? (
         <>
-          <EscrowFunding project={project} onRegistered={onRegistered} />
+          <EscrowFunding readOnly project={project} />
           <OwnerAwards
             key={project.id}
             project={project}
@@ -1480,7 +1385,7 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
-        <div className="install-panel" id="start">
+        <div id="start">
           <div className="install-heading">
             <h2>Copy this into your agent.</h2>
           </div>
@@ -1492,7 +1397,7 @@ function ProjectBountyIntroduction({
 }
 
 function ProjectPage({
-  project: original,
+  project,
   state,
   retry,
 }: {
@@ -1500,8 +1405,6 @@ function ProjectPage({
   state: DataState;
   retry: () => void;
 }) {
-  const [registered, setRegistered] = useState<ProjectDefinition | null>(null);
-  const project = registered ?? original;
   const view =
     state.status === "ready"
       ? state.views.find((candidate) => candidate.project.id === project.id)
@@ -1515,14 +1418,7 @@ function ProjectPage({
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
-          <ProjectParticipation
-            project={project}
-            view={view}
-            outdated={
-              state.status === "ready" &&
-              (state.refreshError !== undefined || stale(state.snapshot))
-            }
-          />
+          <ProjectParticipation project={project} />
         </div>
       </section>
       <div className="shell">
@@ -1530,7 +1426,6 @@ function ProjectPage({
           key={`funding:${project.id}`}
           project={project}
           state={state}
-          onRegistered={setRegistered}
         />
         <ProjectPaymentHistory
           key={`history:${project.id}`}
@@ -1663,7 +1558,14 @@ function AppContent({ route }: { route: Route }) {
       </main>
     );
   } else if (route.kind === "profile")
-    content = <ProfilePage login={route.login} retry={retry} state={state} />;
+    content = (
+      <ProfilePage
+        key={route.login.toLowerCase()}
+        login={route.login}
+        retry={retry}
+        state={state}
+      />
+    );
   else if (route.kind === "cycle")
     content = withProject(route, (project) => (
       <CyclePage

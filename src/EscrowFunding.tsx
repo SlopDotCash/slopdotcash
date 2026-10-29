@@ -1,16 +1,8 @@
-import {
-  CircleAlert,
-  Clock,
-  Hourglass,
-  LoaderCircle,
-  RotateCcw,
-  ShieldCheck,
-} from "lucide-react";
+import { CircleAlert, Hourglass, LoaderCircle, RotateCcw } from "lucide-react";
 import { lazy, useCallback, useEffect, useState } from "react";
 import "./owner-review.css";
 import { readBoundedJson } from "./lib/browser-json";
 import type { VaultConnection } from "./lib/evm-vault-actions";
-import { networkLabel } from "./lib/network-names";
 import {
   formatAssetAmount,
   isAssetDecimals,
@@ -24,7 +16,7 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
-import { formatDateTime, NetworkName } from "./Presentation";
+import { NetworkName } from "./Presentation";
 
 const AutomaticMonthlyPayment = lazy(() =>
   import("./AutomaticMonthlyPayment").then((module) => ({
@@ -82,7 +74,7 @@ function validSnapshot(s: VaultSnapshot, projectId: string): boolean {
   );
 }
 
-/** Free and reserved funds as one bar (PRD section 6); the tiles carry the values. */
+/** Free and reserved funds as one bar (PRD section 6). */
 function BalanceMeter({
   free,
   reserved,
@@ -109,24 +101,12 @@ function BalanceMeter({
   );
 }
 
-function VaultTotals({
-  snapshot,
-  stale,
-}: {
-  snapshot: VaultSnapshot;
-  stale: boolean;
-}) {
+function VaultTotals({ snapshot }: { snapshot: VaultSnapshot }) {
   const value = (amount: string | null) =>
     amount === null ? "Not reported" : formatAssetAmount(amount, snapshot);
   const reservedAwards = reservedGross(snapshot);
   return (
     <div className="vault-snapshot">
-      {stale && (
-        <p className="setup-badge setup-badge--warning" role="alert">
-          <Clock aria-hidden="true" size={14} />
-          Outdated · read {formatDateTime(snapshot.observedAt)}
-        </p>
-      )}
       <BalanceMeter free={snapshot.freeBalance} reserved={reservedAwards} />
       <dl className="vault-stats">
         <div className="vault-stat vault-stat--available">
@@ -137,18 +117,6 @@ function VaultTotals({
           <dd>{value(snapshot.freeBalance)}</dd>
         </div>
         <div className="vault-stat">
-          <dt>
-            <span className="pr-dot vault-reserved" aria-hidden="true" />
-            Reserved for awards
-          </dt>
-          <dd>{value(reservedAwards)}</dd>
-          {snapshot.reservedFees !== null && (
-            <dd className="vault-stat-note">
-              incl. {value(snapshot.reservedFees)} fees
-            </dd>
-          )}
-        </div>
-        <div className="vault-stat">
           <dt>Paid out</dt>
           <dd>{value(snapshot.totalPaid)}</dd>
           <dd className="vault-stat-note">
@@ -156,39 +124,6 @@ function VaultTotals({
           </dd>
         </div>
       </dl>
-      <details className="vault-ledger-details">
-        <summary>Ledger details</summary>
-        <dl className="vault-stats">
-          <div className="vault-stat">
-            <dt>Deposited</dt>
-            <dd>{value(snapshot.totalDeposited)}</dd>
-          </div>
-          <div className="vault-stat">
-            <dt>Withdrawn</dt>
-            <dd>{value(snapshot.totalGrossWithdrawn)}</dd>
-          </div>
-          <div className="vault-stat">
-            <dt>Withdrawal fees</dt>
-            <dd>{value(snapshot.totalWithdrawalFees)}</dd>
-          </div>
-          <div className="vault-stat">
-            <dt>Payout fees</dt>
-            <dd>{value(snapshot.totalPayoutFees)}</dd>
-          </div>
-          <div className="vault-stat">
-            <dt>Accrued fees</dt>
-            <dd>{value(snapshot.accruedFees)}</dd>
-          </div>
-        </dl>
-        <p className="vault-finality">
-          <ShieldCheck aria-hidden="true" size={15} />
-          <span>Finalized block {snapshot.blockNumber}</span>
-          <span>{formatDateTime(snapshot.blockTime)}</span>
-          <NetworkName chain={snapshot.chain}>
-            {networkLabel(snapshot.network)}
-          </NetworkName>
-        </p>
-      </details>
     </div>
   );
 }
@@ -324,13 +259,6 @@ export function useVaultTotals(
 }
 
 export { reservedGross };
-/** Measured against the viewer's clock: the response itself can be edge-cached. */
-export function vaultSnapshotStale(
-  snapshot: VaultSnapshot,
-  staleAfterMs: number,
-): boolean {
-  return Date.now() - Date.parse(snapshot.observedAt) > staleAfterMs;
-}
 
 function RetryButton({ retry }: { retry: () => void }) {
   return (
@@ -340,7 +268,7 @@ function RetryButton({ retry }: { retry: () => void }) {
   );
 }
 
-/** Loading, empty, error, stale and ready totals, each shown differently. */
+/** Loading, empty, error and ready totals, each shown differently. */
 function VaultTotalsView({
   totals,
 }: {
@@ -388,10 +316,6 @@ function VaultTotalsView({
         <VaultTotals
           key={`${snapshot.network}:${snapshot.vault}`}
           snapshot={snapshot}
-          stale={
-            totals.refreshError !== null ||
-            vaultSnapshotStale(snapshot, totals.vault.staleAfterMs)
-          }
         />
       ))}
     </div>
@@ -401,9 +325,11 @@ function VaultTotalsView({
 export function EscrowFunding({
   project,
   onRegistered,
+  readOnly = false,
 }: {
   project: ProjectDefinition;
-  onRegistered: (project: ProjectDefinition) => void;
+  onRegistered?: (project: ProjectDefinition) => void;
+  readOnly?: boolean;
 }) {
   const { allowed } = useProjectMaintainer(project.id);
   const [registrationNotice, setRegistrationNotice] = useState("");
@@ -412,6 +338,7 @@ export function EscrowFunding({
   const [revision, setRevision] = useState(0);
   const totals = useVaultTotals(project, revision);
   const chain = project.escrow?.chain ?? "solana";
+  if (readOnly && totals.status === "none") return null;
   return (
     <section className="section project-funding" aria-label="Project escrow">
       <header className="vault-header">
@@ -423,11 +350,11 @@ export function EscrowFunding({
         </h2>
       </header>
       {totals.status === "none" ? (
-        allowed ? (
+        allowed && !readOnly ? (
           <OwnerVaultSetup
             project={project}
             onRegistered={(updated, wallet, notice) => {
-              onRegistered(updated);
+              onRegistered?.(updated);
               setConnectedWallet(wallet);
               setRegistrationNotice(notice ?? "");
             }}
@@ -445,16 +372,17 @@ export function EscrowFunding({
         <>
           {registrationNotice && <p role="status">{registrationNotice}</p>}
           <VaultTotalsView totals={totals} />
-          {project.escrow?.deployments.map((deployment) => (
-            <VaultActions
-              key={`${deployment.network}:${deployment.vault}`}
-              deployment={deployment}
-              connectedWallet={connectedWallet ?? undefined}
-              projectId={project.id}
-              onFinalized={() => setRevision((value) => value + 1)}
-            />
-          ))}
-          {project.reward.kind === "monthly-pool"
+          {!readOnly &&
+            project.escrow?.deployments.map((deployment) => (
+              <VaultActions
+                key={`${deployment.network}:${deployment.vault}`}
+                deployment={deployment}
+                connectedWallet={connectedWallet ?? undefined}
+                projectId={project.id}
+                onFinalized={() => setRevision((value) => value + 1)}
+              />
+            ))}
+          {!readOnly && project.reward.kind === "monthly-pool"
             ? project.escrow?.deployments.map((deployment) => (
                 <AutomaticMonthlyPayment
                   key={`monthly:${deployment.network}:${deployment.vault}`}

@@ -52,14 +52,10 @@ test("profiles preserve legacy coverage and a valid census", async ({
       },
     }),
   );
-  await page.goto("/points");
+  await page.goto("/points?view=people&q=profile-only");
   const directory = page.getByRole("region", { name: "People", exact: true });
-  await page.getByLabel("Find a contributor").fill("profile-only");
-  await page.getByRole("button", { name: "People", exact: true }).click();
-  await expect(page.getByLabel("Find a contributor")).toHaveValue(
-    "profile-only",
-  );
   await expect(page).toHaveURL(/view=people/);
+  await expect(page).toHaveURL(/q=profile-only/);
   await directory
     .getByRole("link", { name: "profile-only-contributor", exact: true })
     .click();

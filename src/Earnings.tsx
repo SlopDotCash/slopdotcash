@@ -44,7 +44,7 @@ import {
   PayoutRow,
   RECEIVED_STATUS,
 } from "./PayoutRows";
-import { AccountNav, formatCycleMonth, RoutePageHeader } from "./Presentation";
+import { formatCycleMonth, RoutePageHeader } from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -196,7 +196,7 @@ export function EarningsPage({
   headingId,
 }: {
   walletsOnly?: boolean;
-  /** An enclosing settings disclosure supplies the wallet heading. */
+  /** An enclosing settings section supplies the wallet heading. */
   headingId?: string;
 } = {}) {
   const wallets = usePayoutWallets();
@@ -426,7 +426,7 @@ export function EarningsPage({
       className={
         walletsOnly ? "earnings-page" : "shell route-main earnings-page"
       }
-      aria-labelledby={headingId ?? heading}
+      aria-labelledby={headingId ? undefined : heading}
       id={walletsOnly && !headingId ? "wallets" : undefined}
     >
       {walletsOnly && headingId ? null : walletsOnly ? (
@@ -445,7 +445,6 @@ export function EarningsPage({
           }
         />
       )}
-      {!walletsOnly ? <AccountNav current="payouts" /> : null}
       <dialog
         ref={dialog}
         className="wallet-picker"
@@ -739,10 +738,6 @@ export function EarningsPage({
                   );
                 })}
               </section>
-              <p className="wallet-note">
-                Payments publish your address on chain. Confirming a wallet
-                moves no funds.
-              </p>
             </>
           ) : (
             <>

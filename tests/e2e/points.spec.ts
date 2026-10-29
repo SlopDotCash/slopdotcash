@@ -1,9 +1,6 @@
-import { join } from "node:path";
-import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
 
-test("switching contributor views preserves a pending ranking read and the shared search", async ({
+test("legacy people navigation preserves the pending ranking read and URL query", async ({
   page,
 }) => {
   let release: () => void = () => {};
@@ -22,21 +19,30 @@ test("switching contributor views preserves a pending ranking read and the share
     await route.continue();
   });
   try {
-    await page.goto("/points", { waitUntil: "domcontentloaded" });
+    await page.goto("/points?q=profile", { waitUntil: "domcontentloaded" });
     await requested;
-    const search = page.getByLabel("Find a contributor");
-    await search.fill("profile");
-    await page.getByRole("button", { name: "People", exact: true }).click();
+    await page.evaluate(() => {
+      history.pushState({}, "", "/points?view=people&q=profile");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
     await expect(
       page.getByRole("region", { name: "People", exact: true }),
     ).toBeVisible();
-    await expect(search).toHaveValue("profile");
-    await page.getByRole("button", { name: "Rankings", exact: true }).click();
-    release();
+    await expect(page.getByLabel("Find a contributor")).toHaveCount(0);
     await expect(
-      page.locator(".points-coverage-details > summary"),
-    ).toBeVisible();
-    await expect(search).toHaveValue("profile");
+      page.getByRole("button", { name: "People", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Rankings", exact: true }),
+    ).toHaveCount(0);
+    await expect(page).toHaveURL(/view=people.*q=profile/u);
+    await page.evaluate(() => {
+      history.pushState({}, "", "/points?q=profile");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    release();
+    await expect(page.getByRole("table")).toBeVisible();
+    await expect(page).toHaveURL(/q=profile/u);
     expect(rankingReads).toBe(1);
   } finally {
     release();
@@ -54,37 +60,103 @@ test(
     await expect(
       page.getByRole("columnheader", { name: "Points", exact: true }),
     ).toHaveAttribute("aria-sort", "descending");
-    // The period states the snapshot's exact bounds and source coverage.
-    await page.locator(".points-coverage-details > summary").click();
-    const coverage = page.locator(".points-coverage");
-    await expect(coverage).toHaveText(
-      /^(This month ranks .+ UTC to .+ UTC\. )?Snapshot window: .+ UTC to .+ UTC\. Source: [\d,]+ merged pull requests and [\d,]+ closed issues across [\d,]+ repositories\.$/u,
+    const header = page.locator(".route-page-header");
+    const actions = header.locator(".route-page-actions");
+    const month = actions.getByRole("button", {
+      name: "This month",
+      exact: true,
+    });
+    const allTime = actions.getByRole("button", {
+      name: "All time",
+      exact: true,
+    });
+    await expect(month).toHaveAttribute("aria-pressed", "true");
+    await expect(allTime).toHaveAttribute("aria-pressed", "false");
+    const buttonStyle = await allTime.evaluate((button) => {
+      const style = getComputedStyle(button);
+      return {
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+        borderWidth: style.borderLeftWidth,
+        borderStyle: style.borderLeftStyle,
+        cursor: style.cursor,
+        background: style.backgroundColor,
+      };
+    });
+    expect(Number.parseFloat(buttonStyle.paddingLeft)).toBeGreaterThanOrEqual(
+      16,
     );
-    await page
-      .getByRole("button", { name: "Recorded history", exact: true })
-      .click();
-    await expect(coverage).toContainText(/Includes [\d,]+ closed cycles?\.$/u);
+    expect(Number.parseFloat(buttonStyle.paddingRight)).toBeGreaterThanOrEqual(
+      16,
+    );
+    expect(buttonStyle.borderWidth).toBe("1px");
+    expect(buttonStyle.borderStyle).toBe("solid");
+    expect(buttonStyle.cursor).toBe("pointer");
+    if ((page.viewportSize()?.width ?? 0) >= 768) {
+      await allTime.hover();
+      await expect
+        .poll(() =>
+          allTime.evaluate(
+            (button) => getComputedStyle(button).backgroundColor,
+          ),
+        )
+        .not.toBe(buttonStyle.background);
+      await page.mouse.move(0, 0);
+    }
+
+    await expect(page.getByText("Period", { exact: true })).toHaveCount(0);
+    await expect(page.locator(".points-panel .points-period")).toHaveCount(0);
+    const titleBox = await header
+      .getByRole("heading", { level: 1 })
+      .boundingBox();
+    const actionsBox = await actions.boundingBox();
+    const headerBox = await header.boundingBox();
+    if (!titleBox || !actionsBox || !headerBox)
+      throw new Error("Missing leaderboard header");
+    if ((page.viewportSize()?.width ?? 0) >= 768) {
+      expect(actionsBox.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
+      expect(
+        Math.abs(
+          actionsBox.x + actionsBox.width - headerBox.x - headerBox.width,
+        ),
+      ).toBeLessThanOrEqual(2);
+      expect(actionsBox.y).toBeLessThan(titleBox.y + titleBox.height);
+      expect(actionsBox.y + actionsBox.height).toBeGreaterThan(titleBox.y);
+    } else {
+      expect(actionsBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+    }
+
+    await expect(page.locator(".points-coverage-details")).toHaveCount(0);
+    await expect(page.getByLabel("Project", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Find a contributor")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "People", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Rankings", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "All time", exact: true }).click();
     await expect(page.getByRole("table")).toBeVisible({ timeout: 30000 });
     await expect(
       page.getByRole("columnheader", { name: "Points", exact: true }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Money received", exact: true })
-      .click();
-    await expect(page).toHaveURL(/sort=money/);
-    await page.reload();
+    await expect(page.getByRole("columnheader")).toHaveText([
+      "Rank",
+      "Contributor",
+      "Points",
+    ]);
     await expect(
       page.getByRole("columnheader", { name: "Money received", exact: true }),
-    ).toHaveAttribute("aria-sort", "descending");
+    ).toHaveCount(0);
+    await page.reload();
     await expect(
-      page.getByRole("button", { name: "Recorded history", exact: true }),
+      page.getByRole("button", { name: "All time", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "Points", exact: true }).click();
     await expect(page.getByLabel("Cohort", { exact: true })).toHaveCount(0);
-    // The earlier combined link still opens recorded history.
+    // Earlier period links still open All time.
     await page.goto("/points?period=new");
     await expect(
-      page.getByRole("button", { name: "Recorded history", exact: true }),
+      page.getByRole("button", { name: "All time", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.goto("/points?sort=points&period=lifetime");
     await expect(
@@ -96,35 +168,43 @@ test(
         name: "Contributor standings table",
         exact: true,
       });
-      expect(
-        await scroller.evaluate((el) => el.scrollWidth > el.clientWidth),
-      ).toBe(true);
       await scroller.focus();
-      await page.keyboard.press("ArrowRight");
-      await expect
-        .poll(() => scroller.evaluate((el) => el.scrollLeft))
-        .toBeGreaterThan(0);
-      await scroller.evaluate((el) => {
-        el.scrollLeft = 0;
-      });
+      await expect(scroller).toBeFocused();
+      // A narrower three-column table needs scrolling only if content overflows.
+      if (await scroller.evaluate((el) => el.scrollWidth > el.clientWidth)) {
+        await page.keyboard.press("ArrowRight");
+        await expect
+          .poll(() => scroller.evaluate((el) => el.scrollLeft))
+          .toBeGreaterThan(0);
+        await scroller.evaluate((el) => {
+          el.scrollLeft = 0;
+        });
+      }
     }
 
-    await page
-      .getByRole("button", { name: "Recorded history", exact: true })
-      .click();
+    await page.getByRole("button", { name: "All time", exact: true }).click();
     const first = page.getByRole("table").getByRole("row").nth(1);
     const login = await first.getByRole("link").innerText();
-    await page.getByLabel("Find a contributor").fill(login);
+    // Earlier contributor links still filter directly, without a search control.
+    await page.goto(`/points?period=lifetime&q=${encodeURIComponent(login)}`);
     await expect(
       page.getByRole("table").getByRole("link", { name: login, exact: true }),
     ).toBeVisible();
-    await page
-      .getByLabel("Find a contributor")
-      .fill("no-such-contributor-987654321");
+    await page.goto("/points?period=lifetime&q=no-such-contributor-987654321");
     await expect(page.getByRole("table").locator("tbody tr")).toHaveCount(0);
-    await page.getByLabel("Find a contributor").fill("");
+    await page.goto("/points?period=lifetime");
     await page.getByRole("button", { name: "Next", exact: true }).click();
     await expect(page.getByText(/Page 2 of/)).toBeVisible();
+    await month.click();
+    await expect(month).toHaveAttribute("aria-pressed", "true");
+    await expect(allTime).toHaveAttribute("aria-pressed", "false");
+    await expect(page).not.toHaveURL(/page=2|period=lifetime/u);
+    await expect(page.getByText(/Page 2 of/)).toHaveCount(0);
+    await allTime.click();
+    await expect(allTime).toHaveAttribute("aria-pressed", "true");
+    await expect(page).toHaveURL(/period=lifetime/u);
+    await expect(page).not.toHaveURL(/page=2/u);
+
     await page.keyboard.press("Tab");
     expect(
       await page.evaluate(() => document.activeElement !== document.body),
@@ -178,112 +258,3 @@ test(
     });
   },
 );
-
-test("shows archived payments as all-time money received independently of points", async ({
-  page,
-}) => {
-  // Local public-record fixtures exercise the browser projection, not chain verification.
-  // Serve the checked bundle on its allowed origin so the payment reader runs.
-  const site = deploymentOrigins(
-    deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
-  ).site;
-  await page.route(`${site}/**`, (route) =>
-    // Money received falls back to the shared empty aggregate (fixtures.ts).
-    new URL(route.request().url()).pathname === "/api/v1/payments/received"
-      ? route.fallback()
-      : route.fulfill({
-          path: join(
-            process.cwd(),
-            "dist",
-            route.request().resourceType() === "document"
-              ? "index.html"
-              : new URL(route.request().url()).pathname,
-          ),
-        }),
-  );
-  await page.route("**/api/v1/payments/received", (route) =>
-    route.fulfill({
-      json: {
-        schemaVersion: "1",
-        generatedAt: "2026-08-17T12:00:00.000Z",
-        contributors: [],
-        totals: {
-          usdMicro: "0",
-          directMicro: "0",
-          vaultUsdMicro: "0",
-          directTransfers: 0,
-          vaultPayments: 0,
-          contributors: 0,
-        },
-      },
-    }),
-  );
-  await page.route("**/api/v1/points/**", (route) =>
-    route.fulfill({ json: null }),
-  );
-  await page.route("**/api/v1/slopbot/summary", (route) =>
-    route.fulfill({ json: { repositories: [] } }),
-  );
-  await page.route("**/.well-known/slop/projects.json", (route) =>
-    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
-  );
-  await page.clock.setFixedTime(new Date("2026-08-17T12:00:00.000Z"));
-  await page.route("**/data/leaderboard.json?**", (route) =>
-    route.fulfill({ json: snapshotFixture() }),
-  );
-  const history = archivedPaidCycleIndex();
-  await page.route("**/data/cycles/index.json?**", (route) =>
-    route.fulfill({ json: history }),
-  );
-  // The home table ranks all-time money received, so the archived payment
-  // appears whatever the current month is.
-  await page.goto(`${site}/#leaderboard`);
-  const home = page.getByRole("region", {
-    name: "Top sloperators",
-    exact: true,
-  });
-  await home
-    .getByRole("button", { name: "Money received", exact: true })
-    .click();
-  const homeRecipient = home.getByRole("row").filter({
-    has: page.getByRole("link", { name: "archive-only", exact: true }),
-  });
-  await expect(homeRecipient.locator("td").nth(3)).toHaveText("$1");
-
-  // Search keeps this zero-points actor visible after all points rows load.
-  await page.goto(`${site}/points?sort=money&q=archive-only`);
-  const standings = page.getByRole("region", {
-    name: "Contributor standings",
-    exact: true,
-  });
-  const recipient = standings.getByRole("row").filter({
-    has: page.getByRole("link", { name: "archive-only", exact: true }),
-  });
-  await expect(recipient.locator("td").nth(3)).toHaveText("$1");
-  await page.goto(`${site}/points?sort=money&period=lifetime&q=archive-only`);
-  await expect(recipient.locator("td").nth(3)).toHaveText("$1");
-  // The points period never narrows money received to one month.
-  await page.clock.setFixedTime(new Date("2026-09-30T12:00:00.000Z"));
-  await page.goto(`${site}/points?sort=money&q=archive-only`);
-  await expect(recipient.locator("td").nth(3)).toHaveText("$1");
-
-  // A current identity must also win when only an older payment creates the row.
-  history.cycles[0].contributors[0].actor.id =
-    snapshotFixture().leaders[0].actor.id;
-  await page.clock.setFixedTime(new Date("2026-08-17T12:00:00.000Z"));
-  await page.goto(`${site}/points?sort=money&identity=renamed`);
-  const currentLink = standings.getByRole("link", {
-    name: "finish-line",
-    exact: true,
-  });
-  await expect(currentLink).toHaveAttribute(
-    "href",
-    "/contributors/finish-line",
-  );
-  await expect(currentLink.locator("../..").locator("td").nth(3)).toHaveText(
-    "$1",
-  );
-  await expect(
-    standings.getByRole("link", { name: "archive-only", exact: true }),
-  ).toHaveCount(0);
-});

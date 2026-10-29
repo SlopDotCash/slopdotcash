@@ -2916,7 +2916,10 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Notifications", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Link or import a GitHub report", { exact: true }),
+    ).toHaveCount(0);
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("slop-report-inbox-compact.png"),

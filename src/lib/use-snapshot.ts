@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { type CycleIndex, loadCycleIndex } from "./cycle-index";
 import {
@@ -14,6 +14,7 @@ import { PROJECTS } from "./projects.mjs";
 
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
+const SNAPSHOT_CACHE_MS = 60_000;
 const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 export type DataState =
   | { status: "loading" }
@@ -30,52 +31,67 @@ export type DataState =
       refreshError?: string;
     };
 
-export function useSnapshot(enabled: boolean): [DataState, () => void] {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<DataState>({ status: "loading" });
+type ReadySnapshot = Extract<DataState, { status: "ready" }>;
+type SnapshotRead = {
+  projects: typeof PROJECTS;
+  controller: AbortController;
+  promise: Promise<ReadySnapshot>;
+  consumers: number;
+  settled: boolean;
+};
 
-  useEffect(() => {
-    let active = true;
-    if (!enabled) return;
-    let controller: AbortController | null = null;
-    let retryTimer: number | null = null;
-    // A refresh keeps showing the last good snapshot while it runs.
-    setState((previous) =>
-      previous.status === "ready" ? previous : { status: "loading" },
+// Only complete, validated public records are reused. Identity, session and
+// wallet reads are independent of this short-lived, page-memory cache.
+let cached: {
+  projects: typeof PROJECTS;
+  value: ReadySnapshot;
+  completedAt: number;
+} | null = null;
+let pending: SnapshotRead | null = null;
+
+function cachedSnapshot(): ReadySnapshot | null {
+  if (!cached || cached.projects !== PROJECTS) return null;
+  const age = Date.now() - cached.completedAt;
+  return age >= 0 && age < SNAPSHOT_CACHE_MS ? cached.value : null;
+}
+
+async function loadSnapshot(
+  projects: typeof PROJECTS,
+  signal: AbortSignal,
+  attempt: number,
+): Promise<ReadySnapshot> {
+  for (let retry = 0; ; retry += 1) {
+    signal.throwIfAborted();
+    const requestController = new AbortController();
+    const requestSignal = AbortSignal.any([signal, requestController.signal]);
+    const timeout = window.setTimeout(
+      () => requestController.abort(new Error("snapshot request timed out")),
+      SNAPSHOT_TIMEOUT_MS,
     );
-
-    const load = async (retry: number): Promise<void> => {
-      const requestController = new AbortController();
-      controller = requestController;
-      const timeout = window.setTimeout(
-        () => requestController.abort(new Error("snapshot request timed out")),
-        SNAPSHOT_TIMEOUT_MS,
-      );
-      try {
-        const query = `attempt=${attempt}&retry=${retry}`;
-        const readSnapshot = async () => {
-          const response = await fetchWithDeadline(
-            `/data/leaderboard.json?${query}`,
-            {
-              cache: "no-store",
-              headers: { Accept: "application/json" },
-              signal: requestController.signal,
-            },
-          );
-          if (!response.ok)
-            throw new Error(`snapshot returned ${response.status}`);
-          return readBoundedJson(response, MAX_LEADERBOARD_BYTES, "snapshot");
-        };
-        const [value, cycleValue]: [unknown, CycleIndex] = await Promise.all([
-          readSnapshot(),
-          loadCycleIndex(requestController.signal, query),
-        ]);
-        assertLeaderboardSnapshot(value);
-        // A project whose pool starts after this snapshot has no cycle to
-        // show yet. Skipping it keeps one future-dated registry entry from
-        // failing the whole page; every other contract violation still
-        // surfaces as a data error rather than being silently swallowed.
-        const views = PROJECTS.filter(
+    try {
+      const query = `attempt=${attempt}&retry=${retry}`;
+      const readSnapshot = async () => {
+        const response = await fetchWithDeadline(
+          `/data/leaderboard.json?${query}`,
+          {
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+            signal: requestSignal,
+          },
+        );
+        if (!response.ok)
+          throw new Error(`snapshot returned ${response.status}`);
+        return readBoundedJson(response, MAX_LEADERBOARD_BYTES, "snapshot");
+      };
+      const [value, cycleIndex]: [unknown, CycleIndex] = await Promise.all([
+        readSnapshot(),
+        loadCycleIndex(requestSignal, query),
+      ]);
+      assertLeaderboardSnapshot(value);
+      // A project whose pool starts after this snapshot has no cycle to
+      // show yet. Every other contract violation remains a data error.
+      const views = projects
+        .filter(
           (project) =>
             projectCycleHasOpened(value, project.id) &&
             project.repositories.every((repository) =>
@@ -83,43 +99,111 @@ export function useSnapshot(enabled: boolean): [DataState, () => void] {
                 (collected) => collected.id === repository.id,
               ),
             ),
-        ).map((project) => createProjectView(value, project.id));
-        if (active) {
-          setState({
-            status: "ready",
-            snapshot: value,
-            views,
-            cycleIndex: cycleValue,
-          });
-        }
-      } catch (error: unknown) {
-        if (!active) return;
-        if (retry < SNAPSHOT_RETRIES) {
-          retryTimer = window.setTimeout(() => void load(retry + 1), 400);
-        } else {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "snapshot could not be read";
-          // error-policy:J1 The browser boundary renders invalid or unavailable public data explicitly.
-          // Without a prior good snapshot this stays an error; nothing is
-          // fabricated. With one, the last good data stays, marked stale.
-          setState((previous) =>
-            previous.status === "ready"
-              ? { ...previous, refreshError: message }
-              : { status: "error", message },
-          );
-        }
-      } finally {
-        requestController.abort();
-        window.clearTimeout(timeout);
-      }
+        )
+        .map((project) => createProjectView(value, project.id));
+      return { status: "ready", snapshot: value, views, cycleIndex };
+    } catch (error: unknown) {
+      if (signal.aborted || retry >= SNAPSHOT_RETRIES) throw error;
+    } finally {
+      requestController.abort();
+      window.clearTimeout(timeout);
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
+  }
+}
+
+function acquireSnapshot(attempt: number, force: boolean) {
+  if (force) cached = null;
+  const fresh = force ? null : cachedSnapshot();
+  if (fresh) return { promise: Promise.resolve(fresh), release: () => {} };
+  let read = !force && pending?.projects === PROJECTS ? pending : null;
+  if (!read || read.controller.signal.aborted) {
+    const controller = new AbortController();
+    const created: SnapshotRead = {
+      projects: PROJECTS,
+      controller,
+      promise: loadSnapshot(PROJECTS, controller.signal, attempt),
+      consumers: 0,
+      settled: false,
     };
-    void load(0);
+    pending = created;
+    created.promise = created.promise
+      .then((value) => {
+        // An older request cannot replace an explicit newer refresh.
+        if (
+          pending === created &&
+          created.consumers > 0 &&
+          !controller.signal.aborted
+        )
+          cached = {
+            projects: created.projects,
+            value,
+            completedAt: Date.now(),
+          };
+        return value;
+      })
+      .finally(() => {
+        created.settled = true;
+        if (pending === created) pending = null;
+      });
+    read = created;
+  }
+  const subscription = read;
+  subscription.consumers += 1;
+  let released = false;
+  return {
+    promise: subscription.promise,
+    release: () => {
+      if (released) return;
+      released = true;
+      subscription.consumers -= 1;
+      // A replacement consumer in the same effect flush can join the read.
+      queueMicrotask(() => {
+        if (subscription.consumers === 0 && !subscription.settled) {
+          subscription.controller.abort();
+          if (pending === subscription) pending = null;
+        }
+      });
+    },
+  };
+}
+
+export function useSnapshot(enabled: boolean): [DataState, () => void] {
+  const [attempt, setAttempt] = useState(0);
+  const previousAttempt = useRef(attempt);
+  const [state, setState] = useState<DataState>(
+    () => (enabled && cachedSnapshot()) || { status: "loading" },
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    const force = attempt !== previousAttempt.current;
+    previousAttempt.current = attempt;
+    // A refresh keeps showing the last good snapshot while it runs.
+    setState((previous) =>
+      previous.status === "ready" ? previous : { status: "loading" },
+    );
+    const request = acquireSnapshot(attempt, force);
+    void request.promise
+      .then((value) => {
+        if (active) setState(value);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        const message =
+          error instanceof Error ? error.message : "snapshot could not be read";
+        // error-policy:J1 Failed reads remain explicit; a prior good read stays visible.
+        setState((previous) =>
+          previous.status === "ready"
+            ? { ...previous, refreshError: message }
+            : { status: "error", message },
+        );
+      })
+      .finally(request.release);
     return () => {
       active = false;
-      controller?.abort();
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      request.release();
     };
   }, [attempt, enabled]);
 

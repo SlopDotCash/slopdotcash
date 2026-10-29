@@ -654,6 +654,83 @@ describe("notifications API", () => {
     expect(((await call(read(["x"]))) as Response).status).toBe(400);
   });
 
+  test("an account switch cannot read or mark another recipient's shared event", async () => {
+    const { call, rows, sqlite } = setup(APPLICANT);
+    sqlite
+      .prepare(
+        "INSERT INTO notifications (event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES ('wallet-claim:a',?,'wallet_changed','solana','/account#wallets',?,?)",
+      )
+      .run(OTHER, T, T);
+    const expected = { "x-slop-expected-github-id": APPLICANT };
+    try {
+      for (const request of [
+        new Request(`${origin}/api/v1/notifications`, { headers: expected }),
+        read(["wallet-claim:a"], expected),
+      ]) {
+        // The page still shows APPLICANT, but the cookie now belongs to OTHER.
+        const response = (await call(request, OTHER)) as Response;
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "actor_changed" });
+      }
+      for (const recipient of [APPLICANT, OTHER])
+        expect(rows(recipient).every((row) => row.read_at === null)).toBe(true);
+
+      const current = { "x-slop-expected-github-id": OTHER };
+      const listed = (await call(
+        new Request(`${origin}/api/v1/notifications`, { headers: current }),
+        OTHER,
+      )) as Response;
+      expect(listed.status).toBe(200);
+      const inbox = parseNotificationsResponse(await listed.json());
+      expect(inbox.recipientGithubId).toBe(OTHER);
+      expect(inbox.unread).toBe(2);
+      expect(
+        inbox.notifications.find((row) => row.eventKey === "wallet-claim:a")
+          ?.subject,
+      ).toBe("solana");
+      const marked = (await call(
+        read(["wallet-claim:a"], current),
+        OTHER,
+      )) as Response;
+      expect(marked.status).toBe(200);
+      expect(await marked.json()).toEqual({ marked: 1 });
+      expect(
+        rows(OTHER).find((row) => row.event_key === "wallet-claim:a")?.read_at,
+      ).toBe("2026-10-19T13:00:00.000Z");
+      expect(rows(APPLICANT).every((row) => row.read_at === null)).toBe(true);
+
+      // Older clients without the optional binding still use their own session.
+      const legacy = (await call(read(["wallet-claim:a"]))) as Response;
+      expect(legacy.status).toBe(200);
+      expect(await legacy.json()).toEqual({ marked: 1 });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  test("malformed expected recipients reveal no rows and mark nothing", async () => {
+    const { call, rows, sqlite } = setup(APPLICANT);
+    try {
+      for (const id of ["0", "01", "-1", "not-an-id", "1".repeat(21)]) {
+        const headers = { "x-slop-expected-github-id": id };
+        for (const request of [
+          new Request(`${origin}/api/v1/notifications`, { headers }),
+          read(["wallet-claim:a"], headers),
+        ]) {
+          const response = (await call(request)) as Response;
+          expect(response.status).toBe(400);
+          expect(await response.json()).toEqual({
+            error: "invalid_expected_actor",
+          });
+        }
+      }
+      expect(rows(APPLICANT).every((row) => row.read_at === null)).toBe(true);
+      expect(rows(OTHER).every((row) => row.read_at === null)).toBe(true);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   test("each notice reports its own email outcome without delivery details", async () => {
     const { call, sqlite } = setup(APPLICANT);
     const insert = sqlite.prepare(
@@ -724,10 +801,14 @@ describe("notifications API", () => {
 
   test("a signed-out request gets 401 and other paths are not handled", async () => {
     const { call } = setup(null);
-    expect(
-      ((await call(new Request(`${origin}/api/v1/notifications`))) as Response)
-        .status,
-    ).toBe(401);
+    for (const request of [
+      new Request(`${origin}/api/v1/notifications`),
+      read(["wallet-claim:a"], { "x-slop-expected-github-id": APPLICANT }),
+    ]) {
+      const response = (await call(request)) as Response;
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: "not_signed_in" });
+    }
     expect(await call(new Request(`${origin}/api/v1/projects`))).toBeNull();
   });
 });
