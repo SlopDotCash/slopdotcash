@@ -36,7 +36,7 @@ import {CloudflareProjectPersistence} from ${JSON.stringify(resolve("backend/pro
 export default {async fetch(request,env) {
  const response=await handleProjectApi(request,{
   persistence:new CloudflareProjectPersistence(env.DB),adminGithubIds:new Set(),moderatorGithubIds:new Set(),
-  sessionActor:async()=>${JSON.stringify(actor)},now:()=>new Date('2026-10-29T00:00:00.000Z'),
+  sessionActor:async()=>(${JSON.stringify(actor)}),now:()=>new Date('2026-10-29T00:00:00.000Z'),
   randomId:()=>crypto.randomUUID(),github:{fetch:async()=>{throw new Error('No live GitHub read allowed')}},
   repositoryAccess:async()=>({installation:'installed',installationId:42,permission:'admin',roleName:'admin',repository:${JSON.stringify(facts)}}),
   repositoryControl:async()=>({state:'matched'}),vettingClearance:async()=>({state:'unscanned'}),
