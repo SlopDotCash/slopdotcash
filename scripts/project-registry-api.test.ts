@@ -2139,7 +2139,7 @@ describe("referral attribution (PRJ-05)", () => {
   const REFERRER = { githubId: "900000010", githubLogin: "e2e-referrer" };
   const liveActors = new Map<
     string,
-    { githubId: string; githubLogin: string }
+    { githubId: string; githubLogin: string; type?: string }
   >();
   beforeEach(() => {
     liveActors.clear();
@@ -2152,7 +2152,7 @@ describe("referral attribution (PRJ-05)", () => {
         ? Response.json({
             id: Number(actor.githubId),
             login: actor.githubLogin,
-            type: "User",
+            type: actor.type ?? "User",
           })
         : new Response(null, { status: 404 });
     };
@@ -2252,6 +2252,18 @@ describe("referral attribution (PRJ-05)", () => {
       expect(body.error).toBe("invalid_referrer");
       expect(body.message).toMatch(message);
     }
+    // An organization is refused as a referrer, not reported as a GitHub outage.
+    liveActors.set("example-org", {
+      githubId: "987654322",
+      githubLogin: "example-org",
+      type: "Organization",
+    });
+    const organization = await create(manifest, { referrer: "example-org" });
+    expect(organization.status).toBe(422);
+    expect(await organization.json()).toMatchObject({
+      error: "personal_account_required",
+      message: expect.stringMatching(/is a GitHub Organization account/u),
+    });
     // A refused referral stores nothing, so the owner can submit again.
     expect(await persistence.listProjects()).toEqual([]);
     const accepted = await create(manifest, { referrer: null });
