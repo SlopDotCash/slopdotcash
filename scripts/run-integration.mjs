@@ -17,6 +17,7 @@ const drivers = [
     ["workers/payments/scanner-progress.workflow.mjs"],
   ],
   ["monthly-order", "node", ["workers/payments/monthly-order.workflow.mjs"]],
+  ["dispatch-clock", "node", ["workers/payments/dispatch-clock.workflow.mjs"]],
   [
     "notifications-mark-read",
     "node",
