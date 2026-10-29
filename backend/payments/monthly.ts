@@ -58,6 +58,7 @@ import {
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
 import {
+  currentRepositoryPath,
   type RepositoryFacts,
   repositoryIdentityMatches,
 } from "../projects/setup";
@@ -111,7 +112,7 @@ export async function verifyProjectAuthority(
       );
     return readBoundedJson(response, 1048576, label);
   }
-  const target = project.repositories[0].id;
+  const target = currentRepositoryPath(project.repositories[0]);
   const identity = (await github(
     `repos/${target}`,
     "Project repository identity",
