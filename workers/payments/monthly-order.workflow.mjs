@@ -10,7 +10,7 @@ import { childEnvironment } from "../../scripts/child-environment.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Real dispatcher/migrations/native D1. The executor binding is a transport
-// fixture; contract admission and signatures are proved by the Anvil workflow.
+// fixture; the compiled EVM suite separately proves the root/leaf ordering.
 const folder = await mkdtemp(join(tmpdir(), "slop-monthly-order-"));
 const time = "2027-01-05T00:00:00.000Z";
 const requests = [];
