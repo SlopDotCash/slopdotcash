@@ -1212,6 +1212,83 @@ test(
   },
 );
 
+test("a long direct transfer history remains readable without enlarging response limits", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  const transfers = Array.from({ length: 5000 }, (_, index) => ({
+    projectId: "eliza",
+    githubUserId: "1",
+    login: current.login,
+    amountMicro: "1000000",
+    contributionMonth: "2026-08",
+    network: "base-mainnet",
+    chain: "base",
+    recipient: `0x${"2".repeat(40)}`,
+    transactionId: `0x${index.toString(16).padStart(64, "0")}`,
+    blockTime: "2026-09-17T12:00:00.000Z",
+  }));
+  const legacy = { transfers, totalMicro: "5000000000" };
+  expect(Buffer.byteLength(JSON.stringify(legacy))).toBeGreaterThan(1_048_576);
+  await page.route(
+    `${site}/api/v1/payments/actors/1/direct-transfers*`,
+    (route) => {
+      const request = route.request();
+      if (request.headers()["x-slop-direct-history"] !== "paged")
+        return route.fulfill({ json: legacy });
+      const after = Number(
+        new URL(request.url()).searchParams.get("after") ?? "0",
+      );
+      const rows = transfers.slice(after, after + 100);
+      return route.fulfill({
+        json: {
+          transfers: rows,
+          totalMicro: String(rows.length * 1_000_000),
+          through: transfers.length,
+          total: transfers.length,
+          next:
+            after + rows.length < transfers.length ? after + rows.length : null,
+        },
+      });
+    },
+  );
+  await page.goto(`${site}/contributors/${current.login}`, {
+    waitUntil: "networkidle",
+  });
+  const history = page.getByRole("region", {
+    name: "Awards and payments",
+    exact: true,
+  });
+  try {
+    await expect(
+      history.locator(".profile-payments-summary strong"),
+    ).toHaveText("$5,001");
+    await expect(
+      history.getByRole("button", {
+        name: "Show all 5001 records",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      history.getByText("Direct payment records unavailable.", {
+        exact: false,
+      }),
+    ).toHaveCount(0);
+  } finally {
+    await page.screenshot({
+      path: info.outputPath("large-direct-history.png"),
+      fullPage: true,
+    });
+  }
+});
+
 test("profile history previews retain every payment and cycle behind keyboard controls", async ({
   page,
 }, info) => {
