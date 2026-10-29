@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { runProductionWatch } from "./production-watch";
 
 // Response bodies trimmed from the live slop.cash shapes of 28 October 2026:
@@ -213,23 +215,31 @@ test("a non-2xx or unreachable endpoint fails its check", async () => {
 
 test("a request that exceeds the bound times out as a failure, without retry", async () => {
   let calls = 0;
-  const results = await runProductionWatch({
-    now: () => NOW,
-    timeoutMs: 20,
-    fetcher: async (url, init) => {
-      if (url !== `${ORIGIN}/`) return site().fetcher(url);
-      calls += 1;
-      return await new Promise<Response>((_, reject) =>
-        init.signal?.addEventListener("abort", () =>
-          reject(init.signal?.reason),
-        ),
-      );
-    },
-  });
-  expect(calls).toBe(1);
-  expect(results.filter((r) => !r.ok)).toEqual([
-    { ok: false, check: "site home", detail: "timed out after 20 ms" },
-  ]);
+  // Stall the home request on a real connection that never answers, as a
+  // stalled network does. A promise that only waits for the abort event
+  // leaves no other pending work, and Bun 1.3.14 on Windows then never fires
+  // AbortSignal.timeout: the test stops progressing at full CPU.
+  const stalled = createServer(() => {});
+  await new Promise<void>((resolve) => stalled.listen(0, "127.0.0.1", resolve));
+  const { port } = stalled.address() as AddressInfo;
+  try {
+    const results = await runProductionWatch({
+      now: () => NOW,
+      timeoutMs: 20,
+      fetcher: async (url, init) => {
+        if (url !== `${ORIGIN}/`) return site().fetcher(url);
+        calls += 1;
+        return await fetch(`http://127.0.0.1:${port}/`, init);
+      },
+    });
+    expect(calls).toBe(1);
+    expect(results.filter((r) => !r.ok)).toEqual([
+      { ok: false, check: "site home", detail: "timed out after 20 ms" },
+    ]);
+  } finally {
+    stalled.closeAllConnections();
+    await new Promise<void>((resolve) => stalled.close(() => resolve()));
+  }
 });
 
 test("an inactive network's old snapshot passes, but it must still exist", async () => {
