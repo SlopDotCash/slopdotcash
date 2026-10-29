@@ -210,6 +210,82 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   });
 });
 
+test("sign-out rejects a delayed session read from profile navigation", async ({
+  diagnostics,
+  page,
+}) => {
+  diagnostics.allowCanceledBackgroundReads();
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  const me = {
+    actor: { id: current.id, login: current.login },
+    joinedAt: "2026-10-01T00:00:00.000Z",
+    public: true,
+    welcome: 5,
+  };
+  let signedIn = true;
+  let sessionReads = 0;
+  let delayedCompleted = false;
+  let releaseSession = () => {};
+  const sessionReady = new Promise<void>((resolve) => {
+    releaseSession = resolve;
+  });
+  await page.route(`${site}/api/v1/points/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/signout")) {
+      signedIn = false;
+      await route.fulfill({ json: { signedOut: true } });
+    } else if (path.endsWith("/me")) {
+      const json = signedIn ? me : null;
+      sessionReads++;
+      if (sessionReads === 2) {
+        await sessionReady;
+        await route.fulfill({ json });
+        delayedCompleted = true;
+      } else await route.fulfill({ json });
+    } else await route.fulfill({ json: null });
+  });
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+    route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  );
+  try {
+    await page.goto(`${site}/contributors/${current.login}`, {
+      waitUntil: "networkidle",
+    });
+    const account = page.getByRole("button", {
+      name: "Your account",
+      exact: true,
+    });
+    await expect(account).toBeVisible();
+    await page
+      .getByRole("banner")
+      .getByRole("link", { name: "Slop home", exact: true })
+      .click();
+    await page
+      .getByRole("region", { name: "Top sloperators", exact: true })
+      .getByRole("table")
+      .waitFor({ state: "visible" });
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    await expect.poll(() => sessionReads).toBe(2);
+    await account.click();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    const login = page
+      .getByRole("banner")
+      .getByRole("link", { name: "Log in", exact: true });
+    await expect(account).toHaveCount(0);
+    releaseSession();
+    await expect.poll(() => delayedCompleted).toBe(true);
+    await page.waitForLoadState("networkidle");
+    await expect(account).toHaveCount(0);
+    await expect(login).toBeVisible();
+  } finally {
+    releaseSession();
+  }
+});
+
 test("warm reassigned handles wait for fresh identity before wallet and history reads", async ({
   page,
 }, info) => {

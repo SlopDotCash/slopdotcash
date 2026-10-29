@@ -206,6 +206,13 @@ export function PointsProvider({
     completedAt: number;
   } | null>(null);
   const sessionRequest = useRef<AbortController | null>(null);
+  const updateMembership = useCallback((value: Membership | null) => {
+    // A successful account action supersedes any earlier session read.
+    sessionRequest.current?.abort();
+    sessionRequest.current = null;
+    setMe(value);
+    setSession("ready");
+  }, []);
   const shouldLoad = enabled || requested;
   // biome-ignore lint/correctness/useExhaustiveDependencies: profile session checks also recheck the public journal's age.
   useEffect(() => {
@@ -290,7 +297,7 @@ export function PointsProvider({
         me,
         session,
         refreshSession: () => setSessionAttempt((value) => value + 1),
-        setMe,
+        setMe: updateMembership,
         refresh: () => setAttempt((a) => a + 1),
         requestPoints: () => setRequested(true),
       }}

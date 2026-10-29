@@ -14,7 +14,13 @@ import {
   notificationCursor,
 } from "../../src/lib/notifications";
 import type { D1Database, D1QueryStatement } from "../d1";
-import { isSameOriginJsonWrite, JSON_HEADERS, json } from "../http";
+import {
+  apiErrorResponse,
+  isSameOriginJsonWrite,
+  JSON_HEADERS,
+  json,
+  requireActor,
+} from "../http";
 import { SCAM_REVIEW_PATH, scamReviewGitHubUrl } from "./events";
 
 export interface NotificationsDependencies {
@@ -94,8 +100,7 @@ export async function handleNotificationsApi(
   if (write && !isSameOriginJsonWrite(request))
     return json(403, { error: "origin_forbidden" });
   try {
-    const actor = await deps.sessionActor(request);
-    if (actor === null) return json(401, { error: "not_signed_in" });
+    const actor = await requireActor(request, deps);
     const moderator = deps.moderatorGithubIds?.has(actor.githubId) === true;
     if (scamRoute) {
       // Moderator access is rechecked on every open (owner decision D4). The
@@ -276,8 +281,13 @@ export async function handleNotificationsApi(
     const marked = result.meta?.changes;
     if (typeof marked !== "number") throw new Error("D1 reported no changes");
     return json(200, { marked });
-  } catch {
-    console.error("notifications API failure");
-    return json(500, { error: "internal_error" });
+  } catch (caught) {
+    return apiErrorResponse(caught, {
+      label: "notifications API failure",
+      respond: (status, { error }) =>
+        json(status, {
+          error: error === "unauthorized" ? "not_signed_in" : error,
+        }),
+    });
   }
 }
