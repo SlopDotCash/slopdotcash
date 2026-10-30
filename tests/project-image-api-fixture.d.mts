@@ -1,4 +1,4 @@
-import type { D1Database, D1QueryStatement } from "../backend/d1";
+import type { D1QueryStatement, D1TransactionalDatabase } from "../backend/d1";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 
 type ProjectFixture = {
@@ -10,7 +10,7 @@ type ProjectFixture = {
 export function projectImageApiFixture(
   project: ProjectDefinition,
   options: { incompleteAssessments: true },
-): Promise<ProjectFixture & { db: D1Database<D1QueryStatement> }>;
+): Promise<ProjectFixture & { db: D1TransactionalDatabase<D1QueryStatement> }>;
 export function projectImageApiFixture(
   project: ProjectDefinition,
 ): Promise<ProjectFixture>;
