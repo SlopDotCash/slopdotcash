@@ -238,6 +238,21 @@ running checks; do not use a leftover ledger. Do not edit or commit the
 generated ledger. Trusted releases collect fresh GitHub data through the
 normal release workflow and never use this local adapter.
 
+When GitHub quota prevents fresh collection, an operator can explicitly release
+the current `main` code with the last published production leaderboard and
+profiles:
+
+```bash
+gh workflow run deploy.yml --ref main -f use_published_data=true
+```
+
+This option is available only for a manual `main` release. It validates the
+published data and preserves its original collection timestamps and history.
+It skips fresh leaderboard/profile collection and the merge-collector install.
+All code, browser, sandbox, build and production release checks still run.
+Missing or invalid published data stops the release. The option defaults to
+`false`; normal releases continue to collect fresh data.
+
 After the chosen preparation succeeds, run:
 
 ```bash
