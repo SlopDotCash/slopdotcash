@@ -8,6 +8,7 @@ const robinhood = {
   claimId: "claim-1",
   address: "0x1111111111111111111111111111111111111111",
   authorized: true,
+  firstAuthorizedAt: "2025-12-01T00:00:00Z",
 };
 function allocation(
   recipient: { amountBase: string; transactionId: string | null },
@@ -155,6 +156,29 @@ test("no published allocation, or no row for this account, shows nothing", async
   await expect(
     page.getByRole("heading", { name: "Contributor allocation" }),
   ).toHaveCount(0);
+});
+
+test("a missed deadline stays unclaimed after late wallet confirmation", async ({
+  page,
+}) => {
+  const published = allocation(
+    { amountBase: "1537000000000000000000", transactionId: null },
+    "2026-01-01T00:00:00Z",
+  );
+  await setup(page, published);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  await expect(section(page)).toContainText("Unclaimed");
+  await setup(page, published, [
+    { ...robinhood, firstAuthorizedAt: "2026-01-02T00:00:00Z" },
+  ]);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(section(page)).toContainText("Unclaimed");
+  await expect(section(page)).not.toContainText("Scheduled");
+  // An on-time registration remains scheduled after the same cutoff.
+  await setup(page, published, [robinhood]);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(section(page)).toContainText("Scheduled");
+  await expectAccessible(page);
 });
 
 test("an invalid file is an error with retry, never an empty allocation", async ({

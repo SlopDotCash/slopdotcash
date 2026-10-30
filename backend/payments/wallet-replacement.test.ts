@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import {
+  contributorAllocation,
+  contributorAllocationState,
+} from "../../src/lib/contributor-allocation";
+import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   type JournalStore,
@@ -50,12 +55,7 @@ async function fixture() {
         claimId: string;
         challengeId: string;
         message: string;
-        wallets: {
-          chain: string;
-          claimId: string;
-          address: string;
-          authorized: boolean;
-        }[];
+        wallets: PaymentsAccount["wallets"];
       },
     };
   }
@@ -117,6 +117,7 @@ test("unsigned replacements preserve the authorized wallet and dispatch, then va
         claimId: a,
         address: first.address.toLowerCase(),
         authorized: false,
+        firstAuthorizedAt: null,
       },
     ]);
     expect(
@@ -138,6 +139,7 @@ test("unsigned replacements preserve the authorized wallet and dispatch, then va
         claimId: a,
         address: first.address.toLowerCase(),
         authorized: true,
+        firstAuthorizedAt: now.toISOString(),
       },
     ]);
     f.award("old-destination");
@@ -190,6 +192,84 @@ test("unsigned replacements preserve the authorized wallet and dispatch, then va
     ).toEqual({ claim_id: a });
   } finally {
     f.sqlite.close();
+  }
+});
+
+test("allocation registration uses the first signed wallet confirmation, including after replacement", async () => {
+  const allocation = contributorAllocation({
+    distribution: {
+      network: "base-mainnet",
+      token: {
+        symbol: "SLOP",
+        address: `0x${"1".repeat(40)}`,
+        decimals: 18,
+      },
+      registrationClosesAt: "2026-10-27T00:08:00.000Z",
+      closed: false,
+      recipients: [{ githubId: "123", amountBase: "100", transactionId: null }],
+    },
+  });
+  if (!allocation) throw new Error("Expected allocation");
+  const afterDeadline = Date.parse("2026-10-27T00:16:00.000Z");
+  const onTime = await fixture();
+  const late = await fixture();
+  try {
+    const original = await onTime.register(first);
+    expect(
+      (
+        await onTime.call(
+          "wallets/authorize",
+          await onTime.consent(original, first),
+        )
+      ).status,
+    ).toBe(200);
+    onTime.advance();
+    const replacement = await onTime.register(second);
+    expect(
+      (
+        await onTime.call(
+          "wallets/authorize",
+          await onTime.consent(replacement, second),
+        )
+      ).status,
+    ).toBe(200);
+    const onTimeWallets = await onTime.current();
+    expect(onTimeWallets[0]).toMatchObject({
+      claimId: replacement,
+      firstAuthorizedAt: now.toISOString(),
+    });
+    expect(
+      contributorAllocationState(
+        allocation,
+        allocation.recipients[0],
+        onTimeWallets,
+        afterDeadline,
+      ),
+    ).toBe("scheduled");
+
+    late.advance();
+    const lateClaim = await late.register(third);
+    expect(
+      (
+        await late.call(
+          "wallets/authorize",
+          await late.consent(lateClaim, third),
+        )
+      ).status,
+    ).toBe(200);
+    const lateWallets = await late.current();
+    expect(lateWallets[0].firstAuthorizedAt).toBe("2026-10-27T00:16:00.000Z");
+    expect(
+      contributorAllocationState(
+        allocation,
+        allocation.recipients[0],
+        lateWallets,
+        afterDeadline,
+      ),
+    ).toBe("unclaimed");
+  } finally {
+    onTime.sqlite.close();
+    late.sqlite.close();
   }
 });
 

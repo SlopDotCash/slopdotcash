@@ -108,9 +108,10 @@ export function contributorAllocation(
 }
 
 /**
- * A recorded transfer is sent. Until the final batch, a confirmed wallet on
- * the allocation's chain is scheduled, and a missing one awaits a wallet
- * until registration closes. Anything else is unclaimed.
+ * A recorded transfer is sent. Until the final batch, a current confirmed
+ * wallet is scheduled only if this account first confirmed a wallet on the
+ * allocation's chain before registration closed. Later replacements retain
+ * that registration time. Anything else is unclaimed after the deadline.
  */
 export function contributorAllocationState(
   allocation: ContributorAllocation,
@@ -120,9 +121,16 @@ export function contributorAllocationState(
 ): ContributorAllocationState {
   if (recipient.transactionId) return "sent";
   if (allocation.closed) return "unclaimed";
-  if (wallets.some((w) => w.chain === allocation.chain && w.authorized))
+  const closesAt = Date.parse(allocation.registrationClosesAt);
+  if (
+    wallets.some(
+      (w) =>
+        w.chain === allocation.chain &&
+        w.authorized &&
+        typeof w.firstAuthorizedAt === "string" &&
+        Date.parse(w.firstAuthorizedAt) < closesAt,
+    )
+  )
     return "scheduled";
-  return now < Date.parse(allocation.registrationClosesAt)
-    ? "awaiting-wallet"
-    : "unclaimed";
+  return now < closesAt ? "awaiting-wallet" : "unclaimed";
 }

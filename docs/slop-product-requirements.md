@@ -402,10 +402,10 @@ Owner decision, 25 October 2026: approve the project-referral program proposed b
 
 ### Contributor token allocation
 
-Proposed by the operator on 29 October 2026; approved by the owner's merge. Slop Cash S.P. distributes its Contributors token line beside the product. It is not a Points, scoring, award or vault feature, and it creates no obligation in the payment record.
+Proposed by the operator on 29 October 2026; approved by the owner on 30 October 2026. Slop Cash S.P. distributes its Contributors token line beside the product. It is not a Points, scoring, award or vault feature, and it creates no obligation in the payment record.
 
 - **Sender.** Slop Cash S.P. sends each transfer from its own wallet. The application holds no key, signs nothing and sends nothing.
 - **Recipients.** The S.P. publishes a fixed list of GitHub actor IDs and amounts in `public/contributor-allocation.json`, changed only by a reviewed pull request. `{"distribution": null}` publishes nothing.
-- **Wallets.** A recipient receives tokens at the wallet confirmed on Payouts for the allocation's network. Transfers go out in batches. Each recipient is sent once; a later wallet change does not resend.
+- **Wallets.** A recipient receives tokens at the wallet confirmed on Payouts for the allocation's network. The first wallet confirmation on that chain must precede the published registration deadline. A later wallet replacement keeps that registration time. Transfers go out in batches. Each recipient is sent once; a later wallet change does not resend.
 - **Payouts.** A signed-in recipient sees only their own row on Payouts: the amount, and Sent with the recorded transaction, Scheduled with a confirmed wallet, Awaiting wallet with a link to register before the published deadline, or Unclaimed. Unclaimed applies after the deadline without a wallet, or to any unsent row once the file records the final batch (`closed`). Accounts outside the list see nothing.
 - **Evidence.** The S.P. records each transaction in the file after it sends. Sent means the sender recorded the transfer; the application does not verify it on chain.
