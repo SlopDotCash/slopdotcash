@@ -998,8 +998,11 @@ async function retainedNativeFixture(
   inventoryMode:
     | "current"
     | "legacy"
+    | "pre-policy"
     | "missing-final"
-    | "changed-final" = "current",
+    | "changed-final"
+    | "missing-policy"
+    | "changed-policy" = "current",
 ) {
   await mkdir(config.workDirectory, { recursive: true });
   await mkdir(config.journalDirectory, { recursive: true });
@@ -1037,11 +1040,12 @@ async function retainedNativeFixture(
       bytes: await readAcquiredObject(acquired.directory, file.sha256),
     });
   const inspection = inspectRepository({ files });
-  if (inventoryMode === "legacy") {
+  if (inventoryMode === "legacy" || inventoryMode === "pre-policy") {
     const inventory = JSON.parse(
       new TextDecoder().decode(inspection.inventory),
     );
-    delete inventory.classifications;
+    if (inventoryMode === "legacy") delete inventory.classifications;
+    delete inventory.rulePolicySha256;
     inspection.inventory = new TextEncoder().encode(JSON.stringify(inventory));
     inspection.inventorySha256 = digest(inspection.inventory);
   }
@@ -1075,12 +1079,19 @@ async function retainedNativeFixture(
     }),
   );
   extension.finish([]);
-  if (inventoryMode === "missing-final" || inventoryMode === "changed-final") {
+  if (
+    inventoryMode.startsWith("missing-") ||
+    inventoryMode.startsWith("changed-")
+  ) {
     const inventory = JSON.parse(
       new TextDecoder().decode(inspection.inventory),
     );
     if (inventoryMode === "missing-final") delete inventory.classifications;
-    else inventory.classifications[0].surfaces = ["source"];
+    if (inventoryMode === "changed-final")
+      inventory.classifications[0].surfaces = ["source"];
+    if (inventoryMode === "missing-policy") delete inventory.rulePolicySha256;
+    if (inventoryMode === "changed-policy")
+      inventory.rulePolicySha256 = "f".repeat(64);
     inspection.inventory = new TextEncoder().encode(JSON.stringify(inventory));
     inspection.inventorySha256 = digest(inspection.inventory);
   }
@@ -1194,8 +1205,8 @@ async function retainedNativeFixture(
   ).toMatchObject({
     outcome:
       defect ||
-      inventoryMode === "missing-final" ||
-      inventoryMode === "changed-final"
+      inventoryMode.startsWith("missing-") ||
+      inventoryMode.startsWith("changed-")
         ? "rejected"
         : "accepted",
   });
@@ -1211,21 +1222,28 @@ async function retainedNativeFixture(
   };
 }
 
-test("native evidence retains the legacy inventory format without rewriting it", async () => {
-  const original = await retainedNativeFixture(
-    false,
-    false,
-    undefined,
-    "legacy",
-  );
-  expect(
-    (await vetting.getAssessment(original.result.assessmentId))?.state,
-  ).toBe("clean");
-  expect(await retained.evidence.retained(original.result)).toBe(true);
-});
+for (const inventoryMode of ["legacy", "pre-policy"] as const) {
+  test(`native evidence retains the ${inventoryMode} inventory format without rewriting it`, async () => {
+    const original = await retainedNativeFixture(
+      false,
+      false,
+      undefined,
+      inventoryMode,
+    );
+    expect(
+      (await vetting.getAssessment(original.result.assessmentId))?.state,
+    ).toBe("clean");
+    expect(await retained.evidence.retained(original.result)).toBe(true);
+  });
+}
 
-for (const inventoryMode of ["missing-final", "changed-final"] as const) {
-  test(`native evidence refuses ${inventoryMode} source classification metadata`, async () => {
+for (const inventoryMode of [
+  "missing-final",
+  "changed-final",
+  "missing-policy",
+  "changed-policy",
+] as const) {
+  test(`native evidence refuses ${inventoryMode} source policy metadata`, async () => {
     const original = await retainedNativeFixture(
       false,
       false,
