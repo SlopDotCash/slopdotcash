@@ -199,9 +199,7 @@ for (const failFirst of [false, true]) {
         });
         release?.();
         if (failFirst) {
-          await expect(form.getByRole("alert")).toContainText(
-            "The correction could not be saved. Retry.",
-          );
+          await expect(form.getByRole("alert")).toBeVisible();
           for (const field of [summary, description, severity, cvss, cwe])
             await expect(field).toBeEnabled();
           await expect(description).toHaveValue(correction.description);

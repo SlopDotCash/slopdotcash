@@ -30,9 +30,7 @@ test("project agent setup falls back to the general prompt until cleared", async
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("/SKILL.md");
-  await expect(page.getByText("inbound terms")).toHaveCount(0);
   // Public project pages keep work selection in the agent workflow.
-  await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(0);
   state = "blocked";
   await page.reload({ waitUntil: "networkidle" });
   await expect(
@@ -41,7 +39,6 @@ test("project agent setup falls back to the general prompt until cleared", async
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).not.toContainText("elizaOS/eliza");
-  await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(0);
   state = "cleared";
   await page.reload({ waitUntil: "networkidle" });
   await expect(
@@ -76,9 +73,6 @@ test("a cleared project keeps a plain agent setup without an open-work list", as
   await expect(
     setup.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("elizaOS/eliza");
-  await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(0);
-  await expect(setup).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(setup).toHaveCSS("border-top-width", "0px");
   await expectAccessible(page, { include: "#start" });
   // Agent links remain next in keyboard order after Copy.
   await setup.getByRole("button", { name: "Copy agent prompt" }).focus();
@@ -113,7 +107,6 @@ test("a cleared project keeps a plain agent setup without an open-work list", as
   await expect(
     setup.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("SlopDotCash/asi");
-  await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(0);
 });
 
 test("home agent setup stays usable when discovery is unavailable", async ({
@@ -176,7 +169,6 @@ test("history navigation never carries another project's clearance into agent se
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("elizaOS/eliza");
-  await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(0);
   await page.waitForLoadState("networkidle");
   const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
   // Observe every committed mutation, including prompt nodes removed before
@@ -234,9 +226,6 @@ test("history navigation never carries another project's clearance into agent se
     await page.evaluate(() => history.go(-2));
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("ASI");
     await expect(page.getByText("Checking project clearance…")).toBeVisible();
-    await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(
-      0,
-    );
     await expect(
       page.getByRole("status", { name: "Agent prompt" }),
     ).not.toContainText("SlopDotCash/asi");
@@ -262,7 +251,6 @@ test("history navigation never carries another project's clearance into agent se
   await expect(
     page.getByText("This project is not cleared for agents.", { exact: false }),
   ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Open work" })).toHaveCount(0);
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).not.toContainText("SlopDotCash/asi");

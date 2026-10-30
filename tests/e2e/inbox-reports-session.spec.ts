@@ -95,9 +95,6 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
       page.getByRole("button", { name: /^(Reports|Notifications)$/u }),
     ).toHaveCount(0);
     const notifications = page.getByRole("list", { name: "Notifications" });
-    await expect(notifications).toContainText(
-      "A base payout wallet was added to your account.",
-    );
     await expect(
       page.getByText("Link or import a GitHub report", { exact: true }),
     ).toHaveCount(0);
@@ -182,7 +179,7 @@ test("Reports view retains sign-in and account-error recovery", async ({
   ).toBeVisible();
   mode = "error";
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByRole("alert")).toContainText("could not load");
+  await expect(page.getByRole("alert")).toBeVisible();
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(

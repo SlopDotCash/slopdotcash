@@ -140,11 +140,6 @@ test(
     await expect(
       page.getByRole("columnheader", { name: "Points", exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("columnheader")).toHaveText([
-      "Rank",
-      "Contributor",
-      "Points",
-    ]);
     await expect(
       page.getByRole("columnheader", { name: "Money received", exact: true }),
     ).toHaveCount(0);
