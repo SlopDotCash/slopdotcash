@@ -685,6 +685,7 @@ export function ProfilePoints({
           </>
         }
       >
+        {own ? <Link href="/inbox?points">Review Points history</Link> : null}
         {children}
       </ProfileActivity>
     </section>
