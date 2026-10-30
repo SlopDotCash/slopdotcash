@@ -24,7 +24,7 @@ mean the code is free of all malware.
 | `source` | Code and configuration files of the executable inventory |
 | `manifests` | `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod` and similar |
 | `dependencies` | Lockfiles; each lock digest is recorded |
-| `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts |
+| `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `wscript`, `Makefile.am`), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts |
 | `downloads` | URLs that install-time content downloads, and committed binaries or archives |
 | `agentInstructions` | `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, README, `SKILL.md`, Cursor, Claude, Copilot and similar rule files |
 
