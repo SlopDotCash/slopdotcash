@@ -38,7 +38,8 @@ export async function processPointsDispute(env: Env, key: string) {
   const at = new Date().toISOString();
   const claim = await db
     .prepare(`UPDATE points_disputes SET claim_token=?,claim_until=?
-    WHERE appeal_key=? AND resolved_at IS NULL AND draft IS NULL
+    WHERE appeal_key=? AND resolved_at IS NULL
+      AND (draft IS NULL OR escalated_at IS NULL)
       AND (claim_until IS NULL OR claim_until<=?)`)
     .bind(
       token,
@@ -66,6 +67,10 @@ export async function processPointsDispute(env: Env, key: string) {
   let callsStarted = false;
   let costsRecorded = false;
   try {
+    // A previous lease may have saved a draft after our initial read. Resume
+    // that immutable draft under this lease instead of calling the model again.
+    appeal = await appealByKey(db, key, "points_disputes");
+    if (!appeal || appeal.resolved_at) return;
     const source = await db
       .prepare(
         "SELECT revision_id,statement FROM points_disputes WHERE appeal_key=?",
