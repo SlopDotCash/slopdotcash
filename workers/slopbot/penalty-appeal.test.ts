@@ -1260,6 +1260,7 @@ test("the queue retries a duplicate review whose original changed after its comm
     // The stale duplicate comment is published, then the label is refused.
     // The changed source must not acknowledge this unfinished review.
     await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+    expect(run.comments).toHaveLength(1);
     const staleComment = run.comments.at(-1);
     expect(run.labels).toEqual([]);
     // The retry reviews the current source and replaces the stale finding.
