@@ -139,7 +139,10 @@ async function signedIn(
       };
     });
   }
-  await page.goto("/how-it-works", { waitUntil: "networkidle" });
+  await page.goto("/how-it-works", { waitUntil: "domcontentloaded" });
+  await expect(
+    page.getByRole("heading", { name: "How Slop works", exact: true }),
+  ).toBeVisible();
   if (!tokens[role]) throw new Error(`Missing fixture session for ${role}`);
   await page.evaluate((value) => {
     document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
