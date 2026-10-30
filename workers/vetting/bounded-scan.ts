@@ -148,6 +148,12 @@ const INSTALL_FILES = new Set([
   "workspace.bazel",
   "docker-bake.hcl",
   "docker-bake.override.hcl",
+  "makefile.inc",
+  "configure.in",
+  "build.xml",
+  "build.ninja",
+  "tupfile",
+  "tuprules.tup",
 ]);
 /**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
@@ -157,7 +163,7 @@ const INSTALL_FILES = new Set([
  * content.
  */
 const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel)$/u;
+  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja)$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -586,11 +592,17 @@ export function inspectRepository(input: {
       counts.downloads += 1;
       continue;
     }
+    const text = decode(file.bytes);
+    // Ant imports may use any filename. Its project root identifies the
+    // executable build document without parsing XML or resolving entities.
+    if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
+      if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
+      if (!surfaces.includes("source")) surfaces.push("source");
+    }
     if (surfaces.length === 0) continue;
     for (const surface of surfaces) counts[surface] += 1;
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
-    const text = decode(file.bytes);
     if (text === null) {
       for (const surface of surfaces) partial.add(surface);
       gaps.push(`Undecodable executable content at ${file.path}`);

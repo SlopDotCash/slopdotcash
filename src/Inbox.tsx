@@ -41,6 +41,7 @@ const SecurityInbox = lazy(() =>
   })),
 );
 const PointsDisputes = lazy(() => import("./PointsDisputes"));
+const IncompleteAssessments = lazy(() => import("./IncompleteAssessments"));
 
 type InboxState =
   | { status: "loading" }
@@ -324,6 +325,16 @@ export default function InboxPage() {
       ) : null}
       {recipient !== null ? (
         <div hidden={state.status === "loading"}>
+          {state.status === "ready" &&
+          state.value.incompleteAssessments !== undefined ? (
+            <Suspense fallback={null}>
+              <IncompleteAssessments
+                key={`incomplete:${recipient}`}
+                actorId={recipient}
+                initial={state.value.incompleteAssessments}
+              />
+            </Suspense>
+          ) : null}
           {new URLSearchParams(window.location.search).has("points") ||
           new URLSearchParams(window.location.search).has("pointsDispute") ? (
             <Suspense fallback={<p role="status">Loading Points review…</p>}>
