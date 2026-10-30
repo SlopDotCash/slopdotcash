@@ -505,8 +505,8 @@ export function monthlyPoolLabel(
   >,
 ): string {
   return monthlyPoolUnfunded(reward)
-    ? `${reward.monthlyCapDisplay} monthly target · not funded`
-    : `${formatMicroUsdc(reward.committedMinor)} funded · ${reward.monthlyCapDisplay} monthly target`;
+    ? `${reward.monthlyCapDisplay} monthly · not funded`
+    : `${formatMicroUsdc(reward.committedMinor)} funded · ${reward.monthlyCapDisplay} monthly`;
 }
 
 export function Avatar({

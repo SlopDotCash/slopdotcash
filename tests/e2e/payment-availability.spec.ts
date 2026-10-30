@@ -39,7 +39,7 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     card.getByText("Payments not active", { exact: true }),
   ).toHaveCount(0);
-  await expect(card).toContainText("/mo target");
+  await expect(card).toContainText("/mo");
   await expect(card.locator(".project-money-state")).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("home-payment-unavailable.png"),
@@ -50,7 +50,7 @@ test("monthly targets remain distinct from verified payment records", async ({
     page.getByRole("heading", { name: "Eliza", exact: true, level: 1 }),
   ).toBeVisible();
   await expect(page.locator(".project-reward-status")).toContainText(
-    "monthly target, split between contributors",
+    "monthly, split between contributors",
   );
   await page.screenshot({
     path: info.outputPath("project-payment-unavailable.png"),
