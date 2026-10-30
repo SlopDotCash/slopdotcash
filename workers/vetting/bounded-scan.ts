@@ -132,16 +132,30 @@ const INSTALL_FILES = new Set([
   "sconstruct",
   "sconscript",
   "wscript",
+  "wscript_build",
   "makefile.am",
+  "makefile.in",
+  "gnumakefile.in",
+  "configure.ac",
+  "build",
+  "build.sbt",
+  "build.boot",
+  "build.bazel",
+  "module.bazel",
+  "workspace",
+  "workspace.bazel",
+  "docker-bake.hcl",
+  "docker-bake.override.hcl",
 ]);
 /**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
- * `app.dockerfile`, or by a build-system extension, such as `Helper.cmake`.
- * They run commands at build time, so they are install surfaces like a
- * Makefile, never unreviewed content.
+ * `app.dockerfile`, or by a build-system definition extension, such as
+ * `Helper.cmake`, `plugins.sbt` or `defs.bzl`. They run commands at build
+ * time, so they are install surfaces like a Makefile, never unreviewed
+ * content.
  */
 const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake)$/u;
+  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel)$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
