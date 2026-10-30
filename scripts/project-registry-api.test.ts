@@ -185,6 +185,12 @@ beforeEach(async () => {
     github: {
       fetch: async (url) => {
         githubReads.push(url);
+        if (url === `https://api.github.com/user/${APPLICANT.githubId}`)
+          return Response.json({
+            id: Number(APPLICANT.githubId),
+            login: APPLICANT.githubLogin,
+            type: "User",
+          });
         if (
           url ===
           "https://api.github.com/repos/example/open-registry/branches?per_page=100&page=1"
@@ -1759,6 +1765,84 @@ describe("project registry API", () => {
     );
     expect(cachedOwned.headers.get("x-slop-cache")).toBe("hit");
     expect(githubReads).toHaveLength(ownedReads);
+  });
+
+  for (const reused of [false, true]) {
+    test(`the owned repository picker follows a renamed account when the old login is ${reused ? "reused" : "missing"}`, async () => {
+      const reads: string[] = [];
+      deps.github.fetch = async (url) => {
+        reads.push(url);
+        if (url === `https://api.github.com/user/${APPLICANT.githubId}`)
+          return Response.json({
+            id: Number(APPLICANT.githubId),
+            login: "renamed-applicant",
+            type: "User",
+          });
+        if (url.includes("/users/renamed-applicant/repos?"))
+          return Response.json([
+            {
+              full_name: "renamed-applicant/tool",
+              description: "The signed-in account's repository",
+              private: false,
+              archived: false,
+            },
+          ]);
+        if (reused)
+          return Response.json([
+            {
+              full_name: `${APPLICANT.githubLogin}/other-account-tool`,
+              description: "Another account's public repository",
+              private: false,
+              archived: false,
+            },
+          ]);
+        return Response.json({ message: "Not Found" }, { status: 404 });
+      };
+      const response = await call(
+        "GET",
+        "project-github/owned-repositories",
+        "applicant",
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        repositories: [
+          {
+            repository: "renamed-applicant/tool",
+            description: "The signed-in account's repository",
+          },
+        ],
+      });
+      expect(
+        reads.some((url) =>
+          url.includes(`/users/${APPLICANT.githubLogin}/repos?`),
+        ),
+      ).toBe(false);
+    });
+  }
+
+  test("an unavailable or mismatched account lookup never fills the owned repository picker", async () => {
+    for (const failure of ["missing", "outage", "mismatch"] as const) {
+      const reads: string[] = [];
+      deps.github.fetch = async (url) => {
+        reads.push(url);
+        if (failure === "missing") return new Response(null, { status: 404 });
+        if (failure === "outage") return new Response(null, { status: 500 });
+        return Response.json({
+          id: 1,
+          login: APPLICANT.githubLogin,
+          type: "User",
+        });
+      };
+      const response = await call(
+        "GET",
+        "project-github/owned-repositories",
+        "applicant",
+      );
+      expect(response.status).toBe(502);
+      expect(reads).toEqual([
+        `https://api.github.com/user/${APPLICANT.githubId}`,
+      ]);
+    }
   });
 
   test("returns every branch through the Slopbot repository read without losing pagination", async () => {

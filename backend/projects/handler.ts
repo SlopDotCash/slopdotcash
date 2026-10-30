@@ -2789,7 +2789,7 @@ async function githubLookup(
   const url = new URL(request.url);
   const cacheRequest = new Request(
     parts[1] === "owned-repositories"
-      ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubLogin.toLowerCase()}`
+      ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubId}`
       : `${url.origin}${url.pathname.toLowerCase()}`,
   );
   const build = async () => {
@@ -2800,10 +2800,23 @@ async function githubLookup(
           "invalid_request",
           "The signed-in GitHub login is not valid.",
         );
-      const repositories = await listOwnedRepositories(
+      const account = await lookupGitHubActor(
         deps.github.fetch,
         deps.github.token,
         session.githubLogin,
+        deps.github.apiOrigin,
+        session.githubId,
+      );
+      if (!account)
+        throw new GithubLookupError(
+          502,
+          "github_unavailable",
+          "GitHub account facts could not be read. Try again.",
+        );
+      const repositories = await listOwnedRepositories(
+        deps.github.fetch,
+        deps.github.token,
+        account.githubLogin,
         deps.github.apiOrigin,
       );
       return json(200, { repositories }, "public, max-age=0, s-maxage=300");
