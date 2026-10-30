@@ -199,6 +199,8 @@ Use one account area, one shared ranking view, and one status summary per projec
 
 Support mobile, keyboard access, screen readers, reduced motion, and 200% zoom. Meet WCAG AA accessibility requirements.
 
+Owner decision, 30 October 2026: remove the "Skip to content" link. Keep the main landmark and keyboard-accessible navigation. The shared header stays at the top of the viewport while scrolling.
+
 Keep loading, empty, stale, invalid, denied, unavailable, and failed states distinct. Each failure needs a useful next action.
 
 The public `/models` page is removed (owner decision, 27 October 2026). Keep exact model attribution on contribution records.
