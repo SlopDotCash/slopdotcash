@@ -250,7 +250,7 @@ jobs:
             assertLeaderboardSnapshot(snapshot);
             console.log(`Using published leaderboard generated at ${snapshot.generatedAt}`);
           ' "$ledger_file"
-          bun scripts/generate-profiles.ts --input "$profiles_file"
+          bun scripts/generate-profiles.ts --input "$profiles_file" --current
           cp "$ledger_file" public/data/leaderboard.json
           bun --no-env-file -e '
             const snapshot = await Bun.file("public/data/profiles.json").json();
