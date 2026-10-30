@@ -2048,29 +2048,34 @@ describe("monthly attestation input", () => {
             `node-${user}`,
             "2027-01-01T00:00:00.000Z",
           );
-        const response = await handlePaymentsApi(
-          new Request("https://slop.cash/api/v1/payments/me", {
-            headers: { cookie: `__Host-slop_points=${token}` },
-          }),
-          { db, now: () => clock },
-        );
-        expect(response.status).toBe(200);
-        const account = (await response.json()) as PaymentsAccount;
-        if (user === A)
-          expect(account.monthlyAwards).toMatchObject([
-            {
-              projectId: project.id,
-              grossBase: "600",
-              feeBase: "12",
-              netBase: "588",
-              state: "conflict",
-            },
-          ]);
-        else {
-          expect(account.monthlyAwards).toEqual([]);
-          expect(account.payments).toMatchObject([
-            { grossBase: "399", feeBase: "7", netBase: "392" },
-          ]);
+        for (const paged of [false, true]) {
+          const headers = new Headers({
+            cookie: `__Host-slop_points=${token}`,
+          });
+          if (paged) headers.set("x-slop-direct-history", "paged");
+          const response = await handlePaymentsApi(
+            new Request("https://slop.cash/api/v1/payments/me", { headers }),
+            { db, now: () => clock },
+          );
+          expect(response.status).toBe(200);
+          const account = (await response.json()) as PaymentsAccount;
+          expect(account.directTransfersPaged).toBe(paged ? true : undefined);
+          if (user === A)
+            expect(account.monthlyAwards).toMatchObject([
+              {
+                projectId: project.id,
+                grossBase: "600",
+                feeBase: "12",
+                netBase: "588",
+                state: "conflict",
+              },
+            ]);
+          else {
+            expect(account.monthlyAwards).toEqual([]);
+            expect(account.payments).toMatchObject([
+              { grossBase: "399", feeBase: "7", netBase: "392" },
+            ]);
+          }
         }
       }
       const expected = {
