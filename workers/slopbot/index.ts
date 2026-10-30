@@ -10,6 +10,10 @@ import { verifyWebhookSignature } from "./github";
 import { dispatchMaintainerHolds } from "./maintainer-holds";
 import { activePenaltyPage } from "./penalties";
 import * as store from "./persistence";
+import {
+  processPendingPointsDisputes,
+  routePointsDisputes,
+} from "./points-disputes";
 import { QUALITY_MARKER } from "./quality";
 import {
   registeredHistoryProject,
@@ -363,6 +367,8 @@ export default {
     }
     const repositoryRoute = routeRepositoryAccess(request, env);
     if (repositoryRoute) return repositoryRoute;
+    const pointsDisputeRoute = routePointsDisputes(request, env);
+    if (pointsDisputeRoute) return pointsDisputeRoute;
     if (request.method !== "POST" || url.pathname !== "/github/webhook") {
       return new Response("not found", { status: 404 });
     }
@@ -519,6 +525,7 @@ export default {
       resumeBudgetBlocks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
+      processPendingPointsDisputes(env),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
         ? [

@@ -489,23 +489,54 @@ export function notifySlopbotAppeal<S>(
   appealKey: string,
   recipient: string,
   at: string,
+  table: "slopbot_appeals" | "points_disputes" = "slopbot_appeals",
+  fence?: { claimToken: string; at: string },
 ): S {
+  if (fence && table !== "points_disputes")
+    throw new Error("Invalid appeal fence");
   return db
     .prepare(
       `${INSERT}
     SELECT 'slopbot-' || a.appeal_key, ?2, 'slopbot_appeal_review',
            a.item_node_id, NULL, ?4, a.escalated_at, ?3
-      FROM slopbot_appeals a
+      FROM ${table} a
      WHERE a.appeal_key = ?1 AND a.escalated_at IS NOT NULL
        AND a.resolved_at IS NULL AND a.appellant_github_id <> ?2
        AND ${GITHUB_ID("?2")}
+       ${fence ? "AND a.claim_token=?5 AND a.claim_until>?6" : ""}
     ${ONCE}`,
     )
     .bind(
       appealKey,
       recipient,
       at,
-      `/api/v1/notifications/appeals/${encodeURIComponent(appealKey)}`,
+      table === "points_disputes"
+        ? `/inbox?pointsDispute=${encodeURIComponent(appealKey)}`
+        : `/api/v1/notifications/appeals/${encodeURIComponent(appealKey)}`,
+      ...(fence ? [fence.claimToken, fence.at] : []),
+    );
+}
+
+/** The private intake receipt and final decision are separate unread events. */
+export function notifyPointsDispute<S>(
+  db: Preparer<S>,
+  key: string,
+  stage: "opened" | "resolved",
+  at: string,
+): S {
+  return db
+    .prepare(`${INSERT}
+    SELECT 'slopbot-' || appeal_key || ?2, appellant_github_id,
+      'slopbot_appeal_review',revision_id,NULL,?3,
+      ${stage === "resolved" ? "resolved_at" : "opened_at"},?4
+    FROM points_disputes WHERE appeal_key=?1
+      ${stage === "resolved" ? "AND resolved_at IS NOT NULL" : ""}
+    ${ONCE}`)
+    .bind(
+      key,
+      stage === "resolved" ? ":resolved" : "",
+      `/inbox?pointsDispute=${encodeURIComponent(key)}`,
+      at,
     );
 }
 
