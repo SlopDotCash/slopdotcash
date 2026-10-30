@@ -3893,8 +3893,15 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       };
     // The full technical analysis is separate from the intake routing screen.
     for (const id of [firstCase, secondCase]) {
-      const analyzed = await act(request, "security", id, "analyze");
-      expect(analyzed.status, JSON.stringify(analyzed.body)).toBe(200);
+      const state = (await ownerCase(id)).analysis?.state;
+      // Receipt verification may already have started the automatic analysis.
+      // Request only a missing/failed analysis, then verify the same completed result.
+      if (state !== "running" && state !== "complete") {
+        const analyzed = await act(request, "security", id, "analyze");
+        if (analyzed.status === 409)
+          expect(analyzed.body.error).toBe("analysis_running");
+        else expect(analyzed.status, JSON.stringify(analyzed.body)).toBe(200);
+      }
       await expect
         .poll(async () => (await ownerCase(id)).analysis?.state, {
           timeout: 30_000,
