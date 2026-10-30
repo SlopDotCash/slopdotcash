@@ -191,18 +191,6 @@ networks are not configured. Safari does not accept the session cookie over
 `http://localhost`, so use Chrome, Edge, or Firefox. The backend listens on
 `127.0.0.1` only and is never deployed.
 
-Local project registration also needs a test Slopbot installation. Create your
-own test GitHub App as described in `workers/slopbot/README.md`, install it on
-your test repository, and put `SLOPBOT_APP_ID` and `SLOPBOT_APP_PRIVATE_KEY` in
-`workers/slopbot/.dev.vars` (or the backend process environment). Use the
-PKCS#8 PEM format required by Slopbot; in `.dev.vars`, store the key on one
-quoted line with `\n` between PEM lines. Restart the backend after configuring
-it. Never use production App credentials. The backend runs Slopbot's existing
-read-only repository routes, which check installation, permanent GitHub IDs,
-and current repository permission against GitHub. Without these credentials,
-sign-in still works and project registration remains unavailable. A local
-registration does not run the security scan or activate a production project.
-
 
 ### Local review checks
 
