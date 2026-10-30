@@ -1244,6 +1244,48 @@ describe("private intake: send outcomes", () => {
     expect(t.cases()).toHaveLength(3);
   });
 
+  test("a GitHub rate limit reopens the draft and is never recorded as forbidden", async () => {
+    const t = setup();
+    for (const [fault, retryAfterSeconds] of [
+      ["403-secondary-rate-limit", null],
+      ["403-primary-rate-limit", 600],
+      ["429", 90],
+    ] as const) {
+      const submission = await t.ready();
+      t.github.faults.create = fault;
+      const sent = await t.send(submission.id, 1);
+      expect(sent.status).toBe(200);
+      expect(sent.body.submission).toMatchObject({
+        state: "draft",
+        failureCode: null,
+        retryAllowed: true,
+        attempt: 1,
+      });
+      expect(sent.body.rateLimited).toEqual({ retryAfterSeconds });
+      expect(t.row(submission.id)).toMatchObject({
+        state: "draft",
+        failure_code: null,
+      });
+      const kinds = (
+        t.sqlite
+          .query(
+            "SELECT kind FROM security_submission_events WHERE submission_id = ? ORDER BY revision",
+          )
+          .all(submission.id) as { kind: string }[]
+      ).map((event) => event.kind);
+      expect(kinds.slice(-2)).toEqual(["send", "rate-limited"]);
+      // GitHub kept no copy, so the reporter sends again without a reconcile.
+      t.github.faults.create = "ok";
+      const again = await t.send(
+        submission.id,
+        sent.body.submission?.revision as number,
+      );
+      expect(again.body.submission?.state).toBe("receipt-verified");
+    }
+    expect(t.github.advisories).toHaveLength(3);
+    expect(t.cases()).toHaveLength(3);
+  });
+
   test("a 404 maps to app-not-installed when the intake App is missing", async () => {
     const t = setup();
     const submission = await t.ready();

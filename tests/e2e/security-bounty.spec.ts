@@ -3778,6 +3778,42 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     expect(secondCase).toBe(submission.caseId);
   });
 
+  await test.step("a GitHub rate limit reopens the draft instead of a refusal", async () => {
+    const submission = await authorized();
+    const before = await advisoryCount();
+    const fault = await request.fetch(
+      `${GITHUB_FIXTURE}/__fixture/advisories/create/secondary-rate-limit`,
+      { method: "PUT" },
+    );
+    expect(fault.status()).toBe(204);
+    const sent = await intakeApi(
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+    expect(sent.body.submission).toMatchObject({
+      state: "draft",
+      failureCode: null,
+      retryAllowed: true,
+    });
+    expect(sent.body.rateLimited).toEqual({ retryAfterSeconds: null });
+    expect(await advisoryCount()).toBe(before);
+    // The throttle cleared, so the next send needs no reconcile.
+    const again = await intakeApi(
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      {
+        expectedRevision: (sent.body.submission as { revision: number })
+          .revision,
+      },
+    );
+    expect(again.body.submission).toMatchObject({
+      state: "receipt-verified",
+    });
+    expect(await advisoryCount()).toBe(before + 1);
+  });
+
   await test.step("the owner triages with the private AI summary and decides a funds-checked 75/25 award", async () => {
     const ownerCase = async (id: string) =>
       (await api(request, "GET", `security-cases/${id}`, TOKENS.security)).body
