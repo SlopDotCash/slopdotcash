@@ -236,17 +236,17 @@ const RULES: Rule[] = [
   },
   {
     threat: "prompt-injection",
-    severity: "high",
+    severity: "medium",
     pattern:
       /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)/iu,
-    summary: "Text tries to override a coding agent's instructions",
+    summary: "Text matches wording used to override agent instructions",
   },
   {
     threat: "prompt-injection",
-    severity: "high",
+    severity: "medium",
     pattern:
       /\b(?:send|post|upload|exfiltrate|paste)\b[^\n]{0,80}\b(?:api[ _-]?key|token|secret|credential|password|private key|\.env)\b/iu,
-    summary: "Instructions ask an agent to send secrets somewhere",
+    summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
   {
