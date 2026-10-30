@@ -107,7 +107,13 @@ const AGENT_INSTRUCTIONS = new Set([
   ".cursorrules",
   ".windsurfrules",
   ".clinerules",
+  ".goosehints",
+  ".continuerules",
+  ".rules",
   "copilot-instructions.md",
+  "warp.md",
+  "claude.local.md",
+  "llms.txt",
 ]);
 const INSTALL_FILES = new Set([
   "setup.py",
@@ -203,6 +209,10 @@ export function surfacesOf(path: string): ScanSurface[] {
     lower.startsWith(".cursor/") ||
     lower.startsWith(".claude/") ||
     lower.startsWith(".github/instructions/") ||
+    lower.startsWith(".github/chatmodes/") ||
+    lower.startsWith(".junie/") ||
+    lower.startsWith(".idx/") ||
+    lower.startsWith(".windsurf/") ||
     lower.includes("/.cursor/rules/")
   )
     surfaces.add("agentInstructions");
