@@ -2705,45 +2705,40 @@ async function finishAppeal(
   if (current.resolution === "upheld" && session.reversalOnly) {
     // A retired project: reverse the debit, with no GitHub write.
     await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
-  } else if (current.resolution === "upheld" && appealed !== session.revision) {
-    // Never reopen here. Remove the finding label only while the newest
-    // finding is still the appealed revision's, as on the current revision.
+  } else if (current.resolution === "upheld") {
+    // Remove the finding label only while the newest finding still belongs to
+    // the appealed revision, and reopen only when that revision is also current.
     const finding = await appealedFinding(db, issue.node_id, covered);
+    const currentRevision = appealed === session.revision && finding !== null;
+    if (currentRevision) {
+      const closedBySlopbot = await store.count(
+        db,
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE item_node_id = ? AND action = 'close'",
+        issue.node_id,
+      );
+      // Reopen only Slopbot's own close, never a later human decision.
+      if (
+        issue.state === "closed" &&
+        closedBySlopbot > 0 &&
+        closedBySlopbotApp(env, issue)
+      ) {
+        await requireScope(db, job, "security");
+        await reopenItem(session.github, job);
+      }
+    }
     if (finding !== null) {
       for (const label of [categoryLabel(finding), UNCERTAIN_LABEL]) {
+        // A due hold can add its label after this appeal's issue snapshot.
+        // DELETE is idempotent; an absent label is also a confirmed removal.
         if (label !== UNCERTAIN_LABEL && !hasLabel(issue, label)) continue;
         await removeLabel(env, job, session.github, label);
       }
     }
     await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
-    await publishAppealState(env, job, session, current, "resolution");
-    return `appeal ${current.resolution} by the ${current.resolved_by}; newer item state kept`;
-  } else if (current.resolution === "upheld") {
-    const closedBySlopbot = await store.count(
-      db,
-      "SELECT COUNT(*) AS n FROM slopbot_actions WHERE item_node_id = ? AND action = 'close'",
-      issue.node_id,
-    );
-    // Reopen only Slopbot's own close, never a later human decision.
-    if (
-      issue.state === "closed" &&
-      closedBySlopbot > 0 &&
-      closedBySlopbotApp(env, issue)
-    ) {
-      await requireScope(db, job, "security");
-      await reopenItem(session.github, job);
+    if (!currentRevision) {
+      await publishAppealState(env, job, session, current, "resolution");
+      return `appeal ${current.resolution} by the ${current.resolved_by}; newer item state kept`;
     }
-    const finding = await latestFinding(db, issue.node_id);
-    for (const label of [
-      ...(finding !== null ? [categoryLabel(finding)] : []),
-      UNCERTAIN_LABEL,
-    ]) {
-      // A due hold can add its label after this appeal's issue snapshot.
-      // DELETE is idempotent; an absent label is also a confirmed removal.
-      if (label !== UNCERTAIN_LABEL && !hasLabel(issue, label)) continue;
-      await removeLabel(env, job, session.github, label);
-    }
-    await reversePenalty(db, issue.node_id, "appeal_upheld", covered);
   }
   await publishAppealState(env, job, session, current, "resolution");
   return `appeal ${current.resolution} by the ${current.resolved_by}`;
