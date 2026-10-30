@@ -93,6 +93,7 @@ export interface PrivateAdvisoryClient {
   ): Promise<
     | { kind: "created"; facts: AdvisoryFacts }
     | { kind: "rejected"; code: FailureCode }
+    | { kind: "rate-limited"; retryAfterSeconds: number | null }
     | { kind: "uncertain" }
   >;
   getAdvisory(
@@ -341,6 +342,53 @@ function repositoryPath(repository: string): string {
   return `${encodeURIComponent(owner ?? "")}/${encodeURIComponent(name ?? "")}`;
 }
 
+/** The longest wait the client reports from GitHub's rate-limit headers. */
+const MAX_RETRY_AFTER_SECONDS = 60 * 60;
+/** The bytes read from a 403 body to find a rate-limit message. */
+const MAX_REFUSAL_BYTES = 16 * 1024;
+
+/**
+ * GitHub answers a primary or secondary rate limit with 429, or with 403 and
+ * `x-ratelimit-remaining: 0`, a `retry-after` header, or a message that names
+ * the rate limit. Any other 403 is a refusal of the account. This reads the
+ * body of a 403 only.
+ */
+async function rateLimited(response: Response): Promise<boolean> {
+  if (response.status === 429) return true;
+  if (response.status !== 403) return false;
+  if (
+    response.headers.get("x-ratelimit-remaining") === "0" ||
+    response.headers.get("retry-after") !== null
+  )
+    return true;
+  try {
+    const body = (await readBoundedJson(
+      response,
+      MAX_REFUSAL_BYTES,
+      "GitHub",
+    )) as { message?: unknown } | null;
+    return (
+      typeof body?.message === "string" && /rate limit/iu.test(body.message)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Seconds until GitHub accepts a request again, when GitHub says so. */
+function retryAfterSeconds(response: Response, now: number): number | null {
+  const header = response.headers.get("retry-after");
+  let seconds: number | null = null;
+  if (header !== null && /^\d{1,6}$/u.test(header.trim()))
+    seconds = Number(header.trim());
+  else if (response.headers.get("x-ratelimit-remaining") === "0") {
+    const reset = response.headers.get("x-ratelimit-reset");
+    if (reset !== null && /^\d{1,12}$/u.test(reset.trim()))
+      seconds = Math.max(0, Math.ceil(Number(reset.trim()) - now / 1000));
+  }
+  return seconds === null ? null : Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
+}
+
 /**
  * The real GitHub client. Its exact response shapes are not yet qualified
  * against GitHub (OPEN_QUESTION 2), so anything outside the mapped statuses
@@ -350,7 +398,10 @@ export function githubAdvisoryClient(options: {
   fetch: Fetch;
   apiOrigin: string;
   installation: IntakeInstallationCheck;
+  /** The clock for GitHub's rate-limit reset time. Tests give their own. */
+  now?: () => Date;
 }): PrivateAdvisoryClient {
+  const now = options.now ?? (() => new Date());
   const request = (url: string, token: string, init: RequestInit = {}) =>
     options.fetch(url, {
       ...init,
@@ -437,6 +488,14 @@ export function githubAdvisoryClient(options: {
           return { kind: "uncertain" };
         }
       }
+      // GitHub refuses a throttled request before it creates anything. A
+      // throttle is not a refusal of the account, so it never becomes
+      // `forbidden`.
+      if (await rateLimited(response))
+        return {
+          kind: "rate-limited",
+          retryAfterSeconds: retryAfterSeconds(response, now().getTime()),
+        };
       await response.body?.cancel().catch(() => undefined);
       if (response.status === 401)
         return { kind: "rejected", code: "grant-expired" };
