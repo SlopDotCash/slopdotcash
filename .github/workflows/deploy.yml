@@ -226,7 +226,7 @@ jobs:
             --tlsv1.2 \
             --connect-timeout 10 \
             --compressed \
-            --retry 2 --retry-delay 2 --retry-max-time 600 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
             --max-time 180 \
             --max-filesize 26214400 \
             --output "$ledger_file" \
