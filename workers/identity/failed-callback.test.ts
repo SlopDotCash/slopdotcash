@@ -13,7 +13,11 @@ type Resolve = () => Promise<{
   githubNodeId?: string;
 } | null>;
 
-async function signIn(resolveGithubIdentity: Resolve) {
+async function signIn(
+  resolveGithubIdentity: Resolve,
+  callbackQuery = "code=fixturecode1",
+  bindStateCookie = true,
+) {
   const persistence = new D1IdentityPersistence(sqliteD1().db as never);
   const deps = {
     persistence,
@@ -44,8 +48,10 @@ async function signIn(resolveGithubIdentity: Resolve) {
   };
   const state = new URL(flow.authorizationUrl).searchParams.get("state");
   const callback = await handleIdentityRequest(
-    new Request(`${LOCAL}/v1/oauth/callback?state=${state}&code=fixturecode1`, {
-      headers: { cookie: `__Host-slop_oauth_state=${state}` },
+    new Request(`${LOCAL}/v1/oauth/callback?state=${state}&${callbackQuery}`, {
+      headers: bindStateCookie
+        ? { cookie: `__Host-slop_oauth_state=${state}` }
+        : {},
     }),
     deps,
   ).then((response) => response.status);
@@ -98,4 +104,31 @@ test("a verified GitHub identity still completes the flow", async () => {
   expect(callback).toBe(200);
   expect(poll.status).toBe(200);
   expect(await poll.json()).toMatchObject({ status: "complete" });
+});
+
+for (const error of [
+  "access_denied",
+  "application_suspended",
+  "redirect_uri_mismatch",
+])
+  test(`GitHub authorization error ${error} ends the flow instead of polling as pending`, async () => {
+    const { callback, poll } = await signIn(async () => {
+      throw new Error("A rejected authorization has no code to exchange");
+    }, `error=${error}`);
+    expect(callback).toBe(400);
+    expect(poll.status).toBe(410);
+    expect(await poll.json()).toMatchObject({ error: "callback_failed" });
+  });
+
+test("an authorization error without the state cookie cannot end the flow", async () => {
+  const { callback, poll } = await signIn(
+    async () => {
+      throw new Error("An unbound callback cannot exchange a code");
+    },
+    "error=access_denied",
+    false,
+  );
+  expect(callback).toBe(400);
+  expect(poll.status).toBe(202);
+  expect(await poll.json()).toMatchObject({ status: "pending" });
 });
