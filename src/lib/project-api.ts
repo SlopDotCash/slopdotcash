@@ -3,7 +3,7 @@
  * site sign-in cookie from /login; the API decides authority on every call.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fetchWithDeadline } from "./browser-json";
 import type {
   PublicProjectApplication as ProjectApplication,
@@ -285,8 +285,13 @@ export function useProjectSession(
 
 /** Show owner controls only after the API verifies current repository authority. */
 export function useProjectMaintainer(projectId: string) {
-  const session = useProjectSession();
+  const [attempt, setAttempt] = useState(0);
+  const session = useProjectSession(attempt);
   const [verified, setVerified] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{
+    identity: string;
+    message: string;
+  } | null>(null);
   // The identity whose maintainer check has answered, allowed or not, so a
   // signed-in visitor sees "checking" rather than a refusal while it runs.
   const [settled, setSettled] = useState<string | null>(null);
@@ -298,6 +303,7 @@ export function useProjectMaintainer(projectId: string) {
     let active = true;
     setVerified(null);
     setSettled(null);
+    setFailure(null);
     if (identity) {
       void projectApiRequest(
         "GET",
@@ -308,10 +314,18 @@ export function useProjectMaintainer(projectId: string) {
           setVerified(identity);
           setSettled(identity);
         },
-        () => {
+        (error: unknown) => {
           if (!active) return;
           setVerified(null);
           setSettled(identity);
+          if (!(error instanceof ProjectApiError && error.status === 403))
+            setFailure({
+              identity,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Project access could not be checked. Retry.",
+            });
         },
       );
     }
@@ -324,6 +338,11 @@ export function useProjectMaintainer(projectId: string) {
     checking:
       session.status === "checking" ||
       (identity !== null && settled !== identity),
+    error:
+      identity !== null && failure?.identity === identity
+        ? failure.message
+        : null,
+    retry: useCallback(() => setAttempt((value) => value + 1), []),
     session,
   };
 }
