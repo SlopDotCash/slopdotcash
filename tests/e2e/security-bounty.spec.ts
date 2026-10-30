@@ -1868,8 +1868,8 @@ test("private security bounty programs keep cases restricted from intake to awar
       view: "financial",
       awardState: "approved",
       paymentState: "rail-unavailable",
-      // No settlement exists yet; the reviewed bounty vault allows one.
-      paymentRail: "unavailable",
+      // No settlement exists yet; the configured route is direct.
+      paymentRail: "direct",
       payee: { githubLogin: "e2e-reporter-a" },
       allowedActions: ["prepare-payment"],
     });
