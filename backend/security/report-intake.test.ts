@@ -4,16 +4,27 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import {
+  REWARD_ASSET_NETWORKS,
+  rewardAssetChoice,
+} from "../../src/lib/reward-asset.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1QueryStatement } from "../d1";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
-import type { SecurityAnalyzer, SecurityScreeningProposal } from "./analysis";
+import type {
+  CaseAnalysisView,
+  SecurityAnalysisInput,
+  SecurityAnalyzer,
+  SecurityAppealInput,
+  SecurityScreeningProposal,
+} from "./analysis";
 import {
   handleSecurityApi,
   type SecurityApiDependencies,
   type SecurityD1Database,
 } from "./handler";
+import { readStoredReportByCase } from "./report-intake";
 
 const ORIGIN = "https://slop.test";
 const START = "2026-10-27T12:00:00.000Z";
@@ -53,6 +64,8 @@ type Submission = {
 };
 type Case = {
   id: string;
+  analysis: CaseAnalysisView | null;
+  allowedActions: string[];
   revision: number;
   receivedAt: string;
   receivedAtSource: string;
@@ -230,11 +243,24 @@ function fixture(overrides: Record<string, unknown> = {}) {
   let screeningFails = false;
   let beforeScreenResult: (() => Promise<void>) | null = null;
   const screenedDescriptions: string[] = [];
+  const analyzed: SecurityAnalysisInput[] = [];
+  const analysisTimeouts: number[] = [];
+  let beforeAnalysisResult: (() => Promise<void>) | null = null;
   const analyzer: SecurityAnalyzer = {
     provider: "deterministic-fixture",
     model: "fixture-screening",
-    async analyze() {
-      throw new Error("This control test does not qualify case analysis");
+    async analyze(input, timeoutMs) {
+      analyzed.push(input);
+      analysisTimeouts.push(timeoutMs);
+      if (beforeAnalysisResult) await beforeAnalysisResult();
+      return {
+        summary: `Assessment ${analyzed.length}: ${input.report.summary}`,
+        severity: "high",
+        potentialLoss: "unclear",
+        duplicateCaseIds: [],
+        rootCauseKey: "fixture-private-report",
+        remediation: "Review the isolated reproduction privately.",
+      };
     },
     async screen(input) {
       screeningCalls++;
@@ -317,6 +343,8 @@ function fixture(overrides: Record<string, unknown> = {}) {
     caseAction,
     notices,
     screenedDescriptions,
+    analyzed,
+    analysisTimeouts,
     screeningCalls: () => screeningCalls,
     decision: (value: SecurityScreeningProposal["decision"]) => {
       decision = value;
@@ -329,6 +357,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
     },
     beforeScreen: (callback: (() => Promise<void>) | null) => {
       beforeScreenResult = callback;
+    },
+    beforeAnalysis: (callback: (() => Promise<void>) | null) => {
+      beforeAnalysisResult = callback;
     },
     beforeStore: (callback: () => Promise<void>) => {
       beforeStore = callback;
@@ -541,53 +572,67 @@ describe("durable private report controls", () => {
     expect(t.objects.size).toBe(1);
   });
 
-  test("the first owner-confirmed qualifying receipt keeps priority before and after funding", async () => {
-    const t = fixture();
-    const first = required(
-      (await t.create("earlier-qualifying-report")).body.submission,
-    );
-    const decision = {
-      action: "decide",
-      outcome: "confirmed",
+  test.each([
+    {
+      eligibility: "critical-loss-of-funds",
       severity: "critical",
       loss: "verified-potential",
-      inScope: true,
-      reason: "The owner independently reproduced this loss-of-funds finding.",
-      relatedParty: false,
-      rootCauseKey: "withdrawal-share-rounding",
-    };
-    expect((await t.caseAction(first.caseId, decision)).status).toBe(200);
-    t.advance(1000);
-    const later = required(
-      (await t.create("later-qualifying-report", OTHER)).body.submission,
-    );
-    expect((await t.caseAction(later.caseId, decision)).status).toBe(200);
-    const awardLater = () =>
-      t.caseAction(later.caseId, {
-        action: "award",
-        decision: "amount",
-        grossMinor: "10000000000",
-        paymentDeadline: "2026-11-30T00:00:00.000Z",
-        confirmation: true,
-        reason: "Attempt to award the later same-finding report.",
-      });
-    const pending = await awardLater();
-    expect(pending.status).toBe(409);
-    expect(pending.body.error).toBe("earlier_qualifying_report");
-    t.fund();
-    const funded = await awardLater();
-    expect(funded.status).toBe(409);
-    expect(funded.body.error).toBe("earlier_qualifying_report");
-    expect(
-      t.sqlite.query("SELECT * FROM security_award_reservations").all(),
-    ).toEqual([]);
-    const firstCase = await t.call(
-      OWNER,
-      "GET",
-      `security-cases/${first.caseId}`,
-    );
-    expect(required(firstCase.body.case).award).toBeNull();
-  });
+    },
+    {
+      eligibility: "in-scope-security",
+      severity: "high",
+      loss: "not-verified",
+    },
+  ])(
+    "the first $eligibility receipt keeps priority before and after funding",
+    async ({ eligibility, severity, loss }) => {
+      const t = fixture({ eligibility });
+      const first = required(
+        (await t.create("earlier-qualifying-report")).body.submission,
+      );
+      const decision = {
+        action: "decide",
+        outcome: "confirmed",
+        severity,
+        loss,
+        inScope: true,
+        reason: "The owner independently reproduced this in-scope finding.",
+        relatedParty: false,
+        rootCauseKey: "withdrawal-share-rounding",
+      };
+      expect((await t.caseAction(first.caseId, decision)).status).toBe(200);
+      t.advance(1000);
+      const later = required(
+        (await t.create("later-qualifying-report", OTHER)).body.submission,
+      );
+      expect((await t.caseAction(later.caseId, decision)).status).toBe(200);
+      const awardLater = () =>
+        t.caseAction(later.caseId, {
+          action: "award",
+          decision: "amount",
+          grossMinor: "10000000000",
+          paymentDeadline: "2026-11-30T00:00:00.000Z",
+          confirmation: true,
+          reason: "Attempt to award the later same-finding report.",
+        });
+      const pending = await awardLater();
+      expect(pending.status).toBe(409);
+      expect(pending.body.error).toBe("earlier_qualifying_report");
+      t.fund();
+      const funded = await awardLater();
+      expect(funded.status).toBe(409);
+      expect(funded.body.error).toBe("earlier_qualifying_report");
+      expect(
+        t.sqlite.query("SELECT * FROM security_award_reservations").all(),
+      ).toEqual([]);
+      const firstCase = await t.call(
+        OWNER,
+        "GET",
+        `security-cases/${first.caseId}`,
+      );
+      expect(required(firstCase.body.case).award).toBeNull();
+    },
+  );
 
   test("an earlier qualifying report keeps priority while its no-award decision is appealed", async () => {
     const t = fixture();
@@ -701,6 +746,53 @@ describe("durable private report controls", () => {
     ).toEqual([]);
   });
 
+  test("private receipts freeze native, Robinhood and custom-token award identities", async () => {
+    for (const choice of [
+      rewardAssetChoice("base", "native", "", ""),
+      rewardAssetChoice("solana", "native", "", ""),
+      rewardAssetChoice("robinhood", "stablecoin", "", ""),
+      rewardAssetChoice("ethereum", "token", `0x${"a".repeat(40)}`, "OPEN"),
+    ]) {
+      const definition = REWARD_ASSET_NETWORKS[choice.network];
+      const decimals =
+        choice.kind === "token" ? 18 : definition[choice.kind].decimals;
+      const asset = {
+        ...choice,
+        decimals,
+        chainId: definition.chainId,
+        cluster: definition.cluster,
+        verifiedAt: START,
+      };
+      const amount = {
+        asset,
+        currency: asset.symbol,
+        decimals,
+        network: asset.network,
+        grossMinor: (4n * 10n ** BigInt(decimals)).toString(),
+      };
+      const t = fixture({ amount, settlement: undefined });
+      const response = await t.create();
+      expect(response.status).toBe(201);
+      const submission = required(response.body.submission);
+      // Later terms must not change the asset, units or split of this receipt.
+      t.publishProgram({ ...program(), amount: program().amount });
+      const received = await t.call(
+        REPORTER,
+        "GET",
+        `security-cases/${submission.caseId}`,
+      );
+      expect(received.status).toBe(200);
+      expect(received.body.case?.terms).toMatchObject({
+        ...amount,
+        researcherMinor: (3n * 10n ** BigInt(decimals)).toString(),
+        slopMinor: (10n ** BigInt(decimals)).toString(),
+      });
+      expect(
+        t.sqlite.query("SELECT * FROM security_award_reservations").all(),
+      ).toEqual([]);
+    }
+  });
+
   test("a slop.cash full-award case pays the whole award and never reserves against a 75/25 vault", async () => {
     const full = {
       split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
@@ -804,6 +896,19 @@ describe("durable private report controls", () => {
         slopMinor: "2500000000",
       },
     });
+    expect(received.body.case?.analysis).toBeUndefined();
+    const assessed = await t.call(
+      OWNER,
+      "GET",
+      `security-cases/${submission.caseId}`,
+    );
+    expect(assessed.body.case?.analysis).toMatchObject({
+      state: "complete",
+      sourceReportVersion: 1,
+    });
+    expect(t.analyzed).toHaveLength(1);
+    expect(t.analyzed[0].report.description).toBe(REPORT.description);
+    expect(t.analyzed[0].scope).toEqual(program().scope);
     expect(t.notices(REPORTER)).toHaveLength(1);
     expect(t.notices(OWNER)).toHaveLength(1);
     const read = await t.call(
@@ -830,8 +935,348 @@ describe("durable private report controls", () => {
     }
   });
 
+  test.each(["needs-information", "spam"] as const)(
+    "a %s report needs explicit human forwarding before assessment",
+    async (decision) => {
+      const t = fixture();
+      t.decision(decision);
+      const submission = required((await t.create()).body.submission);
+      expect(t.analyzed).toHaveLength(0);
+      const blocked = await t.caseAction(submission.caseId, {
+        action: "analyze",
+      });
+      expect(blocked.status).toBe(409);
+      expect(t.analyzed).toHaveLength(0);
+      const forwarded = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${submission.id}/review`,
+        {
+          expectedRevision: submission.intake.revision,
+          decision: "forward",
+          reason: "The private evidence supports technical review.",
+        },
+      );
+      expect(forwarded.status).toBe(200);
+      expect(t.analyzed).toHaveLength(1);
+      const retry = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${submission.id}/screen`,
+        {
+          expectedRevision: required(forwarded.body.submission).intake.revision,
+        },
+      );
+      expect(retry.status).toBe(200);
+      expect(t.analyzed).toHaveLength(1);
+      expect(t.screeningCalls()).toBe(1);
+    },
+  );
+
+  test("a revision hides stale assessment, binds new content and keeps receipt scope", async () => {
+    const t = fixture();
+    const submission = required(
+      (await t.create("assessment-revision")).body.submission,
+    );
+    const read = () =>
+      t.call(OWNER, "GET", `security-cases/${submission.caseId}`);
+    const original = required((await read()).body.case).analysis;
+    expect(original).toMatchObject({
+      state: "complete",
+      sourceReportVersion: 1,
+    });
+    const requested = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${submission.id}/review`,
+      {
+        expectedRevision: submission.intake.revision,
+        decision: "request-information",
+        reason: "Include a second isolated reproduction.",
+      },
+    );
+    const pending = required(requested.body.submission);
+    expect(required((await read()).body.case).analysis).toBeNull();
+    const unchanged = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      { expectedRevision: pending.intake.revision, report: REPORT },
+    );
+    expect(unchanged.status).toBe(409);
+    expect(unchanged.body.error).toBe("report_unchanged");
+    expect(t.analyzed).toHaveLength(1);
+    t.publishProgram({
+      ...program(),
+      scope: { ...program().scope, includedAssets: ["Later scope"] },
+    });
+    t.beforeScreen(async () => {
+      t.beforeScreen(null);
+      const view = required((await read()).body.case);
+      expect(view.analysis).toBeNull();
+      expect(view.allowedActions).not.toContain("analyze");
+      const comparison = await t.create("comparison-during-revision", OTHER);
+      expect(comparison.status).toBe(201);
+      expect(t.analyzed.at(-1)?.priorCases).toContainEqual({
+        id: submission.caseId,
+        rootCauseKey: null,
+        summary: null,
+      });
+    });
+    const revisedReport = {
+      ...REPORT,
+      description: `${REPORT.description} Second reproduction attached.`,
+    };
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      { expectedRevision: pending.intake.revision, report: revisedReport },
+    );
+    expect(revised.status).toBe(200);
+    const current = required((await read()).body.case).analysis;
+    expect(current).toMatchObject({
+      state: "complete",
+      sourceReportVersion: 2,
+      attempt: 2,
+    });
+    expect(current?.advisoryDigest).not.toBe(original?.advisoryDigest);
+    expect(t.analyzed.at(-1)?.report.description).toBe(
+      revisedReport.description,
+    );
+    expect(t.analyzed.at(-1)?.scope).toEqual(program().scope);
+    expect(
+      (await readStoredReportByCase(t.deps, submission.caseId, 1))?.description,
+    ).toBe(REPORT.description);
+    expect(
+      (await readStoredReportByCase(t.deps, submission.caseId, 2))?.description,
+    ).toBe(revisedReport.description);
+    const before = t.analyzed.length;
+    const replay = await t.create("assessment-revision");
+    expect(replay.body.replayed).toBe(true);
+    expect(t.analyzed).toHaveLength(before);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT attempt,report_version,state FROM security_case_analyses WHERE case_id=? ORDER BY attempt",
+        )
+        .all(submission.caseId),
+    ).toEqual([
+      { attempt: 1, report_version: 1, state: "complete" },
+      { attempt: 2, report_version: 2, state: "complete" },
+    ]);
+  });
+
+  test("appeal triage does not reuse a completed assessment of an older report version", async () => {
+    const t = fixture();
+    const appealInputs: SecurityAppealInput[] = [];
+    required(t.deps.analyzer).triageAppeal = async (input) => {
+      appealInputs.push(input);
+      return {
+        proposedOutcome: "return",
+        rationale: "Review the revised evidence.",
+        confidence: 0.95,
+      };
+    };
+    const submission = required((await t.create()).body.submission);
+    const review = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${submission.id}/review`,
+      {
+        expectedRevision: submission.intake.revision,
+        decision: "request-information",
+        reason: "Clarify the affected operation.",
+      },
+    );
+    t.beforeAnalysis(async () => {
+      throw new Error("Fixture revised assessment unavailable");
+    });
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      {
+        expectedRevision: required(review.body.submission).intake.revision,
+        report: { ...REPORT, summary: "Revised private finding" },
+      },
+    );
+    expect(revised.status).toBe(200);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT report_version,state FROM security_case_analyses WHERE case_id=? ORDER BY attempt",
+        )
+        .all(submission.caseId),
+    ).toEqual([
+      { report_version: 1, state: "complete" },
+      { report_version: 2, state: "failed" },
+    ]);
+    expect(
+      (
+        await t.caseAction(submission.caseId, {
+          action: "decide",
+          outcome: "confirmed",
+          severity: "critical",
+          loss: "verified-potential",
+          inScope: true,
+          reason: "The revised reproduction proves the finding.",
+          relatedParty: false,
+          rootCauseKey: "revised-private-finding",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await t.caseAction(submission.caseId, {
+          action: "award",
+          decision: "none",
+          reason: "The owner declines an award.",
+        })
+      ).status,
+    ).toBe(200);
+    const current = required(
+      (await t.call(REPORTER, "GET", `security-cases/${submission.caseId}`))
+        .body.case,
+    );
+    const appealed = await t.call(
+      REPORTER,
+      "POST",
+      `security-cases/${submission.caseId}/actions`,
+      {
+        action: "appeal",
+        expectedRevision: current.revision,
+        idempotencyKey: "appeal-revised-private-report",
+        reason: "Please consider the revised report and award decision.",
+      },
+    );
+    expect(appealed.status).toBe(200);
+    expect(appealInputs).toHaveLength(1);
+    expect(appealInputs[0].analysisSummary).toBeNull();
+    expect(appealInputs[0].scope).toEqual(program().scope);
+    expect(
+      t.sqlite
+        .query("SELECT state FROM security_appeal_triages WHERE case_id=?")
+        .get(submission.caseId),
+    ).toEqual({ state: "complete" });
+  });
+
+  test("a late old assessment cannot replace a completed revision, and shares the background budget", async () => {
+    const t = fixture();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const pending: Promise<unknown>[] = [];
+    t.deps.waitUntil = (task) => {
+      pending.push(task);
+    };
+    t.beforeAnalysis(async () => {
+      t.beforeAnalysis(null);
+      started.resolve();
+      await release.promise;
+    });
+    const submission = required((await t.create()).body.submission);
+    await started.promise;
+    await pending[0];
+    expect(t.analysisTimeouts[0]).toBeGreaterThan(0);
+    expect(t.analysisTimeouts[0]).toBeLessThan(25_000);
+    expect(() =>
+      t.sqlite
+        .query(
+          "UPDATE security_case_analyses SET report_version=2 WHERE case_id=? AND attempt=1",
+        )
+        .run(submission.caseId),
+    ).toThrow("an analysis report version is immutable");
+    const latest = required(
+      (await t.call(REPORTER, "GET", `security-submissions/${submission.id}`))
+        .body.submission,
+    );
+    const review = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${submission.id}/review`,
+      {
+        expectedRevision: latest.intake.revision,
+        decision: "request-information",
+        reason: "Clarify the affected operation.",
+      },
+    );
+    const from = pending.length;
+    const revision = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      {
+        expectedRevision: required(review.body.submission).intake.revision,
+        report: { ...REPORT, summary: "Revised affected operation" },
+      },
+    );
+    expect(revision.status).toBe(200);
+    await pending[from];
+    await Promise.all(pending.slice(from));
+    const read = () =>
+      t.call(OWNER, "GET", `security-cases/${submission.caseId}`);
+    expect(required((await read()).body.case).analysis).toMatchObject({
+      state: "complete",
+      sourceReportVersion: 2,
+      attempt: 2,
+    });
+    release.resolve();
+    await Promise.all(pending);
+    expect(required((await read()).body.case).analysis).toMatchObject({
+      state: "complete",
+      sourceReportVersion: 2,
+      attempt: 2,
+    });
+    expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("reporter screening retries cannot repeat a failed assessment, but the owner can retry", async () => {
+    const t = fixture();
+    t.beforeAnalysis(async () => {
+      throw new Error("Fixture analysis unavailable");
+    });
+    const submission = required((await t.create()).body.submission);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(submission.intake.routingState).toBe("routed");
+    expect(t.analyzed).toHaveLength(1);
+    t.beforeAnalysis(null);
+    for (let retry = 0; retry < 3; retry++) {
+      const screened = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/screen`,
+        { expectedRevision: submission.intake.revision },
+      );
+      expect(screened.status).toBe(200);
+      expect(t.analyzed).toHaveLength(1);
+      expect(t.screeningCalls()).toBe(1);
+    }
+    const before = await t.call(
+      OWNER,
+      "GET",
+      `security-cases/${submission.caseId}`,
+    );
+    expect(before.body.case?.analysis).toMatchObject({
+      state: "failed",
+      attempt: 1,
+    });
+    const recovered = await t.caseAction(submission.caseId, {
+      action: "analyze",
+    });
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.case?.analysis).toMatchObject({
+      state: "complete",
+      attempt: 2,
+      sourceReportVersion: 1,
+    });
+    expect(t.analyzed).toHaveLength(2);
+  });
+
   test("an unreadable saved report records an unavailable owner analysis that can run again", async () => {
     const t = fixture();
+    t.beforeAnalysis(async () => {
+      throw new Error("Fixture analysis unavailable");
+    });
     const submission = required((await t.create()).body.submission);
     // The retained object is gone, as after a private storage fault.
     t.objects.clear();
@@ -843,7 +1288,7 @@ describe("durable private report controls", () => {
         .all(submission.caseId);
     const first = await t.caseAction(submission.caseId, { action: "analyze" });
     expect(first.status).toBe(200);
-    expect(attempts()).toEqual([{ state: "unavailable" }]);
+    expect(attempts()).toEqual([{ state: "failed" }, { state: "unavailable" }]);
     expect(
       (first.body.case as unknown as { allowedActions: string[] })
         .allowedActions,
@@ -851,6 +1296,7 @@ describe("durable private report controls", () => {
     const again = await t.caseAction(submission.caseId, { action: "analyze" });
     expect(again.status).toBe(200);
     expect(attempts()).toEqual([
+      { state: "failed" },
       { state: "unavailable" },
       { state: "unavailable" },
     ]);
@@ -937,6 +1383,23 @@ describe("durable private report controls", () => {
     );
     expect(t.notices(OWNER)).toHaveLength(0);
     const before = [...t.objects.values()][0].bytes.slice();
+    for (const [person, revoked] of [
+      [OTHER, false],
+      [FINANCE, true],
+    ] as const)
+      t.sqlite
+        .prepare(
+          "INSERT INTO security_case_members(case_id,github_id,github_login,role,added_by_github_id,added_at,revoked_at,revoked_by_github_id) VALUES (?,?,?,'triager',?,?,?,?)",
+        )
+        .run(
+          submission.caseId,
+          person.githubId,
+          person.githubLogin,
+          OWNER.githubId,
+          START,
+          revoked ? START : null,
+          revoked ? OWNER.githubId : null,
+        );
     t.failScreening(false);
     const revisedReport = {
       ...REPORT,
@@ -954,6 +1417,16 @@ describe("durable private report controls", () => {
     expect(submission.intake.reportVersion).toBe(2);
     expect(t.objects.size).toBe(2);
     expect([...t.objects.values()][0].bytes).toEqual(before);
+    expect(t.notices(OTHER)).toHaveLength(1);
+    expect(t.notices(FINANCE)).toHaveLength(0);
+    const rescreened = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/screen`,
+      { expectedRevision: submission.intake.revision },
+    );
+    expect(rescreened.status).toBe(200);
+    expect(t.notices(OTHER)).toHaveLength(1);
     const read = await t.call(
       REPORTER,
       "GET",
@@ -1544,6 +2017,15 @@ describe("durable private report controls", () => {
         },
       );
       expect(review.status).toBe(200);
+      expect(
+        t
+          .notices(REPORTER)
+          .filter((notice) =>
+            String((notice as { event_key: string }).event_key).startsWith(
+              "security-information:",
+            ),
+          ),
+      ).toHaveLength(1);
       reviewed = true;
     });
     const accepted = await t.create();
@@ -1624,6 +2106,37 @@ describe("durable private report controls", () => {
     expect(
       t.sqlite.query("SELECT * FROM security_award_reservations").all(),
     ).toHaveLength(1);
+  });
+
+  test("honors a new program's in-scope criteria without imposing a funds-loss gate", async () => {
+    const t = fixture({ eligibility: "in-scope-security" });
+    const accepted = await t.create();
+    const submission = required(accepted.body.submission);
+    // A later program edit cannot narrow the terms already accepted at receipt.
+    t.publishProgram({ ...program(), eligibility: "critical-loss-of-funds" });
+    const decided = await t.caseAction(submission.caseId, {
+      action: "decide",
+      outcome: "confirmed",
+      severity: "high",
+      loss: "not-verified",
+      inScope: true,
+      reason:
+        "Reproduced the private data exposure within the published scope.",
+      relatedParty: false,
+      rootCauseKey: "private-data-exposure",
+    });
+    expect(decided.status).toBe(200);
+    const awarded = await t.caseAction(submission.caseId, {
+      action: "award",
+      decision: "amount",
+      grossMinor: "10000000000",
+      paymentDeadline: "2026-11-30T00:00:00.000Z",
+      confirmation: true,
+      reason: "The report meets the criteria frozen at receipt.",
+    });
+    expect(awarded.status).toBe(200);
+    expect(required(awarded.body.case).award.grossMinor).toBe("10000000000");
+    t.sqlite.close();
   });
 
   test.each([

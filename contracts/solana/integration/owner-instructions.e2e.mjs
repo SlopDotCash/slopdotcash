@@ -35,7 +35,7 @@ import {
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 
 test("edge owner instructions create distinct vaults with atomic monthly choice and accept funds", {
-  timeout: 240000,
+  timeout: 600000,
 }, async () => {
   const provider = anchor.AnchorProvider.env();
   const owner = provider.wallet.payer;

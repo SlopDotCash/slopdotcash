@@ -25,6 +25,11 @@ const checks = modes.map((args) => ({
   args: ["backend/security/payments.integration.ts", ...args],
 }));
 checks.push({
+  label: "direct-security-payments",
+  command: "bun",
+  args: ["backend/security/direct-payments.integration.ts"],
+});
+checks.push({
   label: "binding-recovery-workflow",
   command: "node",
   args: ["workers/payment-executor/binding-recovery.workflow.mjs"],
@@ -56,6 +61,7 @@ await Promise.all(
         env: {
           ...childEnvironment(),
           SLOP_SECURITY_ANVIL_PORT: await availablePort(),
+          SLOP_DIRECT_TEST_PORT: await availablePort(),
         },
         timeoutMs: 10 * 60_000,
       });

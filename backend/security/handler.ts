@@ -11,6 +11,7 @@ import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
  */
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import type { RewardAsset } from "../../src/lib/reward-asset.mjs";
 import {
   isFullAwardSplit,
   SECURITY_FULL_AWARD_SPLIT,
@@ -62,6 +63,21 @@ import {
   type SecurityAnalysisReport,
   type SecurityAnalyzer,
 } from "./analysis";
+import { awardAsset, sameAssetAddress } from "./award-asset";
+import {
+  type DirectPaymentConfiguration,
+  directConsent,
+  directPaymentNetworks,
+  directRecoveryConsent,
+  directRecoveryView,
+  directSettlementView,
+  directSettlementViews,
+  insertDirectIntent,
+  prepareDirectIntent,
+  recoverDirectIntent,
+  refreshDirectIntent,
+  verifyDirectPayment,
+} from "./direct-payments";
 import { markerLine } from "./github-advisories";
 import type { IntakeConfig } from "./intake-grant";
 import {
@@ -69,10 +85,7 @@ import {
   securitySettlementView,
   securitySettlementViews,
 } from "./payments";
-import {
-  OUTSTANDING_RESERVATIONS,
-  readSecurityProgramFunds,
-} from "./program-funds";
+import { readSecurityProgramFunds } from "./program-funds";
 import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
@@ -93,6 +106,7 @@ export type SecurityD1Database = D1TransactionalDatabase<D1Statement>;
 
 export type SecurityApiDependencies = {
   db: SecurityD1Database;
+  directPayments?: DirectPaymentConfiguration;
   /** Private security-report prefix, distinct from contributor trace objects. */
   reportStorage?: R2Bucket;
   /** Disables new intake while preserving authorized historical body reads. */
@@ -223,6 +237,8 @@ type ReservationRow = {
 };
 
 export type FrozenTerms = {
+  /** Verified asset identity at receipt; legacy USD/USDC cases omit it. */
+  asset?: RewardAsset;
   grossMinor: string;
   researcherMinor: string;
   slopMinor: string;
@@ -231,7 +247,9 @@ export type FrozenTerms = {
   network: SecurityBountyTerms["amount"]["network"];
   capacityAwards: number | null;
   fundingPolicy?: "after-approval";
-  /** Present only for the platform's full-award program; older cases are 75/25. */
+  /** Older receipts retain their original critical-loss-of-funds restriction. */
+  eligibility?: SecurityBountyTerms["eligibility"];
+  /** Present for an approved full-award program; older cases are 75/25. */
   split?: typeof SECURITY_FULL_AWARD_SPLIT;
 };
 
@@ -248,7 +266,7 @@ export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{16,80}$/u;
 const ROOT_CAUSE = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
-const GROSS_MINOR = /^[1-9]\d{0,15}$/u;
+const GROSS_MINOR = /^[1-9]\d{0,38}$/u;
 /**
  * `verified_by_github_id` of a receipt that Slop verified from GitHub's own
  * private vulnerability report, rather than a person (migration 0061).
@@ -671,6 +689,8 @@ const REPORTER_EVENT_KINDS = new Set([
   "remediation",
   "consent-payment",
   "prepare-payment",
+  "verify-payment",
+  "recover-payment",
   "appeal",
   "decide-appeal",
   "decide-related-party",
@@ -738,7 +758,7 @@ function allowedActions(row: CaseRow, roles: Set<Role>): string[] {
     (roles.has("security-maintainer") || roles.has("financial")) &&
     row.award_state === "approved"
   )
-    actions.push("prepare-payment");
+    actions.push("prepare-payment", "verify-payment", "recover-payment");
   if (roles.has("dispute") && row.appeal_state === "open")
     actions.push("decide-appeal");
   if (
@@ -819,7 +839,7 @@ function nextStep(
   )
     return {
       text: owner
-        ? "The award amount is chosen. Fund the bounty vault, then reserve the award."
+        ? "The award amount is chosen. Arrange funding to pay the award."
         : "The owner chose an award amount. It is awaiting verified funding.",
       dueAt: row.payment_deadline,
     };
@@ -891,6 +911,7 @@ function awardAmount(
 type CaseContext = {
   project: Awaited<ReturnType<typeof currentReportingProject>>;
   settlement: Awaited<ReturnType<typeof securitySettlementView>>;
+  directSettlement: Awaited<ReturnType<typeof directSettlementView>>;
   reservation: ReservationRow | null;
   intake: Awaited<ReturnType<typeof storedIntakeViewForCase>>;
   forwarded: { repository: string; advisory_ghsa: string } | null;
@@ -911,14 +932,16 @@ async function caseContexts(
     contexts.set(row.id, {
       project: projects.get(row.project_id) ?? null,
       settlement: null,
+      directSettlement: null,
       reservation: null,
       intake: null,
       forwarded: null,
     });
   const ids = rows.map((row) => row.id);
-  const [settlements, intakes] = await Promise.all([
+  const [settlements, intakes, directSettlements] = await Promise.all([
     securitySettlementViews(deps.db, ids),
     storedIntakeViewsForCases(deps, rolesByCase),
+    directSettlementViews(deps.db, ids),
   ]);
   for (const part of chunked(ids)) {
     const placeholders = part.map(() => "?").join(",");
@@ -947,6 +970,7 @@ async function caseContexts(
   }
   for (const [caseId, context] of contexts) {
     context.settlement = settlements.get(caseId) ?? null;
+    context.directSettlement = directSettlements.get(caseId) ?? null;
     context.intake = intakes.get(caseId) ?? null;
   }
   return contexts;
@@ -969,9 +993,13 @@ async function caseView(
   preloaded?: CaseContext,
 ): Promise<Record<string, unknown>> {
   const terms = frozenTerms(row);
-  const settlement = preloaded
+  const vaultSettlement = preloaded
     ? preloaded.settlement
     : await securitySettlementView(deps.db, row.id);
+  const directSettlement = preloaded
+    ? preloaded.directSettlement
+    : await directSettlementView(deps.db, row.id);
+  const settlement = directSettlement ?? vaultSettlement;
   const current = preloaded
     ? preloaded.project
     : await currentReportingProject(deps, row.project_id);
@@ -983,7 +1011,12 @@ async function caseView(
         )
         .bind(row.id)
         .first<ReservationRow>();
+  const directNetworks =
+    terms && deps.directPayments
+      ? directPaymentNetworks(terms, deps.directPayments)
+      : [];
   const railAvailable =
+    directNetworks.length > 0 ||
     (current?.manifest.securityBounty?.settlement?.deployments.length ?? 0) > 0;
   const step = nextStep(
     row,
@@ -992,6 +1025,11 @@ async function caseView(
     current?.manifest.securityBounty?.responseTargets?.acknowledgeHours ?? null,
     railAvailable,
   );
+  const payer = roles.has("security-maintainer") || roles.has("financial");
+  const recovery =
+    directSettlement?.state === "awaiting-external-payment"
+      ? await directRecoveryView(deps.db, row.id, deps.directPayments)
+      : null;
   const base = {
     id: row.id,
     projectId: row.project_id,
@@ -999,10 +1037,33 @@ async function caseView(
     viewerRoles: [...roles].sort(),
     allowedActions: allowedActions(row, roles).filter(
       (action) =>
-        !["prepare-payment", "consent-payment"].includes(action) ||
-        (!settlement && railAvailable),
+        ![
+          "prepare-payment",
+          "consent-payment",
+          "verify-payment",
+          "recover-payment",
+        ].includes(action) ||
+        (action === "recover-payment"
+          ? recovery !== null &&
+            !["legacy-manual", "wallet-required"].includes(recovery.mode)
+          : action === "consent-payment" && recovery
+            ? !recovery.consented
+            : action === "verify-payment"
+              ? directSettlement?.state === "awaiting-external-payment"
+              : action === "prepare-payment" &&
+                  directSettlement?.state === "awaiting-external-payment"
+                ? !directSettlement.walletReviewRequired
+                : !settlement && railAvailable),
     ),
-    nextStep: step.text,
+    nextStep: directSettlement?.walletReviewRequired
+      ? payer
+        ? "Payment is held because the reporter changed wallets. Verify any transfers already sent."
+        : "Payment is held because your wallet changed."
+      : directSettlement?.state === "awaiting-external-payment"
+        ? payer
+          ? "Send the remaining transfers with your external wallet, then verify the transaction IDs."
+          : "Waiting for the payer to send and verify your payment."
+        : step.text,
     nextStepDueAt: step.dueAt,
     submissionState: row.submission_state,
     receivedAt: row.received_at,
@@ -1017,12 +1078,40 @@ async function caseView(
     relatedParty: row.related_party,
     relatedPartyReview: row.related_party_review,
     paymentState: settlement?.state ?? row.payment_state,
-    paymentRail: settlement ? "escrow" : "unavailable",
-    settlement,
-    paymentNetworks:
-      current?.manifest.securityBounty?.settlement?.deployments.map(
-        (d) => d.network,
-      ) ?? [],
+    paymentRail: directSettlement
+      ? "direct"
+      : settlement
+        ? "escrow"
+        : directNetworks.length
+          ? "direct"
+          : "unavailable",
+    settlement: directSettlement
+      ? {
+          ...directSettlement,
+          ownerRequest: payer ? directSettlement.ownerRequest : null,
+          recovery: payer
+            ? recovery
+            : roles.has("reporter") && recovery
+              ? {
+                  generation: recovery.generation,
+                  mode: recovery.mode,
+                  ...("role" in recovery
+                    ? { role: recovery.role, legIndex: recovery.legIndex }
+                    : {}),
+                  target: recovery.target,
+                  consented: recovery.consented,
+                }
+              : null,
+        }
+      : settlement,
+    paymentNetworks: [
+      ...new Set([
+        ...(current?.manifest.securityBounty?.settlement?.deployments.map(
+          (d) => d.network,
+        ) ?? []),
+        ...directNetworks,
+      ]),
+    ],
     paymentDeadline: row.payment_deadline,
   };
   const full =
@@ -1137,7 +1226,7 @@ async function caseView(
       ...((maintainer || roles.has("triager")) &&
       includeHistory &&
       row.submission_state === "verified" &&
-      (analysis === null || analysis.retryable)
+      (await analysisMayStart(deps, row.id))
         ? ["analyze"]
         : []),
       // A dispute reviewer may run a missing, failed or lost appeal triage.
@@ -1198,7 +1287,7 @@ async function caseView(
 }
 
 const CASE_COLUMNS =
-  "id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, evidence_digest, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, severity, loss_finding, root_cause_key, duplicate_of, technical_decider_github_id, appeal_state, appeal_from_state, owner_github_id, next_action, next_action_due_at, payment_deadline, related_party, related_party_review, related_party_reviewer_github_id, received_at_source, receipt_evidence_digest, award_gross_minor, revision, created_at, updated_at";
+  "id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, evidence_digest, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, severity, loss_finding, root_cause_key, duplicate_of, technical_decider_github_id, appeal_state, appeal_from_state, owner_github_id, next_action, next_action_due_at, payment_deadline, related_party, related_party_review, related_party_reviewer_github_id, received_at_source, receipt_evidence_digest, COALESCE(award_gross_base,award_gross_minor) AS award_gross_minor, revision, created_at, updated_at";
 
 export async function loadCase(
   deps: Pick<SecurityApiDependencies, "db">,
@@ -1412,7 +1501,11 @@ export async function termsAtReceipt(
       currency: program.amount.currency,
       decimals: program.amount.decimals,
       network: program.amount.network,
+      ...(program.amount.asset ? { asset: program.amount.asset } : {}),
       capacityAwards: program.capacity.awards,
+      ...(program.eligibility === "in-scope-security"
+        ? { eligibility: program.eligibility }
+        : {}),
       ...(program.fundingPolicy
         ? { fundingPolicy: program.fundingPolicy }
         : {}),
@@ -1482,6 +1575,13 @@ export function inboxStatements(
     relatedReview?: boolean;
   },
 ): D1Statement[] {
+  // History pages are audited case events, not new actions for recipients.
+  // Notify when recovery creates its successor, not for each polling attempt.
+  if (
+    input.kind === "recover-payment" &&
+    typeof input.detail.state === "string"
+  )
+    return [];
   const ids = (role: "technical" | "financial") =>
     (input.terms?.approvers[role] ?? []).map((entry) => entry.githubId);
   const event = {
@@ -1494,8 +1594,13 @@ export function inboxStatements(
     ...(input.kind === "receive" ||
     input.kind === "claim" ||
     input.kind === "submit" ||
-    input.kind === "submit-direct"
+    input.kind === "submit-direct" ||
+    input.kind === "verify-payment" ||
+    input.kind === "recover-payment"
       ? ids("technical")
+      : []),
+    ...(["verify-payment", "recover-payment"].includes(input.kind)
+      ? ids("financial")
       : []),
     ...(input.kind === "appeal" || input.relatedReview
       ? [...(deps.moderatorGithubIds ?? [])]
@@ -1604,11 +1709,13 @@ export async function scheduleAnalysis(
   deps: SecurityApiDependencies,
   caseId: string,
   report: SecurityAnalysisReport | null,
+  timeoutMs?: number,
 ): Promise<void> {
   const run = (timeoutMs: number) =>
     runCaseAnalysis(analysisDependencies(deps), caseId, report, timeoutMs);
-  if (deps.waitUntil) deps.waitUntil(run(BACKGROUND_ANALYSIS_TIMEOUT_MS));
-  else await run(ANALYSIS_TIMEOUT_MS);
+  if (deps.waitUntil)
+    deps.waitUntil(run(timeoutMs ?? BACKGROUND_ANALYSIS_TIMEOUT_MS));
+  else await run(timeoutMs ?? ANALYSIS_TIMEOUT_MS);
 }
 
 /**
@@ -1631,7 +1738,8 @@ function analysisDependencies(deps: SecurityApiDependencies) {
     now: deps.now,
     advisories: deps.advisories ?? null,
     analyzer: deps.analyzer ?? null,
-    storedReport: (caseId: string) => readStoredReportByCase(deps, caseId),
+    storedReport: (caseId: string, reportVersion?: number) =>
+      readStoredReportByCase(deps, caseId, reportVersion),
   };
 }
 
@@ -2609,14 +2717,46 @@ async function planChange(
         program?.manifest.securityBounty?.settlement?.deployments.find(
           (d) => d.network === body.network,
         );
-      if (!deployment)
+      const directAward = await deps.db
+        .prepare("SELECT 1 ok FROM security_direct_awards WHERE case_id=?")
+        .bind(row.id)
+        .first();
+      const existingDirect = await deps.db
+        .prepare(
+          "SELECT 1 ok FROM security_direct_current_payments WHERE case_id=?",
+        )
+        .bind(row.id)
+        .first();
+      const direct =
+        (!deployment || directAward) && deps.directPayments && frozenTerms(row)
+          ? existingDirect
+            ? await directRecoveryConsent(
+                deps.db,
+                row.id,
+                actor.githubId,
+                deps.directPayments,
+              )
+            : await directConsent(
+                deps.db,
+                frozenTerms(row) as FrozenTerms,
+                String(body.network),
+                row.reporter_github_id,
+                deps.directPayments,
+              )
+          : null;
+      if (direct && direct.network !== body.network)
+        fail(400, "invalid_request", "Use the payment's approved network");
+      if (!deployment && !direct)
         fail(
           409,
           "rail_unavailable",
           "The program has no reviewed settlement on this network",
         );
-      const approved = {
-        ...paymentDeploymentRecord(row.project_id, deployment),
+      const approved = direct ?? {
+        ...paymentDeploymentRecord(
+          row.project_id,
+          deployment as Parameters<typeof paymentDeploymentRecord>[1],
+        ),
         payoutPolicy: "security-bounty",
       };
       return {
@@ -2625,7 +2765,7 @@ async function planChange(
         reason: null,
         evidenceReference: null,
         detail: {
-          network: deployment.network,
+          network: String(body.network),
           publicChainVisibilityAccepted: true,
         },
         set: {},
@@ -2661,6 +2801,80 @@ async function planChange(
           (d) => d.network === body.network,
         );
       const terms = frozenTerms(row);
+      const directAward = await deps.db
+        .prepare(
+          "SELECT gross_base FROM security_direct_awards WHERE case_id=?",
+        )
+        .bind(row.id)
+        .first<{ gross_base: string }>();
+      if (directAward && terms && deps.directPayments) {
+        if (
+          await deps.db
+            .prepare(
+              "SELECT 1 ok FROM security_direct_payments WHERE case_id=?",
+            )
+            .bind(row.id)
+            .first()
+        ) {
+          const refresh = await refreshDirectIntent(
+            deps.db,
+            {
+              caseId: row.id,
+              revision: row.revision + 1,
+              key: idempotencyKey,
+              network: String(body.network),
+              at,
+            },
+            deps.directPayments,
+          );
+          return {
+            kind: action,
+            role: actingRole(["security-maintainer", "financial"]),
+            reason: null,
+            evidenceReference: null,
+            detail: {
+              network: String(body.network),
+              rail: "direct",
+              refreshed: true,
+            },
+            set: {},
+            after: refresh ? [refresh] : [],
+          };
+        }
+        const intent = await prepareDirectIntent(
+          deps.db,
+          {
+            caseId: row.id,
+            projectId: row.project_id,
+            reporterId: row.reporter_github_id,
+            payerId: actor.githubId,
+            terms,
+            grossBase: directAward.gross_base,
+            split: frozenSplit(terms),
+            network: String(body.network),
+            at,
+          },
+          deps.directPayments,
+        );
+        return {
+          kind: action,
+          role: actingRole(["security-maintainer", "financial"]),
+          reason: null,
+          evidenceReference: null,
+          detail: { network: intent.network, rail: "direct" },
+          set: {},
+          after: [
+            insertDirectIntent(
+              deps.db,
+              row.id,
+              row.revision + 1,
+              idempotencyKey,
+              intent,
+              at,
+            ),
+          ],
+        };
+      }
       if (isFullAwardSplit(terms?.split))
         fail(
           409,
@@ -2691,6 +2905,7 @@ async function planChange(
         decimals: terms.decimals,
         currency: terms.currency,
         chain: terms.network,
+        asset: terms.asset,
         deployment,
         at,
       });
@@ -2705,6 +2920,113 @@ async function planChange(
         },
         set: {},
         after: [statement],
+      };
+    }
+    case "recover-payment": {
+      exactKeys(
+        body,
+        [...common, "confirmation"],
+        ["cancellationTransactionId", "signatures"],
+      );
+      requireAction(row, roles, action);
+      if (body.confirmation !== true || !deps.directPayments)
+        fail(
+          400,
+          "confirmation_required",
+          "Confirm the reviewed payment recovery",
+        );
+      if (
+        body.cancellationTransactionId !== undefined &&
+        typeof body.cancellationTransactionId !== "string"
+      )
+        fail(400, "invalid_request", "Provide the cancellation transaction ID");
+      if (
+        body.signatures !== undefined &&
+        (!Array.isArray(body.signatures) ||
+          body.signatures.length > 64 ||
+          body.signatures.some(
+            (entry) =>
+              !entry ||
+              typeof entry !== "object" ||
+              Array.isArray(entry) ||
+              Object.keys(entry).sort().join() !== "messageId,signature" ||
+              typeof entry.messageId !== "string" ||
+              typeof entry.signature !== "string",
+          ))
+      )
+        fail(400, "invalid_request", "Provide the expired request signatures");
+      const recovery = await recoverDirectIntent(
+        deps.db,
+        {
+          caseId: row.id,
+          payerId: actor.githubId,
+          revision: row.revision + 1,
+          key: idempotencyKey,
+          at,
+          ...(typeof body.cancellationTransactionId === "string"
+            ? { cancellationTransactionId: body.cancellationTransactionId }
+            : {}),
+          ...(Array.isArray(body.signatures)
+            ? {
+                signatures: body.signatures as {
+                  messageId: string;
+                  signature: string;
+                }[],
+              }
+            : {}),
+        },
+        deps.directPayments,
+      );
+      return {
+        kind: action,
+        role: actingRole(["security-maintainer", "financial"]),
+        reason: null,
+        evidenceReference: null,
+        detail: recovery.detail,
+        set: {},
+        after: recovery.after,
+      };
+    }
+    case "verify-payment": {
+      exactKeys(body, [...common, "transactionIds", "confirmation"]);
+      requireAction(row, roles, action);
+      if (
+        body.confirmation !== true ||
+        !Array.isArray(body.transactionIds) ||
+        body.transactionIds.length < 1 ||
+        body.transactionIds.length > 2 ||
+        body.transactionIds.some((id) => typeof id !== "string")
+      )
+        fail(
+          400,
+          "invalid_request",
+          "Confirm one or two external transaction IDs",
+        );
+      if (!deps.directPayments)
+        fail(
+          409,
+          "rail_unavailable",
+          "Direct receipt verification is unavailable",
+        );
+      const after = await verifyDirectPayment(
+        deps.db,
+        {
+          caseId: row.id,
+          revision: row.revision + 1,
+          key: idempotencyKey,
+          transactionIds: body.transactionIds as string[],
+          at,
+        },
+        deps.directPayments,
+      );
+      return {
+        kind: action,
+        role: actingRole(["security-maintainer", "financial"]),
+        reason: null,
+        evidenceReference: null,
+        detail: { verified: true, rail: "direct" },
+        set: {},
+        after,
       };
     }
   }
@@ -2975,10 +3297,11 @@ async function planAward(
   }
   if (frozenTerms(row)?.fundingPolicy === "after-approval") {
     if (
-      row.severity !== "critical" ||
-      !["verified-potential", "verified-actual"].includes(
-        row.loss_finding ?? "",
-      )
+      frozenTerms(row)?.eligibility !== "in-scope-security" &&
+      (row.severity !== "critical" ||
+        !["verified-potential", "verified-actual"].includes(
+          row.loss_finding ?? "",
+        ))
     )
       fail(
         409,
@@ -3109,7 +3432,7 @@ async function planAward(
  * id, root cause key.
  */
 const ROOT_CAUSE_PENDING_REVIEW =
-  "SELECT 1 FROM security_cases o WHERE o.project_id = ? AND o.id <> ? AND o.root_cause_key = ? AND o.receipt_state = 'confirmed' AND o.award_state = 'pending' AND (o.related_party_review = 'pending' OR o.award_gross_minor IS NOT NULL)";
+  "SELECT 1 FROM security_cases o WHERE o.project_id = ? AND o.id <> ? AND o.root_cause_key = ? AND o.receipt_state = 'confirmed' AND o.award_state = 'pending' AND (o.related_party_review = 'pending' OR COALESCE(o.award_gross_base,o.award_gross_minor) IS NOT NULL)";
 
 async function assertRootCauseFree(
   deps: SecurityApiDependencies,
@@ -3122,9 +3445,17 @@ async function assertRootCauseFree(
   if (
     (await deps.db
       .prepare(
-        `SELECT 1 AS taken FROM security_award_reservations WHERE project_id = ? AND root_cause_key = ? UNION ALL ${ROOT_CAUSE_PENDING_REVIEW} LIMIT 1`,
+        `SELECT 1 AS taken FROM security_award_reservations WHERE project_id = ? AND root_cause_key = ? UNION ALL SELECT 1 FROM security_direct_awards WHERE project_id=? AND root_cause_key=? UNION ALL ${ROOT_CAUSE_PENDING_REVIEW} LIMIT 1`,
       )
-      .bind(projectId, rootCauseKey, projectId, caseId, rootCauseKey)
+      .bind(
+        projectId,
+        rootCauseKey,
+        projectId,
+        rootCauseKey,
+        projectId,
+        caseId,
+        rootCauseKey,
+      )
       .first<{ taken: number }>()) !== null
   )
     fail(
@@ -3203,7 +3534,7 @@ async function firstQualifyingGuard(
   row: CaseRow,
 ) {
   if (frozenTerms(row)?.fundingPolicy !== "after-approval") return null;
-  const sql = `NOT EXISTS(SELECT 1 FROM security_cases earlier WHERE earlier.project_id=? AND earlier.id<>? AND earlier.root_cause_key=? AND (earlier.receipt_state='confirmed' OR (earlier.receipt_state='disputed' AND earlier.appeal_state='open' AND earlier.appeal_from_state='confirmed')) AND earlier.severity='critical' AND earlier.loss_finding IN ('verified-potential','verified-actual') AND (earlier.received_at<? OR (earlier.received_at=? AND earlier.id<?)) AND json_extract((SELECT e.detail FROM security_case_events e WHERE e.case_id=earlier.id AND e.kind='decide' ORDER BY e.case_revision DESC LIMIT 1),'$.inScope')=1)`;
+  const sql = `NOT EXISTS(SELECT 1 FROM security_cases earlier WHERE earlier.project_id=? AND earlier.id<>? AND earlier.root_cause_key=? AND (earlier.receipt_state='confirmed' OR (earlier.receipt_state='disputed' AND earlier.appeal_state='open' AND earlier.appeal_from_state='confirmed')) AND (json_extract(earlier.terms,'$.eligibility')='in-scope-security' OR (earlier.severity='critical' AND earlier.loss_finding IN ('verified-potential','verified-actual'))) AND (earlier.received_at<? OR (earlier.received_at=? AND earlier.id<?)) AND json_extract((SELECT e.detail FROM security_case_events e WHERE e.case_id=earlier.id AND e.kind='decide' ORDER BY e.case_revision DESC LIMIT 1),'$.inScope')=1)`;
   const values = [
     row.project_id,
     row.id,
@@ -3254,16 +3585,79 @@ async function awardReservation(
   await assertRootCauseFree(deps, row.project_id, row.id, rootCauseKey);
   const firstReport = await firstQualifyingGuard(deps, row);
   const snapshotGuards = [programGuard, ...(firstReport ? [firstReport] : [])];
+  const currentProgram = (await currentReportingProject(deps, row.project_id))
+    ?.manifest.securityBounty;
+  const compatibleVault = currentProgram?.settlement?.deployments.some((d) => {
+    const expected = awardAsset(terms, d.network, d.asset);
+    return (
+      expected &&
+      expected.decimals === terms.decimals &&
+      sameAssetAddress(d.network, expected.address, d.asset)
+    );
+  });
+  if (
+    (!compatibleVault || isFullAwardSplit(terms.split)) &&
+    deps.directPayments &&
+    directPaymentNetworks(terms, deps.directPayments).length
+  ) {
+    return {
+      before: [
+        deps.db
+          .prepare(
+            `INSERT INTO security_direct_awards(case_id,project_id,root_cause_key,terms,gross_base,approved_at) SELECT ?,?,?,?,?,? WHERE (SELECT revision FROM security_cases WHERE id=?)=? AND ${snapshotGuards.map((g) => g.sql).join(" AND ")} AND NOT EXISTS (${ROOT_CAUSE_PENDING_REVIEW}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+          )
+          .bind(
+            row.id,
+            row.project_id,
+            rootCauseKey,
+            JSON.stringify(terms),
+            grossMinor,
+            at,
+            row.id,
+            row.revision,
+            ...snapshotGuards.flatMap((g) => g.values),
+            row.project_id,
+            row.id,
+            rootCauseKey,
+            row.reporter_github_id,
+            actor.githubId,
+          ),
+      ],
+      set: {
+        award_state: "approved",
+        payment_state: "rail-unavailable",
+        award_gross_minor: grossMinor,
+      },
+      requireSql:
+        "EXISTS(SELECT 1 FROM security_direct_awards WHERE case_id=security_cases.id)",
+      unmet: {
+        code: "award_changed",
+        message: "The award can no longer be approved. Reload the case.",
+      },
+    };
+  }
   // Every bounty vault pays 75/25, so a full-award case never reserves
   // against one, even if a later revision binds a vault. It stays a chosen,
   // unfunded award until a full-award payment rail is approved.
   const funds = isFullAwardSplit(terms.split)
     ? null
     : await programFunds(deps, row.project_id, snapshotGuards);
+  const frozenAsset = funds
+    ? awardAsset(terms, funds.deploymentNetwork, funds.assetAddress)
+    : null;
+  const sameFundsAsset =
+    funds !== null &&
+    frozenAsset !== null &&
+    sameAssetAddress(
+      funds.deploymentNetwork,
+      frozenAsset.address,
+      funds.assetAddress,
+    );
   if (
     (terms.fundingPolicy === "after-approval" ||
       isFullAwardSplit(terms.split)) &&
     (funds === null ||
+      !sameFundsAsset ||
       funds.currency !== terms.currency ||
       funds.decimals !== terms.decimals ||
       funds.network !== terms.network ||
@@ -3293,6 +3687,7 @@ async function awardReservation(
   }
   if (
     funds === null ||
+    !sameFundsAsset ||
     funds.currency !== terms.currency ||
     funds.decimals !== terms.decimals ||
     funds.network !== terms.network
@@ -3312,7 +3707,7 @@ async function awardReservation(
     before: [
       deps.db
         .prepare(
-          `INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) SELECT ?, ?, ?, ?, ?, ?, ? WHERE (SELECT revision FROM security_cases WHERE id = ?) = ? AND (${OUTSTANDING_RESERVATIONS}) + CAST(? AS INTEGER) <= CAST(? AS INTEGER) AND ${snapshotGuards.map((guard) => guard.sql).join(" AND ")} AND NOT EXISTS (${ROOT_CAUSE_PENDING_REVIEW}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+          `INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) SELECT ?, ?, ?, ?, ?, ?, ? WHERE (SELECT revision FROM security_cases WHERE id = ?) = ? AND ${snapshotGuards.map((guard) => guard.sql).join(" AND ")} AND NOT EXISTS (${ROOT_CAUSE_PENDING_REVIEW}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
         )
         .bind(
           row.id,
@@ -3324,11 +3719,6 @@ async function awardReservation(
           at,
           row.id,
           row.revision,
-          row.project_id,
-          terms.currency,
-          funds.snapshotAt,
-          grossMinor,
-          funds.freeMinor,
           ...snapshotGuards.flatMap((guard) => guard.values),
           row.project_id,
           row.id,
@@ -3416,7 +3806,11 @@ async function automaticAction(
         "The case does not allow analyze in its current state",
       );
     if (!(await analysisMayStart(deps, row.id)))
-      fail(409, "analysis_running", "The analysis is already running");
+      fail(
+        409,
+        "analysis_running",
+        "Analysis is not available for this report state. Reload the case.",
+      );
     // The owner asked for it and waits, so the request keeps the analysis
     // alive for the full provider time limit.
     await runCaseAnalysis(
@@ -3492,6 +3886,10 @@ async function actOnCase(
     idempotencyKey,
   );
   const at = deps.now().toISOString();
+  if (frozenTerms(row)?.asset && "award_gross_minor" in change.set) {
+    change.set.award_gross_base = change.set.award_gross_minor;
+    delete change.set.award_gross_minor;
+  }
   const columns = Object.keys(change.set);
   const assignments = [
     ...columns.map((column) => `${column} = ?`),
@@ -3544,6 +3942,8 @@ async function actOnCase(
     ]);
   } catch (error) {
     const message = constraintError(error);
+    if (/payment transfer already credited/iu.test(message))
+      fail(409, "payment_replay", "This transfer is already recorded");
     if (/security_award_reservations/iu.test(message))
       fail(
         409,

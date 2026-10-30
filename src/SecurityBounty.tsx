@@ -30,6 +30,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { BountySubmittedPayments } from "./BountySubmittedPayments";
+import {
+  DirectBountyPayment,
+  type DirectEvmTransaction,
+} from "./DirectBountyPayment";
 import { Link } from "./Link";
 import { hasBountyOverview } from "./lib/home-projects";
 import { PrivateReportForm, usePrivateDraftSession } from "./PrivateReportForm";
@@ -43,6 +48,11 @@ import {
 } from "./PrivateReportSummary";
 import { ProjectSecuritySettings } from "./ProjectSecuritySettings";
 import { SecurityOffer } from "./SecurityOffer";
+import {
+  type DirectSolanaPlan,
+  SolanaBountyPayment,
+} from "./SolanaBountyPayment";
+import { SolanaBountyRecovery } from "./SolanaBountyRecovery";
 import "./operations-design.css";
 import "./private-report-design.css";
 import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
@@ -67,6 +77,7 @@ import {
 } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import type { RewardAsset } from "./lib/reward-asset.mjs";
 import {
   formatSecurityAmount,
   isFullAwardSplit,
@@ -92,12 +103,102 @@ function FormError({ message }: { message: string | null }) {
   ) : null;
 }
 
-function UnsignedPaymentRequest({ request }: { request: unknown }) {
+type DirectOwnerRequest = {
+  rail: "direct";
+  asset: { symbol: string; decimals: number; address: string };
+  payer: { address: string };
+  transfers: {
+    recipient: string;
+    amountBase: string;
+    role: "researcher" | "fee";
+  }[];
+  transactions?: {
+    from: string;
+    to: string;
+    value: string;
+    data: string;
+    chainId?: string;
+    nonce?: string;
+  }[];
+  solana?: {
+    transaction: string;
+    blockhash: string;
+    lastValidBlockHeight: number;
+    messageId: string;
+  };
+};
+
+function UnsignedPaymentRequest({
+  request,
+}: {
+  request: Record<string, unknown>;
+}) {
   const [feedback, setFeedback] = useState("");
   const text = JSON.stringify(request, null, 2);
+  const direct =
+    request.rail === "direct"
+      ? (request as unknown as DirectOwnerRequest)
+      : null;
   return (
-    <details>
-      <summary>Unsigned owner request</summary>
+    <section
+      className="security-unsigned-payment"
+      aria-label="Unsigned owner request"
+    >
+      <h5>{direct ? "Transfers still due" : "Unsigned owner request"}</h5>
+      {direct ? (
+        <>
+          <p>
+            Send these transfers with your external wallet, then verify the
+            transaction IDs.
+          </p>
+          <dl className="operations-facts">
+            <Fact term="From">
+              <CopyIdentifier
+                label="payer wallet"
+                value={direct.payer.address}
+              />
+            </Fact>
+            <Fact term="Asset">
+              <CopyIdentifier
+                label="payment asset"
+                value={direct.asset.address}
+              />
+            </Fact>
+          </dl>
+          <div className="security-payment-transfers">
+            {direct.transfers.map((transfer, index) => (
+              <div
+                key={`${transfer.role}:${transfer.recipient}`}
+                data-payment-recipient={transfer.recipient}
+              >
+                <span>
+                  {transfer.role === "fee" ? "Slop fee" : "Researcher"}
+                </span>
+                <strong>
+                  {formatBaseUnits(transfer.amountBase, direct.asset.decimals)}{" "}
+                  {direct.asset.symbol}
+                </strong>
+                <CopyIdentifier
+                  label={`${transfer.role === "fee" ? "Slop fee" : "researcher"} wallet`}
+                  value={transfer.recipient}
+                />
+                {direct.transactions?.[index] ? (
+                  <CopyButton
+                    label={`${transfer.role === "fee" ? "Slop fee" : "researcher"} transfer`}
+                    text={JSON.stringify(direct.transactions[index], null, 2)}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+          {direct.solana ? (
+            <CopyButton
+              label="Solana transaction"
+              text={direct.solana.transaction}
+            />
+          ) : null}
+        </>
+      ) : null}
       <div className="operations-file-actions">
         <CopyButton
           label="unsigned request"
@@ -125,14 +226,16 @@ function UnsignedPaymentRequest({ request }: { request: unknown }) {
         </button>
       </div>
       <p role="status">{feedback}</p>
-      <textarea
-        className="security-payment-request"
-        aria-label="Unsigned transaction request"
-        readOnly
-        rows={9}
-        value={text}
-      />
-    </details>
+      {direct ? null : (
+        <textarea
+          className="security-payment-request"
+          aria-label="Unsigned transaction request"
+          readOnly
+          rows={9}
+          value={text}
+        />
+      )}
+    </section>
   );
 }
 
@@ -625,7 +728,13 @@ export function SecurityProgramPage({
       {published?.projectId === project.id ? (
         <p role="status">Published revision {published.revision}.</p>
       ) : null}
-      <p>Find a critical security vulnerability in the {project.name}</p>
+      <p>
+        Find{" "}
+        {terms.eligibility === "critical-loss-of-funds"
+          ? "a critical"
+          : "an in-scope"}{" "}
+        security vulnerability in {project.name}
+      </p>
       <p>
         <ExternalLinkAnchor href={project.links.repository}>
           View in GitHub <ExternalLink aria-hidden="true" size={14} />
@@ -670,13 +779,9 @@ export function SecurityProgramPage({
                 {terms.amount.network ? ` on ${terms.amount.network}` : ""}
               </Fact>
               <Fact term="Funding">
-                {isFullAwardSplit(terms.split)
-                  ? "Pledged. Funds are supplied after the owner approves a qualifying finding. No full-award payment path is released yet: an approved award is not payable until one is approved and released, and verified funding alone does not make it payable."
-                  : terms.funding.state === "pledged"
-                    ? terms.fundingPolicy === "after-approval"
-                      ? "Pledged. Funds are supplied after the owner approves a qualifying finding. Payment requires verified funding."
-                      : "Pledged, not verified."
-                    : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
+                {terms.funding.state === "pledged"
+                  ? "Pledged. Awards require owner approval."
+                  : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
               </Fact>
               <Fact term="Capacity">
                 {terms.capacity.awards === null
@@ -695,10 +800,12 @@ export function SecurityProgramPage({
             </dl>
             <p>
               Awards are discretionary. The owner decides whether to award;
-              fixed after-approval awards use the amount published at receipt;
-              critical bugs and potential loss of funds are priorities, not an
-              automatic payout. No other payout fee applies. The terms in force
-              when Slop receives your report apply to your case.
+              fixed after-approval awards use the amount published at receipt.{" "}
+              {terms.eligibility === "critical-loss-of-funds"
+                ? "Critical bugs and potential loss of funds are priorities, not an automatic payout."
+                : "Findings must meet the published scope and acceptance criteria."}{" "}
+              No other payout fee applies. The terms in force when Slop receives
+              your report apply to your case.
             </p>
           </section>
         </details>
@@ -744,12 +851,22 @@ export function SecurityProgramPage({
             </Fact>
             <Fact term="Testing permission">{scope.testingPermission}</Fact>
             <Fact term="Severity rubric">{scope.severityRubric}</Fact>
-            <Fact term="Loss of funds">{scope.lossDefinition}</Fact>
+            <Fact
+              term={
+                terms.eligibility === "critical-loss-of-funds"
+                  ? "Loss of funds"
+                  : "Impact"
+              }
+            >
+              {scope.lossDefinition}
+            </Fact>
           </dl>
           <p>
             Do not exploit a production system, move another person's funds,
             reveal keys or cause damage. A local fork or isolated test can show
-            potential loss.
+            potential{" "}
+            {terms.eligibility === "critical-loss-of-funds" ? "loss" : "impact"}
+            .
           </p>
         </section>
         <IntakeHandoff project={project} session={session} />
@@ -805,13 +922,14 @@ export function SecurityProgramPage({
 
 type Terms = {
   fundingPolicy?: "after-approval";
-  /** Present only when slop.cash sponsors the whole award. */
+  /** Present when an admin approved a full award. */
   split?: { researcherBasisPoints: 10000; slopBasisPoints: 0 };
   grossMinor: string;
   researcherMinor: string;
   slopMinor: string;
-  currency: "USD" | "USDC";
-  decimals: 2 | 6;
+  currency: string;
+  decimals: number;
+  asset?: RewardAsset;
   network: string | null;
 };
 
@@ -829,6 +947,7 @@ type CaseEvent = {
 };
 
 type Analysis = {
+  sourceReportVersion?: number | null;
   state: "running" | "complete" | "failed" | "unavailable";
   provider: string | null;
   model: string | null;
@@ -884,12 +1003,46 @@ type SecurityCase = {
   relatedParty: "not-assessed" | "unrelated" | "related";
   relatedPartyReview: "not-applicable" | "pending" | "approved" | "refused";
   paymentState: string;
-  paymentRail: "unavailable" | "escrow";
+  paymentRail: "unavailable" | "escrow" | "direct";
   paymentNetworks: string[];
   settlement: {
     state: string;
     network: string;
+    generation?: number;
     transactionId: string | null;
+    transactionIds?: string[];
+    confirmedTransactionIds?: string[];
+    remainingTransfers?: {
+      recipient: string;
+      amountBase: string;
+      role: "researcher" | "fee";
+    }[];
+    recovery?: {
+      generation: number;
+      mode:
+        | "consent-required"
+        | "cancellation-required"
+        | "resume-original"
+        | "legacy-manual"
+        | "expiry-required"
+        | "signature-required"
+        | "history-check"
+        | "wallet-required"
+        | "fee-pending"
+        | "retirement-required"
+        | "retirement-unproven"
+        | "payer-review"
+        | "payment-found";
+      target: { id: string; address: string; digest: string } | null;
+      consented: boolean;
+      cancellationRequest?: DirectEvmTransaction;
+      payer?: string;
+      messages?: { messageId: string; message: string }[];
+      transactionIds?: string[];
+      retirementNonce?: string;
+      role?: "researcher" | "fee";
+      legIndex?: number;
+    } | null;
     privacyNotice: string;
     ownerRequest: Record<string, unknown> | null;
   } | null;
@@ -907,7 +1060,7 @@ type SecurityCase = {
   analysis?: Analysis | null;
   appealTriage?: AppealTriage | null;
   awardFunds?: {
-    currency: "USD" | "USDC";
+    currency: string;
     decimals: number;
     availableMinor: string;
   } | null;
@@ -1087,6 +1240,8 @@ const EVENT_LABELS: Record<string, string> = {
   "approve-award": "Award approved",
   "consent-payment": "Reporter accepted chain visibility",
   "prepare-payment": "Unsigned payment prepared",
+  "verify-payment": "Payment checked",
+  "recover-payment": "Payment wallet recovered",
   "decide-related-party": "Related-party award reviewed",
   "reserve-award": "Award reserved with raised capacity",
 };
@@ -2222,6 +2377,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
       if (record.terms === null) return null;
       const decimals = record.terms.decimals;
       const fixed = record.terms.fundingPolicy === "after-approval";
+      const direct = record.paymentRail === "direct";
       const available = record.awardFunds
         ? money(record.awardFunds.availableMinor, record.awardFunds)
         : "no verified funds";
@@ -2252,9 +2408,13 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
                 })
               : undefined,
             readOnly: fixed,
-            hint: fixed
-              ? `The published award is fixed. Available to reserve: ${available}. Without funds, it stays selected and unpaid.`
-              : `Available to reserve: ${available}.`,
+            hint: direct
+              ? fixed
+                ? "The published award is fixed."
+                : undefined
+              : fixed
+                ? `The published award is fixed. Available to reserve: ${available}. Without funds, it stays selected and unpaid.`
+                : `Available to reserve: ${available}.`,
             when: { field: "decision", values: ["amount"] },
           },
           {
@@ -2265,7 +2425,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
           },
           {
             name: "confirmation",
-            label: `I approve this award for @${record.reporter?.githubLogin ?? "the reporter"}. ${fixed ? "It remains unpaid until verified funds cover the award." : "Approval reserves the amount now."}`,
+            label: `I approve this award for @${record.reporter?.githubLogin ?? "the reporter"}.${direct ? "" : fixed ? " It remains unpaid until verified funds cover the award." : " Approval reserves the amount now."}`,
             kind: "checkbox",
             when: { field: "decision", values: ["amount"] },
           },
@@ -2434,7 +2594,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             options: [
               [
                 "approve",
-                `Approve ${record.award && record.terms ? money(record.award.grossMinor, record.terms) : "the proposed award"} and reserve it if funds remain`,
+                `Approve ${record.award && record.terms ? money(record.award.grossMinor, record.terms) : "the proposed award"}${record.paymentRail === "direct" ? "" : " and reserve it if funds remain"}`,
               ],
               ["refuse", "Refuse: the reporter is not eligible for this award"],
             ],
@@ -2449,11 +2609,15 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
         title:
           action === "consent-payment"
             ? "Accept payment visibility"
-            : "Prepare private payment",
+            : record.settlement
+              ? "Refresh payment request"
+              : "Prepare payment",
         submit:
           action === "consent-payment"
             ? "Accept visibility"
-            : "Prepare unsigned payment",
+            : record.settlement
+              ? "Refresh unsigned payment"
+              : "Prepare unsigned payment",
         fields: [
           {
             name: "network",
@@ -2465,12 +2629,81 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             name: "confirmation",
             label:
               action === "consent-payment"
-                ? "I understand that chain transactions reveal my GitHub actor number, wallet, time and amounts. My report stays private."
+                ? record.paymentRail === "direct"
+                  ? "I understand that chain transactions reveal my wallet, time and amounts. My report stays private."
+                  : "I understand that chain transactions reveal my GitHub actor number, wallet, time and amounts. My report stays private."
                 : `I approve ${awardText(record)} on this network. This prepares an unsigned request; it does not pay.`,
             kind: "checkbox",
           },
         ],
       };
+    case "verify-payment":
+      return {
+        title: "Verify payment",
+        submit: "Verify payment",
+        fields: [
+          {
+            name: "transactionIds",
+            label: "Transaction IDs",
+            kind: "textarea",
+            hint: "One per line.",
+          },
+          {
+            name: "confirmation",
+            label: "These transactions pay the approved award.",
+            kind: "checkbox",
+          },
+        ],
+      };
+    case "recover-payment": {
+      const recovery = record.settlement?.recovery;
+      if (
+        !recovery ||
+        [
+          "legacy-manual",
+          "consent-required",
+          "wallet-required",
+          "signature-required",
+          "payment-found",
+          "fee-pending",
+          "retirement-unproven",
+          "payer-review",
+        ].includes(recovery.mode)
+      )
+        return null;
+      return {
+        title: "Recover payment",
+        submit:
+          recovery.mode === "resume-original"
+            ? "Resume original wallet"
+            : recovery.mode === "cancellation-required"
+              ? "Verify cancellation"
+              : recovery.mode === "retirement-required"
+                ? "Verify previous transaction"
+                : "Check payment recovery",
+        fields: [
+          ...(["cancellation-required", "retirement-required"].includes(
+            recovery.mode,
+          )
+            ? [
+                {
+                  name: "cancellationTransactionId",
+                  label:
+                    recovery.mode === "retirement-required"
+                      ? `Previous ${recovery.role === "fee" ? "fee" : "researcher"} transaction ID`
+                      : "Cancellation transaction ID",
+                  kind: "text" as const,
+                },
+              ]
+            : []),
+          {
+            name: "confirmation",
+            label: "I approve recovery to the payout wallet shown above.",
+            kind: "checkbox",
+          },
+        ],
+      };
+    }
   }
   return null;
 }
@@ -2525,7 +2758,9 @@ function ActionForm({
     for (const field of spec.fields) {
       if (!shown(field)) continue;
       const value = values[field.name];
-      if (field.kind === "utc") body[field.name] = utcInput(String(value));
+      if (action === "verify-payment" && field.name === "transactionIds")
+        body[field.name] = String(value).trim().split(/\s+/u).filter(Boolean);
+      else if (field.kind === "utc") body[field.name] = utcInput(String(value));
       else if (field.kind === "amount") {
         const minor = decimalToMinor(String(value), field.decimals);
         if (minor === null) {
@@ -2683,11 +2918,29 @@ function caseTitle(record: SecurityCase): string {
 
 function awardText(record: SecurityCase): string {
   if (record.award === null || record.terms === null)
-    return AWARD_LABELS[record.awardState] ?? record.awardState;
+    return record.paymentRail === "direct" && record.awardState === "approved"
+      ? "Approved"
+      : (AWARD_LABELS[record.awardState] ?? record.awardState);
   const amount = `${money(record.award.researcherMinor, record.terms)} to the researcher · ${money(record.award.slopMinor, record.terms)} to Slop · ${money(record.award.grossMinor, record.terms)} gross`;
   return record.awardState === "pending"
-    ? `${record.relatedPartyReview === "pending" ? "Proposed; awaiting independent review" : "Selected; awaiting verified funding"} · ${amount}`
+    ? `${record.relatedPartyReview === "pending" ? "Proposed; awaiting independent review" : record.paymentRail === "direct" ? "Selected; awaiting payment approval" : "Selected; awaiting verified funding"} · ${amount}`
     : amount;
+}
+
+function paymentLabel(record: SecurityCase): string {
+  if (
+    record.paymentRail === "direct" &&
+    record.settlement?.state === "awaiting-external-payment"
+  )
+    return (record.settlement.confirmedTransactionIds?.length ?? 0) > 0
+      ? "Partly paid"
+      : "Ready for external payment";
+  if (
+    record.paymentRail === "direct" &&
+    record.paymentState === "awaiting-owner-commitment"
+  )
+    return "Waiting for the payer";
+  return PAYMENT_LABELS[record.paymentState] ?? record.paymentState;
 }
 
 const RELATED_PARTY_LABELS: Record<SecurityCase["relatedPartyReview"], string> =
@@ -2883,6 +3136,8 @@ const PRIMARY_ACTIONS = [
   "decide-appeal",
   "decide-related-party",
   "prepare-payment",
+  "verify-payment",
+  "recover-payment",
   "consent-payment",
   "appeal",
 ];
@@ -2960,6 +3215,60 @@ function CaseActions({
   );
 }
 
+function recoveryMessage(
+  mode: string,
+  payer: boolean,
+  reporter: boolean,
+): string {
+  switch (mode) {
+    case "wallet-required":
+      return reporter
+        ? "Confirm your payout wallet in Settings."
+        : "Waiting for the reporter's verified payout wallet.";
+    case "consent-required":
+      return reporter
+        ? "Accept payment visibility for this payout wallet."
+        : "Waiting for the reporter to accept payment visibility for this wallet.";
+    case "fee-pending":
+      return payer
+        ? "Pay and verify the unchanged fee first."
+        : "Waiting for the payer to verify the unchanged fee.";
+    case "retirement-required":
+      return payer
+        ? "This wallet nonce was used. Verify its failed or cancelled transaction before preparing a replacement."
+        : "Waiting for verification of the previous wallet transaction.";
+    case "retirement-unproven":
+      return payer
+        ? "Verify any payment already sent. This consumed wallet nonce needs manual review before a replacement."
+        : "The previous wallet transaction needs review.";
+    case "payer-review":
+      return "The payer wallet needs manual review before recovery. Existing payments can still be verified.";
+    case "legacy-manual":
+      return "This older payment request requires manual review. Existing transfers can still be verified.";
+    case "resume-original":
+      return payer
+        ? "Resume the original verified payout wallet."
+        : "Waiting for the payer to resume the original wallet.";
+    case "cancellation-required":
+      return payer
+        ? "Cancel the old transfer before sending to this wallet."
+        : "Waiting for the payer to cancel the old transfer.";
+    case "payment-found":
+      return payer
+        ? "An existing payment was found. Verify it before continuing."
+        : "Waiting for verification of an existing payment.";
+    case "signature-required":
+    case "history-check":
+      return payer
+        ? "Check the finalized history of the expired request."
+        : "Waiting for the payer to check the expired request.";
+    default:
+      return payer
+        ? "Wait for the old transaction to expire, then check payment recovery."
+        : "Waiting for the old transaction to expire.";
+  }
+}
+
 function CaseDetail({
   caseId,
   onChanged,
@@ -2967,6 +3276,8 @@ function CaseDetail({
   caseId: string;
   onChanged: () => void;
 }) {
+  const privateRequest = usePrivateRequest();
+  const recoveryAction = useAction();
   const [state, reload, replace] = useSecurityData<{ case: SecurityCase }>(
     `security-cases/${encodeURIComponent(caseId)}`,
   );
@@ -2994,6 +3305,71 @@ function CaseDetail({
     );
   const record = state.value.case;
   const owner = record.view === "restricted";
+  const canPay =
+    record.viewerRoles.includes("financial") ||
+    record.viewerRoles.includes("security-maintainer");
+  const directRequest = record.settlement?.ownerRequest as
+    | DirectOwnerRequest
+    | null
+    | undefined;
+  const canSendEvm =
+    record.paymentRail === "direct" &&
+    record.settlement?.generation !== undefined &&
+    !["retirement-required", "retirement-unproven"].includes(
+      record.settlement.recovery?.mode ?? "",
+    ) &&
+    Array.isArray(directRequest?.transactions) &&
+    directRequest.transactions.every(
+      (transaction) =>
+        typeof transaction.nonce === "string" &&
+        typeof transaction.chainId === "string",
+    );
+  const canSendSolana =
+    record.paymentRail === "direct" &&
+    record.settlement?.generation !== undefined &&
+    typeof directRequest?.solana?.transaction === "string" &&
+    typeof directRequest.solana.messageId === "string";
+  const authorizeExistingPayment = async () => {
+    const current = await privateRequest<{ case: SecurityCase }>(
+      "GET",
+      `security-cases/${encodeURIComponent(record.id)}`,
+    );
+    if (
+      !current.case.allowedActions.includes("verify-payment") ||
+      current.case.settlement?.generation !== record.settlement?.generation
+    ) {
+      replace(current);
+      onChanged();
+      throw new Error("The payment state changed. Review the current case.");
+    }
+  };
+  const verifyExistingPayment = async (hashes: string[]) => {
+    const current = await privateRequest<{ case: SecurityCase }>(
+      "GET",
+      `security-cases/${encodeURIComponent(record.id)}`,
+    );
+    if (
+      !current.case.allowedActions.includes("verify-payment") ||
+      current.case.settlement?.generation !== record.settlement?.generation
+    ) {
+      replace(current);
+      onChanged();
+      throw new Error("The payment state changed. Review the current case.");
+    }
+    const response = await privateRequest<{ case: SecurityCase }>(
+      "POST",
+      `security-cases/${encodeURIComponent(record.id)}/actions`,
+      {
+        action: "verify-payment",
+        expectedRevision: current.case.revision,
+        idempotencyKey: requestKey(),
+        transactionIds: hashes,
+        confirmation: true,
+      },
+    );
+    replace(response);
+    onChanged();
+  };
   const response = [...(record.events ?? [])]
     .reverse()
     .find((event) => RESPONSE_KINDS.has(event.kind) && event.reason);
@@ -3068,7 +3444,7 @@ function CaseDetail({
           <StatusBadge
             tone={record.paymentState === "paid" ? "success" : "neutral"}
           >
-            {PAYMENT_LABELS[record.paymentState] ?? record.paymentState}
+            {paymentLabel(record)}
           </StatusBadge>
           {record.paymentDeadline
             ? ` · deadline ${formatUtc(record.paymentDeadline)}`
@@ -3088,9 +3464,7 @@ function CaseDetail({
             <Fact term="Slop share">
               {money(record.award.slopMinor, record.terms)}
             </Fact>
-            <Fact term="Payment status">
-              {PAYMENT_LABELS[record.paymentState] ?? record.paymentState}
-            </Fact>
+            <Fact term="Payment status">{paymentLabel(record)}</Fact>
           </dl>
           <p>Approval and funding are separate from finalized payment.</p>
         </section>
@@ -3121,7 +3495,7 @@ function CaseDetail({
           aria-label="Private payment"
           className="security-payment-panel"
         >
-          <h4>Private payment</h4>
+          <h4>Payment</h4>
           <p className="operations-muted">{record.settlement.privacyNotice}</p>
           {record.viewerRoles.includes("reporter") &&
           record.settlement.state !== "paid" ? (
@@ -3131,18 +3505,359 @@ function CaseDetail({
           ) : null}
           <dl className="operations-facts">
             <Fact term="Network">{record.settlement.network}</Fact>
-            {record.settlement.transactionId ? (
-              <Fact term="Finalized transaction">
-                <CopyIdentifier
-                  label="payment transaction ID"
-                  value={record.settlement.transactionId}
-                />
+            {record.paymentRail === "direct" &&
+            record.settlement.remainingTransfers ? (
+              <Fact term="Progress">
+                {record.settlement.confirmedTransactionIds?.length ?? 0}{" "}
+                transaction(s) confirmed ·{" "}
+                {record.settlement.remainingTransfers.length} transfer(s)
+                remaining
               </Fact>
             ) : null}
+            {(
+              record.settlement.transactionIds ??
+              (record.settlement.transactionId
+                ? [record.settlement.transactionId]
+                : [])
+            ).map((transactionId) => (
+              <Fact term="Finalized transaction" key={transactionId}>
+                <CopyIdentifier
+                  label="payment transaction ID"
+                  value={transactionId}
+                />
+              </Fact>
+            ))}
           </dl>
+          {record.settlement.recovery ? (
+            <fieldset
+              className="security-payment-recovery"
+              aria-label="Payment recovery"
+            >
+              <legend>Payment recovery</legend>
+              {record.settlement.recovery.target ? (
+                <CopyIdentifier
+                  label={
+                    record.settlement.recovery.role === "fee"
+                      ? "fee wallet"
+                      : "current payout wallet"
+                  }
+                  value={record.settlement.recovery.target.address}
+                />
+              ) : null}
+              <p role="status">
+                {recoveryMessage(
+                  record.settlement.recovery.mode,
+                  canPay,
+                  record.viewerRoles.includes("reporter"),
+                )}
+              </p>
+              {record.settlement.recovery.mode === "wallet-required" ? (
+                <Link href="/account#wallets">Review payout wallet</Link>
+              ) : null}
+              {record.settlement.recovery.mode === "payment-found" &&
+              record.settlement.recovery.transactionIds?.length &&
+              (record.viewerRoles.includes("financial") ||
+                record.viewerRoles.includes("security-maintainer")) ? (
+                <button
+                  className="button secondary-button"
+                  type="button"
+                  disabled={recoveryAction.busy}
+                  onClick={() =>
+                    void recoveryAction.run(async () => {
+                      const value = await privateRequest<{
+                        case: SecurityCase;
+                      }>(
+                        "POST",
+                        `security-cases/${encodeURIComponent(record.id)}/actions`,
+                        {
+                          action: "verify-payment",
+                          expectedRevision: record.revision,
+                          idempotencyKey: requestKey(),
+                          confirmation: true,
+                          transactionIds:
+                            record.settlement?.recovery?.transactionIds,
+                        },
+                      );
+                      replace(value);
+                      onChanged();
+                    })
+                  }
+                >
+                  Verify found payment
+                </button>
+              ) : null}
+              <FormError message={recoveryAction.error} />
+              {record.settlement.recovery.payer &&
+              record.settlement.recovery.messages?.length &&
+              ["signature-required", "history-check"].includes(
+                record.settlement.recovery.mode,
+              ) &&
+              (record.viewerRoles.includes("financial") ||
+                record.viewerRoles.includes("security-maintainer")) ? (
+                <SolanaBountyRecovery
+                  key={`history:${record.id}:${record.settlement.recovery.generation}`}
+                  caseId={record.id}
+                  generation={record.settlement.recovery.generation}
+                  payer={record.settlement.recovery.payer}
+                  messages={record.settlement.recovery.messages}
+                  authorize={async () => {
+                    const current = await privateRequest<{
+                      case: SecurityCase;
+                    }>(
+                      "GET",
+                      `security-cases/${encodeURIComponent(record.id)}`,
+                    );
+                    if (
+                      !current.case.allowedActions.includes(
+                        "recover-payment",
+                      ) ||
+                      current.case.settlement?.recovery?.generation !==
+                        record.settlement?.recovery?.generation ||
+                      JSON.stringify(
+                        current.case.settlement?.recovery?.messages,
+                      ) !==
+                        JSON.stringify(record.settlement?.recovery?.messages)
+                    ) {
+                      replace(current);
+                      onChanged();
+                      throw new Error(
+                        "The recovery request changed. Refresh before signing.",
+                      );
+                    }
+                  }}
+                  verify={async (signatures) => {
+                    const response = await privateRequest<{
+                      case: SecurityCase;
+                    }>(
+                      "POST",
+                      `security-cases/${encodeURIComponent(record.id)}/actions`,
+                      {
+                        action: "recover-payment",
+                        expectedRevision: record.revision,
+                        idempotencyKey: requestKey(),
+                        confirmation: true,
+                        signatures,
+                      },
+                    );
+                    replace(response);
+                    onChanged();
+                  }}
+                />
+              ) : null}
+              {record.settlement.recovery.mode === "cancellation-required" &&
+              record.settlement.recovery.consented &&
+              record.settlement.recovery.cancellationRequest &&
+              (record.viewerRoles.includes("financial") ||
+                record.viewerRoles.includes("security-maintainer")) ? (
+                <>
+                  <CopyButton
+                    label="cancellation request"
+                    text={JSON.stringify(
+                      record.settlement.recovery.cancellationRequest,
+                      null,
+                      2,
+                    )}
+                  />
+                  <DirectBountyPayment
+                    key={`recovery:${record.id}:${record.settlement.recovery.generation}`}
+                    caseId={record.id}
+                    generation={record.settlement.recovery.generation}
+                    payer={record.settlement.recovery.cancellationRequest.from}
+                    transactions={[
+                      record.settlement.recovery.cancellationRequest,
+                    ]}
+                    cancellation
+                    authorize={async () => {
+                      const current = await privateRequest<{
+                        case: SecurityCase;
+                      }>(
+                        "GET",
+                        `security-cases/${encodeURIComponent(record.id)}`,
+                      );
+                      if (
+                        !current.case.allowedActions.includes(
+                          "recover-payment",
+                        ) ||
+                        current.case.settlement?.recovery?.generation !==
+                          record.settlement?.recovery?.generation ||
+                        JSON.stringify(
+                          current.case.settlement?.recovery
+                            ?.cancellationRequest,
+                        ) !==
+                          JSON.stringify(
+                            record.settlement?.recovery?.cancellationRequest,
+                          )
+                      ) {
+                        replace(current);
+                        onChanged();
+                        throw new Error(
+                          "The recovery request changed. Refresh the case before signing.",
+                        );
+                      }
+                    }}
+                    authorizeVerification={async () => {
+                      const current = await privateRequest<{
+                        case: SecurityCase;
+                      }>(
+                        "GET",
+                        `security-cases/${encodeURIComponent(record.id)}`,
+                      );
+                      const previous = record.settlement?.recovery;
+                      const next = current.case.settlement?.recovery;
+                      if (
+                        !current.case.allowedActions.includes(
+                          "recover-payment",
+                        ) ||
+                        next?.generation !== previous?.generation ||
+                        next?.legIndex !== previous?.legIndex ||
+                        (next?.cancellationRequest?.nonce ??
+                          next?.retirementNonce) !==
+                          previous?.cancellationRequest?.nonce
+                      ) {
+                        replace(current);
+                        onChanged();
+                        throw new Error(
+                          "The recovery changed. Review its current state.",
+                        );
+                      }
+                    }}
+                    verify={async (hashes) => {
+                      if (hashes.length !== 1)
+                        throw new Error(
+                          "Provide the exact cancellation transaction.",
+                        );
+                      const response = await privateRequest<{
+                        case: SecurityCase;
+                      }>(
+                        "POST",
+                        `security-cases/${encodeURIComponent(record.id)}/actions`,
+                        {
+                          action: "recover-payment",
+                          expectedRevision: record.revision,
+                          idempotencyKey: requestKey(),
+                          confirmation: true,
+                          cancellationTransactionId: hashes[0],
+                        },
+                      );
+                      replace(response);
+                      onChanged();
+                    }}
+                  />
+                </>
+              ) : null}
+            </fieldset>
+          ) : null}
+          {!canSendEvm &&
+          !canSendSolana &&
+          record.settlement.generation !== undefined &&
+          record.paymentRail === "direct" &&
+          canPay &&
+          record.allowedActions.includes("verify-payment") ? (
+            <BountySubmittedPayments
+              caseId={record.id}
+              generation={record.settlement.generation}
+              solana={record.settlement.network.startsWith("solana")}
+              confirmed={record.settlement.confirmedTransactionIds ?? []}
+              authorize={authorizeExistingPayment}
+              verify={verifyExistingPayment}
+            />
+          ) : null}
           {record.settlement.ownerRequest &&
-          record.viewerRoles.includes("financial") ? (
-            <UnsignedPaymentRequest request={record.settlement.ownerRequest} />
+          (record.viewerRoles.includes("financial") ||
+            record.viewerRoles.includes("security-maintainer")) ? (
+            <>
+              <UnsignedPaymentRequest
+                request={record.settlement.ownerRequest}
+              />
+              {canSendEvm && record.settlement.generation !== undefined ? (
+                <DirectBountyPayment
+                  key={`${record.id}:${record.settlement.generation}`}
+                  caseId={record.id}
+                  generation={record.settlement.generation}
+                  payer={
+                    (
+                      record.settlement
+                        .ownerRequest as unknown as DirectOwnerRequest
+                    ).payer.address
+                  }
+                  transactions={
+                    record.settlement.ownerRequest
+                      .transactions as DirectEvmTransaction[]
+                  }
+                  authorize={async () => {
+                    const current = await privateRequest<{
+                      case: SecurityCase;
+                    }>(
+                      "GET",
+                      `security-cases/${encodeURIComponent(record.id)}`,
+                    );
+                    if (
+                      !current.case.allowedActions.includes("verify-payment") ||
+                      current.case.settlement?.generation !==
+                        record.settlement?.generation ||
+                      JSON.stringify(
+                        current.case.settlement?.ownerRequest?.transactions,
+                      ) !==
+                        JSON.stringify(
+                          record.settlement?.ownerRequest?.transactions,
+                        )
+                    ) {
+                      replace(current);
+                      onChanged();
+                      throw new Error(
+                        "The payment request changed. Refresh the case before signing.",
+                      );
+                    }
+                  }}
+                  authorizeVerification={authorizeExistingPayment}
+                  verify={verifyExistingPayment}
+                />
+              ) : null}
+              {canSendSolana && record.settlement.generation !== undefined ? (
+                <SolanaBountyPayment
+                  key={`solana:${record.id}:${record.settlement.generation}:${(record.settlement.ownerRequest as unknown as DirectOwnerRequest).solana?.messageId}`}
+                  caseId={record.id}
+                  generation={record.settlement.generation}
+                  payer={
+                    (
+                      record.settlement
+                        .ownerRequest as unknown as DirectOwnerRequest
+                    ).payer.address
+                  }
+                  plan={
+                    (
+                      record.settlement
+                        .ownerRequest as unknown as DirectOwnerRequest
+                    ).solana as DirectSolanaPlan
+                  }
+                  authorize={async () => {
+                    const current = await privateRequest<{
+                      case: SecurityCase;
+                    }>(
+                      "GET",
+                      `security-cases/${encodeURIComponent(record.id)}`,
+                    );
+                    if (
+                      !current.case.allowedActions.includes("verify-payment") ||
+                      current.case.settlement?.generation !==
+                        record.settlement?.generation ||
+                      JSON.stringify(
+                        current.case.settlement?.ownerRequest?.solana,
+                      ) !==
+                        JSON.stringify(record.settlement?.ownerRequest?.solana)
+                    ) {
+                      replace(current);
+                      onChanged();
+                      throw new Error(
+                        "The payment request changed. Review its current state before signing.",
+                      );
+                    }
+                  }}
+                  authorizeVerification={authorizeExistingPayment}
+                  verify={(signature) => verifyExistingPayment([signature])}
+                />
+              ) : null}
+            </>
           ) : null}
         </section>
       ) : null}

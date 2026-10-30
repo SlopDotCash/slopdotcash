@@ -1,6 +1,6 @@
 # Solana protected payout escrow
 
-This Anchor program holds classic SPL Token mints and the approved metadata-only
+This Anchor program holds native SOL, classic SPL Token mints and the approved metadata-only
 Token-2022 subset in a separate PDA vault for each owner, project digest and purpose. The project PDA seeds are
 `["project", owner, project digest, purpose]`, where the purpose byte is `0`
 for ordinary awards and `1` for private bounties, so one owner can hold separate
@@ -23,7 +23,32 @@ or whether a mint is the asset the project intends. A reviewed project manifest
 must bind its program ID, project PDA, network, mint, owner and identity
 authority.
 
-All counters are u64 token base units. A high-decimal mint limits the total a
+## Native SOL
+
+Native SOL uses `11111111111111111111111111111111` (the System Program ID) as
+its immutable asset identity and nine decimals. It is not the WSOL mint.
+`initialize_native` creates the same project PDA and a program-owned, empty
+vault at `["vault", project]`. Its permanent rent reserve never enters the
+accounting counters. `deposit_native` transfers actual lamports from the
+signing depositor; unsolicited transfers do not earn credit or refund rights.
+The shared commit and monthly instructions enforce the same credited free
+balance, reserved awards and accrued fees for either asset family.
+
+`pay_native` sends lamports directly to the latest co-signed destination,
+`withdraw_native` sends the net refund only to the project owner, and
+`claim_fees_native` sends accrued fees only to the pinned fee recipient.
+No native instruction creates an associated token account or wraps SOL.
+Every transfer preserves vault rent and the existing Project account layout.
+A recipient with no SOL must receive enough to remain rent-exempt; otherwise
+Solana rejects the entire transaction and the award stays unpaid.
+
+The owner planner, funding receipt checker, payment executor and vault totals
+reader select these native instructions from the asset identity. Funding and
+payment receipts reconcile exact lamport changes and account separately for
+network fees. These source changes require a reviewed program upgrade before
+native SOL can be activated in a deployment.
+
+All counters are u64 asset base units: lamports for native SOL, token units for SPL. A high-decimal mint limits the total a
 project can hold: at 18 decimals, u64 holds about 18.4 whole tokens in the
 cumulative `deposited` counter. Use a mint whose decimals fit the expected
 project budget.

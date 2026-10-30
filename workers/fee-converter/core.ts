@@ -11,6 +11,7 @@
  */
 
 import { FeeCapTooLowError } from "viem";
+import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
 import { LOCK_MS } from "./store";
 
@@ -251,6 +252,12 @@ export interface ConversionStore {
   /** Quoted value of live sends created since `since`, in micro-units. */
   liveValueSince(network: Network, since: string): Promise<bigint>;
   latest(network: Network, token: string): Promise<ConversionRow | null>;
+  /** Only finalized native fee receipts, less committed spending and gas. */
+  nativeFeeBalance?(
+    network: Network,
+    token: string,
+    feeWallet: string,
+  ): Promise<bigint>;
   /** Journaled same-nonce replacements of one row, in attempt order. */
   replacements(conversionId: string): Promise<SendReplacement[]>;
   insertReplacement(
@@ -698,7 +705,21 @@ export async function runNetwork(
       if (blocked.has(token)) continue;
       if (!(await leased())) break;
       try {
-        const balance = await client.balance(token);
+        let balance = await client.balance(token);
+        if (isNativeAssetAddress(config.network, token)) {
+          if (!deps.store.nativeFeeBalance)
+            throw new Error("Native fees need finalized receipt accounting");
+          const received = await deps.store.nativeFeeBalance(
+            config.network,
+            token,
+            config.feeWallet,
+          );
+          // Pay the next send's worst-case cost from earned fees as well;
+          // a wallet gas top-up never increases the amount sold.
+          const reserve = BigInt(config.nativeBudget?.perTransaction ?? "0");
+          const available = received > reserve ? received - reserve : 0n;
+          if (available < balance) balance = available;
+        }
         if (balance === 0n) continue;
         if (deps.trigger === "receipts") {
           const latest = await deps.store.latest(config.network, token);

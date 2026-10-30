@@ -1,12 +1,17 @@
 /**
  * The one reward asset a project pays in: a network and either that
- * network's reviewed stablecoin or one standard token (ERC-20 or classic SPL
- * mint). The manifest stores the chain identity, address, symbol and decimals
+ * network's native coin, reviewed stablecoin or one standard token (ERC-20 or
+ * classic SPL mint). The manifest stores the chain identity, address, symbol and decimals
  * as display metadata. The server reads decimals from chain once, when the
  * asset is submitted or changed; page views never read chain.
  */
 
-import { ESCROW_NETWORKS } from "./escrow-policy.mjs";
+import {
+  ESCROW_NETWORKS,
+  EVM_NATIVE_ASSET,
+  isNativeAssetAddress,
+  SOLANA_NATIVE_ASSET,
+} from "./escrow-policy.mjs";
 import { isFundingAddress } from "./funding-address.mjs";
 
 /** Display names of the four reward networks, in picker order. */
@@ -34,6 +39,12 @@ function rewardNetwork(chain) {
     family: definition.family,
     chainId: definition.chainId ?? null,
     cluster: definition.family === "solana" ? "mainnet-beta" : null,
+    native: Object.freeze({
+      address:
+        definition.family === "solana" ? SOLANA_NATIVE_ASSET : EVM_NATIVE_ASSET,
+      symbol: definition.family === "solana" ? "SOL" : "ETH",
+      decimals: definition.family === "solana" ? 9 : 18,
+    }),
     stablecoin: Object.freeze({
       address: stablecoin.address,
       symbol: stablecoin.symbol,
@@ -78,13 +89,25 @@ export function rewardAssetChoice(network, kind, address, symbol) {
       symbol: definition.stablecoin.symbol,
     };
   }
-  if (kind !== "token") throw new TypeError("Choose stablecoin or token");
+  if (kind === "native")
+    return {
+      network,
+      kind,
+      address: definition.native.address,
+      symbol: definition.native.symbol,
+    };
+  if (kind !== "token")
+    throw new TypeError("Choose native coin, stablecoin or token");
   const canonical = canonicalRewardAssetAddress(network, address);
   if (canonical === null)
     throw new TypeError(
       definition.family === "evm"
         ? "Enter a 0x token contract address with 40 hexadecimal characters"
         : "Enter a base58 SPL mint address",
+    );
+  if (isNativeAssetAddress(network, canonical))
+    throw new TypeError(
+      `Choose ${definition.native.symbol} as the native coin`,
     );
   if (canonical === definition.stablecoin.address)
     throw new TypeError(
@@ -121,7 +144,10 @@ export function assertRewardAsset(value, field = "project.rewardAsset") {
   )
     throw new TypeError(`${field} chain identity does not match its network`);
   if (
-    canonicalRewardAssetAddress(value.network, value.address) !== value.address
+    value.kind === "native"
+      ? !isNativeAssetAddress(value.network, value.address)
+      : canonicalRewardAssetAddress(value.network, value.address) !==
+          value.address || isNativeAssetAddress(value.network, value.address)
   )
     throw new TypeError(`${field}.address is not a canonical address`);
   if (
@@ -139,7 +165,14 @@ export function assertRewardAsset(value, field = "project.rewardAsset") {
   )
     throw new TypeError(`${field}.verifiedAt is invalid`);
   const stablecoin = definition.stablecoin;
-  if (value.kind === "stablecoin") {
+  if (value.kind === "native") {
+    if (
+      value.address !== definition.native.address ||
+      value.symbol !== definition.native.symbol ||
+      value.decimals !== definition.native.decimals
+    )
+      throw new TypeError(`${field} is not the network native coin`);
+  } else if (value.kind === "stablecoin") {
     if (
       value.address !== stablecoin.address ||
       value.symbol !== stablecoin.symbol ||

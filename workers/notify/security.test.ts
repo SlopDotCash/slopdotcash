@@ -8,6 +8,7 @@ import {
 } from "../../backend/notifications/handler";
 import {
   handleSecurityApi,
+  inboxStatements,
   type SecurityD1Database,
 } from "../../backend/security/handler";
 import { applicationManifest } from "../../tests/project-application-manifest";
@@ -25,7 +26,11 @@ const reporter = { githubId: "102", githubLogin: "reporter" };
 const backup = { githubId: "103", githubLogin: "backup" };
 const at = "2026-10-19T12:00:00.000Z";
 const origin = "https://slop.test";
-async function setup(beforeMailMigration = false, confidentialOnly = false) {
+async function setup(
+  beforeMailMigration = false,
+  confidentialOnly = false,
+  financial: { githubId: string; githubLogin: string }[] = [],
+) {
   const { db: source, sqlite } = sqliteD1(
     readdirSync("migrations")
       // Defer mail activation and the later inbox rebuilds; the rollout
@@ -38,7 +43,8 @@ async function setup(beforeMailMigration = false, confidentialOnly = false) {
               p.startsWith("0030") ||
               p.startsWith("0063") ||
               p.startsWith("0065") ||
-              p.startsWith("0079")
+              p.startsWith("0079") ||
+              p.startsWith("0111")
             )),
       )
       .sort(),
@@ -55,7 +61,7 @@ async function setup(beforeMailMigration = false, confidentialOnly = false) {
             intake: { repository: "example/bounty" },
             approvers: {
               technical: [owner, backup],
-              financial: [],
+              financial,
               dispute: [],
             },
             capacity: { awards: 1, closesAt: null },
@@ -63,6 +69,7 @@ async function setup(beforeMailMigration = false, confidentialOnly = false) {
           },
         },
   );
+
   sqlite
     .query(
       "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at,actor_github_id,actor_github_login) VALUES ('bounty',1,?,?,'test',?,?,?)",
@@ -257,6 +264,156 @@ test("a case change queues once, sends generic per-role mail once, and needs exp
     }),
   ).toBe(true);
   expect(h.rows()[0].state).toBe("delivered");
+  h.sqlite.close();
+});
+
+test("direct payment progress and completion notify the other case roles once without disclosing payment details", async () => {
+  const finance = { githubId: "104", githubLogin: "finance" };
+  const h = await setup(false, false, [finance]);
+  h.deps.config.recipients[finance.githubId] = {
+    email: "finance@example.com",
+    verifiedAt: at,
+    evidenceReference: "synthetic-financial-recipient",
+    backupGithubId: owner.githubId,
+  };
+  await dispatchSecurityMail(h.deps);
+  h.sent.length = 0;
+  const terms = {
+    approvers: {
+      technical: [owner, backup],
+      financial: [finance],
+      dispute: [],
+    },
+  };
+  for (const [revision, completed] of [
+    [2, false],
+    [3, true],
+  ] as const) {
+    const key = `direct-payment-verification-${revision}`;
+    const event = {
+      caseId: h.caseId,
+      revision,
+      kind: "verify-payment",
+      idempotencyKey: key,
+      reporterGithubId: reporter.githubId,
+      detail: {
+        rail: "direct",
+        completed,
+        privateDetail: "PRIVATE-REPORT-BODY-AND-AMOUNT",
+      },
+      terms,
+    };
+    await h.db.batch([
+      h.db
+        .prepare(
+          "UPDATE security_cases SET revision=?,submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=?,policy_revision=1,terms=?,award_state='approved' WHERE id=?",
+        )
+        .bind(
+          revision,
+          at,
+          at,
+          owner.githubId,
+          JSON.stringify({
+            grossMinor: "100",
+            researcherMinor: "75",
+            slopMinor: "25",
+            currency: "USD",
+            decimals: 2,
+            network: null,
+            capacityAwards: 1,
+          }),
+          h.caseId,
+        ),
+      h.db
+        .prepare(
+          "INSERT INTO security_case_events(case_id,case_revision,kind,actor_github_id,actor_role,idempotency_key,detail,at) VALUES(?,?,'verify-payment',?,'security-maintainer',?,?,?)",
+        )
+        .bind(
+          h.caseId,
+          revision,
+          owner.githubId,
+          key,
+          JSON.stringify(event.detail),
+          at,
+        ),
+      ...inboxStatements({ db: h.db } as never, event as never),
+    ]);
+    await h.db.batch(inboxStatements({ db: h.db } as never, event as never));
+    const rows = h
+      .rows()
+      .filter(
+        (row) => row.event_key === `security-case:${h.caseId}:${revision}`,
+      );
+    expect(rows.map((row) => row.recipient_github_id)).toEqual([
+      reporter.githubId,
+      backup.githubId,
+      finance.githubId,
+    ]);
+    await Promise.all([
+      dispatchSecurityMail(h.deps),
+      dispatchSecurityMail(h.deps),
+    ]);
+    expect(h.sent).toHaveLength((revision - 1) * 3);
+    const financial = rows.find(
+      (row) => row.recipient_github_id === finance.githubId,
+    );
+    if (!financial) throw new Error("Missing financial notice");
+    expect(
+      (
+        await h.call(owner, `security-cases/${h.caseId}/acknowledge`, {
+          eventKey: financial.event_key,
+        })
+      )?.status,
+    ).toBe(404);
+    expect(
+      (
+        await h.call(finance, `security-cases/${h.caseId}/acknowledge`, {
+          eventKey: financial.event_key,
+        })
+      )?.status,
+    ).toBe(200);
+  }
+  for (const message of h.sent) {
+    expect(message.mime).toContain("https://staging.slop.cash/inbox");
+    expect(message.mime).not.toMatch(
+      /PRIVATE-REPORT|bounty|GHSA|paid|amount/iu,
+    );
+    expect(message.mime).not.toContain(h.caseId);
+  }
+  await dispatchSecurityMail(h.deps);
+  expect(h.sent).toHaveLength(6);
+  const legacyKey = `security-legacy:${h.caseId}`;
+  h.sqlite
+    .prepare(
+      "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES (?,?,'security_case',?,'/security',?,?)",
+    )
+    .run(legacyKey, finance.githubId, h.caseId, at, at);
+  const inbox = await handleNotificationsApi(
+    new Request(`${origin}/api/v1/notifications`),
+    {
+      db: h.db,
+      sessionActor: async () => finance,
+      now: () => new Date(at),
+    },
+  );
+  if (!inbox) throw new Error("Missing inbox response");
+  const notices = (await inbox.json()).notifications as {
+    eventKey: string;
+    actionPath: string;
+  }[];
+  expect(
+    notices.find((notice) => notice.eventKey === legacyKey)?.actionPath,
+  ).toBe(`/security?case=${h.caseId}`);
+  expect(
+    notices
+      .filter((notice) => notice.eventKey.startsWith("security-case:"))
+      .every((notice) => notice.actionPath === `/security?case=${h.caseId}`),
+  ).toBe(true);
+  expect(
+    h.sqlite
+      .query("SELECT action_path FROM notifications WHERE event_key=?")
+      .get(legacyKey),
+  ).toEqual({ action_path: "/security" });
   h.sqlite.close();
 });
 
@@ -689,6 +846,9 @@ test("pre-pilot inbox history is not mailed and does not expose a dead acknowled
     ),
   );
   expect(h.rows()).toEqual([]);
+  h.sqlite.exec(
+    readFileSync("migrations/0111_verified_notification_email.sql", "utf8"),
+  );
   const response = await handleNotificationsApi(
     new Request(origin + "/api/v1/notifications"),
     {

@@ -34,6 +34,7 @@ export class GithubLookupError extends Error {
 }
 
 const MAX_OWNED_REPOSITORY_PAGES = 20;
+const MAX_REPOSITORY_BRANCH_PAGES = 20;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export function validGithubLogin(value: string): boolean {
@@ -154,7 +155,7 @@ function nextOwnedRepositoryPage(
 }
 
 /**
- * Lists the public, non-fork, non-archived repositories a GitHub account
+ * Lists the public, non-archived repositories a GitHub account
  * owns, most recently pushed first.
  */
 export async function listOwnedRepositories(
@@ -204,7 +205,6 @@ export async function listOwnedRepositories(
       const repo = entry as Record<string, unknown>;
       if (
         repo.private !== false ||
-        repo.fork !== false ||
         repo.archived !== false ||
         typeof repo.full_name !== "string" ||
         !validRepositoryPath(repo.full_name)
@@ -233,6 +233,133 @@ function unknownLicense(
   reason: string,
 ): RepositoryLookup {
   return { ...facts, license: { state: "unknown", reason } };
+}
+
+function validBranchName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 255 &&
+    value !== "@" &&
+    value !== "HEAD" &&
+    !value.startsWith("-") &&
+    !value.endsWith(".") &&
+    !value.includes("..") &&
+    !value.includes("@{") &&
+    !/[~^:?*[\\]/u.test(value) &&
+    [...value].every((character) => {
+      const code = character.charCodeAt(0);
+      return code > 32 && code !== 127;
+    }) &&
+    value
+      .split("/")
+      .every(
+        (part) =>
+          part !== "" && !part.startsWith(".") && !part.endsWith(".lock"),
+      )
+  );
+}
+
+/** Returns complete branch options, never a partial list after a failed page. */
+async function repositoryBranches(
+  fetcher: GithubFetch,
+  token: string | undefined,
+  repository: string,
+  repositoryId: number,
+  apiOrigin: string,
+): Promise<{ branches: string[]; branchCommits: Record<string, string> }> {
+  const path = `/repos/${repository}/branches`;
+  const branches = new Set<string>();
+  const branchCommits = new Map<string, string>();
+  for (let page = 1; page <= MAX_REPOSITORY_BRANCH_PAGES; page++) {
+    const response = await fetcher(
+      `${apiOrigin}${path}?per_page=100&page=${page}`,
+      requestInit(token),
+    );
+    if (limited(response))
+      throw new GithubLookupError(
+        503,
+        "github_rate_limited",
+        "GitHub limited branch lookups.",
+      );
+    if (!response.ok)
+      throw new GithubLookupError(
+        502,
+        "github_unavailable",
+        "GitHub branches could not be read. Try again.",
+      );
+    const values = await readBoundedJson(
+      response,
+      2 * 1024 * 1024,
+      "GitHub branches",
+    );
+    if (!Array.isArray(values) || values.length > 100)
+      throw new GithubLookupError(
+        502,
+        "github_unavailable",
+        "GitHub returned an invalid branch list.",
+      );
+    for (const branch of values) {
+      if (
+        !branch ||
+        typeof branch !== "object" ||
+        !validBranchName(branch.name)
+      )
+        throw new GithubLookupError(
+          502,
+          "github_unavailable",
+          "GitHub returned an invalid branch name.",
+        );
+      branches.add(branch.name);
+      if (branch.commit !== undefined) {
+        const sha = branch.commit?.sha;
+        if (typeof sha !== "string" || !/^[0-9a-f]{40}$/u.test(sha))
+          throw new GithubLookupError(
+            502,
+            "github_unavailable",
+            "GitHub returned an invalid branch commit.",
+          );
+        branchCommits.set(branch.name, sha);
+      }
+    }
+    let next: URL | null;
+    try {
+      const link = nextLink(response.headers.get("link"));
+      next = link === null ? null : new URL(link);
+    } catch {
+      throw new GithubLookupError(
+        502,
+        "github_unavailable",
+        "GitHub returned an invalid branch page link.",
+      );
+    }
+    if (next === null)
+      return {
+        branches: [...branches],
+        branchCommits: Object.fromEntries(branchCommits),
+      };
+    if (
+      next.origin !== apiOrigin ||
+      (next.pathname !== path &&
+        next.pathname !== `/repositories/${repositoryId}/branches`) ||
+      next.username !== "" ||
+      next.password !== "" ||
+      next.hash !== "" ||
+      next.searchParams.size !== 2 ||
+      next.searchParams.get("per_page") !== "100" ||
+      next.searchParams.get("page") !== String(page + 1)
+    )
+      throw new GithubLookupError(
+        502,
+        "github_unavailable",
+        "GitHub returned an invalid branch page link.",
+      );
+  }
+  throw new GithubLookupError(
+    502,
+    "github_unavailable",
+    "GitHub returned too many branch pages.",
+  );
 }
 
 /**
@@ -270,7 +397,7 @@ export async function lookupGitHubRepository(
     !/^[A-Za-z0-9_=-]{1,100}$/u.test(repo.node_id) ||
     typeof repo.full_name !== "string" ||
     !validRepositoryPath(repo.full_name) ||
-    typeof repo.default_branch !== "string" ||
+    !validBranchName(repo.default_branch) ||
     !owner ||
     !Number.isSafeInteger(owner.id) ||
     typeof owner.login !== "string" ||
@@ -282,12 +409,27 @@ export async function lookupGitHubRepository(
       "github_unavailable",
       "GitHub returned incomplete repository facts.",
     );
+  const { branches, branchCommits } = await repositoryBranches(
+    fetcher,
+    token,
+    repo.full_name,
+    Number(repo.id),
+    apiOrigin,
+  );
+  if (!branches.includes(repo.default_branch))
+    throw new GithubLookupError(
+      502,
+      "github_unavailable",
+      "GitHub did not return the default branch. Try again.",
+    );
   const facts: Omit<RepositoryLookup, "license"> = {
     repository: repo.full_name,
     description: repositoryDescription(repo.description),
     numericId: String(repo.id),
     nodeId: repo.node_id,
     defaultBranch: repo.default_branch,
+    branches,
+    branchCommits,
     owner: {
       login: owner.login,
       actorId: String(owner.id),
