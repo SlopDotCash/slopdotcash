@@ -8,9 +8,9 @@ import type {
 import { rewardFields } from "../../src/lib/project-proposal";
 import { privateBountyTerms } from "../../src/lib/security-bounty-proposal";
 import {
+  connectLocalDirectEvmFixture,
   rotateVerifiedBountyWallet,
   seedVerifiedBountyWallets,
-  startLocalDirectEvmFixture,
 } from "../direct-bounty-chain";
 import {
   E2E_SECURITY_ACCOUNTS,
@@ -84,7 +84,7 @@ type CaseRecord = {
     ownerRequest: null | { transactions: Transaction[] };
   };
 };
-let chain: Awaited<ReturnType<typeof startLocalDirectEvmFixture>>;
+let chain: Awaited<ReturnType<typeof connectLocalDirectEvmFixture>>;
 
 test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
@@ -93,7 +93,7 @@ test.beforeAll(async () => {
   const persist = process.env.SLOP_E2E_PERSIST_TO;
   if (!endpoint || !persist)
     throw new Error("Missing local direct-payment fixture");
-  chain = await startLocalDirectEvmFixture(Number(new URL(endpoint).port));
+  chain = await connectLocalDirectEvmFixture(Number(new URL(endpoint).port));
   seedVerifiedBountyWallets(persist, [
     { ...owner, address: chain.payer },
     {
@@ -102,9 +102,6 @@ test.beforeAll(async () => {
       address: chain.reporter,
     },
   ]);
-});
-test.afterAll(async () => {
-  await chain?.close();
 });
 
 async function signedIn(
@@ -139,7 +136,10 @@ async function signedIn(
       };
     });
   }
-  await page.goto("/how-it-works", { waitUntil: "networkidle" });
+  await page.goto("/how-it-works", { waitUntil: "domcontentloaded" });
+  await expect(
+    page.getByRole("heading", { name: "How Slop works", exact: true }),
+  ).toBeVisible();
   if (!tokens[role]) throw new Error(`Missing fixture session for ${role}`);
   await page.evaluate((value) => {
     document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
@@ -207,6 +207,57 @@ async function enrollSecurityEmail(
           .isVisible()),
     )
     .toBe(true);
+  const current = await api<{ availability: string; email?: string }>(
+    request,
+    page,
+    role,
+    "GET",
+    "notifications/email",
+  );
+  expect(current.status).toBe(200);
+  // Viewports share these accounts. Reuse their verified destination rather
+  // than changing an address and hitting the real verification cooldown.
+  if (current.body.availability === "verified") {
+    expect(current.body.email).toBe(address);
+    await page.bringToFront();
+    // Firefox can activate this window on its first pointer action. Finish
+    // the resulting preference refresh before clicking a consent control.
+    await page
+      .getByRole("heading", { name: "Email preferences", exact: true })
+      .click();
+    for (const [name, checked] of [
+      ["Activity email", false],
+      ["Security email", true],
+    ] as const) {
+      const toggle = preferences.getByRole("switch", { name, exact: true });
+      await expect(toggle).toBeEnabled();
+      await expect(toggle).toHaveAttribute("aria-busy", "false");
+      if ((await toggle.isChecked()) !== checked) {
+        const saved = page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            new URL(response.url()).pathname === "/api/v1/notifications/email",
+        );
+        await toggle.click();
+        expect((await saved).status()).toBe(200);
+      }
+      await expect(toggle).toBeChecked({ checked });
+      await expect(toggle).toHaveAttribute("aria-busy", "false");
+    }
+    await expect(preferences).toContainText(address);
+    const saved = await api<{
+      enabled: boolean;
+      securityEnabled: boolean;
+      email: string;
+    }>(request, page, role, "GET", "notifications/email");
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({
+      enabled: false,
+      securityEnabled: true,
+      email: address,
+    });
+    return;
+  }
   for (const name of ["Activity email", "Security email"]) {
     const toggle = preferences.getByRole("switch", { name, exact: true });
     if ((await toggle.isVisible()) && (await toggle.isChecked())) {
@@ -429,7 +480,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     { role: "security-b", page: otherMaintainer },
   ].map((actor) => ({
     ...actor,
-    address: `${actor.role}-${suffix}@example.com`,
+    address: `${actor.role}-bounty-flow@example.com`,
   }));
   try {
     for (const actor of emailActors) {
@@ -438,6 +489,12 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
         `[bounty-full-flow] ${suffix}: ${actor.role} email verified`,
       );
     }
+    const notifyOrigin = process.env.SLOP_E2E_NOTIFY_ORIGIN as string;
+    const previousEmails = new Set<string>(
+      (await capturedNotifyEmails(notifyOrigin)).map(
+        (email: { raw: string }) => email.raw,
+      ),
+    );
     const facts = fixtureRepository(repository);
     const installed = await fetch(
       `${github}/__fixture/slopbot/${repository}/installed`,
@@ -1221,7 +1278,6 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     // Finish Pages reads before the separate local Worker writes the shared
     // SQLite fixture through its own Miniflare runtime.
     await Promise.all(actors.map((entry) => entry.context.close()));
-    const notifyOrigin = process.env.SLOP_E2E_NOTIFY_ORIGIN as string;
     expect(
       (
         await fetch(`${notifyOrigin}/__fixture/security-dispatch`, {
@@ -1229,14 +1285,16 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
         })
       ).status,
     ).toBe(204);
-    const emails = (await capturedNotifyEmails(notifyOrigin)) as {
-      to: string[];
-      subject?: string;
-      raw?: string;
-      rawBase64?: string;
-      text?: string;
-      html?: string;
-    }[];
+    const emails = (
+      (await capturedNotifyEmails(notifyOrigin)) as {
+        to: string[];
+        subject?: string;
+        raw?: string;
+        rawBase64?: string;
+        text?: string;
+        html?: string;
+      }[]
+    ).filter((email) => !previousEmails.has(email.raw ?? ""));
     for (const actor of emailActors)
       expect(emails.some((email) => email.to.includes(actor.address))).toBe(
         true,

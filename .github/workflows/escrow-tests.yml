@@ -6,6 +6,9 @@ on:
     paths:
       - 'contracts/**'
       - 'backend/security/**'
+      - 'backend/payments/**'
+      - 'backend/fee-conversions/**'
+      - 'workers/fee-converter/**'
       - 'migrations/**'
       - 'src/lib/security-bounty.*'
       - 'scripts/run-security-payments.mjs'
@@ -174,7 +177,6 @@ jobs:
       - run: bun run test:referral-accrual:anvil
         if: github.event_name != 'pull_request'
       - name: Exercise fee conversion and claim recovery on an isolated local chain
-        if: github.event_name != 'pull_request'
         env:
           SLOP_TEST_CLAIM_FAULTS: before,lease,finalized-role
         run: |
