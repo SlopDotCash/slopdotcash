@@ -7,6 +7,7 @@ import {
   CloudflareVettingPersistence,
   composeStalePinIncomplete,
   pendingPinIsStale,
+  SCANNER_CLAIM_LEASE_MS,
   STALE_PIN_POLICY_VERSION,
   stalePinGap,
   vettedContentSha256,
@@ -210,5 +211,109 @@ describe("#1411 C-01 stale pending recovery", () => {
     ).toBe("already_queued");
     expect((await vetting.currentPending(PROJECT))?.state).toBe("pending");
     expect(await vetting.listAssessments()).toHaveLength(1);
+  });
+
+  test("queueAutomaticScan recovers an expired scanner claim on a stale pin", async () => {
+    const { projects, vetting, manifest, manifestSha256 } = openProject();
+    const keys = await vettingKeyPair();
+    const stalePin = {
+      commitSha: "a".repeat(40),
+      templateSha256: "b".repeat(64),
+    };
+    const livePin = {
+      commitSha: "c".repeat(40),
+      templateSha256: "d".repeat(64),
+    };
+    const staleId = `vet_${"3".repeat(32)}`;
+    expect(
+      await vetting.createAssessment({
+        id: staleId,
+        projectId: PROJECT,
+        revision: 1,
+        manifestSha256,
+        contentSha256: await vettedContentSha256(manifest),
+        commitSha: stalePin.commitSha,
+        templateSha256: stalePin.templateSha256,
+        requestedBy: ADMIN,
+        requestedAt: AT,
+        requestReason: "Claimed then abandoned",
+      }),
+    ).toBe("created");
+    // Claim at AT, then queue after the lease expires so C-01 still recovers.
+    await vetting.claimPendingAssessments(AT);
+    const afterLease = new Date(
+      Date.parse(AT) + SCANNER_CLAIM_LEASE_MS + 1,
+    ).toISOString();
+    const project = await projects.getProject(PROJECT);
+    if (!project) throw new Error("Missing fixture project");
+    let ids = 0;
+    expect(
+      await queueAutomaticScan(
+        {
+          vetting,
+          livePin: async () => livePin,
+          now: () => new Date(afterLease),
+          randomId: () =>
+            `0000000000004000c000${String(++ids).padStart(12, "0")}`,
+          resultPublicKeys: keys.publicKey,
+        },
+        project,
+        "Recover after an expired scanner claim",
+      ),
+    ).toBe("queued");
+    expect((await vetting.getAssessment(staleId))?.state).toBe("incomplete");
+    expect((await vetting.currentPending(PROJECT))?.commitSha).toBe(
+      livePin.commitSha,
+    );
+  });
+
+  test("queueAutomaticScan defers terminalization while a scanner claim is active", async () => {
+    const { projects, vetting, manifest, manifestSha256 } = openProject();
+    const keys = await vettingKeyPair();
+    const stalePin = {
+      commitSha: "a".repeat(40),
+      templateSha256: "b".repeat(64),
+    };
+    const livePin = {
+      commitSha: "c".repeat(40),
+      templateSha256: "d".repeat(64),
+    };
+    const staleId = `vet_${"4".repeat(32)}`;
+    expect(
+      await vetting.createAssessment({
+        id: staleId,
+        projectId: PROJECT,
+        revision: 1,
+        manifestSha256,
+        contentSha256: await vettedContentSha256(manifest),
+        commitSha: stalePin.commitSha,
+        templateSha256: stalePin.templateSha256,
+        requestedBy: ADMIN,
+        requestedAt: AT,
+        requestReason: "Claimed and still in flight",
+      }),
+    ).toBe("created");
+    await vetting.claimPendingAssessments(AT);
+    const project = await projects.getProject(PROJECT);
+    if (!project) throw new Error("Missing fixture project");
+    let ids = 0;
+    expect(
+      await queueAutomaticScan(
+        {
+          vetting,
+          livePin: async () => livePin,
+          now: () => new Date(AT),
+          randomId: () =>
+            `0000000000004000d000${String(++ids).padStart(12, "0")}`,
+          resultPublicKeys: keys.publicKey,
+        },
+        project,
+        "Queue live pin beside an in-flight claim",
+      ),
+    ).toBe("queued");
+    expect((await vetting.getAssessment(staleId))?.state).toBe("pending");
+    const pending = await vetting.currentPending(PROJECT);
+    expect(pending?.id).not.toBe(staleId);
+    expect(pending?.commitSha).toBe(livePin.commitSha);
   });
 });

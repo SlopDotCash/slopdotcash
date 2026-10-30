@@ -187,6 +187,13 @@ export const STALE_PIN_POLICY_VERSION = "slop-stale-pin-v1";
 /** Stable signing-key digest material for stale-pin recovery (not a scanner key). */
 export const STALE_PIN_SIGNING_KEY_MARKER = "slop-vetting-stale-pin-recovery";
 
+/**
+ * How long a scanner claim protects a pending row from stale-pin terminalization.
+ * Acquisition alone may run for 45 minutes; keep headroom for model review.
+ * Unclaimed rows recover immediately. Expired claims recover on the next queue.
+ */
+export const SCANNER_CLAIM_LEASE_MS = 60 * 60 * 1000;
+
 /** SHA-256 of the empty string; used where a digest is required but no bytes exist. */
 const EMPTY_SHA256 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -480,6 +487,48 @@ export class CloudflareVettingPersistence {
     return (rows.results ?? []).map(fromRow);
   }
 
+  /**
+   * Serves the current queue head for each project and records a scanner claim
+   * so stale-pin recovery will not terminalize an in-flight scan (#1789 P1).
+   */
+  async claimPendingAssessments(at: string): Promise<VettingAssessment[]> {
+    const pending = await this.pendingAssessments();
+    if (pending.length === 0) return pending;
+    const leaseUntil = new Date(
+      Date.parse(at) + SCANNER_CLAIM_LEASE_MS,
+    ).toISOString();
+    await this.db.batch(
+      pending.map((assessment) =>
+        this.db
+          .prepare(
+            `INSERT INTO vetting_assessment_claims(assessment_id, claimed_at, lease_until)
+             VALUES(?, ?, ?)
+             ON CONFLICT(assessment_id) DO UPDATE SET
+               claimed_at = excluded.claimed_at,
+               lease_until = excluded.lease_until`,
+          )
+          .bind(assessment.id, at, leaseUntil),
+      ),
+    );
+    return pending;
+  }
+
+  /** True when the scanner holds an unexpired claim on this assessment. */
+  async hasActiveScannerClaim(
+    assessmentId: string,
+    at: string,
+  ): Promise<boolean> {
+    return (
+      (await this.db
+        .prepare(
+          `SELECT assessment_id FROM vetting_assessment_claims
+           WHERE assessment_id = ? AND lease_until > ?`,
+        )
+        .bind(assessmentId, at)
+        .first()) !== null
+    );
+  }
+
   async getAssessment(id: string): Promise<VettingAssessment | null> {
     const row = await this.db
       .prepare(`SELECT ${COLUMNS} FROM vetting_assessments WHERE id = ?`)
@@ -620,8 +669,12 @@ export class CloudflareVettingPersistence {
   async terminalizeStalePending(
     assessment: VettingAssessment,
     input: { gap: string; at: string },
-  ): Promise<"terminalized" | "conflict"> {
+  ): Promise<"terminalized" | "conflict" | "deferred"> {
     if (assessment.state !== "pending") return "conflict";
+    // An active scanner claim means the scan is in flight: leave the row
+    // pending so its later result (including confirmed malice) can land.
+    if (await this.hasActiveScannerClaim(assessment.id, input.at))
+      return "deferred";
     const result = composeStalePinIncomplete({
       assessment,
       gap: input.gap,

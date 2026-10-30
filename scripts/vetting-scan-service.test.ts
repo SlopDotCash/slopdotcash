@@ -755,9 +755,12 @@ test("a pending admission recovers from a replaced template without an admin req
       evidence: "retained",
     },
   ]);
+  // The first pass claimed the original row. Stale-pin recovery must leave a
+  // claimed in-flight assessment pending so a late result can still land
+  // (#1789 P1); the replacement is already the accepted queue head.
   const superseded = await vetting.getAssessment(original.id);
-  expect(superseded?.state).toBe("incomplete");
-  expect(superseded?.policyVersion).toBe("slop-stale-pin-v1");
+  expect(superseded?.state).toBe("pending");
+  expect(superseded?.policyVersion).toBeNull();
   expect(assessments).toHaveLength(2);
   expect(provider.calls).toHaveLength(1);
   expect((await activate()).status).toBe(200);
@@ -841,7 +844,9 @@ test("a pending investigation on an exempt project recovers without changing its
     manifestSha256: original.manifestSha256,
     templateSha256,
   });
-  expect((await vetting.getAssessment(original.id))?.state).toBe("incomplete");
+  // Claimed during the outage pass; keep pending rather than discarding a
+  // possible late result (#1789 P1). Exemption clearance is unchanged.
+  expect((await vetting.getAssessment(original.id))?.state).toBe("pending");
   expect(await clearance()).toEqual({
     state: "cleared",
     assessment: null,

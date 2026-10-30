@@ -612,6 +612,8 @@ async function queueAssessment(
     )
       return "conflict" as const;
     if (templateRetry.state === "pending") {
+      // "deferred" keeps an in-flight claimed row pending; the replacement is
+      // already the queue head, so the scan can still record its result.
       await deps.vetting.terminalizeStalePending(templateRetry, {
         gap: stalePinGap(templateRetry, pin),
         at: assessment.requestedAt,
@@ -624,6 +626,8 @@ async function queueAssessment(
         gap: stalePinGap(pending, pin),
         at: assessment.requestedAt,
       });
+      // "deferred" = scanner claim still active; leave that row pending and
+      // still queue the live pin so the in-flight result can land (#1789 P1).
       if (terminalized === "conflict") return "conflict" as const;
     }
     if ((await deps.vetting.createAssessment(assessment)) === "conflict")
@@ -877,7 +881,9 @@ async function serviceQueue(
       "Private evidence storage is required before acquisition",
     );
   const origin = new URL(request.url).origin;
-  const pending = await deps.vetting.pendingAssessments();
+  const pending = await deps.vetting.claimPendingAssessments(
+    deps.now().toISOString(),
+  );
   return json(200, {
     schemaVersion: "slop-vetting-queue-v1",
     assessments: pending.map((assessment) => ({

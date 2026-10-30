@@ -33,6 +33,7 @@ import {
   VETTING_TRACE_BODY,
   vettingKeyPair,
   vettingResult,
+  vettingScanResult,
 } from "../tests/vetting-fixtures";
 import { publishResult } from "../workers/vetting/publication";
 import { servicePublicationJournal } from "../workers/vetting/publication-journal";
@@ -615,6 +616,58 @@ describe("community security vetting", () => {
         .status,
     ).toBe(410);
     expect((await activate()).status).toBe(409);
+  });
+
+  test("in-flight claim keeps a confirmed-malicious result when a newer pin queues (#1789 P1)", async () => {
+    await listPausedProject();
+    const c1 = await queueScan();
+    // Serving the queue records a scanner claim so stale-pin recovery must not
+    // terminalize this row while the scan is executing.
+    const served = await vettingApi(await signed("GET", "vetting/requests"));
+    expect(served.status).toBe(200);
+    expect(
+      (
+        (await served.json()) as { assessments: { assessmentId: string }[] }
+      ).assessments.map((row) => row.assessmentId),
+    ).toContain(c1);
+
+    livePin = { commitSha: "c".repeat(40), templateSha256: TEMPLATE };
+    const queued = await vettingApi(
+      sessionRequest("POST", "admin/vetting/assessments", "admin", {
+        projectId: "open-registry",
+        revision: 1,
+        reason: "Newer commit while the claimed C1 scan is in flight",
+      }),
+    );
+    expect(queued.status).toBe(201);
+    expect((await queued.json()).assessment.id).not.toBe(c1);
+    expect((await vetting.getAssessment(c1))?.state).toBe("pending");
+
+    const project = await projects.getProject("open-registry");
+    if (project === null) throw new Error("project was not listed");
+    const assessment = await vetting.getAssessment(c1);
+    if (assessment === null) throw new Error("C1 assessment vanished");
+    const result = vettingScanResult(
+      {
+        assessmentId: c1,
+        projectId: project.id,
+        revision: assessment.revision,
+        manifestSha256: assessment.manifestSha256,
+        repository: "example/open-registry",
+        commitSha: assessment.commitSha,
+        templateSha256: assessment.templateSha256,
+      },
+      "malicious",
+    );
+    expect((await postResult(result)).status).toBe(200);
+    expect((await vetting.getAssessment(c1))?.state).toBe("malicious");
+    expect(await projects.listEnforcements()).toMatchObject([
+      {
+        action: "ban",
+        actorRole: "vetting-service",
+        systemIssuer: { kind: "vetting-service", assessmentId: c1 },
+      },
+    ]);
   });
 
   test("forged, stale, mismatched and unconfigured requests fail closed", async () => {
