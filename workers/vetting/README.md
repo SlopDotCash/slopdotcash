@@ -84,8 +84,8 @@ The flow for one queued assessment:
 
 `run.ts` runs this flow automatically. One pass:
 
-1. calls the signed `POST /api/v1/vetting/refresh`, so Slop queues every
-   changed project;
+1. calls the signed `POST /api/v1/vetting/refresh`, so Slop queues initial
+   admission and required flag recovery;
 2. reads the signed queue;
 3. for each pending assessment, in queue order, acquires the exact inputs
    (`acquireQueuedAssessment`), inspects the repository source and the queued
@@ -101,6 +101,17 @@ The flow for one queued assessment:
    dependency lock and every named artifact under the scan run through the
    signed evidence routes;
 5. publishes the result once with `publishResult`.
+
+Model coverage describes the bounded static review of the supplied evidence,
+not a full runtime audit. Reviewers must preserve concrete visibility gaps and
+findings. Missing runtime execution alone does not make a completed static
+review partial. The primary and synthesis prompt revisions record this scope.
+
+A completed incomplete assessment is not pending work. After correcting its
+cause, an administrator can queue a fresh scan from the project's security
+vetting panel. Older pending rows remain in history but do not hide that action
+after a newer assessment has finished. A current pending assessment still
+blocks a duplicate request. Earlier results and evidence remain unchanged.
 
 A reused result preserves the original run, review and report evidence rather
 than claiming another provider call. Its normal result publication revalidates

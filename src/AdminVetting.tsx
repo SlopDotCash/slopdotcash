@@ -658,11 +658,11 @@ export function VettingSection({ projectId }: { projectId: string }) {
                 const history = state.value.assessments.filter(
                   (assessment) => assessment.projectId === project.id,
                 );
-                const queued = history.some(
-                  (assessment) =>
-                    assessment.state === "pending" &&
-                    assessment.revision === project.revision,
-                );
+                // The API returns newest first. Superseded pending requests
+                // remain in history but no longer occupy the project queue.
+                const queued =
+                  history[0]?.state === "pending" &&
+                  history[0].revision === project.revision;
                 const exemptions = (state.value.exemptions ?? []).filter(
                   (exemption) => exemption.projectId === project.id,
                 );
