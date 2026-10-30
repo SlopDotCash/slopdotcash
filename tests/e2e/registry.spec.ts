@@ -622,12 +622,8 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expect(admin.getByRole("status")).toContainText("Saved.");
   await expect(
     card
-      .locator(".admin-facts > div", {
-        has: card.getByRole("term", {
-          name: "Discovery placement",
-          exact: true,
-        }),
-      })
+      .locator(".admin-facts > div")
+      .filter({ hasText: "Discovery placement" })
       .getByRole("definition"),
   ).toHaveText("retired");
   await expect(card.locator(".admin-project-heading .route-badge")).toHaveText(
