@@ -423,6 +423,25 @@ export function retainedHistoryAwards(events: ScoreEvent[]): PointAward[] {
   });
 }
 
+/** Partition once, retaining each revision's original sequence and order. */
+export function pointShardRows(journal: PointsJournal) {
+  const shards = Array.from(
+    { length: 16 },
+    () =>
+      [] as {
+        sequence: number;
+        revision: PointsJournal["revisions"][number];
+      }[],
+  );
+  journal.revisions.forEach((revision, sequence) => {
+    shards[Number.parseInt(revision.award.key[0], 16)].push({
+      sequence,
+      revision,
+    });
+  });
+  return shards;
+}
+
 /** Every contributor's all-time total, derived from the same journal. */
 export function pointsSummary(
   journal: PointsJournal,
@@ -540,11 +559,10 @@ export async function generatePoints(
     revisionCount: journal.revisions.length,
     shards: [],
   };
+  const shards = pointShardRows(journal);
   for (let i = 0; i < 16; i++) {
     const name = i.toString(16);
-    const rows = journal.revisions
-      .map((revision, sequence) => ({ sequence, revision }))
-      .filter((r) => r.revision.award.key.startsWith(name));
+    const rows = shards[i];
     const bytes = JSON.stringify(rows) + "\n";
     if (Buffer.byteLength(bytes) > 8 * 1024 * 1024)
       throw new Error("Points shard exceeds size limit");
