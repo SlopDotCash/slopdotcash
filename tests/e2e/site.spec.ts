@@ -1697,17 +1697,17 @@ for (const scenario of [
       "/projects/new",
       "/projects/eliza/funding",
     ]) {
-      test(`reflows ${path} with ${scenario.name}`, async ({ page }) => {
+      test(`reflows ${path} with ${scenario.name}`, async ({ page }, info) => {
         await page.setViewportSize({ width: scenario.width, height: 1000 });
         await page.goto(path, { waitUntil: "networkidle" });
         if (scenario.textScale === 2) {
           await enlargeText(page.locator("body"));
         }
-        // The skip link is the first stop; it hands keyboard users the content.
-        if (path.endsWith("/funding"))
-          await page.getByRole("link", { name: "Skip to content" }).focus();
-        else await page.keyboard.press("Tab");
-        await expect(page.locator(":focus")).toHaveAttribute("href", "#main");
+        await expect(
+          page.getByRole("link", { name: "Skip to content" }),
+        ).toHaveCount(0);
+        // Start in the header even when a route has focused its own content.
+        await page.getByRole("banner").click({ position: { x: 1, y: 1 } });
         await page.keyboard.press("Tab");
         await expect(page.locator(":focus")).toHaveAttribute("href", "/");
         await expectAccessible(page);
@@ -1738,6 +1738,23 @@ for (const scenario of [
         expect(obscuredFooterLinks, "footer links covered by the logo").toEqual(
           [],
         );
+        await page.mouse.wheel(0, 1000);
+        await expect
+          .poll(() =>
+            page
+              .getByRole("banner")
+              .evaluate((header) => header.getBoundingClientRect().top),
+          )
+          .toBe(0);
+        await page.screenshot({ path: info.outputPath("header-scrolled.png") });
+        // Capture from the document top so a sticky header is not composited
+        // into the middle of a full-page screenshot at the old scroll offset.
+        await page.mouse.wheel(0, -100000);
+        await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+        await page.screenshot({
+          path: info.outputPath("header-at-top.png"),
+          fullPage: true,
+        });
       });
     }
   });
