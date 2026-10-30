@@ -124,10 +124,12 @@ class PointsRequestError extends Error {
 }
 /**
  * The next action after the identity service refuses a sign-in request: 410
- * ends an expired flow, 429 is its one-minute rate limit, and anything else
- * means the service is unavailable.
+ * ends a flow that expired or whose GitHub callback failed, 429 is its
+ * one-minute rate limit, and anything else means the service is unavailable.
  */
-function identityFailure(status: number): string {
+function identityFailure(status: number, code?: unknown): string {
+  if (status === 410 && code === "callback_failed")
+    return "Sign-in failed. Please start again.";
   if (status === 410) return "Sign-in expired. Please start again.";
   if (status === 429)
     return "Too many sign-in attempts. Wait one minute, then try again.";
@@ -802,7 +804,13 @@ function JoinPoints({
                   : "Slop's local sign-in service is unavailable. Try again later.",
               );
             }
-            throw new Error(identityFailure(response.status));
+            const refusal =
+              response.status === 410
+                ? ((await readBoundedJson(response, 16384, "sign-in").catch(
+                    () => null,
+                  )) as { error?: unknown } | null)
+                : null;
+            throw new Error(identityFailure(response.status, refusal?.error));
           }
           const body = await readBoundedJson(response, 16384, "sign-in");
           if (!body || typeof body !== "object" || Array.isArray(body))
