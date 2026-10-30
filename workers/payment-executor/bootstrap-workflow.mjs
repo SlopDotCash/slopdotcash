@@ -303,7 +303,10 @@ export default {
             `https://attester.internal${path}`,
             {
               method: "POST",
-              headers: { "content-type": "application/json" },
+              headers: {
+                "content-type": "application/json",
+                "accept-encoding": "identity",
+              },
               body: JSON.stringify({
                 projectId: "fixture",
                 period: "2026-11",
@@ -316,7 +319,12 @@ export default {
           await response.text();
           break;
         } catch (err) {
-          if (attempt === 2 || !err?.message?.includes("terminated")) throw err;
+          const isTransportReset =
+            err?.message?.includes("terminated") ||
+            err?.code === "ECONNRESET" ||
+            err?.cause?.code === "ECONNRESET" ||
+            err?.cause?.message?.includes("ECONNRESET");
+          if (attempt === 2 || !isTransportReset) throw err;
           await new Promise((r) => setTimeout(r, 50));
         }
       }
