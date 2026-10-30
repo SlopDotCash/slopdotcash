@@ -1,16 +1,22 @@
+import { ImagePlus, X } from "lucide-react";
 import { useState } from "react";
 import {
   assertProjectImage,
   MAX_PROJECT_IMAGE_LENGTH,
 } from "./lib/project-image.mjs";
+import { Avatar } from "./Presentation";
 
 /** Re-encode uploads as a small avatar; metadata and original bytes stay local. */
 export function ProjectImageField({
   value,
   onChange,
+  compact = false,
+  ownerLogin,
 }: {
   value: string;
   onChange: (value: string) => void;
+  compact?: boolean;
+  ownerLogin?: string;
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -62,6 +68,58 @@ export function ProjectImageField({
       setBusy(false);
     }
   }
+  const input = (
+    <input
+      id="project-image"
+      className={compact ? "project-image-input" : undefined}
+      type="file"
+      accept="image/png,image/jpeg,image/webp"
+      aria-describedby={compact ? undefined : "project-image-help"}
+      disabled={busy}
+      onChange={(event) => {
+        const file = event.currentTarget.files?.[0];
+        event.currentTarget.value = "";
+        if (file) void choose(file);
+      }}
+    />
+  );
+  if (compact)
+    return (
+      <div className="project-image-field-compact">
+        <label className="project-image-upload" htmlFor="project-image">
+          {value ? (
+            <img src={value} alt="" width={64} height={64} />
+          ) : ownerLogin ? (
+            <Avatar
+              actor={{
+                login: ownerLogin,
+                avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(ownerLogin)}?size=128`,
+              }}
+            />
+          ) : (
+            <ImagePlus
+              aria-hidden="true"
+              className="project-image-placeholder"
+            />
+          )}
+          <span className="visually-hidden">Project image (optional)</span>
+          {input}
+        </label>
+        {value ? (
+          <button
+            type="button"
+            className="text-button project-image-remove"
+            disabled={busy}
+            onClick={() => onChange("")}
+          >
+            <X aria-hidden="true" />
+            <span className="visually-hidden">Remove image</span>
+          </button>
+        ) : null}
+        {busy ? <p role="status">Preparing image…</p> : null}
+        {error ? <p role="alert">{error}</p> : null}
+      </div>
+    );
   return (
     <div className="project-image-field">
       <label htmlFor="project-image">Project image (optional)</label>
@@ -72,18 +130,7 @@ export function ProjectImageField({
       {value ? (
         <img src={value} alt="Project avatar preview" width={80} height={80} />
       ) : null}
-      <input
-        id="project-image"
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        aria-describedby="project-image-help"
-        disabled={busy}
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (file) void choose(file);
-        }}
-      />
+      {input}
       {value ? (
         <button
           type="button"

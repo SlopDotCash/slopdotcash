@@ -179,6 +179,7 @@ function harness(seedBeforeDeliveryMigration?: (sqlite: Database) => void) {
     action: "created" | "suspend" | "unsuspend" | "deleted",
     deliveryId: string,
     updatedAt: string | number,
+    login = "acme",
   ) => {
     const body = JSON.stringify({
       action,
@@ -194,7 +195,7 @@ function harness(seedBeforeDeliveryMigration?: (sqlite: Database) => void) {
         created_at: "2026-10-14T10:00:00Z",
         updated_at: updatedAt,
         suspended_at: action === "suspend" ? updatedAt : null,
-        account: { id: 777, login: "acme", type: "Organization" },
+        account: { id: 777, login, type: "Organization" },
       },
       sender: { id: 555, login: "owner", type: "User" },
     });
@@ -410,4 +411,56 @@ for (const action of ["suspend", "deleted"] as const) {
       },
     ]);
   });
+
+  test(`installation ${action} notifies the projects of the account's current login`, async () => {
+    const { db, deliver } = harness();
+    await deliver("created", "renamed-created", "2026-10-23T10:00:00Z");
+    // The organization renames itself on GitHub after it installs the App.
+    // Its project lists the new name; another account now owns the old name.
+    registerProject(db, "renamed-project", "acme-labs/repo", "910000003");
+    registerProject(db, "former-name-project", "acme/other", "910000004");
+    const changed = await deliver(
+      action,
+      "renamed-change",
+      "2026-10-23T11:00:00Z",
+      "acme-labs",
+    );
+    expect(changed.status).toBe(202);
+    expect(
+      db.sqlite
+        .query("SELECT recipient_github_id, subject FROM notifications")
+        .all(),
+    ).toEqual([
+      { recipient_github_id: "910000003", subject: "renamed-project" },
+    ]);
+  });
+}
+
+function registerProject(
+  db: TestDatabase,
+  id: string,
+  repositoryKey: string,
+  steward: string,
+) {
+  const manifest = JSON.stringify({
+    id,
+    status: "active",
+    steward: { github: { actorId: steward } },
+  });
+  const at = "2026-10-23T10:00:00.000Z";
+  db.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES(?,1,?,?,?,?)",
+    )
+    .run(id, manifest, "a".repeat(64), "fixture", at);
+  db.sqlite
+    .query(
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)",
+    )
+    .run(id, manifest, "a".repeat(64), at, at);
+  db.sqlite
+    .query(
+      "INSERT INTO project_repositories(repository_key,project_id) VALUES(?,?)",
+    )
+    .run(repositoryKey, id);
 }

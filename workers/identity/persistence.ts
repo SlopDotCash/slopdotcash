@@ -161,6 +161,18 @@ export class D1IdentityPersistence implements IdentityPersistence {
     return (result.meta?.changes ?? 0) === 1;
   }
 
+  /** A failed GitHub exchange is terminal; only an in-progress callback fails. */
+  async failCallback(flowId: string): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `UPDATE identity_oauth_flows SET status = 'callback_failed'
+         WHERE id = ? AND status = 'callback_processing'`,
+      )
+      .bind(flowId)
+      .run();
+    return (result.meta?.changes ?? 0) === 1;
+  }
+
   async findPollableFlow(
     flowId: string,
     pollCapabilityHash: string,

@@ -288,7 +288,7 @@ export async function handlePointsApi(
         )
           return json(400, { error: "confirmation_mismatch" });
         // One atomic batch: deactivate and hide the membership, remove the
-        // optional connections and activity email, then end every session.
+        // optional connections and all email consent, then end every session.
         // Claims keep X and historical Telegram IDs reserved to this GitHub identity.
         // Wallets, unpaid obligations, payment and settlement records, private
         // cases, points history and public GitHub work are not touched.
@@ -310,10 +310,15 @@ export async function handlePointsApi(
           deps.db
             .prepare("DELETE FROM points_telegram_links WHERE actor_id=?")
             .bind(member.actor_id),
-          // The 0033 opt-out trigger suppresses queued activity mail.
+          // Opt-out triggers suppress both activity and security mail queues.
           deps.db
             .prepare(
-              "UPDATE notification_email_preferences SET enabled=0, destination_version='', updated_at=? WHERE github_id=? AND enabled=1",
+              "UPDATE notification_email_preferences SET enabled=0, security_enabled=0, destination_version='', updated_at=? WHERE github_id=?",
+            )
+            .bind(now, member.github_id),
+          deps.db
+            .prepare(
+              "UPDATE notification_email_verifications SET cancelled_at=? WHERE github_id=? AND consumed_at IS NULL AND cancelled_at IS NULL",
             )
             .bind(now, member.github_id),
           deps.db

@@ -264,8 +264,8 @@ for (const navigation of ["project links", "browser history"] as const) {
       await expect(disclosure).toHaveAttribute("href", disclosureUrl);
       const summary = page.locator(".payment-history .money-summary");
       await expect(summary.locator("strong")).toHaveText(nextAmount);
-      await expect(summary.locator("span")).toHaveText(
-        "Paid Sep 1, 2026 for August 2026 work · 1 transfers · Disclosure",
+      await expect(summary.locator("span")).toContainText(
+        /Sep 1, 2026.*August 2026/u,
       );
       await page.screenshot({
         path: info.outputPath("direct-payment-disclosure.png"),

@@ -24,9 +24,15 @@ mean the code is free of all malware.
 | `source` | Code and configuration files of the executable inventory |
 | `manifests` | `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod` and similar |
 | `dependencies` | Lockfiles; each lock digest is recorded |
-| `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts |
+| `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts |
 | `downloads` | URLs that install-time content downloads, and committed binaries or archives |
 | `agentInstructions` | `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, README, `SKILL.md`, Cursor, Claude, Copilot and similar rule files |
+
+A build, install or provisioning recipe is recognized by its name, so the
+same bytes are classified the same way whether they sit in a `Makefile`, a
+`Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Each keeps its
+`installScripts` coverage, its install-time download extraction and its place
+in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
 
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and

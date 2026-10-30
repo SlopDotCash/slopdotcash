@@ -90,6 +90,17 @@ export function submissionStatus(submission: Submission): string {
   return githubSubmissionStatus(submission);
 }
 
+/** The notice for a send that GitHub throttled before it kept a copy. */
+export function rateLimitMessage(retryAfterSeconds: number | null): string {
+  const wait =
+    retryAfterSeconds === null
+      ? "a few minutes"
+      : retryAfterSeconds < 60
+        ? "1 minute"
+        : `${Math.ceil(retryAfterSeconds / 60)} minutes`;
+  return `GitHub is limiting new reports from your account right now. GitHub has no copy of this report. Wait ${wait}, then send it again.`;
+}
+
 export function githubSubmissionStatus(submission: Submission): string {
   switch (submission.state) {
     case "draft":

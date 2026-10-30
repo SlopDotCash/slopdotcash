@@ -3453,6 +3453,18 @@ a.payout-tx:hover {
   font-size: 12px;
 }
 
+.admin-editor .checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-editor .checkbox-field input {
+  width: 20px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
 .admin-actions > div {
   display: flex;
   flex-wrap: wrap;

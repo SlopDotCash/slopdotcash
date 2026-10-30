@@ -230,10 +230,11 @@ export const REPOSITORY_READ_HEADER = "x-slopbot-repository-read";
 
 /**
  * The public reads that project setup and security vetting make for one
- * repository: its facts, one branch, and its LICENSE at one commit.
+ * repository: its facts, paginated branches, one branch, and its LICENSE at
+ * one commit.
  */
 export const REPOSITORY_READ_PATH =
-  /^\/repos\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})(?:\/branches\/[A-Za-z0-9._%-]{1,765}|\/license\?ref=[0-9a-f]{40})?$/u;
+  /^\/repos\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})(?:\/branches(?:\/[A-Za-z0-9._%-]{1,765}|\?per_page=100&page=[1-9][0-9]{0,2})|\/license\?ref=[0-9a-f]{40})?$/u;
 
 /** Public identity fields returned by the authenticated GitHub repository read. */
 export type RepositoryIdentity = {
@@ -337,6 +338,14 @@ export type ProjectSetupStatus = {
   funding:
     | { mode: "none" }
     | {
+        mode: "bounty";
+        network: string | null;
+        symbol: string;
+        awardAmountMinor: string;
+        decimals: number;
+        state: "pledged" | "verified";
+      }
+    | {
         mode: "monthly";
         network: string;
         symbol: string;
@@ -373,6 +382,9 @@ export interface RepositoryLookup {
   numericId: string;
   nodeId: string;
   defaultBranch: string;
+  branches: string[];
+  /** Immutable heads returned by GitHub; older lookup responses may omit them. */
+  branchCommits?: Record<string, string>;
   owner: {
     login: string;
     actorId: string;

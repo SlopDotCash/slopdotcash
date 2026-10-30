@@ -17,7 +17,7 @@ import {
   monthlyAmountDisplay,
   parseAssetAmount,
 } from "./project-schema.mjs";
-import { REWARD_ASSET_NETWORKS } from "./reward-asset.mjs";
+import { REWARD_ASSET_NETWORKS, rewardAssetChoice } from "./reward-asset.mjs";
 
 export function safeProposalHttpsUrl(value: string): boolean {
   if (value.length === 0 || value.length > 500) return false;
@@ -116,11 +116,14 @@ export function monthlyPoolValue(
       display: token ? `0 ${token.symbol}` : "$0",
       minor: "0",
       valid: false,
-      error: token
-        ? error instanceof Error
-          ? error.message
-          : "Enter a positive token amount."
-        : "Enter a positive amount with up to two decimals, at most 1 billion.",
+      error:
+        value.trim() === "" || /^0(?:\.0+)?$/u.test(value)
+          ? "Enter a positive amount."
+          : token
+            ? error instanceof Error
+              ? error.message
+              : "Enter a positive token amount."
+            : "Use up to 2 decimals, at most 1 billion.",
     };
   }
 }
@@ -142,7 +145,7 @@ export function formatMonthlyAmount(
 export type FundingChoice = {
   mode: "none" | "monthly";
   network: string;
-  assetKind: "stablecoin" | "token";
+  assetKind: "stablecoin" | "token" | "native";
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
@@ -188,19 +191,16 @@ export function rewardFields(
           address: choice.tokenAddress.trim(),
           symbol: choice.tokenSymbol.trim(),
         }
-      : {
-          network: choice.network,
-          kind: "stablecoin",
-          address: network.stablecoin.address,
-          symbol: network.stablecoin.symbol,
-        };
+      : rewardAssetChoice(choice.network, choice.assetKind, "", "");
   const escrow = isEscrowChain(choice.network);
-  // A stablecoin has 6 decimals, so its base units are known here. A token's
-  // decimals are read from chain on save; until then its amount is zero.
+  // Native and stablecoin precision is known here. Custom token decimals are
+  // read from chain on save; until then its amount is zero.
   const amount =
     choice.assetKind === "token"
       ? { minor: "0", display: `0 ${asset.symbol}` }
-      : monthlyPoolValue(choice.monthlyAmount);
+      : choice.assetKind === "native"
+        ? monthlyPoolValue(choice.monthlyAmount, network.native)
+        : monthlyPoolValue(choice.monthlyAmount);
   return {
     ...(escrow
       ? {
@@ -263,7 +263,7 @@ async function projectGithubRequest<T>(
 }
 
 /**
- * Lists the signed-in maintainer's public, non-fork, non-archived
+ * Lists the signed-in maintainer's public, non-archived
  * repositories. The site server reads GitHub with the site session; the
  * browser never calls api.github.com.
  */
@@ -293,5 +293,27 @@ export async function lookupGitHubRepository(
   );
   if (!body.repository || typeof body.repository !== "object")
     throw new Error("GitHub lookup failed.");
-  return body.repository as RepositoryLookup;
+  const repositoryFacts = body.repository as RepositoryLookup;
+  if (
+    !Array.isArray(repositoryFacts.branches) ||
+    !repositoryFacts.branches.includes(repositoryFacts.defaultBranch)
+  )
+    throw new Error("The repository branch list is unavailable. Try again.");
+  const commits = repositoryFacts.branchCommits;
+  if (
+    commits !== undefined &&
+    (commits === null ||
+      typeof commits !== "object" ||
+      Array.isArray(commits) ||
+      Object.entries(commits).some(
+        ([branch, commit]) =>
+          !repositoryFacts.branches.includes(branch) ||
+          typeof commit !== "string" ||
+          !/^[0-9a-f]{40}$/u.test(commit),
+      ))
+  )
+    throw new Error(
+      "The repository branch commits are unavailable. Try again.",
+    );
+  return repositoryFacts;
 }

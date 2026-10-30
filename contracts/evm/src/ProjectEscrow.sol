@@ -27,7 +27,7 @@ enum Purpose {
     Bounty
 }
 
-/// @notice Version 5 signatures, upgradeable single-project, single-asset, single-purpose escrow for any standard ERC-20.
+/// @notice Version 5 signatures, upgradeable single-project, single-asset, single-purpose escrow for native ETH or a standard ERC-20.
 /// @dev A binding needs the identity authority's transaction and the destination wallet's EIP-712 signature.
 /// The latest verified binding activates immediately; earlier versions never pay. An award still waits
 /// bindingDelay after commitment. The owner may cancel an unpaid binding during its review window or an
@@ -110,6 +110,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// @dev Upper bound on s for a canonical secp256k1 signature (EIP-2).
     bytes32 private constant MAX_S = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
 
+    /// @notice Zero denotes native ETH; other addresses denote the unchanged ERC-20 asset.
     IERC20 public token;
     /// @notice The token's decimals at vault creation, for display only. The vault never scales amounts.
     uint8 public decimals;
@@ -264,14 +265,14 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         address identityAuthority_ = factory_.identityAuthority();
         // Free funds are refunded only to the owner, whoever deposited them.
         if (
-            projectId_ == bytes32(0) || address(token_).code.length == 0 || owner_ == address(0)
-                || owner_ == address(this) || feeRecipient_ == address(0) || identityAuthority_ == address(0)
-                || owner_ == identityAuthority_ || feeRecipient_ == address(this) || bindingDelay_ < MIN_BINDING_DELAY
-                || bindingDelay_ > MAX_BINDING_DELAY
+            projectId_ == bytes32(0) || (address(token_) != address(0) && address(token_).code.length == 0)
+                || owner_ == address(0) || owner_ == address(this) || feeRecipient_ == address(0)
+                || identityAuthority_ == address(0) || owner_ == identityAuthority_ || feeRecipient_ == address(this)
+                || bindingDelay_ < MIN_BINDING_DELAY || bindingDelay_ > MAX_BINDING_DELAY
         ) revert InvalidInput();
         projectId = projectId_;
         token = token_;
-        decimals = readDecimals(token_);
+        decimals = address(token_) == address(0) ? 18 : readDecimals(token_);
         owner = owner_;
         purpose = purpose_;
         feeRecipient = feeRecipient_;
@@ -467,17 +468,22 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
             reservedPrincipal,
             reservedFees,
             accruedFees,
-            token.balanceOf(address(this))
+            assetBalance(address(this))
         );
     }
 
     /// @notice Anyone may deposit. The amount joins the free balance, which only the owner can commit to awards
     /// or refund to itself; a depositor gets no refund right. Direct transfers are not credited.
-    function deposit(uint128 amount) external nonReentrant {
+    function deposit(uint128 amount) external payable nonReentrant {
         if (amount == 0) revert InvalidInput();
-        uint256 beforeBalance = token.balanceOf(address(this));
-        callToken(abi.encodeCall(IERC20.transferFrom, (msg.sender, address(this), amount)));
-        if (token.balanceOf(address(this)) != beforeBalance + amount) revert TransferFailed();
+        if (address(token) == address(0)) {
+            if (msg.value != amount) revert InvalidInput();
+        } else {
+            if (msg.value != 0) revert InvalidInput();
+            uint256 beforeBalance = token.balanceOf(address(this));
+            callToken(abi.encodeCall(IERC20.transferFrom, (msg.sender, address(this), amount)));
+            if (token.balanceOf(address(this)) != beforeBalance + amount) revert TransferFailed();
+        }
         freeBalance += amount;
         totalDeposited += amount;
         emit Deposited(msg.sender, amount);
@@ -793,13 +799,21 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     function sendExact(address destination, uint256 amount) private {
         if (amount == 0) return;
-        uint256 beforeVault = token.balanceOf(address(this));
-        uint256 beforeRecipient = token.balanceOf(destination);
-        callToken(abi.encodeCall(IERC20.transfer, (destination, amount)));
+        uint256 beforeVault = assetBalance(address(this));
+        uint256 beforeRecipient = assetBalance(destination);
+        if (address(token) == address(0)) {
+            (bool sent,) = payable(destination).call{value: amount}("");
+            if (!sent) revert TransferFailed();
+        } else {
+            callToken(abi.encodeCall(IERC20.transfer, (destination, amount)));
+        }
         if (
-            token.balanceOf(address(this)) != beforeVault - amount
-                || token.balanceOf(destination) != beforeRecipient + amount
+            assetBalance(address(this)) != beforeVault - amount || assetBalance(destination) != beforeRecipient + amount
         ) revert TransferFailed();
+    }
+
+    function assetBalance(address account) private view returns (uint256) {
+        return address(token) == address(0) ? account.balance : token.balanceOf(account);
     }
 
     /// @dev decimals() is optional in ERC-20 but every supported asset has it; a token without it is rejected.
@@ -821,7 +835,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
 /// @notice Anyone creates a vault for itself: the caller is the owner, and there is one vault per (owner,
 /// project ID, token, purpose) in this deployment. The token is a per-vault parameter, so one factory serves
-/// every standard ERC-20 on its chain. A vault proves only who created it; the project registry decides
+/// native ETH and every standard ERC-20 on its chain. A vault proves only who created it; the project registry decides
 /// which owner's vault a project uses.
 /// The registrar rotates the identity authority without a mandatory waiting period. The separate
 /// upgrade authority controls factory and vault upgrades and may change logic governing deposited funds.

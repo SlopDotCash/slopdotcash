@@ -73,6 +73,34 @@ const registryIntake =
   process.env.SLOP_E2E_PRIVATE_INTAKE === "1"
     ? ` --binding SLOP_PRIVATE_INTAKE_MODE=on --binding GITHUB_INTAKE_APP_CLIENT_ID=Iv1.e2efixture --binding GITHUB_INTAKE_APP_CLIENT_SECRET=e2e-fixture-secret --binding SLOP_INTAKE_GRANT_KEY=${registryIntakeGrant} --binding SLOP_GITHUB_OAUTH_ORIGIN=${registryGitHub}`
     : "";
+const directBountyRpc = process.env.SLOP_E2E_DIRECT_RPC_URL;
+if (
+  directBountyRpc !== undefined &&
+  !/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/u.test(directBountyRpc)
+)
+  throw new Error("The direct bounty fixture RPC must use loopback");
+const solanaBountyRpc = process.env.SLOP_E2E_SOLANA_RPC_URL;
+const solanaRecoveryRpc = process.env.SLOP_E2E_SOLANA_RECOVERY_RPC_URL;
+const solanaGenesis = process.env.SLOP_E2E_SOLANA_GENESIS;
+const solanaWalletUrl = process.env.SLOP_E2E_SOLANA_WALLET_URL;
+if (
+  (process.env.SLOP_E2E_SOLANA_BOUNTY === "1" ||
+    solanaBountyRpc !== undefined ||
+    solanaRecoveryRpc !== undefined ||
+    solanaGenesis !== undefined) &&
+  (process.env.SLOP_E2E_SOLANA_BOUNTY !== "1" ||
+    !/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/u.test(solanaWalletUrl ?? "") ||
+    !/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/u.test(solanaBountyRpc ?? "") ||
+    !/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/u.test(solanaRecoveryRpc ?? "") ||
+    !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(solanaGenesis ?? ""))
+)
+  throw new Error(
+    "The Solana bounty fixture requires loopback RPCs and its local genesis",
+  );
+const directRpcUrls = {
+  ...(directBountyRpc ? { "base-mainnet": directBountyRpc } : {}),
+  ...(solanaBountyRpc ? { "solana-mainnet": solanaBountyRpc } : {}),
+};
 const registryVettingKey = process.env.SLOP_E2E_VETTING_PUBLIC_KEY;
 if (
   registryVettingKey !== undefined &&
@@ -97,7 +125,7 @@ const registryArguments = registryPersistTo
       // The loopback fixture also answers the Surplus analysis provider, so
       // private analysis and appeal triage run in every registry run.
       registryGitHub
-        ? ` --binding SLOP_GITHUB_API_ORIGIN=${registryGitHub} --binding SURPLUS_API_KEY=e2e-fixture-analysis-key --binding SLOP_ANALYSIS_API_ORIGIN=${registryGitHub}`
+        ? ` --binding SLOP_GITHUB_API_ORIGIN=${registryGitHub} --binding SURPLUS_API_KEY=e2e-fixture-analysis-key --binding SLOP_ANALYSIS_API_ORIGIN=${registryGitHub} --binding REWARD_RPC_BASE=${registryGitHub}/__fixture/reward-rpc/base`
         : ""
     }${
       registryIntakeKey
@@ -109,7 +137,7 @@ const registryArguments = registryPersistTo
         : ""
     }${registryNotify ? ` --service SLOP_NOTIFY=${registryNotify}` : ""}${
       registrySlopbot ? ` --service SLOPBOT=${registrySlopbot}` : ""
-    }${registryIntake}`
+    }${Object.keys(directRpcUrls).length ? ` --binding ${shellArgument(`PAYMENT_RPC_URLS=${JSON.stringify(directRpcUrls)}`)}` : ""}${solanaBountyRpc ? ` --binding SLOP_LOCAL_SOLANA_GENESIS=${solanaGenesis} --binding SOLANA_RECOVERY_RPC_URL=${solanaRecoveryRpc} --binding REWARD_RPC_SOLANA=${solanaBountyRpc}` : ""}${registryIntake}`
   : "";
 const outputName = process.env.SLOP_E2E_OUTPUT ?? localServer;
 
@@ -200,6 +228,7 @@ export default defineConfig({
       testMatch: [
         "**/evidence-download.spec.ts",
         "**/email-preferences.spec.ts",
+        "**/bounty-full-flow.spec.ts",
       ],
       use: {
         ...devices["Desktop Firefox"],
@@ -208,7 +237,10 @@ export default defineConfig({
     },
     {
       name: "firefox-mobile",
-      testMatch: "**/email-preferences.spec.ts",
+      testMatch: [
+        "**/email-preferences.spec.ts",
+        "**/bounty-full-flow.spec.ts",
+      ],
       use: {
         ...devices["Desktop Firefox"],
         viewport: { width: 320, height: 800 },
@@ -216,7 +248,10 @@ export default defineConfig({
     },
     {
       name: "chromium-desktop",
-      testIgnore: "**/email-preferences.spec.ts",
+      testIgnore: [
+        "**/email-preferences.spec.ts",
+        "**/bounty-full-flow.spec.ts",
+      ],
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1440, height: 1000 },
@@ -225,7 +260,10 @@ export default defineConfig({
     {
       name: "chromium-mobile",
       grepInvert: /@desktop-only/,
-      testIgnore: "**/email-preferences.spec.ts",
+      testIgnore: [
+        "**/email-preferences.spec.ts",
+        "**/bounty-full-flow.spec.ts",
+      ],
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 320, height: 800 },

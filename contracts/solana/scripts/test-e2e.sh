@@ -74,4 +74,4 @@ bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/disp
 bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit \
   --test-reporter=tap --test-reporter=spec \
   --test-reporter-destination=stdout --test-reporter-destination=stderr \
-  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs
+  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs integration/native.e2e.mjs

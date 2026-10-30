@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
-import type { VaultConnection } from "./lib/evm-vault-actions";
 import {
   ProjectApiError,
   projectApiRequest,
@@ -9,8 +8,6 @@ import {
 } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
-import { isFullAwardSplit } from "./lib/security-bounty.mjs";
-import { OwnerVaultSetup } from "./OwnerVaultSetup";
 import { formatDateTime, NetworkName } from "./Presentation";
 import { VaultActions } from "./VaultActions";
 
@@ -22,26 +19,21 @@ type PrivateFunds = {
   snapshotAt: string;
 };
 
-/** A slop.cash-sponsored full award binds no bounty vault: every bounty
- * vault pays 75/25 (PRD section 8, owner decision 28 October 2026). */
-export function FullAwardFundingNote() {
-  return (
-    <p className="vault-unconfigured" role="status">
-      slop.cash funds approved awards after review. This program pays the whole
-      award to the researcher, so it uses no 75/25 bounty vault. An approved
-      award is not payable until a full-award payment path is approved and
-      released.
-    </p>
-  );
-}
-
 /** Same public vault framing, backed only by the separate bounty vault. */
 export function ProjectBountyFunding({
-  project: initial,
+  project,
 }: {
   project: ProjectDefinition;
 }) {
-  const [project, setProject] = useState(initial);
+  if (!project.securityBounty?.settlement?.deployments.length) return null;
+  return <ExistingProjectBountyFunding project={project} />;
+}
+
+function ExistingProjectBountyFunding({
+  project,
+}: {
+  project: ProjectDefinition;
+}) {
   const { allowed } = useProjectMaintainer(project.id);
   const terms = project.securityBounty;
   const deployments = terms?.settlement?.deployments ?? [];
@@ -63,14 +55,8 @@ export function ProjectBountyFunding({
           )}
         </h2>
       </header>
-      {isFullAwardSplit(terms.split) ? (
-        <FullAwardFundingNote />
-      ) : allowed ? (
-        <OwnerBountyVault
-          project={project}
-          compact
-          onRegistered={({ project: updated }) => setProject(updated)}
-        />
+      {allowed ? (
+        <OwnerBountyVault project={project} compact />
       ) : (
         <div className="vault-totals">
           {deployments.map((deployment) => (
@@ -87,15 +73,21 @@ export function ProjectBountyFunding({
 /** Owner-only funding view. Bounty balances never use the public payment API. */
 export function OwnerBountyVault({
   project,
-  onRegistered,
   compact = false,
 }: {
   project: ProjectDefinition;
   compact?: boolean;
-  onRegistered: (value: {
-    project: ProjectDefinition;
-    revision: number;
-  }) => void;
+}) {
+  if (!project.securityBounty?.settlement?.deployments.length) return null;
+  return <ExistingBountyVault project={project} compact={compact} />;
+}
+
+function ExistingBountyVault({
+  project,
+  compact,
+}: {
+  project: ProjectDefinition;
+  compact: boolean;
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
@@ -108,7 +100,6 @@ export function OwnerBountyVault({
       }
   >({ status: "loading" });
   const [reload, setReload] = useState(0);
-  const [wallet, setWallet] = useState<VaultConnection | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh repeats the private balance read.
   useEffect(() => {
     let active = true;
@@ -188,17 +179,6 @@ export function OwnerBountyVault({
             ) : (
               <p>No finalized balance yet. After a deposit, refresh later.</p>
             )}
-            {deployments.length === 0 && state.canSetup ? (
-              <OwnerVaultSetup
-                project={project}
-                payoutPolicy="security-bounty"
-                onRegistered={(registered, connected, _notice, revision) => {
-                  setWallet(connected);
-                  onRegistered({ project: registered, revision });
-                  setReload((value) => value + 1);
-                }}
-              />
-            ) : null}
             {deployments.map((deployment) => (
               <VaultActions
                 key={`${deployment.network}:${deployment.vault}`}
@@ -206,7 +186,6 @@ export function OwnerBountyVault({
                 deployment={deployment}
                 payoutPolicy="security-bounty"
                 canDeposit={state.canSetup}
-                connectedWallet={wallet ?? undefined}
                 onFinalized={() => setReload((value) => value + 1)}
               />
             ))}

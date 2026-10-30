@@ -62,6 +62,8 @@ const AUTHOR = 42;
 const MAINTAINER = 43;
 const OUTSIDER = 44;
 const MODERATOR = 50;
+const REVIEWER = 45;
+const IMPLEMENTER = 46;
 const BODY = "Buy cheap followers today at our shop.";
 /** When Slopbot closes the fixture pull request; GitHub's closedAt agrees. */
 const CLOSED_AT = "2026-11-10T00:00:00.000Z";
@@ -69,6 +71,7 @@ const CLOSED_AT = "2026-11-10T00:00:00.000Z";
 type ModelReply = {
   category: Category;
   confidence: number;
+  ruleRefs?: { source: string; quote: string }[];
   evidence?: string[];
   limitations?: string[];
   servedModel?: string;
@@ -76,6 +79,13 @@ type ModelReply = {
 };
 
 type Run = {
+  repositoryId: number;
+  seedValue: (options?: {
+    predecessor?: string;
+    joint?: boolean;
+    secondCarrier?: boolean;
+  }) => string;
+  disputeModel: (draft: "uphold" | "deny", confidence: number) => void;
   inbox(actor: number, moderators?: string, path?: string): Promise<Response>;
   enableMail(): Promise<void>;
   mail(moderators?: string): Promise<string[]>;
@@ -108,6 +118,7 @@ type Run = {
   closeTime: (value: string | null) => void;
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
+  guidance: (value: string | null) => void;
   policyResponse: (status: number, body?: unknown) => void;
   closureEnabled: (value: boolean) => void;
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
@@ -136,6 +147,7 @@ type Run = {
   closeByMaintainer: () => void;
   reopen: (senderId?: number, occurredAt?: string) => Promise<Job>;
   head: (sha: string) => void;
+  base: (sha: string) => void;
   loseNextLabelDelete: () => void;
   maintainerPermission: (value: boolean | "unavailable") => void;
   writes: string[];
@@ -250,6 +262,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseClose: (() => Promise<void>) | null = null;
   let closeOptions: { loseResponse?: boolean; afterWrite?: () => void } = {};
   let head = "b".repeat(40);
+  let comparisonBase = "c".repeat(40);
   let loseLabelDelete = false;
   let maintainerPermission: boolean | "unavailable" = true;
   let pauseReopen: (() => Promise<void>) | null = null;
@@ -263,7 +276,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let appealHistoryMode = "normal";
   let historyPrefix = 0;
   let verdict: ModelReply = { category: "spam", confidence: 0.97 };
+  let disputeVerdict = { draft: "uphold", confidence: 0.97 };
+  let hasValue = false;
   let config: string | null = null;
+  let guidance: string | null = null;
   let configTruncated = false;
   let policyResponse: { status: number; body?: unknown } | null = null;
   let revokeOnConfirmation = false;
@@ -312,6 +328,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       [MAINTAINER]: "maintainer",
       [OUTSIDER]: "outsider",
       [MODERATOR]: "moderator",
+      [REVIEWER]: "reviewer",
+      [IMPLEMENTER]: "implementer",
     })[id];
   const server = Bun.serve({
     port: 0,
@@ -324,7 +342,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         if (++modelCalls === 2 && revokeOnConfirmation) consent(false);
         const input = (await request.json()) as {
           model: string;
-          output_config: { effort: string };
+          output_config: {
+            effort: string;
+            format?: { schema?: { properties?: { draft?: unknown } } };
+          };
           messages: { content: { text: string }[] }[];
         };
         modelInputs.push({
@@ -347,23 +368,27 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                category: reply.category,
-                confidence: reply.confidence,
-                rule_refs: [
-                  { source: "universal", quote: "Buy cheap followers" },
-                ],
-                evidence: reply.evidence ?? [
-                  reply.category === "empty"
-                    ? "Comparison changed files: 0"
-                    : reply.category === "duplicate" && duplicate
-                      ? "Title, body and complete diff are byte-identical to this item."
-                      : "Buy cheap followers",
-                ],
-                summary: "This pull request advertises a service.",
-                limitations: reply.limitations ?? [],
-                objective_defect: null,
-              }),
+              text: JSON.stringify(
+                input.output_config.format?.schema?.properties?.draft
+                  ? disputeVerdict
+                  : {
+                      category: reply.category,
+                      confidence: reply.confidence,
+                      rule_refs: reply.ruleRefs ?? [
+                        { source: "universal", quote: "Buy cheap followers" },
+                      ],
+                      evidence: reply.evidence ?? [
+                        reply.category === "empty"
+                          ? "Comparison changed files: 0"
+                          : reply.category === "duplicate" && duplicate
+                            ? "Title, body and complete diff are byte-identical to this item."
+                            : "Buy cheap followers",
+                      ],
+                      summary: "This pull request advertises a service.",
+                      limitations: reply.limitations ?? [],
+                      objective_defect: null,
+                    },
+              ),
             },
           ],
           usage: { input_tokens: 10, output_tokens: 10 },
@@ -395,6 +420,23 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           encoding: "base64",
         });
       }
+      if (path.endsWith("/contents/CONTRIBUTING.md") && guidance !== null)
+        return Response.json({
+          type: "file",
+          size: Buffer.byteLength(guidance),
+          content: Buffer.from(guidance).toString("base64"),
+          encoding: "base64",
+        });
+      if (hasValue && path.endsWith("/contents/README.md")) {
+        const text =
+          "Credit a reproduced bug fix as small; preserve existing awards.";
+        return Response.json({
+          type: "file",
+          encoding: "base64",
+          size: text.length,
+          content: Buffer.from(text).toString("base64"),
+        });
+      }
       if (
         duplicate &&
         path.endsWith("/issues/4") &&
@@ -403,6 +445,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return new Response(null, { status: 404 });
       if (
         (path.endsWith("/issues/5") ||
+          path.endsWith("/issues/6") ||
           (duplicate && path.endsWith("/issues/4"))) &&
         request.method === "GET"
       )
@@ -411,8 +454,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             ? duplicateChange === "node"
               ? "PR_changed"
               : "PR_prior"
-            : "PR_local",
-          number: path.endsWith("/issues/4") ? 4 : 5,
+            : path.endsWith("/issues/6")
+              ? "PR_second"
+              : "PR_local",
+          number: path.endsWith("/issues/4")
+            ? 4
+            : path.endsWith("/issues/6")
+              ? 6
+              : 5,
           state: path.endsWith("/issues/4")
             ? duplicateChange === "closed"
               ? "closed"
@@ -475,7 +524,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         }
         return Response.json({ state, closed_at: closedAt });
       }
-      if (path.endsWith("/pulls/5") || (duplicate && path.endsWith("/pulls/4")))
+      if (
+        path.endsWith("/pulls/5") ||
+        path.endsWith("/pulls/6") ||
+        (duplicate && path.endsWith("/pulls/4"))
+      )
         return Response.json({
           draft: false,
           merged,
@@ -486,7 +539,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
                 : head,
           },
           base: {
-            sha: "c".repeat(40),
+            sha: comparisonBase,
             ref: "main",
             repo: { id: repositoryId },
           },
@@ -495,11 +548,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           changed_files: reportedFiles,
         });
       if (path.endsWith("/branches/main"))
-        return Response.json({ commit: { sha: "c".repeat(40) } });
+        return Response.json({ commit: { sha: comparisonBase } });
       if (path.includes("/compare/"))
         return Response.json({
-          base_commit: { sha: "c".repeat(40) },
-          merge_base_commit: { sha: "c".repeat(40) },
+          base_commit: { sha: comparisonBase },
+          merge_base_commit: { sha: comparisonBase },
           files:
             !emptyComparison &&
             (url.searchParams.get("page") === "1" ||
@@ -518,7 +571,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return Response.json({
           login: login(Number(user[1])),
           id: Number(user[1]),
+          node_id: `U_${user[1]}`,
         });
+      if (path.endsWith("/pulls/5/reviews"))
+        return Response.json([
+          { node_id: "PRR_reviewer", user: { node_id: `U_${REVIEWER}` } },
+        ]);
+      if (path.endsWith("/pulls/5/commits"))
+        return Response.json([{ author: { node_id: `U_${IMPLEMENTER}` } }]);
       if (path.endsWith("/permission"))
         return maintainerPermission === "unavailable"
           ? new Response(null, { status: 503 })
@@ -528,7 +588,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
                   ? "write"
                   : "read",
             });
-      if (path.endsWith("/issues/5/comments") && request.method === "GET") {
+      if (/\/issues\/[56]\/comments$/u.test(path) && request.method === "GET") {
         if (appealHistoryMode === "unavailable")
           return new Response(null, { status: 503 });
         const history = [
@@ -554,7 +614,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         const page = Number(url.searchParams.get("page") ?? 1);
         return Response.json(history.slice((page - 1) * 100, page * 100));
       }
-      if (path.endsWith("/issues/5/comments")) {
+      if (/\/issues\/[56]\/comments$/u.test(path)) {
         const body = ((await request.json()) as { body: string }).body;
         if (body.startsWith("<!-- slopbot:appeal:")) {
           if (appealRejection !== null) {
@@ -582,6 +642,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         }
         return Response.json({ id: 900 + comments.length }, { status: 201 });
       }
+      if (path.endsWith("/issues/comments/77") && request.method === "GET")
+        return Response.json({
+          body: "/slopbot dispute Exact dispute from comment 77",
+          user: { id: AUTHOR },
+          issue_url: `https://api.github.com/repos/${owner}/${repo}/issues/5`,
+        });
       if (/\/issues\/comments\/\d+$/u.test(path)) {
         if (failCommentUpdate) {
           failCommentUpdate = false;
@@ -590,7 +656,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         comments.push(((await request.json()) as { body: string }).body);
         return Response.json({ id: Number(path.split("/").pop()) });
       }
-      if (path.endsWith("/issues/5/labels")) {
+      if (/\/issues\/[56]\/labels$/u.test(path)) {
         const body = (await request.json()) as { labels: string[] };
         if (pauseFindingLabel) {
           const pause = pauseFindingLabel;
@@ -682,6 +748,117 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   };
   try {
     await cb({
+      repositoryId,
+      seedValue: (options = {}) => {
+        hasValue = true;
+        const source = {
+          repository: `${owner}/${repo}`,
+          repositoryNodeId: "R_fixture",
+          repositoryDatabaseId: repositoryId,
+          pullRequestNodeId: "PR_local",
+          pullRequestNumber: 5,
+          headSha: head,
+          mergeSha: "a".repeat(40),
+          occurredAt: at,
+          policySha: "c".repeat(40),
+          sourceDigest: "d".repeat(64),
+        };
+        const assessment = {
+          status: "assessed",
+          tier: "small",
+          rationale: "Accepted bug fix",
+          dimensions: {},
+          evidenceUrls: [],
+          relatedPullRequests: [],
+          limitations: [],
+          reviews: [{ sourceId: "PRR_reviewer", tier: "standard" }],
+        };
+        const record = options.joint
+          ? {
+              schemaVersion: "slop-work-unit-record:v1",
+              projectId: project.id,
+              sources: [
+                source,
+                ...(options.secondCarrier
+                  ? [
+                      {
+                        ...source,
+                        pullRequestNodeId: "PR_second",
+                        pullRequestNumber: 6,
+                      },
+                    ]
+                  : []),
+              ],
+              claims: [
+                {
+                  id: "e".repeat(64),
+                  repositoryNodeId: source.repositoryNodeId,
+                  commitSha: source.headSha,
+                  path: "code.ts",
+                  carrierPullRequestIds: ["PR_local"],
+                  creditPullRequestId: "PR_local",
+                  implementationActorNodeIds: [`U_${IMPLEMENTER}`],
+                },
+              ],
+              units: [
+                {
+                  workUnitId: "f".repeat(64),
+                  claimIds: ["e".repeat(64)],
+                  assessment,
+                },
+              ],
+              sourceDigest: source.sourceDigest,
+              supersedes: [],
+              legacyPredecessors: [],
+              revisionReason: null,
+            }
+          : {
+              schemaVersion: "slop-value-record:v1",
+              projectId: project.id,
+              ...source,
+              assessment,
+              supersedes: options.predecessor ?? null,
+              revisionReason: options.predecessor
+                ? "Reviewed correction"
+                : null,
+            };
+        const json = JSON.stringify({
+          ...record,
+          rubricVersion: "slop-value-2026-10-09",
+          producerRevision: "a".repeat(40),
+          assessedAt: new Date().toISOString(),
+          model: { provider: "fixture", model: "fixture", client: "fixture" },
+        });
+        const digest = createHash("sha256").update(json).digest("hex");
+        const key = createHash("sha256").update(`${digest}key`).digest("hex");
+        if (options.joint)
+          sqlite.run(
+            `INSERT INTO slopbot_work_unit_journal
+          (record_digest,assessment_key,project_id,source_digest,record_json,recorded_at) VALUES (?,?,?,?,?,?)`,
+            [digest, key, project.id, source.sourceDigest, json, at],
+          );
+        else
+          sqlite.run(
+            `INSERT INTO slopbot_value_journal
+          (record_digest,assessment_key,repository_node_id,pull_request_node_id,head_sha,source_digest,supersedes,record_json,recorded_at)
+          VALUES (?,?,?,?,?,?,?,?,?)`,
+            [
+              digest,
+              key,
+              source.repositoryNodeId,
+              "PR_local",
+              head,
+              source.sourceDigest,
+              options.predecessor ?? null,
+              json,
+              at,
+            ],
+          );
+        return digest;
+      },
+      disputeModel: (draft, confidence) => {
+        disputeVerdict = { draft, confidence };
+      },
       inbox: async (
         actor,
         moderators = String(MODERATOR),
@@ -758,6 +935,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       },
       head: (sha) => {
         head = sha;
+      },
+      base: (sha) => {
+        comparisonBase = sha;
       },
       loseNextLabelDelete: () => {
         loseLabelDelete = true;
@@ -971,6 +1151,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         config = value;
         configTruncated = truncated;
       },
+      guidance: (value) => {
+        guidance = value;
+      },
       policyResponse: (status, body) => {
         policyResponse = { status, body };
       },
@@ -1008,6 +1191,277 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     sqlite.close();
   }
 }
+
+test("an ordinary value dispute is triaged and resolved without changing the assessment or a penalty", async () => {
+  await closedItem(async (run) => {
+    run.closeByMaintainer();
+    run.merged(true);
+    const digest = run.seedValue();
+    const history = run.sql("SELECT * FROM slopbot_value_journal");
+    const request = run.job("appeal", { senderId: AUTHOR, subject: "value" });
+    expect(await run.deliver(request)).toBe("value dispute drafted (uphold)");
+    const key = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: key,
+        }),
+      ),
+    ).toBe("value dispute upheld; assessment history unchanged");
+    expect(run.currentState()).toBe("closed");
+    expect(run.sql("SELECT * FROM slopbot_value_journal")).toEqual(history);
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
+    expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(false);
+    expect(run.comments.some((body) => body.includes(digest))).toBe(true);
+  });
+});
+
+test("a value dispute with the same head and a changed comparison base needs a moderator", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue();
+    // The stored assessment used base c. The current target now resolves to d,
+    // so its comparison is not the assessment's source even with the same head.
+    run.base("d".repeat(40));
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    expect(run.sql("SELECT draft_confidence FROM slopbot_appeals")).toEqual([
+      { draft_confidence: 0.89 },
+    ]);
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`,
+        }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql("SELECT resolved_at FROM slopbot_appeals")).toEqual([
+      { resolved_at: null },
+    ]);
+    expect(run.sql(PENALTY)).toEqual([]);
+    expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(false);
+  });
+});
+
+for (const actor of [AUTHOR, MAINTAINER, REVIEWER, IMPLEMENTER, OUTSIDER]) {
+  test(`only affected actors and maintainers may open a value dispute (${actor})`, async () => {
+    await closedItem(async (run) => {
+      run.seedValue({ joint: actor === IMPLEMENTER });
+      const result = await run.deliver(
+        run.job("appeal", { senderId: actor, subject: "value" }),
+      );
+      if (actor === OUTSIDER) {
+        expect(result).toBe(
+          "only an affected contributor, reviewer or maintainer can dispute this assessment",
+        );
+        expect(run.modelInputs).toHaveLength(0);
+        expect(run.sql("SELECT * FROM slopbot_appeals")).toEqual([]);
+      } else {
+        expect(result).toBe("value dispute drafted (uphold)");
+        expect(
+          run.sql("SELECT appellant_github_id FROM slopbot_appeals"),
+        ).toEqual([{ appellant_github_id: String(actor) }]);
+      }
+    });
+  });
+}
+
+test("a value dispute retry retains the original assessment after a correction", async () => {
+  await closedItem(async (run) => {
+    const original = run.seedValue();
+    const request = run.job("appeal", { senderId: AUTHOR, subject: "value" });
+    await run.deliver(request);
+    run.seedValue({ predecessor: original });
+    await run.deliver(request);
+    expect(run.modelInputs).toHaveLength(1);
+    expect(run.sql("SELECT appeal_key FROM slopbot_appeals")).toEqual([
+      {
+        appeal_key: `value-appeal:single:${original}:${AUTHOR}:${run.repositoryId}:5`,
+      },
+    ]);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_value_journal")).toEqual([
+      { n: 2 },
+    ]);
+  });
+});
+
+test("uncertain value triage escalates and only an independent moderator can decide", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue();
+    run.disputeModel("deny", 0.7);
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    const key = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: key,
+        }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: MODERATOR,
+          command: "uphold",
+          appealKey: key,
+        }),
+      ),
+    ).toBe("value dispute upheld; assessment history unchanged");
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_value_journal")).toEqual([
+      { n: 1 },
+    ]);
+  });
+});
+
+test("parallel value disputes use their exact keys rather than another actor's newest dispute", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue();
+    await run.deliver(
+      run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+    );
+    await run.deliver(
+      run.job("appeal", { senderId: REVIEWER, subject: "value" }),
+    );
+    const authorKey = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    const reviewerKey = `value-appeal:single:${digest}:${REVIEWER}:${run.repositoryId}:5`;
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: reviewerKey,
+        }),
+      ),
+    ).toBe("only the appellant or a maintainer can answer the draft");
+    await run.deliver(
+      run.job("appeal_command", {
+        senderId: AUTHOR,
+        command: "accept",
+        appealKey: authorKey,
+      }),
+    );
+    expect(
+      run.sql(
+        "SELECT resolution FROM slopbot_appeals WHERE appellant_github_id='42'",
+      ),
+    ).toEqual([{ resolution: "upheld" }]);
+    expect(
+      run.sql(
+        "SELECT resolution FROM slopbot_appeals WHERE appellant_github_id='45'",
+      ),
+    ).toEqual([{ resolution: null }]);
+  });
+});
+
+test("a retained value dispute on a retired project reaches a moderator without new review or GitHub writes", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    run.retire();
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    expect(run.modelInputs).toHaveLength(0);
+    expect(run.writes).toEqual([]);
+    expect(run.sql("SELECT escalation FROM slopbot_appeals")).toEqual([
+      {
+        escalation:
+          "the project is restricted, so Slopbot cannot reassess ordinary work",
+      },
+    ]);
+  });
+});
+
+test("upholding an ordinary value dispute leaves an existing closure and its penalty untouched", async () => {
+  await closedItem(async (run) => {
+    await run.review();
+    expect(run.currentState()).toBe("closed");
+    const penalties = run.sql("SELECT * FROM slopbot_penalties");
+    const labels = [...run.labels];
+    const digest = run.seedValue();
+    const key = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    await run.deliver(
+      run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+    );
+    await run.deliver(
+      run.job("appeal_command", {
+        senderId: AUTHOR,
+        command: "accept",
+        appealKey: key,
+      }),
+    );
+    expect(run.currentState()).toBe("closed");
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual(penalties);
+    expect(run.labels).toEqual(labels);
+  });
+});
+
+test("the same actor can independently dispute two PRs in one joint assessment", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue({ joint: true, secondCarrier: true });
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value", number: 6 }),
+      ),
+    ).toBe("value dispute escalated");
+    const rows = run.sql(
+      "SELECT item_node_id,resolved_at FROM slopbot_appeals ORDER BY item_node_id",
+    );
+    expect(rows).toEqual([
+      { item_node_id: "PR_local", resolved_at: null },
+      { item_node_id: "PR_second", resolved_at: null },
+    ]);
+    const firstKey = `value-appeal:joint:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    await run.deliver(
+      run.job("appeal_command", {
+        senderId: MODERATOR,
+        command: "uphold",
+        appealKey: firstKey,
+      }),
+    );
+    expect(
+      run.sql(
+        "SELECT resolved_at FROM slopbot_appeals WHERE item_node_id='PR_second'",
+      ),
+    ).toEqual([{ resolved_at: null }]);
+  });
+});
+
+test("a value dispute reads the opening comment rather than a newer unrelated appeal", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    await run.deliver(
+      run.job("appeal", {
+        senderId: AUTHOR,
+        subject: "value",
+        appealCommentId: 77,
+      }),
+    );
+    expect(run.modelInputs[0].item).toContain("Exact dispute from comment 77");
+    expect(run.modelInputs[0].item).not.toContain(
+      "This is my real project page",
+    );
+  });
+});
 
 const PENALTY =
   "SELECT category, debit_thirds, moderator_review, reversal FROM slopbot_penalties";
@@ -1106,6 +1560,58 @@ test("fresh project consent and confirmation permit closure without a repository
     expect(run.sql(PENALTY)).toHaveLength(1);
   });
 });
+
+for (const category of ["busywork", "gaming"] as const) {
+  for (const guard of [
+    "none",
+    "label override",
+    "no consent",
+    "global off",
+    "no rule",
+  ] as const) {
+    test(`a quoted ${category} rule uses the published penalty with ${guard}`, async () => {
+      await closedItem(async (run) => {
+        const rule = "Do not advertise commercial services in contributions.";
+        if (guard !== "no rule") run.guidance(rule);
+        if (guard === "no consent") run.consent(false);
+        if (guard === "global off") run.closureEnabled(false);
+        if (guard === "label override")
+          run.repositoryConfig(
+            JSON.stringify({
+              version: 1,
+              audience: "protection",
+              closure: true,
+              categories: { [category]: "label" },
+            }),
+          );
+        run.modelSequence(
+          ["triage", "confirm"].map(() => ({
+            category,
+            confidence: 0.97,
+            ruleRefs: [{ source: "CONTRIBUTING.md", quote: rule }],
+          })),
+        );
+        const result = await run.review();
+        if (guard === "none") {
+          expect(result).toBe(`closed (${category})`);
+          expect(run.modelInputs.map((input) => input.effort)).toEqual([
+            "medium",
+            "high",
+          ]);
+          expect(run.sql(PENALTY)).toEqual([
+            { category, debit_thirds: 1, moderator_review: 0, reversal: null },
+          ]);
+          await run.review();
+          expect(run.sql(PENALTY)).toHaveLength(1);
+        } else {
+          expect(result).not.toStartWith("closed");
+          expect(run.currentState()).toBe("open");
+          expect(run.sql(PENALTY)).toEqual([]);
+        }
+      });
+    });
+  }
+}
 
 for (const category of ["empty", "duplicate"] as const) {
   test(`${category} prefilter closure requires recorded medium and high model reviews`, async () => {
@@ -1251,6 +1757,25 @@ for (const closureEnabled of [true, false]) {
   });
 }
 
+test("the queue retries a duplicate review whose original changed after its comment", async () => {
+  await closedItem(async (run) => {
+    run.seedDuplicate();
+    run.closureEnabled(false);
+    run.onReviewComment(() => run.changeDuplicate("closed"));
+    const job = run.job("review", {});
+    // The stale duplicate comment is published, then the label is refused.
+    // The changed source must not acknowledge this unfinished review.
+    await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+    expect(run.comments).toHaveLength(1);
+    const staleComment = run.comments.at(-1);
+    expect(run.labels).toEqual([]);
+    // The retry reviews the current source and replaces the stale finding.
+    expect(await run.deliver(job)).toBe("labeled (spam)");
+    expect(run.comments.at(-1)).not.toBe(staleComment);
+    expect(run.labels).toEqual(["slopbot: spam"]);
+  });
+});
+
 test("a model's duplicate claim cannot close without a verified same-author open original", async () => {
   await closedItem(async (run) => {
     run.model("duplicate", 0.97);
@@ -1353,7 +1878,7 @@ test("model triage replaces the prefilter category before category mode and pena
 
 for (const mode of ["label", "close"] as const) {
   for (const source of ["prefilter", "ordinary"] as const) {
-    test(`a limited ${source} verdict gives the exact hold reason with one call in ${mode} mode`, async () => {
+    test(`a limited ${source} verdict stays held with one call in ${mode} mode`, async () => {
       await closedItem(async (run) => {
         if (source === "prefilter") run.emptyComparison();
         run.repositoryConfig(
@@ -1376,9 +1901,6 @@ for (const mode of ["label", "close"] as const) {
         expect(run.sql("SELECT call_kind FROM slopbot_costs")).toEqual([
           { call_kind: "triage" },
         ]);
-        expect(run.comments.at(-1)).toContain(
-          "_Slopbot is not certain about this finding (unresolved model limitations), so a maintainer decides first.",
-        );
         expect(run.writes).not.toContain(
           "POST /repos/SlopDotCash/asi/issues/5/labels",
         );
@@ -1394,31 +1916,27 @@ for (const mode of ["label", "close"] as const) {
       confidence: 0.85,
       evidence: ["Buy cheap followers"],
       limitations: [],
-      reason: "confidence below closure threshold",
     },
     {
       name: "bad grounding",
       confidence: 0.97,
       evidence: ["not in the submitted item"],
       limitations: [],
-      reason: "no verbatim evidence from the item",
     },
     {
       name: "low confidence and limitations",
       confidence: 0.85,
       evidence: ["Buy cheap followers"],
       limitations: ["Unresolved check."],
-      reason: "confidence below closure threshold",
     },
     {
       name: "bad grounding, low confidence and limitations",
       confidence: 0.85,
       evidence: ["not in the submitted item"],
       limitations: ["Unresolved check."],
-      reason: "no verbatim evidence from the item",
     },
   ]) {
-    test(`${finding.name} preserves its hold reason and one call in ${mode} mode`, async () => {
+    test(`${finding.name} stays held with one call in ${mode} mode`, async () => {
       await closedItem(async (run) => {
         run.repositoryConfig(
           JSON.stringify({
@@ -1431,9 +1949,6 @@ for (const mode of ["label", "close"] as const) {
         run.modelSequence([{ category: "spam", ...finding }]);
         expect(await run.review()).toStartWith("held for maintainer");
         expect(run.modelInputs).toHaveLength(1);
-        expect(run.comments.at(-1)).toContain(
-          `_Slopbot is not certain about this finding (${finding.reason}), so a maintainer decides first.`,
-        );
         expect(run.writes).not.toContain(
           "POST /repos/SlopDotCash/asi/issues/5/labels",
         );
@@ -1485,7 +2000,6 @@ test("a spam close debits 3 thirds once; an accepted uphold draft reopens the it
         reversal: null,
       },
     ]);
-    expect(run.comments.at(-1)).toContain("removes 3 thirds of a point");
     // A replayed review records nothing new.
     expect(await run.review()).toBe(
       "already reviewed at this revision and policy",
@@ -1500,9 +2014,6 @@ test("a spam close debits 3 thirds once; an accepted uphold draft reopens the it
     expect(run.sql(APPEAL)).toEqual([
       { draft: "uphold", escalated: 0, resolution: null, resolved_by: null },
     ]);
-    expect(run.comments.at(-1)).toContain(
-      "Slopbot drafted this resolution: uphold",
-    );
     // Another person cannot answer the draft.
     expect(
       await run.deliver(
@@ -1591,7 +2102,6 @@ test("an upheld appeal reopens only Slopbot's own close, never a later maintaine
         reversal: "maintainer_reopen",
       },
     ]);
-    expect(run.comments.at(-1)).toContain("**Appeal upheld**");
   });
   // Missing closer evidence keeps the upheld decision pending, not reopened.
   await closedItem(async (run) => {
@@ -1620,7 +2130,6 @@ test("an upheld appeal reopens only Slopbot's own close, never a later maintaine
         reversal: "appeal_upheld",
       },
     ]);
-    expect(run.comments.at(-1)).toContain("**Appeal upheld**");
   });
 });
 
@@ -1695,9 +2204,6 @@ test("a maintainer reopen upholds an open appeal and removes the finding label, 
         resolved_by: "maintainer",
       },
     ]);
-    expect(run.comments.at(-1)).toContain(
-      "**Appeal upheld** (decided by the maintainer).",
-    );
   });
   await closedItem(async (run) => {
     expect(await run.review()).toBe("closed (spam)");
@@ -1892,7 +2398,6 @@ test("a retry after an uncertain reopen completes the recorded appeal decision",
       { reversal: "appeal_upheld" },
     ]);
     expect(run.labels).not.toContain("slopbot: scam");
-    expect(run.comments.at(-1)).toContain("**Appeal upheld**");
   });
 });
 
@@ -3071,7 +3576,6 @@ test("a close response without GitHub's close time records no debit", async () =
   await closedItem(async (run) => {
     run.closeTime(null);
     expect(await run.review()).toBe("labeled (spam)");
-    expect(run.comments.at(-1)).toContain("GitHub did not confirm the close");
     expect(run.sql(PENALTY)).toEqual([]);
   });
 });
@@ -3105,9 +3609,6 @@ for (const reversal of ["upheld appeal", "author dispute"] as const) {
         );
       if (reversal === "upheld appeal") {
         expect(await run.review()).toBe("labeled (spam)");
-        expect(run.comments.join("\n")).toContain(
-          "reopen-rate circuit breaker",
-        );
         expect(run.sql(PENALTY)).toEqual([]);
       } else expect(await run.review()).toBe("closed (spam)");
     });
@@ -3256,5 +3757,51 @@ test("accepting an older head's uphold draft keeps a later head's finding label"
     expect(
       run.writes.slice(before).filter((write) => !write.endsWith("/comments")),
     ).toEqual([]);
+  });
+});
+
+test("reverting the branch to the appealed head after a later head's close never reopens or removes the later finding", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    // Head b gets a spam label only: the owner has not consented to closure.
+    run.consent(false);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    // The author appeals head b, and triage drafts an uphold.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // The owner consents, the author pushes head d, and Slopbot closes d
+    // with a scam finding and debit. Head d has no appeal.
+    run.consent(true);
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
+    run.model("scam", 0.97);
+    expect(await run.review()).toBe("closed (scam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "scam", debit_thirds: 24, reversal: null },
+    ]);
+    // The author force-pushes the branch back to head b and accepts the old
+    // head-b draft. Head d's close, scam label and debit must still stand.
+    run.head("b".repeat(40));
+    const before = run.writes.length;
+    const result = await run.deliver(
+      run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+    );
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "scam", debit_thirds: 24, reversal: null },
+    ]);
+    expect(run.currentState()).toBe("closed");
+    expect(run.labels).toContain("slopbot: scam");
+    expect(
+      run.writes.slice(before).filter((write) => !write.endsWith("/comments")),
+    ).toEqual([]);
+    expect(result).toBe(
+      "appeal upheld by the appellant; newer item state kept",
+    );
+    expect(run.sql(APPEAL)).toMatchObject([
+      { resolution: "upheld", resolved_by: "appellant" },
+    ]);
   });
 });

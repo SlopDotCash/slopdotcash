@@ -7,6 +7,14 @@ import {
   type PayoutPolicy,
 } from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
+import {
+  nativeLamportDeltas,
+  SOLANA_NATIVE_ASSET,
+  SOLANA_NATIVE_DECIMALS,
+} from "./native";
+
+export { SOLANA_NATIVE_ASSET, SOLANA_NATIVE_DECIMALS } from "./native";
+
 import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
 import {
   readTokenAccount,
@@ -84,7 +92,8 @@ const anchorDiscriminator = (name: string) =>
 const COMMIT = anchorDiscriminator("commit"),
   COMMIT_BOUNTY = anchorDiscriminator("commit_bounty"),
   COMMIT_MONTHLY_AWARD = anchorDiscriminator("commit_monthly_award"),
-  PAY = anchorDiscriminator("pay");
+  PAY = anchorDiscriminator("pay"),
+  PAY_NATIVE = anchorDiscriminator("pay_native");
 export const CONFIG_DISCRIMINATOR = hex(
   sha256(encoder.encode("account:Config")).slice(0, 8),
 );
@@ -246,6 +255,11 @@ export async function solanaMintDetails(
   config: { rpcUrl: string },
   mint: string,
 ): Promise<{ decimals: number; tokenProgram: string }> {
+  if (mint === SOLANA_NATIVE_ASSET)
+    return {
+      decimals: SOLANA_NATIVE_DECIMALS,
+      tokenProgram: SOLANA_NATIVE_ASSET,
+    };
   const reading = await liveMint(config, mint);
   return { decimals: reading.decimals, tokenProgram: reading.program };
 }
@@ -254,7 +268,7 @@ export async function solanaMintDecimals(
   config: { rpcUrl: string },
   mint: string,
 ): Promise<number> {
-  return (await liveMint(config, mint)).decimals;
+  return (await solanaMintDetails(config, mint)).decimals;
 }
 
 /** Verify finalized program bytes, loader, upgrade authority and singleton Config. */
@@ -637,7 +651,8 @@ export function escrowInvocations(
       tag !== COMMIT &&
       tag !== COMMIT_BOUNTY &&
       tag !== COMMIT_MONTHLY_AWARD &&
-      tag !== PAY
+      tag !== PAY &&
+      tag !== PAY_NATIVE
     )
       return;
     const children: Obj[] = [];
@@ -650,10 +665,10 @@ export function escrowInvocations(
     const awardAt = tag === COMMIT_MONTHLY_AWARD ? 12 : 8;
     found.push({
       index,
-      kind: tag === PAY ? "paid" : "reserved",
+      kind: tag === PAY || tag === PAY_NATIVE ? "paid" : "reserved",
       accounts: list(entry.ix.accounts).map(string),
       data,
-      ...(tag === PAY
+      ...(tag === PAY || tag === PAY_NATIVE
         ? {}
         : { awardId: hex(data.slice(awardAt, awardAt + 32)) }),
       children,
@@ -800,62 +815,84 @@ export function solanaPaymentAdapter(
           obligation[136] !== 1 ||
           accounts[0] !== config.projectPda ||
           accounts[1] !== awardAddress ||
-          accounts[3] !== config.mint ||
-          accounts[4] !== config.vault
+          (config.mint === SOLANA_NATIVE_ASSET
+            ? hex(data.slice(0, 8)) !== PAY_NATIVE ||
+              accounts[3] !== config.vault
+            : hex(data.slice(0, 8)) !== PAY ||
+              accounts[3] !== config.mint ||
+              accounts[4] !== config.vault)
         )
           throw new Error("Payment differs from award");
-        // The fee accrues in the vault; a zero-net award makes no token transfer.
-        const expected = net === 0n ? [] : [{ to: accounts[5], amount: net }];
-        if (children.length !== expected.length)
-          throw new Error("Unexpected payout instructions");
-        // Only the mint's own token program may carry the transfer, and the transfer
-        // decimals must equal that mint's.
-        const mintReading = await liveMint(config, config.mint);
-        children.forEach((child, i) => {
-          const parsed = object(child.parsed),
-            info = object(parsed.info),
-            amount = object(info.tokenAmount);
-          if (
-            child.programId !== mintReading.program ||
-            parsed.type !== "transferChecked" ||
-            info.source !== config.vault ||
-            info.mint !== config.mint ||
-            info.authority !== config.projectPda ||
-            info.destination !== expected[i].to ||
-            amount.decimals !== mintReading.decimals ||
-            amount.amount !== expected[i].amount.toString()
-          )
-            throw new Error("Payout transfer differs from award");
-        });
-        const keys = list(object(transaction.message).accountKeys).map(
-          (entry) => string(object(entry).pubkey),
-        );
-        const ownerOf = (address: string) => {
-          const index = keys.indexOf(address);
-          // A recipient can spend the payout and close its token account later
-          // in this transaction. The post-state then omits the closed account,
-          // but the finalized pre-state still attests to its mint and owner.
-          const balances = [meta.postTokenBalances, meta.preTokenBalances]
-            .flatMap(list)
-            .map(object);
-          // The escrow pays only the bound wallet's canonical associated
-          // account. Token ownership can change within the transaction, so an
-          // endpoint owner alone does not prove who received the payout.
-          const balance = balances.find(
-            (item) =>
-              item.accountIndex === index &&
-              item.mint === config.mint &&
-              solanaAssociatedTokenAddress(
-                config.mint,
-                string(item.owner),
-                mintReading.program,
-              ) === address,
+        if (config.mint === SOLANA_NATIVE_ASSET) {
+          // Native payout is a direct lamport move by the verified program. There is no
+          // wrapped token account or token CPI. Reconcile the exact vault and destination,
+          // normalizing the network fee if the recipient also paid the transaction fee.
+          if (children.length !== 0)
+            throw new Error("Unexpected native payout instructions");
+          const keys = list(object(transaction.message).accountKeys).map(
+            (entry) => string(object(entry).pubkey),
           );
-          if (index < 0 || !balance || balance.mint !== config.mint)
-            throw new Error("Payout account balance missing");
-          return string(balance.owner);
-        };
-        destination = ownerOf(accounts[5]);
+          const deltas = nativeLamportDeltas(meta, keys);
+          if (
+            deltas.get(config.vault) !== -net ||
+            deltas.get(accounts[4]) !== net
+          )
+            throw new Error("Native payout balances differ from award");
+          destination = accounts[4];
+        } else {
+          // The fee accrues in the vault; a zero-net award makes no token transfer.
+          const expected = net === 0n ? [] : [{ to: accounts[5], amount: net }];
+          if (children.length !== expected.length)
+            throw new Error("Unexpected payout instructions");
+          // Only the mint's own token program may carry the transfer, and the transfer
+          // decimals must equal that mint's.
+          const mintReading = await liveMint(config, config.mint);
+          children.forEach((child, i) => {
+            const parsed = object(child.parsed),
+              info = object(parsed.info),
+              amount = object(info.tokenAmount);
+            if (
+              child.programId !== mintReading.program ||
+              parsed.type !== "transferChecked" ||
+              info.source !== config.vault ||
+              info.mint !== config.mint ||
+              info.authority !== config.projectPda ||
+              info.destination !== expected[i].to ||
+              amount.decimals !== mintReading.decimals ||
+              amount.amount !== expected[i].amount.toString()
+            )
+              throw new Error("Payout transfer differs from award");
+          });
+          const keys = list(object(transaction.message).accountKeys).map(
+            (entry) => string(object(entry).pubkey),
+          );
+          const ownerOf = (address: string) => {
+            const index = keys.indexOf(address);
+            // A recipient can spend the payout and close its token account later
+            // in this transaction. The post-state then omits the closed account,
+            // but the finalized pre-state still attests to its mint and owner.
+            const balances = [meta.postTokenBalances, meta.preTokenBalances]
+              .flatMap(list)
+              .map(object);
+            // The escrow pays only the bound wallet's canonical associated
+            // account. Token ownership can change within the transaction, so an
+            // endpoint owner alone does not prove who received the payout.
+            const balance = balances.find(
+              (item) =>
+                item.accountIndex === index &&
+                item.mint === config.mint &&
+                solanaAssociatedTokenAddress(
+                  config.mint,
+                  string(item.owner),
+                  mintReading.program,
+                ) === address,
+            );
+            if (index < 0 || !balance || balance.mint !== config.mint)
+              throw new Error("Payout account balance missing");
+            return string(balance.owner);
+          };
+          destination = ownerOf(accounts[5]);
+        }
       }
       const block = object(
         await rpc(config, "getBlock", [
@@ -915,15 +952,23 @@ export async function readVaultTotals(config: {
   const vault = solanaVaultAddress(config.programId, config.projectPda);
   const response = object(
     await rpc(config, "getMultipleAccounts", [
-      [config.projectPda, mint, vault],
+      mint === SOLANA_NATIVE_ASSET
+        ? [config.projectPda, vault]
+        : [config.projectPda, mint, vault],
       { commitment: "finalized", encoding: "base64" },
     ]),
   );
   const slot = object(response.context).slot;
   if (!Number.isSafeInteger(slot) || Number(slot) < 0)
     throw new Error("Invalid RPC slot");
-  const [projectInfo, mintInfo, vaultInfo] = list(response.value);
-  if (projectInfo === null || mintInfo === null || vaultInfo === null)
+  const values = list(response.value);
+  const [projectInfo, mintInfo, vaultInfo] =
+    mint === SOLANA_NATIVE_ASSET ? [values[0], null, values[1]] : values;
+  if (
+    projectInfo == null ||
+    vaultInfo == null ||
+    (mint !== SOLANA_NATIVE_ASSET && mintInfo == null)
+  )
     throw new Error("Project, mint or vault account missing");
   const project = account(
     projectInfo,
@@ -932,8 +977,11 @@ export async function readVaultTotals(config: {
     PROJECT_DISCRIMINATOR,
   );
   if (pubkey(project, 168) !== mint) throw new Error("Project mint changed");
-  const mintReading = readTokenMint(mintInfo, decodeBase58Bytes(mint));
-  const decimals = mintReading.decimals;
+  const mintReading =
+    mint === SOLANA_NATIVE_ASSET
+      ? null
+      : readTokenMint(mintInfo, decodeBase58Bytes(mint));
+  const decimals = mintReading?.decimals ?? SOLANA_NATIVE_DECIMALS;
   const time = await rpc(config, "getBlockTime", [slot]);
   if (!Number.isSafeInteger(time))
     throw new Error("Missing finalized block time");
@@ -947,16 +995,39 @@ export async function readVaultTotals(config: {
   const free = deposited - paid - payoutFees - withdrawnGross - reserved;
   if (free < 0n) throw new Error("Project counters exceed deposits");
   // As on EVM, fail closed when the vault holds less than the counters owe.
-  const vaultReading = readTokenAccount(vaultInfo);
-  if (vaultReading.program !== mintReading.program)
-    throw new Error("Vault token program differs from the mint");
-  const vaultAccount = vaultReading.raw;
-  if (
-    pubkey(vaultAccount, 0) !== mint ||
-    pubkey(vaultAccount, 32) !== config.projectPda ||
-    uint(vaultAccount, 64) < free + reserved + accruedFees
-  )
-    throw new Error("Vault balance is below free, reserved and accrued fees");
+  if (mint === SOLANA_NATIVE_ASSET) {
+    const value = object(vaultInfo);
+    const rent = await rpc(config, "getMinimumBalanceForRentExemption", [
+      0,
+      { commitment: "finalized" },
+    ]);
+    if (
+      value.owner !== config.programId ||
+      value.executable !== false ||
+      !Array.isArray(value.data) ||
+      value.data[0] !== "" ||
+      value.data[1] !== "base64" ||
+      !Number.isSafeInteger(value.lamports) ||
+      !Number.isSafeInteger(rent) ||
+      Number(rent) < 0 ||
+      BigInt(Number(value.lamports)) - BigInt(Number(rent)) <
+        free + reserved + accruedFees
+    )
+      throw new Error(
+        "Native vault balance is below rent, free, reserved and accrued fees",
+      );
+  } else {
+    const vaultReading = readTokenAccount(vaultInfo);
+    if (vaultReading.program !== mintReading?.program)
+      throw new Error("Vault token program differs from the mint");
+    const vaultAccount = vaultReading.raw;
+    if (
+      pubkey(vaultAccount, 0) !== mint ||
+      pubkey(vaultAccount, 32) !== config.projectPda ||
+      uint(vaultAccount, 64) < free + reserved + accruedFees
+    )
+      throw new Error("Vault balance is below free, reserved and accrued fees");
+  }
   return {
     network: config.network,
     vault: config.projectPda,

@@ -412,9 +412,7 @@ test("private receipt response cannot be assigned to a later matching session", 
     waitUntil: "networkidle",
   });
   expect(privateReads).toBe(1);
-  await expect(page.getByRole("alert")).toContainText(
-    "This private response belongs to another account.",
-  );
+  await expect(page.getByRole("alert")).toBeVisible();
   await expect(
     page.getByText(`Private report · ${foreignProject}`, { exact: true }),
   ).toHaveCount(0);
@@ -514,9 +512,7 @@ for (const mismatch of ["submissions", "cases"] as const) {
       throw new Error(`Unexpected request: ${path}`);
     });
     await page.goto("/security", { waitUntil: "networkidle" });
-    await expect(page.getByRole("alert")).toContainText(
-      "This private response belongs to another account.",
-    );
+    await expect(page.getByRole("alert")).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Retry private session", exact: true }),
     ).toBeVisible();

@@ -8,6 +8,10 @@ import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type ProxyOptions } from "vite";
+import {
+  devDataDirectory,
+  privateDevRequest,
+} from "./scripts/dev-private-paths";
 import { deploymentOrigins } from "./src/lib/deployment";
 
 const publicDirectory = `${fileURLToPath(new URL("./public", import.meta.url))}${sep}`;
@@ -37,6 +41,11 @@ export default defineConfig(({ command, isPreview }) => {
         "^/(?:api/|v1/oauth/|__dev/)": {
           target: localBackend,
           changeOrigin: false,
+          rewrite: (path) =>
+            path.replace(
+              /^\/__dev\/project-create(?=\?|$)/,
+              "/api/v1/projects",
+            ),
         },
       }
     : {};
@@ -48,6 +57,22 @@ export default defineConfig(({ command, isPreview }) => {
         name: "local-sign-in",
         apply: "serve",
         configureServer(server) {
+          const privateDirectory = devDataDirectory(
+            server.config.root,
+            process.env.SLOP_DEV_DATA_DIR,
+          );
+          server.middlewares.use((request, response, next) => {
+            if (
+              privateDevRequest(
+                request.url ?? "/",
+                server.config.root,
+                privateDirectory,
+              )
+            ) {
+              response.writeHead(403, { "cache-control": "no-store" });
+              response.end();
+            } else next();
+          });
           if (!automaticBackend || !localBackend) return;
           let child: ChildProcess | undefined;
           const stop = () => child?.kill("SIGTERM");
@@ -210,7 +235,20 @@ export default defineConfig(({ command, isPreview }) => {
     // "Money received".
     // The legacy file URL is also supported for existing sessions.
     server: {
+      fs: {
+        deny: [
+          ".env",
+          ".env.*",
+          "*.{crt,pem}",
+          "**/.git/**",
+          "**/.dev.vars*",
+          "**/.slop-dev/**",
+          "**/.wrangler/**",
+          `${devDataDirectory(process.cwd(), process.env.SLOP_DEV_DATA_DIR)}/**`,
+        ],
+      },
       proxy: {
+        ...localBackendProxy,
         "^/api/v1/wallet-claims/actors/[1-9][0-9]*/current(?:\\?.*)?$": {
           target: localApiOrigin,
           changeOrigin: true,
@@ -270,7 +308,6 @@ export default defineConfig(({ command, isPreview }) => {
               });
             },
           },
-        ...localBackendProxy,
       },
     },
     build: {

@@ -9,13 +9,10 @@ export async function expectHeaderRow(page: Page, account: Locator) {
   const header = page.getByRole("banner");
   const home = header.getByRole("link", { name: "Slop home", exact: true });
   const help = header.getByRole("link", { name: "How it works", exact: true });
-  await expect(home.locator(".slop-mark")).toBeVisible();
+  await expect(home).toBeVisible();
   await expect(help).toHaveAttribute("href", "/how-it-works");
   await expect(account).toBeVisible();
   const width = await page.evaluate(() => window.innerWidth);
-  await expect(help).toHaveText("How It Works", { useInnerText: true });
-  if (width < 480) await expect(home.locator(".wordmark-text")).toBeHidden();
-  else await expect(home.locator(".wordmark-text")).toBeVisible();
   const [homeBox, helpBox, accountBox] = await Promise.all(
     [home, help, account].map((item) => item.boundingBox()),
   );

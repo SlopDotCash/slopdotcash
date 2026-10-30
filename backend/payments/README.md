@@ -274,15 +274,16 @@ sections 6 and 7). Migration `0062` adds its private records.
    three days of each month, on `main` for `slop-private` and on
    `development` for `slop-staging`. It freezes the complete ledger of the
    closed UTC month and runs `bun run rewards:propose-month -- --cycle
-   YYYY-MM --sql <file>`. For each active, verified monthly-pool project whose
-   escrow policy is effective for the month and whose monthly amount is
-   positive, it stores one `monthly_reward_bases` row with the exact D1
-   revision bytes and one `monthly_reward_base_rows` row per scored
-   contributor: integer base units by largest remainder of the shared pool,
-   plus any committed review line. A month's proposal is written once; a later
-   run never adds or replaces rows. Unfunded projects and private bounty
-   programs get no proposal. No cycle file, public decision or review PR is
-   created.
+   YYYY-MM --sql <file>`. For each active, verified monthly-pool project that
+   has a registered vault, whose escrow policy is effective for the month and
+   whose monthly amount is positive, it stores one `monthly_reward_bases` row
+   with the exact D1 revision bytes and one `monthly_reward_base_rows` row per
+   scored contributor: integer base units by largest remainder of the shared
+   pool, plus any committed review line. A month's proposal is written once; a
+   later run never adds or replaces rows. Unfunded projects and private bounty
+   programs get no proposal. If the owner registers the vault before the last
+   of those three runs, the next run proposes the month. No cycle file, public
+   decision or review PR is created.
 2. **Private changes.** The owner, with current GitHub write, maintain or
    admin permission on the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and

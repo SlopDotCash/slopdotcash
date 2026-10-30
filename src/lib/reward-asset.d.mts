@@ -3,13 +3,18 @@
 import type { EscrowChain } from "./escrow-policy.mjs";
 
 export type RewardAssetNetwork = EscrowChain;
-export type RewardAssetKind = "stablecoin" | "token";
+export type RewardAssetKind = "stablecoin" | "token" | "native";
 
 export interface RewardAssetNetworkDefinition {
   readonly name: string;
   readonly family: "evm" | "solana";
   readonly chainId: string | null;
   readonly cluster: "mainnet-beta" | null;
+  readonly native: {
+    readonly address: string;
+    readonly symbol: "ETH" | "SOL";
+    readonly decimals: 18 | 9;
+  };
   readonly stablecoin: {
     readonly address: string;
     readonly symbol: string;

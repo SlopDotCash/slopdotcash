@@ -5,9 +5,10 @@
  * split into token-budgeted batches, risky content first and grouped by
  * directory, followed by one repository-level synthesis call over the
  * deterministic pre-pass and every batch result. Nothing is sampled or
- * shortened: every distinct byte sequence is in exactly one batch, every
- * byte-identical path is named beside it or recorded with the plan as sharing
- * its reviewed bytes, and the review is complete only when every call completed.
+ * shortened: every distinct byte sequence, or each part of one larger than a
+ * batch, is in exactly one batch, every byte-identical path is named beside it
+ * or recorded with the plan as sharing its reviewed bytes, and the review is
+ * complete only when every call completed.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,6 +20,7 @@ import {
   MAX_INVENTORY_ITEMS,
   type RepositoryInspection,
   surfacesOf,
+  textParts,
 } from "./bounded-scan";
 import {
   type ReviewPass,
@@ -97,16 +99,40 @@ function planned(evidence: string, items: number): PlannedCall {
   };
 }
 
+/**
+ * Consecutive parts of an item larger than one batch, for example the
+ * deterministic listing of many bulk files. JSON writes one byte as at most
+ * six (`\u0000`), so every part fits the batch, with its batch framing,
+ * however its text escapes.
+ */
+function batchParts(item: Item, limit: number): Item[] {
+  const framing =
+    BATCH_OVERHEAD_BYTES +
+    itemBytes({
+      id: `${item.id}#part-999999-of-999999`,
+      text: "",
+      sha256: item.sha256,
+    });
+  return textParts(item.text, Math.floor((limit - framing) / 6)).map(
+    (text, index, parts) => ({
+      id: `${item.id}#part-${index + 1}-of-${parts.length}`,
+      text,
+      sha256: sha256(text),
+    }),
+  );
+}
+
 /** Review order: 0 runs at install, build or agent time, or carries a risk signal. */
 function tier(id: string, risky: Set<string>): number {
+  // A batch part of an already split file carries two part suffixes.
+  const path = id.replace(/(?:#(?:part-\d+-of-\d+|signals))+$/u, "");
   if (
-    id === DETERMINISTIC_COVERAGE_ID ||
+    path === DETERMINISTIC_COVERAGE_ID ||
     id.startsWith("/slop-scan/symlink/") ||
     id.startsWith("execution:") ||
     id.startsWith("slop-skill-template/")
   )
     return 0;
-  const path = id.replace(/#(?:part-\d+-of-\d+|signals)$/u, "");
   const lower = path.toLowerCase();
   const surfaces = surfacesOf(path);
   if (
@@ -150,39 +176,6 @@ export function planReview(
     inventory.visibilityGaps.every((gap) => gap.length <= 1000);
   if (fits)
     return { mode: "single", call: planned(evidence, inventory.items.length) };
-  const risky = new Set(inspection.riskSignals);
-  // Identical bytes are reviewed once. Every other path is named beside the
-  // reviewed copy while it fits that copy's batch; the rest are recorded with
-  // the plan and the synthesis pre-pass, never sent as content-free batches.
-  const first = new Map<string, Item>();
-  const sameBytes = new Map<string, string[]>();
-  for (const item of inventory.items) {
-    const original = first.get(item.sha256);
-    if (original === undefined) first.set(item.sha256, item);
-    else {
-      const aliases = sameBytes.get(original.id);
-      if (aliases) aliases.push(item.id);
-      else sameBytes.set(original.id, [item.id]);
-    }
-  }
-  const unique = inventory.items.filter(
-    (item) => first.get(item.sha256) === item,
-  );
-  const ordered = unique
-    .map((item, position) => ({
-      item,
-      position,
-      // A shared copy is reviewed at the riskiest tier of any of its paths.
-      tier: (sameBytes.get(item.id) ?? []).reduce(
-        (lowest, id) => Math.min(lowest, tier(id, risky)),
-        tier(item.id, risky),
-      ),
-    }))
-    // Stable: within a tier, sorted inventory order groups each directory
-    // and keeps every part of a file consecutive.
-    .sort((a, b) => a.tier - b.tier || a.position - b.position)
-    .map((entry) => entry.item);
-  const limit = Math.min(batchTokens * BYTES_PER_TOKEN, MAX_INVENTORY_BYTES);
   const batchEvidence = (
     index: number,
     count: number,
@@ -202,6 +195,51 @@ export function planReview(
       artifacts: [],
       visibilityGaps: [],
     });
+  const risky = new Set(inspection.riskSignals);
+  const limit = Math.min(batchTokens * BYTES_PER_TOKEN, MAX_INVENTORY_BYTES);
+  // An item larger than one batch is reviewed in consecutive parts; a call
+  // never receives more than one review call accepts.
+  const items = inventory.items.flatMap((item) =>
+    Buffer.byteLength(
+      batchEvidence(
+        Number.MAX_SAFE_INTEGER,
+        Number.MAX_SAFE_INTEGER,
+        [item],
+        {},
+      ),
+    ) > limit
+      ? batchParts(item, limit)
+      : [item],
+  );
+  // Identical bytes are reviewed once. Every other path is named beside the
+  // reviewed copy while it fits that copy's batch; the rest are recorded with
+  // the plan and the synthesis pre-pass, never sent as content-free batches.
+  const first = new Map<string, Item>();
+  const sameBytes = new Map<string, string[]>();
+  for (const item of items) {
+    const original = first.get(item.sha256);
+    if (original === undefined) first.set(item.sha256, item);
+    else {
+      const aliases = sameBytes.get(original.id);
+      if (aliases) aliases.push(item.id);
+      else sameBytes.set(original.id, [item.id]);
+    }
+  }
+  const unique = items.filter((item) => first.get(item.sha256) === item);
+  const ordered = unique
+    .map((item, position) => ({
+      item,
+      position,
+      // A shared copy is reviewed at the riskiest tier of any of its paths.
+      tier: (sameBytes.get(item.id) ?? []).reduce(
+        (lowest, id) => Math.min(lowest, tier(id, risky)),
+        tier(item.id, risky),
+      ),
+    }))
+    // Stable: within a tier, sorted inventory order groups each directory
+    // and keeps every part of a file consecutive.
+    .sort((a, b) => a.tier - b.tier || a.position - b.position)
+    .map((entry) => entry.item);
   /**
    * The aliases that fit beside `item` in its own batch, measured exactly and
    * in linear time: the serialized batch with an empty alias list (at the

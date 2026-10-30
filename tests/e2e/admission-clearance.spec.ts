@@ -121,7 +121,9 @@ test("admin distinguishes retained admission from the current revision and can r
     queued = true;
     return route.fulfill({ json: {} });
   });
-  await page.goto(`/admin?project=${project.id}`, { waitUntil: "networkidle" });
+  await page.goto(`/admin?project=${project.id}&section=security`, {
+    waitUntil: "networkidle",
+  });
   const card = page.getByRole("article", {
     name: `Security vetting for ${project.id}`,
   });
@@ -140,11 +142,8 @@ test("admin distinguishes retained admission from the current revision and can r
     path: info.outputPath("retained-admission.png"),
     fullPage: true,
   });
-  await card
-    .getByText("Queue scan of revision 4", { exact: true })
-    .locator("xpath=self::summary")
-    .focus();
-  await page.keyboard.press("Enter");
+  await expect(page.locator("main details")).toHaveCount(0);
+  await expect(card.getByLabel("Reason for the scan")).toBeVisible();
   await card
     .getByLabel("Reason for the scan")
     .fill("Investigate a reported dependency");

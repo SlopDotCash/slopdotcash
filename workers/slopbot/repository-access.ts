@@ -305,12 +305,14 @@ export async function handleRepositoryRead(
         : await installation.read(path);
     if (answer.status !== 200 && answer.status !== 404)
       throw new Error(`GitHub repository read returned ${answer.status}`);
+    const link = answer.headers.get("link");
     return new Response(answer.body, {
       status: answer.status,
       headers: {
         ...headers,
         "content-type": "application/json",
         [REPOSITORY_READ_HEADER]: "github",
+        ...(link === null ? {} : { link }),
       },
     });
   } catch {

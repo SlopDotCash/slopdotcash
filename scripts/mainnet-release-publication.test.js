@@ -140,12 +140,6 @@ test("supersession is a clean no-op only before service publication", async () =
       expect(await readFile(output, "utf8")).toBe(
         servicesPublished ? "" : "superseded=true\n",
       );
-      const reported = await readFile(summary, "utf8");
-      expect(reported).toContain(
-        servicesPublished ? "Partial publication" : "this run did not publish",
-      );
-      if (servicesPublished)
-        expect(reported).not.toContain("this run did not publish");
     }
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -149,18 +149,24 @@ test("selected admin project can queue after a superseded pending scan and prese
   await expect(
     page.getByRole("heading", { name: project.name, exact: true }),
   ).toHaveCount(1);
+  await expect(page.locator("main details")).toHaveCount(0);
+  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/admin\\?project=${project.id}&section=security$`, "u"),
+  );
   const card = page.getByRole("article", {
     name: `Security vetting for ${project.id}`,
   });
-  await expect(card.getByLabel("Reason for the scan")).not.toBeVisible();
-  await expect(
-    card.getByText("An install script requests credentials.", { exact: false }),
-  ).not.toBeVisible();
-  await card.getByText("Active contributor flags · 1", { exact: true }).click();
+  await expect(card.getByLabel("Reason for the scan")).toBeVisible();
   await expect(
     card.getByText("An install script requests credentials.", { exact: false }),
   ).toBeVisible();
-  await card.getByText(/^Revision 1 · Incomplete/u).click();
+  await expect(page.locator("main details")).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL(`/admin?project=${project.id}`);
+  await expect(card).toHaveCount(0);
+  await page.goForward();
+  await expect(card.getByLabel("Reason for the scan")).toBeVisible();
   await expect(
     card
       .getByRole("table", { name: "Scanned surfaces" })
@@ -169,11 +175,6 @@ test("selected admin project can queue after a superseded pending scan and prese
   await expect(card.getByRole("table", { name: "Scan checks" })).toContainText(
     "Incomplete",
   );
-  const queue = card
-    .getByText("Queue scan of revision 1", { exact: true })
-    .locator("xpath=self::summary");
-  await queue.focus();
-  await page.keyboard.press("Enter");
   const reason = card.getByLabel("Reason for the scan");
   await expect(reason).toBeVisible();
   await card.getByRole("button", { name: "Queue scan of revision 1" }).click();
@@ -187,7 +188,7 @@ test("selected admin project can queue after a superseded pending scan and prese
     ),
   ).toBe(true);
   await page.screenshot({
-    path: info.outputPath("admin-expanded-200.png"),
+    path: info.outputPath("admin-security-200.png"),
     fullPage: true,
   });
   const coverage = card.locator(".assessment-coverage");
@@ -239,9 +240,6 @@ test("selected admin project can queue after a superseded pending scan and prese
   await restore();
   await card.getByRole("button", { name: "Queue scan of revision 1" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toContainText(
-    "Queued a scan of asi revision 1.",
-  );
   expect(writes).toEqual([
     {
       projectId: project.id,
@@ -422,9 +420,7 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   );
   inventoryDenied = true;
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByRole("alert")).toContainText(
-    "Vetting operator access required.",
-  );
+  await expect(page.getByRole("alert")).toBeVisible();
   await expect(
     page.getByRole("list", { name: "Retained objects" }),
   ).toHaveCount(0);

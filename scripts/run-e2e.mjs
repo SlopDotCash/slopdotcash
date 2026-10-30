@@ -26,6 +26,7 @@ import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -240,17 +241,170 @@ function prepareRegistryDatabase(persistTo) {
 async function runRegistryPhase() {
   const persistTo = mkdtempSync(join(tmpdir(), "slop-e2e-d1-"));
   const githubPort = basePort + 3;
-  let github, notify, slopbot;
+  const directBounty = process.env.SLOP_E2E_DIRECT_BOUNTY === "1";
+  const solanaBounty = process.env.SLOP_E2E_SOLANA_BOUNTY === "1";
+  let github, notify, slopbot, solana, walletBridge;
   let failed = false;
   let failure;
   let status;
   try {
     const database = prepareRegistryDatabase(persistTo);
+    if (solanaBounty) {
+      const fixture = await import("../tests/direct-bounty-solana-chain.ts");
+      solana = await fixture.startLocalDirectSolanaFixture(basePort + 60);
+      fixture.seedVerifiedSolanaBountyWallets(persistTo, [
+        {
+          githubId: E2E_SECURITY_ACCOUNTS.security,
+          githubLogin: "e2e-security",
+          address: solana.payer,
+        },
+        {
+          githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
+          githubLogin: "e2e-reporter-a",
+          address: solana.reporter,
+        },
+      ]);
+      walletBridge = createServer(async (request, response) => {
+        const reply = (status, body) =>
+          response
+            .writeHead(status, {
+              "content-type": "application/json",
+              "cache-control": "no-store",
+            })
+            .end(JSON.stringify(body));
+        try {
+          const url = new URL(request.url, "http://127.0.0.1");
+          if (
+            request.method === "GET" &&
+            url.pathname === "/info" &&
+            !url.search
+          ) {
+            reply(200, {
+              payer: solana.payer,
+              reporter: solana.reporter,
+              recoveryAddress: solana.recoveryAddress,
+              fee: solana.fee,
+              publicKey: Array.from(solana.publicKey),
+              rpcUrl: solana.rpcUrl,
+              recoveryRpcUrl: solana.recoveryRpcUrl,
+              genesisHash: solana.genesisHash,
+            });
+            return;
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === "/balance" &&
+            url.searchParams.size === 1 &&
+            url.searchParams.has("address")
+          ) {
+            const address = url.searchParams.get("address");
+            if (
+              ![
+                solana.payer,
+                solana.reporter,
+                solana.recoveryAddress,
+                solana.fee,
+              ].includes(address)
+            ) {
+              reply(400, { error: "invalid_address" });
+              return;
+            }
+            reply(200, { balance: String(await solana.balance(address)) });
+            return;
+          }
+          if (
+            request.method !== "POST" ||
+            !["/send", "/rotate-reporter", "/reset-reporter"].includes(
+              url.pathname,
+            ) ||
+            url.search
+          ) {
+            reply(404, { error: "not_found" });
+            return;
+          }
+          const chunks = [];
+          let size = 0;
+          for await (const chunk of request) {
+            size += chunk.length;
+            if (size > 4096) {
+              reply(413, { error: "request_too_large" });
+              return;
+            }
+            chunks.push(chunk);
+          }
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (
+            url.pathname === "/rotate-reporter" ||
+            url.pathname === "/reset-reporter"
+          ) {
+            if (
+              !body ||
+              typeof body !== "object" ||
+              Array.isArray(body) ||
+              Object.keys(body).length !== 0
+            ) {
+              reply(400, { error: "invalid_request" });
+              return;
+            }
+            const target =
+              url.pathname === "/reset-reporter"
+                ? solana.reporter
+                : solana.recoveryAddress;
+            const claimId = fixture.rotateVerifiedSolanaBountyWallet(
+              persistTo,
+              {
+                githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
+                githubLogin: "e2e-reporter-a",
+                address: target,
+              },
+            );
+            reply(200, { address: target, claimId });
+            return;
+          }
+          if (
+            !body ||
+            Object.keys(body).join() !== "transaction" ||
+            typeof body.transaction !== "string" ||
+            !/^[A-Za-z0-9+/]+={0,2}$/u.test(body.transaction)
+          ) {
+            reply(400, { error: "invalid_request" });
+            return;
+          }
+          const raw = Buffer.from(body.transaction, "base64");
+          if (
+            raw.toString("base64") !== body.transaction ||
+            raw.length > 1232
+          ) {
+            reply(400, { error: "invalid_request" });
+            return;
+          }
+          const signature = await solana.signAndSend(raw);
+          reply(200, { signature: Buffer.from(signature).toString("base64") });
+        } catch {
+          reply(500, { error: "wallet_request_failed" });
+        }
+      });
+      await new Promise((resolve, reject) => {
+        walletBridge.once("error", reject);
+        walletBridge.listen(basePort + 7, "127.0.0.1", resolve);
+      });
+    }
     github = await startGitHubApiFixture(githubPort);
     notify = await startNotifyWorkerFixture(
       packageRoot,
       persistTo,
       basePort + 4,
+      directBounty || solanaBounty
+        ? {
+            generalEmail: true,
+            securityGithubIds: [
+              E2E_SECURITY_ACCOUNTS.security,
+              E2E_SECURITY_ACCOUNTS["reporter-a"],
+              E2E_SECURITY_ACCOUNTS.finance,
+              E2E_SECURITY_ACCOUNTS["security-b"],
+            ],
+          }
+        : undefined,
     );
     slopbot = await startSlopbotWorkerFixture(
       packageRoot,
@@ -265,6 +419,26 @@ async function runRegistryPhase() {
       ["--grep", "@registry", ...extraArgs],
       {
         ...database.env,
+        ...(directBounty
+          ? {
+              SLOP_E2E_DIRECT_BOUNTY: "1",
+              ...(process.env.SLOP_E2E_NATIVE_ETH === "1"
+                ? { SLOP_E2E_NATIVE_ETH: "1" }
+                : {}),
+              SLOP_E2E_DIRECT_RPC_URL: `http://127.0.0.1:${basePort + 6}`,
+              SLOP_E2E_NOTIFY_ORIGIN: `http://127.0.0.1:${basePort + 4}`,
+            }
+          : {}),
+        ...(solanaBounty
+          ? {
+              SLOP_E2E_SOLANA_BOUNTY: "1",
+              SLOP_E2E_SOLANA_WALLET_URL: `http://127.0.0.1:${basePort + 7}`,
+              SLOP_E2E_SOLANA_RPC_URL: solana.rpcUrl,
+              SLOP_E2E_SOLANA_RECOVERY_RPC_URL: solana.recoveryRpcUrl,
+              SLOP_E2E_SOLANA_GENESIS: solana.genesisHash,
+              SLOP_E2E_NOTIFY_ORIGIN: `http://127.0.0.1:${basePort + 4}`,
+            }
+          : {}),
         SLOP_E2E_GITHUB_API_ORIGIN: `http://127.0.0.1:${githubPort}`,
         // A throwaway key for the slopdotcash App stand-in. It mints the
         // fixture's advisory-read installation tokens in every registry run.
@@ -298,6 +472,12 @@ async function runRegistryPhase() {
       Promise.resolve().then(() => slopbot?.close()),
       Promise.resolve().then(() => notify?.close()),
       Promise.resolve().then(() => github?.close()),
+      Promise.resolve().then(() => {
+        if (!walletBridge) return;
+        walletBridge.closeAllConnections();
+        return new Promise((resolve) => walletBridge.close(resolve));
+      }),
+      Promise.resolve().then(() => solana?.close()),
     ]);
     // The fixture Workers hold the local D1 files until they exit, and
     // Windows refuses to delete an open file. Windows can also release the

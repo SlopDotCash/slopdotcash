@@ -322,9 +322,16 @@ async function oauthCallback(
       flow.id,
       deps.stateEncryptionSecret,
     );
-    const identity = await deps.resolveGithubIdentity(code, verifier);
+    let identity: Awaited<ReturnType<typeof deps.resolveGithubIdentity>>;
+    try {
+      identity = await deps.resolveGithubIdentity(code, verifier);
+    } catch (error) {
+      await deps.persistence.failCallback(flow.id);
+      throw error;
+    }
     verifier = "";
     if (identity === null) {
+      await deps.persistence.failCallback(flow.id);
       return html(
         502,
         "Sign-in failed",
@@ -332,13 +339,15 @@ async function oauthCallback(
         siteOf(deps),
       );
     }
-    if (flow.audience === POINTS_AUDIENCE && !identity.githubNodeId)
+    if (flow.audience === POINTS_AUDIENCE && !identity.githubNodeId) {
+      await deps.persistence.failCallback(flow.id);
       return html(
         502,
         "Sign-in failed",
         "GitHub account identity is incomplete.",
         siteOf(deps),
       );
+    }
     const completed = await deps.persistence.completeCallback(
       flow.id,
       identity.githubActorId,
@@ -408,6 +417,8 @@ async function pollFlow(
     response.headers.set("retry-after", String(POLL_AFTER_SECONDS));
     return response;
   }
+  if (flow.status === "callback_failed")
+    fail(410, "callback_failed", "Identity sign-in failed; start again");
   if (
     flow.status !== "callback_complete" ||
     flow.githubActorId === null ||

@@ -1,5 +1,8 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  SOLANA_NATIVE_ASSET,
+  solanaBase58,
+} from "../../contracts/solana/adapter";
 import {
   type prepareSolanaFunding,
   solanaFundingMessage,
@@ -40,7 +43,11 @@ function planMessage(deployment: EscrowDeployment, plan: SolanaFundingPlan) {
   if (
     plan.tokenProgram !== undefined &&
     plan.tokenProgram !== CLASSIC_TOKEN_PROGRAM &&
-    plan.tokenProgram !== TOKEN_2022_PROGRAM
+    plan.tokenProgram !== TOKEN_2022_PROGRAM &&
+    !(
+      deployment.asset === SOLANA_NATIVE_ASSET &&
+      plan.tokenProgram === SOLANA_NATIVE_ASSET
+    )
   )
     throw new Error("Unsupported mint token program.");
   const msg = solanaFundingMessage(

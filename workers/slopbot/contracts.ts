@@ -55,9 +55,9 @@ const DEFAULT_CATEGORIES: RepositoryConfig["categories"] = {
   empty: "close",
   duplicate: "close",
   out_of_scope: "label",
-  busywork: "label",
+  busywork: "close",
   missing_evidence: "label",
-  gaming: "label",
+  gaming: "close",
   low_quality: "label",
 };
 
@@ -378,9 +378,15 @@ export type Job =
       itemKind: "issue" | "pull_request";
       number: number;
       senderId: number;
+      /** An explicit ordinary value dispute, distinct from a finding appeal. */
+      subject?: "value";
+      /** Exact authenticated GitHub comment that opened the dispute. */
+      appealCommentId?: number;
     }
   | {
       kind: "appeal_command";
+      /** Optional exact appeal shown in a published triage comment. */
+      appealKey?: string;
       /** accept or reject: the appellant or a maintainer; uphold or deny: a
        * Slop moderator, on an escalated appeal only. */
       command: AppealCommand;

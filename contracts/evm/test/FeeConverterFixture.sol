@@ -68,11 +68,18 @@ contract FeeConverterRouter {
 
     function swapSimpleMode(address, Description calldata desc, bytes calldata, bytes calldata)
         external
+        payable
         returns (uint256 returnAmount, uint256 gasUsed)
     {
-        returnAmount = desc.amount / 2e12;
+        bool nativeAsset = desc.srcToken == address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
+        returnAmount = desc.amount / (nativeAsset ? 1e9 : 2e12);
         require(returnAmount >= desc.minReturnAmount, "minimum");
-        require(FeeConverterToken(desc.srcToken).transferFrom(msg.sender, address(this), desc.amount));
+        if (nativeAsset) {
+            require(msg.value == desc.amount, "native input");
+        } else {
+            require(msg.value == 0, "token input");
+            require(FeeConverterToken(desc.srcToken).transferFrom(msg.sender, address(this), desc.amount));
+        }
         require(FeeConverterToken(desc.dstToken).transfer(desc.dstReceiver, returnAmount));
         gasUsed = 100000;
     }

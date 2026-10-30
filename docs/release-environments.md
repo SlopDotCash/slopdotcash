@@ -116,6 +116,23 @@ published: ordinary releases must read the prior staging census and fail if
 that history cannot be fetched. Never use this option to recover from an outage
 or a failed refresh of an existing staging site.
 
+## Release code with published data
+
+When GitHub quota prevents fresh collection, an operator may explicitly run:
+
+```bash
+gh workflow run deploy.yml --ref main -f use_published_data=true
+```
+
+This manual `main` option retains the last published production leaderboard
+and profiles after validation, with their original timestamps, history and
+source counts. Missing or invalid data stops the release. It skips live
+leaderboard/profile collection and installation of the Git merge collector.
+It never uses the pull-request data adapter. The current D1 registry, code,
+browser, sandbox, protected environment, source-identity and deployment-byte
+checks still apply. Staging and staging bootstrap cannot use this option.
+Normal releases keep fresh collection; the option defaults to `false`.
+
 ## Acceptance and recovery
 
 Run `bun run verify` and `bun run test:e2e` at the proposed source revision.

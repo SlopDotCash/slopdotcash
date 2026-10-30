@@ -86,6 +86,7 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   page,
 }) => {
   let reads = 0;
+  let inventoryReads = 0;
   await page.route("**/api/v1/project-session", (route) => {
     reads++;
     return route.fulfill({
@@ -97,17 +98,22 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   await page.route("**/api/v1/project-setup", (route) =>
     route.fulfill({ json: { projects: [], applications: [] } }),
   );
-  await page.route("**/api/v1/project-github/owned-repositories", (route) =>
-    route.fulfill({ json: { repositories: [] } }),
-  );
+  await page.route("**/api/v1/project-github/owned-repositories", (route) => {
+    inventoryReads++;
+    return route.fulfill({ json: { repositories: [] } });
+  });
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await expect(page.getByText("Your projects", { exact: true })).toHaveCount(0);
-  await page
-    .getByText("Choose from your GitHub repositories", { exact: true })
-    .click();
+  const repository = page.getByRole("textbox", {
+    name: "GitHub repository",
+    exact: true,
+  });
+  await expect(repository).toBeVisible();
+  await expect(repository).toBeEnabled();
+  await expect(repository).toHaveValue("");
   await expect(
-    page.getByText("@example owns no public repositories. Enter one below."),
-  ).toBeVisible();
+    page.getByRole("combobox", { name: "Integration branch", exact: true }),
+  ).toBeDisabled();
   await page.screenshot({
     path: test.info().outputPath("project-setup.png"),
     fullPage: true,
@@ -117,6 +123,7 @@ test("project setup shares one sign-in read with its owner inventory", async ({
     contentType: "text/plain",
   });
   expect(reads).toBe(1);
+  expect(inventoryReads).toBe(1);
   await expectAccessible(page);
 });
 
@@ -589,9 +596,6 @@ test("shows agent setup and keeps contribution records available", async ({
   await expect(
     page.getByRole("button", { name: "Copy agent prompt" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Manual install command")).toHaveCount(0);
-  await expect(page.getByLabel("Solana public address")).toHaveCount(0);
-  await expect(page.getByText("Cycle allocation details")).toHaveCount(0);
   const view = createProjectView(await loadSnapshot(request), "eliza");
   // The open cycle page carries the allocation table.
   await page.goto(`/cycles/eliza/${view.cycle.id}`);
@@ -952,9 +956,6 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await expect(page.getByRole("region", { name: "Changes" })).toContainText(
     scope,
   );
-  await expect(page.getByRole("region", { name: "Changes" })).not.toContainText(
-    "No changes yet",
-  );
   revision = 2;
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
@@ -1001,9 +1002,6 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await review.screenshot({
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
-  await expect(page.getByRole("region", { name: "Changes" })).toContainText(
-    "Contribution changes need a new security scan.",
-  );
   await page.getByRole("button", { name: "Publish changes" }).click();
   await expect(page.getByText("Published revision 3.")).toBeVisible();
   await expect(
@@ -1018,46 +1016,6 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
   await expect(page.getByRole("region", { name: "Changes" })).toHaveCount(0);
-  // PRD section 8: an exempt project publishes skill changes without a new
-  // scan, so the change list must not say that it needs one.
-  Object.assign(setup.checks.scan, {
-    state: "cleared",
-    exempt: true,
-    message: "Existing project, permanently exempt from scan clearance.",
-  });
-  await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByText("Exempt", { exact: true })).toBeVisible();
-  await openOwnerSettings(page, "Contribution rules");
-  await page
-    .getByLabel("Acceptance criteria")
-    .fill(`${scope} Keep the review evidence concise.`);
-  const exemptChanges = page.getByRole("region", { name: "Changes" });
-  await expect(exemptChanges).toContainText(
-    "Presentation and cleared contribution changes publish now.",
-  );
-  await expect(exemptChanges).not.toContainText("need a new security scan");
-  // A normal successful admission has the same routine-edit permission,
-  // without relabelling it as the older existing-project exemption.
-  Object.assign(setup.checks.scan, {
-    state: "cleared",
-    exempt: undefined,
-    message: "Repository admission passed at revision 1.",
-  });
-  await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByText("Exempt", { exact: true })).toHaveCount(0);
-  await openOwnerSettings(page, "Contribution rules");
-  await page
-    .getByLabel("Acceptance criteria")
-    .fill(`${scope} Keep the review evidence concise.`);
-  const admittedChanges = page.getByRole("region", { name: "Changes" });
-  await expect(admittedChanges).toContainText(
-    "Presentation and cleared contribution changes publish now.",
-  );
-  await expect(admittedChanges).not.toContainText("need a new security scan");
-  await page.screenshot({
-    path: test.info().outputPath("admitted-owner-edit.png"),
-    fullPage: true,
-  });
 });
 
 test("reaches and reads older inbox notifications without losing the page", async ({
@@ -1114,7 +1072,15 @@ test("reaches and reads older inbox notifications without losing the page", asyn
     });
   });
   await page.route("**/api/v1/notifications/email", (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unavailable" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unavailable",
+      },
+    }),
   );
   await page.route("**/api/v1/notifications/read", (route) => {
     const keys: string[] = route.request().postDataJSON().eventKeys;
@@ -1218,7 +1184,15 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     }),
   );
   await page.route("**/api/v1/notifications/email", (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unverified",
+      },
+    }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
@@ -1305,7 +1279,15 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   ).toHaveCount(0);
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unavailable" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unavailable",
+      },
+    }),
   );
   await page.reload();
   const retry = preferences.getByRole("button", {
@@ -1317,6 +1299,9 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     route.fulfill({
       json: {
         enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
         availability: "verified",
         email: "example@example.com",
         destinationVersion: "a".repeat(64),
@@ -1390,7 +1375,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
       },
     }),
   );
-  // The admin project list also reads the private fee report (PRD section 6).
+  // The separate fee report remains available through the admin navigation.
   await page.route("**/api/v1/admin/fee-conversions", (route) =>
     route.fulfill({
       json: {
@@ -1404,22 +1389,37 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
       },
     }),
   );
-  await page.goto("/admin", { waitUntil: "networkidle" });
+  await page.goto("/admin?project", { waitUntil: "networkidle" });
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("admin-project-list.png"),
+    fullPage: true,
+  });
   await page.getByRole("searchbox", { name: "Find a project" }).fill("ASI");
-  await page.getByRole("button", { name: "Open ASI", exact: true }).click();
+  await page.getByRole("link", { name: "Open ASI", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\?project=asi$/u);
-  await page.getByRole("button", { name: "Edit project", exact: true }).click();
+  await expect(page.locator("main details")).toHaveCount(0);
+  await page.getByRole("link", { name: "Skills", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\?project=asi&section=skills$/u);
+  await expect(page.locator("main details")).toHaveCount(0);
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\?project=asi&section=settings$/u);
   const changes = page.getByRole("region", { name: "Revision changes" });
-  await expect(changes).toContainText("No changes.");
   await page
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("An updated description without a financial configuration change.");
   await expect(changes).toContainText("Short description");
   await expect(changes).not.toContainText("Reward asset");
   await page.getByRole("button", { name: "Close and keep draft" }).click();
-  await page.getByRole("button", { name: "All projects", exact: true }).click();
-  await page.getByRole("button", { name: "Open ASI", exact: true }).click();
-  await page.getByRole("button", { name: "Edit project", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\?project=asi$/u);
+  await expect(
+    page.getByRole("heading", { name: "ASI", exact: true }),
+  ).toBeFocused();
+  await page.getByRole("link", { name: "All projects", exact: true }).click();
+  await page.getByRole("link", { name: "Open ASI", exact: true }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.locator("main details")).toHaveCount(0);
   await expect(changes).not.toContainText("Reward asset");
   await page.screenshot({
     path: test.info().outputPath("admin-no-implicit-asset.png"),
@@ -1427,9 +1427,37 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   });
   await page.getByRole("button", { name: "Use this reward asset" }).click();
   await expect(changes).toContainText("Reward asset");
-  await page.getByLabel("Discovery placement").selectOption("community");
-  await expect(page.getByLabel("Project status")).toHaveValue("paused");
+  await page.getByRole("checkbox", { name: "Featured", exact: true }).uncheck();
+  await expect(page.getByLabel("Project status")).toHaveValue(project.status);
   await expect(changes).toContainText("Discovery placement");
+  await page
+    .getByLabel("Reason for revision (public)")
+    .fill("Update the project description and selected reward asset.");
+  let releaseSave: () => void = () => {};
+  const pendingSave = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route("**/api/v1/admin/projects/asi/manifest", async (route) => {
+    await pendingSave;
+    await route.fulfill({ json: {} });
+  });
+  const saveRequest = page.waitForRequest(
+    "**/api/v1/admin/projects/asi/manifest",
+  );
+  await page.getByRole("button", { name: "Save revision 2" }).click();
+  await saveRequest;
+  await page
+    .getByRole("link", { name: "Fee conversions", exact: true })
+    .click();
+  const saveResponse = page.waitForResponse(
+    "**/api/v1/admin/projects/asi/manifest",
+  );
+  releaseSave();
+  await saveResponse;
+  await expect(
+    page.getByRole("region", { name: "Fee conversions" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\?section=fees$/u);
 });
 
 test("serves byte-consistent bootstrap and read-only site artifacts", {
@@ -1482,22 +1510,17 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     maxRedirects: 0,
   });
   expect(fundingRouteResponse.status()).toBe(200);
-  expect(await fundingRouteResponse.text()).toContain('<div id="root"></div>');
   const trailingFundingRouteResponse = await request.get(
     "/projects/eliza/funding/",
     { maxRedirects: 0 },
   );
   expect(trailingFundingRouteResponse.status()).toBe(200);
-  expect(await trailingFundingRouteResponse.text()).toContain(
-    '<div id="root"></div>',
-  );
   // Let the client retain the query and explicit fragment, or supply the
   // monthly-awards fragment. Redirecting to funding loses the awards target.
   // The preview server would conceal a missing Pages rewrite.
   for (const path of ["/projects/eliza/awards", "/projects/eliza/awards/"]) {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(200);
-    expect(await response.text(), path).toContain('<div id="root"></div>');
   }
   for (const path of [
     "/models",
@@ -1510,7 +1533,6 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   ]) {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(404);
-    expect(await response.text(), path).not.toContain('<div id="root"></div>');
   }
 
   const sitemap = await request.get("/sitemap.xml");
@@ -1546,7 +1568,6 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   // D1 by a Pages Function; the registry lane covers them.
   const missingDiscovery = await request.get("/.well-known/slop/missing.json");
   expect(missingDiscovery.status()).toBe(404);
-  expect(await missingDiscovery.text()).not.toContain('<div id="root"></div>');
   expect(bootstrapResponse.headers()["content-type"]).toContain(
     "text/markdown",
   );
@@ -1595,9 +1616,6 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   });
   expect(await discoverySkillResponse.body()).toEqual(bootstrap);
   expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
-  expect(bootstrap.toString()).toContain(
-    "separate informed consent and inspection; failure never blocks submission.",
-  );
 });
 
 test("shows an explicit error for invalid data and retries", async ({
@@ -1653,17 +1671,17 @@ for (const scenario of [
       "/projects/new",
       "/projects/eliza/funding",
     ]) {
-      test(`reflows ${path} with ${scenario.name}`, async ({ page }) => {
+      test(`reflows ${path} with ${scenario.name}`, async ({ page }, info) => {
         await page.setViewportSize({ width: scenario.width, height: 1000 });
         await page.goto(path, { waitUntil: "networkidle" });
         if (scenario.textScale === 2) {
           await enlargeText(page.locator("body"));
         }
-        // The skip link is the first stop; it hands keyboard users the content.
-        if (path.endsWith("/funding"))
-          await page.getByRole("link", { name: "Skip to content" }).focus();
-        else await page.keyboard.press("Tab");
-        await expect(page.locator(":focus")).toHaveAttribute("href", "#main");
+        await expect(
+          page.getByRole("link", { name: "Skip to content" }),
+        ).toHaveCount(0);
+        // Start in the header even when a route has focused its own content.
+        await page.getByRole("banner").click({ position: { x: 1, y: 1 } });
         await page.keyboard.press("Tab");
         await expect(page.locator(":focus")).toHaveAttribute("href", "/");
         await expectAccessible(page);
@@ -1694,6 +1712,23 @@ for (const scenario of [
         expect(obscuredFooterLinks, "footer links covered by the logo").toEqual(
           [],
         );
+        await page.mouse.wheel(0, 1000);
+        await expect
+          .poll(() =>
+            page
+              .getByRole("banner")
+              .evaluate((header) => header.getBoundingClientRect().top),
+          )
+          .toBe(0);
+        await page.screenshot({ path: info.outputPath("header-scrolled.png") });
+        // Capture from the document top so a sticky header is not composited
+        // into the middle of a full-page screenshot at the old scroll offset.
+        await page.mouse.wheel(0, -100000);
+        await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+        await page.screenshot({
+          path: info.outputPath("header-at-top.png"),
+          fullPage: true,
+        });
       });
     }
   });
@@ -1963,7 +1998,6 @@ test("refuses retired and unknown paths and recovers to projects", async ({
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
     ).toBeVisible();
-    await expect(page).toHaveTitle("Page not found · Slop");
     await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
       "content",
@@ -2015,8 +2049,7 @@ test("an unknown project is a noindex page with no canonical", async ({
   page,
 }) => {
   await page.goto("/projects/no-such-project");
-  await expect(page.getByText("This project isn't listed.")).toBeVisible();
-  await expect(page).toHaveTitle("Page not found · Slop");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
     "content",

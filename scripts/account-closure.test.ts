@@ -3,7 +3,9 @@
 // connections and activity email, and keeps the identity, claims, awards,
 // obligations and inbox. Only an explicit reopen signs the account in again.
 import { expect, test } from "bun:test";
-import { handlePointsApi } from "../backend/points/handler";
+import { handleEmailPreferences } from "../backend/notifications/email";
+import { verificationTokenHash } from "../backend/notifications/email-destinations";
+import { handlePointsApi, sessionGithubActor } from "../backend/points/handler";
 import {
   ME,
   OTHER,
@@ -57,6 +59,7 @@ async function harness() {
   const count = (sql: string, ...values: string[]) =>
     (sqlite.query(sql).get(...values) as { n: number }).n;
   return {
+    db,
     sqlite,
     tokens,
     call,
@@ -170,8 +173,7 @@ test("closing an account ends every session, removes optional connections and ke
         ME.github,
       ),
     ).toBe(1);
-    // Activity mail is off and queued activity mail is suppressed; the
-    // essential wallet-security notice is not.
+    // Both activity and security email consent end, including queued mail.
     expect(
       sqlite
         .query(
@@ -187,7 +189,7 @@ test("closing an account ends every session, removes optional connections and ke
         .all(),
     ).toEqual([
       { essential: 0, state: "suppressed", n: 2 },
-      { essential: 1, state: "queued", n: 1 },
+      { essential: 1, state: "suppressed", n: 1 },
     ]);
     // The closed membership leaves people lists and the public profile.
     const people = await call("people", null);
@@ -214,8 +216,31 @@ test("closing an account ends every session, removes optional connections and ke
 });
 
 test("a closed account signs in again only through an explicit reopen", async () => {
-  const { sqlite, tokens, call, count, setClock } = await harness();
+  const { db, sqlite, tokens, call, count, setClock } = await harness();
   try {
+    const version = "e".repeat(64),
+      token = "f".repeat(64);
+    sqlite
+      .query(
+        "UPDATE notification_email_preferences SET enabled=0,security_enabled=1,destination_version=? WHERE github_id=?",
+      )
+      .run(version, ME.github);
+    sqlite
+      .query(
+        "INSERT INTO notification_email_destinations(github_id,email,destination_version,verified_at) VALUES(?,?,?,?)",
+      )
+      .run(ME.github, "closed-account@example.com", version, NOW);
+    sqlite
+      .query(
+        "INSERT INTO notification_email_verifications(id,github_id,request_key,email,address_key,token_hash,activity_enabled,security_enabled,created_at,expires_at) VALUES('pending-close',?,'pending-close-key','pending@example.com',?,?,1,1,?,?)",
+      )
+      .run(
+        ME.github,
+        "a".repeat(64),
+        await verificationTokenHash(token),
+        NOW,
+        "2026-10-23T14:00:00.000Z",
+      );
     expect(
       (await call("account/close", tokens.me, { login: ME.login })).status,
     ).toBe(200);
@@ -250,6 +275,55 @@ test("a closed account signs in again only through an explicit reopen", async ()
       socialPoints: 10,
     });
     expect(reopened.cookie).toContain("Max-Age=3600");
+    expect(
+      sqlite
+        .query(
+          "SELECT enabled,security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
+        )
+        .get(ME.github),
+    ).toEqual({ enabled: 0, security_enabled: 0, destination_version: "" });
+    expect(
+      sqlite
+        .query(
+          "SELECT cancelled_at,consumed_at FROM notification_email_verifications WHERE id='pending-close'",
+        )
+        .get(),
+    ).toEqual({ cancelled_at: NOW, consumed_at: null });
+    expect(
+      sqlite
+        .query(
+          "SELECT email,destination_version FROM notification_email_destinations WHERE github_id=?",
+        )
+        .get(ME.github),
+    ).toEqual({
+      email: "closed-account@example.com",
+      destination_version: version,
+    });
+    const oldVerification = await handleEmailPreferences(
+      new Request("https://slop.cash/api/v1/notifications/email/verify", {
+        method: "POST",
+        headers: {
+          origin: "https://slop.cash",
+          "content-type": "application/json",
+          cookie: reopened.cookie as string,
+        },
+        body: JSON.stringify({ token }),
+      }),
+      {
+        db,
+        now: () => new Date(LATER),
+        sessionActor: (request) => sessionGithubActor(request, db, LATER),
+        eligibility: async () => ({ available: false }),
+      },
+    );
+    expect(oldVerification?.status).toBe(409);
+    expect(
+      sqlite
+        .query(
+          "SELECT enabled,security_enabled FROM notification_email_preferences WHERE github_id=?",
+        )
+        .get(ME.github),
+    ).toEqual({ enabled: 0, security_enabled: 0 });
     expect(
       sqlite
         .query("SELECT public, closed_at FROM points_members WHERE actor_id=?")

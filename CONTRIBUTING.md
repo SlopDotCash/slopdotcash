@@ -355,17 +355,24 @@ Install the pinned toolchain and run the complete repository check:
 
 ```bash
 bun install --frozen-lockfile
+bun run projects:sync
 bun run leaderboard:generate
 bun run verify
 bun run format:check
 bun run test:e2e
 ```
 
+The committed registry snapshot is empty. Award and skill validation need the
+synced project identities. Do not commit the generated snapshot.
+
 For local pull-request checks without live GitHub ingestion, replace only
 `leaderboard:generate` with the validated public-snapshot preparation in
 [Local review checks](README.md#local-review-checks). Stop if preparation
-fails; a leftover ledger is not valid evidence. The release workflow always
-collects fresh GitHub data.
+fails; a leftover ledger is not valid evidence. Normal releases collect fresh
+GitHub data. An explicit manual `main` release may instead validate and retain
+the last published production leaderboard and profiles, including their
+original timestamps. It cannot use staging bootstrap or bypass the quality and
+deployment gates; see [release environments](docs/release-environments.md).
 
 For UI changes, test the built site at desktop and mobile widths, keyboard-only
 navigation, 200% zoom, WCAG AA, copy feedback, downloads, raw Markdown routes,

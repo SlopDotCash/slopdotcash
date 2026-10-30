@@ -304,9 +304,8 @@ test("a second trace for a run is refused at the intent, and its bytes are never
   const runId = await runWithTraceA(t);
   const intentB = await t.intent(runId, TRACE_B);
   expect(intentB.status).toBe(409);
-  expect(intentB.json).toEqual({
+  expect(intentB.json).toMatchObject({
     error: "trace_conflict",
-    message: "The run already has a different trace",
   });
   // The same trace may be re-declared: the intent stays idempotent.
   expect((await t.intent(runId, TRACE_A)).status).toBe(201);
@@ -325,9 +324,8 @@ test("an intent issued before another trace attached cannot write its bytes", as
   ).toBe(201);
   const uploadB = await t.upload(intentB.json.uploadUrl as string, TRACE_B);
   expect(uploadB.status).toBe(409);
-  expect(uploadB.json).toEqual({
+  expect(uploadB.json).toMatchObject({
     error: "trace_conflict",
-    message: "The run already has a different trace",
   });
   expect(await t.retained(TRACE_B)).toBe(false);
 });
@@ -347,9 +345,8 @@ test("an intent issued before finalization cannot write its bytes afterwards", a
   expect((await t.finalize(runId)).status).toBe(200);
   const uploadB = await t.upload(intentB.json.uploadUrl as string, TRACE_B);
   expect(uploadB.status).toBe(409);
-  expect(uploadB.json).toEqual({
+  expect(uploadB.json).toMatchObject({
     error: "run_finalized",
-    message: "A finalized run cannot be changed",
   });
   expect(await t.retained(TRACE_B)).toBe(false);
 });

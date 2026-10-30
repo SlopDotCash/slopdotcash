@@ -141,6 +141,7 @@ export async function completeInstallationDelivery(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(installation_id) DO UPDATE SET
              ${column} = excluded.${column},
+             account_login = excluded.account_login,
              source_updated_at = excluded.source_updated_at
            WHERE slopbot_installations.source_updated_at IS NULL
              OR slopbot_installations.source_updated_at < excluded.source_updated_at

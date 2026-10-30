@@ -33,6 +33,7 @@ import { handleFeeConversionsApi } from "../../backend/fee-conversions/handler";
 import { evmAwardId } from "../../contracts/evm/adapter";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { NETWORK_DEFINITIONS, parseConfig } from "./config";
+import { directFeeScenario } from "./direct-fees-fixture";
 import { KYBER_ROUTER_ABI } from "./evm";
 import { chainClient, runOnce } from "./index";
 import { D1ConversionStore, projectVaults } from "./store";
@@ -43,6 +44,9 @@ const FORK_URL =
 const PORT = Number(process.env.SLOP_TEST_FEE_PORT ?? 28545);
 const local = process.argv.includes("--local");
 const claimOnly = process.argv.includes("--fee-claim-only");
+const directOnly = process.argv.includes("--direct-receipts");
+if (directOnly && !local)
+  throw new Error("Direct fee fixture requires --local");
 const supportedFaults = [
   "before",
   "after",
@@ -72,7 +76,7 @@ if (
   );
 if (faults.some((fault) => !supportedFaults.includes(fault)))
   throw new Error("Unknown fee-claim fault case");
-if (faults.length > 1) {
+if (faults.length > 1 && !directOnly) {
   // Repeated snapshot restores can lose historical bytecode in Anvil. Each
   // fault needs a fresh chain so receipt-block code checks remain available.
   // The first process also runs the six existing conversion cases.
@@ -102,6 +106,8 @@ const RPC = `http://127.0.0.1:${PORT}`;
 const AERO = "0x940181a94a35a4569e4529a3cdfb74e38fd98631";
 const HOLDER = "0x6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d";
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const NATIVE_ASSET = "0x0000000000000000000000000000000000000000";
 // A fork-only copy of the AERO contract: an ERC-20 no aggregator knows.
 const UNROUTED = "0x00000000000000000000000000000000000f0e10";
 
@@ -121,7 +127,11 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
           { status: 400 },
         );
       const amountOut =
-        tokenIn === AERO ? BigInt(amountIn) / 2_000_000_000_000n : 1n;
+        tokenIn === NATIVE
+          ? BigInt(amountIn) / 1_000_000_000n
+          : tokenIn === AERO
+            ? BigInt(amountIn) / 2_000_000_000_000n
+            : 1n;
       const usd = (Number(amountOut) / 1_000_000).toString();
       return Response.json({
         code: 0,
@@ -144,12 +154,14 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     if (parsed.pathname.endsWith("/route/build")) {
       const request = JSON.parse(String(init?.body));
       const route = request.routeSummary;
-      const amountOut = BigInt(route.amountIn) / 2_000_000_000_000n;
+      const amountOut =
+        BigInt(route.amountIn) /
+        (route.tokenIn === NATIVE ? 1_000_000_000n : 2_000_000_000_000n);
       return Response.json({
         code: 0,
         data: {
           routerAddress: ROUTER,
-          transactionValue: "0",
+          transactionValue: route.tokenIn === NATIVE ? route.amountIn : "0",
           amountIn: route.amountIn,
           amountOut: amountOut.toString(),
           data: encodeFunctionData({
@@ -358,6 +370,20 @@ try {
     }),
     FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [AERO, UNROUTED] }),
   };
+  if (directOnly) {
+    await directFeeScenario({
+      db,
+      sqlite,
+      env,
+      rpc,
+      rpcUrl: RPC,
+      wallet,
+      token: AERO,
+      target: USDC,
+    });
+    await cleanup();
+    process.exit(0);
+  }
   // Loses a swap send after the separate approval has finalized,
   // either before it reaches the node or after the node accepted it.
   const faulty = (when: "before" | "after"): typeof fetch => {
@@ -627,8 +653,8 @@ try {
     const rows = sqlite
       .query(
         `SELECT state, amount_in, quote_amount_out, min_amount_out, amount_out,
-              approval_tx_id, tx_id, evm_nonce, token_balance_before, target_balance_before,
-              target_balance_after, reason FROM fee_conversions WHERE kind = 'conversion' ORDER BY rowid`,
+            approval_tx_id, tx_id, evm_nonce, token_balance_before, target_balance_before,
+            target_balance_after, reason FROM fee_conversions WHERE kind = 'conversion' ORDER BY rowid`,
       )
       .all() as { state: string; amount_out: string | null }[];
     console.log(JSON.stringify(rows, null, 2));
@@ -700,7 +726,7 @@ try {
     "function vaultKey(address,bytes32,address,uint8) pure returns (bytes32)",
     "function vaults(bytes32) view returns (address)",
     "function approve(address,uint256) returns (bool)",
-    "function deposit(uint128)",
+    "function deposit(uint128) payable",
     "function withdrawUnused(uint128)",
     "function accruedFees() view returns (uint128)",
     "function freeBalance() view returns (uint128)",
@@ -712,9 +738,9 @@ try {
     "function executeIdentityAuthorityRotation()",
     "function claimFees()",
   ]);
-  const call = async (from: string, to: string, data: Hex) => {
+  const call = async (from: string, to: string, data: Hex, value = 0n) => {
     const hash = await rpc("eth_sendTransaction", [
-      { from, to, data, gas: "0x7a1200" },
+      { from, to, data, value: `0x${value.toString(16)}`, gas: "0x7a1200" },
     ]);
     await rpc("anvil_mine", ["0x1"]);
     const receipt = (await rpc("eth_getTransactionReceipt", [hash])) as {
@@ -1937,6 +1963,162 @@ try {
       `PASS: ${local ? "Local EVM fixture" : "Base fork"} ${faults[0]} claim recovery and principal preservation`,
     );
   }
+  if (local && faults[0] === "before") {
+    // A native reward uses zero only as the recorded asset identity. The
+    // claim moves ETH and the router receives exact msg.value, with no ERC-20
+    // balance, allowance or transfer call to the sentinel.
+    const nativeProject = keccak256(
+      new TextEncoder().encode("native-fee-local"),
+    );
+    await call(
+      registrar,
+      factory,
+      encodeFunctionData({
+        abi: vaultAbi,
+        functionName: "create",
+        args: [nativeProject, NATIVE_ASSET, 0],
+      }),
+    );
+    const nativeKey = await view(factory, "vaultKey", [
+      registrar,
+      nativeProject,
+      NATIVE_ASSET,
+      0,
+    ]);
+    const nativeVault = (
+      (await view(factory, "vaults", [nativeKey])) as unknown as string
+    ).toLowerCase();
+    const nativeImplementation = await implementation(nativeVault);
+    save(
+      {
+        ...deployment,
+        vault: nativeVault,
+        asset: NATIVE_ASSET,
+        codeSha256: await runtimeDigest(nativeVault),
+        evmUpgrade: {
+          ...deployment.evmUpgrade,
+          vaultImplementation: nativeImplementation,
+          vaultImplementationCodeSha256:
+            await runtimeDigest(nativeImplementation),
+        },
+      },
+      false,
+    );
+    await rpc("anvil_mine", ["0x80"]);
+    const nativeEnv = {
+      ...env,
+      FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [NATIVE_ASSET] }),
+    };
+    const nativeConversions = () =>
+      sqlite
+        .query(
+          "SELECT * FROM fee_conversions WHERE token=? AND kind='conversion' ORDER BY rowid",
+        )
+        .all(NATIVE_ASSET) as {
+        state: string;
+        amount_in: string;
+        amount_out: string | null;
+        approval_tx_id: string | null;
+        raw_tx: string;
+      }[];
+    await runOnce(nativeEnv);
+    assert.equal(
+      nativeConversions().length,
+      0,
+      "a gas top-up is not native fee revenue",
+    );
+
+    const nativeDeposit = 2n * 10n ** 18n;
+    const nativeWithdrawal = 10n ** 18n;
+    await call(
+      registrar,
+      nativeVault,
+      encodeFunctionData({
+        abi: vaultAbi,
+        functionName: "deposit",
+        args: [nativeDeposit],
+      }),
+      nativeDeposit,
+    );
+    await call(
+      registrar,
+      nativeVault,
+      encodeFunctionData({
+        abi: vaultAbi,
+        functionName: "withdrawUnused",
+        args: [nativeWithdrawal],
+      }),
+    );
+    const nativeFee = nativeWithdrawal / 50n;
+    assert.equal(await view(nativeVault, "accruedFees"), nativeFee);
+    const nativePrincipal = await view(nativeVault, "freeBalance");
+    const beforeNativeUsdc = await balanceOf(USDC, wallet);
+    const [nativeClaimRun] = await runOnce(nativeEnv);
+    assert.equal(nativeClaimRun.claimed, 1);
+    assert.equal(
+      nativeConversions().length,
+      0,
+      "native claim must finalize before conversion",
+    );
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(nativeEnv);
+    const [sentNative] = nativeConversions();
+    assert.equal(sentNative?.state, "submitted");
+    assert.equal(
+      sentNative.approval_tx_id,
+      null,
+      "native conversion needs no token approval",
+    );
+    const nativeInput = BigInt(sentNative.amount_in);
+    assert(
+      nativeInput > 0n && nativeInput < nativeFee - 10n ** 16n,
+      "earned fees retain the next gas reserve",
+    );
+    const nativeWire = parseTransaction(sentNative.raw_tx as Hex);
+    assert.equal(nativeWire.value, nativeInput);
+    assert.equal(nativeWire.to?.toLowerCase(), ROUTER.toLowerCase());
+    await rpc("anvil_mine", ["0x80"]);
+    await runOnce(nativeEnv);
+    const [settledNative] = nativeConversions();
+    assert.equal(settledNative.state, "finalized");
+    assert.equal(
+      BigInt(settledNative.amount_out as string),
+      nativeInput / 1_000_000_000n,
+    );
+    assert.equal(
+      (await balanceOf(USDC, wallet)) - beforeNativeUsdc,
+      BigInt(settledNative.amount_out as string),
+    );
+    const nativeClaim = sqlite
+      .query(
+        "SELECT state,amount_out FROM fee_conversions WHERE token=? AND kind='claim'",
+      )
+      .get(NATIVE_ASSET) as { state: string; amount_out: string };
+    assert.equal(nativeClaim.state, "finalized");
+    assert.equal(BigInt(nativeClaim.amount_out), nativeFee);
+    assert.equal(await view(nativeVault, "accruedFees"), 0n);
+    assert.equal(await view(nativeVault, "freeBalance"), nativePrincipal);
+    const remainingNativeFees = await new D1ConversionStore(
+      db,
+    ).nativeFeeBalance("base", NATIVE_ASSET, wallet);
+    assert(remainingNativeFees >= 0n && remainingNativeFees < 10n ** 16n);
+    await runOnce(nativeEnv);
+    assert.equal(
+      nativeConversions().length,
+      1,
+      "repeat run cannot sweep wallet gas or replay native fees",
+    );
+    console.log(
+      JSON.stringify({
+        check:
+          "native ETH claim and exact-value conversion preserves principal and gas topups",
+        earnedWei: nativeFee.toString(),
+        soldWei: nativeInput.toString(),
+        retainedWei: remainingNativeFees.toString(),
+        usdcMicro: settledNative.amount_out,
+      }),
+    );
+  }
   const nativeRows = sqlite
     .query<
       {
@@ -1990,6 +2172,9 @@ try {
     }),
   );
 } finally {
+  await cleanup();
+}
+async function cleanup() {
   anvil.kill();
   await anvil.exited;
   globalThis.fetch = nativeFetch;

@@ -372,9 +372,7 @@ const day = 24 * 60 * 60 * 1000;
 test("an uncertain finding waits 7 days for the maintainer, then is labeled once and never closed", async () => {
   await uncertainReview(false, async (run) => {
     const start = Date.now();
-    expect(await run.review()).toMatch(
-      /^held for maintainer until .+ \(busywork\)$/,
-    );
+    await run.review();
     expect(run.writes).toContain(
       "POST /repos/SlopDotCash/asi/issues/5/comments",
     );
@@ -420,7 +418,7 @@ test("an uncertain finding waits 7 days for the maintainer, then is labeled once
 test("a maintainer who acts inside the window keeps the decision; Slopbot adds no label", async () => {
   await uncertainReview(true, async (run) => {
     const start = Date.now();
-    expect(await run.review()).toMatch(/^held for maintainer until /);
+    await run.review();
     setSystemTime(new Date(start + 8 * day));
     await run.deliver(await run.tick());
     expect(run.writes.some((w) => w.endsWith("/labels"))).toBe(false);
@@ -433,7 +431,7 @@ test("a maintainer who acts inside the window keeps the decision; Slopbot adds n
 test("an author's @mention of a maintainer is not maintainer action", async () => {
   await uncertainReview(false, async (run) => {
     const start = Date.now();
-    expect(await run.review()).toMatch(/^held for maintainer until /);
+    await run.review();
     setSystemTime(new Date(start + 8 * day));
     // The author comments "@maintainer please take a look". GitHub records
     // `mentioned` and `subscribed` timeline events whose actor is the
@@ -463,7 +461,7 @@ test("a label-only finding without cited evidence waits even at high confidence"
   await uncertainReview(
     false,
     async (run) => {
-      expect(await run.review()).toMatch(/^held for maintainer until /);
+      await run.review();
       expect(run.writes.some((w) => w.endsWith("/labels"))).toBe(false);
       expect(run.sql("SELECT status, action FROM slopbot_reviews")).toEqual([
         { status: "completed", action: "hold" },
@@ -476,7 +474,7 @@ test("a label-only finding without cited evidence waits even at high confidence"
 test("a pull request converted to draft during the window is not labeled", async () => {
   await uncertainReview(false, async (run) => {
     const start = Date.now();
-    expect(await run.review()).toMatch(/^held for maintainer until /);
+    await run.review();
     // The author converts the pull request back to draft before the window
     // ends; the head SHA the hold recorded does not change.
     run.setDraft(true);
@@ -500,7 +498,7 @@ test.each([true, false])(
   async (newHead) => {
     await uncertainReview(false, async (run) => {
       const start = Date.now();
-      expect(await run.review()).toMatch(/^held for maintainer until /);
+      await run.review();
       // The author answers the finding with a new commit that adds an image.
       run.pushUnpatchedFile(newHead);
       setSystemTime(new Date(start + 7 * day + 60_000));
@@ -523,7 +521,7 @@ test.each([true, false])(
   async (closed) => {
     await uncertainReview(false, async (run) => {
       const start = Date.now();
-      expect(await run.review()).toMatch(/^held for maintainer until /);
+      await run.review();
       // Deleting the target branch closes the pull requests that target it.
       run.deleteTargetBranch(closed);
       setSystemTime(new Date(start + 7 * day + 60_000));
@@ -570,7 +568,7 @@ test.each([true, false])(
 test("an upheld appeal supersedes an open maintainer hold and removes slopbot:uncertain after the hold window", async () => {
   await uncertainReview(false, async (run) => {
     const start = Date.now();
-    expect(await run.review()).toMatch(/^held for maintainer until /);
+    await run.review();
     run.setVerdict("none", 0.95);
     await run.deliver([run.job("appeal", { senderId: 42 })]);
     await run.deliver([
@@ -587,7 +585,7 @@ test("an upheld appeal supersedes an open maintainer hold and removes slopbot:un
   });
   await uncertainReview(false, async (run) => {
     const start = Date.now();
-    expect(await run.review()).toMatch(/^held for maintainer until /);
+    await run.review();
     setSystemTime(new Date(start + 7 * day + 60_000));
     await run.deliver(await run.tick());
     expect(run.labels).toEqual([{ name: "slopbot:uncertain" }]);

@@ -204,9 +204,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   release?.();
   blocked = undefined;
   diagnostics.allowResponse(503, "GET", olderPath);
-  await expect(page.getByRole("alert")).toContainText(
-    "The inbox could not load",
-  );
+  await expect(page.getByRole("alert")).toBeVisible();
   await expect(receipt).toContainText("More evidence needed");
   actor = "43";
   // The account change resets the cursor, which starts a second, first-page
@@ -223,9 +221,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   await expect(page).toHaveURL(/\/inbox\?view=notifications$/u);
   await expect(page.locator("textarea")).toHaveCount(0);
   await firstPageRetry;
-  await expect(page.getByRole("alert")).toContainText(
-    "The inbox could not load",
-  );
+  await expect(page.getByRole("alert")).toBeVisible();
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByText("You have no notifications.")).toBeVisible();

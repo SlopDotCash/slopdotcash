@@ -53,7 +53,8 @@ interface Holding {
   amount: bigint;
 }
 export interface ReviewedRouteAccounts {
-  source: Holding;
+  source: Holding | null;
+  sourceAddress: string;
   destination: Holding | null;
   destinationAddress: string;
   observations: RouteAccountObservation[];
@@ -200,9 +201,15 @@ export async function reviewSolanaRouteAccounts(
   );
   for (const entry of creations) {
     if (
-      proof.keys[entry.index] !== route.destination ||
-      entry.mint !== expected.outputMint ||
-      entry.tokenProgram !== expected.outputProgram
+      !(
+        (proof.keys[entry.index] === route.destination &&
+          entry.mint === expected.outputMint &&
+          entry.tokenProgram === expected.outputProgram) ||
+        (expected.nativeInput &&
+          proof.keys[entry.index] === route.source &&
+          entry.mint === expected.inputMint &&
+          entry.tokenProgram === expected.inputProgram)
+      )
     )
       throw new Error("Route creates an unrelated associated token account");
   }
@@ -269,15 +276,16 @@ export async function reviewSolanaRouteAccounts(
     wallet.data.length !== 0
   )
     throw new Error("Route fee payer is not a system wallet");
-  const source = holdings.get(route.source);
+  const source = holdings.get(route.source) ?? null;
   const destination = holdings.get(route.destination) ?? null;
   if (
-    !source ||
-    source.wallet !== expected.wallet ||
-    source.mint !== expected.inputMint ||
-    source.state.owner !== expected.inputProgram ||
-    source.amount < expected.amountIn ||
-    source.bytes[108] !== 1
+    source
+      ? source.wallet !== expected.wallet ||
+        source.mint !== expected.inputMint ||
+        source.state.owner !== expected.inputProgram ||
+        (!expected.nativeInput && source.amount < expected.amountIn) ||
+        source.bytes[108] !== 1
+      : !expected.nativeInput || !created.has(route.source)
   )
     throw new Error("Route input holding does not cover the reviewed swap");
   if (
@@ -293,6 +301,7 @@ export async function reviewSolanaRouteAccounts(
     );
   return {
     source,
+    sourceAddress: route.source,
     destination,
     destinationAddress: route.destination,
     observations,
@@ -316,11 +325,7 @@ export function assertSolanaRouteSimulation(
     accounts.length !== 2
   )
     throw new Error("Route simulation account evidence is incomplete or stale");
-  const sourceState = accountState(
-    accounts[0],
-    review.source.state.address,
-    slot,
-  );
+  const sourceState = accountState(accounts[0], review.sourceAddress, slot);
   const destinationState = accountState(
     accounts[1],
     review.destinationAddress,
@@ -338,7 +343,7 @@ export function assertSolanaRouteSimulation(
         (index >= 64 && index < 72) || byte === after.bytes[index],
     );
   if (
-    !unchanged(review.source, source) ||
+    (review.source && !unchanged(review.source, source)) ||
     (review.destination && !unchanged(review.destination, destination))
   )
     throw new Error(
@@ -351,16 +356,25 @@ export function assertSolanaRouteSimulation(
     destination.bytes[108] !== 1
   )
     throw new Error("Route simulation redirected the output");
-  if (!review.destination) {
-    const view = new DataView(
-      destination.bytes.buffer,
-      destination.bytes.byteOffset,
-    );
+  for (const created of [
+    review.source ? null : source,
+    review.destination ? null : destination,
+  ]) {
+    if (!created) continue;
+    const view = new DataView(created.bytes.buffer, created.bytes.byteOffset);
     if (view.getUint32(72, true) !== 0 || view.getUint32(129, true) !== 0)
-      throw new Error("Route simulation delegated a new output token account");
+      throw new Error("Route simulation delegated a new token account");
   }
   if (
-    review.source.amount - source.amount !== review.expected.amountIn ||
+    source.state.owner !== review.expected.inputProgram ||
+    source.wallet !== review.expected.wallet ||
+    source.mint !== review.expected.inputMint ||
+    source.bytes[108] !== 1
+  )
+    throw new Error("Route simulation redirected the input");
+  if (
+    (review.source?.amount ?? 0n) - source.amount !==
+      (review.expected.nativeInput ? 0n : review.expected.amountIn) ||
     destination.amount - (review.destination?.amount ?? 0n) <
       review.expected.minimumOut
   )

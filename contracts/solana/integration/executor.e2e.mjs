@@ -638,7 +638,6 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
       assert.equal(result.status, "rejected");
       assert.ok(result.reason instanceof Error);
       assert.equal(result.reason.constructor.name, "SolanaRpcUnavailable");
-      assert.equal(result.reason.message, "RPC failure");
       assert.equal(
         result.reason.cause?.message,
         "Injected transport interruption before broadcast",

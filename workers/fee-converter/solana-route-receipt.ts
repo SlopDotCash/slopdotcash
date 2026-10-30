@@ -3,12 +3,17 @@ import {
   solanaBase58,
   solanaBase64Bytes,
 } from "../../contracts/solana/adapter";
+import {
+  nativeLamportDeltas,
+  SOLANA_NATIVE_ASSET,
+} from "../../contracts/solana/native";
 import { ata } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { ConversionRow } from "./core";
 import { assertJupiterRoute } from "./jupiter-route";
 import { parseTransaction } from "./solana";
 import {
+  associatedAccountCreations,
   retainedRouteExpectation,
   type SolanaAccountProof,
 } from "./solana-accounts";
@@ -25,6 +30,9 @@ export interface RouteReceipt {
   transaction: [string, string];
   meta: {
     err: unknown;
+    fee?: number;
+    preBalances?: number[];
+    postBalances?: number[];
     loadedAddresses?: { writable: string[]; readonly: string[] };
     preTokenBalances: Balance[];
     postTokenBalances: Balance[];
@@ -60,7 +68,9 @@ export function finalizedRouteCredit(
     expected = retainedRouteExpectation(proof.route);
   if (
     expected.wallet !== row.feeWallet ||
-    expected.inputMint !== row.token ||
+    (expected.nativeInput
+      ? row.token !== SOLANA_NATIVE_ASSET
+      : expected.inputMint !== row.token) ||
     expected.outputMint !== row.targetToken ||
     expected.amountIn.toString() !== row.amountIn ||
     expected.minimumOut.toString() !== row.minAmountOut
@@ -141,7 +151,7 @@ export function finalizedRouteCredit(
     sourceIndex,
     expected.inputMint,
     expected.inputProgram,
-    false,
+    Boolean(expected.nativeInput),
   );
   const credit = change(
     destinationIndex,
@@ -149,10 +159,28 @@ export function finalizedRouteCredit(
     expected.outputProgram,
     true,
   );
-  if (debit !== expected.amountIn || credit < expected.minimumOut)
+  if (
+    debit !== (expected.nativeInput ? 0n : expected.amountIn) ||
+    credit < expected.minimumOut
+  )
     throw new Error(
       "Finalized swap did not debit its exact input and credit its minimum output",
     );
+  if (expected.nativeInput) {
+    const changes = nativeLamportDeltas({ ...receipt.meta }, proof.keys);
+    const rent = associatedAccountCreations(
+      parsed,
+      proof.keys,
+      expected.wallet,
+    ).reduce((sum, account) => {
+      const change = changes.get(proof.keys[account.index]) ?? 0n;
+      return sum + (change > 0n ? change : 0n);
+    }, 0n);
+    if ((changes.get(expected.wallet) ?? 0n) + rent !== -expected.amountIn)
+      throw new Error(
+        "Finalized native swap did not spend exactly its earned fee input",
+      );
+  }
   for (const [index, pre] of before) {
     if (
       pre.owner !== expected.wallet ||

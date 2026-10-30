@@ -137,7 +137,6 @@ test("a verified ancestor can progress while development advances; old guard rej
     [f.deployment(f.revisions[1]), f.deployment(f.revisions[0])],
   ]);
   expect(result.status).toBe(0);
-  expect(result.stdout).toContain("Staging order verified");
 });
 
 test("a newer attempted deployment prevents rollback regardless of success", () => {

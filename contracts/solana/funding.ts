@@ -4,6 +4,7 @@ import {
 } from "../../src/lib/payments/contracts";
 import {
   readVaultTotals,
+  SOLANA_NATIVE_ASSET,
   type SolanaEscrowConfig,
   solanaMintDetails,
   solanaPubkey,
@@ -12,6 +13,7 @@ import {
   solanaVaultAddress,
   verifySolanaDeployment,
 } from "./adapter";
+import { nativeLamportDeltas } from "./native";
 import { inspectTokenAccount } from "./token";
 import {
   ata,
@@ -71,6 +73,28 @@ function fundingInstructions(
     throw new SolanaFundingError(
       "Only the vault owner's wallet can withdraw free funds.",
     );
+  if (config.mint === SOLANA_NATIVE_ASSET) {
+    return [
+      {
+        program: config.programId,
+        accounts:
+          intent.operation === "deposit"
+            ? [
+                { key: intent.wallet, write: true },
+                { key: config.projectPda, write: true },
+                { key: config.vault, write: true },
+                { key: SOLANA_NATIVE_ASSET, write: false },
+              ]
+            : [
+                { key: intent.wallet, write: true },
+                { key: config.projectPda, write: true },
+                { key: config.vault, write: true },
+                { key: config.owner, write: true },
+              ],
+        data: instructionData(`${intent.operation}_native`, le(gross)),
+      },
+    ];
+  }
   const accounts = [
     { key: intent.wallet, write: true },
     { key: config.projectPda, write: true },
@@ -131,6 +155,20 @@ export async function prepareSolanaFunding(
       throw new SolanaFundingError(
         "The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.",
       );
+  } else if (config.mint === SOLANA_NATIVE_ASSET) {
+    const response = object(
+      await solanaRpc(config, "getBalance", [
+        intent.wallet,
+        { commitment: "finalized" },
+      ]),
+    );
+    if (
+      !Number.isSafeInteger(response.value) ||
+      BigInt(Number(response.value)) < gross
+    )
+      throw new SolanaFundingError(
+        "Your SOL balance is too low for this deposit.",
+      );
   } else {
     const response = object(
       await solanaRpc(config, "getAccountInfo", [
@@ -168,6 +206,22 @@ export async function prepareSolanaFunding(
     intent.wallet,
     instructions,
   );
+  if (config.mint === SOLANA_NATIVE_ASSET && intent.operation === "deposit") {
+    const balance = object(
+      await solanaRpc(config, "getBalance", [
+        intent.wallet,
+        { commitment: "finalized" },
+      ]),
+    );
+    if (
+      !Number.isSafeInteger(balance.value) ||
+      BigInt(Number(balance.value)) <
+        gross + BigInt(prepared.networkFeeLamports)
+    )
+      throw new SolanaFundingError(
+        "Your wallet needs enough SOL for this deposit and the network fee.",
+      );
+  }
   const fee = intent.operation === "withdraw" ? ordinaryFee(gross) : 0n;
   return {
     ...intent,
@@ -201,6 +255,29 @@ export async function checkSolanaFunding(
   // Wallet guards can recompile the same action with different account indices.
   // Token-balance metadata indexes the verified finalized message.
   const keys = checked.accountKeys;
+  if (config.mint === SOLANA_NATIVE_ASSET) {
+    const deltas = nativeLamportDeltas(meta, keys);
+    const gross = baseAmount(intent.gross);
+    const walletDelta = deltas.get(intent.wallet);
+    const vaultDelta = deltas.get(config.vault);
+    if (intent.operation === "deposit") {
+      if (walletDelta !== -gross || vaultDelta !== gross)
+        throw new SolanaFundingError(
+          "Finalized SOL movements do not match this deposit.",
+        );
+    } else {
+      const net = walletDelta ?? -1n;
+      if (
+        net < 0n ||
+        vaultDelta !== -net ||
+        !acceptsPayoutFee(gross, gross - net)
+      )
+        throw new SolanaFundingError(
+          "Finalized SOL movements do not match this withdrawal.",
+        );
+    }
+    return "finalized";
+  }
   function balances(value: unknown): Map<string, bigint> {
     if (!Array.isArray(value))
       throw new SolanaFundingError("Finalized token balances are missing.");

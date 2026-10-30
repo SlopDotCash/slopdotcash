@@ -3,8 +3,11 @@
 // one current Jupiter route. Only a throwaway funder receives seeded tokens;
 // a real local token transfer funds the fee wallet. No mainnet token moves.
 // SLOP_FEE_TEST_TOKEN=pmup selects the owner-approved Token-2022 mint.
+// SLOP_FEE_TEST_TOKEN=sol creates a native escrow, claims its earned SOL fees,
+// and proves the exact atomic wrap and USDC swap without spending gas topups.
 //   bun workers/fee-converter/solana-local.integration.ts
 
+import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,16 +26,20 @@ import {
   message,
 } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { runOnce } from "./index";
 import { parseTransaction } from "./solana";
 import { resolveSolanaAccounts } from "./solana-accounts";
+import { WRAPPED_SOL } from "./solana-native-route";
 
 const selected = process.env.SLOP_FEE_TEST_TOKEN ?? "jup";
-if (selected !== "jup" && selected !== "pmup")
-  throw new Error("Select jup or pmup");
-const INPUT_MINT =
-  selected === "pmup"
+if (selected !== "jup" && selected !== "pmup" && selected !== "sol")
+  throw new Error("Select jup, pmup or sol");
+const nativeInput = selected === "sol";
+const INPUT_MINT = nativeInput
+  ? WRAPPED_SOL
+  : selected === "pmup"
     ? "35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump"
     : "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -52,7 +59,14 @@ const PORT = Number(process.env.SLOP_FEE_TEST_PORT ?? "28899");
 if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65000)
   throw new Error("Invalid local validator port");
 const RPC = `http://127.0.0.1:${PORT}`;
-const AMOUNT = selected === "pmup" ? 30_000_000_000n : 30_000_000n;
+const AMOUNT = nativeInput
+  ? 100_000_000n
+  : selected === "pmup"
+    ? 30_000_000_000n
+    : 30_000_000n;
+// A native claim costs 5,000 lamports and the next send reserves 5,000,000.
+// The actual claim receipt must prove that exact remainder before we quote it.
+const NATIVE_FEES = AMOUNT + 5_005_000n;
 const quoteCache = new Map<string, unknown>();
 let capturedSwap: unknown;
 let capturedQuote: unknown;
@@ -68,7 +82,7 @@ const pinnedRoute: typeof fetch = (async (
   if (url.href.startsWith(`${JUPITER_API}/quote?`)) {
     url.searchParams.set("asLegacyTransaction", "false");
     url.searchParams.set("instructionVersion", "V2");
-    if (selected === "jup") {
+    if (selected === "jup" || nativeInput) {
       url.searchParams.set("dexes", "Whirlpool");
       url.searchParams.set("onlyDirectRoutes", "true");
     } else {
@@ -79,7 +93,12 @@ const pinnedRoute: typeof fetch = (async (
     url.searchParams.sort();
     const cached = quoteCache.get(url.href);
     if (cached) return Response.json(cached);
-    if (captureComplete && url.searchParams.get("inputMint") === INPUT_MINT)
+    if (
+      captureComplete &&
+      url.searchParams.get("inputMint") === INPUT_MINT &&
+      (!nativeInput ||
+        BigInt(url.searchParams.get("amount") ?? "0") > NATIVE_FEES)
+    )
       throw new Error("Uncaptured input route request after local snapshot");
     const response = await fetch(url, init);
     if (!response.ok) throw new Error(`Jupiter quote HTTP ${response.status}`);
@@ -239,6 +258,19 @@ console.log(
 );
 
 const dir = mkdtempSync(join(tmpdir(), "fee-converter-solana-"));
+const nativeFixture = nativeInput
+  ? await import(
+      new URL(
+        "../../contracts/solana/integration/fee-converter-native-fixture.mjs",
+        import.meta.url,
+      ).href
+    )
+  : null;
+const nativeGenesis =
+  nativeFixture?.nativeFixtureGenesis(dir, [
+    ...fundingSeed,
+    ...ed25519.getPublicKey(fundingSeed),
+  ]) ?? [];
 writeFileSync(
   join(dir, "route-evidence.json"),
   JSON.stringify(
@@ -310,6 +342,8 @@ const validator = Bun.spawn(
     "solana-test-validator",
     "--reset",
     "--quiet",
+    "--ticks-per-slot",
+    "8",
     "--ledger",
     join(dir, "ledger"),
     "--rpc-port",
@@ -325,9 +359,9 @@ const validator = Bun.spawn(
     ...programs.flatMap((key) => ["--clone-upgradeable-program", key]),
     ...clones.flatMap((key) => ["--maybe-clone", key]),
     ...tableFiles,
-    "--account",
-    fundingAccount,
-    accountFile,
+    ...(nativeInput
+      ? nativeGenesis
+      : ["--account", fundingAccount, accountFile]),
   ],
   {
     stdout: Bun.file(join(dir, "validator.stdout.log")),
@@ -371,7 +405,7 @@ try {
   // token account is seeded; the fee wallet starts without a JUP account.
   const funded = await rpc<string>("requestAirdrop", [
     fundingWallet,
-    100000000,
+    nativeInput ? 20_000_000_000 : 100000000,
   ]);
   async function finalized(signature: string) {
     for (let i = 0; i < 120; i++) {
@@ -391,51 +425,61 @@ try {
     throw new Error("local receipt transaction did not finalize");
   }
   await finalized(funded);
-  const latest = await rpc<{ value: { blockhash: string } }>(
-    "getLatestBlockhash",
-    [{ commitment: "confirmed" }],
-  );
-  const incoming = message(fundingWallet, latest.value.blockhash, [
-    createAta(fundingWallet, INPUT_MINT, wallet, tokenProgram),
-    {
-      program: tokenProgram,
-      accounts: [
-        { key: fundingAccount, write: true },
-        { key: jupAccount, write: true },
-        { key: fundingWallet, write: false },
-      ],
-      data: concat(Uint8Array.of(3), le(AMOUNT)),
-    },
-  ]);
-  const receiptSignature = await rpc<string>("sendTransaction", [
-    btoa(
-      String.fromCharCode(
-        ...concat(
-          Uint8Array.of(1),
-          ed25519.sign(incoming, fundingSeed),
-          incoming,
+  const nativeProject = nativeFixture
+    ? await nativeFixture.createNativeFeeFixture(
+        RPC,
+        [...fundingSeed, ...ed25519.getPublicKey(fundingSeed)],
+        wallet,
+        NATIVE_FEES.toString(),
+      )
+    : null;
+  if (!nativeInput) {
+    const latest = await rpc<{ value: { blockhash: string } }>(
+      "getLatestBlockhash",
+      [{ commitment: "confirmed" }],
+    );
+    const incoming = message(fundingWallet, latest.value.blockhash, [
+      createAta(fundingWallet, INPUT_MINT, wallet, tokenProgram),
+      {
+        program: tokenProgram,
+        accounts: [
+          { key: fundingAccount, write: true },
+          { key: jupAccount, write: true },
+          { key: fundingWallet, write: false },
+        ],
+        data: concat(Uint8Array.of(3), le(AMOUNT)),
+      },
+    ]);
+    const receiptSignature = await rpc<string>("sendTransaction", [
+      btoa(
+        String.fromCharCode(
+          ...concat(
+            Uint8Array.of(1),
+            ed25519.sign(incoming, fundingSeed),
+            incoming,
+          ),
         ),
       ),
-    ),
-    { encoding: "base64", preflightCommitment: "confirmed" },
-  ]);
-  await finalized(receiptSignature);
-  const received = await rpc<{ value: { amount: string } }>(
-    "getTokenAccountBalance",
-    [jupAccount],
-  );
-  if (received.value.amount !== AMOUNT.toString())
-    throw new Error(
-      "local fee wallet did not receive the intended SPL receipt",
+      { encoding: "base64", preflightCommitment: "confirmed" },
+    ]);
+    await finalized(receiptSignature);
+    const received = await rpc<{ value: { amount: string } }>(
+      "getTokenAccountBalance",
+      [jupAccount],
     );
-  console.log(
-    JSON.stringify({
-      check: "actual local SPL receipt",
-      receiptSignature,
-      amount: received.value.amount,
-      mainnet: false,
-    }),
-  );
+    if (received.value.amount !== AMOUNT.toString())
+      throw new Error(
+        "local fee wallet did not receive the intended SPL receipt",
+      );
+    console.log(
+      JSON.stringify({
+        check: "actual local SPL receipt",
+        receiptSignature,
+        amount: received.value.amount,
+        mainnet: false,
+      }),
+    );
+  }
   const databasePath = join(dir, "journal.sqlite");
   let { db, sqlite } = sqliteD1(undefined, databasePath);
   const env = {
@@ -461,11 +505,16 @@ try {
     FEE_CONVERTER_MAX_PRICE_IMPACT_BPS: "200",
     FEE_CONVERTER_RUN_CAP_MICRO: "1000000000",
     FEE_CONVERTER_DAILY_CAP_MICRO: "5000000000",
-    FEE_CONVERTER_ALLOWLIST: JSON.stringify({ solana: [INPUT_MINT] }),
+    FEE_CONVERTER_ALLOWLIST: JSON.stringify({
+      solana: [nativeInput ? SOLANA_NATIVE_ASSET : INPUT_MINT],
+    }),
   };
   const overrides = {
     fetch: pinnedRoute,
     localBlockhash: true,
+    ...(nativeInput
+      ? { localGenesisHash: await rpc<string>("getGenesisHash", []) }
+      : {}),
   };
   const state = () =>
     sqlite
@@ -476,6 +525,62 @@ try {
       state: string;
       reason: string | null;
     };
+  if (nativeProject) {
+    await runOnce(env, undefined, overrides);
+    if (
+      (
+        sqlite.query("SELECT COUNT(*) AS n FROM fee_conversions").get() as {
+          n: number;
+        }
+      ).n !== 0
+    )
+      throw new Error("A wallet gas topup became native fee income");
+    const manifest = JSON.stringify({
+      id: nativeProject.projectId,
+      status: "active",
+      escrow: { deployments: [nativeProject.deployment] },
+    });
+    const digest = createHash("sha256").update(manifest).digest("hex");
+    const timestamp = new Date().toISOString();
+    sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)",
+      )
+      .run(
+        nativeProject.projectId,
+        manifest,
+        digest,
+        "local native fee proof",
+        timestamp,
+      );
+    sqlite
+      .query(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)",
+      )
+      .run(nativeProject.projectId, manifest, digest, timestamp, timestamp);
+    const [claimed] = await runOnce(env, undefined, overrides);
+    console.log("native claim:", JSON.stringify(claimed));
+    if (claimed.claimed !== 1)
+      throw new Error("Native fee claim was not submitted");
+    for (let i = 0; i < 80; i++) {
+      await Bun.sleep(1000);
+      await runOnce(env, undefined, overrides);
+      const claim = sqlite
+        .query(
+          "SELECT state, amount_out FROM fee_conversions WHERE kind='claim'",
+        )
+        .get() as { state: string; amount_out: string | null } | null;
+      const conversion = sqlite
+        .query("SELECT state FROM fee_conversions WHERE kind='conversion'")
+        .get();
+      if (conversion) break;
+      if (
+        claim?.state === "finalized" &&
+        claim.amount_out !== NATIVE_FEES.toString()
+      )
+        throw new Error("Native claim amount does not match the real fee");
+    }
+  }
   console.log(
     "run 1 (receipt trigger):",
     JSON.stringify(await runOnce(env, undefined, overrides, "receipts")),
@@ -493,9 +598,9 @@ try {
   }
   const rows = sqlite
     .query(
-      "SELECT state, amount_in, quote_amount_out, min_amount_out, amount_out, tx_id, expires_at, reason FROM fee_conversions",
+      "SELECT state, amount_in, quote_amount_out, min_amount_out, amount_out, tx_id, expires_at, reason FROM fee_conversions WHERE kind='conversion'",
     )
-    .all() as { state: string; amount_out: string | null }[];
+    .all() as { state: string; amount_in: string; amount_out: string | null }[];
   console.log(JSON.stringify(rows, null, 2));
   const usdc = await rpc<{ value: { amount: string } }>(
     "getTokenAccountBalance",
@@ -511,6 +616,7 @@ try {
   if (
     rows.length !== 1 ||
     rows[0].state !== "finalized" ||
+    (nativeInput && rows[0].amount_in !== AMOUNT.toString()) ||
     rows[0].amount_out !== usdc.value.amount ||
     jupLeft.value.amount !== "0"
   )
@@ -519,24 +625,30 @@ try {
     );
   await runOnce(env, undefined, overrides);
   const count = sqlite
-    .query("SELECT COUNT(*) AS n FROM fee_conversions")
+    .query("SELECT COUNT(*) AS n FROM fee_conversions WHERE kind='conversion'")
     .get() as { n: number };
   if (count.n !== 1) throw new Error("a repeat run added a record");
   const native = sqlite
     .query(
-      "SELECT tx_id,maximum_wei,actual_wei FROM fee_native_gas WHERE state='signed'",
+      "SELECT tx_id,maximum_wei,actual_wei FROM fee_native_gas WHERE state='signed' ORDER BY rowid",
     )
     .all() as {
     tx_id: string;
     maximum_wei: string;
     actual_wei: string | null;
   }[];
-  if (native.length !== 1 || native[0].actual_wei === null)
+  if (
+    native.length !== (nativeInput ? 2 : 1) ||
+    native.some((row) => row.actual_wei === null)
+  )
     throw new Error("Solana native cost did not reconcile through its journal");
+  const swapCost = native.at(-1);
+  if (!swapCost || swapCost.actual_wei === null)
+    throw new Error("Missing finalized swap cost");
   const receipt = await rpc<{
     meta: { preBalances: number[]; postBalances: number[]; fee: number };
   }>("getTransaction", [
-    native[0].tx_id,
+    swapCost.tx_id,
     {
       commitment: "finalized",
       encoding: "json",
@@ -544,11 +656,13 @@ try {
     },
   ]);
   const debit =
-    BigInt(receipt.meta.preBalances[0]) - BigInt(receipt.meta.postBalances[0]);
+    BigInt(receipt.meta.preBalances[0]) -
+    BigInt(receipt.meta.postBalances[0]) -
+    (nativeInput ? AMOUNT : 0n);
   if (
-    BigInt(native[0].actual_wei) !== debit ||
+    BigInt(swapCost.actual_wei) !== debit ||
     debit < BigInt(receipt.meta.fee) ||
-    debit > BigInt(native[0].maximum_wei)
+    debit > BigInt(swapCost.maximum_wei)
   )
     throw new Error(
       "Solana native cost differs from the canonical fee-payer debit",
@@ -556,11 +670,12 @@ try {
   console.log(
     JSON.stringify({
       check: "Solana native budget finalized cost",
-      reservedLamports: native[0].maximum_wei,
-      actualLamports: native[0].actual_wei,
+      reservedLamports: swapCost.maximum_wei,
+      actualLamports: swapCost.actual_wei,
       networkFeeLamports: receipt.meta.fee,
     }),
   );
+  if (nativeProject) await nativeProject.assertPrincipal();
   console.log(
     `PASS: ${selected} Solana local live cycle (${parsed.legacy ? "legacy" : "v0"}, ${proof.tables.length} lookup tables)`,
   );

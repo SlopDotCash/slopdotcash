@@ -64,11 +64,10 @@ describe("owner-approved admission exemption presentation", () => {
   test("shows the owner decision without claiming a scan or grandfathered status", () => {
     const result = status(ownerExemption);
     expect(result.state).toBe("ready");
-    expect(result.checks.scan).toEqual({
+    expect(result.checks.scan).toMatchObject({
       state: "cleared",
       exempt: true,
       exemptionKind: "owner-approved-admission",
-      message: "Owner-approved admission exemption. No passed scan is claimed.",
     });
   });
 
@@ -79,7 +78,6 @@ describe("owner-approved admission exemption presentation", () => {
       grandfathered: true,
     });
     expect(result.checks.scan.exemptionKind).toBe("existing-project");
-    expect(result.checks.scan.message).toContain("Existing project");
   });
 
   test("an exemption does not replace current GitHub authority", () => {

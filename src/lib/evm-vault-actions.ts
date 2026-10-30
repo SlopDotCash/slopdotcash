@@ -3,6 +3,7 @@ import {
   buildDepositCalldata,
   buildWithdrawCalldata,
   EVM_ESCROW_EVENT_TOPICS,
+  EVM_NATIVE_ASSET,
   type EvmEscrowConfig,
   readVaultTotals,
   verifyEvmDeployment,
@@ -93,6 +94,7 @@ export async function reviewVaultAction(
   const gross = parseVaultAmount(amount, totals.decimals);
   if (totals.asset.toLowerCase() !== deployment.asset.toLowerCase())
     throw new Error("The vault asset changed. Reload the project.");
+  const native = deployment.asset.toLowerCase() === EVM_NATIVE_ASSET;
   let allowance = 0n;
   if (operation === "withdraw") {
     if (wallet.address.toLowerCase() !== deployment.owner.toLowerCase())
@@ -104,31 +106,45 @@ export async function reviewVaultAction(
   } else {
     const request = wallet.evmRequest;
     if (!request) throw new Error("Choose an EVM wallet.");
-    const call = (data: string) =>
-      request("eth_call", [{ to: deployment.asset, data }, "latest"]);
-    const balance = word(
-      await call(
-        encodeFunctionData({
-          abi: tokenAbi,
-          functionName: "balanceOf",
-          args: [wallet.address as `0x${string}`],
-        }),
-      ),
-    );
-    if (balance < gross)
-      throw new Error("Your token balance is too low for this deposit.");
-    allowance = word(
-      await call(
-        encodeFunctionData({
-          abi: tokenAbi,
-          functionName: "allowance",
-          args: [
-            wallet.address as `0x${string}`,
-            deployment.vault as `0x${string}`,
-          ],
-        }),
-      ),
-    );
+    if (native) {
+      const balance = await request("eth_getBalance", [
+        wallet.address,
+        "latest",
+      ]);
+      if (
+        typeof balance !== "string" ||
+        !/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(balance)
+      )
+        throw new Error("The wallet returned an invalid ETH balance.");
+      if (BigInt(balance) < gross)
+        throw new Error("Your ETH balance is too low for this deposit.");
+    } else {
+      const call = (data: string) =>
+        request("eth_call", [{ to: deployment.asset, data }, "latest"]);
+      const balance = word(
+        await call(
+          encodeFunctionData({
+            abi: tokenAbi,
+            functionName: "balanceOf",
+            args: [wallet.address as `0x${string}`],
+          }),
+        ),
+      );
+      if (balance < gross)
+        throw new Error("Your token balance is too low for this deposit.");
+      allowance = word(
+        await call(
+          encodeFunctionData({
+            abi: tokenAbi,
+            functionName: "allowance",
+            args: [
+              wallet.address as `0x${string}`,
+              deployment.vault as `0x${string}`,
+            ],
+          }),
+        ),
+      );
+    }
   }
   const fee = operation === "withdraw" ? ordinaryFee(gross) : 0n;
   return {
@@ -137,9 +153,9 @@ export async function reviewVaultAction(
     net: (gross - fee).toString(),
     decimals: totals.decimals,
     freeBalance: totals.freeBalance,
-    approvalNeeded: operation === "deposit" && allowance < gross,
+    approvalNeeded: operation === "deposit" && !native && allowance < gross,
     resetAllowance:
-      operation === "deposit" && allowance > 0n && allowance < gross,
+      operation === "deposit" && !native && allowance > 0n && allowance < gross,
   };
 }
 export type VaultActionReview = Awaited<ReturnType<typeof reviewVaultAction>>;
@@ -163,10 +179,13 @@ export async function sendVaultAction(
   );
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
+  const native = deployment.asset.toLowerCase() === EVM_NATIVE_ASSET;
   if (step === "send" && review.approvalNeeded)
     throw new Error("Approve the exact token amount before depositing.");
   if (step !== "send" && operation !== "deposit")
     throw new Error("Withdrawals do not require token approval.");
+  if (step !== "send" && native)
+    throw new Error("Native ETH deposits do not require token approval.");
   const data =
     step === "send"
       ? (operation === "deposit"
@@ -184,7 +203,10 @@ export async function sendVaultAction(
     from: wallet.address,
     to: step === "send" ? deployment.vault : deployment.asset,
     data,
-    value: "0x0",
+    value:
+      native && operation === "deposit"
+        ? `0x${BigInt(review.gross).toString(16)}`
+        : "0x0",
   };
   await request("eth_estimateGas", [transaction]);
   await assertVaultWalletAccount(
@@ -211,6 +233,9 @@ export async function checkVaultAction(
   payoutPolicy: PayoutPolicy = "ordinary",
 ) {
   const config = walletVaultConfig(deployment, wallet, payoutPolicy);
+  const native = deployment.asset.toLowerCase() === EVM_NATIVE_ASSET;
+  if (step !== "send" && native)
+    throw new Error("Native ETH deposits do not require token approval.");
   const expectedInput =
     step === "send"
       ? (operation === "deposit"
@@ -230,6 +255,7 @@ export async function checkVaultAction(
     transactionId,
     step === "send" ? deployment.vault : deployment.asset,
     expectedInput,
+    native && operation === "deposit" ? BigInt(gross) : 0n,
   );
   if (checked.status !== "finalized") return checked.status;
   const receipt = checked.receipt;
@@ -268,6 +294,7 @@ export async function readFinalizedWalletTransaction(
   transactionId: string,
   target: string,
   expectedInput: string,
+  expectedValue = 0n,
 ) {
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
@@ -298,7 +325,7 @@ export async function readFinalizedWalletTransaction(
     transaction.from.toLowerCase() !== wallet.address.toLowerCase() ||
     transaction.to?.toLowerCase() !== target.toLowerCase() ||
     transaction.input.toLowerCase() !== expectedInput.toLowerCase() ||
-    BigInt(transaction.value) !== 0n
+    BigInt(transaction.value) !== expectedValue
   )
     throw new Error(
       "This transaction does not match the pending wallet action. Check its hash in your wallet.",

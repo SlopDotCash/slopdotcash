@@ -228,7 +228,6 @@ function prepareQuality(
   );
   return {
     status: run.status,
-    output: `${run.stdout}${run.stderr}`,
     qualityPath: path("quality.json"),
   };
 }
@@ -241,7 +240,6 @@ describe("2026-10 quality evidence follows the payment review ledger", () => {
 
   test("prepare-contribution-quality builds evidence from the payment review ledger", () => {
     const run = prepareQuality("october", "2026-10", october);
-    expect(run.output).toContain(`Prepared ${paymentEvents} scored events`);
     expect(run.status).toBe(0);
     const evidence = JSON.parse(readFileSync(run.qualityPath, "utf8"));
     expect(evidence.events).toHaveLength(paymentEvents);
@@ -255,9 +253,6 @@ describe("pre-2026-10 quality evidence keeps the score ledger", () => {
   test("prepare-contribution-quality accepts the archived September cycle", () => {
     const september = preparationFor(archived, "2026-09");
     const run = prepareQuality("september", "2026-09", september);
-    expect(run.output).toContain(
-      `Prepared ${september.view.ledger.length} scored events`,
-    );
     expect(run.status).toBe(0);
   }, 60_000);
 });

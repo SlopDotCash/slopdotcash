@@ -11,6 +11,7 @@ import {
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
   PROJECT_SIZE,
+  SOLANA_NATIVE_ASSET,
   type SolanaEscrowConfig,
   solanaAccount,
   solanaAwardId,
@@ -649,37 +650,49 @@ async function payBoundAward(
     throw new Error("Gas payer must be separate from project owner");
   if (env.SOLANA_SIGNER.address === solanaPubkey(ctx.project, 104))
     throw new Error("Gas payer must be separate from identity authority");
+  const native = ctx.config.mint === SOLANA_NATIVE_ASSET;
   const ix: Instruction = {
     program: ctx.config.programId,
-    accounts: [
-      { key: ctx.config.projectPda, write: true },
-      { key: ctx.awardAddress, write: true },
-      { key: ctx.bindingAddress, write: true },
-      { key: ctx.config.mint, write: false },
-      { key: ctx.config.vault, write: true },
-      {
-        key: ata(ctx.config.mint, input.destination, ctx.tokenProgram),
-        write: true,
-      },
-      { key: ctx.tokenProgram, write: false },
-      { key: veto, write: false },
-    ],
-    data: instructionData("pay", le(version)),
+    accounts: native
+      ? [
+          { key: ctx.config.projectPda, write: true },
+          { key: ctx.awardAddress, write: true },
+          { key: ctx.bindingAddress, write: true },
+          { key: ctx.config.vault, write: true },
+          { key: input.destination, write: true },
+          { key: veto, write: false },
+        ]
+      : [
+          { key: ctx.config.projectPda, write: true },
+          { key: ctx.awardAddress, write: true },
+          { key: ctx.bindingAddress, write: true },
+          { key: ctx.config.mint, write: false },
+          { key: ctx.config.vault, write: true },
+          {
+            key: ata(ctx.config.mint, input.destination, ctx.tokenProgram),
+            write: true,
+          },
+          { key: ctx.tokenProgram, write: false },
+          { key: veto, write: false },
+        ],
+    data: instructionData(native ? "pay_native" : "pay", le(version)),
   };
   return send(
     env,
     ctx,
     input,
     role,
-    [
-      createAta(
-        env.SOLANA_SIGNER.address,
-        ctx.config.mint,
-        input.destination,
-        ctx.tokenProgram,
-      ),
-      ix,
-    ],
+    native
+      ? [ix]
+      : [
+          createAta(
+            env.SOLANA_SIGNER.address,
+            ctx.config.mint,
+            input.destination,
+            ctx.tokenProgram,
+          ),
+          ix,
+        ],
     refresh,
   );
 }

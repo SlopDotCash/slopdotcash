@@ -21,7 +21,8 @@ export type OAuthFlowStatus =
   | "pending"
   | "callback_processing"
   | "callback_complete"
-  | "assertion_issued";
+  | "assertion_issued"
+  | "callback_failed";
 
 export type OAuthFlow = {
   id: string;
@@ -66,6 +67,7 @@ export interface IdentityPersistence {
     completedAt: string,
     githubNodeId?: string,
   ): Promise<boolean>;
+  failCallback(flowId: string): Promise<boolean>;
   findPollableFlow(
     flowId: string,
     pollCapabilityHash: string,

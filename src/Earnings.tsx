@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { ChainIcon } from "./ChainIcon";
+import { ContributorAllocationRow } from "./ContributorAllocation";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import {
@@ -855,6 +856,7 @@ export function EarningsPage({
                   </ul>
                 </section>
               )}
+              <ContributorAllocationRow account={data} />
               <ReferralClaims />
             </>
           )}

@@ -1,10 +1,15 @@
 /** NOT-01 optional activity delivery; essential wallet notices do not use the activity preference. */
+
+import {
+  enrolledDestination,
+  issueEmailUnsubscribeToken,
+} from "../../backend/notifications/email-destinations";
 import {
   PROJECT_AFFECTED_CONTRIBUTORS,
   PROJECT_OWNERS,
 } from "../../backend/notifications/events";
 import type { SecurityD1Database } from "../../backend/security/handler";
-import { SENDER_ADDRESS } from "./contracts";
+import { retryableEmailRejection, SENDER_ADDRESS } from "./contracts";
 import {
   claimDueDeliveries,
   destinationDigest,
@@ -28,6 +33,8 @@ export type ActivityMailDependencies = {
   adminGithubIds?: ReadonlySet<string>;
   moderatorGithubIds?: ReadonlySet<string>;
   config: ActivityMailConfig;
+  generalEmail?: boolean;
+  unsubscribeKey?: string;
   fromAddress: string;
   now(): Date;
   sendEmail(from: string, to: string, mime: string): Promise<void>;
@@ -199,17 +206,26 @@ export async function dispatchActivityMail(
       await recordDelivery(deps, row, "suppressed", null, "activity");
       continue;
     }
-    const destination = await activityMailEligibility(
-      deps.config,
-      row.recipient_github_id,
-      now,
-    );
+    const registered = deps.generalEmail
+      ? await enrolledDestination(deps.db, row.recipient_github_id)
+      : null;
+    const destination = registered
+      ? { available: true, ...registered }
+      : await activityMailEligibility(
+          deps.config,
+          row.recipient_github_id,
+          now,
+        );
     const preference = await deps.db
       .prepare(
-        "SELECT enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
+        "SELECT enabled,security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
       )
       .bind(row.recipient_github_id)
-      .first<{ enabled: number; destination_version: string | null }>();
+      .first<{
+        enabled: number;
+        security_enabled: number | null;
+        destination_version: string | null;
+      }>();
     // An essential notice whose operator-verified record is not yet in effect
     // made no provider call: retry it on the bounded schedule. Optional mail
     // never retries here, because its consent names one effective destination.
@@ -223,6 +239,10 @@ export async function dispatchActivityMail(
     }
     if (
       !destination.available ||
+      (row.essential && preference?.security_enabled === 0) ||
+      (registered &&
+        (row.destination_version !== registered.destinationVersion ||
+          (row.essential && preference?.security_enabled !== 1))) ||
       (!row.essential &&
         (preference?.enabled !== 1 ||
           preference.destination_version !== destination.destinationVersion ||
@@ -241,6 +261,15 @@ export async function dispatchActivityMail(
     const text = row.essential
       ? "Your Slop account has a security notice."
       : "Your Slop inbox has an activity update.";
+    const unsubscribeToken =
+      registered && deps.unsubscribeKey
+        ? await issueEmailUnsubscribeToken(
+            deps.db,
+            deps.unsubscribeKey,
+            registered.destinationVersion,
+            deps.now(),
+          )
+        : null;
     const mime = inboxNoticeMime({
       from: deps.fromAddress,
       to: destination.email,
@@ -248,11 +277,20 @@ export async function dispatchActivityMail(
       date: now,
       deliveryId: row.id,
       attempt: row.attempts + 1,
-      text: `${text}\n\nSign in: ${deps.config.inboxUrl}\n\nDo not reply with approvals, evidence or payment details.\n`,
+      ...(unsubscribeToken
+        ? {
+            unsubscribeUrl: `${new URL(deps.config.inboxUrl).origin}/api/v1/notifications/email/unsubscribe?token=${unsubscribeToken}`,
+          }
+        : {}),
+      text: `${text}\n\nSign in: ${deps.config.inboxUrl}\n\nDo not reply with approvals, evidence or payment details.\n${unsubscribeToken ? `\nStop email notifications: ${deps.config.inboxUrl}#unsubscribe-email=${unsubscribeToken}\n` : ""}`,
     });
     try {
       await deps.sendEmail(deps.fromAddress, destination.email, mime);
-    } catch {
+    } catch (error) {
+      if (retryableEmailRejection(error)) {
+        await retryWithoutProviderCall(deps, row, "activity");
+        continue;
+      }
       // The binding gives no definite non-acceptance receipt. The outcome stays
       // uncertain until independent evidence reconciles it; only `not-accepted`
       // evidence permits the next bounded attempt.
