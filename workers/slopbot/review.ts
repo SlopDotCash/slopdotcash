@@ -91,6 +91,15 @@ import {
   reopenSource,
 } from "./reopen-source";
 import { route } from "./routing";
+import {
+  affectedValueActor,
+  currentValueDispute,
+  draftValueDispute,
+  isValueDispute,
+  retainedValueDispute,
+  type ValueDispute,
+  valueDisputeKey,
+} from "./value-disputes";
 import type { ValueMergeVerifier } from "./value-merge-profile";
 
 export type ReviewEnv = ModelEnv &
@@ -807,6 +816,7 @@ async function closureState(
        UNION ALL
        SELECT a.item_node_id, a.resolved_at AS at FROM slopbot_appeals a
        WHERE a.repository_id = ?1 AND a.resolution = 'upheld'
+         AND a.appeal_key NOT LIKE 'value-appeal:%'
      ) reversed
      WHERE reversed.at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
        AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = ?1
@@ -2154,6 +2164,30 @@ export async function recordHumanSignal(
   const session = await appealSession(env, job);
   if (typeof session === "string") return session;
   const { github, issue, revision } = session;
+  if (job.kind === "appeal") {
+    const bound = await db
+      .prepare(
+        "SELECT detail FROM slopbot_actions WHERE review_key=? AND action='appeal'",
+      )
+      .bind(`value-dispute:${job.deliveryId}`)
+      .first<{ detail: string }>();
+    if (
+      bound ||
+      job.subject === "value" ||
+      (await latestFinding(db, issue.node_id)) === null
+    ) {
+      const subject = bound
+        ? null
+        : await currentValueDispute(
+            db,
+            session.registration.projectId,
+            job.repositoryId,
+            issue.node_id,
+          );
+      if (bound || subject || job.subject === "value")
+        return recordValueDispute(env, job, session, subject, bound?.detail);
+    }
+  }
   const source =
     job.kind === "human_reopen" ? await reopenSource(db, job) : null;
   if (job.kind === "human_reopen") {
@@ -2286,6 +2320,142 @@ export async function recordHumanSignal(
   });
   if (appeal.resolved_at !== null) return "appeal already resolved";
   return triageAppeal(env, job, session, appeal, finding);
+}
+
+/** Uses the existing appeal machinery; a value decision cannot change a
+ * score, award, penalty, or pull-request state. */
+async function recordValueDispute(
+  env: ReviewEnv,
+  job: Extract<Job, { kind: "appeal" | "human_reopen" }>,
+  session: AppealSession,
+  value: ValueDispute | null,
+  boundKey?: string,
+): Promise<string> {
+  const db = env.SLOPBOT_DB;
+  if (job.itemKind !== "pull_request")
+    return "this item has no PR value assessment";
+  if (!boundKey) {
+    if (!value) return "this pull request has no retained value assessment";
+    if (
+      job.senderId !== session.issue.user.id &&
+      !(await isMaintainer(session, job, job.senderId)) &&
+      !(await affectedValueActor(
+        value,
+        session.github,
+        job.senderId,
+        session.revision,
+        `${job.owner}/${job.repo}`,
+      ))
+    )
+      return "only an affected contributor, reviewer or maintainer can dispute this assessment";
+    await store.recordAction(
+      db,
+      `value-dispute:${job.deliveryId}`,
+      job.repositoryId,
+      session.issue.node_id,
+      "appeal",
+      valueDisputeKey(value, job.senderId),
+    );
+    const binding = await db
+      .prepare(
+        "SELECT detail FROM slopbot_actions WHERE review_key=? AND action='appeal'",
+      )
+      .bind(`value-dispute:${job.deliveryId}`)
+      .first<{ detail: string }>();
+    boundKey = binding?.detail;
+  }
+  if (!boundKey) throw new Error("Value dispute was not bound");
+  const appeal = await openAppeal(db, {
+    appealKey: boundKey,
+    job,
+    itemNodeId: session.issue.node_id,
+    appellantId: job.senderId,
+  });
+  if (
+    appeal.item_node_id !== session.issue.node_id ||
+    appeal.appellant_github_id !== String(job.senderId)
+  )
+    throw new Error("Value dispute belongs to another source or actor");
+  value = await retainedValueDispute(
+    db,
+    appeal,
+    session.registration.projectId,
+    job.repositoryId,
+  );
+  if (appeal.resolved_at !== null) return "value dispute already resolved";
+  if (session.reversalOnly || session.registration.scope === "security") {
+    await escalateAppeal(
+      db,
+      appeal.appeal_key,
+      "the project is restricted, so Slopbot cannot reassess ordinary work",
+      moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+    );
+    const escalated = (await appealByKey(db, appeal.appeal_key)) ?? appeal;
+    await publishAppealState(env, job, session, escalated, "escalation");
+    return "value dispute escalated";
+  }
+  let current = appeal;
+  if (current.draft === null) {
+    const reviewJob = { ...job, kind: "review" as const };
+    const context = await loadContext(env, reviewJob, session.registration);
+    if (!context) throw new Error("The disputed source is unavailable");
+    const statement = await appealStatement(session.github, job, job.senderId);
+    const policy = await loadPolicy(
+      session.github,
+      job.owner,
+      job.repo,
+      value.source.policySha,
+    );
+    const result = await draftValueDispute({
+      env,
+      value,
+      sourceText: context.itemText,
+      sourceGaps: [
+        ...context.limitations,
+        ...(policy.length === 0 || policy.some((file) => file.truncated)
+          ? ["The original project policy is unavailable or incomplete"]
+          : []),
+      ],
+      currentHead: context.revision,
+      policyText: JSON.stringify(policy),
+      statement,
+      mayCall: () => scopeAllowed(db, job, session.registration.scope),
+      recordCalls: (calls) =>
+        store.recordCalls(
+          db,
+          appeal.appeal_key,
+          job.installationId,
+          "confirm",
+          calls,
+        ),
+    });
+    if ("deferredUntil" in result)
+      return `value dispute deferred: provider budget until ${result.deferredUntil}`;
+    current = await recordDraft(
+      db,
+      appeal.appeal_key,
+      result.draft,
+      result.confidence,
+    );
+  }
+  const reason = (await hasParticipationBan(db, current.appellant_github_id))
+    ? "the appellant has an active participation ban"
+    : current.draft_confidence === null ||
+        current.draft_confidence < CLOSE_CONFIDENCE
+      ? "the value dispute needs independent review of incomplete or uncertain evidence"
+      : null;
+  if (reason)
+    await escalateAppeal(
+      db,
+      current.appeal_key,
+      reason,
+      moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+    );
+  current = (await appealByKey(db, current.appeal_key)) ?? current;
+  await publishAppealState(env, job, session, current, "draft");
+  return current.escalation
+    ? "value dispute escalated"
+    : `value dispute drafted (${current.draft})`;
 }
 
 function hasLabel(issue: Issue, label: string) {
@@ -2450,11 +2620,14 @@ async function appealStatement(
       const body = (comment.body ?? "").trim();
       if (
         comment.user?.id === appellantId &&
-        body.startsWith("/slopbot appeal")
+        (body.startsWith("/slopbot appeal") ||
+          body.startsWith("/slopbot dispute"))
       )
         statement =
-          body.slice("/slopbot appeal".length).trim().slice(0, 4000) ||
-          "(no reason given)";
+          body
+            .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
+            .trim()
+            .slice(0, 4000) || "(no reason given)";
     }
     if (comments.length < 100) break;
   }
@@ -2465,6 +2638,26 @@ function appealComment(
   appeal: Appeal,
   stage: "draft" | "escalation" | "resolution",
 ): string {
+  if (isValueDispute(appeal)) {
+    const digest = appeal.appeal_key.split(":")[2];
+    return [
+      "<!-- slopbot:appeal -->",
+      stage === "resolution"
+        ? `**Value dispute ${appeal.resolution === "upheld" ? "upheld" : "denied"}** (decided by the ${appeal.resolved_by}).`
+        : stage === "escalation"
+          ? "**Value dispute sent to a Slop moderator**"
+          : `**Slopbot value triage:** ${appeal.draft === "uphold" ? "review the assessment for correction" : "retain the assessment"}. Confidence: ${(appeal.draft_confidence ?? 0).toFixed(2)}.`,
+      `Assessment: \`${digest}\`.`,
+      "This decision does not change Points, awards, payments, penalties or this pull request. Any correction must use the authorized assessment journal and retain its predecessor.",
+      ...(stage === "resolution"
+        ? []
+        : [
+            appeal.escalation
+              ? `A Slop moderator decides with \`/slopbot uphold ${appeal.appeal_key}\` or \`/slopbot deny ${appeal.appeal_key}\`.`
+              : `The disputing contributor or a maintainer may \`/slopbot accept ${appeal.appeal_key}\` or \`/slopbot reject ${appeal.appeal_key}\` for moderator review. Unresolved disputes escalate after seven days.`,
+          ]),
+    ].join("\n\n");
+  }
   const moderator = `A Slop moderator decides it with \`/slopbot uphold\` or \`/slopbot deny\`.`;
   if (stage === "resolution")
     return [
@@ -2559,8 +2752,19 @@ export async function applyAppealCommand(
   if (String(job.senderId) === env.SLOPBOT_APP_USER_ID) return "ignored";
   const session = await appealSession(env, job);
   if (typeof session === "string") return session;
-  let appeal = await latestAppealFor(db, session.issue.node_id);
+  let appeal = job.appealKey
+    ? await appealByKey(db, job.appealKey)
+    : await latestAppealFor(db, session.issue.node_id);
   if (appeal === null) return "no open appeal";
+  if (appeal.item_node_id !== session.issue.node_id)
+    return "the appeal belongs to another item";
+  if (isValueDispute(appeal))
+    await retainedValueDispute(
+      db,
+      appeal,
+      session.registration.projectId,
+      job.repositoryId,
+    );
   if (appeal.resolved_at !== null) {
     // Resume the recorded decision, including external writes interrupted
     // before their response arrived. Never apply this retry's new command.
@@ -2669,6 +2873,13 @@ async function finishAppeal(
   by: "appellant" | "maintainer" | "moderator",
 ): Promise<string> {
   const db = env.SLOPBOT_DB;
+  if (isValueDispute(appeal))
+    await retainedValueDispute(
+      db,
+      appeal,
+      session.registration.projectId,
+      job.repositoryId,
+    );
   // Choose the decision before external effects. A concurrent rejection can
   // escalate an unanswered draft, and only a moderator may then resolve it.
   await resolveAppeal(
@@ -2692,6 +2903,10 @@ async function finishAppeal(
       await publishAppealState(env, job, session, escalated, "escalation");
     }
     return "a Slop moderator decides this appeal";
+  }
+  if (isValueDispute(current)) {
+    await publishAppealState(env, job, session, current, "resolution");
+    return `value dispute ${current.resolution}; assessment history unchanged`;
   }
   const { issue } = session;
   // An appeal binds the revision it was opened on. Like a maintainer reopen,
