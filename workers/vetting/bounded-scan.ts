@@ -117,7 +117,13 @@ const AGENT_INSTRUCTIONS = new Set([
   ".cursorrules",
   ".windsurfrules",
   ".clinerules",
+  ".goosehints",
+  ".continuerules",
+  ".rules",
   "copilot-instructions.md",
+  "warp.md",
+  "claude.local.md",
+  "llms.txt",
 ]);
 const INSTALL_FILES = new Set([
   "setup.py",
@@ -219,6 +225,10 @@ export function surfacesOf(path: string): ScanSurface[] {
     lower.startsWith(".cursor/") ||
     lower.startsWith(".claude/") ||
     lower.startsWith(".github/instructions/") ||
+    lower.startsWith(".github/chatmodes/") ||
+    lower.startsWith(".junie/") ||
+    lower.startsWith(".idx/") ||
+    lower.startsWith(".windsurf/") ||
     lower.includes("/.cursor/rules/")
   )
     surfaces.add("agentInstructions");
@@ -544,7 +554,7 @@ export type RepositoryInspection = {
 
 /**
  * Inspects one revision's acquired files. Pure and deterministic: the same
- * bytes produce the same inventory digest, which keys the scan cache, so an
+ * bytes and surface classifications produce the same inventory digest, so an
  * unchanged executable inventory reuses its clean result and any change to
  * executable content is scanned again.
  */
@@ -574,6 +584,7 @@ export function inspectRepository(input: {
     flagged: boolean;
   };
   const candidates: Candidate[] = [];
+  const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
   const downloads = new Set<string>();
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
@@ -581,6 +592,8 @@ export function inspectRepository(input: {
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
+    if (surfaces.length > 0)
+      classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
     if (
       EXECUTABLE_BINARIES.test(file.path) ||
@@ -744,6 +757,7 @@ export function inspectRepository(input: {
   const inventory = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: INVENTORY_SCHEMA,
+      classifications,
       items,
       // Binary and archive bytes are not text items. Bind their digests so
       // adding or changing quarantined content invalidates clean scan reuse.
@@ -865,6 +879,7 @@ export function composeAcquisitionRefusal(input: {
   const inventory = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: INVENTORY_SCHEMA,
+      classifications: [],
       items: [],
       artifacts: [],
       visibilityGaps,

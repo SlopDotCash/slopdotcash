@@ -995,6 +995,11 @@ async function retainedNativeFixture(
   legacy = false,
   incomplete = false,
   defect?: NativeExecutionDefect,
+  inventoryMode:
+    | "current"
+    | "legacy"
+    | "missing-final"
+    | "changed-final" = "current",
 ) {
   await mkdir(config.workDirectory, { recursive: true });
   await mkdir(config.journalDirectory, { recursive: true });
@@ -1032,6 +1037,14 @@ async function retainedNativeFixture(
       bytes: await readAcquiredObject(acquired.directory, file.sha256),
     });
   const inspection = inspectRepository({ files });
+  if (inventoryMode === "legacy") {
+    const inventory = JSON.parse(
+      new TextDecoder().decode(inspection.inventory),
+    );
+    delete inventory.classifications;
+    inspection.inventory = new TextEncoder().encode(JSON.stringify(inventory));
+    inspection.inventorySha256 = digest(inspection.inventory);
+  }
   const sourceBytes = inspection.inventory;
   const sourceSha = inspection.inventorySha256;
   const executionReport = new TextEncoder().encode(
@@ -1062,6 +1075,15 @@ async function retainedNativeFixture(
     }),
   );
   extension.finish([]);
+  if (inventoryMode === "missing-final" || inventoryMode === "changed-final") {
+    const inventory = JSON.parse(
+      new TextDecoder().decode(inspection.inventory),
+    );
+    if (inventoryMode === "missing-final") delete inventory.classifications;
+    else inventory.classifications[0].surfaces = ["source"];
+    inspection.inventory = new TextEncoder().encode(JSON.stringify(inventory));
+    inspection.inventorySha256 = digest(inspection.inventory);
+  }
   // The fixture represents an independently accepted clean analysis. The
   // scanner itself never changes quarantine merely because execution exited.
   for (const artifact of incomplete ? [] : inspection.artifacts) {
@@ -1169,7 +1191,14 @@ async function retainedNativeFixture(
       at: clock,
       fetch: config.connection.fetch,
     }),
-  ).toMatchObject({ outcome: defect ? "rejected" : "accepted" });
+  ).toMatchObject({
+    outcome:
+      defect ||
+      inventoryMode === "missing-final" ||
+      inventoryMode === "changed-final"
+        ? "rejected"
+        : "accepted",
+  });
   await rm(acquired.directory, { recursive: true, force: true });
   return {
     result: composed.result,
@@ -1180,6 +1209,34 @@ async function retainedNativeFixture(
     reportSha: digest(composed.report),
     native,
   };
+}
+
+test("native evidence retains the legacy inventory format without rewriting it", async () => {
+  const original = await retainedNativeFixture(
+    false,
+    false,
+    undefined,
+    "legacy",
+  );
+  expect(
+    (await vetting.getAssessment(original.result.assessmentId))?.state,
+  ).toBe("clean");
+  expect(await retained.evidence.retained(original.result)).toBe(true);
+});
+
+for (const inventoryMode of ["missing-final", "changed-final"] as const) {
+  test(`native evidence refuses ${inventoryMode} source classification metadata`, async () => {
+    const original = await retainedNativeFixture(
+      false,
+      false,
+      undefined,
+      inventoryMode,
+    );
+    expect(
+      (await vetting.getAssessment(original.result.assessmentId))?.state,
+    ).toBe("pending");
+    expect(await retained.evidence.retained(original.result)).toBe(false);
+  });
 }
 
 for (const defect of ["artifact", "image", "egress", "uncovered"] as const) {
