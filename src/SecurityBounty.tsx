@@ -1714,6 +1714,7 @@ function SubmissionCard({
             <IntakeConsent login={session.session.githubLogin} />
             <ReportFields
               draft={draft}
+              disabled={busy}
               onChange={(next) => {
                 setDraft(next);
                 saveDraft(submission.id, next);
