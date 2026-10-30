@@ -434,6 +434,76 @@ test("identical paths outside batches share the reviewed bytes without another c
   );
 });
 
+test("an item larger than one call is reviewed in parts that each fit a batch", async () => {
+  // Thousands of vendored files are covered by the deterministic checks, and
+  // their listing alone is larger than one model call accepts. Control
+  // characters grow six times when JSON escapes an install script part.
+  const install = Array.from(
+    { length: 1500 },
+    (_, line) => `${line} ${String.fromCharCode(27).repeat(200)}\n`,
+  ).join("");
+  const inspection = inspectRepository({
+    files: [
+      file("main.go", "package main\n"),
+      file("scripts/install.sh", install),
+      ...Array.from({ length: 8000 }, (_, index) =>
+        file(
+          `vendor/github.com/example/module-${String(index).padStart(4, "0")}/file.go`,
+          `package module${index}\n`,
+        ),
+      ),
+    ],
+  });
+  expect(inspection.deterministic).toHaveLength(8000);
+  const inventory = JSON.parse(new TextDecoder().decode(inspection.inventory));
+  const listing = inventory.items.find(
+    (item: { id: string }) => item.id === DETERMINISTIC_COVERAGE_ID,
+  );
+  expect(Buffer.byteLength(listing.text)).toBeGreaterThan(MAX_INVENTORY_BYTES);
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  // Every batch is within the byte budget.
+  const items = accounted(plan).reviewed;
+  const listingParts = items.filter((item) =>
+    item.id.startsWith(`${DETERMINISTIC_COVERAGE_ID}#part-`),
+  );
+  const scriptParts = items.filter((item) =>
+    item.id.startsWith("scripts/install.sh#part-1-of-2#part-"),
+  );
+  expect(listingParts.length).toBeGreaterThan(1);
+  expect(scriptParts.length).toBeGreaterThan(1);
+  // Consecutive parts, risky content first: the listing, then the script.
+  expect(items.map((item) => item.id)).toEqual([
+    ...listingParts.map(
+      (_, index) =>
+        `${DETERMINISTIC_COVERAGE_ID}#part-${index + 1}-of-${listingParts.length}`,
+    ),
+    ...scriptParts.map(
+      (_, index) =>
+        `scripts/install.sh#part-1-of-2#part-${index + 1}-of-${scriptParts.length}`,
+    ),
+    "scripts/install.sh#part-2-of-2",
+    "main.go",
+  ]);
+  // Every byte is reviewed exactly once.
+  const joined = (prefix: string) =>
+    items
+      .filter((item) => item.id.startsWith(prefix))
+      .map((item) => item.text)
+      .join("");
+  expect(joined(DETERMINISTIC_COVERAGE_ID)).toBe(listing.text);
+  expect(joined("scripts/install.sh#")).toBe(install);
+  const ok = provider(() => null);
+  const reviewed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: ok.fetcher,
+    concurrency: 2,
+  });
+  expect(reviewed.evidence?.review.status).toBe("completed");
+  expect(ok.calls).toHaveLength(plan.batches.length + 1);
+});
+
 test("a review larger than one pass resumes from its private cache without repeating calls", async () => {
   const inspection = inspectRepository({ files: largeRepository() });
   const plan = planReview(inspection);
