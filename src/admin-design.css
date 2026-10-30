@@ -1,13 +1,13 @@
 /* Admin uses direct section navigation and a compact, flat working layout. */
-.admin-page {
+.admin-page.operations-page {
   gap: 18px;
 }
 
-.admin-page .route-page-header {
+.admin-page.operations-page .route-page-header {
   margin-bottom: 0;
 }
 
-.admin-page .admin-section {
+.admin-page.operations-page .admin-section {
   gap: 16px;
   min-width: 0;
 }
@@ -42,10 +42,6 @@
 
 .admin-section-nav a[aria-current="page"] {
   box-shadow: inset 0 -2px var(--orange);
-}
-
-.admin-page svg {
-  flex-shrink: 0;
 }
 
 .admin-section-nav svg,
@@ -204,28 +200,28 @@
   color: var(--muted);
 }
 
-.admin-page .admin-card {
+.admin-page.operations-page .admin-card {
   gap: 16px;
   padding: 20px;
 }
 
-.admin-page .admin-card > header,
-.admin-page .admin-enforcement > header {
+.admin-page.operations-page .admin-card > header,
+.admin-page.operations-page .admin-enforcement > header {
   margin-bottom: 0;
 }
 
-.admin-page .admin-project-heading h3 {
+.admin-page.operations-page .admin-project-heading h3 {
   font-size: 22px;
 }
 
-.admin-page .admin-card .admin-card {
+.admin-page.operations-page .admin-card .admin-card {
   padding: 0;
   border: 0;
   border-radius: 0;
   background: none;
 }
 
-.admin-page .admin-facts {
+.admin-page.operations-page .admin-facts {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 12px 20px;
 }
@@ -243,7 +239,7 @@
   border-top: 1px solid var(--line);
 }
 
-.admin-page .admin-subsection-heading {
+.admin-page.operations-page .admin-subsection-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -257,7 +253,7 @@
   font-size: 12px;
 }
 
-.admin-page .admin-enforcement {
+.admin-page.operations-page .admin-enforcement {
   margin-top: 0;
   padding-top: 16px;
 }
@@ -286,7 +282,7 @@
 }
 
 .admin-action-grid,
-.admin-page .admin-editor,
+.admin-page.operations-page .admin-editor,
 .admin-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -294,11 +290,11 @@
   gap: 20px;
 }
 
-.admin-page .admin-actions {
+.admin-page.operations-page .admin-actions {
   margin-top: 0;
 }
 
-.admin-page .admin-fieldset {
+.admin-page.operations-page .admin-fieldset {
   display: grid;
   gap: 12px;
   margin: 0;
@@ -319,17 +315,17 @@
   grid-column: 1 / -1;
 }
 
-.admin-page .admin-editor .admin-manifest {
+.admin-page.operations-page .admin-editor .admin-manifest {
   min-height: 240px;
   max-height: 480px;
   resize: vertical;
 }
 
-.admin-page .admin-editor textarea {
+.admin-page.operations-page .admin-editor textarea {
   resize: vertical;
 }
 
-.admin-page .admin-actions label.checkbox-field {
+.admin-page.operations-page .admin-actions label.checkbox-field {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -337,28 +333,28 @@
   line-height: 1.5;
 }
 
-.admin-page .checkbox-field input {
+.admin-page.operations-page .checkbox-field input {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
   margin-top: 3px;
 }
 
-.admin-page .skill-preview-controls {
+.admin-page.operations-page .skill-preview-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 16px;
 }
 
-.admin-page .skill-preview-controls label {
+.admin-page.operations-page .skill-preview-controls label {
   display: grid;
   gap: 6px;
   min-width: 0;
   font-size: 13px;
 }
 
-.admin-page .skill-preview-controls select {
+.admin-page.operations-page .skill-preview-controls select {
   min-height: 40px;
   padding: 8px 12px;
   border: 1px solid var(--line);
@@ -368,7 +364,7 @@
   font: inherit;
 }
 
-.admin-page .skill-preview textarea {
+.admin-page.operations-page .skill-preview textarea {
   width: 100%;
   height: 55vh;
   min-height: 260px;
@@ -381,7 +377,7 @@
   resize: vertical;
 }
 
-.admin-page .admin-card pre {
+.admin-page.operations-page .admin-card pre {
   background: var(--paper);
   color: var(--ink);
   white-space: pre-wrap;
@@ -389,7 +385,7 @@
 }
 
 @media (max-width: 640px) {
-  .admin-page .admin-card {
+  .admin-page.operations-page .admin-card {
     padding: 14px;
   }
 
@@ -416,7 +412,7 @@
   }
 
   .admin-action-grid,
-  .admin-page .admin-editor,
+  .admin-page.operations-page .admin-editor,
   .admin-field-grid {
     grid-template-columns: minmax(0, 1fr);
   }
