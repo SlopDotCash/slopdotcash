@@ -2607,6 +2607,31 @@ async function appealStatement(
   job: AppealJob,
   appellantId: number,
 ): Promise<string> {
+  if (job.kind === "appeal" && job.appealCommentId !== undefined) {
+    const comment = await github.get<{
+      body?: string;
+      issue_url?: string;
+      user?: { id: number } | null;
+    }>(
+      `/repos/${job.owner}/${job.repo}/issues/comments/${job.appealCommentId}`,
+    );
+    if (
+      !comment ||
+      comment.user?.id !== appellantId ||
+      comment.issue_url !==
+        `https://api.github.com/repos/${job.owner}/${job.repo}/issues/${job.number}` ||
+      !/^\/slopbot (?:appeal|dispute)(?:\s|$)/u.test(comment.body ?? "")
+    )
+      throw new Error(
+        "The original dispute comment is unavailable or changed source",
+      );
+    return (
+      (comment.body ?? "")
+        .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
+        .trim()
+        .slice(0, 4000) || "(no reason given)"
+    );
+  }
   let statement = "(no appeal text; the author reopened the item)";
   for (let page = 1; page <= 10; page++) {
     const comments = await github.get<

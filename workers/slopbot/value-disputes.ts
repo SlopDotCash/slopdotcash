@@ -29,7 +29,7 @@ export type ValueDispute = {
   };
 };
 export const valueDisputeKey = (value: ValueDispute, actorId: number) =>
-  `value-appeal:${value.kind}:${value.digest}:${actorId}`;
+  `value-appeal:${value.kind}:${value.digest}:${actorId}:${value.source.repositoryDatabaseId}:${value.source.pullRequestNumber}`;
 export const isValueDispute = (appeal: Appeal) =>
   appeal.appeal_key.startsWith("value-appeal:");
 
@@ -99,10 +99,14 @@ export async function retainedValueDispute(
   repositoryId: number,
 ): Promise<ValueDispute> {
   const match =
-    /^value-appeal:(single|joint):([a-f0-9]{64}):([1-9][0-9]*)$/u.exec(
+    /^value-appeal:(single|joint):([a-f0-9]{64}):([1-9][0-9]*):([1-9][0-9]*):([1-9][0-9]*)$/u.exec(
       appeal.appeal_key,
     );
-  if (!match || match[3] !== appeal.appellant_github_id)
+  if (
+    !match ||
+    match[3] !== appeal.appellant_github_id ||
+    Number(match[4]) !== repositoryId
+  )
     throw new Error("Invalid value dispute binding");
   const kind = match[1] as ValueDispute["kind"];
   const table =
@@ -121,6 +125,8 @@ export async function retainedValueDispute(
     appeal.item_node_id,
   );
   if (!result) throw new Error("The disputed value record is unavailable");
+  if (Number(match[5]) !== result.source.pullRequestNumber)
+    throw new Error("The dispute belongs to another pull request");
   return result;
 }
 
