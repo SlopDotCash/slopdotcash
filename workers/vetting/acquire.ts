@@ -11,6 +11,7 @@ import {
   mkdir,
   mkdtemp,
   open,
+  readFile,
   rename,
   rm,
   stat,
@@ -248,7 +249,71 @@ class StreamReader {
   }
 }
 
-type TreeEntry = { path: string; gitSha: string; type: string; mode: string };
+export type TreeEntry = {
+  path: string;
+  gitSha: string;
+  type: string;
+  mode: string;
+};
+
+/** Resolve only entries in the verified commit tree, never filesystem paths. */
+export async function resolveSymlinkTarget(
+  entry: TreeEntry,
+  entries: ReadonlyMap<string, TreeEntry>,
+  readLink: (entry: TreeEntry) => Promise<Uint8Array>,
+): Promise<string | null> {
+  const seen = new Set<string>();
+  let current = entry;
+  while (current.type === "blob" && current.mode === "120000") {
+    if (seen.has(current.path)) return null;
+    seen.add(current.path);
+    let target: string;
+    try {
+      target = new TextDecoder("utf-8", { fatal: true }).decode(
+        await readLink(current),
+      );
+    } catch (error) {
+      if (error instanceof TypeError) return null;
+      throw error;
+    }
+    const segments = target.split("/");
+    if (
+      !target ||
+      target.startsWith("/") ||
+      target.endsWith("/") ||
+      target.includes("\\") ||
+      [...target].some(
+        (character) =>
+          character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+      ) ||
+      segments.some((part) => /^[A-Za-z]:/u.test(part))
+    )
+      return null;
+    const parts = current.path.split("/").slice(0, -1);
+    for (const [index, part] of segments.entries()) {
+      if (!part || part === ".") continue;
+      if (part === "..") {
+        if (parts.length === 0) return null;
+        parts.pop();
+      } else parts.push(part);
+      const candidate = entries.get(parts.join("/"));
+      // A non-final component must be a real directory in this tree. In
+      // particular, do not follow directory links or normalize file/.. away.
+      if (
+        parts.length > 0 &&
+        (!candidate ||
+          (index < segments.length - 1 && candidate.type !== "tree"))
+      )
+        return null;
+    }
+    const next = entries.get(parts.join("/"));
+    if (!next) return null;
+    current = next;
+  }
+  return current.type === "blob" && ["100644", "100755"].includes(current.mode)
+    ? current.path
+    : null;
+}
 
 /** Parses `git ls-tree -r -t -z` and applies the source path policy. */
 function treeEntries(output: Buffer): TreeEntry[] {
@@ -477,6 +542,7 @@ export async function acquireRepository(input: {
       },
     );
     const records = [];
+    const byPath = new Map(entries.map((entry) => [entry.path, entry]));
     const gaps = new Set([
       "execution-dependencies-and-release-assets-not-acquired",
       "skill-template-inputs-not-acquired",
@@ -496,9 +562,29 @@ export async function acquireRepository(input: {
       }
       const object = stored.get(entry.gitSha);
       if (!object) throw new Error("Invalid immutable blob");
-      if (entry.mode === "120000") gaps.add("symbolic-link-not-followed");
+      let resolvedPath: string | null = null;
+      if (entry.mode === "120000") {
+        resolvedPath = await resolveSymlinkTarget(
+          entry,
+          byPath,
+          async (link) => {
+            const object = stored.get(link.gitSha);
+            if (!object) throw new Error("Invalid immutable link blob");
+            const bytes = await readFile(join(objects, object.sha256));
+            if (hash(bytes) !== object.sha256)
+              throw new Error("Acquired link bytes changed");
+            return bytes;
+          },
+        );
+        if (resolvedPath === null) gaps.add("symbolic-link-not-followed");
+      }
       if (lfs.has(entry.gitSha)) gaps.add("lfs-object-not-acquired");
-      records.push({ ...entry, ...object, state: "quarantined" });
+      records.push({
+        ...entry,
+        ...object,
+        ...(resolvedPath === null ? {} : { resolvedPath }),
+        state: "quarantined",
+      });
     }
     const inventory = Buffer.from(
       JSON.stringify({
@@ -507,6 +593,7 @@ export async function acquireRepository(input: {
         commitSha: input.commitSha,
         treeSha,
         state: "quarantined",
+        directories: entries.filter((entry) => entry.type === "tree"),
         records,
         visibilityGaps: [...gaps].sort(),
       }),
