@@ -1387,18 +1387,19 @@ export default function ProjectProposalPage() {
           <p className="proposal-note">Referred by @{submission.referrer}.</p>
         ) : null}
         <div className="wizard-actions">
-          <Link
+          {/* Reload the registry so these routes can resolve the new project. */}
+          <a
             className="button primary-button"
             href={`/projects/${submission.projectId}`}
           >
             View project
-          </Link>
-          <Link
+          </a>
+          <a
             className="button secondary-button"
             href={`/projects/${submission.projectId}/manage`}
           >
             Manage project
-          </Link>
+          </a>
           <button
             className="button ghost-button"
             onClick={() => {
