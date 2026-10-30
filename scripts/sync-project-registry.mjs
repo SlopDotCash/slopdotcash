@@ -205,6 +205,11 @@ async function fetchRegistryPair(origin, snapshot) {
 }
 
 export async function fetchProjectRegistry(origin = DEFAULT_API_ORIGIN) {
+  return fetchRegistryPair(origin);
+}
+
+/** Only snapshot publication needs the current manifests bound to history. */
+async function fetchConsistentRegistry(origin) {
   for (let attempt = 0; ; attempt++) {
     let registry;
     try {
@@ -311,7 +316,7 @@ export async function syncProjectRegistry(checkOnly = false) {
   const origin = process.env.SLOP_API_ORIGIN || DEFAULT_API_ORIGIN;
   let registry;
   try {
-    registry = await fetchProjectRegistry(origin);
+    registry = await fetchConsistentRegistry(origin);
   } catch (error) {
     // Only the first rollout reaches this: the build that deploys the API
     // cannot read it yet, so it publishes the committed snapshot. Once the
