@@ -1417,6 +1417,12 @@ describe("project registry API", () => {
           id: 1,
           error: { code: -32603, message: "Internal error" },
         }),
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32005, message: "Limit exceeded" },
+        }),
       async () => {
         throw new TypeError("fetch failed");
       },
