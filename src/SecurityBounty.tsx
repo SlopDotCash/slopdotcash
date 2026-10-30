@@ -414,9 +414,11 @@ function IntakeReferenceNote() {
 function ReportFields({
   draft,
   onChange,
+  disabled = false,
 }: {
   draft: ReportDraft;
   onChange: (draft: ReportDraft) => void;
+  disabled?: boolean;
 }) {
   const fieldId = useId();
   const [classificationOpen, setClassificationOpen] = useState(
@@ -431,6 +433,7 @@ function ReportFields({
         <input
           id={`${fieldId}-summary`}
           autoComplete="off"
+          disabled={disabled}
           maxLength={1024}
           minLength={8}
           onChange={(event) => set("summary")(event.target.value)}
@@ -442,6 +445,7 @@ function ReportFields({
         Description
         <textarea
           id={`${fieldId}-description`}
+          disabled={disabled}
           maxLength={65000}
           minLength={20}
           onChange={(event) => set("description")(event.target.value)}
@@ -466,7 +470,7 @@ function ReportFields({
           <label>
             Severity (optional)
             <select
-              disabled={draft.cvss.trim() !== ""}
+              disabled={disabled || draft.cvss.trim() !== ""}
               onChange={(event) => set("severity")(event.target.value)}
               value={draft.severity}
             >
@@ -481,6 +485,7 @@ function ReportFields({
             CVSS vector (optional, instead of severity)
             <input
               autoComplete="off"
+              disabled={disabled}
               onChange={(event) => set("cvss")(event.target.value)}
               placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
               spellCheck={false}
@@ -491,6 +496,7 @@ function ReportFields({
             CWE IDs (optional)
             <input
               autoComplete="off"
+              disabled={disabled}
               onChange={(event) => set("cwe")(event.target.value)}
               placeholder="CWE-284"
               spellCheck={false}
@@ -1373,7 +1379,7 @@ function RevisePrivateReport({
           The new version is screened again. Your original receipt time and
           terms stay the same.
         </p>
-        <ReportFields draft={draft} onChange={setDraft} />
+        <ReportFields draft={draft} onChange={setDraft} disabled={busy} />
         <button className="button primary-button" disabled={busy} type="submit">
           {busy ? "Saving…" : "Save and screen again"}
         </button>
