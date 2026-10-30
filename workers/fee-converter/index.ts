@@ -59,6 +59,7 @@ export function chainClient(
   overrides: {
     fetch?: typeof fetch;
     localBlockhash?: boolean;
+    localGenesisHash?: string;
     nativeGas?: NativeGasJournal;
     now?: () => Date;
   } = {},
@@ -94,6 +95,7 @@ export function chainClient(
         keypair: secret,
         fetch: overrides.fetch,
         localBlockhash: overrides.localBlockhash,
+        localGenesisHash: overrides.localGenesisHash,
         recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL,
         nativeGas: overrides.nativeGas,
       });

@@ -153,6 +153,7 @@ export function createProject(
   manifest: ProjectDefinition,
   referrer: string | null,
   monthlyAmount: string | null,
+  bountyAmount: string | null = null,
 ): Promise<{
   project: { id: string; revision: number; referrer: unknown };
   setup: ProjectSetupStatus;
@@ -161,6 +162,7 @@ export function createProject(
     manifest,
     ...(referrer === null ? {} : { referrer }),
     ...(monthlyAmount === null ? {} : { monthlyAmount }),
+    ...(bountyAmount === null ? {} : { bountyAmount }),
   });
 }
 
@@ -217,12 +219,14 @@ export function publishProjectRevision(
   expectedRevision: number,
   note: string,
   monthlyAmount: string | null,
+  bountyAmount: string | null = null,
 ): Promise<RevisionResult> {
   return projectApiRequest("PUT", `projects/${encodeURIComponent(projectId)}`, {
     manifest,
     expectedRevision,
     ...(note.trim() ? { reason: note.trim() } : {}),
     ...(monthlyAmount === null ? {} : { monthlyAmount }),
+    ...(bountyAmount === null ? {} : { bountyAmount }),
   });
 }
 

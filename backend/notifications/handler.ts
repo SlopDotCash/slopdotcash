@@ -228,7 +228,13 @@ export async function handleNotificationsApi(
             kind: row.kind,
             subject: row.subject,
             detail: row.detail,
-            actionPath: row.action_path,
+            actionPath:
+              (row.kind === "security_case" ||
+                row.kind === "security_report_received") &&
+              row.action_path === "/security" &&
+              /^sc_[A-Za-z0-9_-]{8,72}$/u.test(row.subject)
+                ? `/security?case=${encodeURIComponent(row.subject)}`
+                : row.action_path,
             sourceAt: row.source_at,
             createdAt: row.created_at,
             readAt: row.read_at,
