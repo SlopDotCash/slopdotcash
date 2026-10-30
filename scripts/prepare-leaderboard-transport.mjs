@@ -1,4 +1,4 @@
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { encodeLeaderboardParts } from "../src/lib/leaderboard-transport.mjs";
@@ -24,6 +24,24 @@ export async function prepareLeaderboardTransport(path) {
   }
   // All content-addressed parts exist before the root index changes.
   await atomicWrite(path, encoded.root);
+  // Only the current publication belongs in the next Pages bundle. Retaining
+  // old generated parts would eventually exceed the aggregate bundle limit.
+  const directory = join(dirname(path), "leaderboard");
+  const retained = new Set(
+    encoded.parts.map((part) => part.path.split("/").at(-1)),
+  );
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    entries = [];
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^[a-f0-9]{64}\.part$/u.test(entry.name))
+      throw new Error("Unexpected file in generated leaderboard parts");
+    if (!retained.has(entry.name)) await rm(join(directory, entry.name));
+  }
   return {
     logicalBytes: logical.length,
     rootBytes: encoded.root.length,

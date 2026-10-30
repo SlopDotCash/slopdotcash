@@ -10,6 +10,12 @@ import {
   test,
 } from "./fixtures";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("https://avatars.githubusercontent.com/**", (route) =>
+    route.fulfill({ path: "public/slop-mark.svg" }),
+  );
+});
+
 test("monthly targets remain distinct from verified payment records", async ({
   page,
 }, info) => {

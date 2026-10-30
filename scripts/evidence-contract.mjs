@@ -87,7 +87,9 @@ function asTimestamp(value, path) {
 function parseJson(contents, path) {
   try {
     return JSON.parse(
-      Buffer.isBuffer(contents) ? contents.toString("utf8") : contents,
+      contents instanceof Uint8Array
+        ? Buffer.from(contents).toString("utf8")
+        : contents,
     );
   } catch (error) {
     // error-policy:J2 evidence capture must preserve the rejected artifact path.
@@ -119,7 +121,7 @@ export function assertLiveLedgerReady(
   { now = Date.now(), maxAgeMs = LIVE_LEDGER_MAX_AGE_MS } = {},
 ) {
   const snapshot = asObject(
-    typeof contents === "string" || Buffer.isBuffer(contents)
+    typeof contents === "string" || contents instanceof Uint8Array
       ? parseJson(contents, "leaderboard")
       : contents,
     "leaderboard",
