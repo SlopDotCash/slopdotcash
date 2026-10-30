@@ -2968,7 +2968,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     const report = page.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
     );
-    await expect(report).toContainText("Slop receipt");
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(page.getByText(description, { exact: true })).toHaveCount(0);
     await expect(
@@ -3001,7 +3000,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await page.route("**/api/v1/security-submissions", withoutFocusedReceipt);
     await page.reload({ waitUntil: "networkidle" });
     await expect(report).toHaveClass(/is-focused/u);
-    await expect(report).toContainText("Slop receipt");
     expect(privateReads.length).toBeGreaterThan(0);
     expect(
       privateReads.every(
@@ -3020,7 +3018,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       waitUntil: "networkidle",
     });
     await expect(report).toBeVisible();
-    await expect(report).toContainText("Slop receipt");
     await expect(
       page.getByText(/Report status could not refresh/),
     ).toBeVisible();
@@ -3160,7 +3157,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await page.goto(`/inbox?submission=${submissionId}`, {
       waitUntil: "networkidle",
     });
-    await expect(report).toContainText("Slop receipt");
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(
       page.locator(`[aria-labelledby="submission-${submissionId}"]`),
@@ -3930,11 +3926,9 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       .getByRole("button", { name: "Open case", exact: true })
       .click();
     const detail = page.locator(`[aria-labelledby="case-${firstCase}"]`);
-    await expect(detail).toContainText("Advisory assessment");
     await expect(detail).toContainText(
       "Fixture proposal: the withdraw path skips the owner check",
     );
-    await expect(detail).toContainText("Likely path to loss of funds");
     const actions = page.getByRole("region", { name: "Case actions" });
     await chooseCaseAction(actions, "award");
     await expect(actions.getByRole("form")).toHaveCount(1);

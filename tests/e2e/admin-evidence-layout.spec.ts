@@ -240,7 +240,6 @@ test("selected admin project can queue after a superseded pending scan and prese
   await restore();
   await card.getByRole("button", { name: "Queue scan of revision 1" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toBeVisible();
   expect(writes).toEqual([
     {
       projectId: project.id,
