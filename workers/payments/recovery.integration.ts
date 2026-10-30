@@ -831,8 +831,178 @@ try {
   assert.deepEqual(uncertainDestinations, [
     "0x0000000000000000000000000000000000000007",
   ]);
+  // A Solana row marked submitted whose journal holds no transaction: the
+  // executor never saw the saved bytes, and a successor wallet exists. The row
+  // must retire like an unsigned attempt, not keep a submitted receipt.
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "old-solana-submitted",
+      "707",
+      "fixture-solana-submitted",
+      "11111111111111111111111111111111",
+      "d1_registry",
+      "b".repeat(64),
+      timestamp,
+      "c".repeat(64),
+      null,
+      timestamp,
+      "solana",
+    );
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "successor-solana-submitted",
+      "707",
+      "fixture-solana-submitted",
+      "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+      "d1_registry",
+      "d".repeat(64),
+      timestamp,
+      "e".repeat(64),
+      "old-solana-submitted",
+      timestamp,
+      "solana",
+    );
+  sql
+    .query(
+      "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(?,?,?,?,?,?)",
+    )
+    .run(
+      "challenge-solana-submitted",
+      "successor-solana-submitted",
+      "707",
+      "solana submitted fixture",
+      expiresAt,
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,?,?)",
+    )
+    .run(
+      "successor-solana-submitted",
+      "707",
+      timestamp,
+      "challenge-solana-submitted",
+      "signature",
+    );
+  sql
+    .query(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
+    )
+    .run(
+      "obligation-solana-submitted",
+      "fixture-solana-submitted",
+      "707",
+      "solana-local",
+      "solana",
+      "vault-solana-submitted",
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      6,
+      "100000000",
+      "2000000",
+      "f".repeat(64),
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_attempts(id,obligation_id,claim_id,transaction_id,created_at,state) VALUES(?,?,?,?,?,'submitted')",
+    )
+    .run(
+      "attempt-solana-submitted",
+      "obligation-solana-submitted",
+      "old-solana-submitted",
+      "forgotten-solana-transaction",
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_outbox(obligation_id,state,updated_at) VALUES(?,'submitted',?)",
+    )
+    .run("obligation-solana-submitted", timestamp);
+  retirements.set("attempt-solana-submitted", "obligation-solana-submitted");
+  await recoverUncertainAttempts(env);
+  assert.deepEqual(
+    sql
+      .query<
+        {
+          attemptState: string;
+          transactionId: string | null;
+          outboxState: string;
+        },
+        [string]
+      >(
+        "SELECT a.state attemptState,a.transaction_id transactionId,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.obligation_id=?",
+      )
+      .all("obligation-solana-submitted"),
+    [
+      {
+        attemptState: "failed",
+        transactionId: null,
+        outboxState: "ready",
+      },
+    ],
+    "A submitted Solana row without a journal transaction must retire to a dispatchable row",
+  );
+  assert.equal(
+    await dispatchPayment(
+      db,
+      {
+        async submit(input) {
+          assert.equal(
+            input.destination,
+            "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9",
+          );
+          return { transactionId: "solana-submitted-retry" };
+        },
+      },
+      "obligation-solana-submitted",
+      new Date(),
+    ),
+    "submitted",
+  );
+  assert.deepEqual(
+    sql
+      .query<
+        {
+          attemptState: string;
+          transactionId: string | null;
+          outboxState: string;
+        },
+        [string]
+      >(
+        "SELECT a.state attemptState,a.transaction_id transactionId,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.obligation_id=? ORDER BY a.rowid",
+      )
+      .all("obligation-solana-submitted"),
+    [
+      {
+        attemptState: "failed",
+        transactionId: null,
+        outboxState: "submitted",
+      },
+      {
+        attemptState: "submitted",
+        transactionId: "solana-submitted-retry",
+        outboxState: "submitted",
+      },
+    ],
+    "The replacement attempt must own the receipt instead of the retired row",
+  );
+  assert.equal(
+    sql
+      .query<{ kind: string }, [string]>(
+        "SELECT json_extract(evidence_json,'$.kind') kind FROM payment_attempt_failures WHERE attempt_id=?",
+      )
+      .get("attempt-solana-submitted")?.kind,
+    "unsigned-attempt-retired",
+  );
   console.log(
-    "Payment recovery integration passed: Base outage remains reported; held Solana attempt recovers durably; restored Base recovers once; a live lease survives retirement and both dispatcher outcomes leave a dispatchable row. Local journal evidence only, no chain submission or finality.",
+    "Payment recovery integration passed: Base outage remains reported; held Solana attempt recovers durably; restored Base recovers once; a live lease survives retirement and both dispatcher outcomes leave a dispatchable row; a submitted Solana row without a journal transaction retires and dispatches again. Local journal evidence only, no chain submission or finality.",
   );
 } finally {
   server?.stop(true);

@@ -502,6 +502,39 @@ test("an item larger than one call is reviewed in parts that each fit a batch", 
   });
   expect(reviewed.evidence?.review.status).toBe("completed");
   expect(ok.calls).toHaveLength(plan.batches.length + 1);
+
+  // A listing just below the call limit still needs room for its batch envelope.
+  const nearLimit = inspectRepository({
+    files: [
+      ...Array.from({ length: 5921 }, (_, index) =>
+        file(
+          `vendor/github.com/example/module-${String(index).padStart(4, "0")}/file.go`,
+          `package module${index}\n`,
+        ),
+      ),
+      ...Array.from({ length: 6 }, (_, index) =>
+        file(
+          `src/main${index}.ts`,
+          `export const value${index}='${"x".repeat(200000)}';\n`,
+        ),
+      ),
+    ],
+  });
+  const nearPlan = planReview(nearLimit, 350000);
+  if (nearPlan.mode !== "batched") throw new Error("Expected batches");
+  for (const batch of nearPlan.batches)
+    expect(Buffer.byteLength(batch.evidence)).toBeLessThanOrEqual(
+      MAX_INVENTORY_BYTES,
+    );
+  const nearProvider = provider(() => null);
+  const nearReview = await reviewInventory({
+    inspection: nearLimit,
+    profile,
+    fetch: nearProvider.fetcher,
+    batchTokens: 350000,
+  });
+  expect(nearReview.evidence?.review.status).toBe("completed");
+  expect(nearProvider.calls).toHaveLength(nearPlan.batches.length + 1);
 });
 
 test("a review larger than one pass resumes from its private cache without repeating calls", async () => {

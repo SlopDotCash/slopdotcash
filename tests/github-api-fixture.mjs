@@ -394,6 +394,14 @@ async function handlePrivateIntake(state, request, response, url) {
       case "403":
       case "404":
         return send(Number(state.faults.create), { message: "refused" });
+      case "secondary-rate-limit":
+        // GitHub's content-creation throttle: a 403 that keeps no copy. It
+        // clears after one refusal.
+        state.faults.create = "ok";
+        return send(403, {
+          message:
+            "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later.",
+        });
       case "timeout-after-create":
         state.store(repository, user, fields);
         state.faults.create = "ok";

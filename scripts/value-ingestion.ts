@@ -59,6 +59,19 @@ export class ValueFeedUnavailableError extends Error {
 /** Process exit status for a value feed outage (EX_TEMPFAIL). */
 export const VALUE_FEED_UNAVAILABLE_EXIT_CODE = 75;
 
+/** Any failure to read an answered body (interrupted, reset or timed out) is
+ * an outage. Malformed JSON in a complete body is an integrity failure and
+ * stops the publication. */
+async function readFeedJson<T>(response: Response): Promise<T> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw new ValueFeedUnavailableError(error);
+  }
+  return JSON.parse(text) as T;
+}
+
 /** The fixed HTTPS origin, not a digest supplied by an arbitrary URL, is the
  * publication authority. Test callers can inject a transport, never a new URL.
  */
@@ -280,17 +293,12 @@ async function fetchPenaltyRecords(
       throw new ValueFeedUnavailableError(`HTTP ${response.status}`);
     if (response.status !== 200 || response.redirected)
       throw new Error("Authoritative penalty feed is unavailable");
-    let body: {
+    const body = await readFeedJson<{
       schemaVersion?: unknown;
       project?: unknown;
       records?: unknown;
       nextAfter?: unknown;
-    };
-    try {
-      body = await response.json();
-    } catch (error) {
-      throw new ValueFeedUnavailableError(error);
-    }
+    }>(response);
     if (
       !(
         body?.schemaVersion ===
@@ -745,18 +753,9 @@ export async function loadParticipationBans(
     throw new ValueFeedUnavailableError(`HTTP ${response.status}`);
   if (response.status !== 200 || response.redirected)
     throw new Error("The account ban feed is unavailable");
-  let body: { schemaVersion?: unknown; bans?: unknown };
-  try {
-    body = (await response.json()) as typeof body;
-  } catch (error) {
-    if (
-      error instanceof TypeError ||
-      (error instanceof DOMException &&
-        (error.name === "TimeoutError" || error.name === "AbortError"))
-    )
-      throw new ValueFeedUnavailableError(error);
-    throw error;
-  }
+  const body = await readFeedJson<{ schemaVersion?: unknown; bans?: unknown }>(
+    response,
+  );
   if (
     body?.schemaVersion !== "slop-account-bans:v1" ||
     !Array.isArray(body.bans) ||
