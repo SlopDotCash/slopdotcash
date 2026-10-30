@@ -1251,6 +1251,24 @@ for (const closureEnabled of [true, false]) {
   });
 }
 
+test("the queue retries a duplicate review whose original changed after its comment", async () => {
+  await closedItem(async (run) => {
+    run.seedDuplicate();
+    run.closureEnabled(false);
+    run.onReviewComment(() => run.changeDuplicate("closed"));
+    const job = run.job("review", {});
+    // The stale duplicate comment is published, then the label is refused.
+    // The changed source must not acknowledge this unfinished review.
+    await expect(run.deliver(job)).rejects.toThrow("appeal job was retried");
+    expect(run.comments.at(-1)).toContain("identical to your open item #4");
+    expect(run.labels).toEqual([]);
+    // The retry reviews the current source and replaces the stale finding.
+    expect(await run.deliver(job)).toBe("labeled (spam)");
+    expect(run.comments.at(-1)).not.toContain("identical to your open item");
+    expect(run.labels).toEqual(["slopbot: spam"]);
+  });
+});
+
 test("a model's duplicate claim cannot close without a verified same-author open original", async () => {
   await closedItem(async (run) => {
     run.model("duplicate", 0.97);
