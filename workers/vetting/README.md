@@ -32,6 +32,11 @@ Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
 `prompt-injection`. The deterministic rules in `bounded-scan.ts` are
 indicators, never confirmations. A match marks the check `flagged`.
+Textual instruction-override and secret-transmission matches are medium-severity
+indicators that require independent contextual specialist review. API documentation
+and injection-defense tests can contain that wording without directing an attack.
+The matches remain in the report; incomplete reviews and high or critical findings
+still block clearance.
 
 The flow for one queued assessment:
 
