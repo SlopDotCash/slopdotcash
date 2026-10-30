@@ -99,14 +99,19 @@ export function useHashScroll(href: string): void {
       window.clearTimeout(timer);
       window.cancelAnimationFrame(frame);
       for (const type of READER_INPUT_EVENTS) {
-        window.removeEventListener(type, stop);
+        window.removeEventListener(type, stop, true);
       }
     }
     align();
     window.addEventListener("scroll", remember, { passive: true });
     observer.observe(document.body, { childList: true, subtree: true });
     for (const type of READER_INPUT_EVENTS) {
-      window.addEventListener(type, stop, { passive: true });
+      // Stop before native scrolling. A passive wheel handler can run after
+      // the scroll event and let restoration undo the reader's first gesture.
+      window.addEventListener(type, stop, {
+        capture: true,
+        passive: type !== "wheel",
+      });
     }
     void document.fonts?.ready.then(align);
     return () => {
