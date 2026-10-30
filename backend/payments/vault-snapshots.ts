@@ -123,7 +123,7 @@ export async function storeVaultSnapshot(
         .fill("?")
         .join(
           ",",
-        )}) ON CONFLICT(project_id,network,vault) DO UPDATE SET ${keys.map((k) => `${COLUMNS[k]}=excluded.${COLUMNS[k]}`).join(",")},block_number=excluded.block_number,block_time=excluded.block_time,observed_at=excluded.observed_at WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_snapshots.block_number AS INTEGER) AND excluded.asset_address=vault_snapshots.asset_address AND excluded.asset_decimals=vault_snapshots.asset_decimals AND excluded.chain=vault_snapshots.chain AND ${monotonicCounters}`,
+        )}) ON CONFLICT(project_id,network,vault) DO UPDATE SET ${keys.map((k) => `${COLUMNS[k]}=excluded.${COLUMNS[k]}`).join(",")},block_number=excluded.block_number,block_time=excluded.block_time,observed_at=MAX(vault_snapshots.observed_at,excluded.observed_at) WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_snapshots.block_number AS INTEGER) AND excluded.asset_address=vault_snapshots.asset_address AND excluded.asset_decimals=vault_snapshots.asset_decimals AND excluded.chain=vault_snapshots.chain AND ${monotonicCounters}`,
     )
     .bind(
       deployment.projectId,

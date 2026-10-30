@@ -470,3 +470,40 @@ test("bounded refresh advances healthy vaults while earlier reads wait and repor
     sqlite.close();
   }
 });
+
+test("a slow refresh cannot make a freshly observed vault stale", async () => {
+  const db = open();
+  const fresh = "2026-10-18T10:15:00.000Z";
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const slow = refreshVaultSnapshots(
+    db,
+    [deployment],
+    { [deployment.network]: "http://rpc.invalid" },
+    async () => {
+      await waiting;
+      return totals();
+    },
+    new Date(observed),
+  );
+  await refreshVaultSnapshots(
+    db,
+    [deployment],
+    { [deployment.network]: "http://rpc.invalid" },
+    async () => totals(),
+    new Date(fresh),
+  );
+  release();
+  await slow;
+  const response = await handlePaymentsApi(
+    new Request("https://slop.cash/api/v1/payments/projects/acme/vault"),
+    { db, now: () => new Date(fresh) },
+  );
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as {
+    snapshots: { observedAt: string }[];
+  };
+  expect(body.snapshots[0].observedAt).toBe(fresh);
+});
