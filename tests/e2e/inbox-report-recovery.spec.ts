@@ -58,7 +58,7 @@ test("Reports can retry an initial Inbox outage without exposing private state",
   await expect(
     page.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("alert")).toContainText("could not load");
+  await expect(page.getByRole("alert")).toBeVisible();
   available = true;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(

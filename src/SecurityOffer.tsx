@@ -9,9 +9,11 @@ import {
 export function SecurityOffer({
   project,
   compact = false,
+  amountPreview,
 }: {
   project: Pick<ProjectDefinition, "securityBounty">;
   compact?: boolean;
+  amountPreview?: { gross: string; researcher: string; slop: string };
 }) {
   const terms = project.securityBounty;
   if (!terms || terms.status !== "open")
@@ -21,28 +23,35 @@ export function SecurityOffer({
         promised.
       </p>
     );
-  const split = securityBountySplit(terms.amount.grossMinor, terms.split);
   const fullAward = isFullAwardSplit(terms.split);
   const amount = (minor: string) => formatSecurityAmount(minor, terms.amount);
+  const { gross, researcher, slop } =
+    amountPreview ??
+    (() => {
+      const split = securityBountySplit(terms.amount.grossMinor, terms.split);
+      return {
+        gross: amount(split.grossMinor),
+        researcher: amount(split.researcherMinor),
+        slop: amount(split.slopMinor),
+      };
+    })();
   return (
     <section
       className={`security-offer${compact ? " security-offer-compact" : ""}`}
       aria-label="Published bounty offer"
     >
       <p className="security-offer-net">
-        <strong>{amount(split.researcherMinor)}</strong> to the researcher
+        <strong>{researcher}</strong> to the researcher
       </p>
       <p>
         {fullAward
-          ? `${amount(split.grossMinor)} total award, sponsored by ${terms.sponsor.name}. The researcher receives all of it; Slop takes no share and no payout fee.`
-          : `${amount(split.grossMinor)} total award · ${amount(split.slopMinor)} to Slop. No additional payout fee.`}
+          ? `${gross} total award, sponsored by ${terms.sponsor.name}. The researcher receives all of it; Slop takes no share and no payout fee.`
+          : `${gross} total award · ${slop} to Slop. No additional payout fee.`}
       </p>
       <p className="security-offer-funding">
-        {fullAward
-          ? "Pledged — funded after approval. An approved award is not payable until a full-award payment path is approved and released."
-          : terms.funding.state === "pledged"
-            ? "Pledged — funded after approval. Payment requires verified funding."
-            : "Funding verified at the recorded observation. Awards require owner approval."}
+        {terms.funding.state === "pledged"
+          ? "Pledged. Awards require owner approval."
+          : "Funding verified at the recorded observation. Awards require owner approval."}
       </p>
       {!compact ? <p>{terms.scope.lossDefinition}</p> : null}
       <p className="field-hint">

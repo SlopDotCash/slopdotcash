@@ -30,7 +30,11 @@ export declare function parseAssetAmount(
 export declare function monthlyAmountDisplay(
   value: string,
   rewardAsset:
-    | { kind: "stablecoin" | "token"; decimals: number; symbol: string }
+    | {
+        kind: "stablecoin" | "token" | "native";
+        decimals: number;
+        symbol: string;
+      }
     | undefined,
 ): string;
 export declare function assertProjectDefinition(

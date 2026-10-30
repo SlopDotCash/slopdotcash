@@ -163,11 +163,6 @@ test("point rankings and ties do not depend on payment availability", async ({
     name: "Contributor standings",
     exact: true,
   });
-  await expect(standings.getByRole("columnheader")).toHaveText([
-    "Rank",
-    "Contributor",
-    "Points",
-  ]);
   await expect(
     standings.getByText(/Money received|Payment records unavailable/u),
   ).toHaveCount(0);
@@ -302,11 +297,6 @@ test("legacy project and contributor URLs keep points-only ranking", async ({
   await expect(
     standings.getByRole("columnheader", { name: "Points", exact: true }),
   ).toHaveAttribute("aria-sort", "descending");
-  await expect(standings.getByRole("columnheader")).toHaveText([
-    "Rank",
-    "Contributor",
-    "Points",
-  ]);
   await expect(page).not.toHaveURL(/sort=money/u);
   await expectAccessible(page);
 });

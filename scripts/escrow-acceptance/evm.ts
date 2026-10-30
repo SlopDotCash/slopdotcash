@@ -712,6 +712,10 @@ export async function runEvm(
     .map((value) => value.trim().toLowerCase());
   if (!assets.length || assets.some((asset) => !/^0x[0-9a-f]{40}$/.test(asset)))
     throw new Error("Factory and asset addresses must be EVM addresses");
+  // A resume must keep every recorded asset. Otherwise an omitted asset stays
+  // unfinished while the run reports passed.
+  if (assets.length < run.assets.length)
+    throw new Error("Asset list changed since the run started");
   const divisor = unitDivisor();
   const services = evmServices(ctx, directory, () =>
     run.assets

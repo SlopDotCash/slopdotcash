@@ -16,8 +16,8 @@
 
 # EVM escrow v5
 
-This is an owner-upgradeable escrow implementation for one project, one token and one
-purpose. The token can be any standard ERC-20 with any decimals: Circle USDC,
+This is an owner-upgradeable escrow implementation for one project, one asset and one
+purpose. The asset can be native ETH or any standard ERC-20 with any decimals: Circle USDC,
 Paxos USDG or a project token. Anyone can call the factory to create a vault
 for itself. The caller is the owner, and the factory keeps one vault for each
 (owner, project ID, token, purpose). The purpose is `Ordinary` (0) for ordinary
@@ -31,6 +31,20 @@ separate upgrade authority can replace factory or vault logic as described
 above. See [the deployment record](../DEPLOY-MAINNET.md) for recorded releases;
 new source changes need their own acceptance evidence. The owner waived the
 independent contract audit, not the release checks.
+
+## Native ETH
+
+The source implementation uses the zero token address for native ETH and stores
+18 decimals. This adds no storage slots. `deposit(amount)` requires exactly
+`amount` wei in transaction value; ERC-20 deposits require zero transaction value.
+Direct transfers are not credited. Payouts, owner refunds and fee claims transfer
+ETH and check exact vault and recipient balance changes. Failed recipients keep
+the award or accrued fee unpaid; they do not consume it.
+
+Run `bun contracts/evm/native.integration.ts` from the repository root for the
+local Anvil lifecycle, including sender gas, monthly awards and receiver failure.
+The ordinary adapter integration also runs this test. No deployment or reviewed
+production implementation binding changes with this source update.
 
 ## Networks
 

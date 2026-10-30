@@ -136,6 +136,7 @@ export async function ownerPlan(input, runtime) {
     throw new Error(
       "Reviewed authorities differ from the pinned escrow Config",
     );
+  const native = mint.equals(SystemProgram.programId);
   if (input.operation === "initialize") {
     if (
       !pda(
@@ -160,25 +161,34 @@ export async function ownerPlan(input, runtime) {
         ? new BN(0)
         : amount(input.monthlyCap);
     instructions.push(
-      await program.methods
-        .initialize(
-          hash(input.projectDigest),
-          hash(d.networkDomain),
-          new PublicKey(d.identityAuthority),
-          new PublicKey(d.feeRecipient),
-          delay(d.bindingDelaySeconds),
-          delay(d.rotationDelaySeconds),
-          bounty ? { bounty: {} } : { ordinary: {} },
+      await program.methods[native ? "initializeNative" : "initialize"](
+        hash(input.projectDigest),
+        hash(d.networkDomain),
+        new PublicKey(d.identityAuthority),
+        new PublicKey(d.feeRecipient),
+        delay(d.bindingDelaySeconds),
+        delay(d.rotationDelaySeconds),
+        bounty ? { bounty: {} } : { ordinary: {} },
+      )
+        .accountsStrict(
+          native
+            ? {
+                owner,
+                project,
+                vault,
+                systemProgram: SystemProgram.programId,
+                config: configAddress,
+              }
+            : {
+                owner,
+                project,
+                mint,
+                vault,
+                tokenProgram: TOKEN_PROGRAM_ID,
+                systemProgram: SystemProgram.programId,
+                config: configAddress,
+              },
         )
-        .accountsStrict({
-          owner,
-          project,
-          mint,
-          vault,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-          config: configAddress,
-        })
         .instruction(),
     );
     // Both instructions execute atomically and require the same owner signature.
@@ -269,64 +279,88 @@ export async function ownerPlan(input, runtime) {
       signer =
         input.depositor === undefined ? owner : new PublicKey(input.depositor);
       instructions.push(
-        await program.methods
-          .deposit(amount(input.grossMicro))
-          .accountsStrict({
-            depositor: signer,
-            project,
-            mint,
-            vault,
-            source: getAssociatedTokenAddressSync(mint, signer, true),
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
+        await program.methods[native ? "depositNative" : "deposit"](
+          amount(input.grossMicro),
+        )
+          .accountsStrict(
+            native
+              ? {
+                  depositor: signer,
+                  project,
+                  vault,
+                  systemProgram: SystemProgram.programId,
+                }
+              : {
+                  depositor: signer,
+                  project,
+                  mint,
+                  vault,
+                  source: getAssociatedTokenAddressSync(mint, signer, true),
+                  tokenProgram: TOKEN_PROGRAM_ID,
+                },
+          )
           .instruction(),
       );
     } else if (input.operation === "withdraw") {
       // The withdrawal fee accrues in the vault; only the owner's account receives tokens.
       instructions.push(
-        createAssociatedTokenAccountIdempotentInstruction(
-          owner,
-          getAssociatedTokenAddressSync(mint, owner),
-          owner,
-          mint,
-        ),
-        await program.methods
-          .withdraw(amount(input.grossMicro))
-          .accountsStrict({
-            owner,
-            project,
-            mint,
-            vault,
-            destination: getAssociatedTokenAddressSync(mint, owner),
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
+        ...(native
+          ? []
+          : [
+              createAssociatedTokenAccountIdempotentInstruction(
+                owner,
+                getAssociatedTokenAddressSync(mint, owner),
+                owner,
+                mint,
+              ),
+            ]),
+        await program.methods[native ? "withdrawNative" : "withdraw"](
+          amount(input.grossMicro),
+        )
+          .accountsStrict(
+            native
+              ? { owner, project, vault, destination: owner }
+              : {
+                  owner,
+                  project,
+                  mint,
+                  vault,
+                  destination: getAssociatedTokenAddressSync(mint, owner),
+                  tokenProgram: TOKEN_PROGRAM_ID,
+                },
+          )
           .instruction(),
       );
     } else if (input.operation === "claim-fees") {
       // Permissionless: moves accrued fees to the fee recipient's associated account,
       // which may not exist yet; creating it is idempotent.
       const feeRecipient = new PublicKey(d.feeRecipient);
-      const feeAccount = getAssociatedTokenAddressSync(
-        mint,
-        feeRecipient,
-        true,
-      );
+      const feeAccount = native
+        ? feeRecipient
+        : getAssociatedTokenAddressSync(mint, feeRecipient, true);
       instructions.push(
-        createAssociatedTokenAccountIdempotentInstruction(
-          owner,
-          feeAccount,
-          feeRecipient,
-          mint,
-        ),
-        await program.methods
-          .claimFees()
-          .accountsStrict({
-            project,
-            mint,
-            vault,
-            feeAccount,
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
+        ...(native
+          ? []
+          : [
+              createAssociatedTokenAccountIdempotentInstruction(
+                owner,
+                feeAccount,
+                feeRecipient,
+                mint,
+              ),
+            ]),
+        await program.methods[native ? "claimFeesNative" : "claimFees"]()
+          .accountsStrict(
+            native
+              ? { project, vault, feeAccount }
+              : {
+                  project,
+                  mint,
+                  vault,
+                  feeAccount,
+                  tokenProgram: TOKEN_PROGRAM_ID,
+                },
+          )
           .instruction(),
       );
     } else if (input.operation === "veto") {

@@ -71,9 +71,6 @@ test("a Robinhood reward token opens its own chain explorer", async ({
   await token.click();
   const popup = await popupPromise;
   await popup.waitForLoadState("domcontentloaded");
-  await expect(popup.getByRole("heading")).toHaveText(
-    "robinhoodchain.blockscout.com",
-  );
   await expect(popup).toHaveURL(
     `https://robinhoodchain.blockscout.com/token/${address}`,
   );

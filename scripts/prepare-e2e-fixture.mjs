@@ -14,6 +14,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -58,7 +59,14 @@ function overlayFixtures(workspace) {
 }
 
 export async function prepareE2eFixture() {
-  const workspace = mkdtempSync(join(tmpdir(), "slop-e2e-fixture-"));
+  // On Windows the temporary directory can be an 8.3 short path
+  // (C:\Users\LONGNA~1\...). A recursive watch on a short path, such as the
+  // local Vite server's, stops Node with a libuv assertion
+  // (`!_wcsnicmp(filename, dir, dirlen)`, src\win\fs-event.c), because change
+  // events report the long path. The native realpath expands the short path.
+  const workspace = realpathSync.native(
+    mkdtempSync(join(tmpdir(), "slop-e2e-fixture-")),
+  );
   try {
     copyWorkingTree(repositoryRoot, workspace);
     overlayFixtures(workspace);
@@ -87,8 +95,13 @@ export async function prepareE2eFixture() {
       join(workspace, "node_modules"),
       process.platform === "win32" ? "junction" : "dir",
     );
-    if (process.env.SLOP_E2E_SOLANA_VAULT === "1") {
-      for (const directory of ["node_modules", "target"]) {
+    if (
+      process.env.SLOP_E2E_SOLANA_VAULT === "1" ||
+      process.env.SLOP_E2E_SOLANA_BOUNTY === "1"
+    ) {
+      for (const directory of process.env.SLOP_E2E_SOLANA_VAULT === "1"
+        ? ["node_modules", "target"]
+        : ["node_modules"]) {
         symlinkSync(
           join(repositoryRoot, "contracts", "solana", directory),
           join(workspace, "contracts", "solana", directory),

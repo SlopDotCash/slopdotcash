@@ -125,7 +125,6 @@ contract AnyTokenTest is OpusBase {
     function test_eighteenDecimalsBeyondUint64() public {
         // 10 million tokens at 18 decimals is 1e25 base units, far above type(uint64).max (about 1.8e19).
         uint256 deposit = 10_000_000e18;
-        check(deposit > type(uint64).max, "beyond uint64");
         lifecycle(18, deposit, 4_000_000e18 + 49, 1_000_000e18 + 7);
     }
 

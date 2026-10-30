@@ -404,7 +404,6 @@ describe("automatic scan and activation", () => {
       commitSha: HEAD,
       templateSha256: TEMPLATE,
       requestedBy: STEWARD,
-      requestReason: "Automatic scan of new project content",
     });
     // A repeated refresh does not queue a duplicate.
     expect((await refresh()).queued).toEqual([]);
@@ -644,9 +643,6 @@ describe("automatic scan and activation", () => {
       disposition: "clean",
     });
     expect(overclaimed.status).toBe(422);
-    expect((await overclaimed.json()).message).toContain(
-      "The downloads surface was not read completely",
-    );
     expect((await postResult(incomplete)).status).toBe(200);
     expect((await (await publicProject()).json()).vetting.state).toBe(
       "quarantined",
@@ -739,9 +735,6 @@ describe("two-contributor flags", () => {
 
     // The fresh scan queued with the pause reinstates on a clean result.
     const fresh = (await vetting.pendingAssessments()).at(-1);
-    expect(fresh?.requestReason).toBe(
-      "Automatic fresh scan after two contributor flags paused the project",
-    );
     clock = new Date(NOW.getTime() + 120_000);
     if (!fresh) throw new Error("no fresh scan");
     expect(

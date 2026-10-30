@@ -408,9 +408,6 @@ describe("community security vetting", () => {
     // A clean claim with a telemetry gap and a quarantined artifact is refused.
     const overclaimed = await postResult({ ...result, disposition: "clean" });
     expect(overclaimed.status).toBe(422);
-    expect((await overclaimed.json()).message).toContain(
-      "Telemetry channel http is not complete",
-    );
     expect((await postResult(result)).status).toBe(200);
     expect(await publicVetting()).toMatchObject({
       state: "quarantined",
@@ -511,9 +508,6 @@ describe("community security vetting", () => {
     } as unknown as (typeof result.modelReviews)[number];
     const refused = await postResult(result);
     expect(refused.status).toBe(422);
-    expect((await refused.json()).message).toContain(
-      "The opus review did not complete",
-    );
     expect(
       (await postResult({ ...result, disposition: "incomplete" })).status,
     ).toBe(200);

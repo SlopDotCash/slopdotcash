@@ -5,6 +5,7 @@ import {
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
+import { assertNativeWrap } from "./solana-native-route";
 
 export interface JupiterRouteExpectation {
   program: string;
@@ -17,6 +18,8 @@ export interface JupiterRouteExpectation {
   quotedOut: bigint;
   minimumOut: bigint;
   slippageBps: number;
+  /** The exact fee SOL is wrapped and spent atomically; existing WSOL stays untouched. */
+  nativeInput?: true;
 }
 
 /** Bind the actual on-chain instruction, not the API's description, to the quote. */
@@ -27,6 +30,7 @@ export function assertJupiterRoute(
   expected: JupiterRouteExpectation,
 ) {
   const keys = verifySolanaAccountProof(raw, parsed, proof);
+  assertNativeWrap(parsed, proof, expected);
   if (
     parsed.requiredSignatures !== 1 ||
     parsed.readonlySigned !== 0 ||

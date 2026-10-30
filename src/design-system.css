@@ -16,7 +16,7 @@ body {
   min-height: 100dvh;
 }
 
-#root > .skip-target {
+#root > .app-content {
   flex: 1;
 }
 
@@ -28,29 +28,6 @@ body {
 ::selection {
   background: var(--orange);
   color: var(--on-accent);
-}
-
-/* Keyboard users jump past the header; the link is visible only while focused. */
-.skip-link {
-  position: absolute;
-  left: 16px;
-  top: 8px;
-  z-index: 100;
-  padding: 10px 16px;
-  background: var(--orange);
-  color: var(--on-accent);
-  border-radius: 8px;
-  font-weight: 600;
-  transform: translateY(-200%);
-}
-
-.skip-link:focus-visible {
-  transform: none;
-  outline-color: var(--on-accent);
-}
-
-.skip-target:focus {
-  outline: 0;
 }
 
 button:focus-visible,
@@ -1351,6 +1328,64 @@ main h2 {
 .email-detail {
   color: var(--muted);
   font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.email-row > strong {
+  font-size: 18px;
+}
+
+.email-enrollment {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.email-enrollment > label {
+  display: grid;
+  gap: 6px;
+}
+
+.email-enrollment input[type="email"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-small);
+}
+
+.email-enrollment fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.email-enrollment legend {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.email-enrollment fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.email-enrollment input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.email-card p {
   overflow-wrap: anywhere;
 }
 
