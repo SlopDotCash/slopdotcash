@@ -28,6 +28,7 @@ import {
 } from "../src/lib/points";
 import type { PointsSummary } from "../src/lib/points-summary";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
+import { readLeaderboardFile } from "./leaderboard-files.mjs";
 import { syncCycleIndex } from "./sync-cycle-index";
 
 function hash(s: string) {
@@ -478,7 +479,9 @@ export async function generatePoints(
     ...(await archivePaths("cycles")),
     "public/data/leaderboard.json",
   ]) {
-    const bytes = await readFile(path, "utf8");
+    const bytes = new TextDecoder("utf-8", { fatal: true }).decode(
+      await readLeaderboardFile(path),
+    );
     const snapshot: unknown = JSON.parse(bytes);
     assertLeaderboardSnapshot(snapshot);
     snapshots.push({ snapshot, digest: hash(bytes) });

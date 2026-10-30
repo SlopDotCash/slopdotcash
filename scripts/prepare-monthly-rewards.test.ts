@@ -1,20 +1,32 @@
 import { expect, test } from "bun:test";
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
+import {
+  handleProjectApi,
+  type ProjectApiDependencies,
+} from "../backend/projects/handler";
+import {
+  handleProjectFlagsApi,
+  ProjectFlagStore,
+} from "../backend/vetting/flags";
 import type { EscrowDeployment } from "../src/lib/escrow-policy.mjs";
-import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
-import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
+import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { closedMonthLedger } from "../tests/closed-month-ledger";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
+import { CONTRIBUTION } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import {
   buildMonthlyBase,
@@ -42,67 +54,34 @@ function fundedProject(projectId = "eliza", effectiveCycle = "2026-09") {
   return project;
 }
 
+/** A registered Solana devnet vault: controlled schema-valid pins. */
+const DEVNET_VAULT: EscrowDeployment = {
+  network: "solana-devnet",
+  vault: "So11111111111111111111111111111111111111112",
+  programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  upgradeAuthority: null,
+  projectPda: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+  networkDomain: "cd".repeat(32),
+  asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  owner: "11111111111111111111111111111111",
+  identityAuthority: "SysvarRent111111111111111111111111111111111",
+  feeRecipient: "SysvarC1ock11111111111111111111111111111111",
+  rotationAuthority: "Vote111111111111111111111111111111111111111",
+  deploymentTransaction: "1".repeat(64),
+  sourceCommit: "0123456789abcdef0123456789abcdef01234567",
+  codeSha256: "ab".repeat(32),
+  bindingDelaySeconds: "60",
+  rotationDelaySeconds: "60",
+  factory: null,
+  factoryCodeSha256: null,
+  registrar: null,
+};
+
+const SEPTEMBER_CLOSE = "2026-10-01T00:00:00.000Z";
+const SEPTEMBER_WINDOW_FROM = "2026-08-27T00:00:00.000Z";
 /** The complete ledger that `leaderboard:generate --cutoff` publishes after September closes. */
-function closedSeptemberLedger(): string {
-  const at = "2026-10-01T00:00:00.000Z";
-  const from = "2026-08-27T00:00:00.000Z";
-  return JSON.stringify(
-    createLeaderboardSnapshot({
-      generatedAt: at,
-      windowFrom: from,
-      windowTo: at,
-      sourceUpdatedAt: at,
-      source: {
-        provider: "github-graphql",
-        fetchedAt: at,
-        cutoffAt: at,
-        repositoryId: "R_fixture",
-        repositories: TARGET_REPOSITORIES.map((target) => ({
-          id: target.id,
-          repositoryId:
-            target.role === "primary"
-              ? "R_fixture"
-              : `R_fixture_${target.name.replaceAll("-", "_")}`,
-        })),
-        requestCount: 1,
-        searchSliceCount: 1,
-        rateLimit: {
-          cost: 1,
-          limit: 5000,
-          remaining: 4999,
-          resetAt: "2026-10-01T01:00:00.000Z",
-        },
-        counts: {
-          mergedPullRequests: 0,
-          detailedMergedPullRequests: 0,
-          closedIssues: 0,
-          detailedClosedIssues: 0,
-          resolvedIssues: 0,
-          openIssues: 0,
-          openPullRequests: 0,
-        },
-        verificationWindow: { days: 35, from, to: at },
-        evidenceVerification: {
-          status: "complete",
-          sourceCount: 0,
-          artifactCount: 0,
-          maxSources: 64,
-          maxArtifacts: 64,
-        },
-      },
-      mergedPullRequestOutcomes: [],
-      mergedPullRequests: [],
-      detailEligibleMergedPullRequestIds: [],
-      closedIssueCount: 0,
-      resolvedIssues: [],
-      openIssues: [],
-      openPullRequests: [],
-      verificationWindowFrom: from,
-      verifiedEvidence: [],
-      evaluatedContributions: [],
-    }),
-  );
-}
+const closedSeptemberLedger = () =>
+  closedMonthLedger(SEPTEMBER_CLOSE, SEPTEMBER_WINDOW_FROM);
 
 test("a month's proposal is stored once; a later ledger never adds or replaces rows", async () => {
   const { db, sqlite } = sqliteD1(
@@ -219,27 +198,7 @@ test("a month closed before vault setup is proposed by the rerun after the vault
       skipped: ["eliza"],
     });
     // The owner creates the vault; the day 2 rerun proposes the month.
-    const vault: EscrowDeployment = {
-      network: "solana-devnet",
-      vault: "So11111111111111111111111111111111111111112",
-      programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-      upgradeAuthority: null,
-      projectPda: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
-      networkDomain: "cd".repeat(32),
-      asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-      owner: "11111111111111111111111111111111",
-      identityAuthority: "SysvarRent111111111111111111111111111111111",
-      feeRecipient: "SysvarC1ock11111111111111111111111111111111",
-      rotationAuthority: "Vote111111111111111111111111111111111111111",
-      deploymentTransaction: "1".repeat(64),
-      sourceCommit: "0123456789abcdef0123456789abcdef01234567",
-      codeSha256: "ab".repeat(32),
-      bindingDelaySeconds: "60",
-      rotationDelaySeconds: "60",
-      factory: null,
-      factoryCodeSha256: null,
-      registrar: null,
-    };
+    const vault = DEVNET_VAULT;
     project.escrow?.deployments.push(vault);
     publish(2);
     expect((await run("2")).bases.map((base) => base.projectId)).toEqual([
@@ -255,6 +214,231 @@ test("a month closed before vault setup is proposed by the rerun after the vault
       stored.results.map((row) => JSON.parse(row.manifest).escrow.deployments),
     ).toEqual([[vault]]);
   } finally {
+    sqlite.close();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+/** Runs one command of the scheduled monthly job in a copied checkout. */
+async function workflowCommand(
+  cwd: string,
+  args: string[],
+  env: Record<string, string> = {},
+) {
+  const child = Bun.spawn([process.execPath, ...args], {
+    cwd,
+    env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { code, stdout, stderr };
+}
+
+test("a contributor-flag pause skips that project and keeps every other project's month", async () => {
+  const root = mkdtempSync(join(tmpdir(), "slop-monthly-flag-"));
+  const { db, sqlite } = sqliteD1(
+    readdirSync("migrations")
+      .filter((name) => name.endsWith(".sql"))
+      .sort(),
+  );
+  const now = () => new Date("2026-10-30T12:00:00.000Z");
+  const persistence = new CloudflareProjectPersistence(db);
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    // Two active monthly-pool projects with a registered vault each and the
+    // generated skills that every registry project publishes.
+    const registered = (id: string) => {
+      const project = fundedProject(id);
+      project.skill = {
+        id: `contribute-to-${id}`,
+        publishAtRoot: false,
+        sourcePath: "skills/project-contributor-template",
+        publicPath: `/projects/${id}/skill.md`,
+      };
+      project.reviewSkill = {
+        id: `review-${id}-contributions`,
+        sourcePath: "skills/project-reviewer-template",
+      };
+      project.contribution = { ...CONTRIBUTION };
+      return project;
+    };
+    const asi = registered("asi");
+    asi.escrow?.deployments.push({
+      ...DEVNET_VAULT,
+      vault: "Stake11111111111111111111111111111111111111",
+      projectPda: "Config1111111111111111111111111111111111111",
+      deploymentTransaction: `${"1".repeat(63)}2`,
+    });
+    const eliza = registered("eliza");
+    eliza.escrow?.deployments.push(DEVNET_VAULT);
+    for (const manifest of assertProjectRegistry([asi, eliza])) {
+      const text = JSON.stringify(manifest);
+      const digest = sha256Hex(text);
+      const at = "2026-09-01T00:00:00.000Z";
+      sqlite
+        .prepare(
+          "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          manifest.id,
+          1,
+          text,
+          digest,
+          "Controlled registry revision",
+          "900000001",
+          "fixture-owner",
+          at,
+        );
+      sqlite
+        .prepare(
+          "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+        )
+        .run(manifest.id, manifest.status, 1, text, digest, at, at);
+    }
+    // PRD section 4: two distinct eligible members flag eliza through the
+    // public route, and the second flag pauses it. The pause appends no D1
+    // revision, so eliza's newest revision still says active.
+    const flags = new ProjectFlagStore(db);
+    let nextFlag = 0;
+    const flag = (githubId: string) =>
+      handleProjectFlagsApi(
+        new Request("https://slop.cash/api/v1/project-flags/eliza", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: "https://slop.cash",
+          },
+          body: JSON.stringify({
+            category: "prompt-injection",
+            evidence:
+              "The install script downloads and runs an unpinned remote payload.",
+            evidenceUrl:
+              "https://github.com/elizaOS/eliza/blob/main/install.sh",
+          }),
+        }),
+        {
+          flags,
+          projects: persistence,
+          sessionActor: async () => ({
+            githubId,
+            githubLogin: `member-${githubId}`,
+          }),
+          // An established member with accepted work and read access only.
+          flaggerStanding: async () => ({
+            accountCreatedAt: "2020-01-01T00:00:00.000Z",
+            hasAcceptedContribution: true,
+          }),
+          repositoryAuthority: async () => ({
+            state: "denied",
+            message: "Read access",
+          }),
+          moderatorGithubIds: ["900000009"],
+          now,
+          randomId: () =>
+            `00000000-0000-4000-8000-${String(++nextFlag).padStart(12, "0")}`,
+        },
+      );
+    expect((await flag("900000101"))?.status).toBe(201);
+    expect(await (await flag("900000102"))?.json()).toMatchObject({
+      paused: true,
+    });
+    const unsupported = async () => {
+      throw new Error("Only public registry reads are allowed in this fixture");
+    };
+    const registryApi: ProjectApiDependencies = {
+      persistence,
+      adminGithubIds: new Set(),
+      moderatorGithubIds: new Set(),
+      now,
+      randomId: () => {
+        throw new Error("No writes are allowed in this fixture");
+      },
+      sessionActor: async () => null,
+      readTokenMetadata: unsupported,
+      github: { fetch: unsupported },
+      vettingClearance: unsupported,
+      repositoryControl: unsupported,
+    };
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) =>
+        (await handleProjectApi(request, registryApi)) ??
+        new Response("Not found", { status: 404 }),
+    });
+    // The job's own checkout, so its registry snapshot is the synced one.
+    const checkout = join(root, "checkout");
+    for (const path of [
+      "backend",
+      "contracts",
+      "package.json",
+      "scripts",
+      "src",
+      "tests/closed-month-ledger.ts",
+      "workers",
+    ]) {
+      mkdirSync(dirname(join(checkout, path)), { recursive: true });
+      cpSync(join(import.meta.dir, "..", path), join(checkout, path), {
+        recursive: true,
+      });
+    }
+    symlinkSync(
+      join(import.meta.dir, "..", "node_modules"),
+      join(checkout, "node_modules"),
+    );
+    // monthly-rewards.yml: projects:sync, then the complete cycle ledger,
+    // then rewards:propose-month.
+    const sync = await workflowCommand(
+      checkout,
+      ["scripts/sync-project-registry.mjs"],
+      { SLOP_API_ORIGIN: `http://127.0.0.1:${server.port}` },
+    );
+    expect(sync.code, sync.stderr).toBe(0);
+    expect(sync.stdout).toContain(
+      "Project eliza is restricted but its paused, retired revision is pending",
+    );
+    // The workflow then validates the synced registry before collection.
+    const check = await workflowCommand(checkout, [
+      "scripts/sync-project-registry.mjs",
+      "--check",
+    ]);
+    expect(check.code, check.stderr).toBe(0);
+    const ledger = join(root, "leaderboard.json");
+    const collected = await workflowCommand(checkout, [
+      "tests/closed-month-ledger.ts",
+      ledger,
+      SEPTEMBER_CLOSE,
+      SEPTEMBER_WINDOW_FROM,
+    ]);
+    expect(collected.code, collected.stderr).toBe(0);
+    const sql = join(root, "monthly-allocations.sql");
+    expect(
+      await workflowCommand(checkout, [
+        "scripts/prepare-monthly-rewards.ts",
+        "--cycle",
+        "2026-09",
+        "--snapshot",
+        ledger,
+        "--sql",
+        sql,
+      ]),
+    ).toEqual({
+      code: 0,
+      stdout: "[Slop] proposed 2026-09 allocations: asi\n",
+      stderr: "",
+    });
+    sqlite.exec(readFileSync(sql, "utf8"));
+    const stored = await db
+      .prepare("SELECT project_id FROM monthly_reward_bases")
+      .all<{ project_id: string }>();
+    expect(stored.results).toEqual([{ project_id: "asi" }]);
+  } finally {
+    server?.stop(true);
     sqlite.close();
     rmSync(root, { force: true, recursive: true });
   }

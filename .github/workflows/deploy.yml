@@ -206,11 +206,8 @@ jobs:
           if [ "$feed_status" -eq 75 ]; then
             echo "::warning::Hosted value feed still unavailable; keeping the last published leaderboard snapshot."
             mkdir -p public/data
-            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
-              --connect-timeout 10 --max-time 180 --max-filesize 26214400 \
-              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-              "$profile_origin/data/leaderboard.json" \
-              --output public/data/leaderboard.json
+            bun scripts/download-leaderboard.ts \
+              "$profile_origin/data/leaderboard.json" public/data/leaderboard.json
             test -s public/data/leaderboard.json
           elif [ "$feed_status" -ne 0 ]; then
             exit "$feed_status"
@@ -236,10 +233,8 @@ jobs:
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-release-ledger.XXXXXX")"
           profiles_file="$(mktemp "$RUNNER_TEMP/slop-release-profiles.XXXXXX")"
           trap 'rm -f "$ledger_file" "$profiles_file"' EXIT
-          curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 180 --max-filesize 26214400 \
-            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-            https://slop.cash/data/leaderboard.json --output "$ledger_file"
+          bun scripts/download-leaderboard.ts \
+            https://slop.cash/data/leaderboard.json "$ledger_file"
           curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
             --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
             --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
@@ -264,16 +259,8 @@ jobs:
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
           trap 'rm -f "$ledger_file"' EXIT
-          curl --fail --silent --show-error \
-            --proto '=https' \
-            --tlsv1.2 \
-            --connect-timeout 10 \
-            --compressed \
-            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-            --max-time 180 \
-            --max-filesize 26214400 \
-            --output "$ledger_file" \
-            https://slop.cash/data/leaderboard.json
+          bun scripts/download-leaderboard.ts \
+            https://slop.cash/data/leaderboard.json "$ledger_file"
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
