@@ -52,6 +52,8 @@ function artifactContentType(path) {
   if (path === "index.html") return "text/html";
   if (path === "llms.txt") return "text/plain";
   if (path.startsWith("downloads/")) return "application/octet-stream";
+  if (path.startsWith("data/leaderboard/") && path.endsWith(".part"))
+    return "application/octet-stream";
   if (path.endsWith(".json")) return "application/json";
   if (path.endsWith(".md")) return "text/markdown";
   throw new TypeError(`remote artifact has no MIME contract: ${path}`);
@@ -413,7 +415,8 @@ export async function verifyRemoteArtifacts({
   const results = [];
   for (const artifact of artifacts) {
     if (
-      !REMOTE_ARTIFACT_PATHS.includes(artifact.path) ||
+      (!REMOTE_ARTIFACT_PATHS.includes(artifact.path) &&
+        !/^data\/leaderboard\/[a-f0-9]{64}\.part$/u.test(artifact.path)) ||
       !Buffer.isBuffer(artifact.contents)
     ) {
       throw new TypeError("remote verification received an invalid artifact");
