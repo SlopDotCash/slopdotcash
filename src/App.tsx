@@ -1344,7 +1344,7 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
                     </ExternalLinkAnchor>
                   </>
                 ) : null}
-                {" monthly target, split between contributors"}
+                {" monthly, split between contributors"}
               </>
             ) : summary.kind === "critical-loss-of-funds" ? (
               <>

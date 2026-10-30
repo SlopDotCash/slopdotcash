@@ -658,7 +658,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await expect(admin.locator("h1")).toHaveText(project.name);
   // Native stablecoins use the shared reward label without a token address.
   await expect(admin.locator(".project-reward-status")).toContainText(
-    "$1,000 monthly target, split between contributors",
+    "$1,000 monthly, split between contributors",
   );
   await expect(admin.locator(".project-hero")).not.toContainText(
     "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
