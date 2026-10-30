@@ -7,8 +7,8 @@
  * project and its maintainer, or reinstate it (PRD sections 2 and 8).
  */
 
-import { CircleAlert } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { CircleAlert, ExternalLink, History, ShieldCheck } from "lucide-react";
+import { type FormEvent, Fragment, useId, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
@@ -40,10 +40,19 @@ function actionLabel(action: EnforcementAction, decision: boolean): string {
     : ACTION_LABELS[action];
 }
 
-function maintainerList(maintainers: { githubLogin: string }[]): string {
-  return maintainers
-    .map((maintainer) => `@${maintainer.githubLogin}`)
-    .join(", ");
+function maintainerList(maintainers: { githubLogin: string }[]) {
+  return maintainers.map((maintainer, index) => (
+    <Fragment key={maintainer.githubLogin}>
+      {index > 0 ? ", " : ""}
+      <a
+        href={`https://github.com/${encodeURIComponent(maintainer.githubLogin)}`}
+        target="_blank"
+        rel="noreferrer"
+      >
+        @{maintainer.githubLogin}
+      </a>
+    </Fragment>
+  ));
 }
 
 function availableActions(
@@ -158,6 +167,9 @@ export function ProjectEnforcementPanel({
       <header>
         <h4 id={headingId}>Enforcement</h4>
         <StatusBadge
+          icon={
+            enforcement.state === "clear" ? <ShieldCheck /> : <CircleAlert />
+          }
           tone={
             enforcement.state === "clear"
               ? "success"
@@ -170,18 +182,18 @@ export function ProjectEnforcementPanel({
         </StatusBadge>
       </header>
       <dl className="admin-facts">
-        <div>
-          <dt>Appeal</dt>
-          <dd>
-            {enforcement.appeal === "none"
-              ? "None"
-              : enforcement.appeal === "requested"
+        {enforcement.appeal !== "none" ? (
+          <div>
+            <dt>Appeal</dt>
+            <dd>
+              {enforcement.appeal === "requested"
                 ? "Reinstatement requested"
                 : enforcement.appeal === "granted"
                   ? "Last appeal granted"
                   : "Last appeal denied"}
-          </dd>
-        </div>
+            </dd>
+          </div>
+        ) : null}
         {enforcement.since ? (
           <div>
             <dt>Restricted since</dt>
@@ -196,37 +208,31 @@ export function ProjectEnforcementPanel({
         ) : null}
         {enforcement.restrictedBy.length > 0 ? (
           <div>
-            <dt>Restricted by</dt>
-            <dd>
-              {enforcement.restrictedBy
-                .map((actor) => `@${actor.githubLogin}`)
-                .join(", ")}{" "}
-              (cannot decide the appeal)
-            </dd>
+            <dt>Restricted by · cannot decide appeal</dt>
+            <dd>{maintainerList(enforcement.restrictedBy)}</dd>
           </div>
         ) : null}
       </dl>
       {enforcement.decisionRequired ? (
         <p className="form-error" role="status">
-          <CircleAlert aria-hidden="true" /> Moderator decision needed:
-          confirmed malicious result. Decide the project restriction and any
-          responsible accounts from the evidence. Reinstatement requires the
-          owner's appeal and a fresh clean scan.
+          <CircleAlert aria-hidden="true" /> Confirmed malicious result.
+          Reinstatement requires the owner's appeal, a fresh clean scan and a
+          moderator decision.
         </p>
       ) : null}
       {enforcement.revisionPending ? (
         <p className="form-error" role="status">
-          <CircleAlert aria-hidden="true" /> Revision pending: the restriction
-          is in force, but revision {project.revision} is still {project.status}{" "}
-          and {project.manifest.listingTier}. Delist to append the paused,
-          retired revision.
+          <CircleAlert aria-hidden="true" /> Restriction active; revision{" "}
+          {project.revision} is still {project.status} and{" "}
+          {project.manifest.listingTier}. Delist to pause and retire it.
         </p>
       ) : null}
       {enforcement.records.length > 0 ? (
-        <details>
-          <summary>
-            Enforcement history ({enforcement.records.length} records)
-          </summary>
+        <section className="admin-subsection">
+          <h4 className="admin-subsection-heading">
+            <History aria-hidden="true" /> Enforcement history ·{" "}
+            {enforcement.records.length}
+          </h4>
           <ol className="admin-enforcement-history">
             {enforcement.records.map((record) => (
               <li key={record.id}>
@@ -247,7 +253,19 @@ export function ProjectEnforcementPanel({
                 <br />
                 Reason: {record.reason}
                 <br />
-                Evidence: {record.evidenceReference}
+                Evidence:{" "}
+                {/^https?:\/\//iu.test(record.evidenceReference) ? (
+                  <a
+                    href={record.evidenceReference}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {record.evidenceReference}{" "}
+                    <ExternalLink aria-hidden="true" />
+                  </a>
+                ) : (
+                  record.evidenceReference
+                )}
                 {record.maintainerBans ? (
                   <>
                     <br />
@@ -264,16 +282,12 @@ export function ProjectEnforcementPanel({
               </li>
             ))}
           </ol>
-        </details>
+        </section>
       ) : null}
       {enforcement.moderation === "unconfigured" ? (
-        <p className="admin-status">
-          Moderation is not configured. Contact the service operator.
-        </p>
+        <p className="admin-status">Moderation unavailable.</p>
       ) : enforcement.moderation === "not-moderator" ? (
-        <p className="admin-status">
-          Only a moderator can quarantine, ban or reinstate.
-        </p>
+        <p className="admin-status">Moderator access required.</p>
       ) : (
         <form className="admin-actions" onSubmit={showPreview}>
           <label>
@@ -296,27 +310,17 @@ export function ProjectEnforcementPanel({
           action === "reinstate_accounts" ? (
             <label>
               {action === "reinstate_accounts"
-                ? "GitHub accounts to reinstate"
-                : "Responsible GitHub accounts"}
+                ? "Accounts to reinstate (comma-separated)"
+                : "Responsible accounts (comma-separated, optional)"}
               <input
                 value={responsible}
                 onChange={(event) => setResponsible(event.target.value)}
                 readOnly={preview !== null}
               />
-              <span>
-                {action === "reinstate_accounts" ? (
-                  "Accounts cleared by the evidence, separated by commas."
-                ) : (
-                  <>
-                    Accounts the evidence identifies as responsible, separated
-                    by commas. Leave empty to ban only the project.
-                  </>
-                )}
-              </span>
             </label>
           ) : null}
           <label>
-            Reason (private audit record)
+            Reason
             <textarea
               maxLength={1000}
               onChange={(event) => setReason(event.target.value)}
@@ -326,7 +330,7 @@ export function ProjectEnforcementPanel({
             />
           </label>
           <label>
-            Evidence reference (link or case id)
+            Evidence link or case ID
             <input
               maxLength={500}
               onChange={(event) => setEvidence(event.target.value)}

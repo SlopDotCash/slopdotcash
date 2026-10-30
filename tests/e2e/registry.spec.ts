@@ -161,16 +161,15 @@ async function queueScan(
   reason: string,
   revision = 1,
 ) {
-  await admin.goto(`/admin?project=${encodeURIComponent(projectId)}`, {
-    waitUntil: "networkidle",
-  });
+  await admin.goto(
+    `/admin?project=${encodeURIComponent(projectId)}&section=security`,
+    {
+      waitUntil: "networkidle",
+    },
+  );
   const card = admin.getByRole("article", {
     name: `Security vetting for ${projectId}`,
   });
-  await card
-    .getByText(`Queue scan of revision ${revision}`, { exact: true })
-    .locator("xpath=self::summary")
-    .click();
   await card.getByLabel("Reason for the scan").fill(reason);
   await card
     .getByRole("button", { name: `Queue scan of revision ${revision}` })
@@ -180,7 +179,15 @@ async function queueScan(
   ).toContainText(`Queued a scan of ${projectId} revision ${revision}.`);
   // A queued rescan keeps the last finished decision until its result lands.
   await expect(
-    card.getByText(new RegExp(`Revision ${revision} · Queued`, "u")),
+    card
+      .locator(".assessment-details")
+      .filter({
+        has: admin.getByRole("heading", {
+          name: `Revision ${revision}`,
+          exact: true,
+        }),
+      })
+      .filter({ has: admin.getByText("Queued", { exact: true }) }),
   ).toBeVisible();
   return card;
 }
@@ -500,14 +507,12 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await admin.goto(`/admin?project=${project.id}`, {
     waitUntil: "networkidle",
   });
-  const card = admin.locator(".admin-card", {
-    has: admin.getByText(project.id, { exact: true }),
-  });
-  await expect(card).toContainText("Generated from revision 1");
-  await card.getByRole("button", { name: "Edit project" }).click();
-  await card
-    .getByText("Customize contributor instructions", { exact: true })
-    .click();
+  const card = admin.locator("main");
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(admin).toHaveURL(
+    new RegExp(`/admin\\?project=${project.id}&section=settings$`, "u"),
+  );
+  await expect(card.locator("details")).toHaveCount(0);
   const adminTests = card.getByRole("textbox", { name: /^Required tests/u });
   const originalAdminTests = await adminTests.inputValue();
   await adminTests.fill("x".repeat(2001));
@@ -515,6 +520,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await adminTests.fill(originalAdminTests);
   await expect(adminTests).toBeVisible();
   await card.getByRole("button", { name: "Close and keep draft" }).click();
+  await expect(admin).toHaveURL(`/admin?project=${project.id}`);
   await expectAccessible(admin);
 
   // The installer's trust root: the exact approved bytes and their digest.
@@ -614,7 +620,19 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await card.getByRole("button", { name: "Delist", exact: true }).click();
   await card.getByRole("button", { name: "Delist project" }).click();
   await expect(admin.getByRole("status")).toContainText("Saved.");
-  await expect(card).toContainText("Delisted.");
+  await expect(
+    card
+      .locator(".admin-facts > div", {
+        has: card.getByRole("term", {
+          name: "Discovery placement",
+          exact: true,
+        }),
+      })
+      .getByRole("definition"),
+  ).toHaveText("retired");
+  await expect(card.locator(".admin-project-heading .route-badge")).toHaveText(
+    "paused",
+  );
   expect(await listedProject(admin, project.id)).toMatchObject({
     status: "paused",
     listingTier: "retired",
@@ -658,7 +676,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toMatchObject({ skillsPublished: false, vetting: { state: "queued" } });
 
   // An incomplete scan quarantines the revision, and it cannot activate.
-  await admin.goto(`/admin?project=${project.id}`, {
+  await admin.goto(`/admin?project=${project.id}&section=security`, {
     waitUntil: "networkidle",
   });
   let vettingCard = admin.getByRole("article", {
@@ -676,7 +694,6 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     name: `Security vetting for ${project.id}`,
   });
   await expect(vettingCard.locator(".admin-badge")).toHaveText("Quarantined");
-  await vettingCard.getByText(/Revision 1 · Incomplete/u).click();
   const quarantinedArtifact = vettingCard
     .locator(".operations-artifact-list li")
     .filter({ hasText: "vendor/addon.node" });
@@ -686,13 +703,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     "A pinned TLS client hid HTTP bodies",
   );
   await expectAccessible(admin);
-  const refusedCard = admin.locator(".admin-card", {
-    has: admin.getByText(project.id, { exact: true }),
-  });
-  await refusedCard.getByRole("button", { name: "Edit project" }).click();
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  const refusedCard = admin.locator("main");
   await refusedCard.getByLabel("Project status").selectOption("active");
   await refusedCard
-    .getByLabel("Reason for this revision (public history)")
+    .getByLabel("Reason for revision (public)")
     .fill("Activate before a clean scan");
   await refusedCard.getByRole("button", { name: "Save revision 2" }).click();
   await expect(refusedCard.getByRole("alert")).toContainText(
@@ -728,13 +743,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     project: { status: "paused" },
     vetting: { state: "queued" },
   });
-  const card = admin.locator(".admin-card", {
-    has: admin.getByText(project.id, { exact: true }),
-  });
-  await card.getByRole("button", { name: "Edit project" }).click();
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  const card = admin.locator("main");
   await card.getByLabel("Project status").selectOption("active");
   await card
-    .getByLabel("Reason for this revision (public history)")
+    .getByLabel("Reason for revision (public)")
     .fill("Activation remains blocked without canonical closure");
   await card.getByRole("button", { name: "Save revision 2" }).click();
   await expect(card.getByRole("alert")).toContainText(
@@ -749,10 +762,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   );
   // A normal paused manifest edit remains available and produces its own notice.
   await card.getByLabel("Project status").selectOption("paused");
-  await card
-    .getByText("Advanced project settings (revision 1)", { exact: true })
-    .click();
-  const manifestEditor = card.getByLabel("Other fields");
+  const manifestEditor = card.getByLabel("Manifest JSON");
   const pausedManifest = JSON.parse(await manifestEditor.inputValue());
   expect(pausedManifest).not.toHaveProperty("status");
   expect(pausedManifest).not.toHaveProperty("contribution");
@@ -777,16 +787,14 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     "A reviewed paused project awaiting complete security evidence.",
   );
   await card
-    .getByText("Advanced project settings (revision 1)", { exact: true })
-    .click();
-  await card
-    .getByLabel("Reason for this revision (public history)")
+    .getByLabel("Reason for revision (public)")
     .fill("Clarify paused project description");
   await card.getByRole("button", { name: "Close and keep draft" }).click();
-  await card.getByRole("button", { name: "Edit project" }).click();
-  await expect(
-    card.getByLabel("Reason for this revision (public history)"),
-  ).toHaveValue("Clarify paused project description");
+  await expect(admin).toHaveURL(`/admin?project=${project.id}`);
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(card.getByLabel("Reason for revision (public)")).toHaveValue(
+    "Clarify paused project description",
+  );
   await expect(
     card.getByRole("region", { name: "Revision changes" }),
   ).toContainText("Short description");
@@ -810,6 +818,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toBe(true);
   await card.getByRole("button", { name: "Save revision 2" }).focus();
   await admin.keyboard.press("Enter");
+  await expect(admin).toHaveURL(`/admin?project=${project.id}`);
   await expect(card).toContainText("2 · updated");
   expect(await listedProject(admin, project.id)).toMatchObject({
     reward: {
@@ -915,10 +924,8 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   // and a confirmation.
   async function act(action: string, reason: string) {
     await panel().getByLabel("Action").selectOption({ label: action });
-    await panel().getByLabel("Reason (private audit record)").fill(reason);
-    await panel()
-      .getByLabel("Evidence reference (link or case id)")
-      .fill(evidence);
+    await panel().getByLabel("Reason", { exact: true }).fill(reason);
+    await panel().getByLabel("Evidence link or case ID").fill(evidence);
     await panel().getByRole("button", { name: "Preview action" }).click();
     const preview = panel().getByRole("group", {
       name: "Preview",
@@ -1007,9 +1014,6 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   });
   await admin.reload();
   await expect(panel()).toContainText("Reinstatement requested");
-  await panel()
-    .getByText(/Enforcement history/u)
-    .click();
   await expect(panel()).toContainText("project-steward, owner-request");
 
   // The moderator who placed the restriction cannot decide the appeal. The
@@ -1061,11 +1065,9 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     .getByLabel("Action")
     .selectOption({ label: "Reinstate after review" });
   await moderatorPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Attempt review without complete canonical evidence");
-  await moderatorPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await moderatorPanel.getByLabel("Evidence link or case ID").fill(evidence);
   // Both preview and confirmation must refuse an unscanned appeal. Use the
   // API for the expected refusal so it does not create a console error.
   const unscannedAppeal = await moderator.request.post(
@@ -1113,11 +1115,9 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     .getByLabel("Action")
     .selectOption({ label: "Request reinstatement" });
   await moderatorPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Request a fresh review after the malicious result");
-  await moderatorPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await moderatorPanel.getByLabel("Evidence link or case ID").fill(evidence);
   await moderatorPanel.getByRole("button", { name: "Preview action" }).focus();
   await moderator.keyboard.press("Enter");
   await moderator.screenshot({
@@ -1156,15 +1156,14 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   );
   await postVettingResult(request, project.id, project.repository, "clean");
   await moderator.reload({ waitUntil: "networkidle" });
+  await moderator.getByRole("link", { name: "Overview", exact: true }).click();
   await moderatorPanel
     .getByLabel("Action")
     .selectOption({ label: "Reinstate after review" });
   await moderatorPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Attempt review without complete canonical evidence");
-  await moderatorPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await moderatorPanel.getByLabel("Evidence link or case ID").fill(evidence);
   await moderatorPanel.getByRole("button", { name: "Preview action" }).click();
   await expect(moderatorPanel.getByRole("alert")).toContainText(
     "fresh clean scan",
@@ -1176,7 +1175,6 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     }),
   ).toHaveCount(0);
   await expectAccessible(moderator);
-  await moderatorPanel.getByText(/Enforcement history/u).click();
   await expect(moderatorPanel.locator("li")).toHaveCount(5);
   await expect(moderatorPanel).toContainText(
     "the signed security vetting service",
@@ -1306,34 +1304,34 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   const moderator = await moderatorContext.newPage();
   await signIn(moderator, MODERATOR_TOKEN);
   await moderator.goto("/admin", { waitUntil: "networkidle" });
-  const summary = moderator.locator(".admin-project-summary", {
+  const summary = moderator.locator(".admin-project-row", {
     has: moderator.getByRole("heading", { name: project.name, exact: true }),
   });
-  await expect(summary).toContainText(
-    "Moderator decision needed: confirmed malicious result",
-  );
+  await expect(summary).toContainText("Decision needed");
   await expectAccessible(moderator);
   await moderator.screenshot({
     path: test.info().outputPath("malicious-decision-queue.png"),
     fullPage: true,
   });
-  await summary.getByRole("button", { name: `Open ${project.name}` }).click();
+  await summary.click();
   const panel = moderator
     .locator(".admin-card", {
       has: moderator.getByText(project.id, { exact: true }),
     })
     .getByRole("region", { name: "Enforcement", exact: true });
-  await expect(panel).toContainText("Moderator decision needed");
+  await expect(panel).toContainText("Confirmed malicious result");
   await expect(panel).toContainText("Banned");
   await expect(panel.getByLabel("Action")).toHaveValue("ban");
   await expect(panel.getByLabel("Action").locator("option:checked")).toHaveText(
     "Ban project and maintainer",
   );
   await panel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Reviewed the signed finding: the install script steals tokens");
-  await panel.getByLabel("Evidence reference (link or case id)").fill(evidence);
-  await panel.getByLabel("Responsible GitHub accounts").fill(login);
+  await panel.getByLabel("Evidence link or case ID").fill(evidence);
+  await panel
+    .getByLabel("Responsible accounts (comma-separated, optional)")
+    .fill(login);
   await panel.getByRole("button", { name: "Preview action" }).click();
   const preview = panel.getByRole("group", {
     name: "Preview",
@@ -1352,9 +1350,8 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   await expect(moderator.getByRole("status").first()).toContainText(
     "Ban project and maintainer recorded",
   );
-  await expect(panel).not.toContainText("Moderator decision needed");
+  await expect(panel).not.toContainText("Confirmed malicious result");
   await expect(panel).toContainText(`Banned maintainers@${login}`);
-  await panel.getByText(/Enforcement history/u).click();
   await expect(panel.locator("li")).toHaveCount(2);
   await expect(panel.locator("li").nth(1)).toContainText(
     "Ban project and maintainer by @e2e-moderator (project-moderator, admin-panel)",
@@ -1461,7 +1458,7 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   await signIn(independent, ADMIN_TOKEN);
   await independent.goto("/admin", { waitUntil: "networkidle" });
   await independent
-    .getByRole("button", { name: `Open ${project.name}`, exact: true })
+    .getByRole("link", { name: `Open ${project.name}`, exact: true })
     .click();
   const accountPanel = independent
     .locator(".admin-card", {
@@ -1482,13 +1479,13 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     }),
   ).toHaveCount(1);
   await accountPanel.getByLabel("Action").selectOption("reinstate_accounts");
-  await accountPanel.getByLabel("GitHub accounts to reinstate").fill(login);
   await accountPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Accounts to reinstate (comma-separated)")
+    .fill(login);
+  await accountPanel
+    .getByLabel("Reason", { exact: true })
     .fill("The evidence clears this account; the project stays banned");
-  await accountPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await accountPanel.getByLabel("Evidence link or case ID").fill(evidence);
   await accountPanel.getByRole("button", { name: "Preview action" }).click();
   const accountPreview = accountPanel.getByRole("group", {
     name: "Preview",
@@ -2218,15 +2215,15 @@ test.describe("private evidence console", () => {
         })
       ).status(),
     ).toBe(403);
-    await page.goto(`/admin?project=${fixtureProjects().queued.id}`, {
-      waitUntil: "networkidle",
-    });
+    await page.goto(
+      `/admin?project=${fixtureProjects().queued.id}&section=security`,
+      {
+        waitUntil: "networkidle",
+      },
+    );
     const consoleLink = page.locator(`a[href="${path}"]`);
-    await consoleLink
-      .locator("xpath=ancestor::details")
-      .locator("summary")
-      .click();
-    await expect(consoleLink).toHaveText("Open restricted evidence console");
+    await expect(consoleLink).toBeVisible();
+    await expect(consoleLink).toHaveText("Evidence");
     await signIn(page, EVIDENCE_OWNER_TOKEN);
     await page.goto(path, { waitUntil: "networkidle" });
     await expect(

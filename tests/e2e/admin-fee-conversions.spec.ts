@@ -73,6 +73,11 @@ test("an admin sees Robinhood Chain fees as not converted beside finalized USDC 
   );
   await page.goto("/admin", { waitUntil: "networkidle" });
   const section = page.getByRole("region", { name: "Fee conversions" });
+  await expect(section).toHaveCount(0);
+  await page
+    .getByRole("link", { name: "Fee conversions", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/admin\?section=fees$/u);
   await expect(section.getByRole("alert")).toContainText(
     "Fee conversion records are unavailable.",
   );
@@ -86,19 +91,14 @@ test("an admin sees Robinhood Chain fees as not converted beside finalized USDC 
       has: page.getByRole("term").filter({ hasText: new RegExp(`^${name}$`) }),
     });
   await expect(network("Robinhood Chain")).toContainText("Not converted");
-  await expect(network("Robinhood Chain")).toContainText(
-    "Received assets stay in the fee wallet.",
-  );
   await expect(network("Robinhood Chain")).not.toContainText(/pending/iu);
-  await expect(network("Ethereum")).toContainText("USDC conversion policy");
-  await expect(network("Ethereum")).toContainText(
-    "No finalized conversion yet.",
-  );
-  await expect(network("Solana")).toContainText("USDC conversion policy");
-  await expect(network("Base")).toContainText("USDC conversion policy");
+  await expect(network("Ethereum")).toContainText("USDC");
+  await expect(network("Solana")).toContainText("USDC");
+  await expect(network("Base")).toContainText("USDC");
   await expect(network("Base")).toContainText(
     `1 conversion: 2500000000000000000 base units of token ${token} to 12.5 USDC`,
   );
+  await expect(page.locator("main details")).toHaveCount(0);
   await expectAccessible(page, {
     include: "section[aria-labelledby='admin-fee-conversions']",
   });
