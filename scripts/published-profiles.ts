@@ -14,3 +14,17 @@ export function assertRetainedProfiles(value: ProfileIndex) {
   assertProfiles(value, collected);
 }
 
+/**
+ * Validate a published census before it is shipped again.
+ *
+ * `current` also applies the browser's check against the current targets.
+ * Without it, a census taken before a project was activated passes here, but
+ * the site rejects it and every contributor profile reads as unavailable.
+ */
+export function assertPublishedProfiles(
+  value: ProfileIndex,
+  { current }: { current: boolean },
+) {
+  assertRetainedProfiles(value);
+  if (current) assertProfiles(value);
+}
