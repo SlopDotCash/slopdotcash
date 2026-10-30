@@ -22,7 +22,8 @@ current behavior.
    project gets security-only review: only a `scam` finding is labeled and
    commented, nothing closes, and no value assessment runs. A retired project
    gets no new review; appeal, maintainer-reopen and moderator events may only
-   reverse an existing debit. Unregistered repositories and replaced repository
+   reverse an existing debit or decide a retained value dispute without a new
+   review or GitHub write. Unregistered repositories and replaced repository
    IDs skip; database errors retry. Registry checks repeat before inference and
    GitHub writes.
 3. **Context.** The consumer takes an installation token and re-reads the
@@ -85,6 +86,16 @@ current behavior.
    `slopbot: moderator`) uses `PROJECT_MODERATOR_GITHUB_IDS`. A maintainer
    reopen always wins. See `appeals.ts` and `reopen-source.ts` for revision
    binding and late-close races.
+
+For an ordinary PR value assessment, an affected author, implementation actor,
+reviewer or maintainer may comment `/slopbot dispute` with their reason. Slopbot
+binds the original single or joint journal digest and drafts a decision. An
+author's `/slopbot appeal` also uses this path when no finding exists. Use the
+exact accept/reject or moderator command in its reply to select that dispute.
+An upheld value dispute does not change Points, awards, penalties or PR state;
+an authorized correction must append through the existing assessment journal.
+Incomplete source, partial joint context and restricted projects go to a
+moderator. Historical non-PR/manual records still need their separate intake.
 
 ## Project consent
 
@@ -234,7 +245,7 @@ Do these in order. Each step names who does it and how to verify it.
 | Close/label/hold publish path | `review.ts` |
 | Closure eligibility (D6) | `closure-eligibility.ts` |
 | Penalty table and feed | `penalties.ts` |
-| Appeals and reopen binding | `appeals.ts`, `appeal-publication.ts`, `reopen-source.ts` |
+| Appeals, value disputes and reopen binding | `appeals.ts`, `value-disputes.ts`, `appeal-publication.ts`, `reopen-source.ts` |
 | Maintainer holds | `maintainer-holds.ts` |
 | Model route | `models.ts` |
 | Registry / capabilities | `registry.ts` |

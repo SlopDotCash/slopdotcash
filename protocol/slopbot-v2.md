@@ -144,6 +144,20 @@ close is the current close (GitHub `closed_by`); a later close by another
 account stays. If GitHub does not report the closer, the decision is retried.
 A maintainer reopen always wins.
 
+Ordinary PR value disputes use `/slopbot dispute`, or an author's appeal when
+there is no finding. An affected implementation actor, reviewed reviewer or
+maintainer may also dispute the assessment. The dispute binds the original
+single or joint journal digest, source revision, policy and rubric. A later
+assessment does not replace that history. Slopbot drafts first; incomplete or
+uncertain evidence and rejected drafts escalate to a moderator. Exact commands
+identify the dispute when several actors have open disputes on the same PR.
+
+A value-dispute decision never reopens a PR, reverses a penalty, changes Points
+or changes an award. An authorized correction uses the normal append-only
+assessment path. A restricted or retired project's retained dispute goes to a
+moderator without a new value review. Non-PR/manual-record intake is not covered
+by the GitHub command.
+
 ## Restricted projects
 
 Owner decision D12 of 24 October 2026. A paused, flagged or quarantined
