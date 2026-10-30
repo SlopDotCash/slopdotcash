@@ -287,7 +287,11 @@ export default {
         `https://attester.internal${path}`,
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          // Complete refusal bodies through Miniflare's Windows HTTP bridge.
+          headers: {
+            "content-type": "application/json",
+            "accept-encoding": "identity",
+          },
           body: JSON.stringify({
             projectId: "fixture",
             period: "2026-11",
