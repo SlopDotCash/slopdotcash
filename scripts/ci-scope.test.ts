@@ -94,8 +94,8 @@ function git(cwd: string, ...args: string[]) {
   ).trim();
 }
 
-/** Returns the browser lanes for a contributor PR that changes `files`. */
-function browserLanes(files: Record<string, string>) {
+/** Runs the real selector for a contributor PR that changes `files`. */
+function scopeFor(files: Record<string, string>) {
   const directory = mkdtempSync(join(tmpdir(), "slop-ci-scope-"));
   const repository = join(directory, "repository");
   try {
@@ -141,16 +141,40 @@ function browserLanes(files: Record<string, string>) {
       },
       stdio: "pipe",
     });
-    const matrix = readFileSync(output, "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("browser_matrix="));
-    if (!matrix) throw new Error("The scope step wrote no browser matrix");
-    const { include } = JSON.parse(matrix.slice("browser_matrix=".length));
-    return (include as { lane: string }[]).map(({ lane }) => lane);
+    return Object.fromEntries(
+      readFileSync(output, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+function browserLanes(files: Record<string, string>) {
+  const { include } = JSON.parse(scopeFor(files).browser_matrix);
+  return (include as { lane: string }[]).map(({ lane }) => lane);
+}
+
+for (const path of [
+  "workers/fee-converter/evm.ts",
+  "backend/fee-conversions/handler.ts",
+  "backend/payments/handler.ts",
+]) {
+  test(`native EVM accounting coverage follows ${path}`, () => {
+    expect(scopeFor({ [path]: "export {};\n" }).evm).toBe("true");
+  });
+}
+
+test("unrelated documentation does not select native EVM accounting", () => {
+  expect(scopeFor({ "README.md": "Updated documentation.\n" }).evm).toBe(
+    "false",
+  );
+});
 
 const registryLanes = (lanes: string[]) =>
   lanes.filter((lane) => lane.startsWith("registry-"));

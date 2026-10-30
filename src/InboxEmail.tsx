@@ -645,10 +645,12 @@ export function InboxEmailAction() {
   const [actor, setActor] = useState<string | null | undefined>(undefined);
   const [done, setDone] = useState(false);
   const { busy, error, setError, run } = useAction();
+  const generation = useRef(0);
   useEffect(() => {
     const capture = () => {
       if (!/^#(?:verify-email|unsubscribe-email)=/u.test(window.location.hash))
         return;
+      generation.current += 1;
       setAction(readEmailAction());
       setActor(undefined);
       setDone(false);
@@ -657,6 +659,7 @@ export function InboxEmailAction() {
     window.addEventListener("hashchange", capture);
     window.addEventListener("popstate", capture);
     return () => {
+      generation.current += 1;
       window.removeEventListener("hashchange", capture);
       window.removeEventListener("popstate", capture);
     };
@@ -700,6 +703,7 @@ export function InboxEmailAction() {
   }, [action, setError]);
   if (!action) return null;
   const discard = () => {
+    generation.current += 1;
     try {
       storeEmailAction(null);
     } catch {
@@ -707,54 +711,67 @@ export function InboxEmailAction() {
     }
     setAction(null);
   };
-  const submit = () =>
+  const submit = () => {
+    const current = generation.current;
     void run(async () => {
-      if (action.kind === "verify") {
-        const current = await currentProjectSession();
-        if (!current || current.githubId !== actor)
-          throw new Error("Your account changed. Reload before verifying.");
-      }
-      const response = await fetchWithDeadline(`${PATH}/${action.kind}`, {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store",
-        redirect: "error",
-        headers: {
-          "content-type": "application/json",
-          ...(action.kind === "verify" && actor
-            ? { "x-slop-expected-github-id": actor }
-            : {}),
-        },
-        body: JSON.stringify({ token: action.token }),
-      });
-      if (!response.ok)
-        throw new Error(
-          response.status === 403
-            ? "Sign in to the account that requested this link."
-            : "This email link could not be used. It may have expired or already been used.",
-        );
-      const result = await readBoundedJson(response, 4096, "email action");
-      if (action.kind === "verify") {
-        preference(result);
-        const current = await currentProjectSession();
-        if (!current || current.githubId !== actor)
-          throw new Error(
-            "Your account changed. Open email preferences to check the result.",
-          );
-      } else if (
-        (result as { enabled?: unknown; securityEnabled?: unknown } | null)
-          ?.enabled !== false ||
-        (result as { securityEnabled?: unknown } | null)?.securityEnabled !==
-          false
-      )
-        throw new Error("The unsubscribe result could not be verified. Retry.");
       try {
-        storeEmailAction(null);
-      } catch {
-        /* The confirmed token is no longer actionable here. */
+        if (action.kind === "verify") {
+          const session = await currentProjectSession();
+          if (generation.current !== current) return;
+          if (!session || session.githubId !== actor)
+            throw new Error("Your account changed. Reload before verifying.");
+        }
+        const response = await fetchWithDeadline(`${PATH}/${action.kind}`, {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: "error",
+          headers: {
+            "content-type": "application/json",
+            ...(action.kind === "verify" && actor
+              ? { "x-slop-expected-github-id": actor }
+              : {}),
+          },
+          body: JSON.stringify({ token: action.token }),
+        });
+        if (generation.current !== current) return;
+        if (!response.ok)
+          throw new Error(
+            response.status === 403
+              ? "Sign in to the account that requested this link."
+              : "This email link could not be used. It may have expired or already been used.",
+          );
+        const result = await readBoundedJson(response, 4096, "email action");
+        if (generation.current !== current) return;
+        if (action.kind === "verify") {
+          preference(result);
+          const session = await currentProjectSession();
+          if (generation.current !== current) return;
+          if (!session || session.githubId !== actor)
+            throw new Error(
+              "Your account changed. Open email preferences to check the result.",
+            );
+        } else if (
+          (result as { enabled?: unknown; securityEnabled?: unknown } | null)
+            ?.enabled !== false ||
+          (result as { securityEnabled?: unknown } | null)?.securityEnabled !==
+            false
+        )
+          throw new Error(
+            "The unsubscribe result could not be verified. Retry.",
+          );
+        try {
+          storeEmailAction(null);
+        } catch {
+          /* The confirmed token is no longer actionable here. */
+        }
+        setDone(true);
+      } catch (caught) {
+        // A replacement link owns its own status, error and retained token.
+        if (generation.current === current) throw caught;
       }
-      setDone(true);
     });
+  };
   return (
     <section
       className="email-card email-link-action"

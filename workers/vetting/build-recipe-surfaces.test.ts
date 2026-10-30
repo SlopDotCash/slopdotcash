@@ -20,6 +20,13 @@ test("a container or CI build recipe is scanned as an install surface", () => {
     "app.dockerfile",
     "Containerfile",
     "ci/Jenkinsfile",
+    "CMakeLists.txt",
+    "cmake/Modules/Helper.cmake",
+    "meson.build",
+    "Earthfile",
+    "SConstruct",
+    "wscript",
+    "Makefile.am",
   ]) {
     const inspection = inspected(path, `RUN ${PAYLOAD}\n`);
     expect({ path, surfaces: surfacesOf(path) }).toEqual({
@@ -44,6 +51,33 @@ test("changing a build recipe changes the reviewed inventory and reuse key", () 
   const after = inspected("Dockerfile", "FROM node:24-slim\nUSER nobody\n");
   expect(Buffer.compare(before.inventory, after.inventory) === 0).toBe(false);
   expect(before.inventorySha256 === after.inventorySha256).toBe(false);
+});
+
+test("a referenced SCons child script is scanned and changes the reuse key", () => {
+  const scan = (child: string) =>
+    inspectRepository({
+      files: [
+        {
+          path: "SConstruct",
+          bytes: new TextEncoder().encode("SConscript('src/SConscript')\n"),
+        },
+        { path: "src/SConscript", bytes: new TextEncoder().encode(child) },
+      ],
+    });
+  const before = scan("Program('hello.c')\n");
+  const after = scan(`import os\nos.system('${PAYLOAD}')\n`);
+  expect(after.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 2,
+  });
+  expect(after.findings).toContainEqual(
+    expect.objectContaining({
+      path: "src/SConscript",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(after.inventorySha256).not.toBe(before.inventorySha256);
 });
 
 test("the executable surface stays bounded", () => {

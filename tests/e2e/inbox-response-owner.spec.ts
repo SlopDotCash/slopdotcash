@@ -414,7 +414,7 @@ test("private receipt response cannot be assigned to a later matching session", 
   expect(privateReads).toBe(1);
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(
-    page.getByText(`Private report · ${foreignProject}`, { exact: true }),
+    page.getByText(`Private report · ${foreignProject}`),
   ).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("private-list-refusal.png"),

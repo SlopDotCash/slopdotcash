@@ -95,7 +95,14 @@ exact accept/reject or moderator command in its reply to select that dispute.
 An upheld value dispute does not change Points, awards, penalties or PR state;
 an authorized correction must append through the existing assessment journal.
 Incomplete source, partial joint context and restricted projects go to a
-moderator. Historical non-PR/manual records still need their separate intake.
+moderator. A member can also select a record from their Points history and
+request review in Inbox, including non-PR and manual awards. This private
+intake pins the exact Points revision and retains the member's statement in
+`points_disputes`; it uses the same draft and escalation rules. The periodic
+Slopbot job recovers an interrupted intake. This path does not independently
+retrieve original work, so a moderator must inspect it before deciding.
+An upheld dispute records that decision; it never edits Points or funded
+awards. Corrections still use the existing append-only journal.
 
 ## Project consent
 

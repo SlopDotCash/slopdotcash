@@ -2,12 +2,95 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
-import { REVIEWED_EVM_FACTORIES } from "../contracts/evm/factories";
+import type { ReviewedEvmFactory } from "../contracts/evm/factories";
+import { childEnvironment } from "../scripts/child-environment.mjs";
 import { REWARD_ASSET_NETWORKS } from "../src/lib/reward-asset.mjs";
 
-export async function startLocalDirectEvmFixture(port: number) {
+const { REVIEWED_EVM_FACTORIES } = createRequire(import.meta.url)(
+  "../contracts/evm/factories.ts",
+) as { REVIEWED_EVM_FACTORIES: ReviewedEvmFactory[] };
+
+function localDirectEvmRpc(port: number) {
   const rpcUrl = `http://127.0.0.1:${port}`;
+  let sequence = 0;
+  async function rpc<T>(method: string, params: unknown[] = []): Promise<T> {
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method, params }),
+    });
+    const body = (await response.json()) as { result: T; error?: unknown };
+    if (body.error) throw new Error("The disposable chain request failed");
+    return body.result;
+  }
+  return { rpcUrl, rpc };
+}
+
+/** Connect to the runner-owned chain without resetting its payment history. */
+export async function connectLocalDirectEvmFixture(port: number) {
+  const { rpcUrl, rpc } = localDirectEvmRpc(port);
+  const [payer, reporter, recoveryAddress] =
+    await rpc<string[]>("eth_accounts");
+  const fee = REVIEWED_EVM_FACTORIES.find(
+    (entry) => entry.network === "base-mainnet",
+  )?.feeRecipient;
+  if (!fee) throw new Error("Missing reviewed Base fee recipient");
+  const token = REWARD_ASSET_NETWORKS.base.stablecoin.address;
+  return {
+    rpcUrl,
+    payer,
+    reporter,
+    recoveryAddress,
+    request: rpc,
+    mine: (blocks = 128) => rpc("anvil_mine", [`0x${blocks.toString(16)}`]),
+    fee,
+    token,
+    /** The test actor's disposable external wallet signs and sends these requests. */
+    async send(
+      transactions: {
+        from: string;
+        to: string;
+        value: string;
+        data: string;
+        chainId?: string;
+        nonce?: string;
+      }[],
+      finalize = true,
+    ) {
+      const ids: string[] = [];
+      for (const tx of transactions) {
+        if (
+          tx.from.toLowerCase() !== payer.toLowerCase() ||
+          ![token, reporter, recoveryAddress, payer, fee].some(
+            (address) => address.toLowerCase() === tx.to.toLowerCase(),
+          )
+        )
+          throw new Error("Unexpected disposable wallet request");
+        ids.push(await rpc<string>("eth_sendTransaction", [tx]));
+      }
+      if (finalize) await rpc("anvil_mine", ["0x80"]);
+      return ids;
+    },
+    async balance(address: string, asset = token) {
+      if (asset === "native")
+        return BigInt(await rpc<string>("eth_getBalance", [address, "latest"]));
+      return BigInt(
+        await rpc<string>("eth_call", [
+          {
+            to: asset,
+            data: `0x70a08231${address.slice(2).padStart(64, "0")}`,
+          },
+          "latest",
+        ]),
+      );
+    },
+  };
+}
+
+export async function startLocalDirectEvmFixture(port: number) {
+  const { rpc } = localDirectEvmRpc(port);
   const reservation = createServer();
   await new Promise<void>((resolve, reject) => {
     reservation.once("error", reject);
@@ -63,19 +146,8 @@ export async function startLocalDirectEvmFixture(port: number) {
   const process = spawn(
     "anvil",
     ["--port", String(anvilPort), "--chain-id", "8453", "--silent"],
-    { stdio: "ignore" },
+    { env: childEnvironment(), stdio: "ignore" },
   );
-  let sequence = 0;
-  async function rpc<T>(method: string, params: unknown[] = []): Promise<T> {
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method, params }),
-    });
-    const body = (await response.json()) as { result: T; error?: unknown };
-    if (body.error) throw new Error("The disposable chain request failed");
-    return body.result;
-  }
   try {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -87,13 +159,8 @@ export async function startLocalDirectEvmFixture(port: number) {
         await sleep(100);
       }
     }
-    const [payer, reporter, recoveryAddress] =
-      await rpc<string[]>("eth_accounts");
-    const fee = REVIEWED_EVM_FACTORIES.find(
-      (entry) => entry.network === "base-mainnet",
-    )?.feeRecipient;
-    if (!fee) throw new Error("Missing reviewed Base fee recipient");
-    const token = REWARD_ASSET_NETWORKS.base.stablecoin.address;
+    const client = await connectLocalDirectEvmFixture(port);
+    const { payer, token } = client;
     await rpc("anvil_setCode", [
       "0x420000000000000000000000000000000000000f",
       "0x600060005260206000f3",
@@ -107,7 +174,7 @@ export async function startLocalDirectEvmFixture(port: number) {
         "FeeConverterUSDC",
         "deployedBytecode",
       ],
-      { encoding: "utf8" },
+      { env: childEnvironment(), encoding: "utf8" },
     ).trim();
     await rpc("anvil_setCode", [token, code]);
     await rpc("eth_sendTransaction", [
@@ -118,55 +185,7 @@ export async function startLocalDirectEvmFixture(port: number) {
       },
     ]);
     return {
-      rpcUrl,
-      payer,
-      reporter,
-      recoveryAddress,
-      request: rpc,
-      mine: (blocks = 128) => rpc("anvil_mine", [`0x${blocks.toString(16)}`]),
-      fee,
-      token,
-      /** The test actor's disposable external wallet signs and sends these requests. */
-      async send(
-        transactions: {
-          from: string;
-          to: string;
-          value: string;
-          data: string;
-          chainId?: string;
-          nonce?: string;
-        }[],
-        finalize = true,
-      ) {
-        const ids: string[] = [];
-        for (const tx of transactions) {
-          if (
-            tx.from.toLowerCase() !== payer.toLowerCase() ||
-            ![token, reporter, recoveryAddress, payer, fee].some(
-              (address) => address.toLowerCase() === tx.to.toLowerCase(),
-            )
-          )
-            throw new Error("Unexpected disposable wallet request");
-          ids.push(await rpc<string>("eth_sendTransaction", [tx]));
-        }
-        if (finalize) await rpc("anvil_mine", ["0x80"]);
-        return ids;
-      },
-      async balance(address: string, asset = token) {
-        if (asset === "native")
-          return BigInt(
-            await rpc<string>("eth_getBalance", [address, "latest"]),
-          );
-        return BigInt(
-          await rpc<string>("eth_call", [
-            {
-              to: asset,
-              data: `0x70a08231${address.slice(2).padStart(64, "0")}`,
-            },
-            "latest",
-          ]),
-        );
-      },
+      ...client,
       async close() {
         proxy.closeAllConnections();
         await new Promise<void>((resolve) => proxy.close(() => resolve()));

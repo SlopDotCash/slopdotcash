@@ -361,7 +361,7 @@ test("a refused sign-in names its next action and closes the blank popup", async
     Math.floor(Date.now() / 1000) * 1000 + 240_000,
   ).toISOString();
   const flowId = `flow_${"f".repeat(24)}`;
-  const starts = [429, 503, 201];
+  const starts = [429, 503, 201, 201];
   let polls = 0;
   await page.context().route(`${deployment.identity}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -406,7 +406,7 @@ test("a refused sign-in names its next action and closes the blank popup", async
       await route.fulfill({
         status: 410,
         json: {
-          error: "flow_unavailable",
+          error: polls === 1 ? "flow_unavailable" : "callback_failed",
           message: "Identity flow is unavailable",
         },
       });
@@ -440,13 +440,21 @@ test("a refused sign-in names its next action and closes the blank popup", async
     await expect(action).toBeEnabled();
     await expectAccessible(page);
   }
-  // An ended flow keeps GitHub's page, where the user can read its state.
-  const popup = page.waitForEvent("popup");
-  await action.click();
-  const authorizing = await popup;
-  await expect(status).toContainText(/expired/i);
-  expect(authorizing.isClosed()).toBe(false);
-  await authorizing.close();
+  // Ended flows keep GitHub's page and distinguish expiry from callback failure.
+  for (const reason of ["expired", "failed"]) {
+    const popup = page.waitForEvent("popup");
+    await action.click();
+    const authorizing = await popup;
+    await expect(status).toHaveText(`Sign-in ${reason}. Please start again.`);
+    await expect(action).toBeEnabled();
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath(`signin-refusal-${reason}.png`),
+      fullPage: true,
+    });
+    expect(authorizing.isClosed()).toBe(false);
+    await authorizing.close();
+  }
   expect(starts).toEqual([]);
-  expect(polls).toBe(1);
+  expect(polls).toBe(2);
 });

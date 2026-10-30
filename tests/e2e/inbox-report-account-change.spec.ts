@@ -173,7 +173,7 @@ test("Reports refresh removes the previous account's retained report", async ({
   ).toHaveCount(0);
   await expect(
     page.getByRole("heading", {
-      name: "Private report · private-project-43",
+      name: "Private report · private-project-43 · Case _private",
       exact: true,
     }),
   ).toBeVisible();

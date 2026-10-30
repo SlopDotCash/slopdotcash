@@ -1739,6 +1739,13 @@ function SubmissionCard({
   useEffect(() => {
     if (focused) setExpanded(true);
   }, [focused]);
+  // Reporters file many reports per project; the case reference tells them apart.
+  const reportReference = submission.caseId
+    ? caseTitle({
+        id: submission.caseId,
+        advisory: caseRecord?.advisory ?? submission.advisory,
+      })
+    : (submission.advisory?.ghsa ?? null);
   return (
     <article
       aria-labelledby={`submission-${submission.id}`}
@@ -1747,6 +1754,14 @@ function SubmissionCard({
       <header className="private-report-heading">
         <h3 id={`submission-${submission.id}`}>
           Private report · {submission.projectId}
+          {reportReference ? (
+            <>
+              {" · "}
+              <span title={submission.caseId ?? undefined}>
+                {reportReference}
+              </span>
+            </>
+          ) : null}
         </h3>
         {submission.caseId ? (
           <button
@@ -2913,7 +2928,10 @@ function ActionForm({
   );
 }
 
-function caseTitle(record: SecurityCase): string {
+function caseTitle(record: {
+  id: string;
+  advisory?: { ghsa: string } | null;
+}): string {
   return record.advisory?.ghsa ?? `Case ${record.id.slice(-8)}`;
 }
 

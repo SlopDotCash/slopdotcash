@@ -17,6 +17,7 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
+import { POINTS_DISPUTE_URL } from "../../../backend/points/disputes";
 import {
   handlePointsApi,
   sessionGithubActor,
@@ -603,6 +604,22 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       ...stagingOrigins,
       rateLimitSecret: env.TRACE_AUTH_SECRET,
       identity: env.SLOP_IDENTITY,
+      disputes: {
+        moderators: moderatorGithubIds,
+        waitUntil,
+        process: async (key) => {
+          if (!env.SLOPBOT) throw new Error("Slopbot is unavailable");
+          const response = await env.SLOPBOT.fetch(
+            new Request(POINTS_DISPUTE_URL, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ key }),
+            }),
+          );
+          if (!response.ok)
+            throw new Error("Points dispute triage unavailable");
+        },
+      },
       x:
         env.X_CLIENT_ID && env.X_CLIENT_SECRET
           ? { clientId: env.X_CLIENT_ID, clientSecret: env.X_CLIENT_SECRET }

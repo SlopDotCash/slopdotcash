@@ -9,12 +9,17 @@ import { randomToken } from "../../workers/identity/crypto";
 import { consumeExactRateLimit } from "../../workers/identity/rate-limit";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import {
+  apiErrorResponse,
   cookieValue,
   isSameOriginJsonWrite,
   json as jsonResponse,
   readJsonObject,
 } from "../http";
 import { consumeIdentityAssertion } from "../identity-assertion";
+import {
+  handlePointsDisputes,
+  type PointsDisputeDependencies,
+} from "./disputes";
 import { handleX, type XConfiguration } from "./x";
 
 export interface PointsDependencies {
@@ -27,6 +32,10 @@ export interface PointsDependencies {
   allowedOrigins?: readonly string[];
   x?: XConfiguration;
   xFetch?: (input: string, init: RequestInit) => Promise<Response>;
+  disputes?: Pick<
+    PointsDisputeDependencies,
+    "moderators" | "process" | "waitUntil"
+  >;
 }
 const SESSION_COOKIE = "__Host-slop_points";
 function json(status: number, body: unknown, cookie?: string) {
@@ -127,6 +136,26 @@ export async function handlePointsApi(
           String(admission.retryAfterSeconds),
         );
         return response;
+      }
+    }
+    if (route === "/disputes" || route.startsWith("/disputes/")) {
+      const actor = await sessionGithubActor(request, deps.db, now);
+      if (!actor) return json(401, { error: "not_signed_in" });
+      const expected = request.headers.get("x-slop-expected-github-id");
+      if (expected && expected !== actor.githubId)
+        return json(409, { error: "account_changed" });
+      try {
+        return await handlePointsDisputes(
+          request,
+          {
+            db: deps.db,
+            now: () => new Date(now),
+            ...deps.disputes,
+          },
+          actor,
+        );
+      } catch (error) {
+        return apiErrorResponse(error, { label: "Points dispute unavailable" });
       }
     }
     if (route.startsWith("/x/")) return await handleX(request, deps, now);
