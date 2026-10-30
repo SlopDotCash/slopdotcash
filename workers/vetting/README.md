@@ -240,8 +240,10 @@ paths before recording the controller as operational.
 
 ### Cache and rescans
 
-The inventory digest covers executable content and the digests of retained
-binary, archive and quarantined artifacts. Documentation that is not an agent
+The inventory digest covers executable content, each file's sorted scan surfaces,
+and the digests of retained binary, archive and quarantined artifacts. A new
+classification requires a fresh scan even when file bytes have not changed.
+Documentation that is not an agent
 instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
 clean scan may cite that result. Before isolated inspection, the controller
