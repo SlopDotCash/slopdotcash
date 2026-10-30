@@ -19,14 +19,22 @@ async function scrollPage(page: Page, deltaY: number) {
   await page.mouse.move(viewport.width / 2, viewport.height / 2);
   // Control+End does not scroll to the bottom on macOS. A real wheel event
   // works on each platform and also exercises reader-input cancellation.
-  const settled = page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        window.addEventListener("scrollend", () => resolve(), { once: true });
-      }),
-  );
+  const before = await page.evaluate(() => scrollY);
   await page.mouse.wheel(0, deltaY);
-  await settled;
+  await expect.poll(() => page.evaluate(() => scrollY)).not.toBe(before);
+  let previous: number | undefined;
+  let stableReads = 0;
+  await expect
+    .poll(
+      async () => {
+        const current = await page.evaluate(() => scrollY);
+        stableReads = current === previous ? stableReads + 1 : 0;
+        previous = current;
+        return stableReads;
+      },
+      { intervals: [50] },
+    )
+    .toBeGreaterThanOrEqual(3);
   await afterPaint(page);
 }
 
@@ -52,7 +60,15 @@ for (const pendingDestination of [false, true]) {
       )
       .toBeLessThan(1);
 
-    await scrollPage(page, 100_000);
+    const distanceFromBottom = () =>
+      page.evaluate(() =>
+        Math.abs(
+          scrollY - (document.documentElement.scrollHeight - innerHeight),
+        ),
+      );
+    // Firefox caps a single wheel gesture. Repeat the real input until the
+    // same bottom-of-page reading position is reached in each browser.
+    while ((await distanceFromBottom()) >= 2) await scrollPage(page, 100_000);
     await expect
       .poll(() =>
         page.evaluate(() =>
