@@ -8,6 +8,12 @@ for (const broken of [false, true]) {
   test(`ranking ${broken ? "refuses corrupted" : "loads complete"} multi-part snapshot`, async ({
     page,
   }) => {
+    await page.route("https://avatars.githubusercontent.com/**", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+      }),
+    );
     const chunks = new Map<string, Uint8Array>();
     let partReads = 0;
     await page.route("**/data/leaderboard/*.part", async (route) => {
@@ -50,8 +56,8 @@ for (const broken of [false, true]) {
       ).toBeVisible();
       expect(partReads).toBeGreaterThan(0);
     } else {
+      await expect.poll(() => partReads).toBeGreaterThan(1);
       await expect(page.getByRole("table")).toBeVisible();
-      expect(partReads).toBeGreaterThan(1);
     }
   });
 }

@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -116,10 +123,56 @@ test("publication and local consumers preserve original digest and support rebui
     const root = await readFile(path);
     await prepareLeaderboardTransport(path);
     expect(Buffer.compare(await readFile(path), root)).toBe(0);
+    const stale = join(dirname(path), "leaderboard", `${"f".repeat(64)}.part`);
+    await writeFile(stale, "old publication");
+    await prepareLeaderboardTransport(path);
+    expect(await readdir(dirname(stale))).not.toContain(
+      `${"f".repeat(64)}.part`,
+    );
     const small = new TextEncoder().encode('{ "legacy": true }\n');
     await writeFile(path, small);
     await prepareLeaderboardTransport(path);
     expect(Buffer.compare(await readLeaderboardFile(path), small)).toBe(0);
+    expect(await readdir(dirname(stale))).toEqual([]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("repeated publication removes only obsolete generated parts and refuses unknown files", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "slop-repeated-parts-"));
+  const path = join(dir, "leaderboard.json");
+  const bytes = Buffer.concat([
+    Buffer.alloc(26 * 1024 * 1024, 0x20),
+    Buffer.from('{"records":[1]}'),
+  ]);
+  try {
+    for (let round = 0; round < 8; round++) {
+      for (
+        let start = 0;
+        start < bytes.length;
+        start += MAX_LEADERBOARD_PART_BYTES
+      ) {
+        for (let bit = 0; bit < 3; bit++)
+          bytes[start + bit] = round & (1 << bit) ? 0x09 : 0x20;
+      }
+      await writeFile(path, bytes);
+      await prepareLeaderboardTransport(path);
+      expect(Buffer.compare(await readLeaderboardFile(path), bytes)).toBe(0);
+      expect((await readdir(join(dir, "leaderboard"))).length).toBe(
+        new Set(
+          JSON.parse(await readFile(path, "utf8")).parts.map(
+            (part: { path: string }) => part.path,
+          ),
+        ).size,
+      );
+    }
+    const unknown = join(dir, "leaderboard", "keep.txt");
+    await writeFile(unknown, "do not delete");
+    await expect(prepareLeaderboardTransport(path)).rejects.toThrow(
+      "Unexpected file",
+    );
+    expect(await readFile(unknown, "utf8")).toBe("do not delete");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
