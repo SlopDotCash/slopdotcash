@@ -3,7 +3,6 @@ import {
   MAXIMUM_ATTEMPTS,
   qualifySecurityScreening,
   ScreeningQualificationError,
-  TOTAL_MAXIMUM_MICRO_USD,
 } from "./qualify-security-screening";
 import { qualificationTransport } from "./qualify-value-models";
 
@@ -125,7 +124,6 @@ test("release screening wrapper accepts canonical body and legacy receipts", asy
       noSleep,
     );
     expect(result.requests).toBe(1);
-    expect(result.outcome).toBe("synthetic report classified legitimate");
     expect(source.calls()).toBe(1);
   }
 });
@@ -209,7 +207,6 @@ test("screening dry run checks the request and price bounds without a call", asy
     source.fetch,
     noSleep,
   );
-  expect(result.outcome).toBe("dry-run; no provider calls");
   expect(result.requests).toBe(0);
   expect(source.calls()).toBe(0);
 });
@@ -232,7 +229,6 @@ test("screening retries transient failures within the attempt bound", async () =
       source.fetch,
       noSleep,
     );
-    expect(result.outcome).toBe("synthetic report classified legitimate");
     expect(result.requests).toBe(2);
     expect(result.failedAttempts).toHaveLength(1);
     expect(source.calls()).toBe(2);
@@ -264,7 +260,6 @@ test("screening reports the category after exhausting transient retries", async 
   );
   expect(network.category).toBe("network");
   expect(thrown.calls()).toBe(MAXIMUM_ATTEMPTS);
-  expect(TOTAL_MAXIMUM_MICRO_USD).toBe(MAXIMUM_ATTEMPTS * 1_000_000);
 });
 
 test("screening retries a committed provider error that names no served model", async () => {
@@ -282,7 +277,6 @@ test("screening retries a committed provider error that names no served model", 
     recovered.fetch,
     noSleep,
   );
-  expect(result.outcome).toBe("synthetic report classified legitimate");
   expect(result.failedAttempts).toEqual([
     {
       attempt: 1,

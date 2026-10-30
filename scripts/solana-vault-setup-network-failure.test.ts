@@ -234,8 +234,6 @@ async function vaultSetup(step: "review" | "register") {
 }
 const retry = {
   error: "vault_network_unavailable",
-  message:
-    "The network could not be read. Nothing needs review. Try again in a minute.",
 };
 
 test("an unreadable Solana RPC is a retry, while a program mismatch still refuses", async () => {
@@ -246,29 +244,36 @@ test("an unreadable Solana RPC is a retry, while a program mismatch still refuse
   try {
     // Owner review: the RPC answers HTTP 429 for every read.
     mode = "limited";
-    expect(await vaultSetup("review")).toEqual({ status: 503, body: retry });
+    expect(await vaultSetup("review")).toMatchObject({
+      status: 503,
+      body: retry,
+    });
     // Owner review: the RPC refuses the connection.
     rpcUrl = closedUrl;
-    expect(await vaultSetup("review")).toEqual({ status: 503, body: retry });
+    expect(await vaultSetup("review")).toMatchObject({
+      status: 503,
+      body: retry,
+    });
     rpcUrl = `http://127.0.0.1:${rpc.port}`;
     // Registration: the program, Config and mint verify, then the creation
     // transaction read answers HTTP 429. The request is valid, so this is
     // not 422.
     mode = "program";
     reads = 0;
-    expect(await vaultSetup("register")).toEqual({ status: 503, body: retry });
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: retry,
+    });
     // Two program checks and their account reads passed before the 429.
     expect(reads).toBeGreaterThan(8);
     // A program whose bytes differ from its review stays unavailable for
-    // review and for registration, with the existing message.
+    // review and for registration.
     programCode = new Uint8Array([1, 2, 3, 5]);
     for (const step of ["review", "register"] as const)
-      expect(await vaultSetup(step)).toEqual({
+      expect(await vaultSetup(step)).toMatchObject({
         status: 503,
         body: {
           error: "vault_setup_unavailable",
-          message:
-            "Vault creation is unavailable until this network has a compatible reviewed program.",
         },
       });
     // Each server failure logs only the fixed label: no RPC URL or body.

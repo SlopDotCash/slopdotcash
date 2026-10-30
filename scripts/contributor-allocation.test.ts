@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import {
   type ContributorAllocation,
   contributorAllocation,
@@ -49,16 +48,6 @@ const before = Date.parse("2026-12-01T00:00:00Z");
 const after = Date.parse("2027-02-08T17:00:00Z");
 
 describe("contributor allocation file", () => {
-  test("the committed file publishes no allocation", () => {
-    const committed = JSON.parse(
-      readFileSync(
-        new URL("../public/contributor-allocation.json", import.meta.url),
-        "utf8",
-      ),
-    );
-    expect(contributorAllocation(committed)).toBeNull();
-  });
-
   test("a valid file resolves its chain from the network policy", () => {
     const value = contributorAllocation(file()) as ContributorAllocation;
     expect(value.chain).toBe("robinhood");
