@@ -14,7 +14,15 @@ The parent directory must already exist and be private to the service operator.
 The command creates its own private subdirectory. It writes objects under their
 SHA-256 names with read-only permissions. Repository paths remain metadata;
 they cannot choose host paths. Symbolic links are stored as bytes and never
-followed. Git submodules and LFS pointers produce explicit visibility gaps.
+created or followed on the filesystem. A relative file link may resolve only
+through the verified same-commit tree to an acquired regular blob. Its original
+Git identity and bytes remain in the inventory; the scanner rechecks them and
+reviews the target bytes under the alias path, including its instruction-file
+checks. The reviewed inventory also retains each alias's original link text,
+Git and content hashes, resolved path and target digest, so link changes cannot
+reuse an assessment merely because the targets contain identical bytes.
+Absolute, escaping, missing, cyclic, directory and nonregular targets
+remain explicit visibility gaps. Git submodules and LFS pointers also produce gaps.
 A completed inventory remains quarantined and is not a scan disposition.
 
 ## No repository size limit
