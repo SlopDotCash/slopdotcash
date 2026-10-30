@@ -145,6 +145,7 @@ const INSTALL_FILES = new Set([
   "workspace",
   "workspace.bazel",
   "docker-bake.hcl",
+  "docker-bake.override.hcl",
 ]);
 /**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
