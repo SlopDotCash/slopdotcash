@@ -147,7 +147,8 @@ internet access. Every requested artifact needs its own byte-identity coverage.
 Old inventories remain readable. Reuse requires the current classification
 digest, so a pre-classification inventory needs a fresh scan. An old native
 result without a retained source binding also needs a fresh scan.
-Deploy the API reuse route before updating the scanner service. A missing
+Deploy the API reuse route and classification-aware evidence reader before
+updating the scanner service. A missing
 route (404), unavailable service (503), or invalid lookup response leaves the
 assignment pending at the reuse step; the scanner does not bypass the lookup
 or spend provider tokens as a deployment fallback.
