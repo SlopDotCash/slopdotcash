@@ -9,9 +9,38 @@ const workflow = await readFile(
   new URL("../.github/workflows/deploy.yml", import.meta.url),
   "utf8",
 );
-const generation = workflow
-  .split("      - name: Generate live contribution data\n")[1]
-  .split("\n      - name:")[0];
+const step = (name: string) =>
+  workflow.split(`      - name: ${name}\n`)[1].split("\n      - name:")[0];
+const publishedDataGuard = step(
+  "Require manual main release for published data",
+).split("        run: |\n")[1];
+for (const [name, event, ref, bootstrap, accepted] of [
+  ["manual main", "workflow_dispatch", "refs/heads/main", "false", true],
+  ["main push", "push", "refs/heads/main", "false", false],
+  [
+    "manual staging",
+    "workflow_dispatch",
+    "refs/heads/development",
+    "false",
+    false,
+  ],
+  ["staging bootstrap", "workflow_dispatch", "refs/heads/main", "true", false],
+] as const) {
+  test(`published data release ${accepted ? "accepts" : "refuses"} ${name}`, async () => {
+    const process = Bun.spawn(["bash", "-euc", publishedDataGuard], {
+      env: {
+        ...Bun.env,
+        GITHUB_EVENT_NAME: event,
+        GITHUB_REF: ref,
+        BOOTSTRAP_STAGING_PROFILES: bootstrap,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await process.exited).toBe(accepted ? 0 : 1);
+  });
+}
+const generation = step("Generate live contribution data");
 const downloads = generation.match(
   /curl --fail --silent --show-error[^\n]*(?:\n {14}[^\n]*)*/g,
 );
