@@ -10,6 +10,7 @@ import {
   handleSecurityApi,
   type SecurityD1Database,
 } from "../../backend/security/handler";
+import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   destinationDigest,
@@ -24,7 +25,7 @@ const reporter = { githubId: "102", githubLogin: "reporter" };
 const backup = { githubId: "103", githubLogin: "backup" };
 const at = "2026-10-19T12:00:00.000Z";
 const origin = "https://slop.test";
-async function setup(beforeMailMigration = false) {
+async function setup(beforeMailMigration = false, confidentialOnly = false) {
   const { db: source, sqlite } = sqliteD1(
     readdirSync("migrations")
       // Defer mail activation and the later inbox rebuilds; the rollout
@@ -43,27 +44,66 @@ async function setup(beforeMailMigration = false) {
       .sort(),
   );
   const db = source as unknown as SecurityD1Database;
-  const manifest = JSON.stringify({
-    id: "bounty",
-    status: "active",
-    securityBounty: {
-      status: "pending-approval",
-      intake: { repository: "example/bounty" },
-      approvers: { technical: [owner, backup], financial: [], dispute: [] },
-      capacity: { awards: 1, closesAt: null },
-      responseTargets: { acknowledgeHours: 1 },
-    },
-  });
+  const manifest = JSON.stringify(
+    confidentialOnly
+      ? applicationManifest("bounty", "example/bounty")
+      : {
+          id: "bounty",
+          status: "active",
+          securityBounty: {
+            status: "pending-approval",
+            intake: { repository: "example/bounty" },
+            approvers: {
+              technical: [owner, backup],
+              financial: [],
+              dispute: [],
+            },
+            capacity: { awards: 1, closesAt: null },
+            responseTargets: { acknowledgeHours: 1 },
+          },
+        },
+  );
   sqlite
     .query(
-      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES ('bounty',1,?,?,'test',?)",
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at,actor_github_id,actor_github_login) VALUES ('bounty',1,?,?,'test',?,?,?)",
     )
-    .run(manifest, "a".repeat(64), at);
+    .run(
+      manifest,
+      "a".repeat(64),
+      at,
+      confidentialOnly ? owner.githubId : null,
+      confidentialOnly ? owner.githubLogin : null,
+    );
   sqlite
     .query(
-      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('bounty','active',1,?,?,?,?)",
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('bounty',?,1,?,?,?,?)",
     )
-    .run(manifest, "a".repeat(64), at, at);
+    .run(
+      confidentialOnly ? "paused" : "active",
+      manifest,
+      "a".repeat(64),
+      at,
+      at,
+    );
+  const repositoryAccess = async () =>
+    ({
+      installation: "installed",
+      installationId: 1,
+      permission: "admin",
+      roleName: "admin",
+      repository: {
+        id: 123456789,
+        node_id: "R_example",
+        full_name: "example/bounty",
+        private: false,
+        owner: {
+          id: 987654321,
+          node_id: "O_example",
+          login: "example",
+          type: "Organization",
+        },
+      },
+    }) as const;
   let current = new Date(at);
   let sequence = 0;
   const call = async (actor: typeof owner, path: string, body: object) =>
@@ -79,6 +119,7 @@ async function setup(beforeMailMigration = false) {
         randomId: () => `noticecase${++sequence}`,
         sessionActor: async () => actor,
         reportingRead: async () => ({ kind: "unavailable" }),
+        repositoryAccess: confidentialOnly ? repositoryAccess : undefined,
       },
     );
   const claim = await call(reporter, "security-cases", {
@@ -115,6 +156,7 @@ async function setup(beforeMailMigration = false) {
   const sent: { to: string; mime: string }[] = [];
   const deps: SecurityMailDependencies = {
     db,
+    repositoryAccess: confidentialOnly ? repositoryAccess : undefined,
     config: config!,
     fromAddress: "notifications@slop.cash",
     now: () => current,
@@ -140,6 +182,7 @@ async function setup(beforeMailMigration = false) {
     db,
     sqlite,
     deps,
+    repositoryAccess,
     call,
     caseId,
     rows,
@@ -348,6 +391,100 @@ test("ambiguous transport never resends until independent non-acceptance evidenc
   await dispatchSecurityMail(h.deps);
   expect(h.sent).toHaveLength(1);
   h.sqlite.close();
+});
+
+test("a backup authority outage does not stop another recipient's queued receipt", async () => {
+  const h = await setup(false, true);
+  try {
+    for (const actor of [owner, backup])
+      h.sqlite
+        .query(
+          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES (?,?,?,?,1)",
+        )
+        .run(`U_${actor.githubId}`, actor.githubId, actor.githubLogin, at);
+    const first = h.sqlite
+      .query(
+        "SELECT recipient_github_id FROM security_notification_outbox ORDER BY created_at,id LIMIT 1",
+      )
+      .get() as { recipient_github_id: string };
+    const backupId =
+      h.deps.config.recipients[first.recipient_github_id].backupGithubId;
+    let unavailable = false;
+    let authorized = true;
+    h.deps.repositoryAccess = async (_repository, actor) => {
+      if (unavailable && actor.githubId === backupId)
+        throw new Error("Fixture GitHub authority outage");
+      return {
+        ...(await h.repositoryAccess()),
+        permission:
+          actor.githubId === backupId && !authorized ? "read" : "admin",
+        roleName: actor.githubId === backupId && !authorized ? "read" : "admin",
+      };
+    };
+    // Queue the reporter's own receipt after the owner's case notice.
+    h.advance(1000);
+    const receivedAt = h.deps.now().toISOString();
+    h.sqlite
+      .query(
+        "UPDATE security_cases SET submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=? WHERE id=?",
+      )
+      .run(receivedAt, receivedAt, owner.githubId, h.caseId);
+    await h.db.batch([notifySecurityReportReceived(h.db, h.caseId)]);
+    const send = h.deps.sendEmail;
+    h.deps.sendEmail = async (from, to, mime) => {
+      if (to === h.deps.config.recipients[first.recipient_github_id].email) {
+        unavailable = true;
+        throw new Error("Fixture uncertain provider result");
+      }
+      await send(from, to, mime);
+    };
+    const failure = await dispatchSecurityMail(h.deps).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(
+      h.rows().find((row) => row.event_key === `security-receipt:${h.caseId}`)
+        ?.state,
+    ).toBe("provider-accepted");
+    expect(h.sent.map((mail) => mail.to)).toEqual(["reporter@example.com"]);
+    expect(failure).toBeNull();
+    expect(
+      h
+        .rows()
+        .find((row) => row.recipient_github_id === first.recipient_github_id)
+        ?.state,
+    ).toBe("ambiguous");
+    expect(h.rows().filter((row) => row.escalation_of)).toHaveLength(0);
+    // An answered check that denies access must still refuse escalation.
+    unavailable = false;
+    authorized = false;
+    h.deps.sendEmail = send;
+    h.advance(60_000);
+    await dispatchSecurityMail(h.deps);
+    expect(h.rows().filter((row) => row.escalation_of)).toHaveLength(0);
+    // Restored authority queues the backup once; uncertain mail is not resent.
+    authorized = true;
+    await dispatchSecurityMail(h.deps);
+    const escalations = h.rows().filter((row) => row.escalation_of);
+    expect(escalations).toHaveLength(1);
+    expect(escalations[0].recipient_github_id).toBe(backupId);
+    await dispatchSecurityMail(h.deps);
+    expect(h.rows().filter((row) => row.escalation_of)).toHaveLength(1);
+    expect(
+      h
+        .rows()
+        .find(
+          (row) =>
+            row.recipient_github_id === first.recipient_github_id &&
+            row.escalation_of === null,
+        )?.attempts,
+    ).toBe(1);
+    expect(
+      h.sent.filter((mail) => mail.to === "reporter@example.com"),
+    ).toHaveLength(1);
+  } finally {
+    h.sqlite.close();
+  }
 });
 
 test("provider suppression evidence is a failed delivery that reaches the backup", async () => {

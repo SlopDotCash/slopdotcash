@@ -68,6 +68,11 @@ export async function runRoute(
   );
 }
 
+/** The recorded failure of a call the provider refused under its spending
+ * limit. The provider served nothing for it.
+ */
+export const PROVIDER_BUDGET_EXHAUSTED = "provider budget exhausted";
+
 // The Anthropic wire reports budget exhaustion as invalid_request_error,
 // with structured budget detail rather than the OpenAI budget_exceeded code.
 // A long-running response may commit HTTP 200 before that denial is known.
@@ -176,7 +181,7 @@ export async function runStructuredRoute<T>(
       }
       const resetAt = budgetResetAt(error);
       if (resetAt !== null) {
-        record.failure = "provider budget exhausted";
+        record.failure = PROVIDER_BUDGET_EXHAUSTED;
         calls.push(record);
         return {
           verdict: null,

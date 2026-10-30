@@ -3,6 +3,7 @@ import type { D1Database } from "./persistence";
 import { collectValueContext } from "./value-context";
 import { collectValueEvidence, namesRepository } from "./value-evidence";
 import { latestValueRecord } from "./value-journal";
+import { noChangePromotionDeferralOnly } from "./value-no-change-promotion";
 import { loadValuePolicy, type ValueClient } from "./value-publication";
 import type { WorkUnitSource } from "./value-work-unit";
 import {
@@ -81,9 +82,12 @@ export async function collectValueGroup(
       evidence.pull.node_id !== selected.nodeId ||
       evidence.repositoryDatabaseId !== identity.id ||
       evidence.repositoryNodeId !== identity.node_id ||
-      evidence.pull.state !== "closed" ||
-      evidence.limitations.length
+      evidence.pull.state !== "closed"
     )
+      return null;
+    // A proven no-change promotion's only limitation is its joint deferral;
+    // joint preparation drops it, so the source may enter the group.
+    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
       return null;
     const occurred = Date.parse(
       evidence.pull.merged_at ??
@@ -114,7 +118,8 @@ export async function collectValueGroup(
       [];
     if (context.length)
       evidence = await collectValueContext(github, evidence, context);
-    if (evidence.limitations.length) return null;
+    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
+      return null;
     const [owner, repo] = repository.id.split("/");
     const policy =
       position === 0

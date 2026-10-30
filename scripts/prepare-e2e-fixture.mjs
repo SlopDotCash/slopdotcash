@@ -14,10 +14,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -57,7 +59,14 @@ function overlayFixtures(workspace) {
 }
 
 export async function prepareE2eFixture() {
-  const workspace = mkdtempSync(join(tmpdir(), "slop-e2e-fixture-"));
+  // On Windows the temporary directory can be an 8.3 short path
+  // (C:\Users\LONGNA~1\...). A recursive watch on a short path, such as the
+  // local Vite server's, stops Node with a libuv assertion
+  // (`!_wcsnicmp(filename, dir, dirlen)`, src\win\fs-event.c), because change
+  // events report the long path. The native realpath expands the short path.
+  const workspace = realpathSync.native(
+    mkdtempSync(join(tmpdir(), "slop-e2e-fixture-")),
+  );
   try {
     copyWorkingTree(repositoryRoot, workspace);
     overlayFixtures(workspace);
@@ -131,7 +140,12 @@ export async function prepareE2eFixture() {
     });
     return workspace;
   } catch (error) {
-    rmSync(workspace, { recursive: true, force: true });
+    await rm(workspace, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    });
     throw error;
   }
 }

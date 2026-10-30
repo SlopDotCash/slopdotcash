@@ -60,10 +60,14 @@ export function previousUtcCycleId(now = new Date()): string {
 }
 
 /**
- * Only an active, verified monthly-pool project with an escrow policy
- * effective for the month has an automatic monthly allocation, and only when
- * its monthly amount is positive. Unfunded projects and private bounty
- * programs never do.
+ * Only an active, verified monthly-pool project with a registered vault and
+ * an escrow policy effective for the month has an automatic monthly
+ * allocation, and only when its monthly amount is positive. Unfunded projects
+ * and private bounty programs never do. Vault creation turns on the monthly
+ * commitment (PRD section 11). A stored proposal never changes, and the
+ * coordinator freezes a month only into the vault that the proposal's
+ * manifest names, so a vaultless proposal could never be paid; a later run
+ * proposes the month once the vault exists.
  */
 export function hasMonthlyAllocation(
   project: ProjectDefinition,
@@ -76,6 +80,7 @@ export function hasMonthlyAllocation(
     project.reward.kind === "monthly-pool" &&
     Date.parse(project.reward.rewardStartAt) < periodEndTime(period) &&
     project.escrow !== undefined &&
+    project.escrow.deployments.length > 0 &&
     period >= project.escrow.effectiveCycle
   );
 }

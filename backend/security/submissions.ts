@@ -1050,6 +1050,19 @@ async function sendSubmission(
     });
     return grantResponse(200, failed ?? sending);
   }
+  if (result.kind === "rate-limited") {
+    // GitHub throttled the request and kept no copy. The draft reopens for a
+    // later send; the reporter's rights are not in question.
+    const throttled = await transition(deps, sending, {
+      state: "draft",
+      kind: "rate-limited",
+      detail: { retryAfterSeconds: result.retryAfterSeconds },
+      actorGithubId: null,
+    });
+    return grantResponse(200, throttled ?? sending, {
+      rateLimited: { retryAfterSeconds: result.retryAfterSeconds },
+    });
+  }
   if (result.kind === "uncertain") {
     const uncertain = await transition(deps, sending, {
       state: "uncertain",

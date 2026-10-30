@@ -441,7 +441,19 @@ export async function reportingContext(
       "This project is not available for private reporting",
     );
   const { manifest } = project;
-  if (manifest.securityBounty) return manifest.securityBounty;
+  // After a recorded rename or transfer the repository id keeps the original
+  // path, which GitHub redirects; intake follows no redirect. Use the current
+  // name that the reporting readiness check verifies by numeric id. A manifest
+  // without repositories keeps its configured intake name.
+  const repository = manifest.repositories?.length
+    ? reportingTarget(manifest, project.revision).repository
+    : (manifest.securityBounty?.intake.repository ??
+      manifest.repositories[0].id);
+  if (manifest.securityBounty)
+    return {
+      ...manifest.securityBounty,
+      intake: { ...manifest.securityBounty.intake, repository },
+    };
   const technical: Actor[] = [];
   if (contacts) {
     // Registry actors are candidates only. Each needs current GitHub authority.
@@ -474,7 +486,7 @@ export async function reportingContext(
   return {
     intake: {
       kind: "github-private-vulnerability-reporting",
-      repository: manifest.repositories[0].id,
+      repository,
     },
     approvers: { technical, financial: [], dispute: [] },
   };
