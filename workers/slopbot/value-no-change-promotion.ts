@@ -64,6 +64,25 @@ export async function collectNoChangePromotion(
   };
 }
 
+/** True when a source's only limitations are the promotion deferral and its
+ * proof matches. Joint preparation is the layer that drops that deferral
+ * (value-work-unit.ts); the scheduled consumer's gates may pass such a source
+ * through to it instead of refusing the source before joint dispatch. Any
+ * other limitation, or a proof that does not match, is not a deferral. */
+export function noChangePromotionDeferralOnly(
+  source: PromotionSource & {
+    noChangePromotion?: NoChangePromotionProof;
+    limitations: readonly string[];
+  },
+): boolean {
+  return (
+    noChangePromotionMatches(source) &&
+    source.limitations.every(
+      (limitation) => limitation === NO_CHANGE_PROMOTION_CONTEXT,
+    )
+  );
+}
+
 export function noChangePromotionMatches(
   source: PromotionSource & { noChangePromotion?: NoChangePromotionProof },
 ): boolean {

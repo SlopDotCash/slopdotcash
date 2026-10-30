@@ -2,6 +2,7 @@
 
 import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -33,6 +34,109 @@ async function openMonthlyAwards(page: Page) {
   await page.goto("/projects/eliza/funding");
   await page.getByRole("button", { name: "Review monthly awards" }).click();
 }
+
+test(
+  "saved awards links retain their destination",
+  { tag: ["@pages"] },
+  async ({ page }, info) => {
+    const project = {
+      ...projectWithVault(),
+      escrow: stagingPaymentProject("solana-devnet").escrow,
+    };
+    if (!project.escrow) throw new Error("Missing deployment fixture");
+    const deployment = project.escrow.deployments[0];
+    const observedAt = new Date().toISOString();
+    await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+      route.fulfill({
+        json: {
+          projectId: project.id,
+          staleAfterMs: 300_000,
+          servedAt: observedAt,
+          snapshots: [
+            {
+              projectId: project.id,
+              network: deployment.network,
+              chain: "solana",
+              vault: deployment.vault,
+              assetAddress: deployment.asset,
+              assetDecimals: 6,
+              totalDeposited: "1000000000",
+              totalPaid: "0",
+              totalPayoutFees: "0",
+              totalGrossWithdrawn: "0",
+              totalWithdrawalFees: "0",
+              freeBalance: "0",
+              reservedPrincipal: "980000000",
+              reservedFees: "20000000",
+              accruedFees: "0",
+              reserved: null,
+              blockNumber: "1",
+              blockTime: observedAt,
+              observedAt,
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/.well-known/slop/projects.json", (route) =>
+      route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
+    );
+    await page.route(
+      /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+      (route) =>
+        route.fulfill({
+          json: {
+            schemaVersion: "1",
+            projects: PROJECTS.map((entry) =>
+              entry.id === project.id ? project : entry,
+            ),
+          },
+        }),
+    );
+    await page.route("**/api/v1/project-session", (route) =>
+      route.fulfill({ json: { session: null } }),
+    );
+    await page.route("**/api/v1/points/session", (route) =>
+      route.fulfill({ json: { session: null } }),
+    );
+    for (const [suffix, fragment] of [
+      ["?keep=1", "monthly-awards"],
+      ["/?keep=1", "monthly-awards"],
+      ["?keep=1#funding", "funding"],
+      ["/?keep=1#funding", "funding"],
+    ]) {
+      // Use a document navigation: the preview server skips Pages redirects.
+      await page.goto(`/projects/eliza/awards${suffix}`, {
+        waitUntil: "networkidle",
+      });
+      await expect(page).toHaveURL(`/projects/eliza?keep=1#${fragment}`);
+      await expect(page.locator(`#${fragment}`)).toBeInViewport();
+      if (fragment === "monthly-awards") {
+        await expect
+          .poll(() =>
+            page.locator("#monthly-awards-heading").evaluate((heading) => {
+              const header = document.querySelector(".site-header");
+              if (!header) throw new Error("Missing site header");
+              return (
+                heading.getBoundingClientRect().top -
+                header.getBoundingClientRect().bottom
+              );
+            }),
+          )
+          .toBeGreaterThanOrEqual(0);
+      }
+      await expect(
+        page.getByRole("button", { name: "Review monthly awards" }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: info.outputPath(
+          `saved-awards-${suffix.startsWith("/") ? "trailing" : "plain"}-${fragment}.png`,
+        ),
+      });
+    }
+    await expectAccessible(page);
+  },
+);
 
 test("owner edits monthly allocations privately, finalizes them and keeps sign-in context", async ({
   diagnostics,
