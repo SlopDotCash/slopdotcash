@@ -29,6 +29,9 @@ export type Appeal = {
   resolution: "upheld" | "denied" | null;
   resolved_by: "appellant" | "maintainer" | "moderator" | null;
 };
+/** Fixed internal stores; never a request-supplied SQL identifier. */
+export type AppealTable = "slopbot_appeals" | "points_disputes";
+export type PointsAppealFence = { claimToken: string };
 
 /** The published escalation criteria that Slopbot can decide by itself.
  * Rejection of the draft and the 7-day limit are recorded by their own paths.
@@ -102,9 +105,10 @@ export async function openAppeal(
 export async function appealByKey(
   db: D1Database,
   appealKey: string,
+  table: AppealTable = "slopbot_appeals",
 ): Promise<Appeal | null> {
   return db
-    .prepare(`SELECT ${COLUMNS} FROM slopbot_appeals WHERE appeal_key = ?`)
+    .prepare(`SELECT ${COLUMNS} FROM ${table} WHERE appeal_key = ?`)
     .bind(appealKey)
     .first<Appeal>();
 }
@@ -131,15 +135,27 @@ export async function recordDraft(
   appealKey: string,
   draft: "uphold" | "deny",
   confidence: number,
+  table: AppealTable = "slopbot_appeals",
+  fence?: PointsAppealFence,
 ): Promise<Appeal> {
+  if (fence && table !== "points_disputes")
+    throw new Error("Invalid appeal fence");
+  const at = new Date().toISOString();
   await db
     .prepare(
-      `UPDATE slopbot_appeals SET draft = ?, draft_confidence = ?, drafted_at = ?
-       WHERE appeal_key = ? AND draft IS NULL AND resolved_at IS NULL`,
+      `UPDATE ${table} SET draft = ?, draft_confidence = ?, drafted_at = ?
+       WHERE appeal_key = ? AND draft IS NULL AND resolved_at IS NULL
+       ${fence ? "AND claim_token=? AND claim_until>?" : ""}`,
     )
-    .bind(draft, confidence, new Date().toISOString(), appealKey)
+    .bind(
+      draft,
+      confidence,
+      at,
+      appealKey,
+      ...(fence ? [fence.claimToken, at] : []),
+    )
     .run();
-  const appeal = await appealByKey(db, appealKey);
+  const appeal = await appealByKey(db, appealKey, table);
   if (appeal === null) throw new Error("Appeal is missing");
   return appeal;
 }
@@ -150,16 +166,35 @@ export async function escalateAppeal(
   appealKey: string,
   reason: string,
   moderators: ReadonlySet<string>,
+  table: AppealTable = "slopbot_appeals",
+  fence?: PointsAppealFence,
 ): Promise<boolean> {
+  if (fence && table !== "points_disputes")
+    throw new Error("Invalid appeal fence");
   const at = new Date().toISOString();
   const results = await db.batch([
     db
       .prepare(
-        `UPDATE slopbot_appeals SET escalated_at = ?, escalation = ?
-       WHERE appeal_key = ? AND escalated_at IS NULL AND resolved_at IS NULL`,
+        `UPDATE ${table} SET escalated_at = ?, escalation = ?
+       WHERE appeal_key = ? AND escalated_at IS NULL AND resolved_at IS NULL
+       ${fence ? "AND claim_token=? AND claim_until>?" : ""}`,
       )
-      .bind(at, reason.slice(0, 200), appealKey),
-    ...[...moderators].map((id) => notifySlopbotAppeal(db, appealKey, id, at)),
+      .bind(
+        at,
+        reason.slice(0, 200),
+        appealKey,
+        ...(fence ? [fence.claimToken, at] : []),
+      ),
+    ...[...moderators].map((id) =>
+      notifySlopbotAppeal(
+        db,
+        appealKey,
+        id,
+        at,
+        table,
+        fence ? { claimToken: fence.claimToken, at } : undefined,
+      ),
+    ),
   ]);
   return (results[0].meta?.changes ?? 0) === 1;
 }

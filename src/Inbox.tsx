@@ -40,6 +40,7 @@ const SecurityInbox = lazy(() =>
     default: module.SecurityInbox,
   })),
 );
+const PointsDisputes = lazy(() => import("./PointsDisputes"));
 
 type InboxState =
   | { status: "loading" }
@@ -149,7 +150,13 @@ export default function InboxPage() {
     if (id === null || changed) {
       clearAllDrafts();
       const url = new URL(window.location.href);
-      for (const key of ["case", "submission", "intake"])
+      for (const key of [
+        "case",
+        "submission",
+        "intake",
+        "points",
+        "pointsDispute",
+      ])
         url.searchParams.delete(key);
       window.history.replaceState(window.history.state, "", url);
       setCursor(null);
@@ -317,6 +324,16 @@ export default function InboxPage() {
       ) : null}
       {recipient !== null ? (
         <div hidden={state.status === "loading"}>
+          {new URLSearchParams(window.location.search).has("points") ||
+          new URLSearchParams(window.location.search).has("pointsDispute") ? (
+            <Suspense fallback={<p role="status">Loading Points review…</p>}>
+              <PointsDisputes
+                key={`${recipient}:${window.location.search}`}
+                actorId={recipient}
+                onChange={load}
+              />
+            </Suspense>
+          ) : null}
           <Suspense fallback={<p role="status">Loading reports…</p>}>
             <SecurityInbox
               embedded

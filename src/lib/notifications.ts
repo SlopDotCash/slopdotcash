@@ -195,9 +195,13 @@ export function notificationTitle(n: Notification): string {
         ? `The ${n.subject} monthly awards are underfunded.`
         : `A payout from ${n.subject} is held and needs attention.`;
     case "slopbot_appeal_review":
-      return "A contribution appeal needs your decision on GitHub.";
+      return n.eventKey.startsWith("slopbot-points-dispute:")
+        ? "A Points dispute is awaiting review."
+        : "A contribution appeal needs your decision on GitHub.";
     case "slopbot_appeal_resolved":
-      return "The contribution appeal was resolved.";
+      return n.eventKey.startsWith("slopbot-points-dispute:")
+        ? "The Points dispute was resolved."
+        : "The contribution appeal was resolved.";
     case "slopbot_scam_review":
       return `Slopbot closed a ${n.subject} contribution as a scam. Review the author's account.`;
     case "security_case":
@@ -232,7 +236,9 @@ export function notificationAction(n: Notification): string {
       return "Open project";
     case "slopbot_appeal_review":
     case "slopbot_appeal_resolved":
-      return "Open appeal on GitHub";
+      return n.eventKey.startsWith("slopbot-points-dispute:")
+        ? "Open Points review"
+        : "Open appeal on GitHub";
     case "slopbot_scam_review":
       return "Open closed item on GitHub";
     case "security_case":
