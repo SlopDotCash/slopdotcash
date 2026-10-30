@@ -592,11 +592,17 @@ export function inspectRepository(input: {
       counts.downloads += 1;
       continue;
     }
+    const text = decode(file.bytes);
+    // Ant imports may use any filename. Its project root identifies the
+    // executable build document without parsing XML or resolving entities.
+    if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
+      if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
+      if (!surfaces.includes("source")) surfaces.push("source");
+    }
     if (surfaces.length === 0) continue;
     for (const surface of surfaces) counts[surface] += 1;
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
-    const text = decode(file.bytes);
     if (text === null) {
       for (const surface of surfaces) partial.add(surface);
       gaps.push(`Undecodable executable content at ${file.path}`);
