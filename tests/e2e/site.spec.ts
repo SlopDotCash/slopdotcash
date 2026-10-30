@@ -1,3 +1,4 @@
+import { readLeaderboardResponse } from "./leaderboard-response";
 /**
  * Drives the built GitHub-native product through discovery, contribution,
  * wallet, profile, cycle, project-proposal, artifact, failure, responsive, and
@@ -454,7 +455,7 @@ async function loadSnapshot(
     maxRetries: 1,
   });
   expect(response.status()).toBe(200);
-  const value: unknown = await response.json();
+  const value: unknown = await readLeaderboardResponse(response, request);
   assertLeaderboardSnapshot(value);
   return value;
 }
