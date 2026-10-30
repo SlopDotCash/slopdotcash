@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { HISTORICAL_PROJECTS } from "../src/lib/projects.mjs";
+import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import { childEnvironment } from "./child-environment.mjs";
@@ -64,11 +65,16 @@ for (let i = 0; i < actors.length; i++) {
       new Date(Date.now() + 3_600_000).toISOString(),
     );
 }
+// A synced public registry provides a project whose repository the local
+// project claims. CI code checks use the committed snapshot, which can be
+// empty; then the local claim uses a frozen fixture repository and there is
+// no public clone to refuse.
 const occupiedPublicProject = HISTORICAL_PROJECTS.find(
   (project) => project.repositories.length > 0,
 );
-assert.ok(occupiedPublicProject);
-const occupiedRepository = occupiedPublicProject.repositories[0].id;
+const occupiedRepository = (occupiedPublicProject ?? fixtureProject("asi"))
+  .repositories[0]?.id;
+assert.ok(occupiedRepository);
 const manifest = applicationManifest(
   "local-private-proof",
   occupiedRepository,
@@ -228,12 +234,13 @@ try {
   assert.ok(
     inventory.projects.some((project) => project.id === "local-private-proof"),
   );
-  assert.ok(
-    !inventory.projects.some(
-      (project) => project.id === occupiedPublicProject.id,
-    ),
-    "public clone must not displace a local repository claim",
-  );
+  if (occupiedPublicProject)
+    assert.ok(
+      !inventory.projects.some(
+        (project) => project.id === occupiedPublicProject.id,
+      ),
+      "public clone must not displace a local repository claim",
+    );
   assert.equal((await request("/__dev/mail", null)).status, 401);
   const signup = await request(
     "/api/v1/notifications/email/verification",
