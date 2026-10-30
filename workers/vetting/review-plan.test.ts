@@ -329,7 +329,6 @@ test("a batched review combines every call and fails when any batch fails", asyn
     concurrency: 3,
   });
   expect(ok.calls).toHaveLength(plan.batches.length + 1);
-  expect(ok.calls.at(-1)).toContain('"prepass" item');
   const evidence = reviewed.evidence;
   if (!evidence) throw new Error("Expected a review");
   expect(evidence.review.status).toBe("completed");

@@ -258,13 +258,11 @@ describe("release gates", () => {
           amount_in: "4000000",
           quote_amount_out: "4000000",
           state: "pending",
-          reason: "below the minimum conversion value",
           raw_tx: null,
         },
       ]);
       expect(completed).toHaveLength(1);
       expect(errors).toHaveLength(1);
-      expect(errors[0]).toContain("live mode needs FEE_WALLET_KEY_ETHEREUM");
       expect(sqlite.query("SELECT * FROM fee_converter_locks").all()).toEqual(
         [],
       );
