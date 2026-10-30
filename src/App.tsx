@@ -624,7 +624,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
           project.reward.kind === "external-prize-share" ? (
             <span> + points</span>
           ) : (
-            <span>/mo target</span>
+            <span>/mo</span>
           )}
         </p>
         {monthlyPoolPointsOnly(project.reward) ? (
@@ -646,7 +646,7 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
   const amount = monthlyPoolPointsOnly(project.reward)
     ? "Points only"
     : project.reward.kind === "monthly-pool"
-      ? `${monthlyPoolCapLabel(project)}/mo target`
+      ? `${monthlyPoolCapLabel(project)}/mo`
       : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
   return (
     <li>
