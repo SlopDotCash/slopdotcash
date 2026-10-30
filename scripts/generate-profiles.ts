@@ -15,7 +15,10 @@ import {
   type CensusRequest,
   collectProfileIssues,
 } from "./profile-issue-census";
-import { assertRetainedProfiles } from "./published-profiles";
+import {
+  assertPublishedProfiles,
+  assertRetainedProfiles,
+} from "./published-profiles";
 
 type PullRequestPage = {
   repository: {
@@ -40,8 +43,11 @@ const { values } = parseArgs({
     seed: { type: "boolean" },
     input: { type: "string" },
     previous: { type: "string" },
+    current: { type: "boolean" },
   },
 });
+if (values.current && !values.input)
+  throw new Error("--current checks a profile input file.");
 if (values.live && values.input)
   throw new Error("Choose live collection or a profile input file.");
 const output = "public/data/profiles.json";
@@ -195,6 +201,6 @@ if (values.live) {
   const value = JSON.parse(await readFile(values.input ?? seed, "utf8"));
   // A PR input is a retained snapshot, not a new complete live collection.
   // Readers keep checking it against current targets and report missing data.
-  assertRetainedProfiles(value);
+  assertPublishedProfiles(value, { current: values.current ?? false });
   await publish(output, value);
 }
