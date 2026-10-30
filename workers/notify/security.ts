@@ -5,6 +5,7 @@ import {
   type SecurityD1Database,
   securityNotificationAccess,
 } from "../../backend/security/handler";
+import { reportingAuthorityUnavailable } from "../../backend/security/project-access";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { EMAIL_ADDRESS, SENDER_ADDRESS } from "./contracts";
 import { encodeQuotedPrintable } from "./handler";
@@ -257,18 +258,25 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
   const backupId =
     deps.config.recipients[row.recipient_github_id]?.backupGithubId;
   if (!backupId || !deps.config.recipients[backupId]) return;
-  if (
-    !(
-      await securityNotificationAccess(
-        deps.db,
-        row.case_id,
-        backupId,
-        deps.moderatorGithubIds,
-        deps.repositoryAccess,
-      )
-    ).allowed
-  )
+  try {
+    if (
+      !(
+        await securityNotificationAccess(
+          deps.db,
+          row.case_id,
+          backupId,
+          deps.moderatorGithubIds,
+          deps.repositoryAccess,
+        )
+      ).allowed
+    )
+      return;
+  } catch (error) {
+    if (!reportingAuthorityUnavailable(error)) throw error;
+    // No backup is authorized while GitHub is unavailable. Keep the failed
+    // notice for the next escalation scan and continue the delivery queue.
     return;
+  }
   const at = deps.now().toISOString();
   const eventKey = `security-escalation:${row.id}`;
   await deps.db.batch([

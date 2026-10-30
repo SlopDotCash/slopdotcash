@@ -230,7 +230,10 @@ activate intake or prove that GitHub or Surplus is available.
   `failed`, `abandoned`. Every transition is a revision compare-and-set
   with an insert-only event in the same batch. `submitting` commits before
   GitHub is called; a lost answer, a 5xx, a malformed 201 or a 201 naming
-  another author is `uncertain`.
+  another author is `uncertain`. A GitHub rate limit (429, or 403 with
+  `x-ratelimit-remaining: 0`, `retry-after` or a rate-limit message) keeps
+  no copy: the send returns the draft for another send with a `rate-limited`
+  event and the wait GitHub gives. It never records `forbidden`.
 - Marker: the description gets one line, `Report reference: <32 hex>`, a
   random value per submission. It names neither the submission nor Slop,
   because it stays in the text if the advisory is published

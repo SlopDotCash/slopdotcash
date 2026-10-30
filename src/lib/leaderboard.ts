@@ -176,6 +176,9 @@ export const OUTCOME_FIRST_POLICY_AT = "2026-10-01T00:00:00.000Z" as const;
 // #683: first successful production deployment of SCR-05 (run 38001124966).
 export const PAYMENT_REVIEW_POLICY_AT = "2026-10-09T23:21:35.388Z" as const;
 export const PAYMENT_REVIEW_POLICY = "scr-05-payments-production-v1" as const;
+/** Publisher reason when paymentReviewBasis is intentionally omitted (#1411 S3). */
+export const PAYMENT_REVIEW_BASIS_OMITTED_REASON =
+  "no-pre-policy-reviews" as const;
 // A 35-day collection window guarantees a complete prior UTC calendar month;
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
@@ -2791,41 +2794,82 @@ export function createLeaderboardSnapshot(
     input,
     OUTCOME_FIRST_POLICY_AT,
   );
+  // Payment weights only diverge for reviews submitted before the SCR-05
+  // production cutoff. Skip the second pass and the basis payload when the
+  // window has none, and publish an explicit omission marker so consumers can
+  // tell intentional equality apart from a missing legacy or incomplete
+  // snapshot (#1411 S3 / Shaw review on #1783).
   if (parseIsoTime(input.windowTo) > parseIsoTime(OUTCOME_FIRST_POLICY_AT)) {
-    const payments = createSnapshotWithReviewCutoff(
-      input,
-      PAYMENT_REVIEW_POLICY_AT,
-    );
-    snapshot.paymentReviewBasis = {
-      policy: PAYMENT_REVIEW_POLICY,
-      effectiveAt: PAYMENT_REVIEW_POLICY_AT,
-      leaders: payments.leaders,
-      ledger: changedPaymentRecords(snapshot.ledger, payments.ledger),
-      removedEventIds: removedPaymentRecordIds(
-        snapshot.ledger,
-        payments.ledger,
-      ),
-      removedAttributionIds: removedPaymentRecordIds(
-        snapshot.attributions,
-        payments.attributions,
-      ),
-      attributionOrder: payments.attributions.map((record) => record.id),
-      // Only profiles read the reviewer, from the score copy. This copy omits
-      // it to save bytes under the 25 MiB Pages per-file limit.
-      reviewExclusions: (payments.reviewExclusions ?? []).map(
-        ({ reviewer: _reviewer, ...exclusion }) => exclusion,
-      ),
-      attributions: changedPaymentRecords(
-        snapshot.attributions,
-        payments.attributions,
-      ),
-      invalidAttributionMarkers: payments.invalidAttributionMarkers,
-      attributionCoverage: payments.attributionCoverage,
-      opportunities: payments.opportunities,
-    };
+    if (inputHasFormalReviewBefore(input, PAYMENT_REVIEW_POLICY_AT)) {
+      const payments = createSnapshotWithReviewCutoff(
+        input,
+        PAYMENT_REVIEW_POLICY_AT,
+      );
+      snapshot.paymentReviewBasis = {
+        policy: PAYMENT_REVIEW_POLICY,
+        effectiveAt: PAYMENT_REVIEW_POLICY_AT,
+        leaders: payments.leaders,
+        ledger: changedPaymentRecords(snapshot.ledger, payments.ledger),
+        removedEventIds: removedPaymentRecordIds(
+          snapshot.ledger,
+          payments.ledger,
+        ),
+        removedAttributionIds: removedPaymentRecordIds(
+          snapshot.attributions,
+          payments.attributions,
+        ),
+        attributionOrder: payments.attributions.map((record) => record.id),
+        // Only profiles read the reviewer, from the score copy. This copy omits
+        // it to save bytes under the 25 MiB Pages per-file limit.
+        reviewExclusions: (payments.reviewExclusions ?? []).map(
+          ({ reviewer: _reviewer, ...exclusion }) => exclusion,
+        ),
+        attributions: changedPaymentRecords(
+          snapshot.attributions,
+          payments.attributions,
+        ),
+        invalidAttributionMarkers: payments.invalidAttributionMarkers,
+        attributionCoverage: payments.attributionCoverage,
+        opportunities: payments.opportunities,
+      };
+    } else {
+      snapshot.paymentReviewBasisOmitted = {
+        policy: PAYMENT_REVIEW_POLICY,
+        effectiveAt: PAYMENT_REVIEW_POLICY_AT,
+        reason: PAYMENT_REVIEW_BASIS_OMITTED_REASON,
+      };
+    }
   }
   assertPublishableLeaderboardSnapshot(snapshot);
   return snapshot;
+}
+
+/** True when any formal review in the census was submitted before cutoff. */
+function inputHasFormalReviewBefore(
+  input: LeaderboardInput,
+  cutoff: string,
+): boolean {
+  const cutoffMs = parseIsoTime(cutoff);
+  const pools = [
+    input.mergedPullRequests,
+    input.reviewedMergedPullRequests ?? [],
+    input.closedUnmergedPullRequests ?? [],
+    input.openPullRequests,
+    input.valueContextPullRequests ?? [],
+  ];
+  for (const pulls of pools) {
+    for (const pull of pulls) {
+      for (const review of pull.reviews) {
+        if (
+          review.submittedAt !== null &&
+          parseIsoTime(review.submittedAt) < cutoffMs
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 /** Reuse the complete eligibility pipeline; only ordinary review timing differs. */
@@ -7593,6 +7637,24 @@ export function assertLeaderboardSnapshot(
     );
   }
   assertMethodologyValue(snapshot.methodology, "snapshot.methodology");
+  if (
+    snapshot.paymentReviewBasis !== undefined &&
+    snapshot.paymentReviewBasisOmitted !== undefined
+  ) {
+    throw new Error(
+      "snapshot cannot publish both paymentReviewBasis and paymentReviewBasisOmitted",
+    );
+  }
+  if (snapshot.paymentReviewBasisOmitted !== undefined) {
+    assertPaymentReviewBasisOmitted(
+      snapshot.paymentReviewBasisOmitted,
+      "snapshot.paymentReviewBasisOmitted",
+    );
+    assertNoPrePaymentCutoffScoreReviews(
+      value as LeaderboardSnapshot,
+      "snapshot.paymentReviewBasisOmitted",
+    );
+  }
   if (snapshot.paymentReviewBasis !== undefined) {
     const basis = assertObject(
       snapshot.paymentReviewBasis,
@@ -7665,13 +7727,42 @@ function applyPaymentRecords<T extends { id: string }>(
   return [...records.values()];
 }
 
-/** Payment callers must never silently use the retroactive score ledger. */
+/**
+ * Payment callers must use the published basis when present; never invent
+ * payment weights. Intentional equality with the score ledger is published as
+ * `paymentReviewBasisOmitted`. A snapshot that lacks both the basis and that
+ * marker is incomplete or legacy and fails closed.
+ */
 export function paymentReviewSnapshot(
   snapshot: LeaderboardSnapshot,
 ): LeaderboardSnapshot {
   const basis = snapshot.paymentReviewBasis;
+  const omitted = snapshot.paymentReviewBasisOmitted;
+  if (basis !== undefined && omitted !== undefined) {
+    throw new Error(
+      "Payment snapshot cannot carry both a review basis and an omission marker",
+    );
+  }
+  if (!basis) {
+    if (!omitted) {
+      throw new Error(
+        "Payment allocation requires the production-release review basis; regenerate the source snapshot",
+      );
+    }
+    assertPaymentReviewBasisOmitted(
+      omitted,
+      "snapshot.paymentReviewBasisOmitted",
+    );
+    assertNoPrePaymentCutoffScoreReviews(
+      snapshot,
+      "snapshot.paymentReviewBasisOmitted",
+    );
+    return {
+      ...snapshot,
+      paymentReviewBasisOmitted: undefined,
+    };
+  }
   if (
-    !basis ||
     basis.policy !== PAYMENT_REVIEW_POLICY ||
     basis.effectiveAt !== PAYMENT_REVIEW_POLICY_AT
   ) {
@@ -7698,6 +7789,7 @@ export function paymentReviewSnapshot(
   return {
     ...snapshot,
     paymentReviewBasis: undefined,
+    paymentReviewBasisOmitted: undefined,
     leaders: basis.leaders,
     ledger: applyPaymentRecords(
       snapshot.ledger,
@@ -7717,6 +7809,55 @@ export function paymentReviewSnapshot(
     attributionCoverage: basis.attributionCoverage,
     opportunities: basis.opportunities,
   };
+}
+
+function assertPaymentReviewBasisOmitted(
+  value: unknown,
+  path: string,
+): asserts value is {
+  policy: typeof PAYMENT_REVIEW_POLICY;
+  effectiveAt: typeof PAYMENT_REVIEW_POLICY_AT;
+  reason: typeof PAYMENT_REVIEW_BASIS_OMITTED_REASON;
+} {
+  const omitted = assertObject(value, path);
+  const keys = Object.keys(omitted).sort();
+  if (
+    JSON.stringify(keys) !== JSON.stringify(["effectiveAt", "policy", "reason"])
+  ) {
+    throw new Error(
+      `${path} must contain exactly policy, effectiveAt, and reason`,
+    );
+  }
+  if (
+    omitted.policy !== PAYMENT_REVIEW_POLICY ||
+    omitted.effectiveAt !== PAYMENT_REVIEW_POLICY_AT ||
+    omitted.reason !== PAYMENT_REVIEW_BASIS_OMITTED_REASON
+  ) {
+    throw new Error(
+      "Payment basis omission must name the production-release policy, cutoff, and no-pre-policy-reviews reason",
+    );
+  }
+}
+
+/**
+ * An omission marker claims the census had no formal review before the payment
+ * cutoff. A score-ledger review dated before that cutoff contradicts it.
+ */
+function assertNoPrePaymentCutoffScoreReviews(
+  snapshot: LeaderboardSnapshot,
+  path: string,
+): void {
+  const cutoffMs = parseIsoTime(PAYMENT_REVIEW_POLICY_AT);
+  for (const event of snapshot.ledger) {
+    if (
+      event.category === "substantive-review" &&
+      parseIsoTime(event.occurredAt) < cutoffMs
+    ) {
+      throw new Error(
+        `${path} cannot omit the payment basis while the score ledger retains a pre-cutoff review`,
+      );
+    }
+  }
 }
 
 function assertLeaderboardOrdering(

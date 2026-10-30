@@ -110,7 +110,7 @@ export function runE2ePhase({
         process.stderr.write(`[${label}] process cleanup did not finish\n`);
         child.stdout.destroy();
         child.stderr.destroy();
-        finish(failureStatus);
+        finish(failureStatus || 1);
       }, 5000);
     };
     const timer = setTimeout(() => {
@@ -126,11 +126,11 @@ export function runE2ePhase({
       process.stderr.write(`[${label}] ${error.message}\n`);
       finish(1);
     });
-    child.on("exit", (status, signal) => {
-      // Exit precedes close: a failed launcher can leave a server holding its
-      // output pipes open. The POSIX group remains addressable after its
-      // leader exits, so stop it now and preserve the launcher's failure.
-      if (process.platform !== "win32" && (status !== 0 || signal))
+    child.on("exit", (status) => {
+      // Exit precedes close: even a successful launcher can leave a server
+      // holding inherited pipes or sockets. Stop remaining POSIX group members
+      // on every exit; close and group checks still precede returning status.
+      if (process.platform !== "win32")
         stopProcessTree(timedOut ? 1 : (status ?? 1));
     });
     child.on("close", (status, signal) => {

@@ -5,6 +5,7 @@ import type { ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
 import { collectValueEvidence, findRepository } from "./value-evidence";
 import { collectValueGroup } from "./value-group-collection";
+import { noChangePromotionDeferralOnly } from "./value-no-change-promotion";
 import {
   claimValueRequest,
   finishValueRequest,
@@ -126,7 +127,10 @@ export async function consumeValueRequest(
       job.number,
       repository,
     );
-    if (evidence.limitations.length) return await finish("source-incomplete");
+    // A proven no-change promotion carries only its joint deferral as a
+    // limitation; joint preparation drops it, so do not refuse it here.
+    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
+      return await finish("source-incomplete");
     const policy = await loadValuePolicy(
       github,
       job.owner,
@@ -201,12 +205,13 @@ export async function consumeValueRequest(
         ),
       ),
     );
-    // The single-PR evaluator refuses indirect acceptance, so a lone source
-    // accepted through an integration commit also needs the joint route.
+    // The single-PR evaluator refuses indirect acceptance and no-change
+    // promotions, so a lone source of either kind also needs the joint route.
     if (
       sources.length > 1 ||
       previousGroups.some(Boolean) ||
-      sources.some((source) => source.evidence.indirectAcceptance)
+      sources.some((source) => source.evidence.indirectAcceptance) ||
+      sources.some((source) => source.evidence.noChangePromotion)
     ) {
       const joint = await prepareWorkUnitEvidence(sources, repositories);
       if (joint.limitations.length) return await finish("source-incomplete");

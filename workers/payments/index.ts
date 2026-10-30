@@ -166,8 +166,12 @@ export async function recoverUncertainAttempts(
                 successorClaimId: successor.id,
               }),
             ),
+            // A Solana row can be `submitted` while the journal never kept its
+            // transaction. The status service reports no transaction, so that
+            // receipt is stale and the row retires like an unsigned attempt;
+            // otherwise dispatch reads a live receipt behind a freed outbox.
             env.PAYMENTS_DB.prepare(
-              "UPDATE payment_attempts SET state='failed' WHERE id=? AND transaction_id IS NULL AND state IN ('prepared','unknown')",
+              "UPDATE payment_attempts SET state='failed',transaction_id=NULL WHERE id=? AND (transaction_id IS NULL AND state IN ('prepared','unknown') OR state='submitted')",
             ).bind(attempt.idempotencyKey),
             // A dispatcher may be mid-submit under a live lease: keep it, so
             // its own completion batch still matches the token.

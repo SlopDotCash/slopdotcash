@@ -301,6 +301,15 @@ textarea:focus-visible {
   text-underline-offset: 3px;
 }
 
+/* Inline Payouts / Disclosure links keep a 24px target (WCAG 2.5.8; #1411 D6). */
+.faq-answer a,
+.mechanism-flow a,
+.money-summary a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 @media (max-width: 700px) {
   .faq-answer {
     display: block;

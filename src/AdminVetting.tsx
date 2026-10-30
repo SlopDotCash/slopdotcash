@@ -11,7 +11,16 @@ import { StatusBadge, formatNullableUtc as time } from "./Presentation";
  * so and offers no scan control.
  */
 
-import { CircleAlert, RotateCcw } from "lucide-react";
+import {
+  CircleAlert,
+  CircleCheck,
+  ExternalLink,
+  History,
+  RotateCcw,
+  ScanSearch,
+  ShieldCheck,
+  ShieldOff,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { projectApiRequest } from "./lib/project-api";
 import type {
@@ -150,25 +159,17 @@ function AdmissionExemptionForm({
     }
   };
   return (
-    <details className="admin-actions">
-      <summary>
-        {revoke
-          ? "Revoke owner-approved exemption"
-          : "Record owner-approved exemption"}
-      </summary>
+    <section className="admin-subsection">
+      <h4 className="admin-subsection-heading">
+        <ShieldCheck aria-hidden="true" /> Owner-approved exemption
+      </h4>
       <form
+        className="admin-actions"
         onSubmit={(event) => {
           event.preventDefault();
           void save();
         }}
       >
-        <p>
-          {revoke
-            ? "Revocation restores the normal admission requirement and keeps the grant history."
-            : `This records an explicit human decision for ${project.name}, revision ${project.revision}, and its current GitHub repository identity. It does not record a passed scan.`}{" "}
-          Contributor flags, investigations, bans and fresh reinstatement checks
-          still apply.
-        </p>
         <label>
           {revoke ? "Reason for revocation" : "Reason for the exemption"}
           <textarea
@@ -189,7 +190,7 @@ function AdmissionExemptionForm({
             onChange={(event) => setDecisionReference(event.target.value)}
           />
         </label>
-        <label>
+        <label className="checkbox-field">
           <input
             type="checkbox"
             required
@@ -215,10 +216,15 @@ function AdmissionExemptionForm({
             !decisionReference.trim()
           }
         >
+          {revoke ? (
+            <ShieldOff aria-hidden="true" />
+          ) : (
+            <ShieldCheck aria-hidden="true" />
+          )}
           {busy ? "Saving…" : revoke ? "Revoke exemption" : "Record exemption"}
         </button>
       </form>
-    </details>
+    </section>
   );
 }
 
@@ -229,8 +235,10 @@ function AdmissionExemptionHistory({
 }) {
   if (exemptions.length === 0) return null;
   return (
-    <details className="admin-reference">
-      <summary>Owner-approved exemption history</summary>
+    <section className="admin-subsection">
+      <h4 className="admin-subsection-heading">
+        <History aria-hidden="true" /> Exemption history
+      </h4>
       {exemptions.map((exemption) => (
         <dl className="admin-facts" key={exemption.id}>
           <div>
@@ -247,7 +255,20 @@ function AdmissionExemptionHistory({
           </div>
           <div>
             <dt>Owner decision</dt>
-            <dd>{exemption.decisionReference}</dd>
+            <dd>
+              {/^https?:\/\//iu.test(exemption.decisionReference) ? (
+                <a
+                  href={exemption.decisionReference}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {exemption.decisionReference}{" "}
+                  <ExternalLink aria-hidden="true" />
+                </a>
+              ) : (
+                exemption.decisionReference
+              )}
+            </dd>
           </div>
           <div>
             <dt>Repository identity</dt>
@@ -285,7 +306,7 @@ function AdmissionExemptionHistory({
           ) : null}
         </dl>
       ))}
-    </details>
+    </section>
   );
 }
 
@@ -316,9 +337,12 @@ function QueueScan({
     });
   };
   return (
-    <details className="admin-actions">
-      <summary>Queue scan of revision {project.revision}</summary>
+    <section className="admin-subsection">
+      <h4 className="admin-subsection-heading">
+        <ScanSearch aria-hidden="true" /> Scan revision {project.revision}
+      </h4>
       <form
+        className="admin-actions"
         onSubmit={(event) => {
           event.preventDefault();
           queue();
@@ -344,11 +368,12 @@ function QueueScan({
             disabled={busy}
             type="submit"
           >
+            <ScanSearch aria-hidden="true" />
             {busy ? "Queuing…" : `Queue scan of revision ${project.revision}`}
           </button>
         </div>
       </form>
-    </details>
+    </section>
   );
 }
 
@@ -371,20 +396,39 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
   const gaps =
     result?.telemetry?.visibilityGaps ?? result?.visibilityGaps ?? [];
   return (
-    <details className="operations-disclosure assessment-details">
-      <summary>
-        <span>
-          Revision {assessment.revision} · {STATE_TEXT[assessment.state]}
-        </span>
+    <section className="admin-subsection assessment-details">
+      <header className="admin-subsection-heading">
+        <h4>Revision {assessment.revision}</h4>
+        <StatusBadge
+          icon={
+            assessment.state === "clean" ? <CircleCheck /> : <CircleAlert />
+          }
+          tone={
+            assessment.state === "clean"
+              ? "success"
+              : assessment.state === "malicious"
+                ? "danger"
+                : "warning"
+          }
+        >
+          {STATE_TEXT[assessment.state]}
+        </StatusBadge>
         <time dateTime={assessment.completedAt ?? assessment.requestedAt}>
           {time(assessment.completedAt ?? assessment.requestedAt)}
         </time>
-      </summary>
+      </header>
       <dl className="admin-facts">
         <div>
           <dt>Queued by</dt>
           <dd>
-            @{assessment.requestedBy.githubLogin} — {assessment.requestReason}
+            <a
+              href={`https://github.com/${encodeURIComponent(assessment.requestedBy.githubLogin)}`}
+              rel="noreferrer"
+              target="_blank"
+            >
+              @{assessment.requestedBy.githubLogin}
+            </a>{" "}
+            — {assessment.requestReason}
           </dd>
         </div>
         <div>
@@ -426,7 +470,7 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
               <a
                 href={`/vetting-evidence?assessmentId=${encodeURIComponent(run.assessmentId)}&runId=${encodeURIComponent(run.runId)}`}
               >
-                Open restricted evidence console
+                <ExternalLink aria-hidden="true" /> Evidence
               </a>
             </dd>
           </div>
@@ -465,7 +509,7 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
                               <StatusBadge
                                 tone={
                                   entry.state === "complete"
-                                    ? "neutral"
+                                    ? "success"
                                     : "warning"
                                 }
                               >
@@ -505,7 +549,9 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
                             <td>
                               <StatusBadge
                                 tone={
-                                  check === "passed" ? "neutral" : "warning"
+                                  check === "passed" || check === "not-found"
+                                    ? "success"
+                                    : "warning"
                                 }
                               >
                                 {scanLabel(check)}
@@ -587,7 +633,7 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
           </ul>
         </>
       ) : null}
-    </details>
+    </section>
   );
 }
 
@@ -658,11 +704,11 @@ export function VettingSection({ projectId }: { projectId: string }) {
                 const history = state.value.assessments.filter(
                   (assessment) => assessment.projectId === project.id,
                 );
-                const queued = history.some(
-                  (assessment) =>
-                    assessment.state === "pending" &&
-                    assessment.revision === project.revision,
-                );
+                // The API returns newest first. Superseded pending requests
+                // remain in history but no longer occupy the project queue.
+                const queued =
+                  history[0]?.state === "pending" &&
+                  history[0].revision === project.revision;
                 const exemptions = (state.value.exemptions ?? []).filter(
                   (exemption) => exemption.projectId === project.id,
                 );
@@ -679,6 +725,13 @@ export function VettingSection({ projectId }: { projectId: string }) {
                       <span>Current clearance</span>
                       <StatusBadge
                         className="admin-badge"
+                        icon={
+                          clearance.state === "cleared" ? (
+                            <ShieldCheck />
+                          ) : (
+                            <CircleAlert />
+                          )
+                        }
                         tone={
                           clearance.state === "cleared"
                             ? "success"
@@ -703,12 +756,12 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         <dt>Decided by</dt>
                         <dd>
                           {clearance.state === "unscanned"
-                            ? "No admission scan for this repository yet"
+                            ? "Awaiting admission scan"
                             : clearance.state === "unverified"
                               ? clearance.reason
                               : clearance.assessment === null
                                 ? "exemption" in clearance
-                                  ? "Explicit owner-approved exemption; see the recorded decision below."
+                                  ? "Owner-approved exemption"
                                   : "Existing-project exemption"
                                 : clearance.state === "stale"
                                   ? `Live head ${clearance.live.commitSha} (template ${clearance.live.templateSha256}) is not scanned. Last scan: ${clearance.assessment.commitSha}.`
@@ -726,51 +779,26 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         </div>
                       ) : null}
                     </dl>
-                    <AdmissionExemptionHistory exemptions={exemptions} />
-                    <AdmissionExemptionForm
-                      key={`${project.revision}:${activeExemption?.id ?? "grant"}`}
-                      project={project}
-                      exemption={activeExemption}
-                      onSaved={() => {
-                        setNote(
-                          activeExemption
-                            ? `Revoked the owner-approved exemption for ${project.id}.`
-                            : `Recorded the owner-approved exemption for ${project.id}.`,
-                        );
-                        load();
-                      }}
-                    />
                     {clearance.state === "banned" ? (
                       <p className="form-error">
                         <CircleAlert aria-hidden="true" /> Confirmed malicious.
                         A new scan cannot lift the ban.
                       </p>
                     ) : null}
-                    {state.value.service.queueRegistrationAvailable &&
-                    !queued ? (
-                      <QueueScan
-                        onQueued={() => {
-                          setNote(
-                            `Queued a scan of ${project.id} revision ${project.revision}.`,
-                          );
-                          load();
-                        }}
-                        project={project}
-                      />
-                    ) : null}
                     {(state.value.flags ?? []).some(
                       (flag) => flag.projectId === project.id,
                     ) ? (
-                      <details className="admin-reference">
-                        <summary>
-                          Active contributor flags ·{" "}
+                      <section className="admin-subsection">
+                        <h4 className="admin-subsection-heading">
+                          <CircleAlert aria-hidden="true" /> Active contributor
+                          flags ·{" "}
                           {
                             (state.value.flags ?? []).filter(
                               (flag) => flag.projectId === project.id,
                             ).length
                           }
-                        </summary>
-                        <ul>
+                        </h4>
+                        <ul className="operations-findings">
                           {(state.value.flags ?? [])
                             .filter((flag) => flag.projectId === project.id)
                             .map((flag) => (
@@ -785,23 +813,48 @@ export function VettingSection({ projectId }: { projectId: string }) {
                                       rel="noreferrer"
                                       target="_blank"
                                     >
-                                      Evidence link
+                                      <ExternalLink aria-hidden="true" />{" "}
+                                      Evidence
                                     </a>
                                   </>
                                 ) : null}
                               </li>
                             ))}
                         </ul>
-                        <p className="admin-status">
-                          Two flags pause the project; a clean fresh scan
-                          reinstates it. Decide only after a confirmed malicious
-                          result.
-                        </p>
-                      </details>
+                      </section>
                     ) : null}
+                    <div className="admin-action-grid">
+                      {state.value.service.queueRegistrationAvailable &&
+                      !queued ? (
+                        <QueueScan
+                          onQueued={() => {
+                            setNote(
+                              `Queued a scan of ${project.id} revision ${project.revision}.`,
+                            );
+                            load();
+                          }}
+                          project={project}
+                        />
+                      ) : null}
+                      <AdmissionExemptionForm
+                        key={`${project.revision}:${activeExemption?.id ?? "grant"}`}
+                        project={project}
+                        exemption={activeExemption}
+                        onSaved={() => {
+                          setNote(
+                            activeExemption
+                              ? `Revoked the owner-approved exemption for ${project.id}.`
+                              : `Recorded the owner-approved exemption for ${project.id}.`,
+                          );
+                          load();
+                        }}
+                      />
+                    </div>
                     {history.length > 0 ? (
                       <>
-                        <h4>Scan history</h4>
+                        <h4 className="admin-subsection-heading">
+                          <History aria-hidden="true" /> Scan history
+                        </h4>
                         {history.map((assessment) => (
                           <AssessmentDetails
                             assessment={assessment}
@@ -810,6 +863,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         ))}
                       </>
                     ) : null}
+                    <AdmissionExemptionHistory exemptions={exemptions} />
                   </article>
                 );
               })
@@ -853,14 +907,16 @@ export function ActivationClearance({
     };
   }, [projectId, revision, attempt]);
   return (
-    <div>
+    <div className="admin-action-bar">
       <p role="status">{clearance}</p>
       <button
         type="button"
         className="text-button"
+        aria-label="Refresh clearance"
+        title="Refresh clearance"
         onClick={() => setAttempt((value) => value + 1)}
       >
-        Refresh clearance
+        <RotateCcw aria-hidden="true" />
       </button>
     </div>
   );

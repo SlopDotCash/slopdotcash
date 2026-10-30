@@ -370,6 +370,15 @@ Proposed, not approved by the owner (from #1154; do not implement or treat as de
 
 Owner decision, 25 October 2026: branch protections and rulesets are not release requirements. Do not add or restore them during release work unless the owner asks. Keep the reviewed `development` to `main` pull-request flow, full CI and trusted policy checks, main-only production environment, and checked-in release workflow.
 
+A manual `main` release may explicitly select `use_published_data` when fresh
+GitHub collection is unavailable. Validate and retain the last published
+production leaderboard and profiles with their original timestamps, history
+and source counts. Keep the current D1 registry and every code, browser,
+sandbox, protected-environment, source-identity and deployment-byte gate.
+Missing or invalid published data stops the release. This option defaults to
+`false`, cannot run on staging or with staging bootstrap, and never uses the
+pull-request data adapter. Normal releases still collect fresh data.
+
 Owner decisions, 26 October 2026: enable private-report intake in staging and production after the reviewed release (#1284). Enable fee handling on Base, Ethereum and Robinhood only after the fee wallets are funded and the limits and readiness are verified (#1285). Base and Ethereum convert received fees; Robinhood retains them. These decisions do not authorize other networks, unbounded spending or referral posting.
 
 Owner decision, 26 October 2026 (#910): accept the remaining private-reporting live checks without proof: successful non-admin delivery, automatic analysis, maintainer notices, interrupted-submission recovery, and funded private-bounty settlement. The approved `shawgotbags` test is no longer a launch gate. Record these checks as waived, not passed. Keep the behavior and access controls in sections 8–10, repair known defects, and preserve funded obligations. This acceptance grants no signing or spending authority, activates no service, and does not establish completion of the whole MVP.

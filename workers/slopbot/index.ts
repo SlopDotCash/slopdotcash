@@ -533,7 +533,12 @@ export default {
             outcome,
           }),
         );
-        if (outcome === "review source or authorization changed before action")
+        // A changed source leaves the review failed. Retry it against the
+        // current source instead of acknowledging unfinished work.
+        if (
+          outcome === "review source or authorization changed before action" ||
+          outcome === "related original or review source changed before label"
+        )
           message.retry({ delaySeconds: 60 });
         else message.ack();
       } catch (error) {
