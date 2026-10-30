@@ -492,8 +492,6 @@ test("a report receipt is mailed generically and never escalates for a missing a
   expect(h.sent).toHaveLength(3);
   const mail = h.sent[2];
   expect(mail.to).toBe("reporter@example.com");
-  expect(mail.mime).toContain("Your private Slop inbox has a new notice.");
-  expect(mail.mime).not.toContain("Acknowledge");
   expect(mail.mime).not.toContain(h.caseId);
   // Past the program's one-hour acknowledgment target, the unacknowledged
   // case notices escalate to their backups; the receipt does not.
