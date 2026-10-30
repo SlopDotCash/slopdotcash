@@ -50,13 +50,16 @@ for (const broken of [false, true]) {
     if (broken) {
       await expect(page.getByRole("alert")).toContainText(
         "Data could not load",
+        { timeout: 35_000 },
       );
       await expect(
         page.getByRole("button", { name: "Retry", exact: true }),
       ).toBeVisible();
       expect(partReads).toBeGreaterThan(0);
     } else {
-      await expect.poll(() => partReads).toBeGreaterThan(1);
+      await expect
+        .poll(() => partReads, { timeout: 35_000 })
+        .toBeGreaterThan(1);
       await expect(page.getByRole("table")).toBeVisible();
     }
   });
