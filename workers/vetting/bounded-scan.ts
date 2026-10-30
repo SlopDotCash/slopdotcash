@@ -80,6 +80,13 @@ const LOCKFILES = new Set([
   "composer.lock",
   "flake.lock",
   "deno.lock",
+  "pdm.lock",
+  "pubspec.lock",
+  "mix.lock",
+  "podfile.lock",
+  "packages.lock.json",
+  "gradle.lockfile",
+  "conda-lock.yml",
 ]);
 const MANIFESTS = new Set([
   "package.json",
@@ -96,6 +103,9 @@ const MANIFESTS = new Set([
   "deno.json",
   "deno.jsonc",
   "flake.nix",
+  "mix.exs",
+  "podfile",
+  "conanfile.txt",
 ]);
 const AGENT_INSTRUCTIONS = new Set([
   "agents.md",
@@ -200,7 +210,13 @@ export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
   const name = basename(path);
   const surfaces = new Set<ScanSurface>();
-  if (LOCKFILES.has(name) || /^requirements[^/]*\.txt$/u.test(name))
+  if (
+    LOCKFILES.has(name) ||
+    /^requirements[^/]*\.txt$/u.test(name) ||
+    // A requirement file under a `requirements` directory, such as
+    // `requirements/base.txt`, is dependency content at any depth.
+    /(?:^|\/)requirements\/[^/]*\.txt$/u.test(lower)
+  )
     surfaces.add("dependencies");
   if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
     surfaces.add("manifests");
