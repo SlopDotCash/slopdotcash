@@ -147,6 +147,7 @@ executable. Put the tested Node and Bun binaries on `PATH` before running checks
 
 ```bash
 bun install --frozen-lockfile
+bun run projects:sync
 bun run leaderboard:generate
 bun run dev
 ```
