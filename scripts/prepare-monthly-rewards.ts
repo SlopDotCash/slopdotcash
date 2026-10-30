@@ -11,7 +11,7 @@
  * script reads no chain and authorizes, reserves or pays nothing.
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
@@ -21,6 +21,7 @@ import type { MonthlyBase } from "../src/lib/payments/monthly-allocation";
 import { createPaymentProjectView } from "../src/lib/project-view";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { readLeaderboardFile } from "./leaderboard-files.mjs";
 import { currentProjectPolicies } from "./project-revision-policy.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -147,13 +148,13 @@ export async function prepareMonthlyBases(options: {
   const period = options.period ?? previousUtcCycleId(new Date(generatedAt));
   if (Date.parse(generatedAt) < periodEndTime(period))
     throw new RangeError(`Cycle ${period} has not closed`);
-  const snapshotBytes = await readFile(
+  const snapshotBytes = await readLeaderboardFile(
     options.snapshotPath
       ? resolve(options.snapshotPath)
       : DEFAULT_SNAPSHOT_PATH,
   );
   assertPublishableLeaderboardSnapshot(
-    JSON.parse(snapshotBytes.toString("utf8")),
+    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(snapshotBytes)),
   );
   const result: MonthlyBasesResult = { period, bases: [], skipped: [] };
   for (const policy of await currentProjectPolicies(
