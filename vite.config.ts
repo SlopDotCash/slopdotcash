@@ -286,7 +286,7 @@ export default defineConfig(({ command, isPreview }) => {
         // Published snapshots (leaderboard, points, cycles, profiles) are build
         // outputs. A local file from the generators wins; otherwise read the
         // published copy so the leaderboard loads without a live ingestion run.
-        "^/data/(?:leaderboard\\.json|points\\.json|points-summary\\.json|points/|cycles/|profiles\\.json)":
+        "^/data/(?:leaderboard\\.json|leaderboard/[a-f0-9]{64}\\.part(?:\\?.*)?$|points\\.json|points-summary\\.json|points/|cycles/|profiles\\.json)":
           {
             target: localReadOrigin,
             changeOrigin: true,

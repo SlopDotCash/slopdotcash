@@ -282,8 +282,11 @@ sections 6 and 7). Migration `0062` adds its private records.
    pool, plus any committed review line. A month's proposal is written once; a
    later run never adds or replaces rows. Unfunded projects and private bounty
    programs get no proposal. If the owner registers the vault before the last
-   of those three runs, the next run proposes the month. No cycle file, public
-   decision or review PR is created.
+   of those three runs, the next run proposes the month. A project that the
+   synced registry stores paused, such as after a contributor-flag pause,
+   gets no proposal; the other projects still get theirs. If the project is
+   active again before the last run, the next run proposes the month. No cycle
+   file, public decision or review PR is created.
 2. **Private changes.** The owner, with current GitHub write, maintain or
    admin permission on the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and
