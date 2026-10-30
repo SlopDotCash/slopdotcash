@@ -40,6 +40,7 @@ import type { VettingResult } from "./result";
 import {
   isScanResult,
   type RecordedVettingResult,
+  SCAN_SURFACES,
   type VettingScanResult,
 } from "./scan-result";
 
@@ -98,6 +99,32 @@ export const EVIDENCE_POLICY = {
 } as const;
 function hasKeys(value: Record<string, unknown>, keys: string[]) {
   return Object.keys(value).sort().join() === keys.sort().join();
+}
+function validClassifications(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  let previousPath = "";
+  for (const row of value) {
+    if (
+      !isRecord(row) ||
+      !hasKeys(row, ["path", "surfaces"]) ||
+      !isText(row.path, 1024) ||
+      row.path <= previousPath ||
+      !Array.isArray(row.surfaces)
+    )
+      return false;
+    const surfaces = row.surfaces;
+    if (
+      surfaces.length === 0 ||
+      surfaces.some(
+        (surface, index) =>
+          !SCAN_SURFACES.includes(surface) ||
+          (index > 0 && surface <= surfaces[index - 1]),
+      )
+    )
+      return false;
+    previousPath = row.path;
+  }
+  return true;
 }
 function isText(value: unknown, max = 500): value is string {
   return (
@@ -969,21 +996,24 @@ export class VettingEvidence {
             const final: unknown = JSON.parse(
               new TextDecoder("utf-8", { fatal: true }).decode(finalBytes),
             );
+            const inventoryKeys = [
+              "schemaVersion",
+              "items",
+              "artifacts",
+              "visibilityGaps",
+            ];
+            const classified =
+              isRecord(source) && Object.hasOwn(source, "classifications");
+            if (classified) inventoryKeys.push("classifications");
             if (
               !isRecord(source) ||
               !isRecord(final) ||
-              !hasKeys(source, [
-                "schemaVersion",
-                "items",
-                "artifacts",
-                "visibilityGaps",
-              ]) ||
-              !hasKeys(final, [
-                "schemaVersion",
-                "items",
-                "artifacts",
-                "visibilityGaps",
-              ]) ||
+              !hasKeys(source, inventoryKeys) ||
+              !hasKeys(final, inventoryKeys) ||
+              (classified &&
+                (!validClassifications(source.classifications) ||
+                  JSON.stringify(source.classifications) !==
+                    JSON.stringify(final.classifications))) ||
               source.schemaVersion !== "slop-scan-inventory-v2" ||
               final.schemaVersion !== source.schemaVersion ||
               !Array.isArray(source.items) ||

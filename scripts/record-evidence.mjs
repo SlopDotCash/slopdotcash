@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { connect as connectTls } from "node:tls";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { readLeaderboardBytes } from "../src/lib/leaderboard-transport.mjs";
 import { PROJECTS } from "../src/lib/projects.mjs";
 import { childEnvironment } from "./child-environment.mjs";
 import {
@@ -369,7 +370,22 @@ const indexArtifact = findArtifact(artifacts, "index.html");
 const manifestArtifact = findArtifact(artifacts, "skill-manifest.json");
 const leaderboardArtifact = findArtifact(artifacts, "data/leaderboard.json");
 const buildFingerprint = hash(manifestArtifact.contents);
-const ledger = assertLiveLedgerReady(leaderboardArtifact.contents);
+const ledger = assertLiveLedgerReady(
+  await readLeaderboardBytes(leaderboardArtifact.contents, async (path) => {
+    const relative = path.slice(1);
+    let artifact = artifacts.find((candidate) => candidate.path === relative);
+    if (!artifact) {
+      const localPath = join(distRoot, relative);
+      artifact = {
+        path: relative,
+        localPath,
+        contents: readFileSync(localPath),
+      };
+      artifacts.push(artifact);
+    }
+    return artifact.contents;
+  }),
+);
 const revision = gitHead();
 const cacheKey = `${revision}-${Date.now()}`;
 

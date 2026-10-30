@@ -14,6 +14,7 @@ const stages = [
       process.env.SLOP_PROFILES_INPUT ?? "data/profiles/seed.json",
     ],
   ],
+  [process.execPath, ["scripts/prepare-leaderboard-transport.mjs"]],
 ];
 for (const [command, args] of stages) {
   execFileSync(command, args, { cwd: root, stdio: "inherit" });

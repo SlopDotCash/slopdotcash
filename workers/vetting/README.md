@@ -26,7 +26,7 @@ mean the code is free of all malware.
 | `dependencies` | Lockfiles; each lock digest is recorded |
 | `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `SConscript`, `wscript`, `Makefile.am`, `Makefile.in`, `GNUmakefile.in`, `configure.ac`, `build.sbt`, `<name>.sbt`, `BUILD.bazel`, `MODULE.bazel`, `WORKSPACE`, `<name>.bzl`, `build.boot`, `build`, `wscript_build`, `docker-bake.hcl`, `docker-bake.override.hcl`), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts, and previously unclassified files whose first two bytes are `#!` (an interpreter script such as `configure`) |
 | `downloads` | URLs that install-time content downloads, and committed binaries or archives |
-| `agentInstructions` | `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, README, `SKILL.md`, Cursor, Claude, Copilot and similar rule files |
+| `agentInstructions` | `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`, `CONTRIBUTING.md`, README, `SKILL.md`, `WARP.md`, `llms.txt`, Cursor, Claude, Copilot (`.github/instructions`, `.github/chatmodes`), Windsurf, JetBrains Junie (`.junie`), Project IDX (`.idx`), Goose, Continue, Zed `.rules` and similar rule files |
 
 A build, install or provisioning recipe is recognized by its name, so the
 same bytes are classified the same way whether they sit in a `Makefile`, a
@@ -144,9 +144,11 @@ complete source inventory followed by the exact retained execution items.
 Clean execution reports use the same bounded validator as fresh execution,
 bind the requested artifacts and recorded image, and preserve disabled
 internet access. Every requested artifact needs its own byte-identity coverage.
-Old text-only results retain their final-digest reuse path. An old native
-result without a retained source binding cannot reuse; it needs a fresh scan.
-Deploy the API reuse route before updating the scanner service. A missing
+Old inventories remain readable. Reuse requires the current classification
+digest, so a pre-classification inventory needs a fresh scan. An old native
+result without a retained source binding also needs a fresh scan.
+Deploy the API reuse route and classification-aware evidence reader before
+updating the scanner service. A missing
 route (404), unavailable service (503), or invalid lookup response leaves the
 assignment pending at the reuse step; the scanner does not bypass the lookup
 or spend provider tokens as a deployment fallback.
@@ -240,8 +242,10 @@ paths before recording the controller as operational.
 
 ### Cache and rescans
 
-The inventory digest covers executable content and the digests of retained
-binary, archive and quarantined artifacts. Documentation that is not an agent
+The inventory digest covers executable content, each file's sorted scan surfaces,
+and the digests of retained binary, archive and quarantined artifacts. A new
+classification requires a fresh scan even when file bytes have not changed.
+Documentation that is not an agent
 instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
 clean scan may cite that result. Before isolated inspection, the controller

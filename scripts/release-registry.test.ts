@@ -23,6 +23,7 @@ import {
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
+import { bashCommand } from "./bash-command";
 import {
   renderProjectRegistry,
   renderProjectRevisions,
@@ -236,7 +237,7 @@ test("release carries the checked D1 registry and history into mainnet and stagi
     const bound = await run(
       prepare,
       [
-        "bash",
+        bashCommand(),
         "-euo",
         "pipefail",
         "-c",
@@ -259,7 +260,7 @@ test("release carries the checked D1 registry and history into mainnet and stagi
       run(
         deploy,
         [
-          "bash",
+          bashCommand(),
           "-euo",
           "pipefail",
           "-c",

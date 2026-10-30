@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
+import { bashCommand } from "./bash-command";
 
 const workflow = await readFile(
   new URL("../.github/workflows/deploy.yml", import.meta.url),
@@ -27,7 +28,7 @@ for (const [name, event, ref, bootstrap, accepted] of [
   ["staging bootstrap", "workflow_dispatch", "refs/heads/main", "true", false],
 ] as const) {
   test(`published data release ${accepted ? "accepts" : "refuses"} ${name}`, async () => {
-    const process = Bun.spawn(["bash", "-euc", publishedDataGuard], {
+    const process = Bun.spawn([bashCommand(), "-euc", publishedDataGuard], {
       env: {
         ...Bun.env,
         GITHUB_EVENT_NAME: event,
@@ -44,22 +45,10 @@ const generation = step("Generate live contribution data");
 const downloads = generation.match(
   /curl --fail --silent --show-error[^\n]*(?:\n {14}[^\n]*)*/g,
 );
-if (downloads?.length !== 2) {
-  throw new Error("Expected profile and fallback leaderboard downloads");
+if (downloads?.length !== 1) {
+  throw new Error("Expected profile history download");
 }
-// Pull-request checks read the largest snapshot from the same public origin.
-const pullRequestLedger = step(
-  "Load deployed public ledger for pull-request checks",
-).match(/curl --fail --silent --show-error \\(?:\n {12}[^\n]*)*/)?.[0];
-if (!pullRequestLedger) {
-  throw new Error("Expected the pull-request ledger download");
-}
-
-for (const [name, download] of [
-  ["profile history", downloads[0]],
-  ["fallback leaderboard", downloads[1]],
-  ["pull-request ledger", pullRequestLedger],
-] as const) {
+for (const [name, download] of [["profile history", downloads[0]]] as const) {
   for (const failure of [
     "timeout",
     "disconnect",
@@ -127,7 +116,7 @@ for (const [name, download] of [
             .replace(/--max-time \d+/, "--max-time 1")
             .replace(/--retry-delay \d+/, "--retry-delay 1")
             .replace(/--retry-max-time \d+/, "--retry-max-time 5");
-        const process = Bun.spawn(["bash", "-euc", command], {
+        const process = Bun.spawn([bashCommand(), "-euc", command], {
           env: { ...Bun.env, previous_profiles: output, ledger_file: output },
           stdout: "pipe",
           stderr: "pipe",
@@ -153,3 +142,21 @@ for (const [name, download] of [
     });
   }
 }
+
+test("all published leaderboard workflow consumers reconstruct the supported transport", async () => {
+  const escrow = await readFile(
+    new URL("../.github/workflows/escrow-tests.yml", import.meta.url),
+    "utf8",
+  );
+  expect(workflow.match(/bun scripts\/download-leaderboard\.ts/g)).toHaveLength(
+    3,
+  );
+  expect(escrow.match(/bun scripts\/download-leaderboard\.ts/g)).toHaveLength(
+    2,
+  );
+  for (const source of [workflow, escrow]) {
+    expect(source).not.toMatch(
+      /curl[\s\S]{0,400}https:\/\/slop\.cash\/data\/leaderboard\.json/,
+    );
+  }
+});

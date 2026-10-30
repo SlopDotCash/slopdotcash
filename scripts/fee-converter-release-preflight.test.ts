@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
+import { bashCommand } from "./bash-command";
 
 const source = resolve(import.meta.dir, "..");
 const workflow = Bun.YAML.parse(
@@ -69,7 +70,7 @@ function release(mode: string, networks: string, secrets: string[]) {
     JSON.stringify(secrets.map((name) => ({ name, type: "secret_text" }))),
   );
   return spawnSync(
-    "bash",
+    bashCommand(),
     [
       "-e",
       "-c",

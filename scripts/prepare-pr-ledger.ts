@@ -4,7 +4,7 @@
  * Trusted main builds always regenerate from GitHub and never call this.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   assertLeaderboardSnapshot,
@@ -25,6 +25,7 @@ import {
   REGISTERED_REPOSITORIES,
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
+import { readLeaderboardFile } from "./leaderboard-files.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -500,7 +501,11 @@ async function main(): Promise<void> {
   }
   const input = resolve(process.argv[2]);
   const output = resolve(process.argv[3]);
-  const parsed: unknown = JSON.parse(await readFile(input, "utf8"));
+  const parsed: unknown = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(
+      await readLeaderboardFile(input),
+    ),
+  );
   const snapshot = preparePullRequestLedger(parsed);
   await mkdir(dirname(output), { recursive: true });
   const temporary = `${output}.tmp-${process.pid}`;

@@ -18,6 +18,7 @@ test("local projects use local reads and writes while read-only public requests 
   const scans: string[] = [];
   const localCalls: string[] = [];
   const publicCalls: string[] = [];
+  const snapshotPart = `/data/leaderboard/${"a".repeat(64)}.part`;
   const dependencies: ProjectApiDependencies = {
     persistence,
     adminGithubIds: new Set(),
@@ -68,7 +69,9 @@ test("local projects use local reads and writes while read-only public requests 
     fetch(request) {
       expect(request.headers.has("cookie")).toBe(false);
       expect(request.headers.has("authorization")).toBe(false);
-      publicCalls.push(request.method);
+      publicCalls.push(`${request.method} ${new URL(request.url).pathname}`);
+      if (new URL(request.url).pathname === snapshotPart)
+        return new Response("retained snapshot part");
       return Response.json({ projects: [] });
     },
   });
@@ -137,6 +140,16 @@ test("local projects use local reads and writes while read-only public requests 
             );
           }
         }
+        const part = await fetch(`${origin}${snapshotPart}`, {
+          headers: {
+            cookie: "fixture-session=owner",
+            authorization: "Bearer synthetic-test-only",
+          },
+        });
+        expect(await part.text()).toBe("retained snapshot part");
+        expect(
+          (await fetch(`${origin}${snapshotPart}`, { method: "POST" })).status,
+        ).toBe(404);
       } finally {
         await vite.close();
       }
@@ -147,7 +160,12 @@ test("local projects use local reads and writes while read-only public requests 
       "GET /api/v1/projects",
     ]);
     expect(scans).toEqual(["local-project"]);
-    expect(publicCalls).toEqual(["GET", "HEAD"]);
+    expect(publicCalls).toEqual([
+      `GET ${snapshotPart}`,
+      "GET /api/v1/projects",
+      "HEAD /api/v1/projects",
+      `GET ${snapshotPart}`,
+    ]);
   } finally {
     if (previousBackend === undefined) delete process.env.SLOP_DEV_BACKEND;
     else process.env.SLOP_DEV_BACKEND = previousBackend;

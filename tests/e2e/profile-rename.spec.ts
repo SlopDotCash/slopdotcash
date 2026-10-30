@@ -103,7 +103,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   const { snapshot, current, walletRequests } = await profileRecords(page);
   await page.clock.install({ time: Date.now() });
   diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/leaderboard\.json\?attempt=\d+&retry=\d+$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/leaderboard\.json\?attempt=\d+&retry=\d+&at=\d+$/u,
   );
   await page.route(`${site}/api/v1/points/**`, (route) =>
     route.fulfill({ json: null }),

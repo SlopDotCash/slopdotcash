@@ -191,16 +191,8 @@ jobs:
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
           trap 'rm -f "$ledger_file"' EXIT
-          curl --fail --silent --show-error \
-            --proto '=https' \
-            --tlsv1.2 \
-            --connect-timeout 10 \
-            --compressed \
-            --retry 2 --retry-delay 2 --retry-max-time 600 \
-            --max-time 180 \
-            --max-filesize 26214400 \
-            --output "$ledger_file" \
-            https://slop.cash/data/leaderboard.json
+          bun scripts/download-leaderboard.ts \
+            https://slop.cash/data/leaderboard.json "$ledger_file"
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
@@ -290,6 +282,11 @@ jobs:
         run: |
           bun backend/security/direct-solana.integration.ts
           bun backend/security/direct-solana-api.integration.ts
+      - name: Verify Solana fee conversion with local validators
+        run: |
+          SLOP_FEE_TEST_TOKEN=jup bun run test:fee-converter:solana
+          SLOP_FEE_TEST_TOKEN=pmup bun run test:fee-converter:solana
+          SLOP_FEE_TEST_TOKEN=sol bun run test:fee-converter:solana
       - name: Verify the lifecycle-tested program matches the retained artifact
         run: |
           set -euo pipefail
@@ -313,16 +310,8 @@ jobs:
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-ledger.XXXXXX")"
           trap 'rm -f "$ledger_file"' EXIT
-          curl --fail --silent --show-error \
-            --proto '=https' \
-            --tlsv1.2 \
-            --connect-timeout 10 \
-            --compressed \
-            --retry 2 --retry-delay 2 --retry-max-time 600 \
-            --max-time 180 \
-            --max-filesize 26214400 \
-            --output "$ledger_file" \
-            https://slop.cash/data/leaderboard.json
+          bun scripts/download-leaderboard.ts \
+            https://slop.cash/data/leaderboard.json "$ledger_file"
           test -s "$ledger_file"
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
