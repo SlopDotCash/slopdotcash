@@ -283,6 +283,19 @@ export function profileCounts(p: ProfileRecord) {
   );
 }
 
+/**
+ * Public search for one contributor's pull requests.
+ * `github.com/pulls` is the signed-in dashboard and sends anonymous visitors
+ * to the login page, so the profile counts cannot use it.
+ */
+export function contributorPullSearchUrl(
+  login: string,
+  qualifier: string,
+): string {
+  const query = `is:pr author:${login} ${qualifier}`;
+  return `https://github.com/search?q=${encodeURIComponent(query)}&type=pullrequests`;
+}
+
 /** Canonical repository behind a census repository name, if it resolves. */
 export function profileCanonicalRepository(repository: string): string | null {
   return (
