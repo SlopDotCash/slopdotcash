@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 // Content can render or grow after a direct load (snapshot data, web fonts),
 // so the hash target is re-aligned until it settles or the reader takes over.
@@ -39,19 +39,63 @@ function scrollToTarget(targetId: string): boolean {
  * client navigation. Reuse the bounded observer for each destination.
  */
 export function useHashScroll(href: string): void {
+  const positions = useRef(new Map<string, { left: number; top: number }>());
+  const active = useRef<{ key: string; href: string } | null>(null);
+  const restoring = useRef<{ left: number; top: number } | undefined>(
+    undefined,
+  );
   useEffect(() => {
+    const remember = () => {
+      const entry = active.current;
+      if (entry?.href === window.location.href)
+        positions.current.set(entry.key, { left: scrollX, top: scrollY });
+    };
+    const onPopState = (event: PopStateEvent) => {
+      const entry = event.state?.__slopHashScroll;
+      restoring.current =
+        event.isTrusted && entry?.href === window.location.href
+          ? positions.current.get(entry.key)
+          : undefined;
+      active.current = null;
+    };
+    window.addEventListener("scroll", remember, { passive: true });
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("scroll", remember);
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, []);
+  useEffect(() => {
+    const restore = restoring.current;
+    restoring.current = undefined;
     const targetId = hashTargetId(new URL(href).hash);
     if (!targetId) return;
+    const currentHref = window.location.href;
+    const previous = window.history.state?.__slopHashScroll;
+    const entry = {
+      key: previous?.href === currentHref ? previous.key : crypto.randomUUID(),
+      href: currentHref,
+    };
+    window.history.replaceState(
+      { ...window.history.state, __slopHashScroll: entry },
+      "",
+    );
+    active.current = entry;
     let settling = true;
     const align = () => {
-      if (settling) scrollToTarget(targetId);
+      if (!settling) return;
+      if (restore) window.scrollTo({ ...restore, behavior: "auto" });
+      else scrollToTarget(targetId);
     };
     const observer = new MutationObserver(align);
     const timer = window.setTimeout(stop, HASH_SETTLE_MS);
+    // Native traversal can scroll against the outgoing page before React paints.
+    const frame = window.requestAnimationFrame(align);
     function stop() {
       settling = false;
       observer.disconnect();
       window.clearTimeout(timer);
+      window.cancelAnimationFrame(frame);
       for (const type of READER_INPUT_EVENTS) {
         window.removeEventListener(type, stop);
       }
