@@ -62,7 +62,7 @@ export const CANCELED = /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) /u;
 
 /** Follow the owner entry point and open its retained Security settings. */
 export async function openProjectSecuritySettings(page: Page) {
-  const label = "Manage security program and private bounty funds";
+  const label = "Manage security bounty";
   const link = page.getByRole("link", { name: label, exact: true });
   if (new URL(page.url()).pathname.endsWith("/manage")) {
     await expect(link).toBeVisible();

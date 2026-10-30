@@ -11,7 +11,7 @@ import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import base from "../vite.config";
 
-test("local project writes reach the API while public reads and read-only mode stay isolated", async () => {
+test("local projects use local reads and writes while read-only public requests stay isolated", async () => {
   const previousBackend = process.env.SLOP_DEV_BACKEND;
   const { db, sqlite } = sqliteD1();
   const persistence = new CloudflareProjectPersistence(db);
@@ -121,7 +121,7 @@ test("local project writes reach the API while public reads and read-only mode s
         expect(await persistence.getProject(projectId)).toEqual(
           readonly ? null : expect.objectContaining({ id: projectId }),
         );
-        for (const method of ["GET", "HEAD"]) {
+        for (const method of readonly ? ["GET", "HEAD"] : ["GET"]) {
           const read = await fetch(`${origin}/api/v1/projects`, {
             method,
             headers: {
@@ -130,6 +130,12 @@ test("local project writes reach the API while public reads and read-only mode s
             },
           });
           expect(read.status).toBe(200);
+          if (!readonly) {
+            const body = (await read.json()) as { projects: { id: string }[] };
+            expect(body.projects.map((project) => project.id)).toContain(
+              projectId,
+            );
+          }
         }
       } finally {
         await vite.close();
@@ -138,9 +144,10 @@ test("local project writes reach the API while public reads and read-only mode s
     expect(localCalls).toEqual([
       "POST /api/v1/projects",
       "POST /api/v1/projects",
+      "GET /api/v1/projects",
     ]);
     expect(scans).toEqual(["local-project"]);
-    expect(publicCalls).toEqual(["GET", "HEAD", "GET", "HEAD"]);
+    expect(publicCalls).toEqual(["GET", "HEAD"]);
   } finally {
     if (previousBackend === undefined) delete process.env.SLOP_DEV_BACKEND;
     else process.env.SLOP_DEV_BACKEND = previousBackend;

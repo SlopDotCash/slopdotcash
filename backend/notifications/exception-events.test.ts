@@ -255,7 +255,7 @@ describe("exception-only notification events", () => {
         kind: "security_report_received",
         subject: "sc_receipt0001",
         detail: null,
-        action_path: "/security",
+        action_path: "/security?case=sc_receipt0001",
       },
     ]);
     expect(rows(STEWARD)).toEqual([]);

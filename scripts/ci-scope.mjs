@@ -98,13 +98,13 @@ for (const [key, value] of Object.entries({
     !pr ||
     (!promotion &&
       changed(
-        /^contracts\/solana\/|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
+        /^contracts\/solana\/|^backend\/security\/|^migrations\/|^src\/lib\/security-bounty\.|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
       )),
   evm:
     !pr ||
     (!promotion &&
       changed(
-        /^contracts\/evm\/|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
+        /^contracts\/evm\/|^backend\/security\/|^migrations\/|^src\/lib\/security-bounty\.|^scripts\/run-security-payments\.mjs$|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
       )),
 }))
   appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
