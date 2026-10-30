@@ -20,6 +20,7 @@ export function GeneratedSkillPreview({
   registry,
   draft = false,
   collapsible = true,
+  compact = false,
 }: {
   manifest: Pick<
     ProjectDefinition,
@@ -28,6 +29,7 @@ export function GeneratedSkillPreview({
   registry?: { revision: number; manifestSha256: string };
   draft?: boolean;
   collapsible?: boolean;
+  compact?: boolean;
 }) {
   const [selectedRole, setSelectedRole] = useState("Contributor skill");
   const [selectedPath, setSelectedPath] = useState("SKILL.md");
@@ -110,6 +112,36 @@ export function GeneratedSkillPreview({
     previews.find(({ role }) => role === selectedRole) ?? previews[0];
   const paths = Object.keys(preview.files);
   const path = paths.includes(selectedPath) ? selectedPath : paths[0];
+  if (compact)
+    return (
+      <section aria-label="Generated skills" className="skill-preview-compact">
+        <div className="skill-preview-controls">
+          <fieldset className="skill-preview-options">
+            <legend className="visually-hidden">Skill</legend>
+            {previews.map(({ role }) => (
+              <label key={role}>
+                <input
+                  checked={preview.role === role}
+                  name="project-skill-role"
+                  onChange={() => setSelectedRole(role)}
+                  type="radio"
+                  value={role}
+                />
+                <span>{role.replace(" skill", "")}</span>
+              </label>
+            ))}
+          </fieldset>
+        </div>
+        <textarea
+          aria-label={`${preview.role} SKILL.md`}
+          className="admin-code skill-preview-source"
+          readOnly
+          rows={8}
+          spellCheck={false}
+          value={decoder.decode(preview.files["SKILL.md"])}
+        />
+      </section>
+    );
   const content = (
     <>
       <div className="skill-preview-controls">

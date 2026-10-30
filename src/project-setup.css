@@ -1,0 +1,440 @@
+.proposal-page.setup-compact {
+  max-width: 960px;
+  padding-block: 1.5rem 3rem;
+}
+
+.proposal-page.setup-compact .route-page-header {
+  margin-bottom: 1.25rem;
+}
+
+.proposal-page.setup-compact .route-title-row h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+}
+
+.proposal-page.setup-compact .breadcrumb {
+  margin-bottom: 0.75rem;
+}
+
+.proposal-page.setup-compact .proposal-steps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-block: 0 1.5rem;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.proposal-page.setup-compact .proposal-steps li {
+  border-radius: 0;
+  background: none;
+}
+
+.proposal-page.setup-compact .proposal-steps button {
+  min-height: 52px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.85rem;
+  gap: 0.5rem;
+}
+
+.proposal-page.setup-compact .proposal-steps button[aria-current="step"] {
+  background: none;
+  box-shadow: inset 0 -2px var(--orange);
+  color: var(--ink);
+}
+
+.setup-step-number {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+[aria-current="step"] .setup-step-number {
+  background: var(--orange);
+  border-color: var(--orange);
+  color: var(--on-accent);
+}
+
+.proposal-page.setup-compact .proposal-form {
+  max-width: none;
+  gap: 1rem;
+}
+
+.proposal-page.setup-compact .form-field {
+  gap: 0.35rem;
+}
+
+.proposal-page.setup-compact .form-field label {
+  font-size: 0.8rem;
+}
+
+.proposal-page.setup-compact .form-field textarea {
+  min-height: 80px;
+  height: 80px;
+}
+
+.proposal-page.setup-compact .form-field input,
+.proposal-page.setup-compact .form-field select,
+.proposal-page.setup-compact .form-field textarea {
+  padding: 0.65rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.setup-source-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.proposal-page.setup-compact .setup-source-grid .form-field {
+  width: 100%;
+  max-width: none;
+}
+
+.setup-repository-picker {
+  min-width: 0;
+}
+
+.setup-pending-applications {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.setup-pending-application {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.setup-pending-application .project-setup-status,
+.setup-pending-application .field-error {
+  flex-basis: 100%;
+}
+
+.setup-pending-application-action {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.setup-repository-entry {
+  display: flex;
+  align-items: start;
+  gap: 0.25rem;
+}
+
+.proposal-page.setup-compact .setup-repository-entry .form-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.proposal-page.setup-compact .setup-repository-entry > button {
+  flex: 0 0 44px;
+  margin-top: 1.4rem;
+  padding: 0;
+}
+
+.setup-lookup-retry {
+  min-height: 44px;
+}
+
+.setup-project-identity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+}
+
+.project-image-field-compact {
+  position: relative;
+}
+
+.project-image-upload {
+  display: grid;
+  place-items: center;
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.project-image-upload:focus-within {
+  outline: 3px solid var(--orange);
+  outline-offset: 3px;
+}
+
+.project-image-upload img,
+.project-image-upload .avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.project-image-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.proposal-page.setup-compact .project-image-remove {
+  position: absolute;
+  top: -12px;
+  right: -14px;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.setup-rule-grid,
+.setup-legal {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.setup-rule-grid > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.proposal-page.setup-compact .proposal-form :is(.setup-choice, .funding-mode) {
+  padding: 0;
+  border: 0;
+  gap: 0.5rem;
+}
+
+.proposal-page.setup-compact
+  .proposal-form
+  :is(.setup-choice, .funding-mode)
+  legend {
+  padding: 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.setup-choice-options,
+.proposal-page.setup-compact .funding-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.proposal-page.setup-compact .setup-choice-options label,
+.proposal-page.setup-compact .funding-mode label {
+  position: relative;
+  cursor: pointer;
+  flex: 1 1 auto;
+}
+
+.proposal-page.setup-compact .setup-choice-options input,
+.proposal-page.setup-compact .funding-mode input,
+.setup-compact .skill-preview-compact .skill-preview-options input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.setup-choice-options span,
+.proposal-page.setup-compact .funding-mode label > span,
+.skill-preview-compact .skill-preview-options span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+.proposal-page.setup-compact .funding-mode .checkbox-field {
+  display: block;
+  margin: 0;
+}
+
+.proposal-page.setup-compact .setup-choice-options input:checked + span,
+.proposal-page.setup-compact .funding-mode input:checked + span,
+.setup-compact
+  .skill-preview-compact
+  .skill-preview-options
+  input:checked
+  + span {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 12%, var(--surface));
+  color: var(--ink);
+}
+
+.proposal-page.setup-compact .setup-choice-options input:focus-visible + span,
+.proposal-page.setup-compact .funding-mode input:focus-visible + span,
+.setup-compact
+  .skill-preview-compact
+  .skill-preview-options
+  input:focus-visible
+  + span {
+  outline: 3px solid var(--orange);
+  outline-offset: 3px;
+}
+
+.proposal-page.setup-compact .fee-preview,
+.proposal-page.setup-compact #automatic-closure-hint {
+  font-size: 0.75rem;
+}
+
+.setup-review-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.setup-review-heading img {
+  border-radius: 8px;
+}
+
+.setup-review-heading .avatar {
+  width: 48px;
+  height: 48px;
+}
+
+.proposal-page.setup-compact .proposal-preview {
+  padding: 1rem;
+  gap: 0.75rem;
+}
+
+.setup-review-facts {
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.skill-preview-compact {
+  min-width: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.skill-preview-compact .skill-preview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.proposal-page.setup-compact .skill-preview-compact fieldset {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0;
+  border: 0;
+}
+
+.setup-compact .skill-preview-compact .skill-preview-options label {
+  position: relative;
+  cursor: pointer;
+}
+
+.proposal-page.setup-compact .skill-preview-source {
+  width: 100%;
+  min-height: 180px;
+  height: 180px;
+  resize: vertical;
+  font-size: 0.75rem;
+}
+
+.proposal-page.setup-compact .wizard-actions {
+  margin-top: 0.25rem;
+  justify-content: flex-end;
+}
+
+.proposal-page.setup-compact .wizard-actions > :first-child:not(:last-child) {
+  margin-right: auto;
+}
+
+.setup-actor {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.proposal-page.setup-compact .handoff-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.proposal-page.setup-compact .handoff-actions .form-error {
+  flex-basis: 100%;
+}
+
+.setup-details-compact dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.setup-details-compact dd {
+  margin: 0;
+}
+
+@media (max-width: 680px) {
+  .proposal-page.setup-compact .proposal-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .proposal-page.setup-compact .proposal-steps button {
+    flex-direction: column;
+    align-items: center;
+    min-height: 72px;
+    padding: 0.5rem 0.1rem;
+    text-align: center;
+    font-size: 0.7rem;
+    line-height: 1.2;
+  }
+
+  .setup-source-grid,
+  .setup-rule-grid,
+  .setup-legal {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .proposal-page.setup-compact .setup-choice-options label {
+    flex-basis: calc(50% - 0.5rem);
+  }
+
+  .setup-choice-options span {
+    padding-inline: 0.5rem;
+  }
+
+  .proposal-page.setup-compact .funding-mode label {
+    flex-basis: 100%;
+  }
+
+  .setup-details-compact dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

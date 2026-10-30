@@ -165,7 +165,8 @@ export function parseAssetAmount(value, decimals) {
  * dollar display; a token names its own symbol, never dollars (PRD section 6).
  */
 export function monthlyAmountDisplay(value, rewardAsset) {
-  if (rewardAsset?.kind !== "token") return formatMonthlyCapDisplay(value);
+  if (!rewardAsset || rewardAsset.kind === "stablecoin")
+    return formatMonthlyCapDisplay(value);
   if (!isBaseUnits(value)) {
     throw new RangeError("monthly amount is too large");
   }

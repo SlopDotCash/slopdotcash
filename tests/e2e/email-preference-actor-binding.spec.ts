@@ -22,7 +22,6 @@ test("failed preflight never enables an email switch that writes to a new accoun
   diagnostics,
 }) => {
   diagnostics.allowResponse(503, "GET", "/api/v1/project-session");
-  diagnostics.allowResponse(403, "POST", "/api/v1/notifications/email");
   diagnostics.allow(
     new RegExp(
       `^console Failed to load resource: the server responded with a status of (?:503 \\(.+\\) at ${escapeRegExp(site)}/api/v1/project-session|403 \\(.+\\) at ${escapeRegExp(site)}/api/v1/notifications/email)$`,
@@ -32,6 +31,7 @@ test("failed preflight never enables an email switch that writes to a new accoun
   diagnostics.allowPreviewApiMisses();
   let sessionFail = true;
   let actor = "900000098";
+  const enabledByActor: Record<string, boolean> = {};
   const posts: { header: string | null }[] = [];
   await page.route(`${site}/**`, (route) =>
     new URL(route.request().url()).pathname === "/api/v1/payments/received"
@@ -98,16 +98,24 @@ test("failed preflight never enables an email switch that writes to a new accoun
       const header =
         route.request().headers()["x-slop-expected-github-id"] ?? null;
       posts.push({ header });
+      const requested = route.request().postDataJSON() as { enabled: boolean };
+      if (header === actor) enabledByActor[actor] = requested.enabled;
       // The server binds the write to the currently signed-in account: a
       // header for any other actor is refused, never rewritten.
       return route.fulfill({
         status: header === actor ? 200 : 403,
-        json: header === actor ? { enabled: true } : { error: "actor_changed" },
+        json:
+          header === actor
+            ? { enabled: requested.enabled, securityEnabled: false }
+            : { error: "actor_changed" },
       });
     }
     return route.fulfill({
       json: {
-        enabled: false,
+        enabled: enabledByActor[actor] ?? false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
         availability: "verified",
         email: "applicant@example.com",
         destinationVersion: DESTINATION_VERSION,
@@ -174,13 +182,19 @@ test("failed preflight never enables an email switch that writes to a new accoun
   await expect(toggle).toBeEnabled();
   await expect(toggle).not.toBeChecked();
 
-  // Step 3: the account switches before the save. The save still carries
-  // the rendered actor, so the server refuses it instead of writing to
-  // the newly signed-in account.
+  // A permitted save remains bound to the rendered actor.
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  expect(posts).toEqual([{ header: "900000098" }]);
+
+  // Step 3: the account switches before another save. The current-session
+  // preflight refuses it before any POST reaches the newly signed-in account.
   actor = "900000099";
   await toggle.click();
-  await expect.poll(() => posts.length).toBe(1);
-  expect(posts[0]?.header).toBe("900000098");
+  await expect(
+    email.getByText("The inbox account changed. Retry.", { exact: true }),
+  ).toBeVisible();
   await expect(toggle).not.toBeChecked();
   expect(posts).toHaveLength(1);
+  expect(enabledByActor[actor] ?? false).toBe(false);
 });
