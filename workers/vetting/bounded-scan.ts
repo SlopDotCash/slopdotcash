@@ -178,8 +178,15 @@ const INSTALL_FILES = new Set([
  * commands at build time, so they are install surfaces like a Makefile,
  * never unreviewed content.
  */
-const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|csproj|fsproj|vbproj|vcxproj|proj|props|targets)$/u;
+const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
+const BUILD_RECIPE = new RegExp(
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS})$`,
+  "u",
+);
+const MSBUILD_RECIPE = new RegExp(
+  String.raw`\.(?:${MSBUILD_EXTENSIONS})$`,
+  "iu",
+);
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -362,9 +369,11 @@ const RULES: Rule[] = [
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
 // so identical source bytes cannot reuse a result from a different rule set.
+// Attribute normalization is part of that semantics: it changes which bytes match.
 const RULE_POLICY_SHA256 = sha256(
   JSON.stringify({
     schemaVersion: "slop-deterministic-rules-v1",
+    msbuildAttributeWhitespace: "cr-lf-to-space",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -406,10 +415,93 @@ function binaryMagic(bytes: Uint8Array): boolean {
   );
 }
 
+/**
+ * MSBuild runs an attribute value after XML turns each CR and LF inside the
+ * quotes into whitespace. A newline before `| sh` therefore still executes
+ * the pipe. The same newline in a shell script ends the command, so only
+ * MSBuild files are rewritten, and only inside a quoted attribute value.
+ * Each CR or LF becomes one space, so a match index refers to the same place
+ * in the original text.
+ */
+function msbuildRuleText(text: string): string {
+  let result = "";
+  let index = 0;
+  let mode: "text" | "tag" | "comment" | "cdata" | "value" = "text";
+  let quote = "";
+  while (index < text.length) {
+    const char = text[index] ?? "";
+    if (mode === "text") {
+      if (text.startsWith("<!--", index)) {
+        mode = "comment";
+        result += "<!--";
+        index += 4;
+        continue;
+      }
+      if (text.startsWith("<![CDATA[", index)) {
+        mode = "cdata";
+        result += "<![CDATA[";
+        index += 9;
+        continue;
+      }
+      if (char === "<") mode = "tag";
+      result += char;
+      index += 1;
+      continue;
+    }
+    if (mode === "comment") {
+      if (text.startsWith("-->", index)) {
+        mode = "text";
+        result += "-->";
+        index += 3;
+        continue;
+      }
+      result += char;
+      index += 1;
+      continue;
+    }
+    if (mode === "cdata") {
+      if (text.startsWith("]]>", index)) {
+        mode = "text";
+        result += "]]>";
+        index += 3;
+        continue;
+      }
+      result += char;
+      index += 1;
+      continue;
+    }
+    if (mode === "value") {
+      if (char === quote) mode = "tag";
+      result += char === "\r" || char === "\n" ? " " : char;
+      index += 1;
+      continue;
+    }
+    if (char === ">") {
+      mode = "text";
+      result += char;
+      index += 1;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      let previous = index - 1;
+      while (previous >= 0 && /[ \t\r\n]/u.test(text[previous] ?? ""))
+        previous -= 1;
+      if (text[previous] === "=") {
+        mode = "value";
+        quote = char;
+      }
+    }
+    result += char;
+    index += 1;
+  }
+  return result;
+}
+
 function checkText(
   path: string,
   text: string,
   surfaces: ScanSurface[],
+  evidenceText = text,
 ): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const rule of RULES) {
@@ -421,7 +513,7 @@ function checkText(
       severity: rule.severity,
       category: rule.threat,
       summary: rule.summary,
-      evidence: `${path}:${lineOf(text, match.index)}`.slice(0, 300),
+      evidence: `${path}:${lineOf(evidenceText, match.index)}`.slice(0, 300),
       path,
     });
   }
@@ -661,7 +753,11 @@ export function inspectRepository(input: {
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
-    const found = checkText(file.path, text, surfaces);
+    // MSBuild attribute newlines are spaces at execution. Shell text is not.
+    const ruleText = MSBUILD_RECIPE.test(file.path)
+      ? msbuildRuleText(text)
+      : text;
+    const found = checkText(file.path, ruleText, surfaces, text);
     findings.push(...found);
     const hooks = installHookCommands(file.path, text);
     if (hooks.length > 0) {
@@ -672,7 +768,7 @@ export function inspectRepository(input: {
         );
     }
     if (surfaces.includes("installScripts") || hooks.length > 0)
-      for (const match of [text, ...hooks].join("\n").matchAll(DOWNLOAD))
+      for (const match of [ruleText, ...hooks].join("\n").matchAll(DOWNLOAD))
         downloads.add((match[1] ?? match[2]).slice(0, 500));
     candidates.push({
       path: file.path,

