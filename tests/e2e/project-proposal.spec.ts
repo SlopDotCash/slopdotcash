@@ -933,6 +933,75 @@ test("native rewards keep ETH and SOL units through review and creation", async 
   });
 });
 
+test("a saved native reward with an unknown network stays editable until corrected", async ({
+  page,
+}) => {
+  await routeGitHub(page, {
+    description: "Reproducible protein-folding benchmarks for open research.",
+  });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await enterRepository(page, "example/open-protein");
+  await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
+  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByLabel("Monthly rewards").check();
+  await page
+    .getByRole("group", { name: "Asset", exact: true })
+    .getByRole("radio", { name: "ETH", exact: true })
+    .check();
+  await page.getByLabel("Monthly amount (ETH)").fill("1");
+  await page.evaluate(() => {
+    const key = "slop:project-proposal:v1";
+    const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
+    localStorage.setItem(
+      key,
+      JSON.stringify({ ...saved, settlementChain: "retired-network" }),
+    );
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("heading", { name: "Add a project", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(page.locator("#field-settlementChain-error")).toHaveText(
+    "Choose a supported network.",
+  );
+  await expect(
+    page.getByRole("article", { name: "Listing preview" }),
+  ).toHaveCount(0);
+  const networks = page.getByRole("group", { name: "Network", exact: true });
+  await expect(networks.locator("input:checked")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
+          .settlementChain,
+    ),
+  ).toBe("retired-network");
+  await page.screenshot({
+    path: test.info().outputPath("saved-native-network-error.png"),
+    fullPage: true,
+  });
+  await networks.getByRole("radio", { name: "Base", exact: true }).check();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(
+    page.getByRole("article", { name: "Listing preview" }),
+  ).toContainText("1 ETH on Base");
+  await page
+    .getByRole("navigation", { name: "Setup steps" })
+    .getByRole("button", { name: "Rewards", exact: true })
+    .click();
+  await page.getByLabel("Private bounty", { exact: true }).check();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  const bountyPreview = page.getByRole("article", { name: "Listing preview" });
+  await expect(bountyPreview).toContainText("1 ETH per accepted finding");
+  await expect(bountyPreview).not.toContainText("critical finding");
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("saved-native-network-recovered.png"),
+    fullPage: true,
+  });
+});
+
 test("a signed-in maintainer picks an owned repository and gets suggested text", async ({
   diagnostics,
   page,
