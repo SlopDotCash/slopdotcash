@@ -574,12 +574,17 @@ No separate manual release approval is required. Publication credentials must
 never be exposed to pull-request runs. Every production release uses the
 shared publication lock.
 
-Every release snapshots the current D1 registry, ingests live GitHub data,
-passes the full quality gate, and publishes through its branch's normal release
-job. To publish new data without a commit, run the release workflow by hand
-(`workflow_dispatch`). Every production release requires current main
-equivalence. Every deployment is bound to its actual
-tested source SHA.
+Every release snapshots the current D1 registry, passes the full quality gate,
+and publishes through its branch's normal release job. Normal releases ingest
+live GitHub data. An explicit manual `main` run may set `use_published_data`
+to retain the last published production leaderboard and profiles after
+validation, with their original timestamps and history. This option cannot run
+on staging or with staging bootstrap; missing or invalid published data stops
+the release. It never uses the pull-request data adapter or skips code, browser,
+sandbox, source-identity or deployment checks. To publish new data without a
+commit, run the release workflow by hand (`workflow_dispatch`) with the option
+off. Every production release requires current main equivalence. Every
+deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
 status and renews a D1 observation. It never publishes code or holds the site
@@ -649,9 +654,9 @@ project registry with `bun run projects:sync`, and prepare the ledger with
 `bun run leaderboard:generate`. Do not commit the generated registry snapshot.
 Local pull-request checks may use the validated public-snapshot preparation in
 [Local review checks](README.md#local-review-checks) instead of live ingestion.
-Stop if ledger preparation fails; never use a leftover ledger. Releases still
-collect fresh GitHub data through the normal release workflow. Run `bun run
-verify`, `bun run format:check`, and real-browser E2E against the exact head.
+Stop if ledger preparation fails; never use a leftover ledger. Normal releases
+collect fresh GitHub data; the explicit manual-main exception is described in
+[Deployment](#deployment). Run `bun run verify`, `bun run format:check`, and real-browser E2E against the exact head.
 UI changes require desktop and mobile review, keyboard and 200% zoom checks,
 WCAG AA, working copy feedback, raw Markdown and archive downloads, valid
 GitHub links, zero first-party request failures, and zero application console
