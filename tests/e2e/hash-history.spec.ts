@@ -1,91 +1,146 @@
 /** Preserve the visitor's reading position across native history (PRD 7). */
+import type { Page } from "@playwright/test";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test.use({ video: "on" });
 
-test("Back and Forward restore reading below a previously visited fragment", async ({
-  page,
-  diagnostics,
-}, info) => {
-  diagnostics.allowPreviewApiMisses();
-  diagnostics.allowCanceledBackgroundReads();
-  await page.goto("/how-it-works", { waitUntil: "networkidle" });
-  // A plain anchor creates a fresh native history entry, unlike Link's
-  // synthetic popstate. It must still land on the requested section.
-  await page
-    .getByRole("link", { name: "Payment stages and timing", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/how-it-works#payments$/u);
-  await expect
-    .poll(() =>
-      page
-        .locator("#payments")
-        .evaluate((element) => Math.abs(element.getBoundingClientRect().top)),
-    )
-    .toBeLessThan(1);
-
-  await page.keyboard.press("Control+End");
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        Math.abs(
-          window.scrollY -
-            (document.documentElement.scrollHeight - window.innerHeight),
-        ),
+async function afterPaint(page: Page) {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
-    )
-    .toBeLessThan(2);
-  const readingPosition = await page.evaluate(() => window.scrollY);
-  const anchorPosition = await page
-    .locator("#payments")
-    .evaluate(
-      (element) => element.getBoundingClientRect().top + window.scrollY,
-    );
-  expect(readingPosition - anchorPosition).toBeGreaterThan(100);
-  await page.evaluate(() =>
-    history.replaceState({ ...history.state, readerState: "retained" }, ""),
   );
+}
 
-  await page.locator('a[href="/earnings"]').last().click();
-  await expect(page).toHaveURL(/\/earnings$/u);
-  await page.waitForLoadState("networkidle");
-  await page.goBack();
-  await expect(page).toHaveURL(/\/how-it-works#payments$/u);
-  await expect(page.locator("#payments")).toBeAttached();
-  await page.waitForLoadState("networkidle");
-  await expect
-    .poll(() =>
-      page.evaluate(
-        (position) => Math.abs(scrollY - position),
-        readingPosition,
-      ),
-    )
-    .toBeLessThan(2);
-  expect(await page.evaluate(() => history.state.readerState)).toBe("retained");
-  await page.screenshot({ path: info.outputPath("back-reading-position.png") });
+async function scrollPage(page: Page, deltaY: number) {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error("The browser test needs a viewport");
+  await page.mouse.move(viewport.width / 2, viewport.height / 2);
+  // Control+End does not scroll to the bottom on macOS. A real wheel event
+  // works on each platform and also exercises reader-input cancellation.
+  const settled = page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        window.addEventListener("scrollend", () => resolve(), { once: true });
+      }),
+  );
+  await page.mouse.wheel(0, deltaY);
+  await settled;
+  await afterPaint(page);
+}
 
-  // Keep the latest reading position, rather than the first departure's offset.
-  await page.mouse.wheel(0, -120);
-  await expect
-    .poll(() => page.evaluate(() => scrollY))
-    .toBeLessThan(readingPosition - 50);
-  const continuedReading = await page.evaluate(() => scrollY);
-  await page.goBack();
-  await expect(page).toHaveURL(/\/how-it-works$/u);
-  await page.goForward();
-  await expect(page).toHaveURL(/\/how-it-works#payments$/u);
-  await expect(page.locator("#payments")).toBeAttached();
-  await page.waitForLoadState("networkidle");
-  await expect
-    .poll(() =>
-      page.evaluate(
-        (position) => Math.abs(scrollY - position),
-        continuedReading,
-      ),
-    )
-    .toBeLessThan(2);
-  await page.screenshot({
-    path: info.outputPath("forward-reading-position.png"),
+for (const pendingDestination of [false, true]) {
+  test(`Back and Forward restore fragment reading after ${pendingDestination ? "a loading page" : "immediate navigation"}`, async ({
+    page,
+    diagnostics,
+  }, info) => {
+    diagnostics.allowPreviewApiMisses();
+    diagnostics.allowCanceledBackgroundReads();
+    await page.goto("/how-it-works", { waitUntil: "networkidle" });
+    // A plain anchor creates a fresh native history entry, unlike Link's
+    // synthetic popstate. It must still land on the requested section.
+    await page
+      .getByRole("link", { name: "Payment stages and timing", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/how-it-works#payments$/u);
+    await expect
+      .poll(() =>
+        page
+          .locator("#payments")
+          .evaluate((element) => Math.abs(element.getBoundingClientRect().top)),
+      )
+      .toBeLessThan(1);
+
+    await scrollPage(page, 100_000);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          Math.abs(
+            window.scrollY -
+              (document.documentElement.scrollHeight - window.innerHeight),
+          ),
+        ),
+      )
+      .toBeLessThan(2);
+    const readingPosition = await page.evaluate(() => window.scrollY);
+    const anchorPosition = await page
+      .locator("#payments")
+      .evaluate(
+        (element) => element.getBoundingClientRect().top + window.scrollY,
+      );
+    expect(readingPosition - anchorPosition).toBeGreaterThan(100);
+    await page.evaluate(() =>
+      history.replaceState({ ...history.state, readerState: "retained" }, ""),
+    );
+
+    let releaseDestination = () => {};
+    if (pendingDestination) {
+      const destinationReady = new Promise<void>((resolve) => {
+        releaseDestination = resolve;
+      });
+      await page.route(/\/assets\/Earnings-[^/]+\.js$/u, async (route) => {
+        await destinationReady;
+        await route.continue();
+      });
+    }
+    try {
+      await page.locator('a[href="/earnings"]').last().click();
+      await expect(page).toHaveURL(/\/earnings$/u);
+      if (pendingDestination)
+        await expect(
+          page.getByText("Loading page…", { exact: true }),
+        ).toBeVisible();
+      // The immediate case deliberately returns before the destination has
+      // finished rendering, as a reader can do with the browser Back button.
+      await page.goBack();
+      releaseDestination();
+      await expect(page).toHaveURL(/\/how-it-works#payments$/u);
+      await expect(page.locator("#payments")).toBeAttached();
+      await page.waitForLoadState("networkidle");
+      await afterPaint(page);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (position) => Math.abs(scrollY - position),
+            readingPosition,
+          ),
+        )
+        .toBeLessThan(2);
+      expect(await page.evaluate(() => history.state.readerState)).toBe(
+        "retained",
+      );
+      await page.screenshot({
+        path: info.outputPath("back-reading-position.png"),
+      });
+
+      // Keep the latest reading position, rather than the first departure's offset.
+      await scrollPage(page, -120);
+      await expect
+        .poll(() => page.evaluate(() => scrollY))
+        .toBeLessThan(readingPosition - 50);
+      const continuedReading = await page.evaluate(() => scrollY);
+      await page.goBack();
+      await expect(page).toHaveURL(/\/how-it-works$/u);
+      await page.goForward();
+      await expect(page).toHaveURL(/\/how-it-works#payments$/u);
+      await expect(page.locator("#payments")).toBeAttached();
+      await page.waitForLoadState("networkidle");
+      await afterPaint(page);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (position) => Math.abs(scrollY - position),
+            continuedReading,
+          ),
+        )
+        .toBeLessThan(2);
+      await page.screenshot({
+        path: info.outputPath("forward-reading-position.png"),
+      });
+      await expectAccessible(page);
+    } finally {
+      releaseDestination();
+    }
   });
-  await expectAccessible(page);
-});
+}

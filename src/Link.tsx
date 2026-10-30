@@ -45,11 +45,6 @@ export function useHashScroll(href: string): void {
     undefined,
   );
   useEffect(() => {
-    const remember = () => {
-      const entry = active.current;
-      if (entry?.href === window.location.href)
-        positions.current.set(entry.key, { left: scrollX, top: scrollY });
-    };
     const onPopState = (event: PopStateEvent) => {
       const entry = event.state?.__slopHashScroll;
       restoring.current =
@@ -58,10 +53,8 @@ export function useHashScroll(href: string): void {
           : undefined;
       active.current = null;
     };
-    window.addEventListener("scroll", remember, { passive: true });
     window.addEventListener("popstate", onPopState);
     return () => {
-      window.removeEventListener("scroll", remember);
       window.removeEventListener("popstate", onPopState);
     };
   }, []);
@@ -84,8 +77,17 @@ export function useHashScroll(href: string): void {
     let settling = true;
     const align = () => {
       if (!settling) return;
-      if (restore) window.scrollTo({ ...restore, behavior: "auto" });
+      if (restore) window.scrollTo({ ...restore, behavior: "instant" });
       else scrollToTarget(targetId);
+    };
+    const remember = () => {
+      if (active.current !== entry || entry.href !== window.location.href)
+        return;
+      // Native history restoration can run after React's first frame. Keep
+      // that transient offset out of the saved entry and restore it again.
+      // Reader input stops settling before its scroll event is recorded.
+      if (settling && restore) align();
+      else positions.current.set(entry.key, { left: scrollX, top: scrollY });
     };
     const observer = new MutationObserver(align);
     const timer = window.setTimeout(stop, HASH_SETTLE_MS);
@@ -101,12 +103,16 @@ export function useHashScroll(href: string): void {
       }
     }
     align();
+    window.addEventListener("scroll", remember, { passive: true });
     observer.observe(document.body, { childList: true, subtree: true });
     for (const type of READER_INPUT_EVENTS) {
       window.addEventListener(type, stop, { passive: true });
     }
     void document.fonts?.ready.then(align);
-    return stop;
+    return () => {
+      stop();
+      window.removeEventListener("scroll", remember);
+    };
   }, [href]);
 }
 
