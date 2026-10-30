@@ -20,6 +20,13 @@ test("a container or CI build recipe is scanned as an install surface", () => {
     "app.dockerfile",
     "Containerfile",
     "ci/Jenkinsfile",
+    "CMakeLists.txt",
+    "cmake/Modules/Helper.cmake",
+    "meson.build",
+    "Earthfile",
+    "SConstruct",
+    "wscript",
+    "Makefile.am",
   ]) {
     const inspection = inspected(path, `RUN ${PAYLOAD}\n`);
     expect({ path, surfaces: surfacesOf(path) }).toEqual({
