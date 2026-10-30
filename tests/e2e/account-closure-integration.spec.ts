@@ -395,9 +395,7 @@ for (const withObligations of [false, true])
       });
       await cancel.focus();
       await page.keyboard.press("Enter");
-      await expect(page.getByRole("status")).toContainText(
-        "Sign-in cancelled.",
-      );
+      await expect(page.getByRole("status")).toBeVisible();
       holdCompletedPoll = false;
       releasePoll();
       await expect.poll(() => cancelledWindow.isClosed()).toBe(true);

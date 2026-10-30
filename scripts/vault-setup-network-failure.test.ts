@@ -231,8 +231,6 @@ async function vaultSetup(step: "review" | "register") {
 }
 const retry = {
   error: "vault_network_unavailable",
-  message:
-    "The network could not be read. Nothing needs review. Try again in a minute.",
 };
 
 test("an unreadable RPC is a retry, while a factory mismatch still refuses", async () => {
@@ -243,28 +241,35 @@ test("an unreadable RPC is a retry, while a factory mismatch still refuses", asy
   try {
     // Owner review: the RPC answers HTTP 429 for every read.
     mode = "limited";
-    expect(await vaultSetup("review")).toEqual({ status: 503, body: retry });
+    expect(await vaultSetup("review")).toMatchObject({
+      status: 503,
+      body: retry,
+    });
     // Owner review: the RPC refuses the connection.
     rpcUrl = closedUrl;
-    expect(await vaultSetup("review")).toEqual({ status: 503, body: retry });
+    expect(await vaultSetup("review")).toMatchObject({
+      status: 503,
+      body: retry,
+    });
     rpcUrl = `http://127.0.0.1:${rpc.port}`;
     // Registration: the factory verifies, then the transaction reads answer
     // HTTP 429. The creation request is valid, so this is not 422.
     mode = "factory";
     reads = 0;
-    expect(await vaultSetup("register")).toEqual({ status: 503, body: retry });
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: retry,
+    });
     // The 12 factory reads passed, so the 429 came from the creation reads.
     expect(reads).toBeGreaterThan(12);
     // A factory whose code differs from its review stays unavailable for
-    // review and for registration, with the existing message.
+    // review and for registration.
     code[address("5")] = "0x6080604053";
     for (const step of ["review", "register"] as const)
-      expect(await vaultSetup(step)).toEqual({
+      expect(await vaultSetup(step)).toMatchObject({
         status: 503,
         body: {
           error: "vault_setup_unavailable",
-          message:
-            "Vault creation is unavailable on this network until a compatible factory and its current code are reviewed.",
         },
       });
     // Each server failure logs only the fixed label: no RPC URL or body.

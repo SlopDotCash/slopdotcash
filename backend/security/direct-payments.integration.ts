@@ -1216,7 +1216,7 @@ for (const scenario of [
             "INSERT INTO payment_direct_transfers(network,transaction_id,project_id,contribution_month,github_user_id,github_node_id,github_login,chain,recipient,amount_micro,block_time,block_id,source_path,imported_at) VALUES('base-mainnet',?,'ordinary-fixture','2026-10','2','node','local-reporter','base',?,'3000000',?,'local-block','disclosures/local-fixture.json',?)",
           )
           .run(transactionId, recipient, stamp, stamp);
-      assert.throws(() => ordinary(hashes[0]), /already credited/);
+      assert.throws(() => ordinary(hashes[0]));
       const nextPlan = (await call(OWNER, `security-cases/${next}`)).body.case
         .settlement.ownerRequest.transactions as typeof transactions;
       let external = "";

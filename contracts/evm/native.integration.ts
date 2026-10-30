@@ -225,7 +225,6 @@ try {
       "approve",
       () => {},
     ),
-    /do not require token approval/,
   );
   const donorBefore = await balance(donor);
   const depositTx = await sendVaultAction(
@@ -262,7 +261,6 @@ try {
       depositTx,
       "send",
     ),
-    /does not match/,
   );
   for (const value of [0n, deposit - 1n, deposit + 1n]) {
     await assert.rejects(

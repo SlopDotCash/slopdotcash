@@ -307,7 +307,7 @@ try {
   );
   await wait(async () => {
     const html = await (await request("/__dev/mail")).text();
-    return html.includes("private Slop inbox");
+    return html.includes(`href="${origin}/inbox"`);
   }, 12_000);
   const captured = await (await request("/__dev/mail")).text();
   assert.ok(!captured.includes(report.description));

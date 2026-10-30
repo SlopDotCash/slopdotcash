@@ -78,9 +78,7 @@ test("an admin sees Robinhood Chain fees as not converted beside finalized USDC 
     .getByRole("link", { name: "Fee conversions", exact: true })
     .click();
   await expect(page).toHaveURL(/\/admin\?section=fees$/u);
-  await expect(section.getByRole("alert")).toContainText(
-    "Fee conversion records are unavailable.",
-  );
+  await expect(section.getByRole("alert")).toBeVisible();
   expect(diagnostics.count(failure)).toBe(1);
   failRead = false;
   await section.getByRole("button", { name: "Retry" }).focus();

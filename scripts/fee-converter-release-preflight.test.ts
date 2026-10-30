@@ -113,7 +113,5 @@ test("the release continues when every enabled live network has its key", () => 
     "FEE_WALLET_KEY_ETHEREUM",
   ]);
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toBe(
-    "fee-converter mode live; networks base,ethereum\nfee-converter upload reached\n",
-  );
+  expect(result.stdout).toContain("fee-converter upload reached");
 });

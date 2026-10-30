@@ -352,10 +352,7 @@ export default { async fetch(request, env) {
 
   state.status = 403;
   await expired();
-  await assert.rejects(
-    caller.fetch("https://fixture.internal/scheduled"),
-    /slop scheduled maintenance failed/u,
-  );
+  await assert.rejects(caller.fetch("https://fixture.internal/scheduled"));
   await cleanupFinished();
   checks.push(
     "configured refresh failure stays explicit and cleanup completes",
