@@ -39,6 +39,8 @@ import {
   isCanonicalEvmReceipt,
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
+import { evmReceiptNativeCost } from "../../contracts/evm/native-cost";
+import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, NetworkConfig } from "./config";
 import type {
   ChainClient,
@@ -244,6 +246,9 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     return definition.usdc;
   };
   const wallet = config.feeWallet as Address;
+  const nativeAsset = (token: string) =>
+    isNativeAssetAddress(config.network, token);
+  const routeToken = (token: string) => (nativeAsset(token) ? NATIVE : token);
   const chain: Chain = defineChain({
     id: definition.chainId as number,
     name: config.network,
@@ -310,7 +315,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
   const kyberRoute = (token: string, amountIn: bigint) =>
     kyber<KyberRoute>(
       `routes?${new URLSearchParams({
-        tokenIn: token,
+        tokenIn: routeToken(token),
         tokenOut: usdc(),
         amountIn: amountIn.toString(),
         gasInclude: "true",
@@ -420,6 +425,11 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     }
     const maximum =
       (input.gas as bigint) * (input.maxFeePerGas as bigint) + extra;
+    if ((input.value ?? 0n) > 0n) {
+      const balance = await client.getBalance({ address: wallet });
+      if (balance < (input.value ?? 0n) + maximum)
+        throw new Error("Native conversion cannot cover its input and gas");
+    }
     const priced = await self.quote(NATIVE, maximum);
     if (
       "noRoute" in priced ||
@@ -445,6 +455,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     nonce: number,
     valueMicro: bigint,
     assertLease?: () => Promise<void>,
+    value = 0n,
   ): Promise<{ raw: Hex; hash: Hex; nativeGasId: string }> {
     if (!account)
       throw new Error("Signing is disabled without a fee-wallet key");
@@ -452,7 +463,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       account: wallet,
       to,
       data,
-      value: 0n,
+      value,
     });
     const fees = await client.estimateFeesPerGas();
     return signIntent(
@@ -461,7 +472,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         type: "eip1559",
         to,
         data,
-        value: 0n,
+        value,
         nonce,
         gas: (gas * 13n) / 10n,
         maxFeePerGas: fees.maxFeePerGas,
@@ -572,6 +583,27 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       claims[0].args.amount <= 0n
     )
       throw new Error("Claim receipt lacks the reviewed vault fee event");
+    if (nativeAsset(escrow.asset)) {
+      const transaction = await client.getTransaction({
+        hash: receipt.transactionHash,
+      });
+      if (
+        transaction.hash.toLowerCase() !==
+          receipt.transactionHash.toLowerCase() ||
+        transaction.from.toLowerCase() !== wallet ||
+        transaction.to?.toLowerCase() !== escrow.vault.toLowerCase() ||
+        transaction.blockHash !== receipt.blockHash ||
+        transaction.blockNumber !== receipt.blockNumber ||
+        transaction.input !== CLAIM_FEES ||
+        transaction.value !== 0n
+      )
+        throw new Error("Native claim transaction differs from its intent");
+      // The pinned implementation emits FeesClaimed only after sendExact
+      // checks this transaction's exact native debit and recipient credit.
+      // Whole-block balances also include unrelated transactions and cannot
+      // establish the amount sent by this claim.
+      return claims[0].args.amount;
+    }
     const transfers = parseEventLogs({
       abi: erc20Abi,
       eventName: "Transfer",
@@ -594,6 +626,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         `claim ${receipt.transactionHash} receipt does not match the vault fee`,
       );
     return received;
+  }
+
+  async function receiptNativeCost(
+    receipt: TransactionReceipt,
+  ): Promise<bigint> {
+    return evmReceiptNativeCost(client, receipt, config.network === "base");
   }
 
   async function recordedIntent(
@@ -731,27 +769,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
           throw new Error(
             "Native fee receipt differs from the signed transaction",
           );
-        let actual = receipt.gasUsed * receipt.effectiveGasPrice;
-        if (config.network === "base") {
-          const raw = (await client.request({
-            method: "eth_getTransactionReceipt",
-            params: [send.txId as Hex],
-          })) as {
-            transactionHash?: string;
-            blockHash?: string;
-            l1Fee?: string;
-          } | null;
-          if (
-            !raw ||
-            raw.transactionHash?.toLowerCase() !== send.txId.toLowerCase() ||
-            raw.blockHash !== receipt.blockHash ||
-            !/^0x[0-9a-fA-F]+$/u.test(raw.l1Fee ?? "")
-          )
-            throw new Error("Finalized Base data fee is unavailable");
-          actual +=
-            BigInt(raw.l1Fee as string) +
-            (await baseFee("0x275aedd2", receipt.gasUsed, receipt.blockNumber));
-        }
+        const actual = await receiptNativeCost(receipt);
         await journal.settle(
           { ...send, nonce: intent.nonce as number },
           {
@@ -763,6 +781,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       }
     },
     async balance(token) {
+      if (nativeAsset(token)) {
+        const balance = await client.getBalance({
+          address: wallet,
+          blockTag: "finalized",
+        });
+        const reserve = BigInt(config.nativeBudget?.perTransaction ?? "0");
+        return balance > reserve ? balance - reserve : 0n;
+      }
       return client.readContract({
         address: token as Address,
         abi: erc20Abi,
@@ -785,7 +811,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       const summary = route.routeSummary;
       if (
         route.routerAddress.toLowerCase() !== router ||
-        summary.tokenIn.toLowerCase() !== token ||
+        summary.tokenIn.toLowerCase() !== routeToken(token) ||
         summary.tokenOut.toLowerCase() !== usdc() ||
         summary.amountIn !== amount.toString() ||
         !/^\d+$/u.test(summary.amountOut)
@@ -848,12 +874,15 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       if (!account)
         throw new Error("Signing is disabled without a fee-wallet key");
       // Approve exactly the order amount to the pinned router, never more.
-      const allowance = await client.readContract({
-        address: token as Address,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [wallet, router],
-      });
+      const native = nativeAsset(token);
+      const allowance = native
+        ? quote.amountIn
+        : await client.readContract({
+            address: token as Address,
+            abi: erc20Abi,
+            functionName: "allowance",
+            args: [wallet, router],
+          });
       const nonce = await client.getTransactionCount({
         address: wallet,
         blockTag: "pending",
@@ -908,8 +937,9 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       });
       if (built.routerAddress.toLowerCase() !== router)
         throw new Error("KyberSwap build names an unexpected router");
-      if (built.transactionValue !== "0")
-        throw new Error("KyberSwap build carries native value");
+      const value = native ? quote.amountIn : 0n;
+      if (built.transactionValue !== value.toString())
+        throw new Error("KyberSwap build carries a different native value");
       const decoded = decodeFunctionData({
         abi: KYBER_ROUTER_ABI,
         data: built.data,
@@ -919,7 +949,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
           ? decoded.args[0].desc
           : decoded.args[1];
       if (
-        desc.srcToken.toLowerCase() !== token ||
+        desc.srcToken.toLowerCase() !== routeToken(token) ||
         desc.dstToken.toLowerCase() !== usdc() ||
         desc.dstReceiver.toLowerCase() !== wallet ||
         desc.amount !== quote.amountIn ||
@@ -934,7 +964,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         account: wallet,
         to: router,
         data: built.data,
-        value: 0n,
+        value,
       });
       if (!simulated.data) throw new Error("swap simulation returned no data");
       const [returnAmount] = decodeFunctionResult({
@@ -953,6 +983,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         nonce,
         quote.amountOut,
         assertLease,
+        value,
       );
       return {
         txId: swap.hash,

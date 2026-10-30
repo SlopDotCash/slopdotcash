@@ -134,8 +134,38 @@
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_fees_native",
+      "discriminator": [191, 89, 211, 129, 186, 98, 126, 166],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_account",
+          "writable": true
         }
       ],
       "args": []
@@ -672,8 +702,48 @@
           }
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "deposit_native",
+      "discriminator": [13, 158, 13, 223, 95, 213, 28, 6],
+      "accounts": [
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
@@ -714,8 +784,7 @@
         {
           "name": "mint",
           "docs": [
-            "Any classic SPL Token mint, with any decimals. `Account<Mint>` requires the classic",
-            "token program as owner, so Token-2022 mints are rejected."
+            "Classic SPL or the approved metadata-only Token-2022 subset."
           ]
         },
         {
@@ -735,8 +804,7 @@
           }
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
         },
         {
           "name": "system_program",
@@ -842,6 +910,94 @@
       ]
     },
     {
+      "name": "initialize_native",
+      "docs": [
+        "SOL stays in a program-owned vault, never a wrapped token account. The asset sentinel",
+        "occupies the existing immutable mint field, so existing Project layouts are unchanged."
+      ],
+      "discriminator": [58, 79, 79, 22, 127, 213, 117, 193],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "project_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "network",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "identity_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "binding_delay",
+          "type": "i64"
+        },
+        {
+          "name": "rotation_delay",
+          "type": "i64"
+        },
+        {
+          "name": "purpose",
+          "type": {
+            "defined": {
+              "name": "Purpose"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "migrate_project",
       "discriminator": [1, 96, 78, 101, 244, 33, 203, 108],
       "accounts": [
@@ -923,8 +1079,94 @@
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
+        },
+        {
+          "name": "veto",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 101, 116, 111]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "account",
+                "path": "obligation.actor_id",
+                "account": "Obligation"
+              },
+              {
+                "kind": "account",
+                "path": "binding.version",
+                "account": "WalletBinding"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "expected_version",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "pay_native",
+      "discriminator": [116, 31, 164, 230, 244, 244, 218, 204],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["obligation"]
+        },
+        {
+          "name": "obligation",
+          "writable": true
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [119, 97, 108, 108, 101, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "account",
+                "path": "obligation.actor_id",
+                "account": "Obligation"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
         },
         {
           "name": "veto",
@@ -1342,8 +1584,48 @@
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "gross",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_native",
+      "discriminator": [113, 227, 26, 32, 53, 66, 90, 250],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
         }
       ],
       "args": [
@@ -1493,7 +1775,7 @@
     {
       "code": 6007,
       "name": "WrongMint",
-      "msg": "Mint is not a classic SPL token mint"
+      "msg": "Mint or token program is not supported"
     },
     {
       "code": 6008,
@@ -1639,6 +1921,11 @@
       "code": 6036,
       "name": "MonthlyReserveChanged",
       "msg": "The month's unsettled gross changed after the release was signed"
+    },
+    {
+      "code": 6037,
+      "name": "UnsupportedTokenExtension",
+      "msg": "Token extension or authority is outside the approved metadata-only policy"
     }
   ],
   "types": [

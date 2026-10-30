@@ -247,6 +247,44 @@ test("an email preference write bound to another account is refused without chan
   h.sqlite.close();
 });
 
+test("either email preference can be withdrawn independently during an eligibility outage", async () => {
+  const h = setup();
+  const initial = await h.call("GET");
+  expect(
+    (
+      await h.call("POST", {
+        enabled: true,
+        securityEnabled: true,
+        destinationVersion: initial.body.destinationVersion,
+      })
+    ).status,
+  ).toBe(200);
+  h.unavailable();
+  expect((await h.call("GET")).body).toMatchObject({
+    enabled: true,
+    securityEnabled: true,
+    availability: "unavailable",
+  });
+  expect(
+    (await h.call("POST", { enabled: false, securityEnabled: true })).body,
+  ).toEqual({ enabled: false, securityEnabled: true });
+  expect(
+    (await h.call("POST", { enabled: true, securityEnabled: true })).status,
+  ).toBe(409);
+  h.sqlite
+    .query(
+      "UPDATE notification_email_preferences SET enabled=1,security_enabled=1 WHERE github_id='101'",
+    )
+    .run();
+  expect(
+    (await h.call("POST", { enabled: true, securityEnabled: false })).body,
+  ).toEqual({ enabled: true, securityEnabled: false });
+  expect(
+    (await h.call("POST", { enabled: true, securityEnabled: true })).status,
+  ).toBe(409);
+  h.sqlite.close();
+});
+
 test("unverified and changed destinations cannot inherit activity consent", async () => {
   const h = setup();
   expect((await h.call("GET", undefined, "202")).body.availability).toBe(

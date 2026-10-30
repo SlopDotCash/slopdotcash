@@ -1,42 +1,28 @@
-/** Project discovery uses bundled manifests and validated committed history. */
-import {
-  type PromotionCycle,
-  projectPromotionEligible,
-} from "./allocation-funding";
-import history from "./project-promotion.generated.json" with { type: "json" };
+/** Project discovery follows the current admin placement and project state. */
 import { PROJECTS, type ProjectDefinition } from "./projects.mjs";
 
-export function homeProjects(now = new Date()) {
-  const cycleId = now.toISOString().slice(0, 7);
-  return PROJECTS.filter(
-    (project) =>
-      project.listingTier === "featured" &&
-      projectPromotionEligible(
-        project,
-        history as PromotionCycle[],
-        Date.parse(project.reward.rewardStartAt) <= now.getTime()
-          ? cycleId
-          : null,
-      ),
+function isOpenProject(project: ProjectDefinition): boolean {
+  return (
+    project.status === "active" &&
+    (!hasBountyOverview(project) || project.securityBounty?.status === "open")
   );
 }
 
-/** Community-tier projects that are open for work; paused ones are not listed. */
+export function homeProjects() {
+  return PROJECTS.filter(
+    (project) => project.listingTier === "featured" && isOpenProject(project),
+  );
+}
+
 export function communityProjects() {
   return PROJECTS.filter(
-    (project) =>
-      project.listingTier === "community" &&
-      project.status !== "paused" &&
-      !hasBountyOverview(project),
+    (project) => project.listingTier === "community" && isOpenProject(project),
   );
 }
 
-/** A published bounty replaces the overview when no ordinary cash pool exists. */
-export function hasBountyOverview(project: ProjectDefinition): boolean {
-  return Boolean(
-    project.securityBounty &&
-      (project.securityBounty.rewardMode === "bounty-only" ||
-        (project.reward.kind === "monthly-pool" &&
-          project.reward.monthlyCapMinor === "0")),
-  );
+/** Only an explicitly bounty-only program replaces ordinary project work. */
+export function hasBountyOverview(
+  project: Pick<ProjectDefinition, "securityBounty">,
+): boolean {
+  return project.securityBounty?.rewardMode === "bounty-only";
 }

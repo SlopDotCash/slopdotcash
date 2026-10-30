@@ -43,7 +43,15 @@ test("social membership preserves past points and discloses public connections w
     route.fulfill({ json: { appeals: [] } }),
   );
   await page.route(`${site}/api/v1/notifications/email`, (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unverified",
+      },
+    }),
   );
   await page.route(`${site}/api/v1/project-session`, (route) =>
     route.fulfill({

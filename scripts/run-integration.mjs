@@ -10,6 +10,12 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const drivers = [
+  [
+    "dev-private-flow",
+    "bun",
+    ["scripts/dev-private-flow.integration.ts"],
+    childEnvironment(),
+  ],
   ["direct-history", "node", ["backend/payments/direct-history.workflow.mjs"]],
   [
     "scanner-progress",

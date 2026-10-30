@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
+import { EVM_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import {
   acceptsPayoutFee,
   ordinaryFee,
@@ -7,6 +8,9 @@ import {
   payoutFee,
 } from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
+
+export { EVM_NATIVE_ASSET };
+
 /** Finalized escrow events from a reviewed deployment. The configured RPC and vault are trust roots. */
 export type EvmRpc =
   | { rpcUrl: string; request?: never }
@@ -1467,6 +1471,13 @@ export async function readVaultTotals(
   const decimals = BigInt(await getter(config, vault, "decimals()", blockTag));
   if (!/^0x0{24}[0-9a-f]{40}$/.test(token) || decimals > 255n)
     throw new Error("Malformed vault asset");
+  if (`0x${token.slice(-40)}` === EVM_NATIVE_ASSET) {
+    const nativeBalance = quantity(
+      await rpc(config, "eth_getBalance", [vault, blockTag]),
+    );
+    if (decimals !== 18n || nativeBalance !== vaultBalance)
+      throw new Error("Native vault totals do not match its ETH balance");
+  }
   const accounted =
     free +
     reservedPrincipal +

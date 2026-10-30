@@ -257,9 +257,7 @@ export function ownerVaultSetupService(deps: {
       );
     const asset = bounty
       ? network.asset
-      : project.manifest.rewardAsset?.kind === "token"
-        ? project.manifest.rewardAsset.address
-        : network.asset;
+      : (project.manifest.rewardAsset?.address ?? network.asset);
     if (!asset)
       fail(
         422,

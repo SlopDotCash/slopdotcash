@@ -1,30 +1,41 @@
 import { describe, expect, test } from "bun:test";
-import legacyProjects from "../src/lib/legacy-projects.json";
-import {
-  carriedSecurityTerms,
-  fullAwardSelectable,
-  initialSecuritySplit,
-  PLATFORM_BOUNTY_DEPLOYMENTS,
-  PLATFORM_BOUNTY_SOURCE_COMMIT,
-  PLATFORM_BOUNTY_TEXT,
-} from "../src/lib/platform-security-bounty";
-import { SOURCE_REPOSITORY } from "../src/lib/project-skill-publication.mjs";
 import {
   assertSecurityBountyTerms,
-  isPlatformSecurityProgram,
-  PLATFORM_SECURITY_PROJECT_ID,
-  PLATFORM_SECURITY_REPOSITORY,
   SECURITY_FULL_AWARD_SPLIT,
   SECURITY_SPLIT,
   type SecurityBountyTerms,
   securityBountySplit,
 } from "../src/lib/security-bounty.mjs";
+import {
+  carriedSecurityTerms,
+  initialSecuritySplit,
+} from "../src/lib/security-program-draft";
 
 const PLATFORM = [{ id: "SlopDotCash/slopdotcash" }];
 const OTHER = [{ id: "SlopDotCash/umia-protocol" }];
 const REWARD = { kind: "monthly-pool" };
+const SOURCE_COMMIT = "a".repeat(40);
+const PROGRAM_RULES = {
+  exhaustionRule:
+    "Each distinct finding is reviewed; the owner decides whether to fund an award.",
+  includedAssets: [
+    "Published project contracts at the recorded source revision",
+  ],
+  excludedDependencies: ["Third-party contracts and intended owner actions"],
+  testingPermission:
+    "Use local forks and synthetic funds; never exploit production systems.",
+  severityRubric:
+    "Critical findings demonstrate unauthorized loss or permanent freezing of funds.",
+  lossDefinition:
+    "Unauthorized theft or permanent freezing of user funds caused by a contract defect.",
+  dispute: "Ask for a private review with supporting evidence.",
+  disclosure:
+    "Keep findings private until the authorized maintainer approves disclosure.",
+  safeHarbor:
+    "Good-faith research within these local testing rules is authorized.",
+};
 
-/** The terms the owner editor proposes for the platform's contract bounty. */
+/** Historical full-award terms; the editor must preserve their economics. */
 function platformProgram(overrides: Record<string, unknown> = {}) {
   return {
     fundingPolicy: "after-approval",
@@ -44,21 +55,21 @@ function platformProgram(overrides: Record<string, unknown> = {}) {
     capacity: {
       awards: null,
       closesAt: null,
-      exhaustionRule: PLATFORM_BOUNTY_TEXT.exhaustionRule,
+      exhaustionRule: PROGRAM_RULES.exhaustionRule,
     },
     scope: {
       sourceRevisions: [
         {
           repository: "SlopDotCash/slopdotcash",
-          commit: PLATFORM_BOUNTY_SOURCE_COMMIT,
+          commit: SOURCE_COMMIT,
         },
       ],
-      deployments: PLATFORM_BOUNTY_DEPLOYMENTS,
-      includedAssets: [...PLATFORM_BOUNTY_TEXT.includedAssets],
-      excludedDependencies: [...PLATFORM_BOUNTY_TEXT.excludedDependencies],
-      testingPermission: PLATFORM_BOUNTY_TEXT.testingPermission,
-      severityRubric: PLATFORM_BOUNTY_TEXT.severityRubric,
-      lossDefinition: PLATFORM_BOUNTY_TEXT.lossDefinition,
+      deployments: [],
+      includedAssets: [...PROGRAM_RULES.includedAssets],
+      excludedDependencies: [...PROGRAM_RULES.excludedDependencies],
+      testingPermission: PROGRAM_RULES.testingPermission,
+      severityRubric: PROGRAM_RULES.severityRubric,
+      lossDefinition: PROGRAM_RULES.lossDefinition,
     },
     intake: {
       kind: "github-private-vulnerability-reporting",
@@ -74,55 +85,14 @@ function platformProgram(overrides: Record<string, unknown> = {}) {
       financial: [{ githubId: "18633264", githubLogin: "lalalune" }],
       dispute: [{ githubId: "18633264", githubLogin: "lalalune" }],
     },
-    dispute: { authority: "advisory", process: PLATFORM_BOUNTY_TEXT.dispute },
-    disclosure: PLATFORM_BOUNTY_TEXT.disclosure,
-    safeHarbor: PLATFORM_BOUNTY_TEXT.safeHarbor,
+    dispute: { authority: "advisory", process: PROGRAM_RULES.dispute },
+    disclosure: PROGRAM_RULES.disclosure,
+    safeHarbor: PROGRAM_RULES.safeHarbor,
     ...overrides,
   };
 }
 
-describe("platform contract bounty (owner decision, 28 October 2026)", () => {
-  test("the platform repository constant matches the Slop source repository", () => {
-    expect(PLATFORM_SECURITY_REPOSITORY).toBe(SOURCE_REPOSITORY);
-    expect(isPlatformSecurityProgram("slopdotcash", PLATFORM)).toBe(true);
-    expect(
-      isPlatformSecurityProgram("slopdotcash", [
-        { id: "slopdotcash/SLOPDOTCASH" },
-      ]),
-    ).toBe(true);
-    expect(isPlatformSecurityProgram("slopdotcash", OTHER)).toBe(false);
-  });
-
-  test("the platform project id matches the registered Slop project", () => {
-    const registered = (
-      legacyProjects as unknown as {
-        id: string;
-        repositories: { id: string }[];
-      }[]
-    ).filter((project) =>
-      project.repositories.some(
-        (repository) => repository.id === PLATFORM_SECURITY_REPOSITORY,
-      ),
-    );
-    expect(registered.map((project) => project.id)).toContain(
-      PLATFORM_SECURITY_PROJECT_ID,
-    );
-  });
-
-  test("listing the Slop repository does not make another project the platform", () => {
-    expect(isPlatformSecurityProgram("not-slop", PLATFORM)).toBe(false);
-    expect(isPlatformSecurityProgram("not-slop", [...OTHER, ...PLATFORM])).toBe(
-      false,
-    );
-    expect(() =>
-      assertSecurityBountyTerms(platformProgram(), {
-        projectId: "not-slop",
-        repositories: PLATFORM,
-        reward: REWARD,
-      }),
-    ).toThrow("project.securityBounty.split pays the full award only");
-  });
-
+describe("approved security bounty splits", () => {
   test("the full-award split pays the whole gross to the researcher", () => {
     expect(
       securityBountySplit("10000000000", SECURITY_FULL_AWARD_SPLIT),
@@ -145,29 +115,18 @@ describe("platform contract bounty (owner decision, 28 October 2026)", () => {
     ).toThrow(TypeError);
   });
 
-  test("the proposed platform terms validate with every deployment listed", () => {
+  test("historical full-award terms remain valid without generated deployment defaults", () => {
     const terms = assertSecurityBountyTerms(platformProgram(), {
       projectId: "slopdotcash",
       repositories: PLATFORM,
       reward: REWARD,
     });
     expect(terms.split).toEqual(SECURITY_FULL_AWARD_SPLIT);
-    expect(terms.scope.deployments.map((entry) => entry.network)).toEqual([
-      "base-mainnet",
-      "base-mainnet",
-      "base-mainnet",
-      "ethereum",
-      "ethereum",
-      "ethereum",
-      "robinhood-mainnet",
-      "robinhood-mainnet",
-      "robinhood-mainnet",
-      "solana-mainnet",
-    ]);
+    expect(terms.scope.deployments).toEqual([]);
   });
 
-  test("another project cannot publish the full-award split", () => {
-    expect(() =>
+  test("approved full-award terms are independent of the project identity", () => {
+    expect(
       assertSecurityBountyTerms(
         platformProgram({
           intake: {
@@ -179,14 +138,14 @@ describe("platform contract bounty (owner decision, 28 October 2026)", () => {
             sourceRevisions: [
               {
                 repository: OTHER[0].id,
-                commit: PLATFORM_BOUNTY_SOURCE_COMMIT,
+                commit: SOURCE_COMMIT,
               },
             ],
           },
         }),
         { projectId: "umia-protocol", repositories: OTHER, reward: REWARD },
-      ),
-    ).toThrow("project.securityBounty.split pays the full award only");
+      ).split,
+    ).toEqual(SECURITY_FULL_AWARD_SPLIT);
   });
 
   test("a full-award program cannot bind the 25% bounty vault or require prefunding", () => {
@@ -219,46 +178,27 @@ describe("platform contract bounty (owner decision, 28 October 2026)", () => {
     ).toEqual(SECURITY_SPLIT);
   });
 
-  test("the owner editor defaults new platform terms to the full award but keeps an existing split", () => {
+  test("the owner editor uses shared defaults and preserves an existing authorized split", () => {
     const ordinary = { split: { ...SECURITY_SPLIT } } as const;
     const full = { split: { ...SECURITY_FULL_AWARD_SPLIT } } as const;
-    expect(initialSecuritySplit(true, undefined)).toBe(
-      SECURITY_FULL_AWARD_SPLIT,
-    );
-    expect(initialSecuritySplit(true, ordinary)).toBe(SECURITY_SPLIT);
-    expect(initialSecuritySplit(true, full)).toBe(SECURITY_FULL_AWARD_SPLIT);
-    expect(initialSecuritySplit(false, undefined)).toBe(SECURITY_SPLIT);
-    expect(initialSecuritySplit(false, full)).toBe(SECURITY_SPLIT);
+    expect(initialSecuritySplit(undefined)).toBe(SECURITY_SPLIT);
+    expect(initialSecuritySplit(ordinary)).toEqual(SECURITY_SPLIT);
+    expect(initialSecuritySplit(full)).toEqual(SECURITY_FULL_AWARD_SPLIT);
   });
 
-  test("a program with a registered bounty vault cannot select the full award", () => {
+  test("the owner editor carries the registered vault and approved split", () => {
     const settlement = { chain: "base", deployments: [] };
     const existing = {
       ...platformProgram({ split: { ...SECURITY_SPLIT } }),
       settlement,
     } as unknown as SecurityBountyTerms;
-    // The API refuses any settlement change (security_vault_restricted), so
-    // the editor never offers a choice that could not publish.
-    expect(fullAwardSelectable(true, existing)).toBe(false);
-    expect(fullAwardSelectable(true, undefined)).toBe(true);
-    expect(
-      fullAwardSelectable(
-        true,
-        platformProgram() as unknown as SecurityBountyTerms,
-      ),
-    ).toBe(true);
-    expect(fullAwardSelectable(false, undefined)).toBe(false);
-    const kept = carriedSecurityTerms(existing, false);
+    const kept = carriedSecurityTerms(existing);
     expect(kept.settlement).toEqual(settlement as never);
+    expect(kept.split).toEqual(SECURITY_SPLIT);
     expect("fundingPolicy" in kept).toBe(false);
-    // The vault is never silently dropped.
-    expect(() => carriedSecurityTerms(existing, true)).toThrow(
-      "keeps the 75/25 split",
-    );
-    expect(carriedSecurityTerms(undefined, true)).toEqual({});
+    expect(carriedSecurityTerms(undefined)).toEqual({});
     const full = carriedSecurityTerms(
       platformProgram() as unknown as SecurityBountyTerms,
-      true,
     );
     expect(
       assertSecurityBountyTerms(
