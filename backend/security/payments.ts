@@ -18,7 +18,7 @@ export async function securityPaymentNotices(
       .prepare(`INSERT INTO notifications
     (event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at)
     SELECT 'security-payment:' || s.obligation_id || ':' || ?, recipients.github_id,
-      'security_case',s.case_id,NULL,'/security',?,?
+      'security_case',s.case_id,NULL,'/security?case=' || s.case_id,?,?
     FROM security_settlements s JOIN (
       SELECT id case_id,reporter_github_id github_id FROM security_cases
       UNION
@@ -90,13 +90,18 @@ import {
 } from "../../src/lib/escrow-policy.mjs";
 import { payoutFee } from "../../src/lib/payments/contracts";
 import { chunked, fail } from "../http";
+import {
+  type AwardAssetTerms,
+  awardAsset,
+  sameAssetAddress,
+} from "./award-asset";
 
 /** A private vault snapshot older than this does not prove free funds. */
 export const VAULT_SNAPSHOT_MAX_AGE_MS = 30 * 60_000;
 
 export async function prepareSecuritySettlement(
   db: Database<D1QueryStatement>,
-  input: {
+  input: Omit<AwardAssetTerms, "network"> & {
     caseId: string;
     idempotencyKey: string;
     projectId: string;
@@ -115,7 +120,20 @@ export async function prepareSecuritySettlement(
     ...paymentDeploymentRecord(input.projectId, input.deployment),
     payoutPolicy: "security-bounty",
   };
-  if (input.currency !== "USDC" || input.chain !== deployment.chain)
+  const expectedAsset = awardAsset(
+    { ...input, network: input.chain },
+    deployment.network,
+    deployment.asset,
+  );
+  if (
+    !expectedAsset ||
+    !sameAssetAddress(
+      deployment.network,
+      expectedAsset.address,
+      deployment.asset,
+    ) ||
+    input.chain !== deployment.chain
+  )
     fail(
       409,
       "payment_terms_mismatch",

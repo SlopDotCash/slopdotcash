@@ -86,6 +86,7 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   page,
 }) => {
   let reads = 0;
+  let inventoryReads = 0;
   await page.route("**/api/v1/project-session", (route) => {
     reads++;
     return route.fulfill({
@@ -97,17 +98,22 @@ test("project setup shares one sign-in read with its owner inventory", async ({
   await page.route("**/api/v1/project-setup", (route) =>
     route.fulfill({ json: { projects: [], applications: [] } }),
   );
-  await page.route("**/api/v1/project-github/owned-repositories", (route) =>
-    route.fulfill({ json: { repositories: [] } }),
-  );
+  await page.route("**/api/v1/project-github/owned-repositories", (route) => {
+    inventoryReads++;
+    return route.fulfill({ json: { repositories: [] } });
+  });
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await expect(page.getByText("Your projects", { exact: true })).toHaveCount(0);
-  await page
-    .getByText("Choose from your GitHub repositories", { exact: true })
-    .click();
+  const repository = page.getByRole("textbox", {
+    name: "GitHub repository",
+    exact: true,
+  });
+  await expect(repository).toBeVisible();
+  await expect(repository).toBeEnabled();
+  await expect(repository).toHaveValue("");
   await expect(
-    page.getByText("@example owns no public repositories. Enter one below."),
-  ).toBeVisible();
+    page.getByRole("combobox", { name: "Integration branch", exact: true }),
+  ).toBeDisabled();
   await page.screenshot({
     path: test.info().outputPath("project-setup.png"),
     fullPage: true,
@@ -117,6 +123,7 @@ test("project setup shares one sign-in read with its owner inventory", async ({
     contentType: "text/plain",
   });
   expect(reads).toBe(1);
+  expect(inventoryReads).toBe(1);
   await expectAccessible(page);
 });
 
@@ -1114,7 +1121,15 @@ test("reaches and reads older inbox notifications without losing the page", asyn
     });
   });
   await page.route("**/api/v1/notifications/email", (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unavailable" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unavailable",
+      },
+    }),
   );
   await page.route("**/api/v1/notifications/read", (route) => {
     const keys: string[] = route.request().postDataJSON().eventKeys;
@@ -1218,7 +1233,15 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     }),
   );
   await page.route("**/api/v1/notifications/email", (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unverified",
+      },
+    }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
@@ -1305,7 +1328,15 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   ).toHaveCount(0);
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unavailable" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unavailable",
+      },
+    }),
   );
   await page.reload();
   const retry = preferences.getByRole("button", {
@@ -1317,6 +1348,9 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     route.fulfill({
       json: {
         enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
         availability: "verified",
         email: "example@example.com",
         destinationVersion: "a".repeat(64),
@@ -1443,8 +1477,8 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   });
   await page.getByRole("button", { name: "Use this reward asset" }).click();
   await expect(changes).toContainText("Reward asset");
-  await page.getByLabel("Discovery placement").selectOption("community");
-  await expect(page.getByLabel("Project status")).toHaveValue("paused");
+  await page.getByRole("checkbox", { name: "Featured", exact: true }).uncheck();
+  await expect(page.getByLabel("Project status")).toHaveValue(project.status);
   await expect(changes).toContainText("Discovery placement");
   await page
     .getByLabel("Reason for revision (public)")

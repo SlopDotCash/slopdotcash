@@ -4,12 +4,15 @@ import {
   assertSecurityEscrowPolicy,
   ESCROW_CHAINS,
   ESCROW_NETWORKS,
+  isBaseUnits,
+  maxBaseUnitsForChain,
 } from "./escrow-policy.mjs";
 import {
   isExactUtc,
   readRecord,
   exactKeys as sharedExactKeys,
 } from "./record-validation.mjs";
+import { assertRewardAsset } from "./reward-asset.mjs";
 
 /**
  * Public terms of a private security bounty program (PRD SEC-01, SEC-05,
@@ -31,12 +34,7 @@ export const SECURITY_SPLIT = Object.freeze({
   researcherBasisPoints: 7500,
   slopBasisPoints: 2500,
 });
-/**
- * Owner decision, 28 October 2026: slop.cash sponsors the bounty on its own
- * contracts, so a Slop share would pay Slop from Slop. The first qualifying
- * reporter receives the whole published award. Only the platform's own
- * project may publish it (see `assertSecurityBountyTerms`).
- */
+/** An admin-approved exception that pays the whole award to the researcher. */
 export const SECURITY_FULL_AWARD_SPLIT = Object.freeze({
   researcherBasisPoints: 10000,
   slopBasisPoints: 0,
@@ -51,35 +49,12 @@ export function isFullAwardSplit(split) {
   );
 }
 
-/**
- * The Slop source repository. It equals `SOURCE_REPOSITORY` in
- * project-skill-publication.mjs, which cannot be imported here without an
- * import cycle through project-schema.mjs; a test pins the two together.
- */
-export const PLATFORM_SECURITY_REPOSITORY = "SlopDotCash/slopdotcash";
-/** The platform's own registered project id (`legacy-projects.json`). */
-export const PLATFORM_SECURITY_PROJECT_ID = "slopdotcash";
-
-/**
- * The platform's own project: its id is the registered Slop project and one of
- * its repositories is the Slop source. Listing the Slop repository alone does
- * not make another project the platform.
- */
-export function isPlatformSecurityProgram(projectId, repositories) {
-  return (
-    projectId === PLATFORM_SECURITY_PROJECT_ID &&
-    repositories.some(
-      (entry) =>
-        entry.id.toLowerCase() === PLATFORM_SECURITY_REPOSITORY.toLowerCase(),
-    )
-  );
-}
 const CURRENCIES = Object.freeze({
   USD: { decimals: 2, networks: [null] },
   USDC: { decimals: 6, networks: ESCROW_CHAINS },
 });
-/** At most 10^15 minor units, the same bound as the monthly pool cap. */
-const MAX_GROSS_MINOR = 1_000_000_000_000_000n;
+/** Historical USD/USDC offers retain their original amount bound. */
+const MAX_LEGACY_GROSS_MINOR = 1_000_000_000_000_000n;
 const GITHUB_ID = /^[1-9]\d{0,19}$/u;
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const KEYS = [
@@ -142,15 +117,13 @@ function list(value, field, min, max, validate) {
 /**
  * Splits a gross amount exactly. The gross must be a positive integer number
  * of minor units. Under the ordinary 75/25 split it must also be divisible by
- * four, so no share is rounded (SEC-05). The platform's full-award split pays
+ * four, so no share is rounded (SEC-05). An approved full-award split pays
  * the whole gross to the researcher.
  */
 export function securityBountySplit(grossMinor, split = SECURITY_SPLIT) {
-  if (typeof grossMinor !== "string" || !/^[1-9]\d{0,15}$/u.test(grossMinor))
+  if (!isBaseUnits(grossMinor) || grossMinor === "0")
     throw new TypeError("gross amount must be positive integer minor units");
   const gross = BigInt(grossMinor);
-  if (gross > MAX_GROSS_MINOR)
-    throw new RangeError("gross amount exceeds the maximum");
   if (isFullAwardSplit(split))
     return { grossMinor, researcherMinor: grossMinor, slopMinor: "0" };
   if (
@@ -172,7 +145,9 @@ export function securityBountySplit(grossMinor, split = SECURITY_SPLIT) {
 /** Formats integer minor units without floating-point conversion. */
 export function formatSecurityAmount(minorUnits, amount) {
   const number = formatBaseUnits(minorUnits, amount.decimals);
-  return amount.currency === "USD" ? `$${number}` : `${number} USDC`;
+  return amount.currency === "USD" && !amount.asset
+    ? `$${number}`
+    : `${number} ${amount.asset?.symbol ?? amount.currency}`;
 }
 
 function validateApprovers(value) {
@@ -203,14 +178,10 @@ function validateApprovers(value) {
 
 /**
  * Validates `project.securityBounty` against the rest of the manifest. The
- * caller passes the project's id, repositories and reward so bounty-only mode
- * can refuse a monthly-pool promise and only the platform project may publish
- * the full-award split.
+ * caller passes the repositories and reward so bounty-only mode can refuse a
+ * monthly-pool promise. Creation and revision APIs enforce split authority.
  */
-export function assertSecurityBountyTerms(
-  value,
-  { projectId, repositories, reward },
-) {
+export function assertSecurityBountyTerms(value, { repositories, reward }) {
   const terms = record(value, "");
   exactKeys(
     terms,
@@ -224,7 +195,10 @@ export function assertSecurityBountyTerms(
   if (terms.version !== "1") fail("version");
   if (!SECURITY_PROGRAM_STATUSES.includes(terms.status)) fail("status");
   if (!SECURITY_REWARD_MODES.includes(terms.rewardMode)) fail("rewardMode");
-  if (terms.eligibility !== "critical-loss-of-funds") fail("eligibility");
+  if (
+    !["critical-loss-of-funds", "in-scope-security"].includes(terms.eligibility)
+  )
+    fail("eligibility");
   if (
     terms.fundingPolicy !== undefined &&
     terms.fundingPolicy !== "after-approval"
@@ -233,13 +207,29 @@ export function assertSecurityBountyTerms(
   const amount = record(terms.amount, "amount");
   exactKeys(
     amount,
-    ["currency", "decimals", "grossMinor", "network"],
+    [
+      "currency",
+      "decimals",
+      "grossMinor",
+      "network",
+      ...(amount.asset === undefined ? [] : ["asset"]),
+    ],
     "amount",
   );
-  const currency = CURRENCIES[amount.currency];
-  if (currency === undefined) fail("amount.currency");
-  if (amount.decimals !== currency.decimals) fail("amount.decimals");
-  if (!currency.networks.includes(amount.network)) fail("amount.network");
+  if (amount.asset !== undefined) {
+    const asset = assertRewardAsset(
+      amount.asset,
+      "project.securityBounty.amount.asset",
+    );
+    if (amount.currency !== asset.symbol) fail("amount.currency");
+    if (amount.decimals !== asset.decimals) fail("amount.decimals");
+    if (amount.network !== asset.network) fail("amount.network");
+  } else {
+    const currency = CURRENCIES[amount.currency];
+    if (currency === undefined) fail("amount.currency");
+    if (amount.decimals !== currency.decimals) fail("amount.decimals");
+    if (!currency.networks.includes(amount.network)) fail("amount.network");
+  }
   const split = record(terms.split, "split");
   exactKeys(split, ["researcherBasisPoints", "slopBasisPoints"], "split");
   const fullAward = isFullAwardSplit(split);
@@ -248,11 +238,9 @@ export function assertSecurityBountyTerms(
     (split.researcherBasisPoints !== SECURITY_SPLIT.researcherBasisPoints ||
       split.slopBasisPoints !== SECURITY_SPLIT.slopBasisPoints)
   )
-    fail("split", "must be the approved 75/25 researcher/Slop split");
-  // Only slop.cash sponsoring its own contracts pays the whole award. The
-  // separate bounty vault always takes 25%, so this program cannot bind it.
-  if (fullAward && !isPlatformSecurityProgram(projectId, repositories))
-    fail("split", "pays the full award only on the Slop platform program");
+    fail("split", "must be an approved 75/25 or 100/0 researcher/Slop split");
+  // The separate bounty vault always takes 25%, so full-award terms cannot
+  // bind it, regardless of which project an admin approved them for.
   if (fullAward && terms.fundingPolicy !== "after-approval")
     fail("fundingPolicy", "must be after-approval for a full-award program");
   if (fullAward && terms.settlement !== undefined)
@@ -262,6 +250,16 @@ export function assertSecurityBountyTerms(
     );
   try {
     securityBountySplit(amount.grossMinor, split);
+    if (
+      amount.asset === undefined &&
+      BigInt(amount.grossMinor) > MAX_LEGACY_GROSS_MINOR
+    )
+      throw new RangeError("gross amount exceeds the legacy maximum");
+    if (
+      amount.asset !== undefined &&
+      BigInt(amount.grossMinor) > maxBaseUnitsForChain(amount.asset.network)
+    )
+      throw new RangeError("gross amount exceeds the network asset limit");
   } catch (error) {
     fail("amount.grossMinor", `is invalid: ${error.message}`);
   }
@@ -419,7 +417,13 @@ export function assertSecurityBountyTerms(
  * are never read from later revisions.
  */
 export function assertSecurityBountyTransition(previous, next) {
-  assertEscrowTransition(previous?.settlement, next?.settlement);
+  if (
+    !(
+      previous?.settlement?.deployments.length === 0 &&
+      next?.settlement === undefined
+    )
+  )
+    assertEscrowTransition(previous?.settlement, next?.settlement);
   if (previous === undefined) return;
   if (next === undefined)
     throw new TypeError(

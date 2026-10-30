@@ -28,6 +28,30 @@ Only owners and maintainers open issues. Contributors use approved requirements 
 
 ## 3. Accounts and wallets
 
+Owner decision, 30 October 2026: complete the remaining private-bounty flow
+gaps. An account can enroll and verify its own notification email without an
+operator-maintained recipient list. Verification is account-bound, expiring,
+single-use and stored only as a token digest. Security and ordinary activity
+email preferences remain explicit and revocable; in-app notices remain
+available independently. Unsubscribe must stop future delivery without
+granting account or case access. Use a sender/provider configuration that
+actually permits delivery to verified user-selected destinations. A legacy
+restricted pilot is not evidence of general delivery readiness.
+
+An unpaid private award can recover from a reporter wallet change through an
+explicit, auditable review and successor payment request. Preserve every paid
+leg and require renewed reporter consent to the new destination. Retire or
+prove the expiry of all prior signable requests before presenting a replacement;
+never claim that deleting a database record cancels an external transaction.
+Existing finalized transfers remain verifiable. A recovery cannot authorize a
+second payment of an already settled amount.
+
+Local development must support the same private report storage, background
+assessment and API flow with durable isolated data and real identity/authority
+checks. Development must not silently send real notification mail or enable a
+production signer. Verify the complete report, review, payment, fee, notification
+and recovery journeys again after these changes, including their failure paths.
+
 GitHub is the only login. Use its permanent actor ID through renames. Owner decision, 28 October 2026: Settings, Payouts and Inbox are separate pages, reached from the account menu without shared account navigation tabs. Settings holds wallets and preferences. Wallets and email preferences are always expanded. Remove the Security card and its recovery, closure and account-appeal controls from Settings. Keep the existing backend account and appeal records, APIs and authorization rules. Wallet management belongs in Settings; Payouts links to it when needed. Keep existing wallet deep links. Approved directly by the repository owner in the 27 October 2026 review: remove the individual-session list and revocation controls from the account page. Keep current-session sign-out and the account-closure API; closure still ends all sessions. This does not remove backend session validation, expiry or revocation. The X connection is optional. Telegram integration is removed by owner decision on 25 October 2026. Do not provide a Telegram bot, connection, profile link, or support route. Keep existing historical records unchanged. Record walletless awards against the account; a verified wallet is required only to receive payment.
 
 Owner decision, 29 October 2026: remove the Connections card from Settings and the Add a payout wallet shortcut from contributor profiles. The Activity email switch has no outer button border. Keep existing public X links, connection records and APIs.
@@ -46,7 +70,13 @@ Owner decision, 28 October 2026: local development uses the existing Slop GitHub
 
 Owner decision, 28 October 2026: projects may upload an optional custom image in setup and settings. Cards and project headers use that image, falling back to the GitHub owner avatar. Do not use GitHub social-preview images. Save image changes as project presentation revisions.
 
-Setup has four steps: Repository, Contribution rules, Rewards, Review. Funding terms belong in Rewards. Project owners must be logged in with Github to create a project. Preview the page and both skills. Show one setup status that reports GitHub authority, Slopbot installation, the security scan, and funding separately, with the next action.
+Setup has three steps: Project (repository and contribution rules), Rewards, Review. The Project step offers the signed-in user's public repositories in one picker, with URL entry for other public repositories. A choice loads its facts automatically, with the integration branch beside it. Funding terms belong in Rewards. Project owners must be logged in with GitHub to create a project. Preview the page and both skills. Show one setup status that reports GitHub authority, Slopbot installation, the security scan, and funding separately, with the next action.
+
+Owner decision, 29 October 2026: Rewards also offers Private bounty. It creates a security-bounty project in the same registry and three-step flow, using the selected branch's immutable source revision, project scope, acceptance criteria and safe-test rules. The creator is the initial private-case contact and sponsor. Show the award, researcher share and private-report terms before creation. New programs use the standard 75/25 split and an after-approval pledge; funds and payment remain separate from creation. A bounty-only project has no monthly contribution pool.
+
+Owner decision, 30 October 2026: monthly rewards and private bounties use the same network and asset choices, including Robinhood Chain, each network's native coin and stablecoin, and custom tokens. Their payment style differs: a monthly allocation or an individually approved private award. A private bounty does not require or imply a payment vault. Keep existing vault-backed programs supported. Direct payments use verified wallets and finalized transaction evidence in the exact asset frozen with the award; preparing a payment never marks it paid.
+
+Owner clarification, 30 October 2026: new security bounties use the scope and acceptance criteria entered by their owner. Do not impose another program's critical-severity or loss-of-funds requirement. Existing programs and received reports retain their published eligibility restrictions. A direct award records each finalized transfer separately, shows only the unpaid transfers, and becomes paid only when both the researcher amount and any Slop share are proved. Completed direct fees enter the same fee-conversion accounting as vault fees. Notify the reporter, current security maintainers and financial approvers of payment progress without including private report content in messages.
 
 Projects start without routine admin approval after complete setup, verified GitHub authority, Slopbot installation, and either a successful security scan or the permanent existing-project exemption in section 8. Funding is optional and has a separate status. Contributor skills check for malicious code and injection risks before installation or execution. They report risks and stop the local workflow. Two distinct contributor flags pause the project and remove it from available work. A clean fresh scan reinstates a project that flags alone paused.
 
@@ -74,6 +104,8 @@ Automatic closure applies only to verified slop.cash members using the skill, ne
 
 Owner decision, 25 October 2026: use project settings for explicit automatic-closure consent. The control starts unchecked; absent consent means no automatic closure. Registration and App installation alone are not consent. A separate `.github/slopbot.json` file is not required. Preserve existing opt-outs, category restrictions and repository rejection rules. Record changes through the existing immutable project revisions and current GitHub authority checks.
 
+Owner decision, 29 October 2026: new project drafts start with automatic closure selected. Keep the visible control editable before creation and preserve an explicit saved opt-out. This changes the initial setup value only; it does not change existing project consent, closure eligibility, or the authority checks above.
+
 Qualify closure with reviewed real cases and counterexamples, not a fixed 14-day and 50-item threshold. Preserve independent confirmation, caps, appeals, maintainer reopen protection, the seven-day uncertain label-only rule and explicit production activation. The activation record must identify the reviewed evidence and any qualified objective verifier. Fixtures prove authorization and failure controls; actual model qualification requires real inference. This decision does not activate production closure.
 
 ## 6. Funds and payments
@@ -81,6 +113,8 @@ Qualify closure with reviewed real cases and counterexamples, not a fixed 14-day
 Each project uses one project vault, network, reward asset, and deposit balance. Project maintainers can deposit and withdraw. Reserved awards and fees cannot be withdrawn.
 
 Support the approved stablecoin, standard ERC-20, classic SPL token, or the metadata-only Token-2022 subset below. Exclude transfer-fee, rebasing, transfer-hook, confidential-transfer, interest-bearing and other extensions that change transfer or balance behavior. Verify identity, token program, decimals, behavior and finality. Use integer base units; never add unlike assets or present tokens as dollars.
+
+Owner decision, 29 October 2026: add direct native ETH rewards on Base, Ethereum and Robinhood Chain, and direct native SOL rewards on Solana. Setup, vault deposits, reserved awards, payouts, refunds and fee claims must use the native coin, not a wrapped-token substitute. Keep native principal and network fees separate, preserve the Solana rent reserve, and retain existing token-vault behavior and funded obligations. Existing fee-conversion limits still apply only to fees already received in the fee wallet. This approves implementation and local testing, not a mainnet deployment, program upgrade, new funding, or activation of a signer.
 
 Owner decision, 26 October 2026, issue #905: support Pump.fun project tokens, including the owner-selected pumpfun-source mint `35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump` (PMUP). This supersedes the blanket Token-2022 exclusion for a bounded subset: a mint may have only `MetadataPointer` and `TokenMetadata` extensions, with mint and freeze authorities disabled; its token accounts may have only `ImmutableOwner`, or no extensions. Reject every other mint or token-account extension, including unknown extensions. Retain classic SPL behavior. Project and asset inventory still comes from D1; this decision does not register or fund that project.
 
@@ -159,6 +193,8 @@ Owner decision, 27 October 2026 ([verified owner authorization](https://github.c
 
 Make Featured and Community projects easy to find. Show real funding, suitable work, and freshness. Featuring does not guarantee payment.
 
+Owner decision, 29 October 2026: an admin's Featured checkbox sets a project's registry listing tier. Funding amount and payment history do not select that tier. Apply the same placement rules to ordinary and security-bounty projects, with current project restrictions and availability still enforced.
+
 Use one account area, one shared ranking view, and one status summary per project. Show the result, the next action, and any restriction together. Put optional explanations after the action. Keep required consent, amounts, and evidence visible.
 
 Support mobile, keyboard access, screen readers, reduced motion, and 200% zoom. Meet WCAG AA accessibility requirements.
@@ -177,7 +213,7 @@ Use the existing routes and shared controls. These are acceptance requirements, 
 | ----------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Contributor       | Home → project → eligible work → skill → GitHub PR → Payouts                                                         | Clear scope, safe execution, accepted outcome, final award status, and verified payment; wallet setup uses Account                                                               |
 | Researcher        | Home security bounties or project → report through Slop → private receipt in Inbox → screening → owner review → decision → payment | Visible net award and privacy terms; confirmed receipt; next action and deadline; private appeal; no public fallback                                                             |
-| Maintainer        | Add project → four setup steps → Slopbot installation → security scan → automatic activation                         | Resume draft, preview page and skills, see setup status; owners publish updates; routine updates keep the same repository’s admission clearance; security investigations and reinstatement retain fresh-evidence gates (section 8) |
+| Maintainer        | Add project → three setup steps → Slopbot installation → security scan → automatic activation                         | Resume draft, preview page and skills, see setup status; owners publish updates; routine updates keep the same repository’s admission clearance; security investigations and reinstatement retain fresh-evidence gates (section 8) |
 | Funder or owner   | Project funding → terms and balance → deposit, approve, or withdraw → receipt                                        | Separate available and reserved funds; show asset, gross, fee, net, signer, and finality; reconcile an uncertain send before retry                                               |
 | Member            | GitHub login → Account → connections, wallets, preferences → Inbox/Payouts                                              | Preserve return destination and drafts; independent consent; current-session sign-out; private recovery and account closure                                                               |
 | Moderator         | Admin → escalated dispute, appeal, or confirmed-malicious result → evidence and Slopbot triage → decision            | Current authority, saved reason, fresh scan; flag-only pauses reinstate automatically after a clean scan; preserve awards                                                        |
@@ -203,6 +239,8 @@ Owner decision, 27 October 2026: approve a normal-admission exemption for the re
 After a confirmed malicious result, the owner can appeal. A moderator decides whether to reinstate or ban the project. The moderator must identify each responsible account from the evidence. Do not infer responsibility from current ownership or the original application. Reinstating a project does not clear account bans. Record a separate decision for each account cleared by the evidence. A banned account cannot start new Slop participation, receive new contribution or review credit, or receive new awards. Preserve funded awards and access to appeals, including for a responsible account that no longer owns the project.
 
 ### Report and decide privately
+
+Owner decision, 29 October 2026: any eligible project may offer a private security bounty through Add project. Public project pages, offers and owner editors derive names, source revisions, scope, contacts, amounts and award splits from the registry. Do not prefill a particular project's terms, deployment addresses or source commit in product code. Preserve published programs and report receipt terms. Award-split exceptions are admin-controlled manifest terms; an owner cannot grant a fee exception through creation or an owner revision. This replaces earlier named-project limits on new offers and admin-approved split exceptions, without changing historical offers or payment obligations.
 
 The private-reporting interface implements the existing MVP reporting, account and review requirements and the owner-requested UI simplification. The home page gives contributing and private reporting distinct entry points and places current security offers before project listings and rankings. Each offer shows the researcher's net amount prominently, the gross amount and Slop share, qualifying scope, and pledged or verified funding. All terms come from the D1 revision. No open paid offer means a confidential-report entry without a promised award. Preserve the approved campaign animation and historical terms.
 
@@ -236,9 +274,9 @@ Keep receipt, remediation, award, payment, and disclosure states separate. Use i
 
 ### Pay a private award
 
-The researcher receives 75% of the gross award; slop.cash receives 25%. This replaces the ordinary 2% commission. The slop.cash-sponsored contract bounty (owner decision, 28 October 2026, above) is the only exception: its researcher receives 100% and Slop takes no share. Add no ordinary payout or claim fee. Use 75/25 gross amounts divisible by four minor units; the full-award split needs no divisibility rule. A 100 USDC award pays 75 and 25. The report and its fix are one financial work unit unless approved terms say otherwise.
+The researcher normally receives 75% of the gross award; slop.cash receives 25%. This replaces the ordinary 2% commission. An admin-approved full-award program pays the researcher 100% and takes no Slop share. Add no ordinary payout or claim fee. Use 75/25 gross amounts divisible by four base units of the selected asset; the full-award split needs no divisibility rule. A 100 USDC award pays 75 and 25. The report and its fix are one financial work unit unless approved terms say otherwise.
 
-Reuse existing payment rails, wallet authorization, recovery, and finality checks. Use a separate bounty vault and private ledger. Ordinary balances, cycles, notices, and account views must reveal no case-related amounts or changes. Restrict case identifiers, counts, queues, and totals.
+Reuse existing payment rails, wallet authorization, recovery, and finality checks. Keep a private award ledger; a separate bounty vault is optional. Direct payments and existing vault payments both require finalized proof before an award is paid. Ordinary balances, cycles, notices, and account views must reveal no case-related amounts or changes. Restrict case identifiers, counts, queues, and totals.
 
 ## 9. Operations and launch decisions
 

@@ -26,6 +26,7 @@ import {
   type Role,
   reportingContext,
   type SecurityApiDependencies,
+  scheduleAnalysis,
   stringField,
   termsAtReceipt,
 } from "./handler";
@@ -314,13 +315,19 @@ async function reportVersion(
 export async function readStoredReportByCase(
   deps: SecurityApiDependencies,
   caseId: string,
+  expectedVersion?: number,
 ): Promise<SecurityAnalysisReport | null> {
   const stored = await deps.db
     .prepare("SELECT * FROM security_submission_intake WHERE case_id=?")
     .bind(caseId)
     .first<StoredIntake>();
   if (!stored) return null;
-  const report = await reportVersion(deps, stored);
+  const report = await reportVersion(
+    deps,
+    expectedVersion === undefined
+      ? stored
+      : { ...stored, report_version: expectedVersion },
+  );
   return analysisReport(report);
 }
 function analysisReport(report: ReportInput): SecurityAnalysisReport {
@@ -401,10 +408,18 @@ async function routedNotice(
   );
   const at = deps.now().toISOString();
   // Private routing contains only a case reference. The worker rechecks roles.
-  const recipients = context.approvers.technical.filter(
-    (x) =>
-      x.githubId !== actorId && x.githubId !== submission.reporter_github_id,
-  );
+  const assigned = await deps.db
+    .prepare(
+      "SELECT github_id FROM security_case_members WHERE case_id=? AND role='triager' AND revoked_at IS NULL",
+    )
+    .bind(row.case_id)
+    .all<{ github_id: string }>();
+  const recipients = [
+    ...new Set([
+      ...context.approvers.technical.map((person) => person.githubId),
+      ...(assigned.results ?? []).map((person) => person.github_id),
+    ]),
+  ].filter((x) => x !== actorId && x !== submission.reporter_github_id);
   // The sole owner may have just reviewed the report here. That completes
   // routing without mailing their own action back to them. Missing contacts
   // still leave routing pending so it can recover when access returns.
@@ -421,7 +436,7 @@ async function routedNotice(
         )
         .bind(
           `security-route:${row.submission_id}:${row.report_version}`,
-          x.githubId,
+          x,
           row.case_id,
           `/inbox?submission=${row.submission_id}`,
           at,
@@ -445,9 +460,20 @@ export async function screenStoredReport(
   id: string,
   timeoutMs = ANALYSIS_TIMEOUT_MS,
 ): Promise<void> {
+  const started = performance.now();
+  const assess = async (qualified: StoredIntake) => {
+    // Screening and assessment share one waitUntil lifetime. Keep time for
+    // persisting a timeout rather than starting a second full-length call.
+    const remaining = deps.waitUntil
+      ? Math.max(1, Math.floor(timeoutMs - (performance.now() - started) - 500))
+      : undefined;
+    await scheduleAnalysis(deps, qualified.case_id, null, remaining);
+  };
   let row = await storedIntake(deps, id);
   if (!row) return;
   if (intakeQualified(row)) {
+    // A public screening retry may recover routing, but assessment retries
+    // belong to the authorized maintainer action, not an unmetered report route.
     await routedNotice(deps, row, null);
     return;
   }
@@ -525,8 +551,10 @@ export async function screenStoredReport(
     intakeEvent(deps, row, "screen-finish", null, finished),
   ]);
   const updated = await storedIntake(deps, id);
-  if (updated && intakeQualified(updated))
+  if (updated && intakeQualified(updated)) {
+    await assess(updated);
     await routedNotice(deps, updated, null);
+  }
 }
 async function scheduleScreen(deps: SecurityApiDependencies, id: string) {
   const run = screenStoredReport(
@@ -1021,6 +1049,25 @@ export async function actStoredIntake(
           stored.revision,
         ),
       intakeEvent(deps, stored, "review", actor.githubId, at),
+      ...(body.decision === "request-information"
+        ? [
+            deps.db
+              .prepare(
+                "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at) SELECT ?,?,'security_case',?,NULL,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=? AND review_decision='request-information' AND reviewed_by=?) ON CONFLICT(event_key,recipient_github_id) DO NOTHING",
+              )
+              .bind(
+                `security-information:${id}:${stored.revision + 1}`,
+                row.reporter_github_id,
+                stored.case_id,
+                `/inbox?submission=${id}`,
+                at,
+                at,
+                id,
+                stored.revision + 1,
+                actor.githubId,
+              ),
+          ]
+        : []),
     ]);
     if (result[0].meta?.changes !== 1)
       fail(
@@ -1029,6 +1076,8 @@ export async function actStoredIntake(
         "The report changed. Reload it before acting.",
       );
     const latest = (await storedIntake(deps, id)) as StoredIntake;
+    if (intakeQualified(latest))
+      await scheduleAnalysis(deps, latest.case_id, null);
     await routedNotice(deps, latest, actor.githubId);
   } else if (action === "report") {
     exactKeys(body, ["expectedRevision", "report"]);
@@ -1056,6 +1105,21 @@ export async function actStoredIntake(
     )
       fail(409, "report_not_editable", "The report already has a decision.");
     const report = parseReportInput(body.report);
+    const currentReport = await deps.db
+      .prepare(
+        "SELECT content_sha256 FROM security_intake_reports WHERE submission_id=? AND version=?",
+      )
+      .bind(id, stored.report_version)
+      .first<{ content_sha256: string }>();
+    if (
+      currentReport?.content_sha256 ===
+      (await sha256Hex(encoder.encode(JSON.stringify(report))))
+    )
+      fail(
+        409,
+        "report_unchanged",
+        "Update the report before submitting it again.",
+      );
     const version = stored.report_version + 1;
     await admitPublicWork(deps, actor.githubId);
     const object = await storeReport(deps, id, version, report);

@@ -133,7 +133,13 @@ for (const [next, expected] of [
       }
       if (url.pathname === "/api/v1/notifications/email") {
         await route.fulfill({
-          json: { enabled: false, availability: "unverified" },
+          json: {
+            enabled: false,
+            securityEnabled: false,
+            enrollmentAvailable: false,
+            pending: null,
+            availability: "unverified",
+          },
         });
         return;
       }

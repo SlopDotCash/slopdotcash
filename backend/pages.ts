@@ -40,6 +40,9 @@ export type PagesEnv = {
   MONTHLY_RELEASE_SOLANA?: { fetch(request: Request): Promise<Response> };
   /** Private RPC endpoints for explicit wallet funding review/check requests. Never returned to the browser. */
   PAYMENT_RPC_URLS?: string;
+  SOLANA_RECOVERY_RPC_URL?: string;
+  /** Disposable local validators only; refused on non-loopback requests/RPCs. */
+  SLOP_LOCAL_SOLANA_GENESIS?: string;
   PRIVATE_TRACES: R2Bucket;
   TRACE_AUTH_SECRET: string;
   X_CLIENT_ID?: string;

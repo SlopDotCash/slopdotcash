@@ -100,9 +100,7 @@ export function checkedVaultSetupReview(
   const bounty = input.payoutPolicy === "security-bounty";
   const asset = bounty
     ? network.asset
-    : project.rewardAsset?.kind === "token"
-      ? project.rewardAsset.address
-      : network.asset;
+    : (project.rewardAsset?.address ?? network.asset);
   const cap = bounty ? "0" : project.reward.monthlyCapMinor;
   const capDisplay = bounty ? "" : project.reward.monthlyCapDisplay;
   const same = (a: unknown, b: string | null) =>

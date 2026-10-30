@@ -1,5 +1,11 @@
 export const ESCROW_PAYOUT_FEE_BASIS_POINTS: 200;
 export const ESCROW_WITHDRAWAL_FEE_BASIS_POINTS: 200;
+export const EVM_NATIVE_ASSET: "0x0000000000000000000000000000000000000000";
+export const SOLANA_NATIVE_ASSET: "11111111111111111111111111111111";
+export declare function isNativeAssetAddress(
+  chain: string,
+  address: unknown,
+): boolean;
 export interface EscrowDeployment {
   /** Optional EVM per-operation gas envelope, in native base units. Not a lifetime budget. */
   maxNativeCostWei?: string;

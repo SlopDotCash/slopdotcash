@@ -1,5 +1,15 @@
 import { isFundingAddress, isSolanaTransactionId } from "./funding-address.mjs";
 
+/** Asset identities for native vaults; never valid substitutes for a wallet. */
+export const EVM_NATIVE_ASSET = "0x0000000000000000000000000000000000000000";
+export const SOLANA_NATIVE_ASSET = "11111111111111111111111111111111";
+export function isNativeAssetAddress(chain, address) {
+  return chain === "solana"
+    ? address === SOLANA_NATIVE_ASSET
+    : ["base", "ethereum", "robinhood"].includes(chain) &&
+        address === EVM_NATIVE_ASSET;
+}
+
 /** The largest base-unit amount supported by the vault accounting. */
 export const MAX_BASE_UNITS = (1n << 128n) - 1n;
 export function isBaseUnits(value) {
@@ -19,8 +29,8 @@ export function isBaseUnits(value) {
  * the generated deployment record copies so hosted workers never assume a value.
  * Solana clusters carry their genesis hash, the RPC identity every check compares.
  *
- * Escrow v2 vaults accept any standard ERC-20 or classic SPL mint with any
- * decimals; a deployment's asset is not limited to the list here. `assets`
+ * Escrow vaults accept native ETH/SOL and standard ERC-20 or classic SPL mints;
+ * a deployment's asset is not limited to the list here. `assets`
  * lists the reference stablecoins each network knows, with their decimals and
  * the primary source that publishes the address. `asset`, `assetSymbol` and
  * `assetDecimals` repeat the first entry (the network's default stablecoin).
@@ -418,11 +428,14 @@ function validateEscrowPolicy(value, feeBasisPoints) {
     if (
       ![
         deployment.vault,
-        deployment.asset,
         deployment.owner,
         deployment.identityAuthority,
         deployment.feeRecipient,
-      ].every((address) => isFundingAddress(value.chain, address))
+      ].every((address) => isFundingAddress(value.chain, address)) ||
+      !(
+        isNativeAssetAddress(value.chain, deployment.asset) ||
+        isFundingAddress(value.chain, deployment.asset)
+      )
     )
       throw new TypeError("Invalid escrow address");
     if (

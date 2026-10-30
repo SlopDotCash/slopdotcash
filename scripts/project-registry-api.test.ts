@@ -5,6 +5,7 @@
 // and ADM-06 enforcement.
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import {
@@ -21,6 +22,7 @@ import {
   handleProjectApi,
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
+import { slopbotGithubFetch } from "../backend/projects/repository-access";
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import {
@@ -45,6 +47,10 @@ import { rewardFields } from "../src/lib/project-proposal";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/project-skill-publication.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
+import {
+  REWARD_ASSET_NETWORKS,
+  rewardAssetChoice,
+} from "../src/lib/reward-asset.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import type { SecurityBountyTerms } from "../src/lib/security-bounty.mjs";
 import { seedParticipationBan } from "../tests/participation-ban.fixture";
@@ -54,6 +60,7 @@ import {
 } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { vettingResult } from "../tests/vetting-fixtures";
+import { handleRepositoryRead } from "../workers/slopbot/repository-access";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 
 const ORIGIN = "https://slop.cash";
@@ -178,6 +185,14 @@ beforeEach(async () => {
     github: {
       fetch: async (url) => {
         githubReads.push(url);
+        if (
+          url ===
+          "https://api.github.com/repos/example/open-registry/branches?per_page=100&page=1"
+        )
+          return Response.json([
+            { name: "main", commit: { sha: "a".repeat(40) } },
+            { name: "development", commit: { sha: "b".repeat(40) } },
+          ]);
         if (url === "https://api.github.com/repos/example/open-registry")
           return Response.json({
             id: 123456789,
@@ -298,6 +313,61 @@ async function listProject(
 }
 
 describe("project registry API", () => {
+  for (const network of ["base", "ethereum", "robinhood", "solana"] as const) {
+    test(`stores native ${network} rewards without reading a token contract`, async () => {
+      const definition = REWARD_ASSET_NETWORKS[network];
+      const response = await create(
+        applicationManifest(
+          "open-registry",
+          "example/open-registry",
+          rewardFields(
+            {
+              mode: "monthly",
+              network,
+              assetKind: "native",
+              tokenAddress: "",
+              tokenSymbol: "",
+              monthlyAmount: "1.25",
+            },
+            deps.now(),
+          ),
+        ),
+        { monthlyAmount: "1.25" },
+      );
+      expect(response.status).toBe(201);
+      const project = await persistence.getProject("open-registry");
+      expect(project?.manifest.rewardAsset).toMatchObject({
+        network,
+        kind: "native",
+        ...definition.native,
+        chainId: definition.chainId,
+        cluster: definition.cluster,
+      });
+      expect(project?.manifest.reward.monthlyCapMinor).toBe(
+        network === "solana" ? "1250000000" : "1250000000000000000",
+      );
+      expect(tokenReads).toEqual([]);
+      const updated = await call(
+        "PUT",
+        "admin/projects/open-registry/manifest",
+        "admin",
+        {
+          expectedRevision: 1,
+          manifest: {
+            ...project?.manifest,
+            headline: "Native rewards with verified repository authority.",
+          },
+          reason: "Update project summary",
+        },
+      );
+      expect(updated.status).toBe(200);
+      expect(tokenReads).toEqual([]);
+      expect(
+        (await persistence.getProject("open-registry"))?.manifest.rewardAsset,
+      ).toEqual(project?.manifest.rewardAsset);
+    });
+  }
+
   test("only a current owner can revise the EVM execution cap without changing its verified vault", async () => {
     access = ADMIN_ACCESS;
     await listProject(
@@ -575,7 +645,7 @@ describe("project registry API", () => {
     expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
   });
 
-  test("owners publish bounty terms and open only with current verified vault funds", async () => {
+  test("owners create private bounty pledges and prefunded terms require current verified vault funds", async () => {
     access = ADMIN_ACCESS;
     const program: SecurityBountyTerms = {
       version: "1",
@@ -664,6 +734,326 @@ describe("project registry API", () => {
     );
     expect(untrusted.status).toBe(422);
     expect((await untrusted.json()).message).toContain("unverified vault");
+    const initialProgram: SecurityBountyTerms = {
+      ...program,
+      status: "open",
+      rewardMode: "bounty-only",
+      fundingPolicy: "after-approval",
+      scope: {
+        ...program.scope,
+        sourceRevisions: [
+          { repository: "example/bounty-first", commit: "b".repeat(40) },
+        ],
+      },
+      intake: { ...program.intake, repository: "example/bounty-first" },
+    };
+    const initial = (securityBounty: SecurityBountyTerms) =>
+      applicationManifest("bounty-first", "example/bounty-first", {
+        reward: {
+          ...(applicationManifest("bounty-first", "example/bounty-first")
+            .reward as object),
+          monthlyCapMinor: "0",
+          monthlyCapDisplay: "$0",
+        },
+        securityBounty,
+      });
+    for (const role of ["technical", "financial", "dispute"] as const) {
+      const denied = await create(
+        initial({
+          ...initialProgram,
+          approvers: { ...initialProgram.approvers, [role]: [MODERATOR] },
+        }),
+      );
+      expect(denied.status).toBe(422);
+      expect((await denied.json()).error).toBe("security_contacts_restricted");
+    }
+    for (const invalid of [
+      {
+        ...initialProgram,
+        sponsor: { name: "Other", githubId: MODERATOR.githubId },
+      },
+      {
+        ...initialProgram,
+        approvers: {
+          ...initialProgram.approvers,
+          technical: [{ ...APPLICANT, githubLogin: MODERATOR.githubLogin }],
+        },
+      },
+    ]) {
+      const denied = await create(initial(invalid));
+      expect(denied.status).toBe(422);
+      expect((await denied.json()).error).toBe("security_contacts_restricted");
+    }
+    for (const invalid of [
+      { ...initialProgram, fundingPolicy: undefined },
+      {
+        ...initialProgram,
+        funding: {
+          state: "verified-available" as const,
+          evidence: "The creator claims funds exist",
+          verifiedAt: deps.now().toISOString(),
+        },
+      },
+    ]) {
+      const denied = await create(initial(invalid));
+      expect(denied.status).toBe(422);
+      expect((await denied.json()).error).toBe("invalid_manifest");
+    }
+    access = { ...ADMIN_ACCESS, permission: "read", roleName: "read" };
+    expect(
+      (
+        await call("POST", "projects", "applicant", {
+          manifest: initial(initialProgram),
+        })
+      ).status,
+    ).toBe(403);
+    const createdBounty = await create(
+      initial({
+        ...initialProgram,
+        settlement: { ...settlement, deployments: [] },
+      }),
+    );
+    expect(createdBounty.status).toBe(201);
+    expect((await createdBounty.json()).project).toMatchObject({
+      status: "paused",
+      manifest: {
+        reward: { monthlyCapMinor: "0", paymentMode: "disabled" },
+        securityBounty: {
+          status: "open",
+          rewardMode: "bounty-only",
+          fundingPolicy: "after-approval",
+          funding: { state: "pledged" },
+          approvers: initialProgram.approvers,
+        },
+      },
+    });
+    access = ADMIN_ACCESS;
+    const removeEmptyVaultConfig = await call(
+      "PUT",
+      "projects/bounty-first",
+      "applicant",
+      {
+        expectedRevision: 1,
+        manifest: initial(initialProgram),
+      },
+    );
+    expect(removeEmptyVaultConfig.status).toBe(200);
+    expect(
+      (await persistence.getProject("bounty-first"))?.manifest.securityBounty
+        ?.settlement,
+    ).toBeUndefined();
+    const fullAwardProgram: SecurityBountyTerms = {
+      ...initialProgram,
+      split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+    };
+    const createWaiver = await create(initial(fullAwardProgram));
+    expect(createWaiver.status).toBe(422);
+    expect((await createWaiver.json()).error).toBe("security_split_restricted");
+    const bounty = await persistence.getProject("bounty-first");
+    if (!bounty) throw new Error("Missing newly created bounty");
+    const ownerWaiver = await call(
+      "PUT",
+      "projects/bounty-first",
+      "applicant",
+      {
+        expectedRevision: bounty.revision,
+        manifest: { ...bounty.manifest, securityBounty: fullAwardProgram },
+      },
+    );
+    expect(ownerWaiver.status).toBe(422);
+    expect((await ownerWaiver.json()).error).toBe("security_split_restricted");
+    const approvedWaiver = await call(
+      "PUT",
+      "admin/projects/bounty-first/manifest",
+      "admin",
+      {
+        expectedRevision: bounty.revision,
+        manifest: { ...bounty.manifest, securityBounty: fullAwardProgram },
+        reason: "Approve the full-award exception for this project.",
+      },
+    );
+    expect(approvedWaiver.status).toBe(200);
+    const approvedBounty = await persistence.getProject("bounty-first");
+    if (!approvedBounty) throw new Error("Missing admin-approved bounty");
+    const preserved = await call("PUT", "projects/bounty-first", "applicant", {
+      expectedRevision: approvedBounty.revision,
+      manifest: {
+        ...approvedBounty.manifest,
+        securityBounty: {
+          ...fullAwardProgram,
+          disclosure: "The owner approves the exact private disclosure.",
+        },
+      },
+    });
+    expect(preserved.status).toBe(200);
+    const currentBounty = await persistence.getProject("bounty-first");
+    if (!currentBounty) throw new Error("Missing revised bounty");
+    expect(currentBounty.manifest.securityBounty?.split).toEqual(
+      fullAwardProgram.split,
+    );
+    const replaceApprovedSplit = await call(
+      "PUT",
+      "projects/bounty-first",
+      "applicant",
+      {
+        expectedRevision: currentBounty.revision,
+        manifest: { ...currentBounty.manifest, securityBounty: initialProgram },
+      },
+    );
+    expect(replaceApprovedSplit.status).toBe(422);
+    expect((await replaceApprovedSplit.json()).error).toBe(
+      "security_split_restricted",
+    );
+    expect(
+      JSON.parse(
+        (await persistence.getRevisionText("bounty-first", bounty.revision))
+          ?.manifestText ?? "{}",
+      ).securityBounty.split,
+    ).toEqual(initialProgram.split);
+    const solanaToken = "So11111111111111111111111111111111111111112";
+    const metadataReader = deps.readTokenMetadata;
+    deps.readTokenMetadata = async (network, address) => {
+      if (network === "solana" && address === solanaToken) {
+        tokenReads.push(`${network}:${address}`);
+        return { decimals: 9, symbol: null };
+      }
+      return metadataReader(network, address);
+    };
+    const assets = [
+      ...(["base", "ethereum", "robinhood", "solana"] as const).flatMap(
+        (network) =>
+          (["stablecoin", "native"] as const).map((kind) =>
+            rewardAssetChoice(network, kind, "", ""),
+          ),
+      ),
+      rewardAssetChoice("robinhood", "token", TOKEN, "UNVERIFIED"),
+      rewardAssetChoice("solana", "token", solanaToken, "WSOL"),
+    ];
+    for (const choice of assets) {
+      const id = `bounty-${choice.network}-${choice.kind}`;
+      const repository = `example/${id}`;
+      const offered = {
+        ...initialProgram,
+        amount: {
+          currency: "FORGED",
+          decimals: 0,
+          network: "ethereum",
+          grossMinor: "0",
+          asset: {
+            ...choice,
+            decimals: 0,
+            chainId: null,
+            cluster: null,
+            verifiedAt: "1900-01-01T00:00:00.000Z",
+          },
+        },
+        intake: { ...initialProgram.intake, repository },
+        scope: {
+          ...initialProgram.scope,
+          sourceRevisions: [{ repository, commit: "b".repeat(40) }],
+        },
+      };
+      const manifest = applicationManifest(id, repository, {
+        reward: {
+          ...(initial(initialProgram).reward as object),
+        },
+        securityBounty: offered,
+      });
+      const readsBefore = tokenReads.length;
+      if (choice.network === "base" && choice.kind === "native") {
+        const missingUnits = await create(manifest);
+        expect(missingUnits.status).toBe(422);
+        expect((await missingUnits.json()).message).toContain(
+          "whole asset units",
+        );
+        expect(await persistence.getProject(id)).toBeNull();
+      }
+      const response = await create(manifest, { bountyAmount: "1.25" });
+      if (response.status !== 201) throw new Error(await response.text());
+      const setupFunding = (await response.json()).setup.funding;
+      expect(setupFunding).toMatchObject({ mode: "bounty", state: "pledged" });
+      const stored = await persistence.getProject(id);
+      if (!stored?.manifest.securityBounty)
+        throw new Error("Missing asset bounty");
+      const amount = stored.manifest.securityBounty.amount;
+      const definition = REWARD_ASSET_NETWORKS[choice.network];
+      const decimals =
+        choice.kind === "token"
+          ? choice.network === "solana"
+            ? 9
+            : 18
+          : definition[choice.kind].decimals;
+      expect(amount).toEqual({
+        currency:
+          choice.kind === "token" && choice.network !== "solana"
+            ? "OPEN"
+            : choice.symbol,
+        decimals,
+        network: choice.network,
+        grossMinor: `125${"0".repeat(decimals - 2)}`,
+        asset: {
+          ...choice,
+          symbol:
+            choice.kind === "token" && choice.network !== "solana"
+              ? "OPEN"
+              : choice.symbol,
+          decimals,
+          chainId: definition.chainId,
+          cluster: definition.cluster,
+          verifiedAt: deps.now().toISOString(),
+        },
+      });
+      expect(setupFunding).toMatchObject({
+        network: choice.network,
+        symbol: amount.currency,
+        decimals,
+        awardAmountMinor: amount.grossMinor,
+      });
+      expect(tokenReads.length - readsBefore).toBe(
+        choice.kind === "token" ? 1 : 0,
+      );
+      expect(stored.manifest.securityBounty.settlement).toBeUndefined();
+      expect(stored.manifest.reward.monthlyCapMinor).toBe("0");
+      // Stored precision and identity win over a later client's forged metadata.
+      const preservedAsset = await call("PUT", `projects/${id}`, "applicant", {
+        expectedRevision: stored.revision,
+        manifest: {
+          ...stored.manifest,
+          headline: "Updated public scope for this private bounty",
+          securityBounty: {
+            ...stored.manifest.securityBounty,
+            amount: { ...offered.amount, grossMinor: amount.grossMinor },
+          },
+        },
+      });
+      if (preservedAsset.status !== 200)
+        throw new Error(await preservedAsset.text());
+      expect(
+        (await persistence.getProject(id))?.manifest.securityBounty?.amount,
+      ).toEqual(amount);
+      expect(tokenReads.length - readsBefore).toBe(
+        choice.kind === "token" ? 1 : 0,
+      );
+      const changedWithoutUnits = await call(
+        "PUT",
+        `projects/${id}`,
+        "applicant",
+        {
+          expectedRevision: stored.revision + 1,
+          manifest: {
+            ...stored.manifest,
+            securityBounty: {
+              ...stored.manifest.securityBounty,
+              amount: { ...amount, grossMinor: "4" },
+            },
+          },
+        },
+      );
+      expect(changedWithoutUnits.status).toBe(422);
+      expect((await changedWithoutUnits.json()).message).toContain(
+        "whole asset units",
+      );
+    }
     await listProject();
     async function change(next: SecurityBountyTerms | undefined) {
       const current = await persistence.getProject("open-registry");
@@ -1297,6 +1687,46 @@ describe("project registry API", () => {
   });
 
   test("looks up GitHub only for a signed-in visitor and caches the facts", async () => {
+    const ordinary = deps.github.fetch;
+    const ownedUrl = `https://api.github.com/users/${APPLICANT.githubLogin}/repos?type=owner&sort=pushed&per_page=100&page=1`;
+    deps.github.fetch = async (url, init) => {
+      if (url !== ownedUrl) return ordinary(url, init);
+      githubReads.push(url);
+      return Response.json([
+        {
+          full_name: `${APPLICANT.githubLogin}/open-tool`,
+          description: "Public tool",
+          private: false,
+          fork: false,
+          archived: false,
+        },
+        {
+          full_name: `${APPLICANT.githubLogin}/forked-tool`,
+          description: "Maintained public fork",
+          private: false,
+          fork: true,
+          archived: false,
+        },
+        {
+          full_name: `${APPLICANT.githubLogin}/private-tool`,
+          description: "Private",
+          private: true,
+          fork: false,
+          archived: false,
+        },
+        {
+          full_name: `${APPLICANT.githubLogin}/archived-tool`,
+          description: "Archived",
+          private: false,
+          fork: false,
+          archived: true,
+        },
+      ]);
+    };
+    expect(
+      (await call("GET", "project-github/owned-repositories")).status,
+    ).toBe(401);
+    expect(githubReads).toHaveLength(0);
     expect(
       (await call("GET", "project-github/repositories/example/open-registry"))
         .status,
@@ -1311,6 +1741,8 @@ describe("project registry API", () => {
     expect((await first.json()).repository).toMatchObject({
       repository: "example/open-registry",
       numericId: "123456789",
+      branches: ["main", "development"],
+      branchCommits: { main: "a".repeat(40), development: "b".repeat(40) },
       license: { state: "unknown" },
     });
     const reads = githubReads.length;
@@ -1327,6 +1759,132 @@ describe("project registry API", () => {
       "applicant",
     );
     expect(missing.status).toBe(404);
+    const owned = await call(
+      "GET",
+      "project-github/owned-repositories",
+      "applicant",
+    );
+    expect(owned.status).toBe(200);
+    expect(await owned.json()).toEqual({
+      repositories: [
+        {
+          repository: `${APPLICANT.githubLogin}/open-tool`,
+          description: "Public tool",
+        },
+        {
+          repository: `${APPLICANT.githubLogin}/forked-tool`,
+          description: "Maintained public fork",
+        },
+      ],
+    });
+    const ownedReads = githubReads.length;
+    const cachedOwned = await call(
+      "GET",
+      "project-github/owned-repositories",
+      "applicant",
+    );
+    expect(cachedOwned.headers.get("x-slop-cache")).toBe("hit");
+    expect(githubReads).toHaveLength(ownedReads);
+  });
+
+  test("returns every branch through the Slopbot repository read without losing pagination", async () => {
+    const ordinary = deps.github.fetch;
+    const firstPage =
+      "https://api.github.com/repos/example/open-registry/branches?per_page=100&page=1";
+    const secondPage = firstPage.replace(/&page=1$/u, "&page=2");
+    const nextPage =
+      "https://api.github.com/repositories/123456789/branches?per_page=100&page=2";
+    const pages: string[] = [];
+    const env = {
+      SLOPBOT_APP_ID: "1",
+      SLOPBOT_APP_PRIVATE_KEY: generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+      })
+        .privateKey.export({ format: "pem", type: "pkcs8" })
+        .toString(),
+    };
+    const github = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/installation"))
+        return Response.json({ id: 42, suspended_at: null });
+      if (url.endsWith("/access_tokens"))
+        return Response.json({ token: "installation-token-fixture" });
+      if (url === firstPage) {
+        pages.push(url);
+        return Response.json(
+          [{ name: "development", commit: { sha: "b".repeat(40) } }],
+          {
+            headers: { link: `<${nextPage}>; rel="next"` },
+          },
+        );
+      }
+      if (url === secondPage) {
+        pages.push(url);
+        return Response.json([
+          { name: "main", commit: { sha: "a".repeat(40) } },
+          { name: "release/1.x" },
+        ]);
+      }
+      return ordinary(url, init ?? {});
+    }) as typeof fetch;
+    deps.github.fetch = slopbotGithubFetch(
+      { fetch: (request) => handleRepositoryRead(request, env, github) },
+      "https://api.github.com",
+      async () => {
+        throw new Error(
+          "The installed repository must not use anonymous reads",
+        );
+      },
+    );
+    const response = await call(
+      "GET",
+      "project-github/repositories/example/open-registry",
+      "applicant",
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).repository).toMatchObject({
+      defaultBranch: "main",
+      branches: ["development", "main", "release/1.x"],
+      branchCommits: { development: "b".repeat(40), main: "a".repeat(40) },
+      license: { state: "unknown" },
+    });
+    expect(pages).toEqual([firstPage, secondPage]);
+  });
+
+  test("branch discovery refuses failed pages and links outside the repository", async () => {
+    const ordinary = deps.github.fetch;
+    for (const next of [
+      null,
+      "https://api.github.com/repos/other/repository/branches?per_page=100&page=2",
+    ]) {
+      deps.github.fetch = async (url, init) => {
+        if (url.includes("/branches?"))
+          return next === null
+            ? Response.json({ message: "Unavailable" }, { status: 503 })
+            : Response.json([{ name: "main" }], {
+                headers: { link: `<${next}>; rel="next"` },
+              });
+        return ordinary(url, init);
+      };
+      const response = await call(
+        "GET",
+        "project-github/repositories/example/open-registry",
+        "applicant",
+      );
+      expect(response.status).toBe(502);
+      expect((await response.json()).repository).toBeUndefined();
+    }
+    deps.github.fetch = async (url, init) =>
+      url.includes("/branches?")
+        ? Response.json([{ name: "main", commit: { sha: "not-a-commit" } }])
+        : ordinary(url, init);
+    const invalidCommit = await call(
+      "GET",
+      "project-github/repositories/example/open-registry",
+      "applicant",
+    );
+    expect(invalidCommit.status).toBe(502);
+    expect((await invalidCommit.json()).repository).toBeUndefined();
   });
 });
 

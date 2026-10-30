@@ -126,7 +126,7 @@ const loadAdminProjects = async () => ({
 
 type AssetDraft = {
   network: RewardAssetNetwork;
-  kind: "stablecoin" | "token";
+  kind: "stablecoin" | "token" | "native";
   address: string;
   symbol: string;
 };
@@ -438,36 +438,35 @@ function ProjectEditor({
       </fieldset>
       <fieldset className="admin-fieldset">
         <legend>Discovery</legend>
-        <label>
-          Discovery placement
-          <select
-            value={String(
-              projectFields?.listingTier ?? project.manifest.listingTier,
-            )}
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={
+              (projectFields?.listingTier ?? project.manifest.listingTier) ===
+              "featured"
+            }
+            disabled={
+              busy ||
+              projectFields === null ||
+              project.enforcement.state !== "clear"
+            }
             onChange={(event) => {
-              setStatus("paused");
               setText(
                 JSON.stringify(
-                  { ...projectFields, listingTier: event.target.value },
+                  {
+                    ...projectFields,
+                    listingTier: event.target.checked
+                      ? "featured"
+                      : "community",
+                  },
                   null,
                   2,
                 ),
               );
             }}
-          >
-            <option value="community">Community</option>
-            <option
-              value="featured"
-              disabled={project.enforcement.state !== "clear"}
-            >
-              Featured
-            </option>
-            <option value="retired" disabled={status !== "paused"}>
-              Retired
-            </option>
-          </select>
+          />
+          Featured
         </label>
-        <p className="admin-status">Placement changes pause the project.</p>
       </fieldset>
       <fieldset className="admin-fieldset admin-fields-wide">
         <legend>Contribution fields</legend>
@@ -515,10 +514,10 @@ function ProjectEditor({
               setAsset((current) => ({
                 ...current,
                 network: id,
-                ...(current.kind === "stablecoin"
+                ...(current.kind === "stablecoin" || current.kind === "native"
                   ? {
-                      address: REWARD_ASSET_NETWORKS[id].stablecoin.address,
-                      symbol: REWARD_ASSET_NETWORKS[id].stablecoin.symbol,
+                      address: REWARD_ASSET_NETWORKS[id][current.kind].address,
+                      symbol: REWARD_ASSET_NETWORKS[id][current.kind].symbol,
                     }
                   : {}),
               }));
@@ -541,8 +540,13 @@ function ProjectEditor({
                 ...current,
                 kind,
                 address:
-                  kind === "stablecoin" ? network.stablecoin.address : "",
-                symbol: kind === "stablecoin" ? network.stablecoin.symbol : "",
+                  kind === "stablecoin" || kind === "native"
+                    ? network[kind].address
+                    : "",
+                symbol:
+                  kind === "stablecoin" || kind === "native"
+                    ? network[kind].symbol
+                    : "",
               }));
             }}
             value={asset.kind}
@@ -550,6 +554,7 @@ function ProjectEditor({
             <option value="stablecoin">
               {network.stablecoin.symbol} (network stablecoin)
             </option>
+            <option value="native">{network.native.symbol}</option>
             <option value="token">Another token</option>
           </select>
         </label>

@@ -1,6 +1,9 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
-import type { SecurityProgramStatus } from "./security-bounty.mjs";
+import type {
+  SecurityBountyTerms,
+  SecurityProgramStatus,
+} from "./security-bounty.mjs";
 
 /** Display variants derive only from the registry's reward policy. */
 export type ProjectRewardSummary =
@@ -10,9 +13,10 @@ export type ProjectRewardSummary =
       token?: { symbol: string; url: string };
     }
   | {
-      kind: "critical-loss-of-funds";
+      kind: "security-bounty";
       amount: string;
       status: SecurityProgramStatus;
+      eligibility: SecurityBountyTerms["eligibility"];
     }
   | { kind: "external-prize"; amount: string | null }
   | { kind: "points-only" };
@@ -25,6 +29,16 @@ function compactWhole(value: string): string {
   })
     .format(BigInt(value.replaceAll(",", "")))
     .toLowerCase();
+}
+
+export function securityBountyAmountLabel(
+  bounty: Pick<SecurityBountyTerms, "amount">,
+): string {
+  const amount = compactWhole(
+    formatBaseUnits(bounty.amount.grossMinor, bounty.amount.decimals),
+  );
+  if (!bounty.amount.asset) return `$${amount}`;
+  return `${amount} ${bounty.amount.asset.symbol}`;
 }
 
 export function projectRewardSummaries(
@@ -46,24 +60,32 @@ export function projectRewardSummaries(
       asset?.decimals ?? 6,
     );
     summaries.push(
-      asset?.kind === "token"
+      asset && asset.kind !== "stablecoin"
         ? {
             kind: "monthly-pool",
             amount: compactWhole(amount),
             token: {
               symbol: asset.symbol.replace(/^\$/u, ""),
               url:
-                asset.network === "solana"
-                  ? asset.address.endsWith("pump")
-                    ? `https://pump.fun/coin/${asset.address}`
-                    : `https://solscan.io/token/${asset.address}`
-                  : `https://${
-                      asset.network === "base"
-                        ? "basescan.org"
-                        : asset.network === "robinhood"
-                          ? "robinhoodchain.blockscout.com"
-                          : "etherscan.io"
-                    }/token/${asset.address}`,
+                asset.kind === "native"
+                  ? asset.network === "solana"
+                    ? "https://solscan.io/"
+                    : asset.network === "base"
+                      ? "https://basescan.org/"
+                      : asset.network === "robinhood"
+                        ? "https://robinhoodchain.blockscout.com/"
+                        : "https://etherscan.io/"
+                  : asset.network === "solana"
+                    ? asset.address.endsWith("pump")
+                      ? `https://pump.fun/coin/${asset.address}`
+                      : `https://solscan.io/token/${asset.address}`
+                    : `https://${
+                        asset.network === "base"
+                          ? "basescan.org"
+                          : asset.network === "robinhood"
+                            ? "robinhoodchain.blockscout.com"
+                            : "etherscan.io"
+                      }/token/${asset.address}`,
             },
           }
         : { kind: "monthly-pool", amount: `$${amount}` },
@@ -71,9 +93,10 @@ export function projectRewardSummaries(
   }
   if (bounty) {
     summaries.push({
-      kind: "critical-loss-of-funds",
-      amount: `$${compactWhole(formatBaseUnits(bounty.amount.grossMinor, bounty.amount.decimals))}`,
+      kind: "security-bounty",
+      amount: securityBountyAmountLabel(bounty),
       status: bounty.status,
+      eligibility: bounty.eligibility,
     });
   }
   if (summaries.length === 0) summaries.push({ kind: "points-only" });

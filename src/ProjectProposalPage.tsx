@@ -4,12 +4,15 @@ import {
   GitBranch,
   ListChecks,
   Settings2,
-  ShieldCheck,
+  Shield,
   Wallet,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
+import { RewardAssetFields } from "./RewardAssetFields";
 import "./owner-review.css";
+import "./project-setup.css";
 import { EscrowFunding } from "./EscrowFunding";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
@@ -25,16 +28,13 @@ import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   ESCROW_WITHDRAWAL_FEE_BASIS_POINTS,
 } from "./lib/escrow-policy.mjs";
+import { hasBountyOverview } from "./lib/home-projects";
 import {
   createProject,
-  listProjectSetup,
   ProjectApiError,
-  type ProjectApplication,
   type ProjectSessionState,
-  type ProjectSummary,
   projectApiRequest,
   publishProjectRevision,
-  publishStoredApplication,
   type RevisionResult,
   useProjectMaintainer,
   useProjectSession,
@@ -70,13 +70,27 @@ import {
   type RewardAssetNetwork,
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
+import {
+  bountyAmountPreview,
+  PRIVATE_BOUNTY_CRITERIA,
+  PRIVATE_BOUNTY_DISCLOSURE,
+  PRIVATE_BOUNTY_TESTING,
+  privateBountyTerms,
+} from "./lib/security-bounty-proposal";
 import { ChangeReview } from "./OwnerPresentation";
-import { ProjectNav, RoutePageHeader, SignInPanel } from "./Presentation";
+import { PendingProjectApplications } from "./PendingProjectApplications";
+import {
+  Avatar,
+  ProjectNav,
+  RoutePageHeader,
+  SignInPanel,
+} from "./Presentation";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
-const PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
+const LEGACY_PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
+const PROPOSAL_STEP_KEY = `${LEGACY_PROPOSAL_STEP_KEY}:v2`;
 /**
  * The referrer named by a `?ref=<login>` link (PRJ-05). It is kept apart
  * from the draft so a resumed draft keeps it, and cleared after submission.
@@ -86,12 +100,7 @@ const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 /** PRJ-03 default, shown as editable text the maintainer can replace. */
 const DEFAULT_CRITERIA =
   "Merged pull requests that fix a reproduced bug or deliver a change the maintainers asked for, with tests or other evidence that the result works.";
-const SETUP_STEPS = [
-  "Repository",
-  "Contribution rules",
-  "Rewards",
-  "Review",
-] as const;
+const SETUP_STEPS = ["Project", "Rewards", "Review"] as const;
 
 const EMPTY_PROPOSAL = {
   name: "",
@@ -99,7 +108,7 @@ const EMPTY_PROPOSAL = {
   repositoryNumericId: "",
   repositoryNodeId: "",
   integrationBranch: "main",
-  stewardName: "",
+  sourceCommit: "",
   stewardKind: "organization",
   stewardLogin: "",
   stewardActorId: "",
@@ -114,7 +123,7 @@ const EMPTY_PROPOSAL = {
   reviewExpectations: "",
   securityContact: "",
   closurePolicy: "",
-  automaticClosure: "false",
+  automaticClosure: "true",
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
@@ -148,97 +157,41 @@ const FIELD_STEP: Partial<Record<ProposalField, number>> = {
   repositoryNumericId: 0,
   repositoryNodeId: 0,
   integrationBranch: 0,
-  stewardName: 0,
   stewardLogin: 0,
   stewardActorId: 0,
   stewardNodeId: 0,
   licenseSpdx: 0,
   licenseCommit: 0,
   licenseDigest: 0,
-  name: 1,
-  image: 1,
-  headline: 1,
-  goal: 1,
-  criteria: 1,
-  contributionGuide: 1,
-  supportedTasks: 1,
-  requiredTests: 1,
-  reviewExpectations: 1,
-  securityContact: 1,
-  closurePolicy: 1,
-  maintainerNotes: 1,
-  copyrightModel: 1,
-  legalHolder: 1,
-  inboundTermsUrl: 1,
-  inboundCommit: 1,
-  inboundDigest: 1,
-  inboundVersion: 1,
-  inboundAcceptance: 1,
-  assignmentAssignee: 1,
-  assignmentUrl: 1,
-  assignmentDigest: 1,
-  assignmentVersion: 1,
-  assignmentSignedAt: 1,
-  monthlyPool: 2,
-  rewardAssetAddress: 2,
-  rewardAssetSymbol: 2,
+  name: 0,
+  image: 0,
+  headline: 0,
+  goal: 0,
+  criteria: 0,
+  contributionGuide: 0,
+  supportedTasks: 0,
+  requiredTests: 0,
+  reviewExpectations: 0,
+  securityContact: 0,
+  closurePolicy: 0,
+  maintainerNotes: 0,
+  copyrightModel: 0,
+  legalHolder: 0,
+  inboundTermsUrl: 0,
+  inboundCommit: 0,
+  inboundDigest: 0,
+  inboundVersion: 0,
+  inboundAcceptance: 0,
+  assignmentAssignee: 0,
+  assignmentUrl: 0,
+  assignmentDigest: 0,
+  assignmentVersion: 0,
+  assignmentSignedAt: 0,
+  monthlyPool: 1,
+  settlementChain: 1,
+  rewardAssetAddress: 1,
+  rewardAssetSymbol: 1,
 };
-const FIELD_LABELS: Partial<Record<ProposalField, string>> = {
-  contributionGuide: "Contribution guide",
-  supportedTasks: "Supported tasks",
-  requiredTests: "Required tests",
-  reviewExpectations: "Review expectations",
-  securityContact: "Security contact",
-  closurePolicy: "Closure policy",
-  maintainerNotes: "Maintainer notes",
-  repository: "Public GitHub repository",
-  repositoryNumericId: "Repository numeric ID",
-  repositoryNodeId: "Repository node ID",
-  integrationBranch: "Integration branch",
-  stewardName: "Steward display name",
-  stewardLogin: "Steward GitHub login",
-  stewardActorId: "Steward numeric actor ID",
-  stewardNodeId: "Steward actor node ID",
-  licenseSpdx: "License SPDX",
-  licenseCommit: "LICENSE commit SHA",
-  licenseDigest: "LICENSE SHA-256",
-  name: "Project name",
-  headline: "Short description",
-  goal: "Goal",
-  criteria: "Acceptance criteria",
-  copyrightModel: "Copyright model",
-  legalHolder: "Exact legal copyright holder",
-  inboundTermsUrl: "Immutable terms URL",
-  inboundCommit: "Terms commit SHA",
-  inboundDigest: "Terms SHA-256",
-  inboundVersion: "Terms version",
-  inboundAcceptance: "Acceptance mechanism",
-  assignmentAssignee: "Assignment assignee",
-  assignmentUrl: "Signed instrument URL",
-  assignmentDigest: "Instrument SHA-256",
-  assignmentVersion: "Instrument version",
-  assignmentSignedAt: "Signed at",
-  monthlyPool: "Monthly amount",
-  rewardAssetAddress: "Token address",
-  rewardAssetSymbol: "Token symbol",
-};
-
-const TERMS_FIELDS = new Set<string>([
-  "copyrightModel",
-  "legalHolder",
-  "inboundTermsUrl",
-  "inboundCommit",
-  "inboundDigest",
-  "inboundVersion",
-  "inboundAcceptance",
-  "assignmentAssignee",
-  "assignmentUrl",
-  "assignmentDigest",
-  "assignmentVersion",
-  "assignmentSignedAt",
-]);
-const isTermsField = (field: string) => TERMS_FIELDS.has(field);
-
 const GIT_SHA = /^[0-9a-f]{40}$/u;
 const FILE_DIGEST = /^[0-9a-f]{64}$/u;
 const NUMERIC_ID = /^[1-9]\d{0,39}$/u;
@@ -254,17 +207,21 @@ function lengthError(
     : `Enter ${minimum} to ${maximum} characters.`;
 }
 
-/** One validation source for the setup wizard, its summary and its handoff. */
+/** One validation source for the setup fields, navigation and submission. */
 function proposalErrors(p: Proposal): FieldErrors {
   const errors: FieldErrors = {};
   if (!validRepositoryPath(p.repository))
-    errors.repository = "Use owner/name, for example SlopDotCash/slopdotcash.";
-  if (!NUMERIC_ID.test(p.repositoryNumericId))
-    errors.repositoryNumericId =
-      "Look up the repository, or enter its numeric GitHub ID.";
-  if (!NODE_ID.test(p.repositoryNodeId))
-    errors.repositoryNodeId =
-      "Look up the repository, or enter its GitHub node ID.";
+    errors.repository = p.repository
+      ? "Use owner/repository."
+      : "Choose a repository.";
+  if (
+    !NUMERIC_ID.test(p.repositoryNumericId) ||
+    !NODE_ID.test(p.repositoryNodeId) ||
+    !GITHUB_LOGIN.test(p.stewardLogin) ||
+    !NUMERIC_ID.test(p.stewardActorId) ||
+    !NODE_ID.test(p.stewardNodeId)
+  )
+    errors.repository ??= "Wait for the repository to load.";
   if (
     p.integrationBranch.length > 255 ||
     !/^(?!.*(?:\.\.|\s|~|\^|:|\?|\*|\[|\\))[A-Za-z0-9._/-]+$/u.test(
@@ -272,23 +229,16 @@ function proposalErrors(p: Proposal): FieldErrors {
     )
   )
     errors.integrationBranch = "Enter a valid Git branch name.";
-  const stewardName = lengthError(p.stewardName, 2, 120);
-  if (stewardName) errors.stewardName = stewardName;
-  if (!GITHUB_LOGIN.test(p.stewardLogin))
-    errors.stewardLogin = "Enter a GitHub login.";
-  if (!NUMERIC_ID.test(p.stewardActorId))
-    errors.stewardActorId = "Enter the steward's numeric GitHub ID.";
-  if (!NODE_ID.test(p.stewardNodeId))
-    errors.stewardNodeId = "Enter the steward's GitHub node ID.";
   const licenseEntered =
     p.licenseSpdx !== "" || p.licenseCommit !== "" || p.licenseDigest !== "";
   if (licenseEntered) {
-    if (!/^[A-Za-z0-9-.+]{1,80}$/u.test(p.licenseSpdx))
-      errors.licenseSpdx = "Enter an SPDX ID, or clear all license facts.";
-    if (!GIT_SHA.test(p.licenseCommit))
-      errors.licenseCommit = "Enter a 40-character commit SHA.";
-    if (!FILE_DIGEST.test(p.licenseDigest))
-      errors.licenseDigest = "Enter a 64-character SHA-256.";
+    if (
+      !/^[A-Za-z0-9-.+]{1,80}$/u.test(p.licenseSpdx) ||
+      !GIT_SHA.test(p.licenseCommit) ||
+      !FILE_DIGEST.test(p.licenseDigest)
+    )
+      errors.repository ??=
+        "Look up the repository again to refresh its license.";
   }
   const name = lengthError(p.name, 2, 80);
   if (name) errors.name = name;
@@ -344,7 +294,10 @@ function proposalErrors(p: Proposal): FieldErrors {
     if (p.assignmentSignedAt.length === 0)
       errors.assignmentSignedAt = "Enter the signing date and time.";
   }
-  if (p.fundingMode === "monthly" && p.rewardKind === "token") {
+  if (
+    ["monthly", "bounty"].includes(p.fundingMode) &&
+    p.rewardKind === "token"
+  ) {
     try {
       rewardAssetChoice(
         p.settlementChain,
@@ -359,12 +312,33 @@ function proposalErrors(p: Proposal): FieldErrors {
       else errors.rewardAssetAddress = message;
     }
   }
-  if (p.fundingMode === "monthly") {
+  if (["monthly", "bounty"].includes(p.fundingMode)) {
+    if (!REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork])
+      errors.settlementChain = "Choose a supported network.";
     const amount = monthlyPoolValue(
       p.monthlyPool,
-      p.rewardKind === "token" ? { symbol: p.rewardAssetSymbol } : undefined,
+      p.rewardKind === "token"
+        ? { symbol: p.rewardAssetSymbol }
+        : p.rewardKind === "native"
+          ? REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
+              ?.native
+          : undefined,
     );
     if (!amount.valid) errors.monthlyPool = amount.error;
+    else if (
+      p.fundingMode === "bounty" &&
+      p.rewardKind !== "token" &&
+      BigInt(amount.minor) % 4n !== 0n
+    )
+      errors.monthlyPool = "Amount must split into whole token units.";
+  }
+  if (p.fundingMode === "bounty") {
+    if (!GIT_SHA.test(p.sourceCommit))
+      errors.integrationBranch = "Reload the repository to verify this branch.";
+    if (p.criteria.trim().length < 12)
+      errors.criteria = "Describe the accepted security finding.";
+    if (p.requiredTests.trim() && p.requiredTests.trim().length < 12)
+      errors.requiredTests = "Describe the safe testing rules.";
   }
   return errors;
 }
@@ -417,167 +391,32 @@ function readDraft(): Proposal | null {
   }
 }
 
-function TextField({
-  label,
-  name,
-  value,
-  error,
-  hint,
-  multiline = false,
-  onChange,
-  ...input
-}: {
-  label: string;
-  name: string;
-  value: string;
-  error?: string;
-  hint?: ReactNode;
-  multiline?: boolean;
-  onChange: (value: string) => void;
-  inputMode?: "decimal" | "numeric";
-  placeholder?: string;
-  type?: string;
-}) {
-  const id = `field-${name}`;
-  const described = [hint ? `${id}-hint` : "", error ? `${id}-error` : ""]
-    .filter(Boolean)
-    .join(" ");
-  const shared = {
-    "aria-describedby": described || undefined,
-    "aria-invalid": error ? true : undefined,
-    id,
-    name,
-    value,
-  };
-  return (
-    <div
-      className={`form-field${!multiline && ["name", "stewardName", "stewardLogin", "integrationBranch", "licenseSpdx", "rewardAssetSymbol", "monthlyPool"].includes(name) ? " field-compact" : ""}${error ? " form-field-invalid" : ""}`}
-    >
-      <label htmlFor={id}>{label}</label>
-      {multiline ? (
-        <textarea
-          {...shared}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={input.placeholder}
-        />
-      ) : (
-        <input
-          {...shared}
-          {...input}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
-      {hint ? (
-        <small className="field-hint" id={`${id}-hint`}>
-          {hint}
-        </small>
-      ) : null}
-      {error ? (
-        <small className="field-error" id={`${id}-error`}>
-          {error}
-        </small>
-      ) : null}
-    </div>
-  );
-}
-
-function SelectField({
-  label,
-  name,
-  value,
-  error,
-  options,
-  onChange,
-}: {
-  label: string;
-  name: string;
-  value: string;
-  error?: string;
-  options: [string, string][];
-  onChange: (value: string) => void;
-}) {
-  const id = `field-${name}`;
-  return (
-    <div
-      className={`form-field field-compact${error ? " form-field-invalid" : ""}`}
-    >
-      <label htmlFor={id}>{label}</label>
-      <select
-        aria-describedby={error ? `${id}-error` : undefined}
-        aria-invalid={error ? true : undefined}
-        id={id}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      >
-        {options.map(([optionValue, optionLabel]) => (
-          <option key={optionValue} value={optionValue}>
-            {optionLabel}
-          </option>
-        ))}
-      </select>
-      {error ? (
-        <small className="field-error" id={`${id}-error`}>
-          {error}
-        </small>
-      ) : null}
-    </div>
-  );
-}
-
-function ErrorSummary({
-  errors,
-  onSelect,
-}: {
-  errors: FieldErrors;
-  onSelect: (field: ProposalField) => void;
-}) {
-  const entries = Object.entries(errors) as [ProposalField, string][];
-  if (entries.length === 0) return null;
-  return (
-    <div className="form-error-summary" role="alert" tabIndex={-1}>
-      <strong>
-        Fix {entries.length} field{entries.length === 1 ? "" : "s"} to continue.
-      </strong>
-      <ul>
-        {entries.map(([field, message]) => (
-          <li key={field}>
-            <button onClick={() => onSelect(field)} type="button">
-              {FIELD_LABELS[field] ?? field}
-            </button>
-            : {message}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/**
- * After GitHub sign-in, lists the repositories the account owns so the
- * maintainer picks one instead of typing owner/name. Manual entry stays
- * available for organization repositories and signed-out visitors.
- */
+/** One repository control: account choices, with URL entry for other public repos. */
 function RepositoryPicker({
   selected,
   onChoose,
   projectSession,
+  error,
+  retryLookup,
 }: {
   selected: string;
   projectSession: ProjectSessionState;
   onChoose: (repository: string) => void;
+  error?: string;
+  retryLookup?: () => void;
 }) {
   const login =
     projectSession.status === "signed-in"
       ? projectSession.session.githubLogin
       : null;
-  const session = projectSession.status;
   const [attempt, setAttempt] = useState(0);
+  const [manual, setManual] = useState(false);
   const [list, setList] = useState<
     | { status: "loading" }
     | { status: "ready"; repositories: OwnedRepository[] }
     | { status: "error"; message: string }
   >({ status: "loading" });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed repository request.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries the inventory request.
   useEffect(() => {
     if (!login) return;
     const controller = new AbortController();
@@ -587,90 +426,129 @@ function RepositoryPicker({
         if (!controller.signal.aborted)
           setList({ status: "ready", repositories });
       },
-      (error: unknown) => {
+      (cause: unknown) => {
         if (!controller.signal.aborted)
           setList({
             status: "error",
-            message: errorMessage(
-              error,
-              "Your repositories could not be loaded.",
-            ),
+            message: errorMessage(cause, "Repositories could not load."),
           });
       },
     );
     return () => controller.abort();
   }, [login, attempt]);
-  if (session === "checking")
-    return (
-      <p className="repository-picker-status" role="status">
-        Checking sign-in…
-      </p>
-    );
   if (!login)
     return (
-      <div className="repository-picker-signin">
+      <div className="form-field">
+        <span>GitHub repository</span>
         <a
+          id="field-repository"
           className="button secondary-button"
           href={loginHref("/projects/new")}
         >
-          Sign in with GitHub
+          {projectSession.status === "checking"
+            ? "Checking sign-in…"
+            : "Sign in with GitHub"}
         </a>
-        <p className="repository-picker-status">
-          {session === "error" ? "We couldn’t check your session. " : ""}
-          Or enter the repository below.
-        </p>
+        {error ? (
+          <small className="field-error" id="field-repository-error">
+            {error}
+          </small>
+        ) : null}
       </div>
     );
-  if (list.status === "loading")
-    return (
-      <p className="repository-picker-status" role="status">
-        Loading your repositories…
-      </p>
-    );
-  if (list.status === "error")
-    return (
-      <p className="repository-picker-status field-error" role="status">
-        {list.message}{" "}
+  const repositories = list.status === "ready" ? list.repositories : [];
+  const selectedOption =
+    repositories.find(
+      (entry) => entry.repository.toLowerCase() === selected.toLowerCase(),
+    )?.repository ?? selected;
+  return (
+    <div className="setup-repository-picker">
+      {manual ||
+      list.status === "error" ||
+      (list.status === "ready" && repositories.length === 0) ? (
+        <div className="setup-repository-entry">
+          <TextField
+            label="GitHub repository"
+            name="repository"
+            value={selected}
+            placeholder="owner/repository or GitHub URL"
+            error={error}
+            onChange={(value) => onChoose(normalizeRepositoryInput(value))}
+          />
+          {repositories.length > 0 ? (
+            <button
+              className="button ghost-button"
+              type="button"
+              aria-label="Choose from your repositories"
+              onClick={() => {
+                setManual(false);
+                window.setTimeout(
+                  () => document.getElementById("field-repository")?.focus(),
+                  0,
+                );
+              }}
+            >
+              <ListChecks aria-hidden="true" size={20} />
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <SelectField
+          label="GitHub repository"
+          name="repository"
+          value={selectedOption}
+          error={error}
+          disabled={list.status === "loading"}
+          options={[
+            [
+              "",
+              list.status === "loading"
+                ? "Loading repositories…"
+                : "Choose a repository",
+            ],
+            ...(selectedOption &&
+            !repositories.some((entry) => entry.repository === selectedOption)
+              ? [[selectedOption, selectedOption] as [string, string]]
+              : []),
+            ...repositories.map((entry): [string, string] => [
+              entry.repository,
+              entry.repository,
+            ]),
+            ["__other", "Enter repository…"],
+          ]}
+          onChange={(value) => {
+            if (value === "__other") {
+              setManual(true);
+              onChoose("");
+              window.setTimeout(
+                () => document.getElementById("field-repository")?.focus(),
+                0,
+              );
+            } else onChoose(value);
+          }}
+        />
+      )}
+      {list.status === "error" ? (
+        <small className="field-error">
+          {list.message}{" "}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            Retry repositories
+          </button>
+        </small>
+      ) : null}
+      {retryLookup ? (
         <button
           type="button"
-          className="text-button"
-          onClick={() => setAttempt((value) => value + 1)}
+          className="text-button setup-lookup-retry"
+          onClick={retryLookup}
         >
           Retry
-        </button>{" "}
-        Or enter the repository below.
-      </p>
-    );
-  if (list.repositories.length === 0)
-    return (
-      <p className="repository-picker-status" role="status">
-        @{login} owns no public repositories. Enter one below.
-      </p>
-    );
-  const value = list.repositories.some((entry) => entry.repository === selected)
-    ? selected
-    : "";
-  return (
-    <div className="form-field">
-      <label htmlFor="field-ownedRepository">Your repositories</label>
-      <select
-        aria-describedby="field-ownedRepository-hint"
-        id="field-ownedRepository"
-        onChange={(event) => {
-          if (event.target.value) onChoose(event.target.value);
-        }}
-        value={value}
-      >
-        <option value="">Choose a repository</option>
-        {list.repositories.map((entry) => (
-          <option key={entry.repository} value={entry.repository}>
-            {entry.repository}
-          </option>
-        ))}
-      </select>
-      <small className="field-hint" id="field-ownedRepository-hint">
-        For an organization repository, enter it below.
-      </small>
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -712,7 +590,7 @@ function SubmitProject({
           Sign in with GitHub
         </a>
       )}
-      {login ? <p>Creating as @{login}.</p> : null}
+      {login ? <span className="setup-actor">@{login}</span> : null}
     </>
   );
 }
@@ -720,26 +598,32 @@ function SubmitProject({
 function ClosureConsent({
   value,
   onChange,
+  compact = false,
 }: {
   value: string;
   onChange: (value: string) => void;
+  compact?: boolean;
 }) {
   return (
     <div>
       <label className="checkbox-field">
         <input
-          aria-describedby="automatic-closure-hint"
+          aria-describedby={compact ? undefined : "automatic-closure-hint"}
           checked={value === "true"}
           name="automaticClosure"
           onChange={(event) => onChange(String(event.currentTarget.checked))}
           type="checkbox"
         />{" "}
-        Allow automatic closure by Slopbot
+        {compact
+          ? "Allow Slopbot to close Slop-skill PRs; authors can appeal."
+          : "Allow automatic closure by Slopbot"}
       </label>
-      <p className="field-hint" id="automatic-closure-hint">
-        Only Slop-skill pull requests can be closed, and authors can appeal. You
-        can turn this off at any time.
-      </p>
+      {compact ? null : (
+        <p className="field-hint" id="automatic-closure-hint">
+          Only Slop-skill pull requests can be closed, and authors can appeal.
+          You can turn this off at any time.
+        </p>
+      )}
     </div>
   );
 }
@@ -753,6 +637,10 @@ function FundingFields({
   set,
   error,
   networkFixed,
+  compact = false,
+  bounty = false,
+  onBounty,
+  networkError,
 }: {
   choice: FundingChoice;
   set: (field: keyof FundingChoice, value: string) => void;
@@ -761,6 +649,10 @@ function FundingFields({
   ) => string | undefined;
   /** A project with a vault keeps its network and asset. */
   networkFixed: boolean;
+  compact?: boolean;
+  bounty?: boolean;
+  onBounty?: () => void;
+  networkError?: string;
 }) {
   const network =
     REWARD_ASSET_NETWORKS[choice.network as RewardAssetNetwork] ??
@@ -768,108 +660,91 @@ function FundingFields({
   const symbol =
     choice.assetKind === "token"
       ? choice.tokenSymbol.trim() || "token"
-      : network.stablecoin.symbol;
+      : choice.assetKind === "native"
+        ? network.native.symbol
+        : network.stablecoin.symbol;
   return (
     <>
       <fieldset className="funding-mode">
-        <legend>Monthly funding (optional)</legend>
+        <legend>
+          {compact ? "Reward type" : "Monthly funding (optional)"}
+        </legend>
         <label className="checkbox-field">
           <input
-            checked={choice.mode === "none"}
+            checked={choice.mode === "none" && !bounty}
             name="fundingMode"
             onChange={() => set("mode", "none")}
             type="radio"
           />{" "}
-          Points only
+          <span>
+            {compact ? <ListChecks aria-hidden="true" size={20} /> : null}Points
+            only
+          </span>
         </label>
         <label className="checkbox-field">
           <input
-            checked={choice.mode === "monthly"}
+            checked={choice.mode === "monthly" && !bounty}
             name="fundingMode"
             onChange={() => set("mode", "monthly")}
             type="radio"
           />{" "}
-          Monthly rewards
+          <span>
+            {compact ? <Wallet aria-hidden="true" size={20} /> : null}Monthly
+            rewards
+          </span>
         </label>
+        {onBounty ? (
+          <label className="checkbox-field">
+            <input
+              checked={bounty}
+              name="fundingMode"
+              onChange={onBounty}
+              type="radio"
+            />
+            <span>
+              <Shield aria-hidden="true" size={20} />
+              Private bounty
+            </span>
+          </label>
+        ) : null}
       </fieldset>
-      {choice.mode === "none" ? (
-        <p className="field-hint">Add funding later.</p>
+      {choice.mode === "none" && !bounty ? (
+        compact ? null : (
+          <p className="field-hint">Add funding later.</p>
+        )
       ) : (
         <>
-          {networkFixed ? (
-            <p className="field-hint">
-              Paid in {symbol} on {network.name} (fixed by the vault).
-            </p>
-          ) : (
-            <>
-              <SelectField
-                label="Network"
-                name="settlementChain"
-                onChange={(value) => set("network", value)}
-                options={Object.entries(SETTLEMENT_CHAIN_NAMES)}
-                value={choice.network}
-              />
-              <SelectField
-                label="Asset"
-                name="rewardKind"
-                onChange={(value) => set("assetKind", value)}
-                options={[
-                  [
-                    "stablecoin",
-                    `${network.stablecoin.symbol} (network stablecoin)`,
-                  ],
-                  ["token", "Another token"],
-                ]}
-                value={choice.assetKind}
-              />
-              {choice.assetKind === "token" ? (
-                <>
-                  <TextField
-                    error={error("tokenAddress")}
-                    hint={
-                      network.family === "evm"
-                        ? `The ERC-20 contract address on ${network.name}.`
-                        : "The classic SPL mint address on Solana."
-                    }
-                    label="Token address"
-                    name="rewardAssetAddress"
-                    onChange={(value) => set("tokenAddress", value)}
-                    placeholder={
-                      network.family === "evm" ? "0x…" : "Mint address"
-                    }
-                    value={choice.tokenAddress}
-                  />
-                  <TextField
-                    error={error("tokenSymbol")}
-                    label="Token symbol"
-                    name="rewardAssetSymbol"
-                    onChange={(value) => set("tokenSymbol", value)}
-                    value={choice.tokenSymbol}
-                  />
-                </>
-              ) : (
-                <details className="proposal-advanced">
-                  <summary>{network.stablecoin.symbol} asset details</summary>
-                  <p className="field-hint">
-                    {network.name}: <code>{network.stablecoin.address}</code>
-                  </p>
-                </details>
-              )}
-            </>
-          )}
+          <RewardAssetFields
+            choice={choice}
+            set={set}
+            error={error}
+            networkFixed={networkFixed}
+            networkError={networkError}
+            compact={compact}
+          />
           <TextField
             error={error("monthlyAmount")}
-            hint="A pledge until deposited in the vault. Changes apply from the next UTC month."
+            hint={
+              compact
+                ? undefined
+                : "A pledge until deposited in the vault. Changes apply from the next UTC month."
+            }
             inputMode="decimal"
-            label={`Monthly amount (${symbol})`}
+            label={
+              bounty
+                ? `Award per accepted finding (${symbol})`
+                : `Monthly amount (${symbol})`
+            }
             name="monthlyPool"
             onChange={(value) => set("monthlyAmount", value)}
             value={choice.monthlyAmount}
           />
-          <p className="fee-preview">
-            Payout fee: {ESCROW_PAYOUT_FEE_BASIS_POINTS / 100}%. Unused-fund
-            withdrawal fee: {ESCROW_WITHDRAWAL_FEE_BASIS_POINTS / 100}%.
-          </p>
+          {compact ? null : (
+            <p className="fee-preview">
+              Payout fee: {ESCROW_PAYOUT_FEE_BASIS_POINTS / 100}%. Unused-fund
+              withdrawal fee: {ESCROW_WITHDRAWAL_FEE_BASIS_POINTS / 100}%.
+            </p>
+          )}
         </>
       )}
     </>
@@ -882,12 +757,22 @@ export default function ProjectProposalPage() {
   const [proposal, setProposal] = useState<Proposal>(
     () => readDraft() ?? EMPTY_PROPOSAL,
   );
-  const [restored] = useState(() => readDraft() !== null);
+  const [extraRuleFields, setExtraRuleFields] = useState(() =>
+    SKILL_RULE_FIELDS.filter(
+      (field) => field !== "requiredTests" && proposal[field] !== "",
+    ),
+  );
   const [referrer, setReferrer] = useState<string | null>(initialReferrer);
   const [step, setStep] = useState(() => {
     try {
       const stored = localStorage.getItem(PROPOSAL_STEP_KEY);
-      const index = stored === null ? 0 : Number(stored);
+      const legacy = localStorage.getItem(LEGACY_PROPOSAL_STEP_KEY);
+      const index =
+        stored !== null
+          ? Number(stored)
+          : legacy !== null
+            ? Math.max(0, Number(legacy) - 1)
+            : 0;
       return readDraft() &&
         Number.isInteger(index) &&
         index >= 0 &&
@@ -905,10 +790,16 @@ export default function ProjectProposalPage() {
     state: "idle" | "loading" | "done" | "error";
     message: string;
   }>({ state: "idle", message: "" });
-  const [factsOpen, setFactsOpen] = useState(false);
-  const [instructionsOpen, setInstructionsOpen] = useState(false);
-  const [goalOpen, setGoalOpen] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
+  const [branchChoices, setBranchChoices] = useState<{
+    repository: string;
+    names: string[];
+    commits: Record<string, string>;
+  } | null>(null);
+  const [lookupAttempt, setLookupAttempt] = useState(0);
+  const resolvedRepository = useRef<{
+    repository: string;
+    attempt: number;
+  } | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
   const lookupController = useRef<AbortController | null>(null);
   const suggestedText = useRef({
@@ -917,11 +808,6 @@ export default function ProjectProposalPage() {
     goal: "",
     criteria: "",
   });
-  const [termsOpen, setTermsOpen] = useState(
-    () =>
-      proposal.copyrightModel !== "unknown" ||
-      proposal.inboundMode !== "unknown",
-  );
   useEffect(() => {
     try {
       localStorage.setItem(PROPOSAL_DRAFT_KEY, JSON.stringify(proposal));
@@ -931,12 +817,123 @@ export default function ProjectProposalPage() {
       setSaveFailed(true);
     }
   }, [proposal, step]);
-  useEffect(() => () => lookupController.current?.abort(), []);
+  // One cancellable lookup for new choices, pasted URLs and restored drafts.
+  useEffect(() => {
+    const repository = normalizeRepositoryInput(proposal.repository);
+    const key = repository.toLowerCase();
+    if (
+      projectSession.status !== "signed-in" ||
+      !validRepositoryPath(repository)
+    ) {
+      setLookup({ state: "idle", message: "" });
+      return;
+    }
+    if (
+      resolvedRepository.current?.repository === key &&
+      resolvedRepository.current.attempt === lookupAttempt
+    )
+      return;
+    const controller = new AbortController();
+    lookupController.current = controller;
+    setLookup({ state: "loading", message: "" });
+    const timer = window.setTimeout(() => {
+      void lookupGitHubRepository(repository, controller.signal).then(
+        (facts) => {
+          if (
+            controller.signal.aborted ||
+            lookupController.current !== controller
+          )
+            return;
+          const description = facts.description ?? "";
+          const suggested = {
+            name: facts.repository.split("/")[1] ?? "",
+            headline: boundedText(description, 8, 120) ? description : "",
+            goal: boundedText(description, 24, 600) ? description : "",
+            criteria: DEFAULT_CRITERIA,
+          };
+          const previous = suggestedText.current;
+          const fill = (field: keyof typeof suggested, value: string) =>
+            value === "" || value === previous[field]
+              ? suggested[field]
+              : value;
+          resolvedRepository.current = {
+            repository: facts.repository.toLowerCase(),
+            attempt: lookupAttempt,
+          };
+          suggestedText.current = suggested;
+          setBranchChoices({
+            repository: facts.repository,
+            names: facts.branches,
+            commits: facts.branchCommits ?? {},
+          });
+          setProposal((current) => {
+            if (
+              normalizeRepositoryInput(current.repository).toLowerCase() !== key
+            )
+              return current;
+            return {
+              ...current,
+              name: fill("name", current.name),
+              headline: fill("headline", current.headline),
+              goal: fill("goal", current.goal),
+              criteria: fill("criteria", current.criteria),
+              repository: facts.repository,
+              repositoryNumericId: facts.numericId,
+              repositoryNodeId: facts.nodeId,
+              integrationBranch:
+                current.repositoryNumericId === facts.numericId
+                  ? current.integrationBranch
+                  : facts.defaultBranch,
+              sourceCommit:
+                facts.branchCommits?.[
+                  current.repositoryNumericId === facts.numericId
+                    ? current.integrationBranch
+                    : facts.defaultBranch
+                ] ?? "",
+              stewardKind: facts.owner.kind,
+              stewardLogin: facts.owner.login,
+              stewardActorId: facts.owner.actorId,
+              stewardNodeId: facts.owner.nodeId,
+              licenseSpdx:
+                facts.license.state === "verified" ? facts.license.spdx : "",
+              licenseCommit:
+                facts.license.state === "verified"
+                  ? facts.license.commitSha
+                  : "",
+              licenseDigest:
+                facts.license.state === "verified"
+                  ? facts.license.fileSha256
+                  : "",
+            };
+          });
+          setLookup({ state: "done", message: "" });
+        },
+        (cause: unknown) => {
+          if (
+            controller.signal.aborted ||
+            lookupController.current !== controller
+          )
+            return;
+          setLookup({
+            state: "error",
+            message: errorMessage(cause, "Repository could not load."),
+          });
+        },
+      );
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [projectSession.status, proposal.repository, lookupAttempt]);
   const set = (field: ProposalField) => (value: string) => {
     if (field === "repository") {
+      if (proposal.repository.toLowerCase() === value.toLowerCase()) return;
       lookupController.current?.abort();
       setLookup({ state: "idle", message: "" });
       if (proposal.repository !== value) {
+        setBranchChoices(null);
+        resolvedRepository.current = null;
         // Facts from another repository must never pair with this name.
         setProposal((current) => ({
           ...current,
@@ -944,6 +941,7 @@ export default function ProjectProposalPage() {
           repositoryNumericId: "",
           repositoryNodeId: "",
           integrationBranch: EMPTY_PROPOSAL.integrationBranch,
+          sourceCommit: "",
           stewardKind: EMPTY_PROPOSAL.stewardKind,
           stewardLogin: "",
           stewardActorId: "",
@@ -955,9 +953,72 @@ export default function ProjectProposalPage() {
         return;
       }
     }
-    setProposal((current) => ({ ...current, [field]: value }));
+    setProposal((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === "integrationBranch"
+        ? { sourceCommit: branchChoices?.commits[value] ?? "" }
+        : {}),
+      ...(field === "fundingMode" && value === "bounty"
+        ? {
+            criteria:
+              current.criteria === DEFAULT_CRITERIA
+                ? PRIVATE_BOUNTY_CRITERIA
+                : current.criteria,
+            requiredTests: current.requiredTests || PRIVATE_BOUNTY_TESTING,
+          }
+        : {}),
+      ...(field === "fundingMode" && value !== "bounty"
+        ? {
+            criteria:
+              current.criteria === PRIVATE_BOUNTY_CRITERIA
+                ? DEFAULT_CRITERIA
+                : current.criteria,
+            requiredTests:
+              current.requiredTests === PRIVATE_BOUNTY_TESTING
+                ? ""
+                : current.requiredTests,
+          }
+        : {}),
+    }));
   };
-  const errors = useMemo(() => proposalErrors(proposal), [proposal]);
+  const errors = useMemo(() => {
+    const result = proposalErrors(proposal);
+    if (lookup.state === "error") result.repository = lookup.message;
+    if (
+      proposal.repositoryNumericId &&
+      (branchChoices?.repository !== proposal.repository ||
+        !branchChoices.names.includes(proposal.integrationBranch))
+    )
+      result.integrationBranch =
+        branchChoices?.repository === proposal.repository
+          ? "Choose a repository branch."
+          : "Wait for the repository branches to load.";
+    return result;
+  }, [proposal, branchChoices, lookup]);
+  // Re-check earlier steps when restored GitHub facts arrive or a draft is
+  // opened on a later step. A pending branch read is not a failed validation.
+  const invalidPriorField = (Object.keys(errors) as ProposalField[]).find(
+    (field) =>
+      (FIELD_STEP[field] ?? step) < step &&
+      !(
+        field === "integrationBranch" &&
+        proposal.repositoryNumericId &&
+        branchChoices?.repository !== proposal.repository &&
+        lookup.state !== "error"
+      ),
+  );
+  useEffect(() => {
+    if (!invalidPriorField) return;
+    const owner = FIELD_STEP[invalidPriorField] ?? 0;
+    setAttempted((current) =>
+      current.map((value, index) => value || index === owner),
+    );
+    setStep(owner);
+    window.setTimeout(() => {
+      document.getElementById(`field-${invalidPriorField}`)?.focus();
+    }, 0);
+  }, [invalidPriorField]);
   const stepErrors = (index: number) =>
     Object.fromEntries(
       Object.entries(errors).filter(
@@ -966,25 +1027,36 @@ export default function ProjectProposalPage() {
     ) as FieldErrors;
   const shown = (field: ProposalField) => {
     const owner = FIELD_STEP[field];
-    return owner !== undefined && (attempted[owner] || attempted[3])
+    return owner !== undefined && (attempted[owner] || attempted[2])
       ? errors[field]
       : undefined;
   };
   const valid = Object.keys(errors).length === 0;
   const p = proposal;
+  const branches =
+    branchChoices?.repository === p.repository ? branchChoices.names : [];
   const slug =
     slugify(p.name) ||
     slugify(p.repository.split("/").at(-1) || "") ||
     "new-project";
   const pool = monthlyPoolValue(
     p.monthlyPool,
-    p.rewardKind === "token" ? { symbol: p.rewardAssetSymbol } : undefined,
+    p.rewardKind === "token"
+      ? { symbol: p.rewardAssetSymbol }
+      : p.rewardKind === "native"
+        ? REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]?.native
+        : undefined,
   );
   const funding: FundingChoice = useMemo(
     () => ({
       mode: p.fundingMode === "monthly" ? "monthly" : "none",
       network: p.settlementChain,
-      assetKind: p.rewardKind === "token" ? "token" : "stablecoin",
+      assetKind:
+        p.rewardKind === "token"
+          ? "token"
+          : p.rewardKind === "native"
+            ? "native"
+            : "stablecoin",
       tokenAddress: p.rewardAssetAddress,
       tokenSymbol: p.rewardAssetSymbol,
       monthlyAmount: p.monthlyPool,
@@ -1001,24 +1073,47 @@ export default function ProjectProposalPage() {
   const fundingSymbol =
     p.rewardKind === "token"
       ? p.rewardAssetSymbol.trim() || "token"
-      : (REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
-          ?.stablecoin.symbol ?? "USDC");
+      : p.rewardKind === "native"
+        ? REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork].native
+            .symbol
+        : (REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
+            ?.stablecoin.symbol ?? "USDC");
   const manifest = useMemo(() => {
     const now = new Date();
     const repository = p.repository || "owner/repository";
+    const bounty =
+      p.fundingMode === "bounty" &&
+      valid &&
+      projectSession.status === "signed-in"
+        ? privateBountyTerms({
+            name: p.name,
+            repository,
+            commit: p.sourceCommit,
+            scope: p.goal,
+            criteria: p.criteria,
+            testing: p.requiredTests,
+            funding,
+            actor: projectSession.session,
+          })
+        : undefined;
     return {
       schemaVersion: "1",
       id: slug,
       slug,
       name: p.name || "New project",
-      eyebrow: "Open-source project",
+      eyebrow:
+        p.fundingMode === "bounty"
+          ? "Private security bounty"
+          : "Open-source project",
       headline: p.headline || "Describe the project in one sentence.",
       ...(p.image ? { image: p.image } : {}),
       description: p.goal || "Describe the concrete open-source goal.",
       listingTier: "community",
       status: "paused",
       steward: {
-        displayName: p.stewardName || "Unverified steward",
+        displayName: p.stewardLogin
+          ? `@${p.stewardLogin}`
+          : "Unverified steward",
         kind: p.stewardKind,
         github: {
           actorId: p.stewardActorId || "0",
@@ -1122,12 +1217,13 @@ export default function ProjectProposalPage() {
           SKILL_RULE_FIELDS.map((field) => [field, p[field].trim()]),
         ) as Record<SkillRuleField, string>),
       },
-      ...(p.automaticClosure === "true"
+      ...(p.automaticClosure === "true" && p.fundingMode !== "bounty"
         ? { slopbot: { automaticClosure: true } }
         : {}),
       // Optional funding: none, or one asset on one network with its vault
       // policy. The server verifies the asset and stores its decimals.
       ...rewardFields(funding, now),
+      ...(bounty ? { securityBounty: bounty } : {}),
       funding: {
         mode: "direct-noncustodial",
         disclosure:
@@ -1144,7 +1240,11 @@ export default function ProjectProposalPage() {
         issues: `https://github.com/${repository}/issues`,
       },
     };
-  }, [p, slug, funding]);
+  }, [p, slug, funding, projectSession, valid]);
+  const bounty = manifest.securityBounty;
+  const bountyAmounts = bounty
+    ? bountyAmountPreview(bounty.amount, p.monthlyPool, bounty.split)
+    : undefined;
   const [submission, setSubmission] = useState<
     | { status: "idle" | "submitting" }
     | { status: "error"; message: string; install: boolean }
@@ -1160,11 +1260,16 @@ export default function ProjectProposalPage() {
     setReferrer(null);
   }
   function submit() {
+    if (!valid) {
+      goTo(2);
+      return;
+    }
     setSubmission({ status: "submitting" });
     createProject(
       manifest as unknown as ProjectDefinition,
       referrer,
       funding.mode === "monthly" ? funding.monthlyAmount.trim() : null,
+      p.fundingMode === "bounty" ? p.monthlyPool.trim() : null,
     ).then(
       ({ project, setup }) => {
         forgetReferrer();
@@ -1187,6 +1292,20 @@ export default function ProjectProposalPage() {
   }
 
   function goTo(index: number) {
+    if (index > step || index === 2) {
+      setAttempted((current) =>
+        current.map((value, owner) => value || owner < index),
+      );
+      for (let owner = 0; owner < index; owner++) {
+        const field = Object.keys(stepErrors(owner))[0] as
+          | ProposalField
+          | undefined;
+        if (field) {
+          focusField(field);
+          return;
+        }
+      }
+    }
     if (index === SETUP_STEPS.length - 1 && step !== index)
       setSessionRevision((current) => current + 1);
     setStep(index);
@@ -1195,128 +1314,36 @@ export default function ProjectProposalPage() {
     }, 0);
   }
   function next() {
-    setAttempted((current) =>
-      current.map((value, index) => value || index === step),
-    );
-    if (Object.keys(stepErrors(step)).length > 0) {
-      window.setTimeout(
-        () =>
-          document
-            .querySelector<HTMLElement>(".proposal-form .form-error-summary")
-            ?.focus(),
-        0,
-      );
-      return;
-    }
     goTo(step + 1);
   }
   function focusField(field: ProposalField) {
     const owner = FIELD_STEP[field] ?? step;
-    if (
-      owner === 0 &&
-      field !== "repository" &&
-      field !== "integrationBranch" &&
-      field !== "stewardName"
-    )
-      setFactsOpen(true);
-    if (isTermsField(field)) setTermsOpen(true);
-    if (field === "goal") setGoalOpen(true);
-    if (SKILL_RULE_FIELDS.some((entry) => entry === field))
-      setInstructionsOpen(true);
     setStep(owner);
-    window.setTimeout(() => document.getElementById(`field-${field}`)?.focus());
-  }
-  async function runLookup(chosen?: string) {
-    lookupController.current?.abort();
-    const controller = new AbortController();
-    lookupController.current = controller;
-    const repository = normalizeRepositoryInput(chosen ?? p.repository);
-    if (!validRepositoryPath(repository)) {
-      setAttempted((current) => current.map((v, i) => v || i === 0));
-      setLookup({
-        state: "error",
-        message: "Enter the repository as owner/name first.",
-      });
-      return;
-    }
-    setLookup({ state: "loading", message: "Looking up on GitHub…" });
-    try {
-      const facts = await lookupGitHubRepository(repository, controller.signal);
-      if (controller.signal.aborted) return;
-      const description = facts.description ?? "";
-      const suggested = {
-        name: facts.repository.split("/")[1] ?? "",
-        headline: boundedText(description, 8, 120) ? description : "",
-        goal: boundedText(description, 24, 600) ? description : "",
-        criteria: DEFAULT_CRITERIA,
-      };
-      // Replace a suggestion from an earlier repository, never the
-      // maintainer's own words.
-      const previous = suggestedText.current;
-      const fill = (field: keyof typeof suggested, value: string) =>
-        value === "" || value === previous[field] ? suggested[field] : value;
-      suggestedText.current = suggested;
-      setProposal((current) => ({
-        ...current,
-        name: fill("name", current.name),
-        headline: fill("headline", current.headline),
-        goal: fill("goal", current.goal),
-        criteria: fill("criteria", current.criteria),
-        repository: facts.repository,
-        repositoryNumericId: facts.numericId,
-        repositoryNodeId: facts.nodeId,
-        integrationBranch: facts.defaultBranch,
-        stewardKind: facts.owner.kind,
-        stewardLogin: facts.owner.login,
-        stewardActorId: facts.owner.actorId,
-        stewardNodeId: facts.owner.nodeId,
-        stewardName: current.stewardName || facts.owner.login,
-        licenseSpdx:
-          facts.license.state === "verified" ? facts.license.spdx : "",
-        licenseCommit:
-          facts.license.state === "verified" ? facts.license.commitSha : "",
-        licenseDigest:
-          facts.license.state === "verified" ? facts.license.fileSha256 : "",
-      }));
-      setLookup({
-        state: "done",
-        message:
-          facts.license.state === "verified"
-            ? `Found ${facts.repository}. Check the filled-in details before you continue.`
-            : `Found ${facts.repository}. Check the filled-in details before you continue. License stays unknown: ${facts.license.reason}`,
-      });
-    } catch (error: unknown) {
-      if (controller.signal.aborted) return;
-      setLookup({
-        state: "error",
-        message: `${errorMessage(error, "GitHub lookup failed.")} Nothing was filled in. Enter them below or try again.`,
-      });
-      setFactsOpen(true);
-    }
+    window.setTimeout(() => {
+      const target =
+        owner === 0 && !p.repositoryNumericId ? "repository" : field;
+      document.getElementById(`field-${target}`)?.focus();
+    });
   }
   function clearDraft() {
     if (submission.status === "submitting") return;
     lookupController.current?.abort();
     setProposal(EMPTY_PROPOSAL);
+    setExtraRuleFields([]);
     setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
-    setTermsOpen(false);
-    setInstructionsOpen(false);
-    setGoalOpen(false);
     setAttempted(SETUP_STEPS.map(() => false));
     setLookup({ state: "idle", message: "" });
-    setConfirmClear(false);
+    setBranchChoices(null);
+    resolvedRepository.current = null;
     setStep(0);
   }
-  const currentErrors = attempted[step] ? stepErrors(step) : {};
-  const licenseKnown = p.licenseSpdx !== "" && !errors.licenseSpdx;
-  const draftNote = (
-    <p className="proposal-note">
-      {saveFailed
-        ? "This browser cannot save the draft. Keep this page open."
-        : "Draft saved on this device."}
+  const licenseKnown = p.licenseSpdx !== "" && !errors.repository;
+  const draftNote = saveFailed ? (
+    <p className="field-error" role="alert">
+      Draft could not save. Keep this page open.
     </p>
-  );
+  ) : null;
   const navigation = (
     <div className="wizard-actions">
       {step > 0 ? (
@@ -1341,11 +1368,12 @@ export default function ProjectProposalPage() {
   }, [submission.status]);
   if (submission.status === "submitted")
     return (
-      <main className="shell route-main proposal-page">
+      <main className="shell route-main proposal-page setup-compact">
         <h1 id="project-created-heading" tabIndex={-1}>
           Project created
         </h1>
         <ProjectSetupStatusPanel
+          compact
           initial={submission.setup}
           projectId={submission.projectId}
           showProjectLink={false}
@@ -1379,39 +1407,16 @@ export default function ProjectProposalPage() {
         </div>
       </main>
     );
-  const repositoryPicker = (
-    <RepositoryPicker
-      projectSession={projectSession}
-      onChoose={(repository) => {
-        set("repository")(repository);
-        void runLookup(repository);
-      }}
-      selected={p.repository}
-    />
-  );
   return (
-    <main className="shell route-main proposal-page">
+    <main className="shell route-main proposal-page setup-compact">
       <p className="breadcrumb">
         <Link href="/">Projects</Link>
       </p>
-      <RoutePageHeader
-        icon={<GitBranch />}
-        title="Add a project"
-        lead="Install Slopbot and pass the security scan to go live."
-      />
-      <OwnerProjects
-        key={
-          projectSession.status === "signed-in"
-            ? projectSession.session.githubId
-            : "anonymous"
-        }
-        session={projectSession}
-        refreshKey=""
-      />
+      <RoutePageHeader title="Add a project" />
+      <PendingProjectApplications projectSession={projectSession} />
       <nav aria-label="Setup steps">
         <ol className="proposal-steps">
           {SETUP_STEPS.map((label, index) => {
-            const count = Object.keys(stepErrors(index)).length;
             return (
               <li key={label}>
                 <button
@@ -1419,223 +1424,97 @@ export default function ProjectProposalPage() {
                   onClick={() => goTo(index)}
                   type="button"
                 >
-                  <span className="proposal-step-icon" aria-hidden="true">
-                    {index === 0 ? (
-                      <GitBranch />
-                    ) : index === 1 ? (
-                      <ListChecks />
-                    ) : index === 2 ? (
-                      <Wallet />
-                    ) : (
-                      <ShieldCheck />
-                    )}
+                  <span className="setup-step-number" aria-hidden="true">
+                    {index + 1}
                   </span>
-                  <span>
-                    <strong>{index + 1}</strong> {label}
-                  </span>
-                  {attempted[index] && count > 0 ? (
-                    <small>{count} to fix</small>
-                  ) : null}
+                  <span>{label}</span>
                 </button>
               </li>
             );
           })}
         </ol>
       </nav>
-      {restored && step === 0 ? (
-        <p className="proposal-note" role="status">
-          Your saved draft was restored.
-        </p>
-      ) : null}
       <form
         className="proposal-form"
         noValidate
         onSubmit={(event) => event.preventDefault()}
       >
-        <h2 id="proposal-step-heading" tabIndex={-1}>
+        <h2
+          className="visually-hidden"
+          id="proposal-step-heading"
+          tabIndex={-1}
+        >
           {SETUP_STEPS[step]}
         </h2>
         {step === 0 ? (
-          <>
-            {projectSession.status === "signed-in" ? (
-              <details className="proposal-advanced">
-                <summary>Choose from your GitHub repositories</summary>
-                {repositoryPicker}
-              </details>
-            ) : (
-              repositoryPicker
-            )}
-            <div className="lookup-row">
-              <TextField
-                error={shown("repository")}
-                hint="Paste owner/name or a github.com link."
-                label="Public GitHub repository"
-                name="repository"
-                onChange={(value) =>
-                  set("repository")(normalizeRepositoryInput(value))
-                }
-                placeholder="owner/repository"
-                value={p.repository}
-              />
-              {projectSession.status === "signed-in" ? (
-                <button
-                  className="button secondary-button"
-                  disabled={lookup.state === "loading"}
-                  onClick={() => void runLookup()}
-                  type="button"
-                >
-                  {lookup.state === "loading"
-                    ? "Looking up…"
-                    : "Look up on GitHub"}
-                </button>
-              ) : null}
-            </div>
-            <p
-              className={
-                lookup.state === "error"
-                  ? "field-error lookup-status"
-                  : "lookup-status"
+          <div className="setup-source-grid">
+            <RepositoryPicker
+              projectSession={projectSession}
+              onChoose={set("repository")}
+              selected={p.repository}
+              error={
+                shown("repository") ??
+                (lookup.state === "error" ? lookup.message : undefined)
               }
-              role="status"
-            >
-              {lookup.message}
-            </p>
-            <TextField
-              error={shown("integrationBranch")}
-              hint="The branch that receives accepted work."
+              retryLookup={
+                lookup.state === "error"
+                  ? () => setLookupAttempt((value) => value + 1)
+                  : undefined
+              }
+            />
+            <SelectField
+              error={
+                branches.length > 0 ? shown("integrationBranch") : undefined
+              }
               label="Integration branch"
               name="integrationBranch"
               onChange={set("integrationBranch")}
-              value={p.integrationBranch}
-            />
-            <TextField
-              error={shown("stewardName")}
-              hint="The person or organization responsible for the repository."
-              label="Steward display name"
-              name="stewardName"
-              onChange={set("stewardName")}
-              value={p.stewardName}
-            />
-            <dl className="proposal-facts">
-              <div>
-                <dt>Steward</dt>
-                <dd>
-                  {p.stewardLogin
-                    ? `@${p.stewardLogin} · ${p.stewardKind}`
-                    : "Not looked up"}
-                </dd>
-              </div>
-              <div>
-                <dt>License</dt>
-                <dd>{licenseKnown ? p.licenseSpdx : "Unknown"}</dd>
-              </div>
-            </dl>
-            <details
-              className="proposal-advanced"
-              onToggle={(event) => setFactsOpen(event.currentTarget.open)}
-              open={
-                factsOpen ||
-                [
-                  "repositoryNumericId",
-                  "repositoryNodeId",
-                  "stewardLogin",
-                  "stewardActorId",
-                  "stewardNodeId",
-                  "licenseSpdx",
-                  "licenseCommit",
-                  "licenseDigest",
-                ].some((field) => Boolean(shown(field as ProposalField)))
+              disabled={branches.length === 0}
+              options={
+                branches.length > 0
+                  ? [
+                      ...(branches.includes(p.integrationBranch)
+                        ? []
+                        : [["", "Select a branch"] as [string, string]]),
+                      ...branches.map((branch): [string, string] => [
+                        branch,
+                        branch,
+                      ]),
+                    ]
+                  : [
+                      [
+                        "",
+                        lookup.state === "loading"
+                          ? "Loading branches…"
+                          : "Choose a repository",
+                      ],
+                    ]
               }
-            >
-              <summary>Edit repository details</summary>
-              <h3>Repository identity</h3>
-              <TextField
-                error={shown("repositoryNumericId")}
-                inputMode="numeric"
-                label="Repository numeric ID"
-                name="repositoryNumericId"
-                onChange={set("repositoryNumericId")}
-                value={p.repositoryNumericId}
-              />
-              <TextField
-                error={shown("repositoryNodeId")}
-                label="Repository node ID"
-                name="repositoryNodeId"
-                onChange={set("repositoryNodeId")}
-                value={p.repositoryNodeId}
-              />
-              <h3>Steward identity</h3>
-              <SelectField
-                label="Steward kind"
-                name="stewardKind"
-                onChange={set("stewardKind")}
-                options={[
-                  ["individual", "Individual"],
-                  ["organization", "Organization"],
-                  ["dao", "DAO"],
-                  ["collective", "Collective"],
-                ]}
-                value={p.stewardKind}
-              />
-              <TextField
-                error={shown("stewardLogin")}
-                label="Steward GitHub login"
-                name="stewardLogin"
-                onChange={set("stewardLogin")}
-                value={p.stewardLogin}
-              />
-              <TextField
-                error={shown("stewardActorId")}
-                inputMode="numeric"
-                label="Steward numeric actor ID"
-                name="stewardActorId"
-                onChange={set("stewardActorId")}
-                value={p.stewardActorId}
-              />
-              <TextField
-                error={shown("stewardNodeId")}
-                label="Steward actor node ID"
-                name="stewardNodeId"
-                onChange={set("stewardNodeId")}
-                value={p.stewardNodeId}
-              />
-              <h3>License evidence</h3>
-              <p className="field-hint">Leave empty if unknown.</p>
-              <TextField
-                error={shown("licenseSpdx")}
-                label="License SPDX"
-                name="licenseSpdx"
-                onChange={set("licenseSpdx")}
-                placeholder="MIT"
-                value={p.licenseSpdx}
-              />
-              <TextField
-                error={shown("licenseCommit")}
-                label="LICENSE commit SHA"
-                name="licenseCommit"
-                onChange={set("licenseCommit")}
-                value={p.licenseCommit}
-              />
-              <TextField
-                error={shown("licenseDigest")}
-                label="LICENSE SHA-256"
-                name="licenseDigest"
-                onChange={set("licenseDigest")}
-                value={p.licenseDigest}
-              />
-            </details>
-          </>
-        ) : null}
-        {step === 1 ? (
-          <>
-            <ProjectImageField value={p.image} onChange={set("image")} />
-            <TextField
-              error={shown("name")}
-              label="Project name"
-              name="name"
-              onChange={set("name")}
-              value={p.name}
+              value={
+                branches.includes(p.integrationBranch)
+                  ? p.integrationBranch
+                  : ""
+              }
             />
+          </div>
+        ) : null}
+        {step === 0 ? (
+          <>
+            <div className="setup-project-identity">
+              <ProjectImageField
+                compact
+                ownerLogin={p.stewardLogin}
+                value={p.image}
+                onChange={set("image")}
+              />
+              <TextField
+                error={shown("name")}
+                label="Project name"
+                name="name"
+                onChange={set("name")}
+                value={p.name}
+              />
+            </div>
             <TextField
               error={shown("headline")}
               label="Short description"
@@ -1643,49 +1522,24 @@ export default function ProjectProposalPage() {
               onChange={set("headline")}
               value={p.headline}
             />
-            <details
-              className="proposal-advanced"
-              onToggle={(event) => setGoalOpen(event.currentTarget.open)}
-              open={goalOpen || Boolean(shown("goal"))}
-            >
-              <summary>Project goal</summary>
-              <TextField
-                error={shown("goal")}
-                label="Goal"
-                multiline
-                name="goal"
-                onChange={set("goal")}
-                value={p.goal}
-              />
-            </details>
+            <TextField
+              error={shown("goal")}
+              label="Goal"
+              multiline
+              name="goal"
+              onChange={set("goal")}
+              value={p.goal}
+            />
             <TextField
               error={shown("criteria")}
               label="Acceptance criteria"
               multiline
               name="criteria"
               onChange={set("criteria")}
-              placeholder="What accepted GitHub outcomes qualify?"
               value={p.criteria}
             />
-            <ClosureConsent
-              onChange={set("automaticClosure")}
-              value={p.automaticClosure}
-            />
-            <details
-              className="proposal-skill-rules"
-              onToggle={(event) =>
-                setInstructionsOpen(event.currentTarget.open)
-              }
-              open={
-                instructionsOpen ||
-                SKILL_RULE_FIELDS.some((field) => Boolean(shown(field)))
-              }
-            >
-              <summary>Contributor instructions (optional)</summary>
-              <p className="field-hint">
-                These cannot override Slop's safety rules.
-              </p>
-              {SKILL_RULE_FIELDS.map((field) => (
+            <div className="setup-rule-grid">
+              {["requiredTests" as const, ...extraRuleFields].map((field) => (
                 <TextField
                   error={shown(field)}
                   key={field}
@@ -1693,141 +1547,145 @@ export default function ProjectProposalPage() {
                   multiline
                   name={field}
                   onChange={set(field)}
-                  placeholder={CONTRIBUTION_LABELS[field].placeholder}
                   value={p[field]}
                 />
               ))}
-            </details>
-            <details
-              className="proposal-advanced"
-              onToggle={(event) => setTermsOpen(event.currentTarget.open)}
-              open={termsOpen || Object.keys(currentErrors).some(isTermsField)}
-            >
-              <summary>Additional legal terms (optional)</summary>
-              <p className="field-hint">
-                Leave as Unknown unless you know them.
-              </p>
-              <SelectField
-                error={shown("copyrightModel")}
-                label="Copyright model"
-                name="copyrightModel"
-                onChange={set("copyrightModel")}
-                options={[
-                  ["unknown", "Unknown"],
-                  ["mixed", "Mixed"],
-                  ["contributor-retained", "Contributor retained"],
-                  ["sponsor-owned", "Sponsor owned"],
-                ]}
-                value={p.copyrightModel}
+            </div>
+            {p.fundingMode === "bounty" ? null : (
+              <ClosureConsent
+                compact
+                onChange={set("automaticClosure")}
+                value={p.automaticClosure}
               />
-              {p.copyrightModel === "sponsor-owned" ? (
-                <TextField
-                  error={shown("legalHolder")}
-                  label="Exact legal copyright holder"
-                  name="legalHolder"
-                  onChange={set("legalHolder")}
-                  value={p.legalHolder}
+            )}
+            {p.copyrightModel !== "unknown" || p.inboundMode !== "unknown" ? (
+              <section className="setup-legal" aria-label="Saved legal terms">
+                <ChoiceField
+                  error={shown("copyrightModel")}
+                  label="Copyright model"
+                  name="copyrightModel"
+                  onChange={set("copyrightModel")}
+                  options={[
+                    ["unknown", "Unknown"],
+                    ["mixed", "Mixed"],
+                    ["contributor-retained", "Contributor retained"],
+                    ["sponsor-owned", "Sponsor owned"],
+                  ]}
+                  value={p.copyrightModel}
                 />
-              ) : null}
-              <SelectField
-                label="Inbound contribution terms"
-                name="inboundMode"
-                onChange={set("inboundMode")}
-                options={[
-                  ["unknown", "Unknown"],
-                  ["license", "License"],
-                  ["cla", "CLA"],
-                  ["assignment", "Assignment"],
-                  ["dco", "DCO"],
-                  ["mixed", "Mixed"],
-                ]}
-                value={p.inboundMode}
-              />
-              {p.inboundMode !== "unknown" ? (
-                <>
+                {p.copyrightModel === "sponsor-owned" ? (
                   <TextField
-                    error={shown("inboundTermsUrl")}
-                    label="Immutable terms URL"
-                    name="inboundTermsUrl"
-                    onChange={set("inboundTermsUrl")}
-                    value={p.inboundTermsUrl}
+                    error={shown("legalHolder")}
+                    label="Exact legal copyright holder"
+                    name="legalHolder"
+                    onChange={set("legalHolder")}
+                    value={p.legalHolder}
                   />
-                  <TextField
-                    error={shown("inboundCommit")}
-                    label="Terms commit SHA"
-                    name="inboundCommit"
-                    onChange={set("inboundCommit")}
-                    value={p.inboundCommit}
-                  />
-                  <TextField
-                    error={shown("inboundDigest")}
-                    label="Terms SHA-256"
-                    name="inboundDigest"
-                    onChange={set("inboundDigest")}
-                    value={p.inboundDigest}
-                  />
-                  <TextField
-                    error={shown("inboundVersion")}
-                    label="Terms version"
-                    name="inboundVersion"
-                    onChange={set("inboundVersion")}
-                    value={p.inboundVersion}
-                  />
-                  <TextField
-                    error={shown("inboundAcceptance")}
-                    label="Acceptance mechanism"
-                    name="inboundAcceptance"
-                    onChange={set("inboundAcceptance")}
-                    value={p.inboundAcceptance}
-                  />
-                </>
-              ) : null}
-              {p.copyrightModel === "sponsor-owned" ||
-              p.inboundMode === "assignment" ? (
-                <>
-                  <TextField
-                    error={shown("assignmentAssignee")}
-                    label="Assignment assignee"
-                    name="assignmentAssignee"
-                    onChange={set("assignmentAssignee")}
-                    value={p.assignmentAssignee}
-                  />
-                  <TextField
-                    error={shown("assignmentUrl")}
-                    label="Signed instrument URL"
-                    name="assignmentUrl"
-                    onChange={set("assignmentUrl")}
-                    value={p.assignmentUrl}
-                  />
-                  <TextField
-                    error={shown("assignmentDigest")}
-                    label="Instrument SHA-256"
-                    name="assignmentDigest"
-                    onChange={set("assignmentDigest")}
-                    value={p.assignmentDigest}
-                  />
-                  <TextField
-                    error={shown("assignmentVersion")}
-                    label="Instrument version"
-                    name="assignmentVersion"
-                    onChange={set("assignmentVersion")}
-                    value={p.assignmentVersion}
-                  />
-                  <TextField
-                    error={shown("assignmentSignedAt")}
-                    label="Signed at"
-                    name="assignmentSignedAt"
-                    onChange={set("assignmentSignedAt")}
-                    type="datetime-local"
-                    value={p.assignmentSignedAt}
-                  />
-                </>
-              ) : null}
-            </details>
+                ) : null}
+                <ChoiceField
+                  label="Inbound contribution terms"
+                  name="inboundMode"
+                  onChange={set("inboundMode")}
+                  options={[
+                    ["unknown", "Unknown"],
+                    ["license", "License"],
+                    ["cla", "CLA"],
+                    ["assignment", "Assignment"],
+                    ["dco", "DCO"],
+                    ["mixed", "Mixed"],
+                  ]}
+                  value={p.inboundMode}
+                />
+                {p.inboundMode !== "unknown" ? (
+                  <>
+                    <TextField
+                      error={shown("inboundTermsUrl")}
+                      label="Immutable terms URL"
+                      name="inboundTermsUrl"
+                      onChange={set("inboundTermsUrl")}
+                      value={p.inboundTermsUrl}
+                    />
+                    <TextField
+                      error={shown("inboundCommit")}
+                      label="Terms commit SHA"
+                      name="inboundCommit"
+                      onChange={set("inboundCommit")}
+                      value={p.inboundCommit}
+                    />
+                    <TextField
+                      error={shown("inboundDigest")}
+                      label="Terms SHA-256"
+                      name="inboundDigest"
+                      onChange={set("inboundDigest")}
+                      value={p.inboundDigest}
+                    />
+                    <TextField
+                      error={shown("inboundVersion")}
+                      label="Terms version"
+                      name="inboundVersion"
+                      onChange={set("inboundVersion")}
+                      value={p.inboundVersion}
+                    />
+                    <TextField
+                      error={shown("inboundAcceptance")}
+                      label="Acceptance mechanism"
+                      name="inboundAcceptance"
+                      onChange={set("inboundAcceptance")}
+                      value={p.inboundAcceptance}
+                    />
+                  </>
+                ) : null}
+                {p.copyrightModel === "sponsor-owned" ||
+                p.inboundMode === "assignment" ? (
+                  <>
+                    <TextField
+                      error={shown("assignmentAssignee")}
+                      label="Assignment assignee"
+                      name="assignmentAssignee"
+                      onChange={set("assignmentAssignee")}
+                      value={p.assignmentAssignee}
+                    />
+                    <TextField
+                      error={shown("assignmentUrl")}
+                      label="Signed instrument URL"
+                      name="assignmentUrl"
+                      onChange={set("assignmentUrl")}
+                      value={p.assignmentUrl}
+                    />
+                    <TextField
+                      error={shown("assignmentDigest")}
+                      label="Instrument SHA-256"
+                      name="assignmentDigest"
+                      onChange={set("assignmentDigest")}
+                      value={p.assignmentDigest}
+                    />
+                    <TextField
+                      error={shown("assignmentVersion")}
+                      label="Instrument version"
+                      name="assignmentVersion"
+                      onChange={set("assignmentVersion")}
+                      value={p.assignmentVersion}
+                    />
+                    <TextField
+                      error={shown("assignmentSignedAt")}
+                      label="Signed at"
+                      name="assignmentSignedAt"
+                      onChange={set("assignmentSignedAt")}
+                      type="datetime-local"
+                      value={p.assignmentSignedAt}
+                    />
+                  </>
+                ) : null}
+              </section>
+            ) : null}
           </>
         ) : null}
-        {step === 2 ? (
+        {step === 1 ? (
           <FundingFields
+            compact
+            bounty={p.fundingMode === "bounty"}
+            onBounty={() => set("fundingMode")("bounty")}
+            networkError={shown("settlementChain")}
             choice={funding}
             error={(field) =>
               shown(
@@ -1855,11 +1713,24 @@ export default function ProjectProposalPage() {
             }
           />
         ) : null}
-        {step === 3 ? (
+        {step === 2 ? (
           <>
             <article className="proposal-preview" aria-label="Listing preview">
-              <span className="draft-badge">Preview</span>
-              <h3>{p.name || "Unnamed project"}</h3>
+              <div className="setup-review-heading">
+                {p.image ? (
+                  <img src={p.image} alt="" width={48} height={48} />
+                ) : p.stewardLogin ? (
+                  <Avatar
+                    actor={{
+                      login: p.stewardLogin,
+                      avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(p.stewardLogin)}?size=128`,
+                    }}
+                  />
+                ) : (
+                  <GitBranch size={28} aria-hidden="true" />
+                )}
+                <h3>{p.name || "Unnamed project"}</h3>
+              </div>
               <p>{p.headline || "No short description yet."}</p>
               <dl>
                 <div>
@@ -1868,22 +1739,36 @@ export default function ProjectProposalPage() {
                     Install Slopbot on {p.repository || "the repository"}.
                   </dd>
                 </div>
+                {p.fundingMode === "bounty" ? null : (
+                  <div>
+                    <dt>Slopbot automatic closure</dt>
+                    <dd>
+                      {p.automaticClosure === "true"
+                        ? "Allowed"
+                        : "Not allowed"}
+                    </dd>
+                  </div>
+                )}
                 <div>
-                  <dt>Slopbot automatic closure</dt>
+                  <dt>{bounty ? "Private bounty" : "Monthly funding"}</dt>
                   <dd>
-                    {p.automaticClosure === "true" ? "Allowed" : "Not allowed"}
+                    {bounty && bountyAmounts
+                      ? `${bountyAmounts.gross} per accepted critical finding · pledge`
+                      : p.fundingMode !== "monthly"
+                        ? "None"
+                        : pool.valid
+                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? pool.display : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
+                          : "Invalid"}
                   </dd>
                 </div>
-                <div>
-                  <dt>Monthly funding</dt>
-                  <dd>
-                    {p.fundingMode !== "monthly"
-                      ? "None"
-                      : pool.valid
-                        ? `${p.rewardKind === "token" ? pool.display : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
-                        : "Invalid"}
-                  </dd>
-                </div>
+                {bounty && bountyAmounts ? (
+                  <div>
+                    <dt>Researcher / Slop</dt>
+                    <dd>
+                      {bountyAmounts.researcher} / {bountyAmounts.slop}
+                    </dd>
+                  </div>
+                ) : null}
                 {p.fundingMode === "monthly" ? (
                   <div>
                     <dt>Fees</dt>
@@ -1906,8 +1791,7 @@ export default function ProjectProposalPage() {
                   </div>
                 ) : null}
               </dl>
-              <details>
-                <summary>Listing details</summary>
+              <div className="setup-review-facts">
                 <dl>
                   <div>
                     <dt>Repository</dt>
@@ -1917,10 +1801,7 @@ export default function ProjectProposalPage() {
                   </div>
                   <div>
                     <dt>Steward</dt>
-                    <dd>
-                      {p.stewardName || "Not set"}
-                      {p.stewardLogin ? ` (@${p.stewardLogin})` : ""}
-                    </dd>
+                    <dd>{p.stewardLogin ? `@${p.stewardLogin}` : "Not set"}</dd>
                   </div>
                   <div>
                     <dt>License</dt>
@@ -1932,10 +1813,18 @@ export default function ProjectProposalPage() {
                   </div>
                 </dl>
                 <p>{p.goal || "No goal yet."}</p>
-              </details>
+                {bounty ? (
+                  <>
+                    <p>{p.criteria}</p>
+                    <p>{p.requiredTests || PRIVATE_BOUNTY_TESTING}</p>
+                    <p>{PRIVATE_BOUNTY_DISCLOSURE}</p>
+                  </>
+                ) : null}
+              </div>
             </article>
-            {valid ? <GeneratedSkillPreview manifest={manifest} draft /> : null}
-            <ErrorSummary errors={errors} onSelect={focusField} />
+            {valid ? (
+              <GeneratedSkillPreview manifest={manifest} draft compact />
+            ) : null}
             {valid ? (
               <div className="handoff-actions">
                 <SubmitProject
@@ -1961,42 +1850,8 @@ export default function ProjectProposalPage() {
             )}
           </>
         ) : null}
-        {step < 3 ? (
-          <ErrorSummary errors={currentErrors} onSelect={focusField} />
-        ) : null}
         {navigation}
       </form>
-      <div className="proposal-reset">
-        {confirmClear ? (
-          <>
-            <span>Clear this draft?</span>
-            <button
-              className="button danger-button"
-              disabled={submission.status === "submitting"}
-              onClick={clearDraft}
-              type="button"
-            >
-              Clear draft
-            </button>
-            <button
-              className="button ghost-button"
-              onClick={() => setConfirmClear(false)}
-              type="button"
-            >
-              Keep draft
-            </button>
-          </>
-        ) : (
-          <button
-            className="button ghost-button"
-            disabled={submission.status === "submitting"}
-            onClick={() => setConfirmClear(true)}
-            type="button"
-          >
-            Start over
-          </button>
-        )}
-      </div>
     </main>
   );
 }
@@ -2106,6 +1961,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
     };
   }, [project.id, reload]);
   const current = base?.project ?? project;
+  const bountyOnly = hasBountyOverview(current);
   const reward = current.reward;
   const monthly = reward.kind === "monthly-pool";
   const capMinor = monthly ? reward.monthlyCapMinor : "0";
@@ -2220,7 +2076,9 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           symbol: value.tokenSymbol,
           ...(assetFixed || !assetTouched ? { decimals } : {}),
         }
-      : undefined,
+      : value.assetKind === "native"
+        ? REWARD_ASSET_NETWORKS[value.network as RewardAssetNetwork]?.native
+        : undefined,
   );
   const amountMinor = amount.valid ? amount.minor : null;
   const errors: Record<string, string | undefined> = {
@@ -2230,7 +2088,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
     note:
       value.note.trim() === "" ? undefined : lengthError(value.note, 1, 500),
     monthlyAmount:
-      value.fundingMode === "monthly" && !amount.valid
+      !bountyOnly && value.fundingMode === "monthly" && !amount.valid
         ? amount.error
         : undefined,
     ...Object.fromEntries(
@@ -2245,12 +2103,18 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
   const choice: FundingChoice = {
     mode: value.fundingMode === "monthly" ? "monthly" : "none",
     network: value.network,
-    assetKind: value.assetKind === "token" ? "token" : "stablecoin",
+    assetKind:
+      value.assetKind === "token"
+        ? "token"
+        : value.assetKind === "native"
+          ? "native"
+          : "stablecoin",
     tokenAddress: value.tokenAddress,
     tokenSymbol: value.tokenSymbol,
     monthlyAmount: value.monthlyAmount,
   };
   if (
+    !bountyOnly &&
     choice.mode === "monthly" &&
     !assetFixed &&
     choice.assetKind === "token"
@@ -2271,7 +2135,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
   const next = ((): ProjectDefinition => {
     const source = current;
     let fundingFields: Record<string, unknown> = {};
-    if (source.reward.kind === "monthly-pool") {
+    if (!bountyOnly && source.reward.kind === "monthly-pool") {
       // In the current asset's base units. The server converts the amount
       // again from `monthlyAmount` with the decimals it verified.
       const monthlyCapMinor =
@@ -2377,7 +2241,8 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
       before: current.contribution?.[field] ?? "",
       after: next.contribution?.[field] ?? "",
     })),
-    ...(current.reward.kind === "monthly-pool" &&
+    ...(!bountyOnly &&
+    current.reward.kind === "monthly-pool" &&
     next.reward.kind === "monthly-pool"
       ? [
           {
@@ -2391,7 +2256,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
             // The typed amount, in whole units of the chosen asset.
             after:
               choice.mode === "monthly" && amount.valid
-                ? choice.assetKind === "token"
+                ? choice.assetKind === "token" || choice.assetKind === "native"
                   ? amount.display
                   : formatMonthlyAmount(
                       amount.minor,
@@ -2434,7 +2299,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
         next,
         base.revision,
         "",
-        choice.mode === "monthly" && changes.financial.length > 0
+        !bountyOnly && choice.mode === "monthly" && changes.financial.length > 0
           ? value.monthlyAmount.trim()
           : null,
       );
@@ -2547,7 +2412,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
             ))}
           </details>
         </details>
-        {monthly ? (
+        {monthly && !bountyOnly ? (
           <details className="proposal-advanced">
             <summary>Monthly rewards</summary>
             <FundingFields
@@ -2576,6 +2441,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           </details>
         ) : null}
         {monthly &&
+        !bountyOnly &&
         choice.mode === "monthly" &&
         !current.escrow &&
         !assetTouched ? (
@@ -2700,7 +2566,8 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           ) : submission.state === "published" ? (
             <p role="status">
               Published revision {submission.result.project.revision}.
-              {submission.result.project.manifest.escrow &&
+              {!hasBountyOverview(submission.result.project.manifest) &&
+              submission.result.project.manifest.escrow &&
               submission.result.project.manifest.escrow.deployments.length ===
                 0 ? (
                 <>
@@ -2717,7 +2584,9 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           </p>
         </div>
       </form>
-      {current.escrow && current.reward.kind !== "external-prize-share" ? (
+      {!bountyOnly &&
+      current.escrow &&
+      current.reward.kind !== "external-prize-share" ? (
         <div id="project-vault">
           <EscrowFunding
             project={current}
@@ -2727,10 +2596,10 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
       ) : null}
       <p id="security-settings">
         <Link href={`/projects/${current.slug}/security#security-settings`}>
-          Manage security program and private bounty funds
+          Manage security bounty
         </Link>
       </p>
-      {!monthly ? (
+      {!monthly && !bountyOnly ? (
         <section aria-labelledby="update-payouts" className="owner-section">
           <h2 id="update-payouts">Payouts</h2>
           <p className="payout-status">
@@ -2739,176 +2608,5 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
         </section>
       ) : null}
     </main>
-  );
-}
-
-/** Readable labels for the stored project status enum. */
-const PROJECT_STATUS_LABEL: Record<ProjectSummary["status"], string> = {
-  active: "Live",
-  paused: "Paused",
-};
-
-/**
- * The signed-in account's projects with their setup status, and any
- * application stored before self-service setup, which its applicant
- * publishes without entering it again.
- */
-function OwnerProjects({
-  refreshKey,
-  session,
-}: {
-  refreshKey: string;
-  session: ProjectSessionState;
-}) {
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "error"; message: string }
-    | {
-        status: "ready";
-        projects: ProjectSummary[];
-        applications: ProjectApplication[];
-      }
-  >({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
-  const [open, setOpen] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState<
-    | { id: string; state: "busy" }
-    | { id: string; state: "error"; message: string }
-    | {
-        id: string;
-        state: "done";
-        projectId: string;
-        setup: ProjectSetupStatus;
-      }
-    | null
-  >(null);
-  const actorId =
-    session.status === "signed-in" ? session.session.githubId : null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt and a new project trigger an explicit reload.
-  useEffect(() => {
-    if (actorId === null) return;
-    let active = true;
-    setState({ status: "loading" });
-    listProjectSetup().then(
-      (body) => {
-        if (active) setState({ status: "ready", ...body });
-      },
-      (caught: unknown) => {
-        if (active)
-          setState({
-            status: "error",
-            message: errorMessage(caught, "Your projects are unavailable."),
-          });
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [actorId, attempt, refreshKey]);
-  if (session.status !== "signed-in") return null;
-  if (
-    state.status === "ready" &&
-    state.projects.length === 0 &&
-    state.applications.length === 0
-  )
-    return null;
-  return (
-    <details id="your-projects">
-      <summary>Your projects</summary>
-      {state.status === "error" ? (
-        <p role="alert">{state.message}</p>
-      ) : state.status === "loading" ? (
-        <p role="status">Loading your projects…</p>
-      ) : state.projects.length === 0 && state.applications.length === 0 ? (
-        <p>You have no projects yet.</p>
-      ) : (
-        <ul>
-          {state.projects.map((project) => (
-            <li key={project.id}>
-              <strong>{project.name}</strong> ·{" "}
-              {project.listingTier === "retired"
-                ? "Delisted"
-                : PROJECT_STATUS_LABEL[project.status]}{" "}
-              <Link href={`/projects/${project.slug}/manage`}>Manage</Link>{" "}
-              <button
-                className="text-button"
-                onClick={() =>
-                  setOpen((current) =>
-                    current === project.id ? null : project.id,
-                  )
-                }
-                type="button"
-              >
-                {open === project.id ? "Hide setup" : "Check setup"}
-              </button>
-              {open === project.id ? (
-                <ProjectSetupStatusPanel projectId={project.id} />
-              ) : null}
-            </li>
-          ))}
-          {state.applications.map((application) => (
-            <li key={application.id}>
-              <strong>{application.manifest.name}</strong> · submitted{" "}
-              {application.submittedAt.slice(0, 10)}
-              {publishing?.id === application.id &&
-              publishing.state === "done" ? (
-                <ProjectSetupStatusPanel
-                  initial={publishing.setup}
-                  projectId={publishing.projectId}
-                />
-              ) : (
-                <>
-                  {" "}
-                  <button
-                    className="button secondary-button"
-                    disabled={
-                      publishing?.id === application.id &&
-                      publishing.state === "busy"
-                    }
-                    onClick={() => {
-                      setPublishing({ id: application.id, state: "busy" });
-                      publishStoredApplication(application.id).then(
-                        ({ project, setup }) =>
-                          setPublishing({
-                            id: application.id,
-                            state: "done",
-                            projectId: project.id,
-                            setup,
-                          }),
-                        (caught: unknown) =>
-                          setPublishing({
-                            id: application.id,
-                            state: "error",
-                            message: errorMessage(
-                              caught,
-                              "The application was not published.",
-                            ),
-                          }),
-                      );
-                    }}
-                    type="button"
-                  >
-                    {application.expectedRevision === undefined
-                      ? "Create this project"
-                      : "Publish this change"}
-                  </button>
-                  {publishing?.id === application.id &&
-                  publishing.state === "error" ? (
-                    <p role="alert">{publishing.message}</p>
-                  ) : null}
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      <button
-        className="button secondary-button button-small"
-        type="button"
-        onClick={() => setAttempt((value) => value + 1)}
-      >
-        Refresh
-      </button>
-    </details>
   );
 }

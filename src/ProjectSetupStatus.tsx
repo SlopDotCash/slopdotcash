@@ -84,12 +84,14 @@ export function ProjectSetupStatusPanel({
   initial,
   onSetup,
   showProjectLink = true,
+  compact = false,
 }: {
   projectId: string;
   initial?: ProjectSetupStatus;
   /** Tells the page the current setup, such as the scan exemption. */
   onSetup?: (setup: ProjectSetupStatus) => void;
   showProjectLink?: boolean;
+  compact?: boolean;
 }) {
   const [setup, setSetup] = useState<ProjectSetupStatus | null>(
     initial ?? null,
@@ -135,6 +137,16 @@ export function ProjectSetupStatusPanel({
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [busy, check, setup]);
+  const checkDetails = setup ? (
+    <dl>
+      <dt>GitHub access</dt>
+      <dd>{setup.checks.authority.message}</dd>
+      <dt>Slopbot</dt>
+      <dd>{setup.checks.installation.message}</dd>
+      <dt>Security scan</dt>
+      <dd>{setup.checks.scan.message}</dd>
+    </dl>
+  ) : null;
   return (
     <section
       aria-labelledby={`setup-${projectId}`}
@@ -250,11 +262,44 @@ export function ProjectSetupStatusPanel({
             <div className="setup-check setup-check--funding">
               <dt>
                 <Wallet size={20} aria-hidden="true" />
-                Contribution funding <small>Optional</small>
+                {setup.funding.mode === "bounty" ? (
+                  "Private bounty"
+                ) : (
+                  <>
+                    Contribution funding <small>Optional</small>
+                  </>
+                )}
               </dt>
               <dd>
                 {setup.funding.mode === "none" ? (
                   <span className="setup-funding-note">Points only</span>
+                ) : setup.funding.mode === "bounty" ? (
+                  <>
+                    <strong>
+                      {formatMonthlyAmount(
+                        setup.funding.awardAmountMinor,
+                        setup.funding.decimals,
+                        setup.funding.symbol,
+                      )}{" "}
+                      / accepted finding
+                    </strong>
+                    <span className="setup-funding-note">
+                      {setup.funding.network ? (
+                        <>
+                          <NetworkName chain={setup.funding.network}>
+                            {REWARD_ASSET_NETWORKS[
+                              setup.funding
+                                .network as keyof typeof REWARD_ASSET_NETWORKS
+                            ]?.name ?? setup.funding.network}
+                          </NetworkName>
+                          {" · "}
+                        </>
+                      ) : null}
+                      {setup.funding.state === "pledged"
+                        ? "Pledged"
+                        : "Funding verified"}
+                    </span>
+                  </>
                 ) : (
                   <>
                     <strong>
@@ -281,17 +326,16 @@ export function ProjectSetupStatusPanel({
               </dd>
             </div>
           </dl>
-          <details className="setup-details">
-            <summary>Check details</summary>
-            <dl>
-              <dt>GitHub access</dt>
-              <dd>{setup.checks.authority.message}</dd>
-              <dt>Slopbot</dt>
-              <dd>{setup.checks.installation.message}</dd>
-              <dt>Security scan</dt>
-              <dd>{setup.checks.scan.message}</dd>
-            </dl>
-          </details>
+          {compact ? (
+            <div className="setup-details setup-details-compact">
+              {checkDetails}
+            </div>
+          ) : (
+            <details className="setup-details">
+              <summary>Check details</summary>
+              {checkDetails}
+            </details>
+          )}
         </>
       )}
       {error ? (

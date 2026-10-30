@@ -111,6 +111,7 @@ export async function proveSolanaExpiry(
   blockhashSlot: number,
   providers: readonly { operator: string; rpc: RecoveryRpc }[],
   store?: ExpiryCoverageStore,
+  expectedGenesis = MAINNET,
 ): Promise<ExpiryProof | null> {
   if (
     !slot(blockhashSlot) ||
@@ -122,7 +123,8 @@ export async function proveSolanaExpiry(
   let horizonSlot: number | undefined, horizonHash: string | undefined;
   let allComplete = true;
   for (const provider of providers) {
-    if ((await provider.rpc("getGenesisHash", [])) !== MAINNET) return null;
+    if ((await provider.rpc("getGenesisHash", [])) !== expectedGenesis)
+      return null;
     const first = await provider.rpc<number>("getFirstAvailableBlock", []);
     if (!slot(first) || first > blockhashSlot) return null;
     const anchor = await provider.rpc<{ blockhash: string } | null>(

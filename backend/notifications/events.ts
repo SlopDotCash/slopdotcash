@@ -440,7 +440,7 @@ export function notifySecurityCase<S>(
     .prepare(
       `${INSERT}
        SELECT 'security-case:' || e.case_id || ':' || e.case_revision, r.value,
-              'security_case', e.case_id, NULL, '/security', e.at, e.at
+              'security_case', e.case_id, NULL, '/security?case=' || e.case_id, e.at, e.at
          FROM security_case_events e, json_each(?4) r
         WHERE e.case_id = ?1 AND e.case_revision = ?2
           AND e.idempotency_key = ?3 AND r.value <> e.actor_github_id
@@ -472,7 +472,7 @@ export function notifySecurityReportReceived<S>(
     .prepare(
       `${INSERT}
        SELECT 'security-receipt:' || c.id, c.reporter_github_id,
-              'security_report_received', c.id, NULL, COALESCE((SELECT '/inbox?submission=' || i.submission_id FROM security_submission_intake i WHERE i.case_id=c.id), '/security'),
+              'security_report_received', c.id, NULL, COALESCE((SELECT '/inbox?submission=' || i.submission_id FROM security_submission_intake i WHERE i.case_id=c.id), '/security?case=' || c.id),
               c.verified_at, c.verified_at
          FROM security_cases c
         WHERE c.id = ? AND c.submission_state = 'verified'

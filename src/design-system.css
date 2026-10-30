@@ -1354,6 +1354,64 @@ main h2 {
   overflow-wrap: anywhere;
 }
 
+.email-row > strong {
+  font-size: 18px;
+}
+
+.email-enrollment {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.email-enrollment > label {
+  display: grid;
+  gap: 6px;
+}
+
+.email-enrollment input[type="email"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--brand-radius-small);
+}
+
+.email-enrollment fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.email-enrollment legend {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.email-enrollment fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.email-enrollment input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.email-card p {
+  overflow-wrap: anywhere;
+}
+
 /* The button is 44px tall for touch; the track and knob are drawn inside it. */
 .email-switch {
   position: relative;

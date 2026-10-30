@@ -24,6 +24,11 @@ import { createServer } from "node:http";
 
 /** The site session that owns its user repositories. */
 export const E2E_OWNER = { githubId: "900000003", login: "e2e-owner" };
+export const E2E_REWARD_TOKEN = Object.freeze({
+  address: "0x1234567890123456789012345678901234567890",
+  symbol: "BOUNTY",
+  decimals: 8,
+});
 /** An organization whose members are never public. */
 export const E2E_ORGANIZATION = { githubId: "987654320", login: "example" };
 
@@ -276,6 +281,33 @@ async function handlePrivateIntake(state, request, response, url) {
           },
         ],
       });
+    const report = JSON.parse(JSON.parse(body).messages[0].content).report;
+    if (report.summary.startsWith("Private authorization bypass ")) {
+      const revised = report.description.includes(
+        "Account A is a maintainer of a local test project",
+      );
+      return send(200, {
+        type: "message",
+        role: "assistant",
+        stop_reason: "end_turn",
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              summary: revised
+                ? "Fixture assessment: account B reads account A's private report title without a project role."
+                : "Fixture assessment: private account authorization bypass; confirm the two local account roles.",
+              severity: "high",
+              potentialLoss: "unlikely",
+              duplicateCaseIds: [],
+              rootCauseKey: "private-report-authorization",
+              remediation:
+                "Check the reader's project role before returning private report data.",
+            }),
+          },
+        ],
+      });
+    }
     return send(200, {
       type: "message",
       role: "assistant",
@@ -543,6 +575,12 @@ function handleSlopbotApp(state, request, response, path) {
   const repository = /^\/repos\/([^/]+\/[^/]+)$/u.exec(route);
   if (request.method === "GET" && repository)
     return send(200, fixtureRepository(repository[1]));
+  const branches = /^\/repos\/([^/]+\/[^/]+)\/branches$/u.exec(route);
+  if (request.method === "GET" && branches)
+    return send(
+      200,
+      ["main", "development"].map((name) => fixtureBranch(branches[1], name)),
+    );
   const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/([^/]+)$/u.exec(route);
   if (request.method === "GET" && branch)
     return send(200, fixtureBranch(branch[1], branch[2]));
@@ -576,6 +614,7 @@ export function startGitHubApiFixture(port) {
   const privateIntake = privateIntakeFixture();
   const githubUsers = new Map();
   const limitedRepositories = new Set();
+  let rewardMetadataReads = 0;
   const slopbot = {
     installations: new Map(),
     permissions: new Map(),
@@ -589,6 +628,42 @@ export function startGitHubApiFixture(port) {
     response.setHeader("connection", "close");
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
+    if (path === "/__fixture/reward-rpc/requests" && request.method === "GET") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ reads: rewardMetadataReads }));
+      return;
+    }
+    if (path === "/__fixture/reward-rpc/base" && request.method === "POST") {
+      try {
+        const rpc = JSON.parse(await readBody(request));
+        const token = E2E_REWARD_TOKEN;
+        let result;
+        if (rpc.method === "eth_chainId") result = "0x2105";
+        else if (
+          rpc.method === "eth_getCode" &&
+          rpc.params?.[0]?.toLowerCase() === token.address
+        )
+          result = "0x60006000";
+        else if (
+          rpc.method === "eth_call" &&
+          rpc.params?.[0]?.to?.toLowerCase() === token.address
+        ) {
+          if (rpc.params[0].data === "0x313ce567")
+            result = `0x${token.decimals.toString(16).padStart(64, "0")}`;
+          if (rpc.params[0].data === "0x95d89b41")
+            result = `0x${Buffer.from(token.symbol).toString("hex").padEnd(64, "0")}`;
+        }
+        if (result === undefined)
+          throw new Error("Unsupported fixture token request");
+        rewardMetadataReads += 1;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+      } catch {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end('{"error":"Unsupported fixture token request"}');
+      }
+      return;
+    }
     const publicControl =
       /^\/__fixture\/public-repository\/([^/]+\/[^/]+)\/(rate-limited|ready)$/u.exec(
         path,
@@ -667,8 +742,9 @@ export function startGitHubApiFixture(port) {
       return;
     }
     const repository = /^\/repos\/([^/]+\/[^/]+)$/u.exec(path);
+    const branches = /^\/repos\/([^/]+\/[^/]+)\/branches$/u.exec(path);
     const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/([^/]+)$/u.exec(path);
-    const limited = (repository ?? branch)?.[1].toLowerCase();
+    const limited = (repository ?? branches ?? branch)?.[1].toLowerCase();
     if (
       request.method === "GET" &&
       limited !== undefined &&
@@ -684,6 +760,17 @@ export function startGitHubApiFixture(port) {
     if (request.method === "GET" && branch) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(fixtureBranch(branch[1], branch[2])));
+      return;
+    }
+    if (request.method === "GET" && branches) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          ["main", "development"].map((name) =>
+            fixtureBranch(branches[1], name),
+          ),
+        ),
+      );
       return;
     }
     if (request.method === "GET" && repository) {

@@ -846,10 +846,11 @@ describe("private intake: creation and identity", () => {
     expect((await t.send(id, 1)).body.error).toBe("grant_required");
     await t.authorize(REPORTER, created.body.authorizeUrl as string);
     const grant = t.jar(REPORTER).get("__Secure-slop_intake_grant") as string;
-    // Tampered.
+    // Change ciphertext data, not trailing base64 padding bits (or an unchanged AA suffix).
+    const tamperAt = grant.indexOf(".") + 1;
     t.jar(REPORTER).set(
       "__Secure-slop_intake_grant",
-      `${grant.slice(0, -2)}AA`,
+      `${grant.slice(0, tamperAt)}${grant[tamperAt] === "A" ? "B" : "A"}${grant.slice(tamperAt + 1)}`,
     );
     expect((await t.send(id, 1)).body.error).toBe("grant_required");
     // Bound to another submission.
@@ -2005,9 +2006,20 @@ describe("private intake: analysis, access, privacy and mode", () => {
       }
       // The outbox and inbox hold only generic notices.
       const notices = t.sqlite
-        .query("SELECT detail, action_path FROM notifications")
-        .all() as { detail: string | null; action_path: string }[];
-      expect(notices.every((n) => n.action_path === "/security")).toBe(true);
+        .query("SELECT subject, detail, action_path FROM notifications")
+        .all() as {
+        subject: string;
+        detail: string | null;
+        action_path: string;
+      }[];
+      expect(
+        notices.every(
+          (n) =>
+            /^sc_[A-Za-z0-9_-]{8,72}$/u.test(n.subject) &&
+            n.detail === null &&
+            n.action_path === `/security?case=${encodeURIComponent(n.subject)}`,
+        ),
+      ).toBe(true);
     });
   });
 

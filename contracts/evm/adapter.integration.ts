@@ -1244,6 +1244,7 @@ try {
     "98000000",
     "An event before the bound still verifies after the rollback",
   );
+  await import("./native.integration");
   console.log(
     "EVM adapter integration passed: real factory deployment, permissionless owner-keyed vault creation, separate ordinary and bounty vaults, permissionless deposit, 18-decimal vault beyond uint64, readVaultTotals, 2% withdrawal fee, vault-bound award, wallet-accepted immediate and cancellable binding, payment, fee claim, signed capped once-per-period monthly commitment from any sender, owner opt-out, finalized gating, wrong chain/vault/award/index/delay/purpose rejection, immediate authority rotation.",
   );

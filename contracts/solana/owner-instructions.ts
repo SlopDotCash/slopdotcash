@@ -1,6 +1,6 @@
 /** Edge-safe vault creation. The caller verifies the reviewed program and Config. */
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
-import { solanaDigest } from "./adapter";
+import { SOLANA_NATIVE_ASSET, solanaDigest } from "./adapter";
 import { TOKEN_2022_PROGRAM } from "./token";
 import {
   bytes,
@@ -65,8 +65,13 @@ export function buildInitializeVaultInstructions(input: SolanaVaultCreation) {
     cap = le(BigInt(input.monthlyCap));
   }
   bytes(input.mint);
-  const tokenProgram = input.tokenProgram ?? TOKEN;
-  if (tokenProgram !== TOKEN && tokenProgram !== TOKEN_2022_PROGRAM)
+  const native = input.mint === SOLANA_NATIVE_ASSET;
+  const tokenProgram = input.tokenProgram ?? (native ? SYSTEM : TOKEN);
+  if (
+    native
+      ? tokenProgram !== SYSTEM
+      : tokenProgram !== TOKEN && tokenProgram !== TOKEN_2022_PROGRAM
+  )
     throw new Error("Unsupported mint token program");
   const projectDigest = solanaDigest(input.projectDigest);
   const projectPda = pda(input.programId, [
@@ -83,17 +88,25 @@ export function buildInitializeVaultInstructions(input: SolanaVaultCreation) {
   const instructions: Instruction[] = [
     {
       program: input.programId,
-      accounts: [
-        { key: input.owner, write: true },
-        { key: projectPda, write: true },
-        { key: input.mint, write: false },
-        { key: vault, write: true },
-        { key: tokenProgram, write: false },
-        { key: SYSTEM, write: false },
-        { key: config, write: false },
-      ],
+      accounts: native
+        ? [
+            { key: input.owner, write: true },
+            { key: projectPda, write: true },
+            { key: vault, write: true },
+            { key: SYSTEM, write: false },
+            { key: config, write: false },
+          ]
+        : [
+            { key: input.owner, write: true },
+            { key: projectPda, write: true },
+            { key: input.mint, write: false },
+            { key: vault, write: true },
+            { key: tokenProgram, write: false },
+            { key: SYSTEM, write: false },
+            { key: config, write: false },
+          ],
       data: instructionData(
-        "initialize",
+        native ? "initialize_native" : "initialize",
         projectDigest,
         solanaDigest(input.networkDomain),
         bytes(input.identityAuthority),

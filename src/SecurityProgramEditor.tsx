@@ -1,32 +1,31 @@
 import { useState } from "react";
+import {
+  RewardAssetFields,
+  type RewardAssetSelection,
+} from "./RewardAssetFields";
 import { SecurityOffer } from "./SecurityOffer";
 import "./operations-design.css";
 import "./owner-review.css";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
-import {
-  carriedSecurityTerms,
-  fullAwardSelectable,
-  initialSecuritySplit,
-  PLATFORM_BOUNTY_DEPLOYMENTS,
-  PLATFORM_BOUNTY_SOURCE_COMMIT,
-  PLATFORM_BOUNTY_TEXT,
-} from "./lib/platform-security-bounty";
 import { publishProjectRevision, type RevisionResult } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { parseAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   assertSecurityBountyTerms,
-  formatSecurityAmount,
   isFullAwardSplit,
-  isPlatformSecurityProgram,
-  SECURITY_FULL_AWARD_SPLIT,
-  SECURITY_SPLIT,
   type SecurityBountyTerms,
-  securityBountySplit,
 } from "./lib/security-bounty.mjs";
+import {
+  bountyAmountFields,
+  bountyAmountPreview,
+} from "./lib/security-bounty-proposal";
+import {
+  carriedSecurityTerms,
+  initialSecuritySplit,
+} from "./lib/security-program-draft";
 import { useAction } from "./lib/use-action";
 
 const TEXT_FIELDS = [
@@ -74,19 +73,9 @@ export function SecurityProgramEditor({
   embedded?: boolean;
 }) {
   const existing = project.securityBounty;
-  // slop.cash sponsors its own contract bounty, so the reporter receives the
-  // whole award (owner decision, 28 October 2026). A first program here is
-  // prefilled with the proposed terms and the full-award split; an existing
-  // program keeps its split. The owner chooses, reviews and publishes.
-  const platform = isPlatformSecurityProgram(project.id, project.repositories);
-  const defaults = platform && !existing ? PLATFORM_BOUNTY_TEXT : null;
-  const canChooseFullAward = fullAwardSelectable(platform, existing);
-  const [fullAward, setFullAward] = useState(
-    () =>
-      canChooseFullAward &&
-      isFullAwardSplit(initialSecuritySplit(platform, existing)),
-  );
-  const programSplit = fullAward ? SECURITY_FULL_AWARD_SPLIT : SECURITY_SPLIT;
+  const boundVault = Boolean(existing?.settlement?.deployments.length);
+  const programSplit = initialSecuritySplit(existing);
+  const fullAward = isFullAwardSplit(programSplit);
   // Session metadata (such as admin) is not part of a public contact record.
   const owner = { githubId: actor.githubId, githubLogin: actor.githubLogin };
   const [expanded, setExpanded] = useState(embedded);
@@ -98,24 +87,26 @@ export function SecurityProgramEditor({
       ? formatBaseUnits(existing.amount.grossMinor, existing.amount.decimals, {
           grouping: false,
         })
-      : defaults
-        ? "10000"
-        : "",
+      : "",
   );
-  const [network, setNetwork] = useState<
-    SecurityBountyTerms["amount"]["network"]
-  >(existing?.amount.network ?? "base");
+  const [assetChoice, setAssetChoice] = useState<RewardAssetSelection>(() => {
+    const asset =
+      existing?.amount.asset ?? (!existing ? project.rewardAsset : undefined);
+    return {
+      network: asset?.network ?? existing?.amount.network ?? "base",
+      assetKind: asset?.kind ?? "stablecoin",
+      tokenAddress: asset?.kind === "token" ? asset.address : "",
+      tokenSymbol: asset?.kind === "token" ? asset.symbol : "",
+    };
+  });
+  const [assetChanged, setAssetChanged] = useState(false);
   const [commit, setCommit] = useState(
-    existing?.scope.sourceRevisions[0]?.commit ??
-      (defaults ? PLATFORM_BOUNTY_SOURCE_COMMIT : ""),
+    existing?.scope.sourceRevisions[0]?.commit ?? "",
   );
-  const [fundAfterApproval, setFundAfterApproval] = useState(
-    existing?.fundingPolicy === "after-approval" || fullAward,
-  );
-  // A full-award program always funds approved awards after review.
-  const afterApproval = fullAward || fundAfterApproval;
+  const afterApproval =
+    !existing || existing.fundingPolicy === "after-approval";
   const [awards, setAwards] = useState(
-    existing?.capacity.awards === null || defaults
+    existing?.capacity.awards === null
       ? ""
       : String(existing?.capacity.awards ?? 1),
   );
@@ -127,69 +118,68 @@ export function SecurityProgramEditor({
     },
   );
   const [text, setText] = useState<Record<TextField, string>>({
-    includedAssets:
-      existing?.scope.includedAssets.join("\n") ??
-      defaults?.includedAssets.join("\n") ??
-      "",
-    excludedDependencies:
-      existing?.scope.excludedDependencies.join("\n") ??
-      defaults?.excludedDependencies.join("\n") ??
-      "",
-    testingPermission:
-      existing?.scope.testingPermission ?? defaults?.testingPermission ?? "",
-    severityRubric:
-      existing?.scope.severityRubric ?? defaults?.severityRubric ?? "",
-    lossDefinition:
-      existing?.scope.lossDefinition ?? defaults?.lossDefinition ?? "",
-    exhaustionRule:
-      existing?.capacity.exhaustionRule ?? defaults?.exhaustionRule ?? "",
-    dispute: existing?.dispute.process ?? defaults?.dispute ?? "",
-    disclosure: existing?.disclosure ?? defaults?.disclosure ?? "",
-    safeHarbor: existing?.safeHarbor ?? defaults?.safeHarbor ?? "",
+    includedAssets: existing?.scope.includedAssets.join("\n") ?? "",
+    excludedDependencies: existing?.scope.excludedDependencies.join("\n") ?? "",
+    testingPermission: existing?.scope.testingPermission ?? "",
+    severityRubric: existing?.scope.severityRubric ?? "",
+    lossDefinition: existing?.scope.lossDefinition ?? "",
+    exhaustionRule: existing?.capacity.exhaustionRule ?? "",
+    dispute: existing?.dispute.process ?? "",
+    disclosure: existing?.disclosure ?? "",
+    safeHarbor: existing?.safeHarbor ?? "",
   });
   const { busy, error, run } = useAction();
   const [reviewing, setReviewing] = useState(false);
+  const amountCurrency = (() => {
+    if (existing && !assetChanged) return existing.amount.currency;
+    try {
+      return bountyAmountFields({
+        ...assetChoice,
+        mode: "monthly",
+        monthlyAmount: "4",
+      }).currency;
+    } catch {
+      return assetChoice.tokenSymbol || "token";
+    }
+  })();
+  function proposedAmount() {
+    if (existing && !assetChanged)
+      return {
+        ...existing.amount,
+        grossMinor: parseAssetAmount(amount, existing.amount.decimals),
+      };
+    return bountyAmountFields({
+      ...assetChoice,
+      mode: "monthly",
+      monthlyAmount: amount,
+    });
+  }
   const preview = (() => {
     try {
-      const precision = {
-        decimals: existing?.amount.decimals ?? 6,
-        currency: existing?.amount.currency ?? "USDC",
-      } as const;
-      const split = securityBountySplit(
-        parseAssetAmount(amount, precision.decimals),
-        programSplit,
-      );
-      return {
-        gross: formatSecurityAmount(split.grossMinor, precision),
-        researcher: formatSecurityAmount(split.researcherMinor, precision),
-        slop: formatSecurityAmount(split.slopMinor, precision),
-      };
+      return bountyAmountPreview(proposedAmount(), amount, programSplit);
     } catch {
       return null;
     }
   })();
   function proposedProgram(): SecurityBountyTerms {
     return {
-      ...carriedSecurityTerms(existing, fullAward),
+      ...carriedSecurityTerms(existing),
+      ...(assetChanged && !boundVault ? { settlement: undefined } : {}),
       ...(afterApproval ? { fundingPolicy: "after-approval" as const } : {}),
       version: "1",
       status,
       rewardMode: existing?.rewardMode ?? "separate",
-      eligibility: "critical-loss-of-funds",
-      amount: {
-        currency: existing?.amount.currency ?? "USDC",
-        decimals: existing?.amount.decimals ?? 6,
-        network,
-        grossMinor: parseAssetAmount(amount, existing?.amount.decimals ?? 6),
-      },
+      eligibility: existing?.eligibility ?? "in-scope-security",
+      // The API verifies a changed asset and resolves its precision on save.
+      amount: proposedAmount() as SecurityBountyTerms["amount"],
       split: { ...programSplit },
-      sponsor:
-        existing?.sponsor ??
-        (platform
-          ? { name: "slop.cash", githubId: project.steward.github.actorId }
-          : { name: project.name, githubId: actor.githubId }),
-      // The API replaces this with its finalized vault evidence.
-      funding: existing?.funding ?? { state: "pledged" },
+      sponsor: existing?.sponsor ?? {
+        name: project.name,
+        githubId: actor.githubId,
+      },
+      funding: assetChanged
+        ? { state: "pledged" }
+        : (existing?.funding ?? { state: "pledged" }),
       capacity: {
         awards: afterApproval && awards === "" ? null : Number(awards),
         closesAt: existing?.capacity.closesAt ?? null,
@@ -205,9 +195,7 @@ export function SecurityProgramEditor({
           },
           ...(existing?.scope.sourceRevisions.slice(1) ?? []),
         ],
-        deployments:
-          existing?.scope.deployments ??
-          (defaults ? PLATFORM_BOUNTY_DEPLOYMENTS : []),
+        deployments: existing?.scope.deployments ?? [],
         includedAssets: lines(text.includedAssets),
         excludedDependencies: lines(text.excludedDependencies),
         testingPermission: text.testingPermission.trim(),
@@ -232,25 +220,33 @@ export function SecurityProgramEditor({
       safeHarbor: text.safeHarbor.trim(),
     };
   }
+  function validateProgram(program: SecurityBountyTerms) {
+    if (!preview) throw new TypeError("Check the award amount and asset.");
+    if (BigInt(parseAssetAmount(amount, program.amount.decimals)) === 0n)
+      throw new TypeError("Enter an award greater than zero.");
+    // Unverified choices are validated by the API after it reads metadata.
+    if (!existing || assetChanged) return;
+    assertSecurityBountyTerms(
+      { ...program, status: status === "open" ? "paused" : status },
+      {
+        projectId: project.id,
+        repositories: project.repositories,
+        reward: { ...project.reward },
+      },
+    );
+  }
   function publish() {
     void run(
       async () => {
         const program = proposedProgram();
-        // Open status is authorized only by the API's current finalized balance.
-        assertSecurityBountyTerms(
-          { ...program, status: status === "open" ? "paused" : status },
-          {
-            projectId: project.id,
-            repositories: project.repositories,
-            reward: { ...project.reward },
-          },
-        );
+        validateProgram(program);
         const result = await publishProjectRevision(
           project.id,
           { ...project, securityBounty: program },
           revision,
           "Update security bounty terms",
           null,
+          program.amount.asset ? amount : null,
         );
         onPublished(result);
         setReviewing(false);
@@ -270,7 +266,7 @@ export function SecurityProgramEditor({
       <div className="owner-form">
         <p className="operations-muted">
           {fullAward
-            ? "You decide each award. slop.cash sponsors this program, so the researcher receives the whole award and Slop takes no share."
+            ? "You decide each award. The researcher receives the whole award and Slop takes no share."
             : "You decide each award: 75% to the researcher, 25% to Slop."}{" "}
           Changes apply to future reports only.
         </p>
@@ -314,20 +310,7 @@ export function SecurityProgramEditor({
               else
                 void run(async () => {
                   const candidate = proposedProgram();
-                  assertSecurityBountyTerms(
-                    {
-                      ...candidate,
-                      status:
-                        candidate.status === "open"
-                          ? "paused"
-                          : candidate.status,
-                    },
-                    {
-                      projectId: project.id,
-                      repositories: project.repositories,
-                      reward: { ...project.reward },
-                    },
-                  );
+                  validateProgram(candidate);
                   setReviewing(true);
                 });
             }}
@@ -355,51 +338,8 @@ export function SecurityProgramEditor({
                   <option value="open">Open</option>
                   <option value="closed">Closed</option>
                 </select>
-                {platform && (
-                  <>
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={fullAward}
-                        disabled={!canChooseFullAward}
-                        aria-describedby={
-                          canChooseFullAward
-                            ? undefined
-                            : "bounty-full-award-vault"
-                        }
-                        onChange={(event) => setFullAward(event.target.checked)}
-                      />
-                      slop.cash sponsors the whole award (researcher 100%, Slop
-                      0%)
-                    </label>
-                    {!canChooseFullAward && (
-                      <p id="bounty-full-award-vault">
-                        This program has a registered bounty vault, which pays
-                        75/25 and keeps its network. The whole-award option
-                        needs a program without a bounty vault.
-                      </p>
-                    )}
-                  </>
-                )}
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={afterApproval}
-                    disabled={fullAward}
-                    onChange={(event) =>
-                      setFundAfterApproval(event.target.checked)
-                    }
-                  />
-                  Fund approved awards after review
-                </label>
-                <p>
-                  {afterApproval
-                    ? "The offer may open before a deposit. It is a discretionary pledge; funds must be verified before an approved award can be reserved or paid."
-                    : "Opening requires available funds in the bounty vault."}{" "}
-                  Closing stops new paid reports only.
-                </p>
                 <label htmlFor="bounty-amount">
-                  Published gross award ({existing?.amount.currency ?? "USDC"})
+                  Published gross award ({amountCurrency})
                 </label>
                 <input
                   id="bounty-amount"
@@ -427,31 +367,26 @@ export function SecurityProgramEditor({
                     </div>
                   </dl>
                 )}
-                <p>
-                  A discretionary award, not a promised payment.
-                  {fullAward &&
-                    " An approved full award is not payable until a full-award payment path is approved and released."}
-                </p>
-                <label htmlFor="bounty-network">Bounty network</label>
-                <select
-                  id="bounty-network"
-                  value={network ?? ""}
-                  disabled={Boolean(existing?.settlement)}
-                  onChange={(event) =>
-                    setNetwork((event.target.value || null) as typeof network)
-                  }
-                >
-                  {existing?.amount.currency === "USD" ? (
-                    <option value="">External USD</option>
-                  ) : (
-                    <>
-                      <option value="base">Base</option>
-                      <option value="ethereum">Ethereum</option>
-                      <option value="robinhood">Robinhood</option>
-                      <option value="solana">Solana</option>
-                    </>
-                  )}
-                </select>
+                <p>A discretionary award, not a promised payment.</p>
+                {existing?.amount.currency === "USD" &&
+                !existing.amount.asset ? (
+                  <p>USD</p>
+                ) : (
+                  <RewardAssetFields
+                    compact
+                    namePrefix="bounty"
+                    choice={assetChoice}
+                    error={() => undefined}
+                    networkFixed={boundVault}
+                    set={(field, value) => {
+                      setAssetChanged(true);
+                      setAssetChoice((previous) => ({
+                        ...previous,
+                        [field]: value,
+                      }));
+                    }}
+                  />
+                )}
                 <label htmlFor="bounty-awards">Planned awards</label>
                 <input
                   id="bounty-awards"
@@ -598,6 +533,7 @@ export function SecurityProgramEditor({
                   only.
                 </p>
                 <SecurityOffer
+                  amountPreview={preview ?? undefined}
                   project={{
                     securityBounty: { ...proposedProgram(), status: "open" },
                   }}

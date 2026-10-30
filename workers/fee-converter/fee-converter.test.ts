@@ -1197,6 +1197,83 @@ describe("replacement lease and restart recovery", () => {
 });
 
 describe("D1 contract", () => {
+  test("native conversion spends finalized fee credits and retains gas, never wallet topups", async () => {
+    const native = "0x0000000000000000000000000000000000000000";
+    const h = harness({
+      env: {
+        FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [native] }),
+        FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+          base: {
+            perTransaction: "1000",
+            perDay: "10000",
+            additionalFeeReserve: "1",
+          },
+        }),
+      },
+    });
+    h.chain.balances.set(native, 1_000_000_000n);
+    await runNetwork(h.network, h.deps);
+    expect(h.chain.prepared).toBe(0);
+    expect(h.rows()).toHaveLength(0);
+    const stamp = "2026-10-18T11:59:00Z";
+    h.sqlite
+      .prepare(`INSERT INTO fee_conversions
+      (id,run_id,kind,network,mode,fee_wallet,token,target_token,amount_in,amount_out,
+       tx_id,raw_tx,state,created_at,updated_at,submitted_at,finalized_at)
+      VALUES('native-claim','native-run','claim','base','live',?,?,?,'30000000','30000000',
+       'native-claim-hash','native-claim-wire','finalized',?,?,?,?)`)
+      .run(WALLET, native, USDC, stamp, stamp, stamp, stamp);
+    h.sqlite
+      .prepare(`INSERT INTO fee_native_gas
+      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,
+       per_day_wei,state,tx_id,created_at,actual_wei,settled_day,receipt_block_hash)
+      VALUES('native-claim-gas','base',?,1,'native-intent','native-run','1000','1000',
+       '10000','signed','native-claim-hash',?,'100','2026-10-18','native-block')`)
+      .run(WALLET, stamp);
+    await runNetwork(h.network, h.deps);
+    const conversion = h.rows().find((row) => row.kind === "conversion");
+    expect(conversion?.amount_in).toBe("29998900");
+    expect(h.chain.prepared).toBe(1);
+    h.chain.statusFor = () => ({ kind: "finalized", amountOut: 29_998_900n });
+    await runNetwork(h.network, h.deps);
+    expect(h.chain.prepared).toBe(1);
+    expect(await h.deps.store.nativeFeeBalance?.("base", native, WALLET)).toBe(
+      1000n,
+    );
+    expect(h.rows().filter((row) => row.kind === "conversion")).toHaveLength(1);
+  });
+
+  test("native credit accounting retains separate Solana transaction fees", async () => {
+    const { db, sqlite } = sqliteD1();
+    const native = "11111111111111111111111111111111";
+    const stamp = "2026-10-18T11:59:00Z";
+    sqlite
+      .prepare(`INSERT INTO fee_conversions
+      (id,run_id,kind,network,mode,fee_wallet,token,target_token,amount_in,amount_out,
+       tx_id,raw_tx,state,created_at,updated_at,submitted_at,finalized_at)
+      VALUES('native-sol-claim','native-run','claim','solana','live',?,?,?,'1000000','1000000',
+       'native-sol-hash','native-sol-wire','finalized',?,?,?,?)`)
+      .run(WALLET, native, USDC, stamp, stamp, stamp, stamp);
+    for (const [id, nonce, cost] of [
+      ["solana-claim-gas", 0, "5000"],
+      ["solana-swap-gas", 1, "7000"],
+    ] as const)
+      sqlite
+        .prepare(`INSERT INTO fee_native_gas
+        (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,
+         per_day_wei,state,tx_id,created_at,actual_wei,settled_day,receipt_block_hash)
+        VALUES(?,'solana',?,?,'native-intent','native-run','10000','10000',
+         '100000','signed',?, ?,?,'2026-10-18','native-block')`)
+        .run(id, WALLET, nonce, `${id}-signature`, stamp, cost);
+    expect(
+      await new D1ConversionStore(db).nativeFeeBalance(
+        "solana",
+        native,
+        WALLET,
+      ),
+    ).toBe(988000n);
+  });
+
   test("the schema refuses a second open send, a submitted row without bytes, and edits to final rows", async () => {
     const h = harness();
     await runNetwork(h.network, h.deps);

@@ -15,14 +15,13 @@ No public page read requires a maintainer permission check.
 ## Program terms
 
 A project opts in with the optional `securityBounty` section of its D1
-manifest (`src/lib/security-bounty.mjs`). New terms start paused with pledged
-funding and no unverified vault. Owners edit terms, open, pause or close the
+manifest (`src/lib/security-bounty.mjs`). New after-approval terms may open as a pledge without a vault. Owners edit terms, open, pause or close the
 program in project settings. Each change uses the existing project revision
 route and checks current GitHub authority through Slopbot. Historical programs
 require available funds from a current finalized snapshot of the separate,
 reviewed bounty vault before opening. The approved `fundingPolicy:
 "after-approval"` publishes a pledge: the owner may select an award before
-funding, but only a current finalized balance can create its reservation. The server sets funding evidence; an owner cannot supply it.
+funding. A direct award is approved without claiming a reservation; an existing vault-backed award needs a current finalized balance for its reservation. The server sets funding evidence; an owner cannot supply it.
 The project steward or a repository admin manages contacts and the sponsor.
 Ordinary write access cannot grant or remove private-case roles. Authority
 checks use the stored project's repository before reading private funds.
@@ -31,13 +30,21 @@ not deploy a vault or accept client-supplied contract trust metadata.
 A program cannot be removed. Existing cases retain their receipt terms and
 funded obligations remain available after a pause or closure.
 
-The Manage page also creates and funds a separate EVM or Solana bounty vault through
-the owner's confirmed wallet. Registration verifies finalized creation
-against the reviewed factory or program, project, owner, USDC asset and bounty purpose.
-It never treats registration or a sent deposit as available funds. The private
-payment worker reads the finalized balance before the owner can open the
-program. Its balance view requires current GitHub ownership and uses no
-public payment totals or receipt route.
+Private bounties use the same verified reward assets as monthly projects: network
+stablecoins, native coins and custom tokens. `amount.asset` freezes the address,
+network, kind, symbol and precision. The API reads token metadata and parses the
+separate decimal `bountyAmount`; client-supplied precision is never trusted.
+Historical USD/USDC terms without `amount.asset` remain valid.
+
+New programs use `eligibility: "in-scope-security"`: the owner decides whether a
+report meets the published scope and criteria. Existing
+`critical-loss-of-funds` programs keep their severity and impact restrictions.
+Eligibility is frozen at receipt, so later edits cannot change an existing
+report's award conditions.
+
+A bounty does not require a payment vault. Existing registered bounty vaults
+remain available with their verified asset and purpose. Their balances stay
+private and never enter ordinary contribution payment totals.
 
 - `amount.grossMinor` is the published gross award per finding, in integer
   minor units divisible by four, so the 75/25 researcher/Slop split is exact.
@@ -191,12 +198,13 @@ version as the reporter, with the same uncertain-send reconciliation. A
 verified GitHub link is stored on the submission; it never rewrites the Slop
 receipt or its terms, and later imports do not create a second case.
 
-The `after-approval` policy preserves the owner's chosen amount as pending
-when a vault or funds are unavailable. The first chosen root cause is held
-against duplicate awards. The owner funds a reviewed bounty vault and repeats
-the award action to create the reservation. New policy awards require the
-owner's confirmed critical, in-scope finding with verified actual or potential
-loss. Existing approved awards and prefunded-program behavior stay unchanged.
+The `after-approval` policy lets the owner approve an award for direct payment
+without a vault or a claimed fund reservation. Existing vault-backed programs
+keep a chosen amount pending until verified funds can cover it. The first chosen
+root cause is held against duplicate awards. An `in-scope-security` award
+requires the owner's confirmed finding against the published scope and criteria.
+Historical `critical-loss-of-funds` terms retain their severity and impact
+conditions. Existing approved awards and prefunded-program behavior stay unchanged.
 
 ## Legacy GitHub-first private intake
 
@@ -356,8 +364,10 @@ owner's award decision (`award`, or an `award` object inside `decide`):
   reporter can appeal it.
 - `decision: "amount"` with `grossMinor`, `paymentDeadline` and confirmation
   selects that exact gross amount. An `after-approval` program requires the
-  frozen published amount; without verified funds it remains pending.
-  Once funded, the owner repeats the action and reserves the amount in the same batch. The
+  frozen published amount. A direct award can be approved without a vault; it
+  does not reserve wallet funds. For an existing vault-backed program without
+  verified funds it remains pending. Once funded, the owner repeats the action
+  and reserves the amount in the same batch. The
   reservation insert itself checks that the bounty vault's unreserved
   finalized free balance covers it; otherwise nothing is written
   (`409 insufficient_funds`). A pledge, a program without a reviewed vault,
@@ -419,7 +429,90 @@ These records do not publish content or schedule disclosure. Reporter recognitio
 consent stays separate. Older events remain unchanged and cannot authorize a new
 disclosure without an exact content approval.
 
-## Private settlement
+## Direct private payments
+
+A program without a registered bounty vault uses direct payment. The reporter
+accepts the wallet, asset and public transaction visibility. A financial approver
+prepares an unsigned plan from their verified wallet. The plan freezes the
+approved amount, asset, payer, reporter and canonical platform fee recipient.
+It includes one or two EVM transfers, or one Solana transaction with the exact
+native/SPL transfers. Slop does not sign or broadcast it.
+
+The browser connects the payer's EVM or Solana wallet and presents only that
+retained request. It rechecks the account and case before a wallet prompt.
+A local journal records the request before sending. An uncertain wallet result
+cannot trigger another send; the payer can enter or correct the transaction
+identifier and verify it. Saved, unverified identifiers remain available during
+wallet holds, while confirmed transfers are excluded.
+
+`prepare-payment` reuses a pending request. Migration
+`0112_direct_payment_recovery.sql` pins each new EVM transfer to a reserved payer
+nonce and retains immutable payment generations. If the reporter changes wallets,
+the unpaid researcher transfer is held until the reporter accepts the successor
+wallet and the original payer confirms recovery. Verified legs are never issued
+again. Lower pending nonces must clear before a later transfer can execute.
+The unchanged fee transfer remains available while a changed researcher wallet
+is held. A successor requires a finalized zero-value self-send with empty data at
+the original transfer nonce,
+or a finalized failed transaction that consumed that nonce. The payer signs these
+transactions in their own wallet. Slop verifies canonical chain evidence before
+it creates a new request. Successful self-cancellation also requires a plain EOA:
+no payer code at either adjacent block and no payer authorization in the receipt
+block. The website withholds this action for a coded or unchecked payer.
+Migration `0113_direct_unpaid_leg_recovery.sql` permits recovery of either unpaid
+leg while preserving every paid leg. The same verified researcher wallet can
+recover a consumed nonce. An unpaid fee can recover after the researcher is paid,
+without asking the reporter to consent again. A successful unrelated transaction
+is not cancellation proof and requires manual review. A legacy EVM request without a pinned nonce cannot be
+redirected automatically; renewed consent can restore only its original address.
+
+Solana reuses the original unsigned bytes while their blockhash is valid. A new
+message, including one for the same wallet, requires retirement of every issued
+message first. Both configured independent RPC operators must confirm expiry and
+retain the complete canonical history from each blockhash to the finalized tip.
+Only after expiry does Slop request a signature over the old message, to identify
+its deterministic transaction signature in that history. The signature is not
+broadcast. Bounded history scans resume from private append-only cursors. A found
+payment is verified instead of replaced; a matching canonical failed transaction
+can retire that message. Missing, inconsistent or incomplete history cannot
+authorize a successor. `SOLANA_RECOVERY_RPC_URL` must name a different recognized
+operator from the primary `PAYMENT_RPC_URLS` Solana endpoint. Two URLs from one
+operator do not qualify. The loopback exception is for non-mainnet local tests.
+Verification of an already-sent transfer remains available throughout recovery.
+`verify-payment` accepts one or both transaction IDs in either order. Each
+finalized EVM transfer is retained separately; the next plan includes only
+unpaid transfers. The case becomes paid only after every required transfer
+is finalized and reconciled. Chain height/slot captured during
+preparation excludes earlier transfers without comparing independent wall clocks.
+Wrong networks, assets, parties, amounts, failed transactions
+and receipts already used by another award are refused. An unavailable proof
+stays unverified; a submitted hash alone is never payment evidence.
+
+ERC-20 verification uses the configured `PAYMENT_RPC_URLS` endpoint's historical
+state and transaction tracing: `debug_traceTransaction` with `prestateTracer`
+and `diffMode`, plus `debug_traceCall` with state overrides and the call and
+prestate tracers. Token preparation checks this capability before returning an
+unsigned request. Native EVM preparation also checks transaction-state tracing.
+Verification requires the recipient's exact native credit and the payer's exact
+debit, with execution gas and Base data/operator fees kept separate. Refunds
+or forwarding by a contract or delegated wallet do not count as receipt.
+Missing proof support returns `payment_proof_unavailable`; there is no event-only
+or whole-block-balance fallback. If verification is unavailable after a send,
+retry verification when the service recovers; do not send the payment again.
+
+Migration `0108_private_direct_payments.sql` keeps the immutable direct intent,
+receipt and transaction-use records private and separate from vault settlements.
+Migration `0109_direct_payment_transfer_receipts.sql` retains partial payments
+and enforces transaction uniqueness before an award is complete.
+Direct payments reserve no wallet balance. Existing approved splits and
+related-party review requirements remain in force.
+Direct platform fees use the same reviewed fee wallet and conversion policy
+as project fees. Completed receipts keep the paid asset discoverable after
+project edits. Native conversion credits only the proved fee amount, excluding
+gas top-ups and unrelated wallet deposits. Robinhood fees remain in their
+original asset under that network's existing policy.
+
+## Existing vault settlement
 
 The 22 October 2026 product decision uses the existing escrow rails with a
 75% reporter share and 25% Slop share. Migration
@@ -427,15 +520,13 @@ The 22 October 2026 product decision uses the existing escrow rails with a
 records, attempts and finalized vault snapshots from ordinary payments.
 Canonical wallet possession and binding authorizations remain shared.
 
-Payment uses the reserved gross amount of the approved award. The project
-owner sets up a separate bounty vault in the **Bounty funds** section of
-`/projects/<id>/manage`, without admin approval (PRD section 11, "Security
-bounty opening"). Registration of the finalized vault attaches the
+Existing vault payments use the reserved gross amount of the approved award.
+Registration of a finalized vault attaches the
 `securityBounty.settlement` policy with `feeBasisPoints: 2500` and
 `withdrawalFeeBasisPoints: 200` (`attachBountyVault` in
 `backend/projects/vault-setup.ts`). The vault must not appear in
-any other payment program. USDC awards require a matching reviewed USDC rail;
-USD awards cannot be converted implicitly. The reporter accepts the selected
+any other payment program. Its verified asset must match the frozen award
+asset; historical USD awards cannot be converted implicitly. The reporter accepts the selected
 rail's public chain visibility before the maintainer or delegated payer prepares an
 immutable unsigned commitment. Report state stays independent of payment
 state, and no payment authorizes disclosure. Onchain records expose actor numbers, addresses,
@@ -455,8 +546,8 @@ Generate the reviewed private deployment inventory with
 and the existing stack generator with `--scope security-bounty`.
 Production retains the existing attester-only policy; this change does not
 authorize a Slop signer or mainnet dispatch. Test stacks use isolated databases.
-Without an approved and verified matching vault, the case shows
-`rail-unavailable` and cannot prepare settlement.
+A vault-backed payment needs its approved matching vault. A program without
+one uses the direct payment path above.
 
 Solana wallet co-signing uses the existing authenticated
 `/api/v1/payments/wallets/solana-bind/prepare` and `complete` endpoints.

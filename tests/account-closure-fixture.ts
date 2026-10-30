@@ -73,7 +73,7 @@ export async function seedAccountClosure(
     INSERT INTO points_telegram_claims VALUES ('88','${ME.actor}','${NOW}');
     INSERT INTO points_telegram_links VALUES ('${ME.actor}','88','closing_tg','${NOW}',1);
     INSERT INTO points_telegram_flows VALUES ('code','session','${ME.actor}','2026-10-23T12:10:00.000Z',1,'pending');
-    INSERT INTO notification_email_preferences VALUES ('${ME.github}',1,'${"d".repeat(64)}','${NOW}');
+    INSERT INTO notification_email_preferences(github_id,enabled,destination_version,updated_at) VALUES ('${ME.github}',1,'${"d".repeat(64)}','${NOW}');
     INSERT INTO wallet_claims (id,github_user_id,github_login,wallet_address,source,issue_repository,issue_number,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain)
       VALUES ('claim-1','${ME.github}','${ME.login}','0x8f77c37d8650776bfe73c9b12b15209ee15d9b86','d1_registry',NULL,NULL,'${"a".repeat(64)}','${NOW}','${"b".repeat(64)}',NULL,'${NOW}','base');
   `);

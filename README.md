@@ -162,11 +162,13 @@ bun run projects:sync
 bun --bun vite --port 4466
 ```
 
-The dev server reads the project registry, finalized vault totals, public
-direct-payment totals, and missing published snapshots in `/data/` from
-`https://slop.cash`, read-only. It also proxies public actor wallet-claim
-metadata from `https://api.slop.cash`. These public read proxies forward no
-cookies or authorization headers. Do not commit the synced registry files.
+The local API imports the synced project registry into local D1 without
+replacing local project edits. Local project reads and writes use that database.
+Finalized vault totals, public direct-payment totals, and missing published
+snapshots in `/data/` still come from `https://slop.cash`, read-only. Public
+actor wallet-claim metadata comes from `https://api.slop.cash`. Public read
+proxies forward no cookies or authorization headers. Do not commit synced
+registry files.
 
 ### Local sign-in
 
@@ -185,10 +187,24 @@ local origin, or `SLOP_DEV_BACKEND` to use an already managed local backend.
 Set `SLOP_DEV_BACKEND=off` for an explicitly read-only preview without local
 sign-in. Production builds never enable the local backend.
 
-The backend keeps its data in `.slop-dev/` (ignored by Git; delete it to start
-over). Only sign-in and the API run locally, on an empty database. Project and
-published data still come from slop.cash, read-only. X connections and payment
-networks are not configured. Safari does not accept the session cookie over
+The backend preserves an existing `.slop-dev/` database. New checkouts store
+private data under `~/.local/share/slop-dev/`, in a directory derived from the
+checkout path. `SLOP_DEV_DATA_DIR` can select a dedicated private directory.
+Vite blocks these files, including symlink and `/@fs/` requests. Directories
+are restricted to their owner, and database and captured-mail files use mode
+600. Do not serve or share the data directory.
+
+Private reports use durable local R2. Email enrollment and notification delivery
+run through the same handlers as production, but messages are captured locally.
+Open `/__dev/mail` while signed in to read that account's messages; no external
+email is sent. Report analysis and GitHub forwarding require their real provider
+configuration and show an unavailable or retry state when absent. Payment
+requests require configured RPC endpoints; only the user's external wallet can
+sign or send funds. Local development never supplies a production signing key.
+For a disposable Solana validator, set its loopback RPC in `PAYMENT_RPC_URLS`
+and its genesis hash in `SLOP_LOCAL_SOLANA_GENESIS`. The override is refused
+unless both the incoming request and the configured Solana RPC use loopback.
+Safari does not accept the session cookie over
 `http://localhost`, so use Chrome, Edge, or Firefox. The backend listens on
 `127.0.0.1` only and is never deployed.
 

@@ -42,6 +42,7 @@ import { handleReferralClaims } from "../../../backend/referrals/claims";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
+import { defaultDirectPaymentConfiguration } from "../../../backend/security/direct-payments";
 import {
   githubAdvisoryClient,
   githubAppAdvisoryToken,
@@ -339,8 +340,33 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     appId && appKey
       ? { fetch: send, apiOrigin, appId, privateKey: appKey, now }
       : null;
+  const directRpcUrls = JSON.parse(env.PAYMENT_RPC_URLS ?? "{}");
+  const directPaymentConfig = defaultDirectPaymentConfiguration(
+    directRpcUrls,
+    env.SOLANA_RECOVERY_RPC_URL
+      ? { "solana-mainnet": env.SOLANA_RECOVERY_RPC_URL }
+      : {},
+  );
+  // Local validators have their own genesis. This exception cannot change a
+  // public deployment's chain: both the request and the RPC must be loopback.
+  if (
+    env.SLOP_LOCAL_SOLANA_GENESIS &&
+    (!loopbackOrigin(new URL(request.url).origin, "") ||
+      typeof directRpcUrls["solana-mainnet"] !== "string" ||
+      !loopbackOrigin(new URL(directRpcUrls["solana-mainnet"]).origin, "") ||
+      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(env.SLOP_LOCAL_SOLANA_GENESIS))
+  )
+    throw new Error("Local Solana configuration requires loopback endpoints");
   const securityResponse = await handleSecurityApi(request, {
     db,
+    directPayments: (network) => {
+      const config = directPaymentConfig(network);
+      return config &&
+        network === "solana-mainnet" &&
+        env.SLOP_LOCAL_SOLANA_GENESIS
+        ? { ...config, genesisHash: env.SLOP_LOCAL_SOLANA_GENESIS }
+        : config;
+    },
     // A separate key namespace; contributor trace APIs never read reports.
     reportStorage: env.PRIVATE_TRACES,
     reportIntakeEnabled: env.SLOP_PRIVATE_INTAKE_MODE === "on",
@@ -454,6 +480,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     db,
     sessionActor,
     now,
+    mailService: env.SLOP_NOTIFY,
     eligibility: (githubId) =>
       verifiedEmailEligibility(env.SLOP_NOTIFY, githubId),
   });

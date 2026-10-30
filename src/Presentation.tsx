@@ -5,6 +5,7 @@ import { loginHref } from "./lib/browser-deployment";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import { useNotFoundHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
+import { hasBountyOverview } from "./lib/home-projects";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
 import { POINTS_PER_THIRD } from "./lib/points";
 import {
@@ -95,7 +96,7 @@ export function ProjectNav({
   project,
   current,
 }: {
-  project: Pick<ProjectDefinition, "id" | "slug">;
+  project: Pick<ProjectDefinition, "id" | "slug" | "securityBounty">;
   current: "overview" | "funding" | "settings" | "security";
 }) {
   const base = `/projects/${project.slug}`;
@@ -106,7 +107,13 @@ export function ProjectNav({
       current={current}
       links={[
         { id: "overview", label: "Overview", href: base },
-        { id: "funding", label: "Funds & awards", href: `${base}/funding` },
+        hasBountyOverview(project)
+          ? {
+              id: "security",
+              label: "Security bounty",
+              href: `${base}/security`,
+            }
+          : { id: "funding", label: "Funds & awards", href: `${base}/funding` },
         ...(allowed
           ? [{ id: "settings", label: "Settings", href: `${base}/manage` }]
           : []),

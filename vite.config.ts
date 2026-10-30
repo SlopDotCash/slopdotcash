@@ -8,6 +8,10 @@ import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type ProxyOptions } from "vite";
+import {
+  devDataDirectory,
+  privateDevRequest,
+} from "./scripts/dev-private-paths";
 import { deploymentOrigins } from "./src/lib/deployment";
 
 const publicDirectory = `${fileURLToPath(new URL("./public", import.meta.url))}${sep}`;
@@ -53,21 +57,22 @@ export default defineConfig(({ command, isPreview }) => {
         name: "local-sign-in",
         apply: "serve",
         configureServer(server) {
-          if (localBackend) {
-            server.middlewares.use((request, _response, next) => {
-              // GET /projects stays a public read. Its POST must reach the
-              // local API before the read-only proxy refuses write methods.
-              if (
-                request.method === "POST" &&
-                /^\/api\/v1\/projects(?:\?|$)/.test(request.url ?? "")
+          const privateDirectory = devDataDirectory(
+            server.config.root,
+            process.env.SLOP_DEV_DATA_DIR,
+          );
+          server.middlewares.use((request, response, next) => {
+            if (
+              privateDevRequest(
+                request.url ?? "/",
+                server.config.root,
+                privateDirectory,
               )
-                request.url = request.url?.replace(
-                  /^\/api\/v1\/projects/,
-                  "/__dev/project-create",
-                );
-              next();
-            });
-          }
+            ) {
+              response.writeHead(403, { "cache-control": "no-store" });
+              response.end();
+            } else next();
+          });
           if (!automaticBackend || !localBackend) return;
           let child: ChildProcess | undefined;
           const stop = () => child?.kill("SIGTERM");
@@ -230,7 +235,20 @@ export default defineConfig(({ command, isPreview }) => {
     // "Money received".
     // The legacy file URL is also supported for existing sessions.
     server: {
+      fs: {
+        deny: [
+          ".env",
+          ".env.*",
+          "*.{crt,pem}",
+          "**/.git/**",
+          "**/.dev.vars*",
+          "**/.slop-dev/**",
+          "**/.wrangler/**",
+          `${devDataDirectory(process.cwd(), process.env.SLOP_DEV_DATA_DIR)}/**`,
+        ],
+      },
       proxy: {
+        ...localBackendProxy,
         "^/api/v1/wallet-claims/actors/[1-9][0-9]*/current(?:\\?.*)?$": {
           target: localApiOrigin,
           changeOrigin: true,
@@ -290,7 +308,6 @@ export default defineConfig(({ command, isPreview }) => {
               });
             },
           },
-        ...localBackendProxy,
       },
     },
     build: {

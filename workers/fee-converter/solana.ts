@@ -20,6 +20,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import {
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
+  SOLANA_NATIVE_ASSET,
   type SolanaEscrowConfig,
   solanaAccount,
   solanaBase58,
@@ -29,6 +30,7 @@ import {
   solanaVaultAddress,
   verifySolanaDeployment,
 } from "../../contracts/solana/adapter";
+import { nativeLamportDeltas } from "../../contracts/solana/native";
 import {
   inspectMintAccount,
   inspectTokenAccount,
@@ -63,6 +65,7 @@ import {
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
+import { WRAPPED_SOL, wrapNativeRoute } from "./solana-native-route";
 import {
   assertSolanaRouteSimulation,
   reviewSolanaRouteAccounts,
@@ -103,6 +106,8 @@ export interface SolanaClientOptions {
    * blockhash before signing. The hosted Worker never sets this.
    */
   localBlockhash?: boolean;
+  /** Exact local validator identity supplied only by the integration harness. */
+  localGenesisHash?: string;
   /**
    * Unit tests only: stands in for the finalized program, Config and project
    * verification. The hosted Worker never sets it.
@@ -329,6 +334,7 @@ export function solanaNativeCost(
     postTokenBalances: TokenBalance[];
   },
   accounts: readonly number[],
+  nativePrincipal = 0n,
 ): bigint {
   let actual = nativeInteger(meta.fee);
   const nativeToken = "So11111111111111111111111111111111111111112";
@@ -350,7 +356,9 @@ export function solanaNativeCost(
     if (after > before) actual += after - before;
   }
   const walletDebit =
-    nativeInteger(meta.preBalances[0]) - nativeInteger(meta.postBalances[0]);
+    nativeInteger(meta.preBalances[0]) -
+    nativeInteger(meta.postBalances[0]) -
+    nativePrincipal;
   if (walletDebit > actual) actual = walletDebit;
   return actual;
 }
@@ -479,6 +487,9 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       [solanaBase64(message), { commitment: "confirmed" }],
     );
     const networkFee = nativeInteger(fee.value);
+    const nativePrincipal = accountProof.route?.expectation.nativeInput
+      ? BigInt(accountProof.route.expectation.amountIn)
+      : 0n;
     let rent = 0n;
     for (const account of accounts) {
       if (
@@ -521,7 +532,13 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     if (
       simulated.value.err !== null ||
       !simulated.value.accounts?.[0] ||
-      before - nativeInteger(simulated.value.accounts[0].lamports) > maximum
+      before -
+        nativeInteger(simulated.value.accounts[0].lamports) -
+        nativePrincipal >
+        maximum ||
+      (nativePrincipal > 0n &&
+        before - nativeInteger(simulated.value.accounts?.[0]?.lamports) <
+          nativePrincipal)
     )
       throw new Error("Solana simulation has unbounded native wallet debit");
     if (maximum > BigInt(config.nativeBudget.perTransaction))
@@ -633,6 +650,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         slot: number;
         transaction: [string, string];
         meta: {
+          err: unknown;
           fee: number;
           preBalances: number[];
           postBalances: number[];
@@ -734,6 +752,9 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       const actual = solanaNativeCost(
         tx.meta,
         accounts.map((account) => account.index),
+        tx.meta.err === null && accountProof?.route?.expectation.nativeInput
+          ? BigInt(accountProof.route.expectation.amountIn)
+          : 0n,
       );
       await journal.settle(send, {
         txId: send.txId,
@@ -748,9 +769,10 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     amount: bigint,
     slippageBps: number,
   ) {
+    const inputMint = token === SOLANA_NATIVE_ASSET ? WRAPPED_SOL : token;
     const quote = await jupiter<JupiterQuote>(
       `quote?${new URLSearchParams({
-        inputMint: token,
+        inputMint,
         outputMint: usdc,
         amount: amount.toString(),
         slippageBps: String(slippageBps),
@@ -761,7 +783,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       })}`,
     );
     if (
-      quote.inputMint !== token ||
+      quote.inputMint !== inputMint ||
       quote.outputMint !== usdc ||
       quote.inAmount !== amount.toString() ||
       quote.swapMode !== "ExactIn" ||
@@ -792,12 +814,24 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     rawTx: string,
     account: string,
     label: string,
+    native = false,
   ): Promise<bigint> {
-    const before = await tokenAccountBalance(account);
+    const before = native
+      ? nativeInteger(
+          (
+            await rpc<{ value: number }>("getBalance", [
+              account,
+              { commitment: "confirmed" },
+            ])
+          ).value,
+        )
+      : await tokenAccountBalance(account);
     const simulation = await rpc<{
       value: {
         err: unknown;
-        accounts: ({ data: [string, string] } | null)[] | null;
+        accounts:
+          | ({ data: [string, string]; lamports: number } | null)[]
+          | null;
       };
     }>("simulateTransaction", [
       rawTx,
@@ -818,6 +852,16 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       throw new Error(
         `${label} simulation did not credit the ${label === "claim" ? "fee" : "USDC"} account`,
       );
+    if (native) {
+      const parsed = parseTransaction(solanaBase64Bytes(rawTx));
+      const fee = await rpc<{ value: number }>("getFeeForMessage", [
+        solanaBase64(solanaBase64Bytes(rawTx).slice(parsed.messageOffset)),
+        { commitment: "confirmed" },
+      ]);
+      return (
+        nativeInteger(simulated.lamports) - before + nativeInteger(fee.value)
+      );
+    }
     const data = solanaBase64Bytes(simulated.data[0]);
     return (
       new DataView(data.buffer, data.byteOffset).getBigUint64(64, true) - before
@@ -851,6 +895,9 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
   async function verifiedVault(entry: FeeVault, executedAtSlot?: number) {
     const escrow = {
       ...solanaEscrowConfig(entry, config.rpcUrl),
+      ...(options.localGenesisHash
+        ? { genesisHash: options.localGenesisHash }
+        : {}),
       executedAtSlot,
     };
     // Another wallet's fees are not this run's to claim.
@@ -862,8 +909,11 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     if (entry.vault !== escrow.vault)
       throw new Error("vault differs from its reviewed deployment record");
     const project = await verifyDeployment(escrow);
-    const mint = await admittedMint(escrow.mint);
-    return { escrow, project, tokenProgram: mint.tokenProgram };
+    const tokenProgram =
+      escrow.mint === SOLANA_NATIVE_ASSET
+        ? SOLANA_NATIVE_ASSET
+        : (await admittedMint(escrow.mint)).tokenProgram;
+    return { escrow, project, tokenProgram };
   }
 
   async function confirmedAccrued(escrow: SolanaEscrowConfig) {
@@ -935,7 +985,9 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           data.length !== 80 ||
           solanaBase58(data.slice(8, 40)) !== escrow.projectPda ||
           solanaBase58(data.slice(40, 72)) !==
-            ata(escrow.mint, wallet, tokenProgram)
+            (escrow.mint === SOLANA_NATIVE_ASSET
+              ? wallet
+              : ata(escrow.mint, wallet, tokenProgram))
         )
           throw new Error("claim receipt has an invalid FeesClaimed event");
         amount = new DataView(data.buffer, data.byteOffset).getBigUint64(
@@ -944,8 +996,18 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         );
       }
     }
-    const received = delta(transaction.meta, wallet, escrow.mint);
-    const paid = -delta(transaction.meta, escrow.projectPda, escrow.mint);
+    const native = escrow.mint === SOLANA_NATIVE_ASSET;
+    const nativeDeltas = native
+      ? nativeLamportDeltas(
+          { ...transaction.meta },
+          transaction.transaction.message?.accountKeys ?? [],
+        )
+      : null;
+    const received =
+      nativeDeltas?.get(wallet) ?? delta(transaction.meta, wallet, escrow.mint);
+    const paid = nativeDeltas
+      ? -(nativeDeltas.get(escrow.vault) ?? 0n)
+      : -delta(transaction.meta, escrow.projectPda, escrow.mint);
     if (
       amount === null ||
       amount === 0n ||
@@ -997,22 +1059,33 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       )
         throw new Error("an earlier project transaction is not yet finalized");
 
-      const feeAccount = ata(escrow.mint, wallet, tokenProgram);
+      const native = escrow.mint === SOLANA_NATIVE_ASSET;
+      const feeAccount = native
+        ? wallet
+        : ata(escrow.mint, wallet, tokenProgram);
       const latest = await rpc<{
         value: { blockhash: string; lastValidBlockHeight: number };
       }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
       const body = legacyMessage(wallet, latest.value.blockhash, [
-        createAta(wallet, escrow.mint, wallet, tokenProgram),
+        ...(native
+          ? []
+          : [createAta(wallet, escrow.mint, wallet, tokenProgram)]),
         {
           program: escrow.programId,
-          accounts: [
-            { key: escrow.projectPda, write: true },
-            { key: escrow.mint, write: false },
-            { key: escrow.vault, write: true },
-            { key: feeAccount, write: true },
-            { key: tokenProgram, write: false },
-          ],
-          data: instructionData("claim_fees"),
+          accounts: native
+            ? [
+                { key: escrow.projectPda, write: true },
+                { key: escrow.vault, write: true },
+                { key: feeAccount, write: true },
+              ]
+            : [
+                { key: escrow.projectPda, write: true },
+                { key: escrow.mint, write: false },
+                { key: escrow.vault, write: true },
+                { key: feeAccount, write: true },
+                { key: tokenProgram, write: false },
+              ],
+          data: instructionData(native ? "claim_fees_native" : "claim_fees"),
         },
       ]);
       if (
@@ -1020,6 +1093,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           solanaBase64(concat(Uint8Array.of(1), new Uint8Array(64), body)),
           feeAccount,
           "claim",
+          native,
         )) < amount
       )
         throw new Error("claim simulation credited less than the accrued fee");
@@ -1096,6 +1170,16 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
 
     reconcileNativeGas: reconcileNative,
     async balance(token) {
+      if (token === SOLANA_NATIVE_ASSET) {
+        const result = await rpc<{ value: number }>("getBalance", [
+          wallet,
+          { commitment: "finalized" },
+        ]);
+        const spendable =
+          nativeInteger(result.value) -
+          BigInt(config.nativeBudget?.perTransaction ?? "0");
+        return spendable > 0n ? spendable : 0n;
+      }
       const mint = await admittedMint(token);
       // A reviewed route debits only the canonical associated account. A
       // claim_fees caller may pay another token account the fee wallet owns;
@@ -1168,7 +1252,9 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     ): Promise<PreparedSend> {
       if (!seed)
         throw new Error("Signing is disabled without a fee-wallet key");
-      const inputMint = await admittedMint(token);
+      const nativeInput = token === SOLANA_NATIVE_ASSET;
+      const inputToken = nativeInput ? WRAPPED_SOL : token;
+      const inputMint = await admittedMint(inputToken);
       const outputMint = await admittedMint(usdc);
       const fresh = await fetchQuote(
         token,
@@ -1194,7 +1280,10 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           ...(inputMint.tokenProgram === TOKEN_2022_PROGRAM
             ? { useSharedAccounts: true }
             : {}),
-          dynamicComputeUnitLimit: true,
+          // The builder cannot simulate our native wrap before we add it.
+          // Native routes use its conservative limit, then our full local
+          // simulation and gas reservation check the completed transaction.
+          dynamicComputeUnitLimit: !nativeInput,
           prioritizationFeeLamports: {
             priorityLevelWithMaxLamports: {
               maxLamports: 200_000,
@@ -1203,8 +1292,8 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           },
         }),
       });
-      const raw = solanaBase64Bytes(swap.swapTransaction);
-      const parsed = parseTransaction(raw);
+      let raw: Uint8Array = solanaBase64Bytes(swap.swapTransaction);
+      let parsed = parseTransaction(raw);
       if (
         parsed.signatureCount !== 1 ||
         parsed.requiredSignatures !== 1 ||
@@ -1238,11 +1327,22 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       )
         throw new Error("Jupiter returned an invalid block height");
 
-      const accountProof = await resolveSolanaAccounts(raw, parsed, rpc);
+      let accountProof = await resolveSolanaAccounts(raw, parsed, rpc);
+      if (nativeInput) {
+        raw = wrapNativeRoute(
+          raw,
+          parsed,
+          accountProof,
+          wallet,
+          quote.amountIn,
+        );
+        parsed = parseTransaction(raw);
+        accountProof = await resolveSolanaAccounts(raw, parsed, rpc);
+      }
       const expected = {
         program: JUPITER_PROGRAM,
         wallet,
-        inputMint: token,
+        inputMint: inputToken,
         inputProgram: inputMint.tokenProgram,
         outputMint: usdc,
         outputProgram: outputMint.tokenProgram,
@@ -1250,6 +1350,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         quotedOut: BigInt(fresh.outAmount),
         minimumOut: minAmountOut,
         slippageBps: fresh.slippageBps,
+        ...(nativeInput ? { nativeInput: true as const } : {}),
       };
       const review = await reviewSolanaRouteAccounts(
         rpc,
@@ -1270,7 +1371,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           commitment: "confirmed",
           accounts: {
             encoding: "base64",
-            addresses: [review.source.state.address, review.destinationAddress],
+            addresses: [review.sourceAddress, review.destinationAddress],
           },
         },
       ]);
@@ -1423,9 +1524,12 @@ interface TokenBalance {
 /** The `getTransaction` fields a claim or swap receipt check reads. */
 interface TransactionReceipt {
   slot: number;
-  transaction: { signatures: string[] };
+  transaction: { signatures: string[]; message?: { accountKeys: string[] } };
   meta: {
     err: unknown;
+    fee?: number;
+    preBalances?: number[];
+    postBalances?: number[];
     preTokenBalances: TokenBalance[];
     postTokenBalances: TokenBalance[];
     logMessages: string[] | null;

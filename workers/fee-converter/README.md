@@ -129,7 +129,12 @@ For each enabled network:
      signs only when no earlier fee-wallet transaction is pending. At the
      receipt block it verifies the deployment again. Transfers of the reviewed
      token must show the same net debit from the vault and credit to this fee
-     wallet, equal to the vault's `FeesClaimed` event. The earlier read is a
+     wallet, equal to the vault's `FeesClaimed` event. For ETH, the canonical
+     receipt must bind the exact zero-value `claimFees()` transaction and
+     event to the reviewed implementation. That code emits the event only
+     after checking its exact native debit and recipient credit; balances
+     across a whole block include unrelated transactions and are not claim
+     evidence. The earlier read is a
      quote estimate: fees can accrue or another caller can claim before this
      transaction lands. Receipt status or nonce advancement alone is not
      proof. Before broadcast, the existing send journal stores the signed
@@ -163,8 +168,8 @@ For each enabled network:
      receipts remain pending, even after blockhash expiry. Recovery sends
      unchanged recorded bytes only while valid, after checking the deployment
      again. That token cannot convert until the receipt is verified.
-5. List candidate tokens from D1 project manifests: a `rewardAsset` of kind
-   `token` on that network, and the `escrow.deployments[].asset` of each
+5. List candidate assets from D1 project manifests: a `rewardAsset` of kind
+   `token` or `native` on that network, and the `escrow.deployments[].asset` of each
    deployment on the network's escrow key (`base-mainnet`, `ethereum`,
    `robinhood-mainnet`, `solana-mainnet`). Add the `FEE_CONVERTER_ALLOWLIST`
    entries. It never discovers tokens from the wallet, so an airdropped token
@@ -174,6 +179,10 @@ For each enabled network:
    latest record. On Solana the balance is the fee wallet's canonical
    associated token account, the only holding a reviewed route can debit.
    A fee paid to another token account of the fee wallet stays there.
+   For ETH and SOL, cap the amount by finalized claim receipts less prior
+   conversion inputs and recorded gas costs. Keep the next transaction's
+   full native cost ceiling. Gas topups and direct transfers add no fee
+   credit and are never sold.
 7. Get a quote. If the quoted value is above the remaining per-run or per-day
    cap, scale the amount down (at most three requotes, aiming at 98% of the
    remaining cap).
@@ -221,7 +230,10 @@ verify those routes. Any of them can replace KyberSwap behind
 
 ### Checks before an EVM swap is signed
 
-- The route and build name the pinned router; the build carries no native value.
+- The route and build name the pinned router. An ERC-20 build carries no
+  native value; an ETH build carries exactly the recorded input amount.
+  ETH uses the zero address in the journal and Kyber's native sentinel in
+  its route and calldata.
 - The calldata decodes as `swap` or `swapSimpleMode`, with the exact input
   token and amount, the network USDC as output, the fee wallet as
   receiver, and no extra fee receivers.
@@ -230,14 +242,18 @@ verify those routes. Any of them can replace KyberSwap behind
   build passes and a larger move fails as "price moved".
 - An `eth_call` of the exact calldata from the fee wallet returns at least the
   signed minimum.
-- The approval is for the exact order amount to the pinned router, never
-  unlimited.
+- An ERC-20 approval is for the exact order amount to the pinned router,
+  never unlimited. ETH needs no approval.
 
 ### Checks before a Solana swap is signed
 
 - The fee wallet is the only signer and the fee payer.
-- Every top-level program is Compute Budget, Associated Token or Jupiter v6.
-  System and token programs cannot run at top level, so no direct transfer
+- Token routes invoke only Compute Budget, Associated Token or Jupiter v6.
+  Native SOL routes add one exact System transfer to the fee wallet's wrapped
+  SOL account and one Token `SyncNative`, before the Jupiter route. This wraps
+  only the journal-approved native fee input in the same transaction. Existing
+  wrapped SOL remains unchanged. Other System or token instructions are refused,
+  so no unrelated direct transfer
   can be added.
 - The signed minimum (`otherAmountThreshold`) is at or above the recorded
   quote minimum.
@@ -509,7 +525,9 @@ read at finalized commitment, every token holding and its mint must use an
 admitted token program and extension set, and the instruction must bind the
 fee wallet, canonical input/output accounts, exact amount, minimum output
 and bounded slippage. Simulation must show the exact input debit and minimum
-output credit without changing the accounts' authority fields. This uses
+output credit without changing the accounts' authority fields. For native SOL,
+the exact wrap and swap leave any pre-existing wrapped SOL unchanged; the native
+wallet debit must equal the input plus bounded network cost and account rent. This uses
 the pinned minimal Jupiter wire schema in `jupiter-route-schema.ts`; the IDL
 source digest records the schema source, not a program-code attestation.
 
@@ -726,7 +744,11 @@ It captures real Jupiter V2 quote and unsigned swap responses, resolves their
 lookup tables at finalized commitment, and clones the route's public programs
 and accounts. The default input is classic SPL JUP; run
 `SLOP_FEE_TEST_TOKEN=pmup bun run test:fee-converter:solana` for the selected
-Token-2022 mint. `SLOP_FEE_TEST_PORT` selects another local port range.
+Token-2022 mint. `SLOP_FEE_TEST_TOKEN=sol bun run test:fee-converter:solana`
+loads the compiled local escrow, creates native fees by deposit and withdrawal,
+and verifies the converter's own finalized claim, exact atomic wrap, USDC receipt,
+unchanged vault principal and exclusion of gas topups from fee income.
+`SLOP_FEE_TEST_PORT` selects another local port range.
 The captured responses stay bound to the requested wallet and quote while
 execution runs against the isolated snapshot. The harness selects stable
 on-chain AMMs instead of expiring oracle-price routes. It retains the original

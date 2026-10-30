@@ -204,6 +204,90 @@ and environment isolation. Local tests substitute the transport and do not
 prove provider acceptance or inbox delivery. This code neither activates a
 bounty nor selects a private payment rail.
 
+## Verified account email
+
+General account email is separate from the legacy operator pilot. A signed-in
+person can enter an address, choose activity and security notices separately,
+and request a verification link in Inbox. The link expires after 30 minutes.
+It contains a random token in the URL fragment, which the browser removes
+before other requests. An explicit POST from the same signed-in GitHub actor
+consumes it once. D1 stores only its hash. A pending address never replaces an
+existing verified destination. A new request cancels earlier pending links.
+
+`POST /api/v1/notifications/email/verification` accepts `email`,
+`idempotencyKey`, `enabled` (activity), and `securityEnabled`. Repeating the
+same request key sends no additional message. Requests are bounded to one per
+minute and three per hour for the account or destination. `POST .../verify`
+accepts the token. `GET /api/v1/notifications/email` returns the verified
+destination, consent and pending verification state. Both consent switches
+require the displayed destination version when enabled. No historical notices
+are added to a queue on opt-in.
+
+General delivery uses `notification_email_destinations` and the existing
+durable outboxes. Each notice binds its destination version. The Worker checks
+current roles and consent again before sending. Address changes cannot send
+an earlier queued notice to the new address. Opt-out suppresses pending mail;
+in-app notices remain. Provider acceptance is not proof of delivery. Unknown
+transport results remain ambiguous and are not automatically resent. Explicit
+provider quota rejections use the existing bounded retry schedule.
+
+Every general notice includes an unsubscribe link and one-click mail headers.
+The capability can only turn off both email preferences for its exact address
+version. `NOTIFY_UNSUBSCRIBE_KEY` generates it, and D1 retains only the hash of
+each issued capability with that version. Verification uses the issued hash,
+so a signing-key rotation does not break older links or require old keys.
+GET never unsubscribes. The browser presents an explicit action; mail clients
+may send the RFC 8058 POST. A later verified address makes the old capability
+invalid. Token-only opt-out remains available when sending is paused.
+
+The private Worker protocol is `/v1/email/capabilities`, `/verification`, and
+`/unsubscribe`, under `https://notify.internal`. It checks the stored challenge
+and actor before a verification send. It does not accept arbitrary message
+text. `handleEnrollmentMailRequest` is also used by the local simulator with
+the same D1 database and a capture callback. Local tests send no external mail.
+
+### General-email release prerequisites
+
+Cloudflare Email Routing alone can send only to account-verified destination
+addresses. An onboarded Email Sending domain allows other recipients. Confirm
+the sender domain, DNS authentication and account sending quota with the
+operator before enabling general mail. See Cloudflare's
+[sending setup](https://developers.cloudflare.com/email-service/get-started/send-emails/)
+and [limits](https://developers.cloudflare.com/email-service/platform/limits/).
+The native binding supports the existing raw `EmailMessage` API; see the
+[Workers API](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/).
+
+Apply migration `0111_verified_notification_email.sql` before releasing the
+Worker or Pages change. Provision a separate 32-byte random hexadecimal
+`NOTIFY_UNSUBSCRIBE_KEY` secret in each selected Worker environment. Do not
+print it or commit it. Set these protected environment variables only after
+the operator has verified onboarding:
+
+- Production: `SLOP_NOTIFY_GENERAL_EMAIL=enabled` and
+  `SLOP_NOTIFY_EMAIL_SENDING_READY=verified`.
+- Staging: `SLOP_NOTIFY_STAGING_GENERAL_EMAIL=enabled` and
+  `SLOP_NOTIFY_STAGING_EMAIL_SENDING_READY=verified`.
+
+To pause a previously enabled general service, select
+`SLOP_NOTIFY_GENERAL_EMAIL=paused` (or its staging counterpart). This profile
+retains the private D1 binding for existing unsubscribe links but enables no
+general send or enrollment. It requires no signing key or cron when no pilot
+is selected. Use the empty admin-only selection only for a service that has
+not issued general-email unsubscribe links.
+
+The existing protected release job builds an explicit
+`NOTIFY_GENERAL_EMAIL_ENABLED=true` profile, verifies its selected D1,
+Slopbot, secret inventory and inbox origin, and installs the five-minute drain
+schedule. Pilot selection remains independent. A default or admin-only profile
+does not enable enrollment. Removing the general selection also requires
+removing its secret from that Worker's expected inventory.
+
+The readiness variable records an operator check; it is not a provider probe
+or delivery receipt. Before claiming live availability, record an approved
+staging mailbox's verification and notice delivery, failure/retry behavior,
+unsubscribe behavior, and provider evidence. The local capture suite and a
+successful release cannot establish inbox delivery for arbitrary providers.
+
 ## Optional activity email (NOT-01)
 
 The activity pilot is separate from the private bounty pilot. Its

@@ -157,7 +157,13 @@ test("expired wallet sessions require sign-in with an Account return path", asyn
       return route.fulfill({ json: { session: null } });
     if (pathname === "/api/v1/notifications/email")
       return route.fulfill({
-        json: { enabled: false, availability: "unverified" },
+        json: {
+          enabled: false,
+          securityEnabled: false,
+          enrollmentAvailable: false,
+          pending: null,
+          availability: "unverified",
+        },
       });
     if (pathname.startsWith("/api/"))
       return route.fulfill({ status: 404, json: {} });

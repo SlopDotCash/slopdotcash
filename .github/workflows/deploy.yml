@@ -608,6 +608,8 @@ jobs:
           SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_STAGING_RELEASE }}
           SLOP_STAGING_BINDING_NONCE_LIMIT: ${{ vars.SLOP_STAGING_BINDING_NONCE_LIMIT }}
           SLOP_NOTIFY_MAIL_PILOTS: ${{ vars.SLOP_NOTIFY_STAGING_MAIL_PILOTS }}
+          SLOP_NOTIFY_GENERAL_EMAIL: ${{ vars.SLOP_NOTIFY_STAGING_GENERAL_EMAIL }}
+          SLOP_NOTIFY_EMAIL_SENDING_READY: ${{ vars.SLOP_NOTIFY_STAGING_EMAIL_SENDING_READY }}
           GH_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -657,6 +659,7 @@ jobs:
             bun scripts/release-notify.mjs deploy staging "$RUNNER_TEMP/slop-notify-staging-release"
           else
             test -z "$SLOP_NOTIFY_MAIL_PILOTS"
+            test -z "$SLOP_NOTIFY_GENERAL_EMAIL"
           fi
           if [ "$SLOP_VETTING_BACKUP_RELEASE" = "enabled" ]; then
             node scripts/release-vetting-backup.mjs staging
@@ -965,6 +968,8 @@ jobs:
           SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
           SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_RELEASE }}
           SLOP_NOTIFY_MAIL_PILOTS: ${{ vars.SLOP_NOTIFY_MAIL_PILOTS }}
+          SLOP_NOTIFY_GENERAL_EMAIL: ${{ vars.SLOP_NOTIFY_GENERAL_EMAIL }}
+          SLOP_NOTIFY_EMAIL_SENDING_READY: ${{ vars.SLOP_NOTIFY_EMAIL_SENDING_READY }}
           SLOP_FEE_CONVERTER_RELEASE: ${{ vars.SLOP_FEE_CONVERTER_RELEASE }}
           SLOP_VETTING_BACKUP_RELEASE: ${{ vars.SLOP_VETTING_BACKUP_RELEASE }}
           SLOP_VETTING_RETENTION_RELEASE: ${{ vars.SLOP_VETTING_RETENTION_RELEASE }}
@@ -1188,6 +1193,7 @@ jobs:
             bun scripts/release-notify.mjs deploy production "$RUNNER_TEMP/slop-notify-release"
           else
             test -z "$SLOP_NOTIFY_MAIL_PILOTS"
+            test -z "$SLOP_NOTIFY_GENERAL_EMAIL"
             echo "::notice::Notification release is disabled."
           fi
 

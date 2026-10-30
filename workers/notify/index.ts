@@ -1,5 +1,9 @@
 import { EmailMessage } from "cloudflare:email";
 import {
+  enrolledDestination,
+  validUnsubscribeKey,
+} from "../../backend/notifications/email-destinations";
+import {
   type SlopbotBinding,
   slopbotRepositoryAccess,
 } from "../../backend/projects/repository-access";
@@ -13,6 +17,8 @@ import {
   dispatchActivityMail,
   parseActivityMailConfig,
 } from "./activity";
+import { SENDER_ADDRESS } from "./contracts";
+import { handleEnrollmentMailRequest } from "./enrollment";
 import { handleNotifyRequest } from "./handler";
 import {
   dispatchSecurityMail,
@@ -33,6 +39,8 @@ type Env = {
   SLOPBOT?: SlopbotBinding;
   SECURITY_MAIL_PILOT?: string;
   ACTIVITY_MAIL_PILOT?: string;
+  NOTIFY_GENERAL_EMAIL_ENABLED?: string;
+  NOTIFY_UNSUBSCRIBE_KEY?: string;
   NOTIFY_FROM_ADDRESS: string;
   NOTIFY_INBOX_URL?: string;
   /** Same configured administrators as the Pages notification writer. */
@@ -50,13 +58,24 @@ function mailPilot<Config extends { inboxUrl: string }>(
   raw: string | undefined,
   parse: (raw: string) => Config | null,
 ) {
-  if (!raw || !env.SLOP_DB) return "off" as const;
-  const config = parse(raw);
+  const generalEmail = env.NOTIFY_GENERAL_EMAIL_ENABLED === "true";
+  if ((!raw && !generalEmail) || !env.SLOP_DB) return "off" as const;
+  if (
+    generalEmail &&
+    (!validUnsubscribeKey(env.NOTIFY_UNSUBSCRIBE_KEY) ||
+      !SENDER_ADDRESS.test(env.NOTIFY_FROM_ADDRESS))
+  )
+    return "misconfigured" as const;
+  const config = parse(
+    raw ?? JSON.stringify({ inboxUrl: env.NOTIFY_INBOX_URL, recipients: {} }),
+  );
   if (!config || config.inboxUrl !== env.NOTIFY_INBOX_URL)
     return "misconfigured" as const;
   return {
     db: env.SLOP_DB,
     config,
+    generalEmail,
+    unsubscribeKey: generalEmail ? env.NOTIFY_UNSUBSCRIBE_KEY : undefined,
     adminGithubIds: githubIdSet(env.ADMIN_GITHUB_IDS, "ADMIN_GITHUB_IDS"),
     moderatorGithubIds: githubIdSet(
       env.PROJECT_MODERATOR_GITHUB_IDS,
@@ -124,6 +143,34 @@ export default {
     const url = new URL(request.url);
     if (
       url.origin === "https://notify.internal" &&
+      !url.search &&
+      [
+        "/v1/email/capabilities",
+        "/v1/email/verification",
+        "/v1/email/unsubscribe",
+      ].includes(url.pathname)
+    ) {
+      const configured = activityPilot(env);
+      const deps =
+        typeof configured !== "string" &&
+        configured.generalEmail &&
+        configured.unsubscribeKey
+          ? {
+              ...configured,
+              inboxUrl: configured.config.inboxUrl,
+              unsubscribeKey: configured.unsubscribeKey,
+            }
+          : null;
+      const response = await handleEnrollmentMailRequest(
+        request,
+        deps,
+        env.SLOP_DB ? { db: env.SLOP_DB, now: () => new Date() } : null,
+      );
+      if (response) return response;
+    }
+
+    if (
+      url.origin === "https://notify.internal" &&
       [
         "/v1/security-notifications/dispatch",
         "/v1/security-notifications/reconcile",
@@ -188,13 +235,22 @@ export default {
             !/^[1-9]\d{0,19}$/u.test(value.githubId)
           )
             return respond(400);
+          const registered = deps.generalEmail
+            ? await enrolledDestination(deps.db, value.githubId)
+            : null;
           return respond(
             200,
-            await activityMailEligibility(
-              deps.config,
-              value.githubId,
-              deps.now(),
-            ),
+            registered
+              ? {
+                  available: true,
+                  email: registered.email,
+                  destinationVersion: registered.destinationVersion,
+                }
+              : await activityMailEligibility(
+                  deps.config,
+                  value.githubId,
+                  deps.now(),
+                ),
           );
         }
         if (url.pathname.endsWith("/reconcile"))

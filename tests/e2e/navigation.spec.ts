@@ -47,7 +47,15 @@ test.beforeEach(async ({ page }) => {
     }),
   );
   await page.route("**/api/v1/notifications/email", (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unverified",
+      },
+    }),
   );
 });
 

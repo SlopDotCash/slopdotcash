@@ -1,14 +1,20 @@
 import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
 import type { D1QueryStatement, D1TransactionalDatabase } from "../d1";
+import {
+  type AwardAssetTerms,
+  awardAsset,
+  sameAssetAddress,
+  sameAwardAsset,
+} from "./award-asset";
 import { VAULT_SNAPSHOT_MAX_AGE_MS } from "./payments";
 
 /**
  * Approved award reservations whose money is still inside the vault's free
  * balance: no finalized on-chain commitment exists for them yet, or that
  * commitment is newer than the snapshot (`?` = the snapshot time).
- * Bind order: project id, currency, snapshot time.
+ * Bind order: project id, snapshot time.
  */
-export const OUTSTANDING_RESERVATIONS = `SELECT COALESCE(SUM(CAST(r.gross_minor AS INTEGER)), 0) FROM security_award_reservations r WHERE r.project_id = ? AND r.currency = ? AND NOT EXISTS (SELECT 1 FROM security_settlements s JOIN security_payment_obligations o ON o.id = s.obligation_id WHERE s.case_id = r.case_id AND o.created_at <= ?)`;
+export const OUTSTANDING_RESERVATIONS = `SELECT r.gross_minor,c.terms FROM security_award_reservations r JOIN security_cases c ON c.id=r.case_id WHERE r.project_id = ? AND NOT EXISTS (SELECT 1 FROM security_settlements s JOIN security_payment_obligations o ON o.id = s.obligation_id WHERE s.case_id = r.case_id AND o.created_at <= ?)`;
 
 /**
  * The program's money that an owner can still reserve (owner decision D10,
@@ -30,6 +36,8 @@ export async function readSecurityProgramFunds(
   freeMinor: string;
   snapshotAt: string;
   availableMinor: string;
+  assetAddress: string;
+  deploymentNetwork: string;
 } | null> {
   const now = deps.now().getTime();
   // One payment draws on one vault, so the funds are those of the single
@@ -45,6 +53,16 @@ export async function readSecurityProgramFunds(
     };
   } | null = null;
   for (const deployment of program.settlement?.deployments ?? []) {
+    const asset = awardAsset(
+      program.amount,
+      deployment.network,
+      deployment.asset,
+    );
+    if (
+      !asset ||
+      !sameAssetAddress(deployment.network, asset.address, deployment.asset)
+    )
+      continue;
     const snapshot = await deps.db
       .prepare(
         "SELECT asset_address, asset_decimals, observed_at, free_balance FROM security_vault_snapshots WHERE project_id = ? AND network = ? AND vault = ?",
@@ -91,11 +109,38 @@ export async function readSecurityProgramFunds(
   });
   const free = BigInt(snapshot.free_balance);
   const snapshotAt = snapshot.observed_at;
-  const outstanding = await deps.db
-    .prepare(`SELECT CAST((${OUTSTANDING_RESERVATIONS}) AS TEXT) AS total`)
-    .bind(projectId, program.amount.currency, snapshotAt)
-    .first<{ total: string }>();
-  const available = free - BigInt(outstanding?.total ?? 0);
+  // Reservations are immutable. Fence their count before reading amounts so
+  // an atomic award append cannot overbook this exact snapshot. Keep money in
+  // BigInt: ERC-20/native amounts can exceed SQLite's signed integer range.
+  const count = await deps.db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM security_award_reservations WHERE project_id=?",
+    )
+    .bind(projectId)
+    .first<{ n: number }>();
+  if (!count) throw new Error("Award reservation snapshot unavailable");
+  snapshotGuards.push({
+    sql: "(SELECT COUNT(*) FROM security_award_reservations WHERE project_id=?)=?",
+    values: [projectId, count.n],
+  });
+  const rows = await deps.db
+    .prepare(OUTSTANDING_RESERVATIONS)
+    .bind(projectId, snapshotAt)
+    .all<{ gross_minor: string; terms: string }>();
+  let outstanding = 0n;
+  for (const row of rows.results ?? []) {
+    const terms = JSON.parse(row.terms) as AwardAssetTerms;
+    if (
+      sameAwardAsset(
+        terms,
+        program.amount,
+        best.deployment.network,
+        snapshot.asset_address,
+      )
+    )
+      outstanding += BigInt(row.gross_minor);
+  }
+  const available = free - outstanding;
   return {
     currency: program.amount.currency,
     decimals: program.amount.decimals,
@@ -103,5 +148,7 @@ export async function readSecurityProgramFunds(
     freeMinor: free.toString(),
     snapshotAt,
     availableMinor: (available > 0n ? available : 0n).toString(),
+    assetAddress: snapshot.asset_address,
+    deploymentNetwork: best.deployment.network,
   };
 }

@@ -160,7 +160,8 @@ function RewardValue({
     );
   // Token amounts are in the token's base units, never dollars.
   if (
-    view.project.rewardAsset?.kind !== "token" &&
+    (!view.project.rewardAsset ||
+      view.project.rewardAsset.kind === "stablecoin") &&
     !monthlyPoolUnfunded(view.project.reward)
   ) {
     return formatMicroUsdc(

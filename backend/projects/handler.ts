@@ -36,7 +36,10 @@ import {
   rewardAssetChoice,
   sameRewardAsset,
 } from "../../src/lib/reward-asset.mjs";
-import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
+import {
+  isFullAwardSplit,
+  type SecurityBountyTerms,
+} from "../../src/lib/security-bounty.mjs";
 import {
   isVaultCreationId,
   type VaultSetupInput,
@@ -218,6 +221,7 @@ function canonicalManifest(value: unknown): {
  */
 function assertNewProjectManifest(
   manifest: ProjectDefinition,
+  actor: GithubActor,
   { storedApplication = false }: { storedApplication?: boolean } = {},
 ): void {
   const reward = manifest.reward;
@@ -281,17 +285,45 @@ function assertNewProjectManifest(
     ],
     [
       manifest.securityBounty === undefined ||
-        (["paused", "pending-approval"].includes(
+        ((["paused", "pending-approval"].includes(
           manifest.securityBounty.status,
-        ) &&
+        ) ||
+          (manifest.securityBounty.status === "open" &&
+            manifest.securityBounty.fundingPolicy === "after-approval")) &&
           manifest.securityBounty.funding.state === "pledged" &&
           (manifest.securityBounty.settlement?.deployments.length ?? 0) === 0),
-      "A security bounty program starts paused with pledged funding and no unverified vault",
+      "A new security bounty must pledge funding without an unverified vault; only an after-approval offer can open during setup",
     ],
   ];
   for (const [valid, message] of rules) {
     if (!valid) fail(422, "invalid_manifest", message);
   }
+  const program = manifest.securityBounty;
+  if (program && isFullAwardSplit(program.split))
+    fail(
+      422,
+      "security_split_restricted",
+      "A new bounty uses the 75/25 researcher/Slop split; an admin must approve any full-award exception",
+    );
+  if (
+    program &&
+    ([
+      ...program.approvers.technical,
+      ...program.approvers.financial,
+      ...program.approvers.dispute,
+    ].some(
+      (person) =>
+        person.githubId !== actor.githubId ||
+        person.githubLogin.toLowerCase() !== actor.githubLogin.toLowerCase(),
+    ) ||
+      (program.sponsor.githubId !== null &&
+        program.sponsor.githubId !== actor.githubId))
+  )
+    fail(
+      422,
+      "security_contacts_restricted",
+      "A new bounty names its signed-in creator as its private-case contact and sponsor; verified owners can manage contacts after setup",
+    );
 }
 
 /** Historical commitment records; the schema keeps them for old revisions. */
@@ -323,6 +355,12 @@ async function ownerSecurityProgram(
       );
     return next;
   }
+  if (isFullAwardSplit(after.split) !== isFullAwardSplit(before?.split))
+    fail(
+      422,
+      "security_split_restricted",
+      "Only an admin can change the approved researcher/Slop split",
+    );
   // Contacts receive private-case roles. Ordinary write access cannot grant
   // or remove them; the project steward or a repository admin manages them.
   if (!canManageContacts && before !== undefined) {
@@ -350,24 +388,31 @@ async function ownerSecurityProgram(
       "security_contacts_restricted",
       "Only the project steward or a repository admin can name other bounty contacts or a sponsor",
     );
-  if (!sameValue(before?.settlement, after.settlement))
+  const boundVault = (before?.settlement?.deployments.length ?? 0) > 0;
+  if (
+    !sameValue(before?.settlement, after.settlement) &&
+    (boundVault || after.settlement !== undefined)
+  )
     fail(
       422,
       "security_vault_restricted",
       "Keep the verified bounty vault; a new vault needs verified registration",
     );
   if (
-    before?.settlement &&
+    boundVault &&
+    before &&
     !sameValue(
       {
         currency: before.amount.currency,
         decimals: before.amount.decimals,
         network: before.amount.network,
+        asset: before.amount.asset,
       },
       {
         currency: after.amount.currency,
         decimals: after.amount.decimals,
         network: after.amount.network,
+        asset: after.amount.asset,
       },
     )
   )
@@ -402,7 +447,7 @@ async function ownerSecurityProgram(
           : // Pausing does not revoke the recorded funding proof. Award reads
             // still require a fresh snapshot, even after a closed program's
             // balances recover. Existing reports can then receive an award.
-            before?.settlement
+            boundVault && before
             ? before.funding
             : { state: "pledged" },
     },
@@ -575,23 +620,22 @@ function prospectiveFinancialChange(
  * asset keeps its stored decimals; a new or changed one is read from chain
  * once. The paid symbol and network of the pool follow the asset.
  */
-async function verifiedRewardAsset(
-  value: unknown,
+async function verifiedAsset(
+  submitted: unknown,
   prior: RewardAsset | undefined,
   deps: ProjectApiDependencies,
-): Promise<unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return value;
-  const manifest = value as Record<string, unknown>;
-  if (!Object.hasOwn(manifest, "rewardAsset")) return value;
-  const submitted = manifest.rewardAsset as Record<string, unknown> | null;
+): Promise<RewardAsset> {
+  const fields =
+    submitted && typeof submitted === "object" && !Array.isArray(submitted)
+      ? (submitted as Record<string, unknown>)
+      : null;
   let choice: ReturnType<typeof rewardAssetChoice>;
   try {
     choice = rewardAssetChoice(
-      String(submitted?.network ?? ""),
-      String(submitted?.kind ?? ""),
-      String(submitted?.address ?? ""),
-      String(submitted?.symbol ?? ""),
+      String(fields?.network ?? ""),
+      String(fields?.kind ?? ""),
+      String(fields?.address ?? ""),
+      String(fields?.symbol ?? ""),
     );
   } catch (error) {
     invalidManifest(error);
@@ -600,10 +644,13 @@ async function verifiedRewardAsset(
   let asset: RewardAsset;
   if (prior !== undefined && sameRewardAsset(prior, choice as RewardAsset)) {
     asset = prior;
-  } else if (choice.kind === "stablecoin") {
+  } else if (choice.kind === "stablecoin" || choice.kind === "native") {
     asset = {
       ...choice,
-      decimals: network.stablecoin.decimals,
+      decimals:
+        choice.kind === "native"
+          ? network.native.decimals
+          : network.stablecoin.decimals,
       chainId: network.chainId,
       cluster: network.cluster,
       verifiedAt: deps.now().toISOString(),
@@ -630,6 +677,19 @@ async function verifiedRewardAsset(
       verifiedAt: deps.now().toISOString(),
     };
   }
+  return asset;
+}
+
+async function verifiedRewardAsset(
+  value: unknown,
+  prior: RewardAsset | undefined,
+  deps: ProjectApiDependencies,
+): Promise<unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return value;
+  const manifest = value as Record<string, unknown>;
+  if (!Object.hasOwn(manifest, "rewardAsset")) return value;
+  const asset = await verifiedAsset(manifest.rewardAsset, prior, deps);
   const reward = manifest.reward as Record<string, unknown> | undefined;
   return {
     ...manifest,
@@ -637,6 +697,81 @@ async function verifiedRewardAsset(
     ...(reward?.kind === "monthly-pool"
       ? { reward: { ...reward, chain: asset.network, currency: asset.symbol } }
       : {}),
+  };
+}
+
+/** Verify bounty units before converting the owner's decimal award amount. */
+async function verifiedBountyAmount(
+  value: unknown,
+  prior: SecurityBountyTerms | undefined,
+  requestedAmount: unknown,
+  deps: ProjectApiDependencies,
+): Promise<unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return value;
+  const manifest = value as Record<string, unknown>;
+  const program = manifest.securityBounty as
+    | Record<string, unknown>
+    | undefined;
+  if (!program || typeof program !== "object" || Array.isArray(program)) {
+    if (requestedAmount !== undefined)
+      fail(
+        422,
+        "invalid_manifest",
+        "A bounty amount needs security bounty terms",
+      );
+    return value;
+  }
+  const amount = program.amount as Record<string, unknown> | undefined;
+  if (!amount || typeof amount !== "object" || Array.isArray(amount))
+    return value;
+  const asset =
+    amount.asset === undefined
+      ? undefined
+      : await verifiedAsset(amount.asset, prior?.amount.asset, deps);
+  if (
+    asset &&
+    requestedAmount === undefined &&
+    (!sameRewardAsset(asset, prior?.amount.asset) ||
+      amount.grossMinor !== prior?.amount.grossMinor)
+  )
+    fail(
+      422,
+      "invalid_manifest",
+      "Send the bounty amount in whole asset units when creating or changing its award",
+    );
+  let grossMinor = amount.grossMinor;
+  if (requestedAmount !== undefined) {
+    try {
+      grossMinor = parseAssetAmount(
+        requestedAmount as string,
+        asset?.decimals ?? Number(amount.decimals),
+      );
+    } catch (error) {
+      fail(
+        422,
+        "invalid_manifest",
+        `The bounty amount is invalid: ${error instanceof Error ? error.message : "check the amount"}`,
+      );
+    }
+  }
+  return {
+    ...manifest,
+    securityBounty: {
+      ...program,
+      amount: {
+        ...amount,
+        grossMinor,
+        ...(asset
+          ? {
+              asset,
+              currency: asset.symbol,
+              decimals: asset.decimals,
+              network: asset.network,
+            }
+          : {}),
+      },
+    },
   };
 }
 
@@ -1082,15 +1217,20 @@ async function createProject(
 ): Promise<Response> {
   const session = await requireSession(request, deps);
   const body = await readJsonObject(request);
-  exactKeys(body, ["manifest"], ["referrer", "monthlyAmount"]);
+  exactKeys(body, ["manifest"], ["referrer", "monthlyAmount", "bountyAmount"]);
   const { manifest, text } = canonicalManifest(
-    withMonthlyAmount(
-      await verifiedRewardAsset(body.manifest, undefined, deps),
-      body.monthlyAmount,
+    await verifiedBountyAmount(
+      withMonthlyAmount(
+        await verifiedRewardAsset(body.manifest, undefined, deps),
+        body.monthlyAmount,
+      ),
+      undefined,
+      body.bountyAmount,
+      deps,
     ),
   );
-  assertNewProjectManifest(manifest);
   const actor = actorOf(session);
+  assertNewProjectManifest(manifest, actor);
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(manifest, actor, enforcements);
   assertRepositoryUnrestricted(manifest, enforcements);
@@ -1332,6 +1472,10 @@ async function ownerVault(
           manifest.securityBounty.amount.decimals !==
             current.manifest.securityBounty.amount.decimals ||
           !sameValue(
+            manifest.securityBounty.amount.asset,
+            current.manifest.securityBounty.amount.asset,
+          ) ||
+          !sameValue(
             manifest.securityBounty.settlement,
             current.manifest.securityBounty.settlement,
           )
@@ -1417,7 +1561,7 @@ async function publishOwnerRevision(
   exactKeys(
     body,
     ["manifest", "expectedRevision"],
-    ["reason", "monthlyAmount"],
+    ["reason", "monthlyAmount", "bountyAmount"],
   );
   const expectedRevision = positiveInteger(
     body.expectedRevision,
@@ -1451,18 +1595,23 @@ async function publishOwnerRevision(
   const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
   // The server decides status and listing; the owner sends content.
-  let prepared = withMonthlyAmount(
-    await verifiedRewardAsset(
-      {
-        ...(body.manifest as Record<string, unknown>),
-        status: current.manifest.status,
-        listingTier: current.manifest.listingTier,
-      },
-      current.manifest.rewardAsset,
-      deps,
+  let prepared = (await verifiedBountyAmount(
+    withMonthlyAmount(
+      await verifiedRewardAsset(
+        {
+          ...(body.manifest as Record<string, unknown>),
+          status: current.manifest.status,
+          listingTier: current.manifest.listingTier,
+        },
+        current.manifest.rewardAsset,
+        deps,
+      ),
+      body.monthlyAmount,
     ),
-    body.monthlyAmount,
-  ) as ProjectDefinition;
+    current.manifest.securityBounty,
+    body.bountyAmount,
+    deps,
+  )) as ProjectDefinition;
   if (
     current.manifest.reward.kind === "monthly-pool" &&
     prepared.reward?.kind === "monthly-pool" &&
@@ -1682,7 +1831,9 @@ async function publishPendingApplication(
       actor,
     });
   canonicalManifest(application.manifest);
-  assertNewProjectManifest(application.manifest, { storedApplication: true });
+  assertNewProjectManifest(application.manifest, actor, {
+    storedApplication: true,
+  });
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(application.manifest, actor, enforcements);
   assertRepositoryUnrestricted(application.manifest, enforcements);
@@ -1774,7 +1925,7 @@ async function replaceProjectManifest(
   const session = await requireAdmin(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
   const body = await readJsonObject(request);
-  exactKeys(body, ["manifest", "expectedRevision", "reason"]);
+  exactKeys(body, ["manifest", "expectedRevision", "reason"], ["bountyAmount"]);
   const expectedRevision = positiveInteger(
     body.expectedRevision,
     "expectedRevision",
@@ -1785,9 +1936,14 @@ async function replaceProjectManifest(
   if (current.revision !== expectedRevision)
     fail(409, "stale_revision", "The project changed since you loaded it");
   const { manifest } = canonicalManifest(
-    await verifiedRewardAsset(
-      body.manifest,
-      current.manifest.rewardAsset,
+    await verifiedBountyAmount(
+      await verifiedRewardAsset(
+        body.manifest,
+        current.manifest.rewardAsset,
+        deps,
+      ),
+      current.manifest.securityBounty,
+      body.bountyAmount,
       deps,
     ),
   );

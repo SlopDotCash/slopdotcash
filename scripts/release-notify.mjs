@@ -20,6 +20,20 @@ if (!["", "security", "activity", "security,activity"].includes(selected))
     "SLOP_NOTIFY_MAIL_PILOTS must be empty, security, activity, or security,activity",
   );
 const pilots = selected ? selected.split(",") : [];
+const generalSelection = process.env.SLOP_NOTIFY_GENERAL_EMAIL ?? "";
+if (!["", "enabled", "paused"].includes(generalSelection))
+  throw new TypeError(
+    "SLOP_NOTIFY_GENERAL_EMAIL must be empty, enabled, or paused",
+  );
+const generalEmail = generalSelection === "enabled";
+const generalPaused = generalSelection === "paused";
+if (generalEmail && process.env.SLOP_NOTIFY_EMAIL_SENDING_READY !== "verified")
+  throw new TypeError(
+    "General email requires operator-verified Cloudflare Email Sending onboarding",
+  );
+const sendsSecurity = generalEmail || pilots.includes("security");
+const hasOutbox = generalEmail || pilots.length > 0;
+const hasDatabase = hasOutbox || generalPaused;
 const pages = Bun.TOML.parse(
   readFileSync(
     resolve(
@@ -57,7 +71,7 @@ if (
 const slopbot =
   pages.services?.filter((item) => item.binding === "SLOPBOT") ?? [];
 if (
-  pilots.includes("security") &&
+  sendsSecurity &&
   (slopbot.length !== 1 ||
     slopbot[0].service !==
       (target === "production"
@@ -78,15 +92,16 @@ const config = {
     ...base.vars,
     SLOP_ENVIRONMENT: target,
     NOTIFY_INBOX_URL: `${expectedOrigin}/inbox`,
+    NOTIFY_GENERAL_EMAIL_ENABLED: String(generalEmail),
     ADMIN_GITHUB_IDS: pages.vars?.ADMIN_GITHUB_IDS ?? "",
     PROJECT_MODERATOR_GITHUB_IDS:
       pages.vars?.PROJECT_MODERATOR_GITHUB_IDS ?? "",
   },
-  d1_databases: pilots.length
+  d1_databases: hasDatabase
     ? [{ ...database[0], migrations_dir: resolve(root, "migrations") }]
     : [],
-  services: pilots.includes("security") ? slopbot : [],
-  triggers: { crons: pilots.length ? ["*/5 * * * *"] : [] },
+  services: sendsSecurity ? slopbot : [],
+  triggers: { crons: hasOutbox ? ["*/5 * * * *"] : [] },
 };
 if (target === "staging") {
   const source = readFileSync(resolve(root, "wrangler.staging.toml"), "utf8");
@@ -120,10 +135,11 @@ writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 const expectedSecrets = [
   "ADMIN_EMAILS",
   ...pilots.map((pilot) => `${pilot.toUpperCase()}_MAIL_PILOT`),
+  ...(generalEmail ? ["NOTIFY_UNSUBSCRIBE_KEY"] : []),
 ].sort();
 writeFileSync(
   resolve(directory, "profile.json"),
-  `${JSON.stringify({ target, name, pilots, expectedSecrets, databaseId: pilots.length ? database[0].database_id : null, inboxUrl: `${expectedOrigin}/inbox` }, null, 2)}\n`,
+  `${JSON.stringify({ target, name, pilots, generalEmail, emailSendingReadiness: generalEmail ? "operator-verified" : generalPaused ? "paused" : "not-enabled", expectedSecrets, databaseId: hasDatabase ? database[0].database_id : null, inboxUrl: `${expectedOrigin}/inbox` }, null, 2)}\n`,
 );
 if (mode === "prepare") process.exit(0);
 if (process.env.SLOP_NOTIFY_RELEASE !== "enabled")
@@ -244,7 +260,13 @@ const tierBinding = bindings.filter(
   (entry) => entry.name === "SLOP_ENVIRONMENT",
 );
 const emailBinding = bindings.filter((entry) => entry.type === "send_email");
+const generalBinding = bindings.filter(
+  (entry) => entry.name === "NOTIFY_GENERAL_EMAIL_ENABLED",
+);
 if (
+  generalBinding.length !== 1 ||
+  generalBinding[0].type !== "plain_text" ||
+  generalBinding[0].text !== String(generalEmail) ||
   tierBinding.length !== 1 ||
   tierBinding[0].type !== "plain_text" ||
   tierBinding[0].text !== target ||
@@ -265,7 +287,7 @@ const deployedSecrets = bindings
   .sort();
 const deployedSlopbot = bindings.filter((entry) => entry.type === "service");
 if (
-  pilots.includes("security")
+  sendsSecurity
     ? deployedSlopbot.length !== 1 ||
       deployedSlopbot[0].name !== "SLOPBOT" ||
       deployedSlopbot[0].service !== slopbot[0].service
@@ -277,7 +299,7 @@ if (
 const deployedDatabase = bindings.filter((entry) => entry.type === "d1");
 if (
   JSON.stringify(deployedSecrets) !== JSON.stringify(expectedSecrets) ||
-  (pilots.length
+  (hasDatabase
     ? deployedDatabase.length !== 1 ||
       deployedDatabase[0].name !== "SLOP_DB" ||
       deployedDatabase[0].id !== database[0].database_id

@@ -65,6 +65,7 @@ export type PayoutWallet = {
       transaction: Uint8Array,
       chain: `solana:${string}`,
     ) => Promise<Uint8Array>;
+    solanaSignMessage?: (message: Uint8Array) => Promise<Uint8Array>;
     solanaSend?: (
       transaction: Uint8Array,
       chain: `solana:${string}`,
@@ -253,6 +254,33 @@ export function usePayoutWallets(): PayoutWallet[] {
               );
             return {
               address: account.address,
+              async solanaSignMessage(message: Uint8Array) {
+                const current = wallet.accounts.find(
+                  (entry) => entry.address === account.address,
+                );
+                if (
+                  !standard.get().includes(wallet) ||
+                  !current?.features.includes("solana:signMessage")
+                )
+                  throw new Error(
+                    "The signing wallet changed. Reconnect before continuing.",
+                  );
+                const [result] = await supported.features[
+                  "solana:signMessage"
+                ].signMessage({ account: current, message });
+                if (
+                  !result ||
+                  result.signature.length !== 64 ||
+                  result.signedMessage.length !== message.length ||
+                  result.signedMessage.some(
+                    (byte, index) => byte !== message[index],
+                  )
+                )
+                  throw new Error(
+                    "Your wallet changed the message. Use a wallet that signs it exactly.",
+                  );
+                return result.signature;
+              },
               ...("solana:signTransaction" in wallet.features &&
               account.features.includes("solana:signTransaction")
                 ? {
@@ -380,6 +408,19 @@ export function usePayoutWallets(): PayoutWallet[] {
             const { publicKey } = await provider.connect();
             return {
               address: publicKey.toString(),
+              async solanaSignMessage(message: Uint8Array) {
+                const current = await provider.connect();
+                if (current.publicKey.toString() !== publicKey.toString())
+                  throw new Error(
+                    "The signing wallet changed. Reconnect before continuing.",
+                  );
+                const result = await provider.signMessage(message, "utf8");
+                if (result.signature.length !== 64)
+                  throw new Error(
+                    "Your wallet did not return a valid signature.",
+                  );
+                return result.signature;
+              },
               async sign(message) {
                 const result = await provider.signMessage(
                   new TextEncoder().encode(message),

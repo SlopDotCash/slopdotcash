@@ -79,7 +79,8 @@ test("verified activity email preference persists and can be withdrawn @registry
   await page.keyboard.press("Enter");
   expect((await enabledResponse).status()).toBe(200);
   await expect(toggle).toBeChecked();
-  await expect(preferences).not.toContainText("applicant@example.com");
+  // Security email has its own consent, so the destination remains visible.
+  await expect(preferences).toContainText("applicant@example.com");
   await page.screenshot({
     path: test.info().outputPath("optional-email-enabled.png"),
     fullPage: true,

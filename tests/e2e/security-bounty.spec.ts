@@ -288,12 +288,23 @@ async function listProject(
   // Creation reads the account's access through the Slopbot installation.
   await installSlopbot(repository);
   const program = manifest.securityBounty as SecurityBountyTerms | undefined;
+  const creatorRole = (Object.keys(TOKENS) as Role[]).find(
+    (role) => TOKENS[role] === applicantToken,
+  );
+  if (program && !creatorRole) throw new Error("Unknown fixture creator");
+  const creator = creatorRole ? account(creatorRole) : undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
     manifest: program?.settlement
       ? {
           ...manifest,
           securityBounty: {
             ...program,
+            sponsor: { ...program.sponsor, githubId: creator?.githubId },
+            approvers: {
+              technical: [creator],
+              financial: [creator],
+              dispute: [creator],
+            },
             settlement: { ...program.settlement, deployments: [] },
           },
         }
@@ -2300,7 +2311,9 @@ test("private settlement requires visibility consent and produces an unsigned re
     caseId,
   );
   await page.getByText("Case details and history", { exact: true }).click();
-  await page.getByText("Unsigned owner request", { exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Unsigned owner request", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Copy unsigned request" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Request copied." }),
@@ -2648,7 +2661,7 @@ test("private bounty obligations continue through role loss, approver replacemen
   });
 });
 
-test("home links to a consolidated security bounty with full award terms @registry", async ({
+test("admin placement and explicit bounty type drive generic project pages @registry", async ({
   page,
   request,
 }) => {
@@ -2661,6 +2674,7 @@ test("home links to a consolidated security bounty with full award terms @regist
     ...base,
     name: "Security test program",
     status: "active",
+    listingTier: "featured",
     reward: {
       ...(base.reward as object),
       monthlyCapMinor: "0",
@@ -2678,12 +2692,13 @@ test("home links to a consolidated security bounty with full award terms @regist
     status: "paused",
     securityBounty: { ...project.securityBounty, status: "closed" },
   };
+  let shown: Record<string, unknown> = project;
   // One public project at a time: first verify its published open state.
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({
       json: {
         schemaVersion: "1",
-        projects: [project],
+        projects: [shown],
         restrictions: [],
       },
     }),
@@ -2694,6 +2709,11 @@ test("home links to a consolidated security bounty with full award terms @regist
     exact: true,
   });
   await expect(section.locator(".project-card")).toHaveCount(1);
+  const featured = page.locator('[aria-labelledby="featured-projects"]');
+  await expect(featured.locator(".project-card")).toHaveCount(1);
+  await expect(featured).toContainText("$10k");
+  await expect(featured).toContainText("Pledged");
+  await expect(featured).not.toContainText("Points only");
   await expect(section).toContainText("$10k");
   await expect(section).toContainText(
     "Find a critical security vulnerability in the Security test program",
@@ -2758,13 +2778,56 @@ test("home links to a consolidated security bounty with full award terms @regist
     page.getByRole("region", { name: "Published bounty offer" }),
   ).toHaveCount(0);
   await expectAccessible(page);
-  await page.goto("/");
-  await page.unroute("**/api/v1/projects");
-  await page.route("**/api/v1/projects", (route) =>
-    route.fulfill({
-      json: { schemaVersion: "1", projects: [closed], restrictions: [] },
-    }),
+  await page
+    .getByRole("link", { name: "Report privately", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    new RegExp(`/projects/${id}/security$`),
   );
+  await expect(
+    page.getByRole("heading", { name: "Private report", exact: true }),
+  ).toBeVisible();
+
+  // Clearing Featured moves the same bounty to Community without changing its offer.
+  shown = { ...project, listingTier: "community" };
+  await page.goto("/", { waitUntil: "networkidle" });
+  await expect(featured).toHaveCount(0);
+  const community = page.locator(".community-projects");
+  const row = community.locator(`a[href="/projects/${id}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("$10k / Critical");
+  await expect(row).toContainText("Pledged");
+  await expect(row).not.toContainText("Points only");
+
+  // Zero ordinary cash does not silently convert a separate bounty into a bounty-only project.
+  shown = {
+    ...project,
+    listingTier: "community",
+    securityBounty: { ...project.securityBounty, rewardMode: "separate" },
+  };
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(row).toContainText("Points only");
+  await expect(section.locator(".project-card")).toHaveAttribute(
+    "href",
+    `/projects/${id}/security`,
+  );
+  const ordinarySnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
+  await row.click();
+  await (await ordinarySnapshot).finished();
+  await page.waitForLoadState("networkidle");
+  await expect(
+    page.getByLabel("Agent prompt", { exact: true }),
+  ).not.toContainText("private security reporting");
+  await expect(
+    page.getByText("Checking project clearance…", { exact: true }),
+  ).toHaveCount(0);
+
+  shown = closed;
+  await page.goto("/", { waitUntil: "networkidle" });
   await page.reload({ waitUntil: "networkidle" });
   await expect(section.locator(".project-card")).toHaveCount(0);
   await expect(section).toContainText("No paid security bounties are open.");
@@ -4049,20 +4112,17 @@ test("a registered Slop bounty vault keeps its split while the owner publishes t
   await signIn(page, TOKENS.security);
   await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
   await openProjectSecuritySettings(page);
-  const fullAward = page.getByRole("checkbox", {
-    name: "slop.cash sponsors the whole award (researcher 100%, Slop 0%)",
-    exact: true,
-  });
-  await expect(fullAward).not.toBeChecked();
-  await expect(fullAward).toBeDisabled();
+  await expect(page.getByRole("checkbox", { name: /full award/i })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".security-program-editor")).toContainText(
+    "USDC · Base",
+  );
   await expect(
-    page.getByLabel("Bounty network", { exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByText("This program has a registered bounty vault", {
-      exact: false,
-    }),
-  ).toBeVisible();
+    page
+      .locator(".security-program-editor")
+      .getByRole("group", { name: "Asset", exact: true }),
+  ).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("registered-vault-locked.png"),
@@ -4085,6 +4145,69 @@ test("a registered Slop bounty vault keeps its split while the owner publishes t
   });
   await page.screenshot({
     path: test.info().outputPath("registered-vault-published.png"),
+    fullPage: true,
+  });
+});
+
+test("an owner preserves admin-approved full-award terms on any project @registry", async ({
+  page,
+  request,
+}) => {
+  const id = `full-award-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  const terms = bountyTerms(repository, {
+    rewardMode: "separate",
+    status: "open",
+    fundingPolicy: "after-approval",
+    split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+    settlement: undefined,
+    capacity: {
+      awards: null,
+      closesAt: null,
+      exhaustionRule: "The sponsor funds each approved finding after review.",
+    },
+    sponsor: { name: "Independent project sponsor", githubId: null },
+  });
+  const approved = await revise(request, id, (manifest) => ({
+    ...manifest,
+    securityBounty: terms,
+  }));
+  expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+  await signIn(page, TOKENS.security);
+  await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
+  await openProjectSecuritySettings(page);
+  await expect(page.getByRole("checkbox", { name: /full award/i })).toHaveCount(
+    0,
+  );
+  await expect(page.getByLabel("Published gross award (USDC)")).toHaveValue(
+    "10000",
+  );
+  await page.getByLabel("Published gross award (USDC)").fill("8000");
+  await page.getByRole("button", { name: "Review bounty terms" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Review before publishing" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Published bounty offer" }),
+  ).toContainText("8,000 USDC to the researcher");
+  await expectAccessible(page);
+  await page.getByRole("button", { name: "Publish bounty terms" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Published revision" }),
+  ).toBeVisible();
+  const saved = await adminProject(request, id);
+  expect(saved.manifest.securityBounty).toMatchObject({
+    split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+    amount: { grossMinor: "8000000000" },
+    fundingPolicy: "after-approval",
+    sponsor: { name: "Independent project sponsor", githubId: null },
+  });
+  expect(
+    (saved.manifest.securityBounty as Record<string, unknown>).settlement,
+  ).toBeUndefined();
+  await page.screenshot({
+    path: test.info().outputPath("generic-full-award-preserved.png"),
     fullPage: true,
   });
 });
