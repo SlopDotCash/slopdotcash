@@ -1,7 +1,10 @@
 /** Browser coverage of private monthly allocations; the API rules are tested in backend/payments/monthly.test.ts. */
 
 import type { Page } from "@playwright/test";
+import type { CycleIndex } from "../../src/lib/cycle-index";
+import { deriveAllocationFundingBasis } from "../../src/lib/allocation-funding";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { archivedPaidCycleIndex } from "../fixtures";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -579,4 +582,178 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+});
+
+/** Routes for the December 2026 review window: a private November proposal. */
+async function serveDecemberReview(
+  page: Page,
+  cycleIndex: CycleIndex,
+): Promise<void> {
+  const project = projectWithVault();
+  await page.clock.setFixedTime(new Date("2026-12-02T12:00:00.000Z"));
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/points/session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/data/cycles/index.json*", (route) =>
+    route.fulfill({ json: cycleIndex }),
+  );
+  const view = (period: string, proposal: unknown) => ({
+    projectId: "eliza",
+    period,
+    manifestSha256: "a".repeat(64),
+    automatic: true,
+    cutoffAt: "2026-12-04T00:00:00.000Z",
+    deployment: null,
+    asset: {
+      network: "base-sepolia",
+      assetAddress: `0x${"1".repeat(40)}`,
+      assetDecimals: 9,
+      symbol: "TEST",
+    },
+    proposal,
+    run: null,
+  });
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-11",
+    (route) =>
+      route.fulfill({
+        json: view("2026-11", {
+          capBase: "5000000000",
+          allocationSequence: 0,
+          allocations: [
+            {
+              githubUserId: "1",
+              login: "first-contributor",
+              grossBase: "1234567890",
+              proposedGrossBase: "1234567890",
+              sourceDigest: "1".repeat(64),
+            },
+            {
+              githubUserId: "2",
+              login: "second-contributor",
+              grossBase: "2000000000",
+              proposedGrossBase: "2000000000",
+              sourceDigest: "2".repeat(64),
+            },
+          ],
+        }),
+      }),
+  );
+  for (const period of ["2026-10", "2026-09"]) {
+    await page.route(
+      `**/api/v1/payments/projects/eliza/monthly/${period}`,
+      (route) => route.fulfill({ json: view(period, null) }),
+    );
+  }
+}
+
+test("a monthly proposal with no public cycle is reachable", async ({
+  page,
+}) => {
+  // Monthly proposals are private records: the public cycle index is empty,
+  // yet the owner must still reach the November review before the cutoff.
+  await serveDecemberReview(page, {
+    schemaVersion: "1",
+    generatedAt: "2026-12-02T00:00:00.000Z",
+    cycles: [],
+  });
+  await page.goto("/projects/eliza/funding");
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  const navigation = page.getByRole("navigation", {
+    name: "Contribution month",
+  });
+  await expect(navigation).toContainText("November 2026");
+  const awards = page.getByRole("region", { name: "Monthly awards" });
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards).toContainText("second-contributor");
+  await expect(
+    page.getByRole("button", { name: "Previous award month" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Next award month" }),
+  ).toBeDisabled();
+});
+
+test("a stale public cycle does not lock the review month", async ({
+  page,
+}) => {
+  // The public index holds only a stale September cycle. The review must
+  // open on the last closed month and walk calendar months in both
+  // directions. The archived fixture supplies a valid published entry;
+  // only its month and dates move to September.
+  const published = archivedPaidCycleIndex();
+  const september = published.cycles[0];
+  september.cycleId = "2026-09";
+  september.generatedAt = "2026-10-02T00:00:00.000Z";
+  september.contributionWindow = {
+    from: "2026-09-01T00:00:00.000Z",
+    to: "2026-10-01T00:00:00.000Z",
+  };
+  september.reviewEndsAt = "2026-10-15T00:00:00.000Z";
+  september.approvedAt = "2026-10-16T00:00:00.000Z";
+  september.settledAt = "2026-10-16T00:00:00.000Z";
+  for (const reference of Object.values(september.files)) {
+    if (reference)
+      reference.url = reference.url.replace("/2026-07/", "/2026-09/");
+  }
+  // The archived fixture predates the current funding and fee policy, and
+  // the index validator checks both against the registry this spec serves
+  // the page, so the funding basis and the fee follow that served policy
+  // (projectWithVault). September sits past the final legacy cap cycle, so
+  // the retained award carries its approved amount under a derived funding
+  // basis instead of a public cap.
+  const policy = projectWithVault();
+  september.reward.fundingBasis = deriveAllocationFundingBasis(
+    policy,
+    "2026-09",
+  );
+  september.reward.capMinor = "0";
+  september.reward.carriedMinor = september.reward.approvedMinor;
+  september.reward.feeMinor = (
+    (BigInt(september.reward.approvedMinor) *
+      BigInt(policy.reward.feeBasisPoints)) /
+    10_000n
+  ).toString();
+  await serveDecemberReview(page, published);
+  await page.goto("/projects/eliza/funding");
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  const navigation = page.getByRole("navigation", {
+    name: "Contribution month",
+  });
+  await expect(navigation).toContainText("November 2026");
+  const awards = page.getByRole("region", { name: "Monthly awards" });
+  await expect(awards).toContainText("first-contributor");
+  const previous = page.getByRole("button", {
+    name: "Previous award month",
+  });
+  const next = page.getByRole("button", { name: "Next award month" });
+  await expect(next).toBeDisabled();
+  await previous.click();
+  await expect(navigation).toContainText("October 2026");
+  await expect(awards).toContainText(
+    "No allocation is proposed for this month yet.",
+  );
+  await previous.click();
+  await expect(navigation).toContainText("September 2026");
+  await expect(previous).toBeDisabled();
+  await next.click();
+  await expect(navigation).toContainText("October 2026");
+  await next.click();
+  await expect(navigation).toContainText("November 2026");
+  await expect(awards).toContainText("first-contributor");
 });
