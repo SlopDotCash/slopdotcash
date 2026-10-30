@@ -436,6 +436,12 @@ test("an owner creates a paused project without admin approval @registry", async
     "Setup status: Waiting for the security scan",
   );
   await expectAccessible(page);
+  await page.getByRole("link", { name: "View project", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${project.id}$`, "u"));
+  await expect(
+    page.getByRole("heading", { name: project.name, exact: true }),
+  ).toBeVisible();
+  await expectAccessible(page);
   await context.close();
 });
 
@@ -458,6 +464,17 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   const listed = await listedProject(owner, project.id);
   expect(listed).toMatchObject({ status: "paused" });
   expect(listed.slopbot).toBeUndefined();
+  await owner
+    .getByRole("link", { name: "Manage project", exact: true })
+    .click();
+  await expect(owner).toHaveURL(
+    new RegExp(`/projects/${project.id}/manage$`, "u"),
+  );
+  await expect(
+    owner.getByRole("heading", { name: "Manage project", exact: true }),
+  ).toBeVisible();
+  await expect(owner.getByLabel("Project name")).toHaveValue(project.name);
+  await expectAccessible(owner);
 
   // Facts that GitHub does not confirm are refused, never listed.
   // The request API keeps the expected 422 out of the page console.
