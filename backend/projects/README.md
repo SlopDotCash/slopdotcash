@@ -283,9 +283,10 @@ rate limit, and caches each answer for five minutes. The browser never calls
   appends the paused, `retired` revision. When the current manifest cannot
   pass that revision, the record says `revision_pending`, the restriction
   still closes every public route, `/admin` shows the pending revision, and
-  `bun run projects:sync` withholds that project and its revisions from the
-  snapshot, with a warning, until an admin appends the paused, `retired`
-  revision. Every other project still syncs.
+  `bun run projects:sync` stores that project paused and `retired`, with a
+  warning, until an admin appends the paused, `retired` revision. The
+  snapshot keeps all its revisions as history. No collection, listing, skill
+  or monthly proposal step serves it. Every other project still syncs.
 - A restriction binds the GitHub repository id and every repository path. A
   restricted project cannot get a revision that is not paused and retired, and
   no project for the same repository can be created or published.
