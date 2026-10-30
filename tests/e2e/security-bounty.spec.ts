@@ -811,12 +811,23 @@ test("owners publish and control bounty programs with verified funding @registry
       }
     }
     const reviewed = bountyTerms(repository).settlement;
+    // The retained testnet vault uses legacy USDC terms. The new form's
+    // explicit mainnet asset must not stand in for Sepolia USDC.
     expect(
       (
         await revise(request, id, (manifest) => ({
           ...manifest,
           securityBounty: {
             ...(manifest.securityBounty as object),
+            amount: {
+              ...(manifest.securityBounty as SecurityBountyTerms).amount,
+              asset: undefined,
+            },
+            fundingPolicy: undefined,
+            capacity: {
+              ...(manifest.securityBounty as SecurityBountyTerms).capacity,
+              awards: 1,
+            },
             settlement: reviewed,
           },
         }))
