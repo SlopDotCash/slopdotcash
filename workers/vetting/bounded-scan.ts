@@ -288,7 +288,7 @@ const RULES: Rule[] = [
     threat: "credential-theft",
     severity: "high",
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|\bLogin Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|\bLogin Data\b|security find-(?:generic|internet)-password|\bgh auth token\b|(?:google-chrome|google[\/\\]chrome|chromium|brave-browser|bravesoftware|microsoft[\/\\ ]?edge)[^\n"']{0,80}?[\/\\]Cookies\b|[\/\\][^\n"']{0,60}?cookies\.sqlite\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
