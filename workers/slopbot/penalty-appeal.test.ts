@@ -69,6 +69,7 @@ const CLOSED_AT = "2026-11-10T00:00:00.000Z";
 type ModelReply = {
   category: Category;
   confidence: number;
+  ruleRefs?: { source: string; quote: string }[];
   evidence?: string[];
   limitations?: string[];
   servedModel?: string;
@@ -108,6 +109,7 @@ type Run = {
   closeTime: (value: string | null) => void;
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
+  guidance: (value: string | null) => void;
   policyResponse: (status: number, body?: unknown) => void;
   closureEnabled: (value: boolean) => void;
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
@@ -264,6 +266,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let historyPrefix = 0;
   let verdict: ModelReply = { category: "spam", confidence: 0.97 };
   let config: string | null = null;
+  let guidance: string | null = null;
   let configTruncated = false;
   let policyResponse: { status: number; body?: unknown } | null = null;
   let revokeOnConfirmation = false;
@@ -350,7 +353,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
               text: JSON.stringify({
                 category: reply.category,
                 confidence: reply.confidence,
-                rule_refs: [
+                rule_refs: reply.ruleRefs ?? [
                   { source: "universal", quote: "Buy cheap followers" },
                 ],
                 evidence: reply.evidence ?? [
@@ -395,6 +398,13 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           encoding: "base64",
         });
       }
+      if (path.endsWith("/contents/CONTRIBUTING.md") && guidance !== null)
+        return Response.json({
+          type: "file",
+          size: Buffer.byteLength(guidance),
+          content: Buffer.from(guidance).toString("base64"),
+          encoding: "base64",
+        });
       if (
         duplicate &&
         path.endsWith("/issues/4") &&
@@ -971,6 +981,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         config = value;
         configTruncated = truncated;
       },
+      guidance: (value) => {
+        guidance = value;
+      },
       policyResponse: (status, body) => {
         policyResponse = { status, body };
       },
@@ -1106,6 +1119,58 @@ test("fresh project consent and confirmation permit closure without a repository
     expect(run.sql(PENALTY)).toHaveLength(1);
   });
 });
+
+for (const category of ["busywork", "gaming"] as const) {
+  for (const guard of [
+    "none",
+    "label override",
+    "no consent",
+    "global off",
+    "no rule",
+  ] as const) {
+    test(`a quoted ${category} rule uses the published penalty with ${guard}`, async () => {
+      await closedItem(async (run) => {
+        const rule = "Do not advertise commercial services in contributions.";
+        if (guard !== "no rule") run.guidance(rule);
+        if (guard === "no consent") run.consent(false);
+        if (guard === "global off") run.closureEnabled(false);
+        if (guard === "label override")
+          run.repositoryConfig(
+            JSON.stringify({
+              version: 1,
+              audience: "protection",
+              closure: true,
+              categories: { [category]: "label" },
+            }),
+          );
+        run.modelSequence(
+          ["triage", "confirm"].map(() => ({
+            category,
+            confidence: 0.97,
+            ruleRefs: [{ source: "CONTRIBUTING.md", quote: rule }],
+          })),
+        );
+        const result = await run.review();
+        if (guard === "none") {
+          expect(result).toBe(`closed (${category})`);
+          expect(run.modelInputs.map((input) => input.effort)).toEqual([
+            "medium",
+            "high",
+          ]);
+          expect(run.sql(PENALTY)).toEqual([
+            { category, debit_thirds: 1, moderator_review: 0, reversal: null },
+          ]);
+          await run.review();
+          expect(run.sql(PENALTY)).toHaveLength(1);
+        } else {
+          expect(result).not.toStartWith("closed");
+          expect(run.currentState()).toBe("open");
+          expect(run.sql(PENALTY)).toEqual([]);
+        }
+      });
+    });
+  }
+}
 
 for (const category of ["empty", "duplicate"] as const) {
   test(`${category} prefilter closure requires recorded medium and high model reviews`, async () => {

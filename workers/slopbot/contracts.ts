@@ -55,9 +55,9 @@ const DEFAULT_CATEGORIES: RepositoryConfig["categories"] = {
   empty: "close",
   duplicate: "close",
   out_of_scope: "label",
-  busywork: "label",
+  busywork: "close",
   missing_evidence: "label",
-  gaming: "label",
+  gaming: "close",
   low_quality: "label",
 };
 

@@ -80,6 +80,11 @@ authors outside the closure scope are never penalized.
 | `busywork` or `gaming`: a project rule quoted verbatim | close | −1 |
 | `empty` | close | 0 |
 
+The default category settings permit the quoted-rule rows above. An explicit
+repository `label` or `off` setting still restricts them. Project consent,
+verbatim rule and item evidence, independent confirmation, and the global
+closure switch are required before any close or debit.
+
 A debit reduces only the score of the UTC month of the close and never takes
 that month below zero. It never changes an approved, scheduled or paid award.
 Changes to this table apply prospectively.
