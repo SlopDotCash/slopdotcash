@@ -125,34 +125,22 @@ export async function handlePointsDisputes(
         "not_authorized",
         "Only the recipient can dispute this Points record.",
       );
-    const current = await deps.db
-      .prepare(
-        `SELECT 1 AS current FROM points_revisions r WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)`,
-      )
-      .bind(body.revisionId)
-      .first<{ current: number }>();
-    if (!current)
-      fail(
-        409,
-        "superseded",
-        "This Points record has a newer revision. Dispute the current record instead.",
-      );
     const id = `points-dispute:${await sha256Hex(`${body.revisionId}:${actor.githubId}`)}`;
     await deps.db.batch([
       deps.db
         .prepare(`INSERT OR IGNORE INTO points_disputes
         (appeal_key,revision_id,item_node_id,appellant_github_id,statement,opened_at,due_at)
-        VALUES(?,?,?,?,?,?,?)`)
+        SELECT ?,r.id,r.id,?,?,?,? FROM points_revisions r
+        WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)`)
         .bind(
           id,
-          body.revisionId,
-          body.revisionId,
           actor.githubId,
           body.reason.trim(),
           now,
           new Date(
             Date.parse(now) + APPEAL_RESOLUTION_DAYS * 86_400_000,
           ).toISOString(),
+          body.revisionId,
         ),
       notifyPointsDispute(deps.db, id, "opened", now),
     ]);
@@ -160,7 +148,13 @@ export async function handlePointsDisputes(
       .prepare("SELECT statement FROM points_disputes WHERE appeal_key=?")
       .bind(id)
       .first<{ statement: string }>();
-    if (stored?.statement !== body.reason.trim())
+    if (!stored)
+      fail(
+        409,
+        "superseded",
+        "This Points record has a newer revision. Dispute the current record instead.",
+      );
+    if (stored.statement !== body.reason.trim())
       fail(
         409,
         "already_submitted",

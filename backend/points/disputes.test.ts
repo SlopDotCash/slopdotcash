@@ -154,6 +154,71 @@ test("a superseded revision cannot open a dispute, but the current revision can"
   ).toEqual({ n: 1 });
 });
 
+test("an identical creation retry recovers its dispute after a later revision", async () => {
+  const h = await fixture();
+  const input = {
+    revisionId: h.revision.id,
+    reason: "The accepted work was credited to the wrong month.",
+  };
+  const created = await (await h.call("", input)).json();
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  h.insert({ ...changed, id: pointRevisionId(changed) });
+  const retried = await h.call("", input);
+  expect(retried.status).toBe(201);
+  expect((await retried.json()).id).toBe(created.id);
+  const changedReason = await h.call("", {
+    ...input,
+    reason: "Replace the retained statement.",
+  });
+  expect(changedReason.status).toBe(409);
+  expect((await changedReason.json()).error).toBe("already_submitted");
+  expect((await h.call("", input, otherToken)).status).toBe(403);
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM notifications").get(),
+  ).toEqual({ n: 1 });
+  const detail = await (await h.call(`/${created.id}`)).json();
+  expect(detail.revision.id).toBe(h.revision.id);
+  expect(detail.reason).toBe(input.reason);
+});
+
+test("a correction committed before intake insertion prevents stale dispute work", async () => {
+  const h = await fixture();
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const batch = h.db.batch.bind(h.db);
+  h.db.batch = async (statements) => {
+    // Another writer commits the correction after the retained record was read,
+    // before the dispute's transaction starts. The SQL still runs unmodified.
+    h.insert({ ...changed, id: pointRevisionId(changed) });
+    return batch(statements);
+  };
+  const response = await h.call("", {
+    revisionId: h.revision.id,
+    reason: "The accepted work was credited to the wrong month.",
+  });
+  expect(response.status).toBe(409);
+  expect((await response.json()).error).toBe("superseded");
+  expect(h.started).toEqual([]);
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 0 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM notifications").get(),
+  ).toEqual({ n: 0 });
+});
+
 test("another actor cannot submit or read a recipient's private dispute", async () => {
   const h = await fixture();
   const input = {
