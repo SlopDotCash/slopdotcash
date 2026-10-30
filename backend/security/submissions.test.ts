@@ -2180,6 +2180,228 @@ test("registered researcher can start a private report on a quarantined project"
 });
 
 describe("optional GitHub forwarding of a saved report", () => {
+  for (const durable of [false, true])
+    test(`forwarding transitions preserve the ${durable ? "saved" : "legacy"} receipt response`, async () => {
+      const t = setup({ durable });
+      const created = durable
+        ? await t.create(REPORTER, { report: REPORT })
+        : await t.create();
+      let submission = created.body.submission as NonNullable<
+        Body["submission"]
+      >;
+      const flow = durable
+        ? await t.call(
+            REPORTER,
+            "POST",
+            `security-submissions/${submission.id}/authorize`,
+            {},
+          )
+        : created;
+      await t.authorize(REPORTER, flow.body.authorizeUrl as string);
+      const send = () =>
+        t.call(REPORTER, "POST", `security-submissions/${submission.id}/send`, {
+          expectedRevision: submission.revision,
+          ...(durable ? {} : { report: REPORT }),
+        });
+      const accept = (
+        response: Awaited<ReturnType<typeof send>>,
+        state: string,
+      ) => {
+        expect(response.body.submission).toMatchObject({
+          id: submission.id,
+          state,
+          intake: durable ? { canForward: true } : null,
+        });
+        expect(JSON.stringify(response.body)).not.toContain(SENTINEL);
+        submission = response.body.submission as typeof submission;
+      };
+      t.github.faults.create = "403-secondary-rate-limit";
+      accept(await send(), "draft");
+      t.github.faults.create = "5xx-before-create";
+      accept(await send(), "uncertain");
+      accept(
+        await t.reconcile(submission.id, submission.revision),
+        "uncertain",
+      );
+      t.advance(RECONCILE_QUIET_MS + 1000);
+      accept(await t.reconcile(submission.id, submission.revision), "draft");
+      t.github.faults.create = "ok";
+      const sentRevision = submission.revision;
+      accept(await send(), "receipt-verified");
+      const replay = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        {
+          expectedRevision: sentRevision,
+          ...(durable ? {} : { report: REPORT }),
+        },
+      );
+      accept(replay, "receipt-verified");
+      expect(t.github.counts.posts).toBe(3);
+      expect(t.github.advisories).toHaveLength(1);
+      expect(t.jar(REPORTER).has("__Secure-slop_intake_grant")).toBe(false);
+    });
+
+  test("a forwarding response uses the current human hold and reveals nothing to another actor", async () => {
+    const t = setup({ durable: true });
+    const created = await t.create(REPORTER, { report: REPORT });
+    const submission = created.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const flow = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await t.authorize(REPORTER, flow.body.authorizeUrl as string);
+    t.github.faults.create = "403";
+    const holdAfterSend = (): void =>
+      t.setBeforeBatch(async () => {
+        if (t.github.counts.posts === 0) return holdAfterSend();
+        const current = await t.call(
+          MAINTAINER,
+          "GET",
+          `security-submissions/${submission.id}`,
+        );
+        if (!current.body.submission) throw new Error("Missing saved report");
+        const reviewed = await t.call(
+          MAINTAINER,
+          "POST",
+          `security-submissions/${submission.id}/review`,
+          {
+            expectedRevision: (
+              current.body.submission.intake as { revision: number }
+            ).revision,
+            decision: "request-information",
+            reason:
+              "The owner needs an isolated reproduction before forwarding.",
+          },
+        );
+        expect(reviewed.status).toBe(200);
+      });
+    holdAfterSend();
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.body.submission).toMatchObject({
+      state: "failed",
+      intake: {
+        state: "needs-information",
+        canForward: false,
+        canAuthorize: false,
+      },
+    });
+    const other = await t.call(
+      OTHER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: sent.body.submission?.revision },
+    );
+    expect(other.status).toBe(404);
+    expect(other.body.submission).toBeUndefined();
+    const revoked = await t.raw(
+      null,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: sent.body.submission?.revision },
+    );
+    expect(revoked.status).toBe(401);
+    expect(revoked.body.submission).toBeUndefined();
+    expect(t.github.counts.posts).toBe(1);
+  });
+
+  test("a saved report keeps its retry controls through refusals and fresh authorization", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    let submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const original = t.cases()[0];
+    const authorize = async () => {
+      const flow = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/authorize`,
+        {},
+      );
+      expect(flow.status).toBe(200);
+      expect(new URL(flow.body.authorizeUrl as string).pathname).toBe(
+        "/login/oauth/authorize",
+      );
+      expect(
+        (await t.authorize(REPORTER, flow.body.authorizeUrl as string)).status,
+      ).toBe(303);
+    };
+    await authorize();
+    t.github.faults.create = "403";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const refused = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        { expectedRevision: submission.revision },
+      );
+      expect(refused.status).toBe(200);
+      expect(refused.body.submission).toMatchObject({
+        state: "failed",
+        failureCode: "forbidden",
+        attempt,
+        caseId: original.id,
+        intake: { canAuthorize: true, canForward: true },
+      });
+      submission = refused.body.submission as typeof submission;
+    }
+    expect(t.github.counts.posts).toBe(3);
+    expect(t.github.advisories).toHaveLength(0);
+    expect(t.cases()).toEqual([original]);
+    // The durable receipt survives the optional grant and legacy draft expiry.
+    t.advance(25 * 60 * 60 * 1000);
+    const expired = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(expired.body.error).toBe("grant_required");
+    expect(t.github.counts.posts).toBe(3);
+    const other = await t.call(
+      OTHER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    expect(other.status).toBe(404);
+    await authorize();
+    t.github.faults.create = "ok";
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.body.submission).toMatchObject({
+      state: "receipt-verified",
+      attempt: 4,
+      caseId: original.id,
+      intake: { canAuthorize: false, canForward: true },
+    });
+    expect(t.github.counts).toMatchObject({ posts: 4, gets: 1 });
+    expect(t.github.advisories).toHaveLength(1);
+    expect(t.cases()).toEqual([original]);
+    expect(t.github.advisories[0].advisory.description).toContain(
+      REPORT.description,
+    );
+    expect(t.github.advisories[0].advisory.author.id.toString()).toBe(
+      REPORTER.githubId,
+    );
+    expect(JSON.stringify(sent.body)).not.toContain(SENTINEL);
+  });
+
   test("retained legacy drafts share the screening budget and verify a grant before paid work", async () => {
     const options = { durable: false };
     const t = setup(options);

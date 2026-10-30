@@ -61,6 +61,7 @@ import {
   acceptStoredReport,
   actStoredIntake,
   approvedReportForForward,
+  decorateSubmission,
   listStoredSubmissions,
   readStoredIntake,
   screenLegacyReport,
@@ -408,15 +409,20 @@ async function programTerms(
   return reportingContext(deps, projectId);
 }
 
-function grantResponse(
+async function grantResponse(
+  deps: SecurityApiDependencies,
+  actor: Actor,
   status: number,
   row: SubmissionRow,
   extra: Record<string, unknown> = {},
   cookies: string[] = [],
-): Response {
+): Promise<Response> {
   const done = row.state === "receipt-verified" || row.state === "abandoned";
   return withCookies(
-    json(status, { submission: submissionView(row), ...extra }),
+    json(status, {
+      submission: await decorateSubmission(deps, row, actor),
+      ...extra,
+    }),
     [...cookies, ...(done ? [clearGrantCookie()] : [])],
   );
 }
@@ -507,6 +513,8 @@ async function createSubmission(
       fail(409, "submission_closed", "This submission is finished");
     const flow = await authorize(row);
     return grantResponse(
+      deps,
+      actor,
       200,
       row,
       { replayed: true, authorizeUrl: flow.authorizeUrl },
@@ -586,9 +594,14 @@ async function createSubmission(
     fail(409, "submission_changed", "Start the submission again");
   }
   const flow = await authorize(row);
-  return grantResponse(201, row, { authorizeUrl: flow.authorizeUrl }, [
-    flow.cookie,
-  ]);
+  return grantResponse(
+    deps,
+    actor,
+    201,
+    row,
+    { authorizeUrl: flow.authorizeUrl },
+    [flow.cookie],
+  );
 }
 
 /** A new authorization for an existing submission, e.g. after expiry. */
@@ -617,9 +630,14 @@ async function authorizeSubmission(
     deps.now(),
   );
   if (flow === null) fail(401, "unauthorized", "Sign in with GitHub");
-  return grantResponse(200, row, { authorizeUrl: flow.authorizeUrl }, [
-    flow.cookie,
-  ]);
+  return grantResponse(
+    deps,
+    actor,
+    200,
+    row,
+    { authorizeUrl: flow.authorizeUrl },
+    [flow.cookie],
+  );
 }
 
 async function authorizationCallback(
@@ -950,7 +968,8 @@ async function sendSubmission(
       .bind(loaded.id, expected + 1)
       .first<{ found: number }>();
     const row = await settle(deps, loaded);
-    if (sent !== null) return grantResponse(200, row, { replayed: true });
+    if (sent !== null)
+      return grantResponse(deps, actor, 200, row, { replayed: true });
     fail(409, "stale_revision", "The submission changed since you loaded it");
   }
   if (expected !== loaded.revision)
@@ -1048,7 +1067,7 @@ async function sendSubmission(
       detail: { code: result.code },
       actorGithubId: null,
     });
-    return grantResponse(200, failed ?? sending);
+    return grantResponse(deps, actor, 200, failed ?? sending);
   }
   if (result.kind === "rate-limited") {
     // GitHub throttled the request and kept no copy. The draft reopens for a
@@ -1059,7 +1078,7 @@ async function sendSubmission(
       detail: { retryAfterSeconds: result.retryAfterSeconds },
       actorGithubId: null,
     });
-    return grantResponse(200, throttled ?? sending, {
+    return grantResponse(deps, actor, 200, throttled ?? sending, {
       rateLimited: { retryAfterSeconds: result.retryAfterSeconds },
     });
   }
@@ -1069,7 +1088,7 @@ async function sendSubmission(
       kind: "uncertain",
       actorGithubId: null,
     });
-    return grantResponse(202, uncertain ?? sending);
+    return grantResponse(deps, actor, 202, uncertain ?? sending);
   }
   // A resend may race a copy from an earlier attempt that landed late; the
   // binding is set once, so the earliest copy is chosen before it is set.
@@ -1112,12 +1131,14 @@ async function sendSubmission(
         actorGithubId: null,
       });
     return grantResponse(
+      deps,
+      actor,
       202,
       (await loadSubmission(deps, sending.id)) as SubmissionRow,
     );
   }
   const verified = await verifyReceipt(deps, intake, submitted, grant);
-  return grantResponse(verified.status, verified.row);
+  return grantResponse(deps, actor, verified.status, verified.row);
 }
 
 /** When the first send of this submission began; the listing starts there. */
@@ -1212,7 +1233,7 @@ async function reconcileSubmission(
         kind: "reconcile-inconclusive",
         actorGithubId: actor.githubId,
       });
-      return grantResponse(202, unchanged ?? row);
+      return grantResponse(deps, actor, 202, unchanged ?? row);
     }
     const matches = earliestFirst(
       listing.matches.filter(
@@ -1231,7 +1252,7 @@ async function reconcileSubmission(
         kind: "reconcile-too-early",
         actorGithubId: actor.githubId,
       });
-      return grantResponse(202, unchanged ?? row);
+      return grantResponse(deps, actor, 202, unchanged ?? row);
     }
     if (matches.length === 0) {
       const draft = await transition(deps, row, {
@@ -1239,7 +1260,7 @@ async function reconcileSubmission(
         kind: "reconcile-empty",
         actorGithubId: actor.githubId,
       });
-      return grantResponse(200, draft ?? row);
+      return grantResponse(deps, actor, 200, draft ?? row);
     }
     const adopted = matches[0];
     const next = await transition(deps, row, {
@@ -1264,7 +1285,7 @@ async function reconcileSubmission(
     row = next;
   }
   const verified = await verifyReceipt(deps, intake, row, grant);
-  return grantResponse(verified.status, verified.row);
+  return grantResponse(deps, actor, verified.status, verified.row);
 }
 
 /** §7: verify a report the reporter filed directly on GitHub. */
@@ -1286,7 +1307,7 @@ async function verifyDirect(
     fail(409, "action_not_allowed", "This submission cannot be verified now");
   const grant = await requireGrant(request, deps, intake, row);
   const verified = await verifyReceipt(deps, intake, row, grant);
-  return grantResponse(verified.status, verified.row);
+  return grantResponse(deps, actor, verified.status, verified.row);
 }
 
 async function listSubmissions(
