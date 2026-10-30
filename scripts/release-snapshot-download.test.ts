@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
+import { bashCommand } from "./bash-command";
 
 const workflow = await readFile(
   new URL("../.github/workflows/deploy.yml", import.meta.url),
@@ -27,7 +28,7 @@ for (const [name, event, ref, bootstrap, accepted] of [
   ["staging bootstrap", "workflow_dispatch", "refs/heads/main", "true", false],
 ] as const) {
   test(`published data release ${accepted ? "accepts" : "refuses"} ${name}`, async () => {
-    const process = Bun.spawn(["bash", "-euc", publishedDataGuard], {
+    const process = Bun.spawn([bashCommand(), "-euc", publishedDataGuard], {
       env: {
         ...Bun.env,
         GITHUB_EVENT_NAME: event,
@@ -127,7 +128,7 @@ for (const [name, download] of [
             .replace(/--max-time \d+/, "--max-time 1")
             .replace(/--retry-delay \d+/, "--retry-delay 1")
             .replace(/--retry-max-time \d+/, "--retry-max-time 5");
-        const process = Bun.spawn(["bash", "-euc", command], {
+        const process = Bun.spawn([bashCommand(), "-euc", command], {
           env: { ...Bun.env, previous_profiles: output, ledger_file: output },
           stdout: "pipe",
           stderr: "pipe",
