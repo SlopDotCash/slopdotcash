@@ -140,12 +140,19 @@ export function jobFor(
       return {
         kind: "appeal",
         subject: "value",
+        ...(payload.comment?.id ? { appealCommentId: payload.comment.id } : {}),
         ...base,
         ...item,
         senderId: sender.id,
       };
     if (text.startsWith("/slopbot appeal"))
-      return { kind: "appeal", ...base, ...item, senderId: sender.id };
+      return {
+        kind: "appeal",
+        ...base,
+        ...item,
+        senderId: sender.id,
+        ...(payload.comment?.id ? { appealCommentId: payload.comment.id } : {}),
+      };
     const command = APPEAL_COMMANDS.find(
       (name) =>
         text === `/slopbot ${name}` ||

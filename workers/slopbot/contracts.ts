@@ -380,6 +380,8 @@ export type Job =
       senderId: number;
       /** An explicit ordinary value dispute, distinct from a finding appeal. */
       subject?: "value";
+      /** Exact authenticated GitHub comment that opened the dispute. */
+      appealCommentId?: number;
     }
   | {
       kind: "appeal_command";

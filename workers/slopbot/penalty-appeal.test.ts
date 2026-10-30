@@ -79,7 +79,12 @@ type ModelReply = {
 };
 
 type Run = {
-  seedValue: (options?: { predecessor?: string; joint?: boolean }) => string;
+  repositoryId: number;
+  seedValue: (options?: {
+    predecessor?: string;
+    joint?: boolean;
+    secondCarrier?: boolean;
+  }) => string;
   disputeModel: (draft: "uphold" | "deny", confidence: number) => void;
   inbox(actor: number, moderators?: string, path?: string): Promise<Response>;
   enableMail(): Promise<void>;
@@ -438,6 +443,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return new Response(null, { status: 404 });
       if (
         (path.endsWith("/issues/5") ||
+          path.endsWith("/issues/6") ||
           (duplicate && path.endsWith("/issues/4"))) &&
         request.method === "GET"
       )
@@ -446,8 +452,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             ? duplicateChange === "node"
               ? "PR_changed"
               : "PR_prior"
-            : "PR_local",
-          number: path.endsWith("/issues/4") ? 4 : 5,
+            : path.endsWith("/issues/6")
+              ? "PR_second"
+              : "PR_local",
+          number: path.endsWith("/issues/4")
+            ? 4
+            : path.endsWith("/issues/6")
+              ? 6
+              : 5,
           state: path.endsWith("/issues/4")
             ? duplicateChange === "closed"
               ? "closed"
@@ -510,7 +522,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         }
         return Response.json({ state, closed_at: closedAt });
       }
-      if (path.endsWith("/pulls/5") || (duplicate && path.endsWith("/pulls/4")))
+      if (
+        path.endsWith("/pulls/5") ||
+        path.endsWith("/pulls/6") ||
+        (duplicate && path.endsWith("/pulls/4"))
+      )
         return Response.json({
           draft: false,
           merged,
@@ -570,7 +586,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
                   ? "write"
                   : "read",
             });
-      if (path.endsWith("/issues/5/comments") && request.method === "GET") {
+      if (/\/issues\/[56]\/comments$/u.test(path) && request.method === "GET") {
         if (appealHistoryMode === "unavailable")
           return new Response(null, { status: 503 });
         const history = [
@@ -596,7 +612,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         const page = Number(url.searchParams.get("page") ?? 1);
         return Response.json(history.slice((page - 1) * 100, page * 100));
       }
-      if (path.endsWith("/issues/5/comments")) {
+      if (/\/issues\/[56]\/comments$/u.test(path)) {
         const body = ((await request.json()) as { body: string }).body;
         if (body.startsWith("<!-- slopbot:appeal:")) {
           if (appealRejection !== null) {
@@ -624,6 +640,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         }
         return Response.json({ id: 900 + comments.length }, { status: 201 });
       }
+      if (path.endsWith("/issues/comments/77") && request.method === "GET")
+        return Response.json({
+          body: "/slopbot dispute Exact dispute from comment 77",
+          user: { id: AUTHOR },
+          issue_url: `https://api.github.com/repos/${owner}/${repo}/issues/5`,
+        });
       if (/\/issues\/comments\/\d+$/u.test(path)) {
         if (failCommentUpdate) {
           failCommentUpdate = false;
@@ -632,7 +654,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         comments.push(((await request.json()) as { body: string }).body);
         return Response.json({ id: Number(path.split("/").pop()) });
       }
-      if (path.endsWith("/issues/5/labels")) {
+      if (/\/issues\/[56]\/labels$/u.test(path)) {
         const body = (await request.json()) as { labels: string[] };
         if (pauseFindingLabel) {
           const pause = pauseFindingLabel;
@@ -724,6 +746,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   };
   try {
     await cb({
+      repositoryId,
       seedValue: (options = {}) => {
         hasValue = true;
         const source = {
@@ -752,7 +775,18 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           ? {
               schemaVersion: "slop-work-unit-record:v1",
               projectId: project.id,
-              sources: [source],
+              sources: [
+                source,
+                ...(options.secondCarrier
+                  ? [
+                      {
+                        ...source,
+                        pullRequestNodeId: "PR_second",
+                        pullRequestNumber: 6,
+                      },
+                    ]
+                  : []),
+              ],
               claims: [
                 {
                   id: "e".repeat(64),
@@ -1161,7 +1195,7 @@ test("an ordinary value dispute is triaged and resolved without changing the ass
     const history = run.sql("SELECT * FROM slopbot_value_journal");
     const request = run.job("appeal", { senderId: AUTHOR, subject: "value" });
     expect(await run.deliver(request)).toBe("value dispute drafted (uphold)");
-    const key = `value-appeal:single:${digest}:${AUTHOR}`;
+    const key = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
     expect(
       await run.deliver(
         run.job("appeal_command", {
@@ -1211,7 +1245,9 @@ test("a value dispute retry retains the original assessment after a correction",
     await run.deliver(request);
     expect(run.modelInputs).toHaveLength(1);
     expect(run.sql("SELECT appeal_key FROM slopbot_appeals")).toEqual([
-      { appeal_key: `value-appeal:single:${original}:${AUTHOR}` },
+      {
+        appeal_key: `value-appeal:single:${original}:${AUTHOR}:${run.repositoryId}:5`,
+      },
     ]);
     expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_value_journal")).toEqual([
       { n: 2 },
@@ -1228,7 +1264,7 @@ test("uncertain value triage escalates and only an independent moderator can dec
         run.job("appeal", { senderId: AUTHOR, subject: "value" }),
       ),
     ).toBe("value dispute escalated");
-    const key = `value-appeal:single:${digest}:${AUTHOR}`;
+    const key = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
     expect(
       await run.deliver(
         run.job("appeal_command", {
@@ -1263,8 +1299,8 @@ test("parallel value disputes use their exact keys rather than another actor's n
     await run.deliver(
       run.job("appeal", { senderId: REVIEWER, subject: "value" }),
     );
-    const authorKey = `value-appeal:single:${digest}:${AUTHOR}`;
-    const reviewerKey = `value-appeal:single:${digest}:${REVIEWER}`;
+    const authorKey = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    const reviewerKey = `value-appeal:single:${digest}:${REVIEWER}:${run.repositoryId}:5`;
     expect(
       await run.deliver(
         run.job("appeal_command", {
@@ -1311,6 +1347,83 @@ test("a retained value dispute on a retired project reaches a moderator without 
           "the project is restricted, so Slopbot cannot reassess ordinary work",
       },
     ]);
+  });
+});
+
+test("upholding an ordinary value dispute leaves an existing closure and its penalty untouched", async () => {
+  await closedItem(async (run) => {
+    await run.review();
+    expect(run.currentState()).toBe("closed");
+    const penalties = run.sql("SELECT * FROM slopbot_penalties");
+    const labels = [...run.labels];
+    const digest = run.seedValue();
+    const key = `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    await run.deliver(
+      run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+    );
+    await run.deliver(
+      run.job("appeal_command", {
+        senderId: AUTHOR,
+        command: "accept",
+        appealKey: key,
+      }),
+    );
+    expect(run.currentState()).toBe("closed");
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual(penalties);
+    expect(run.labels).toEqual(labels);
+  });
+});
+
+test("the same actor can independently dispute two PRs in one joint assessment", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue({ joint: true, secondCarrier: true });
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value", number: 6 }),
+      ),
+    ).toBe("value dispute escalated");
+    const rows = run.sql(
+      "SELECT item_node_id,resolved_at FROM slopbot_appeals ORDER BY item_node_id",
+    );
+    expect(rows).toEqual([
+      { item_node_id: "PR_local", resolved_at: null },
+      { item_node_id: "PR_second", resolved_at: null },
+    ]);
+    const firstKey = `value-appeal:joint:${digest}:${AUTHOR}:${run.repositoryId}:5`;
+    await run.deliver(
+      run.job("appeal_command", {
+        senderId: MODERATOR,
+        command: "uphold",
+        appealKey: firstKey,
+      }),
+    );
+    expect(
+      run.sql(
+        "SELECT resolved_at FROM slopbot_appeals WHERE item_node_id='PR_second'",
+      ),
+    ).toEqual([{ resolved_at: null }]);
+  });
+});
+
+test("a value dispute reads the opening comment rather than a newer unrelated appeal", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    await run.deliver(
+      run.job("appeal", {
+        senderId: AUTHOR,
+        subject: "value",
+        appealCommentId: 77,
+      }),
+    );
+    expect(run.modelInputs[0].item).toContain("Exact dispute from comment 77");
+    expect(run.modelInputs[0].item).not.toContain(
+      "This is my real project page",
+    );
   });
 });
 
