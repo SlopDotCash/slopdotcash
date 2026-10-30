@@ -79,6 +79,7 @@ const LOCKFILES = new Set([
   "gemfile.lock",
   "composer.lock",
   "flake.lock",
+  "deno.lock",
 ]);
 const MANIFESTS = new Set([
   "package.json",
@@ -93,6 +94,7 @@ const MANIFESTS = new Set([
   "build.gradle.kts",
   "pom.xml",
   "deno.json",
+  "deno.jsonc",
   "flake.nix",
 ]);
 const AGENT_INSTRUCTIONS = new Set([
