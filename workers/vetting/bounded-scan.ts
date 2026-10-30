@@ -339,7 +339,7 @@ const RULES: Rule[] = [
     threat: "prompt-injection",
     severity: "medium",
     pattern:
-      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)/iu,
+      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)|\b(?:do\s+not|don'?t|never)\s+(?:mention|disclose|report|log)\s+this\b[^\n]{0,40}?\b(?:user|operator|human|maintainer|reviewer)\b|\bwithout\s+(?:telling|informing|notifying|asking)\s+(?:the\s+)?(?:user|operator|human|maintainer)\b|\boverrides?\s+(?:any\s+|all\s+)?(?:previous|prior|earlier|system|other)\s+(?:instructions|prompts|rules|guidelines)\b/iu,
     summary: "Text matches wording used to override agent instructions",
   },
   {
