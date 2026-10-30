@@ -1902,7 +1902,9 @@ const DRAFT_FIELDS = [
  * the current one, and the server refuses a stale base revision.
  */
 export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
-  const { allowed, checking, session } = useProjectMaintainer(project.id);
+  const { allowed, checking, session, error, retry } = useProjectMaintainer(
+    project.id,
+  );
   if (!allowed)
     return (
       <main className="shell route-main manage-page">
@@ -1916,6 +1918,17 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
             next={`/projects/${project.slug}/manage`}
             purpose="Sign in with a maintainer account to change project settings."
           />
+        ) : error ? (
+          <div role="alert">
+            <p>{error}</p>
+            <button
+              className="button secondary-button"
+              type="button"
+              onClick={retry}
+            >
+              Retry access check
+            </button>
+          </div>
         ) : (
           <p role="status">
             Project settings are available only to this project's maintainers.
