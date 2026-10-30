@@ -151,6 +151,7 @@ function vault(
   free: string,
   observedAt = afterCutoff.toISOString(),
   decimals = 6,
+  asset?: string,
 ) {
   const escrow = project.manifest.escrow;
   const selected = escrow?.deployments[0];
@@ -164,7 +165,7 @@ function vault(
       selected.network,
       escrow.chain,
       selected.vault,
-      selected.asset,
+      asset ?? selected.asset,
       decimals,
       BigInt(free) > 5000n ? free : "5000",
       free,
@@ -919,6 +920,39 @@ describe("monthly coordinator", () => {
     expect(
       await service.commitment(project.id, "2026-11", actor, request),
     ).toMatchObject({ award: { githubUserId: A, gross: "600", fee: "12" } });
+  });
+
+  test("a Solana funding reading for a different mint case does not fund the month", async () => {
+    sqlite.close();
+    await setupFixture(solanaDeployment);
+    await coordinate(afterCutoff);
+    const caseVariant = solanaDeployment.asset.replace("z", "Z");
+    expect(caseVariant).not.toBe(solanaDeployment.asset);
+    expect(caseVariant.toLowerCase()).toBe(
+      solanaDeployment.asset.toLowerCase(),
+    );
+    // Enough free balance for the whole month, recorded against another mint.
+    vault("1000000", afterCutoff.toISOString(), 6, caseVariant);
+    expect((await coordinate(afterCutoff)).waiting).toEqual([
+      { key: `${project.id}/2026-11`, reason: "stale-funding" },
+    ]);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    expect(count("monthly_payment_exclusions")).toBe(0);
+  });
+
+  test("a Solana month with the exact mint still reports underfunded when the free balance is short", async () => {
+    sqlite.close();
+    await setupFixture(solanaDeployment);
+    await coordinate(afterCutoff);
+    vault("1");
+    expect((await coordinate(afterCutoff)).waiting).toEqual([
+      { key: `${project.id}/2026-11`, reason: "underfunded" },
+    ]);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    vault("1000");
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
   });
 
   test("a Solana month needs its full total free, even for an award reserved earlier", async () => {
