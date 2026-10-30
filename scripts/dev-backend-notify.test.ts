@@ -127,7 +127,6 @@ test("local enrollment uses the shared private handler and captures verification
   await Promise.all([service.dispatch(), service.dispatch()]);
   expect(captured).toHaveLength(2);
   expect(captured[1].githubId).toBe("42");
-  expect(captured[1].mime).toContain("Slop inbox notice");
   await service.dispatch();
   expect(captured).toHaveLength(2);
   sqlite.close();

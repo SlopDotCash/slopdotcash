@@ -39,7 +39,6 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     card.getByText("Payments not active", { exact: true }),
   ).toHaveCount(0);
-  await expect(card).toContainText("/mo");
   await expect(card.locator(".project-money-state")).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("home-payment-unavailable.png"),

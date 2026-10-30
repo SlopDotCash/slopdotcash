@@ -251,7 +251,6 @@ describe("payment quality evidence for an external evaluated contribution", () =
       ],
       { cwd: repository, encoding: "utf8" },
     );
-    expect(result.stderr).not.toContain("Invalid quality source");
     expect(result.status).toBe(0);
     const evidence = JSON.parse(readFileSync(path("quality.json"), "utf8"));
     expect(

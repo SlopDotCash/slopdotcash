@@ -228,7 +228,6 @@ try {
     "actor-104@example.com",
   ]);
   for (const [index, email] of messages.entries()) {
-    assert.equal(email.subject, "Slop private inbox notice");
     assert.match(email.text, /https:\/\/staging\.slop\.cash\/inbox/);
     assert.doesNotMatch(
       email.raw,

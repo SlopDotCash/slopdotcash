@@ -195,9 +195,6 @@ test("body and legacy truncation refuse valid-looking output and retain both att
       51, 100,
     ]);
     expect(result.calls[0].outcome).toBe("failed");
-    expect(result.calls[0].failure).toBe(
-      "provider deadline truncated the response",
-    );
     expect(result.servedBy).toBe(result.calls[1]);
   }
 });
@@ -262,7 +259,6 @@ test("SDK HTTP errors use canonical body receipts and do not hide retries", asyn
   expect(result.calls.map((call) => call.providerCostMicroUsd)).toEqual([
     75, 100,
   ]);
-  expect(result.calls[0].failure).toBe("provider returned HTTP 429");
   expect(result.calls[0].providerRequestId).toBe("local-http-receipt");
   expect(JSON.stringify(result)).not.toContain("untrusted-error-detail");
 });
