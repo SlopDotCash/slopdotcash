@@ -136,6 +136,14 @@ export function jobFor(
       };
     if (action !== "created") return null;
     const text = (payload.comment?.body ?? "").trim();
+    if (/^\/slopbot dispute(?:\s|$)/u.test(text))
+      return {
+        kind: "appeal",
+        subject: "value",
+        ...base,
+        ...item,
+        senderId: sender.id,
+      };
     if (text.startsWith("/slopbot appeal"))
       return { kind: "appeal", ...base, ...item, senderId: sender.id };
     const command = APPEAL_COMMANDS.find(
@@ -145,9 +153,21 @@ export function jobFor(
         text.startsWith(`/slopbot ${name} `),
     );
     if (command === undefined) return null;
+    const target = text.slice(`/slopbot ${command}`.length).trim();
+    if (
+      /^(?:appeal|value-appeal):/u.test(target) &&
+      !/^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u.test(target)
+    )
+      return null;
+    const appealKey = /^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u.test(
+      target,
+    )
+      ? target
+      : undefined;
     return {
       kind: "appeal_command",
       command,
+      ...(appealKey ? { appealKey } : {}),
       ...base,
       ...item,
       senderId: sender.id,

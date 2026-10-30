@@ -62,6 +62,8 @@ const AUTHOR = 42;
 const MAINTAINER = 43;
 const OUTSIDER = 44;
 const MODERATOR = 50;
+const REVIEWER = 45;
+const IMPLEMENTER = 46;
 const BODY = "Buy cheap followers today at our shop.";
 /** When Slopbot closes the fixture pull request; GitHub's closedAt agrees. */
 const CLOSED_AT = "2026-11-10T00:00:00.000Z";
@@ -77,6 +79,8 @@ type ModelReply = {
 };
 
 type Run = {
+  seedValue: (options?: { predecessor?: string; joint?: boolean }) => string;
+  disputeModel: (draft: "uphold" | "deny", confidence: number) => void;
   inbox(actor: number, moderators?: string, path?: string): Promise<Response>;
   enableMail(): Promise<void>;
   mail(moderators?: string): Promise<string[]>;
@@ -265,6 +269,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let appealHistoryMode = "normal";
   let historyPrefix = 0;
   let verdict: ModelReply = { category: "spam", confidence: 0.97 };
+  let disputeVerdict = { draft: "uphold", confidence: 0.97 };
+  let hasValue = false;
   let config: string | null = null;
   let guidance: string | null = null;
   let configTruncated = false;
@@ -315,6 +321,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       [MAINTAINER]: "maintainer",
       [OUTSIDER]: "outsider",
       [MODERATOR]: "moderator",
+      [REVIEWER]: "reviewer",
+      [IMPLEMENTER]: "implementer",
     })[id];
   const server = Bun.serve({
     port: 0,
@@ -327,7 +335,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         if (++modelCalls === 2 && revokeOnConfirmation) consent(false);
         const input = (await request.json()) as {
           model: string;
-          output_config: { effort: string };
+          output_config: {
+            effort: string;
+            format?: { schema?: { properties?: { draft?: unknown } } };
+          };
           messages: { content: { text: string }[] }[];
         };
         modelInputs.push({
@@ -350,23 +361,27 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                category: reply.category,
-                confidence: reply.confidence,
-                rule_refs: reply.ruleRefs ?? [
-                  { source: "universal", quote: "Buy cheap followers" },
-                ],
-                evidence: reply.evidence ?? [
-                  reply.category === "empty"
-                    ? "Comparison changed files: 0"
-                    : reply.category === "duplicate" && duplicate
-                      ? "Title, body and complete diff are byte-identical to this item."
-                      : "Buy cheap followers",
-                ],
-                summary: "This pull request advertises a service.",
-                limitations: reply.limitations ?? [],
-                objective_defect: null,
-              }),
+              text: JSON.stringify(
+                input.output_config.format?.schema?.properties?.draft
+                  ? disputeVerdict
+                  : {
+                      category: reply.category,
+                      confidence: reply.confidence,
+                      rule_refs: reply.ruleRefs ?? [
+                        { source: "universal", quote: "Buy cheap followers" },
+                      ],
+                      evidence: reply.evidence ?? [
+                        reply.category === "empty"
+                          ? "Comparison changed files: 0"
+                          : reply.category === "duplicate" && duplicate
+                            ? "Title, body and complete diff are byte-identical to this item."
+                            : "Buy cheap followers",
+                      ],
+                      summary: "This pull request advertises a service.",
+                      limitations: reply.limitations ?? [],
+                      objective_defect: null,
+                    },
+              ),
             },
           ],
           usage: { input_tokens: 10, output_tokens: 10 },
@@ -405,6 +420,16 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           content: Buffer.from(guidance).toString("base64"),
           encoding: "base64",
         });
+      if (hasValue && path.endsWith("/contents/README.md")) {
+        const text =
+          "Credit a reproduced bug fix as small; preserve existing awards.";
+        return Response.json({
+          type: "file",
+          encoding: "base64",
+          size: text.length,
+          content: Buffer.from(text).toString("base64"),
+        });
+      }
       if (
         duplicate &&
         path.endsWith("/issues/4") &&
@@ -528,7 +553,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return Response.json({
           login: login(Number(user[1])),
           id: Number(user[1]),
+          node_id: `U_${user[1]}`,
         });
+      if (path.endsWith("/pulls/5/reviews"))
+        return Response.json([
+          { node_id: "PRR_reviewer", user: { node_id: `U_${REVIEWER}` } },
+        ]);
+      if (path.endsWith("/pulls/5/commits"))
+        return Response.json([{ author: { node_id: `U_${IMPLEMENTER}` } }]);
       if (path.endsWith("/permission"))
         return maintainerPermission === "unavailable"
           ? new Response(null, { status: 503 })
@@ -692,6 +724,105 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   };
   try {
     await cb({
+      seedValue: (options = {}) => {
+        hasValue = true;
+        const source = {
+          repository: `${owner}/${repo}`,
+          repositoryNodeId: "R_fixture",
+          repositoryDatabaseId: repositoryId,
+          pullRequestNodeId: "PR_local",
+          pullRequestNumber: 5,
+          headSha: head,
+          mergeSha: "a".repeat(40),
+          occurredAt: at,
+          policySha: "c".repeat(40),
+          sourceDigest: "d".repeat(64),
+        };
+        const assessment = {
+          status: "assessed",
+          tier: "small",
+          rationale: "Accepted bug fix",
+          dimensions: {},
+          evidenceUrls: [],
+          relatedPullRequests: [],
+          limitations: [],
+          reviews: [{ sourceId: "PRR_reviewer", tier: "standard" }],
+        };
+        const record = options.joint
+          ? {
+              schemaVersion: "slop-work-unit-record:v1",
+              projectId: project.id,
+              sources: [source],
+              claims: [
+                {
+                  id: "e".repeat(64),
+                  repositoryNodeId: source.repositoryNodeId,
+                  commitSha: source.headSha,
+                  path: "code.ts",
+                  carrierPullRequestIds: ["PR_local"],
+                  creditPullRequestId: "PR_local",
+                  implementationActorNodeIds: [`U_${IMPLEMENTER}`],
+                },
+              ],
+              units: [
+                {
+                  workUnitId: "f".repeat(64),
+                  claimIds: ["e".repeat(64)],
+                  assessment,
+                },
+              ],
+              sourceDigest: source.sourceDigest,
+              supersedes: [],
+              legacyPredecessors: [],
+              revisionReason: null,
+            }
+          : {
+              schemaVersion: "slop-value-record:v1",
+              projectId: project.id,
+              ...source,
+              assessment,
+              supersedes: options.predecessor ?? null,
+              revisionReason: options.predecessor
+                ? "Reviewed correction"
+                : null,
+            };
+        const json = JSON.stringify({
+          ...record,
+          rubricVersion: "slop-value-2026-10-09",
+          producerRevision: "a".repeat(40),
+          assessedAt: new Date().toISOString(),
+          model: { provider: "fixture", model: "fixture", client: "fixture" },
+        });
+        const digest = createHash("sha256").update(json).digest("hex");
+        const key = createHash("sha256").update(`${digest}key`).digest("hex");
+        if (options.joint)
+          sqlite.run(
+            `INSERT INTO slopbot_work_unit_journal
+          (record_digest,assessment_key,project_id,source_digest,record_json,recorded_at) VALUES (?,?,?,?,?,?)`,
+            [digest, key, project.id, source.sourceDigest, json, at],
+          );
+        else
+          sqlite.run(
+            `INSERT INTO slopbot_value_journal
+          (record_digest,assessment_key,repository_node_id,pull_request_node_id,head_sha,source_digest,supersedes,record_json,recorded_at)
+          VALUES (?,?,?,?,?,?,?,?,?)`,
+            [
+              digest,
+              key,
+              source.repositoryNodeId,
+              "PR_local",
+              head,
+              source.sourceDigest,
+              options.predecessor ?? null,
+              json,
+              at,
+            ],
+          );
+        return digest;
+      },
+      disputeModel: (draft, confidence) => {
+        disputeVerdict = { draft, confidence };
+      },
       inbox: async (
         actor,
         moderators = String(MODERATOR),
@@ -1021,6 +1152,167 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     sqlite.close();
   }
 }
+
+test("an ordinary value dispute is triaged and resolved without changing the assessment or a penalty", async () => {
+  await closedItem(async (run) => {
+    run.closeByMaintainer();
+    run.merged(true);
+    const digest = run.seedValue();
+    const history = run.sql("SELECT * FROM slopbot_value_journal");
+    const request = run.job("appeal", { senderId: AUTHOR, subject: "value" });
+    expect(await run.deliver(request)).toBe("value dispute drafted (uphold)");
+    const key = `value-appeal:single:${digest}:${AUTHOR}`;
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: key,
+        }),
+      ),
+    ).toBe("value dispute upheld; assessment history unchanged");
+    expect(run.currentState()).toBe("closed");
+    expect(run.sql("SELECT * FROM slopbot_value_journal")).toEqual(history);
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
+    expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(false);
+    expect(run.comments.some((body) => body.includes(digest))).toBe(true);
+  });
+});
+
+for (const actor of [AUTHOR, MAINTAINER, REVIEWER, IMPLEMENTER, OUTSIDER]) {
+  test(`only affected actors and maintainers may open a value dispute (${actor})`, async () => {
+    await closedItem(async (run) => {
+      run.seedValue({ joint: actor === IMPLEMENTER });
+      const result = await run.deliver(
+        run.job("appeal", { senderId: actor, subject: "value" }),
+      );
+      if (actor === OUTSIDER) {
+        expect(result).toBe(
+          "only an affected contributor, reviewer or maintainer can dispute this assessment",
+        );
+        expect(run.modelInputs).toHaveLength(0);
+        expect(run.sql("SELECT * FROM slopbot_appeals")).toEqual([]);
+      } else {
+        expect(result).toBe("value dispute drafted (uphold)");
+        expect(
+          run.sql("SELECT appellant_github_id FROM slopbot_appeals"),
+        ).toEqual([{ appellant_github_id: String(actor) }]);
+      }
+    });
+  });
+}
+
+test("a value dispute retry retains the original assessment after a correction", async () => {
+  await closedItem(async (run) => {
+    const original = run.seedValue();
+    const request = run.job("appeal", { senderId: AUTHOR, subject: "value" });
+    await run.deliver(request);
+    run.seedValue({ predecessor: original });
+    await run.deliver(request);
+    expect(run.modelInputs).toHaveLength(1);
+    expect(run.sql("SELECT appeal_key FROM slopbot_appeals")).toEqual([
+      { appeal_key: `value-appeal:single:${original}:${AUTHOR}` },
+    ]);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_value_journal")).toEqual([
+      { n: 2 },
+    ]);
+  });
+});
+
+test("uncertain value triage escalates and only an independent moderator can decide", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue();
+    run.disputeModel("deny", 0.7);
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    const key = `value-appeal:single:${digest}:${AUTHOR}`;
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: key,
+        }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: MODERATOR,
+          command: "uphold",
+          appealKey: key,
+        }),
+      ),
+    ).toBe("value dispute upheld; assessment history unchanged");
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_value_journal")).toEqual([
+      { n: 1 },
+    ]);
+  });
+});
+
+test("parallel value disputes use their exact keys rather than another actor's newest dispute", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue();
+    await run.deliver(
+      run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+    );
+    await run.deliver(
+      run.job("appeal", { senderId: REVIEWER, subject: "value" }),
+    );
+    const authorKey = `value-appeal:single:${digest}:${AUTHOR}`;
+    const reviewerKey = `value-appeal:single:${digest}:${REVIEWER}`;
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: reviewerKey,
+        }),
+      ),
+    ).toBe("only the appellant or a maintainer can answer the draft");
+    await run.deliver(
+      run.job("appeal_command", {
+        senderId: AUTHOR,
+        command: "accept",
+        appealKey: authorKey,
+      }),
+    );
+    expect(
+      run.sql(
+        "SELECT resolution FROM slopbot_appeals WHERE appellant_github_id='42'",
+      ),
+    ).toEqual([{ resolution: "upheld" }]);
+    expect(
+      run.sql(
+        "SELECT resolution FROM slopbot_appeals WHERE appellant_github_id='45'",
+      ),
+    ).toEqual([{ resolution: null }]);
+  });
+});
+
+test("a retained value dispute on a retired project reaches a moderator without new review or GitHub writes", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    run.retire();
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    expect(run.modelInputs).toHaveLength(0);
+    expect(run.writes).toEqual([]);
+    expect(run.sql("SELECT escalation FROM slopbot_appeals")).toEqual([
+      {
+        escalation:
+          "the project is restricted, so Slopbot cannot reassess ordinary work",
+      },
+    ]);
+  });
+});
 
 const PENALTY =
   "SELECT category, debit_thirds, moderator_review, reversal FROM slopbot_penalties";
