@@ -1,3 +1,4 @@
+import { readLeaderboardResponse } from "./leaderboard-response";
 /** A monthly target must not look like an active payment offer. */
 
 import { createProjectView } from "../../src/lib/project-view";
@@ -8,6 +9,12 @@ import {
   serveProjectCycleIndex,
   test,
 } from "./fixtures";
+
+test.beforeEach(async ({ page }) => {
+  await page.route("https://avatars.githubusercontent.com/**", (route) =>
+    route.fulfill({ path: "public/slop-mark.svg" }),
+  );
+});
 
 test("monthly targets remain distinct from verified payment records", async ({
   page,
@@ -88,7 +95,7 @@ test("a cycle record offers a funding check without inventing a vault balance", 
   diagnostics.allowPreviewApiMisses();
   const response = await page.request.get("/data/leaderboard.json");
   expect(response.ok()).toBe(true);
-  const snapshot = await response.json();
+  const snapshot = await readLeaderboardResponse(response, page.request);
   const view = createProjectView(snapshot, "eliza");
   await page.clock.install({ time: new Date(view.cycle.endsAt) });
   await page.goto(`/cycles/eliza/${view.cycle.id}`, {
