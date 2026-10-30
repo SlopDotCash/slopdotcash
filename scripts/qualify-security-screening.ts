@@ -199,6 +199,15 @@ async function attemptScreening(
       costMicroUsd: receipt.cost,
     });
     requireThat(spent.micro <= TOTAL_MAXIMUM_MICRO_USD, "total-over-budget");
+    // Surplus commits HTTP 200 before a long call ends, so a later failure is
+    // an error envelope with a receipt but no served model. It is an
+    // incomplete answer, not an unidentified model.
+    if (value !== null && Object.hasOwn(value, "error"))
+      throw new ScreeningQualificationError("incomplete", {
+        errorType: observed.errorType,
+        stopReason: observed.stopReason,
+        truncated: observed.truncated,
+      });
     requireThat(
       value !== null &&
         typeof value.model === "string" &&
