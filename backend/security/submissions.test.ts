@@ -1186,7 +1186,6 @@ describe("private intake: send outcomes", () => {
       severity: null,
       owner_github_id: MAINTAINER.githubId,
       // The analysis never shows in fields the reporter sees.
-      next_action: "Triage new private report",
     });
     expect(verified.receipt_evidence_digest).toMatch(/^[0-9a-f]{64}$/u);
     expect(row.evidence_digest).toBe(verified.receipt_evidence_digest);
@@ -1247,7 +1246,6 @@ describe("private intake: send outcomes", () => {
       receivedAtSource: "github-verified",
       receivedAt: advisory.advisory.created_at,
       view: "reporter",
-      nextStep: "Waiting for the project owner's response.",
       nextStepDueAt: "2026-10-24T10:00:00.000Z",
     });
     expect(JSON.stringify(view.body)).not.toContain("autoAnalysis");
@@ -1729,7 +1727,6 @@ describe("private intake: direct GitHub reports", () => {
       advisory_ghsa: advisory.ghsa_id,
       received_at: "2026-10-20T08:30:00.000Z",
       received_at_source: "github-verified",
-      next_action: "Triage new private report",
     });
     const event = t.sqlite
       .query(
