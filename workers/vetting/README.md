@@ -34,6 +34,11 @@ same bytes are classified the same way whether they sit in a `Makefile`, a
 `installScripts` coverage, its install-time download extraction and its place
 in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
 
+Package-manager configuration that the package manager reads on every install
+or run (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`) is
+also an `installScripts` surface, at any depth. Each can make the package
+manager execute code, for example through `node-options` in `.npmrc`.
+
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
 `prompt-injection`. The deterministic rules in `bounded-scan.ts` are
