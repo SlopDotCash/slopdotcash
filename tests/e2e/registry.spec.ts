@@ -907,7 +907,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).json();
   expect(JSON.parse(prior.manifestText).escrow.chain).toBe("base");
   expect(JSON.parse(prior.manifestText).listingTier).toBe("community");
-  await card.getByRole("button", { name: "Edit project" }).click();
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(
     card.getByRole("checkbox", { name: "Featured", exact: true }),
   ).toBeChecked();
@@ -1028,7 +1028,7 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   );
   await expect(panel()).toContainText("Quarantined");
   await expect(card()).toContainText("3 · updated");
-  await card().getByRole("button", { name: "Edit project" }).click();
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(
     card().getByRole("checkbox", { name: "Featured", exact: true }),
   ).toBeDisabled();

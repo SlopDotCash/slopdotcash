@@ -715,10 +715,11 @@ test("owners publish and control bounty programs with verified funding @registry
       page.getByRole("status").filter({ hasText: "Published revision" }),
     ).toBeVisible();
     let stored = await adminProject(request, id);
-    expect((stored.manifest.securityBounty as { status: string }).status).toBe(
-      "paused",
-    );
-    // Program settings cannot self-attest funds or register a contract.
+    expect(stored.manifest.securityBounty).toMatchObject({
+      status: "paused",
+      fundingPolicy: "after-approval",
+    });
+    // A historical prefunded offer still needs verified available funds.
     const unsupported = await api(
       request,
       "PUT",
@@ -731,6 +732,12 @@ test("owners publish and control bounty programs with verified funding @registry
           securityBounty: {
             ...(stored.manifest.securityBounty as object),
             status: "open",
+            fundingPolicy: undefined,
+            capacity: {
+              ...(stored.manifest.securityBounty as SecurityBountyTerms)
+                .capacity,
+              awards: 1,
+            },
           },
         },
       },
