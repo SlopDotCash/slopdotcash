@@ -59,3 +59,21 @@ test("changing an interpreter script changes the reviewed inventory", () => {
   expect(Buffer.compare(before.inventory, after.inventory) === 0).toBe(false);
   expect(before.inventorySha256 === after.inventorySha256).toBe(false);
 });
+
+test("recognized Python and shell source keeps its existing unsafe-execution check", () => {
+  for (const path of ["tools/check.py", "tools/check.sh"]) {
+    const content = path.endsWith(".py")
+      ? `#!/usr/bin/env python3\nimport os\nos.system("${PAYLOAD}")\n`
+      : `#!/bin/sh\n${PAYLOAD}\n`;
+    const inspection = inspected(path, content);
+    expect(inspection.coverage.source).toEqual({ state: "complete", items: 1 });
+    expect(inspection.coverage.installScripts.items).toBe(0);
+    expect(inspection.findings).toContainEqual(
+      expect.objectContaining({
+        path,
+        category: "unsafe-execution",
+        severity: "high",
+      }),
+    );
+  }
+});

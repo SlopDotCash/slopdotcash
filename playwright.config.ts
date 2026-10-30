@@ -115,7 +115,7 @@ const shellArgument = (value: string) => JSON.stringify(value);
 const registryArguments = registryPersistTo
   ? // Positive local registry workflows must explicitly select test networks;
     // the release configuration intentionally has no network enabled by default.
-    ` --persist-to ${JSON.stringify(registryPersistTo)} --binding ${shellArgument('PAYMENT_NETWORKS=["base-sepolia","solana-devnet"]')}${
+    ` --persist-to ${JSON.stringify(registryPersistTo)} --binding PAYMENTS_ALLOWED_ORIGIN=http://127.0.0.1:${localPort} --binding TRACE_AUTH_SECRET=e2e-points-limiter-secret-not-for-production --binding ${shellArgument('PAYMENT_NETWORKS=["base-sepolia","solana-devnet"]')}${
       registryAdmins ? ` --binding ADMIN_GITHUB_IDS=${registryAdmins}` : ""
     }${
       registryModerators

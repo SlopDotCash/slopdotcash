@@ -174,6 +174,7 @@ export async function handleNotificationsApi(
             `SELECT event_key,
                     CASE WHEN kind = 'slopbot_appeal_review' AND EXISTS (
                       SELECT 1 FROM slopbot_appeals a WHERE 'slopbot-' || a.appeal_key = notifications.event_key AND a.resolved_at IS NOT NULL
+                      UNION ALL SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.resolved_at IS NOT NULL
                     ) THEN 'slopbot_appeal_resolved' ELSE kind END AS kind,
                     subject, detail, action_path, source_at,
                     created_at, read_at,
@@ -193,7 +194,8 @@ export async function handleNotificationsApi(
                         WHERE a.event_key = notifications.event_key AND a.recipient_github_id = notifications.recipient_github_id
                           AND a.template_version = 'activity-inbox-v1')) AS delivery_state
                FROM notifications WHERE recipient_github_id = ?
-                AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)
+                AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
+                  OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
                 ${cursor ? "AND (source_at < ? OR (source_at = ? AND event_key > ?))" : ""}
               ORDER BY source_at DESC, event_key LIMIT ?`,
           )
@@ -208,7 +210,8 @@ export async function handleNotificationsApi(
           .prepare(
             `SELECT COUNT(*) AS count FROM notifications
               WHERE recipient_github_id = ? AND read_at IS NULL
-                AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)`,
+                AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
+                  OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))`,
           )
           .bind(actor.githubId, moderator ? 1 : 0)
           .all<{ count: number }>(),
@@ -274,7 +277,8 @@ export async function handleNotificationsApi(
       .prepare(
         `UPDATE notifications SET read_at = ?
           WHERE recipient_github_id = ? AND read_at IS NULL
-            AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1)
+            AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
+                  OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
             AND event_key IN (SELECT value FROM json_each(?))`,
       )
       .bind(

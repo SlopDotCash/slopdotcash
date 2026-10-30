@@ -126,14 +126,22 @@ const INSTALL_FILES = new Set([
   "rakefile",
   "brewfile",
   "procfile",
+  "cmakelists.txt",
+  "meson.build",
+  "earthfile",
+  "sconstruct",
+  "sconscript",
+  "wscript",
+  "makefile.am",
 ]);
 /**
- * Container and CI build recipes with a name suffix, such as
- * `Dockerfile.prod` or `app.dockerfile`. They run commands at build time, so
- * they are install surfaces like a Makefile, never unreviewed content.
+ * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
+ * `app.dockerfile`, or by a build-system extension, such as `Helper.cmake`.
+ * They run commands at build time, so they are install surfaces like a
+ * Makefile, never unreviewed content.
  */
 const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.dockerfile$/u;
+  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake)$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -141,8 +149,7 @@ const EXECUTABLE_BINARIES =
 const ARCHIVES = /\.(?:zip|tar|tgz|gz|bz2|xz|7z|rar|whl|gem|crate)$/iu;
 
 /**
- * `#!` in the first two bytes: the file runs through the interpreter on its
- * first line, so it executes at build or install time whatever it is called.
+ * A leading `#!` marks content as a potential interpreter script.
  */
 function declaresInterpreter(bytes: Uint8Array): boolean {
   return bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x21;
@@ -532,9 +539,8 @@ export function inspectRepository(input: {
   const downloads = new Set<string>();
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
-    // A script that declares an interpreter in its first two bytes runs at
-    // build or install time, whether or not its name says so: `configure`
-    // and other extensionless build scripts carry no recognized name.
+    // Previously unclassified interpreter scripts still need review, even
+    // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
     const digest = sha256(file.bytes);
