@@ -12,6 +12,11 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import {
+  NETWORK_NAMES,
+  REWARD_ASSET_NETWORKS,
+} from "../../src/lib/reward-asset.mjs";
+import { E2E_REWARD_TOKEN, fixtureBranchHead } from "../github-api-fixture.mjs";
 import { enlargeText } from "../text-size";
 import {
   signedVettingHeaders,
@@ -161,16 +166,15 @@ async function queueScan(
   reason: string,
   revision = 1,
 ) {
-  await admin.goto(`/admin?project=${encodeURIComponent(projectId)}`, {
-    waitUntil: "networkidle",
-  });
+  await admin.goto(
+    `/admin?project=${encodeURIComponent(projectId)}&section=security`,
+    {
+      waitUntil: "networkidle",
+    },
+  );
   const card = admin.getByRole("article", {
     name: `Security vetting for ${projectId}`,
   });
-  await card
-    .getByText(`Queue scan of revision ${revision}`, { exact: true })
-    .locator("xpath=self::summary")
-    .click();
   await card.getByLabel("Reason for the scan").fill(reason);
   await card
     .getByRole("button", { name: `Queue scan of revision ${revision}` })
@@ -180,7 +184,15 @@ async function queueScan(
   ).toContainText(`Queued a scan of ${projectId} revision ${revision}.`);
   // A queued rescan keeps the last finished decision until its result lands.
   await expect(
-    card.getByText(new RegExp(`Revision ${revision} · Queued`, "u")),
+    card
+      .locator(".assessment-details")
+      .filter({
+        has: admin.getByRole("heading", {
+          name: `Revision ${revision}`,
+          exact: true,
+        }),
+      })
+      .filter({ has: admin.getByText("Queued", { exact: true }) }),
   ).toBeVisible();
   return card;
 }
@@ -262,6 +274,22 @@ async function signIn(page: Page, token: string) {
   }, token);
 }
 
+/** Selects an owned repository or uses the same picker's organization entry. */
+async function setRepository(page: Page, repository: string) {
+  const control = page.getByLabel("GitHub repository", { exact: true });
+  await expect(control).toBeEnabled();
+  if ((await control.evaluate((element) => element.tagName)) === "SELECT") {
+    if (await control.locator(`option[value="${repository}"]`).count()) {
+      await control.selectOption(repository);
+      return;
+    }
+    await control.selectOption("__other");
+  }
+  await page
+    .getByRole("textbox", { name: "GitHub repository", exact: true })
+    .fill(repository);
+}
+
 /** Open a settings group only when it is folded; repeated saves preserve it. */
 async function openSettings(page: Page, label: string) {
   if (label === "Contributor instructions")
@@ -302,25 +330,27 @@ async function draftApplication(
   },
 ) {
   await page.goto("/projects/new", { waitUntil: "networkidle" });
-  await page.getByLabel("Public GitHub repository").fill(project.repository);
-  await page.getByRole("button", { name: "Look up on GitHub" }).click();
-  await expect(page.locator(".lookup-status")).toContainText(
-    `Found ${project.repository}`,
-  );
-  await page.getByRole("button", { name: "Next: Contribution rules" }).click();
+  await setRepository(page, project.repository);
+  await expect(
+    page.getByRole("combobox", { name: "Integration branch", exact: true }),
+  ).toHaveValue("main");
   await page.getByLabel("Project name").fill(project.name);
   const consent = page.getByRole("checkbox", {
-    name: "Allow automatic closure by Slopbot",
+    name: /Allow Slopbot to close/u,
   });
-  await expect(consent).not.toBeChecked();
-  if (project.automaticClosure) await consent.check();
+  await expect(consent).toBeChecked();
+  if (!project.automaticClosure) await consent.uncheck();
   await page.getByRole("button", { name: "Next: Rewards" }).click();
   await page.getByLabel("Monthly rewards").check();
   await page.getByLabel("Monthly amount (USDC)").fill("1000");
   if (project.network)
     await page
-      .getByRole("combobox", { name: "Network", exact: true })
-      .selectOption(project.network);
+      .getByRole("group", { name: "Network", exact: true })
+      .getByRole("radio", {
+        name: NETWORK_NAMES[project.network as keyof typeof NETWORK_NAMES],
+        exact: true,
+      })
+      .check();
   await page.getByRole("button", { name: "Next: Review" }).click();
   await expect(
     page.getByRole("article", { name: "Listing preview" }),
@@ -365,13 +395,10 @@ test("a signed-out visitor must sign in to look up GitHub and submit @registry",
   );
   const project = fixtureProjects().queued;
   await page.goto("/projects/new", { waitUntil: "networkidle" });
-  await page.getByLabel("Public GitHub repository").fill(project.repository);
   await expect(
     page.getByRole("button", { name: "Look up on GitHub" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "Sign in with GitHub", exact: true }),
-  ).toHaveAttribute("href", /\/login\?next=%2Fprojects%2Fnew$/u);
+  await expect(page.getByLabel("Integration branch")).toBeDisabled();
   await expect(
     page.getByRole("link", { name: "Sign in with GitHub", exact: true }),
   ).toHaveAttribute("href", /\/login\?next=%2Fprojects%2Fnew$/u);
@@ -429,6 +456,24 @@ test("an owner creates a paused project without admin approval @registry", async
     "Setup status: Waiting for the security scan",
   );
   await expectAccessible(page);
+  await enlargeText(page.locator("main"));
+  const viewProject = page.getByRole("link", {
+    name: "View project",
+    exact: true,
+  });
+  for (let presses = 0; presses < 10; presses += 1) {
+    if (await viewProject.evaluate((link) => link === document.activeElement))
+      break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(viewProject).toBeFocused();
+  await expect(viewProject).toBeInViewport();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/projects/${project.id}$`, "u"));
+  await expect(
+    page.getByRole("heading", { name: project.name, exact: true }),
+  ).toBeVisible();
+  await expectAccessible(page);
   await context.close();
 });
 
@@ -451,6 +496,20 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   const listed = await listedProject(owner, project.id);
   expect(listed).toMatchObject({ status: "paused" });
   expect(listed.slopbot).toBeUndefined();
+  await owner
+    .getByRole("link", { name: "Manage project", exact: true })
+    .click();
+  await expect(owner).toHaveURL(
+    new RegExp(`/projects/${project.id}/manage$`, "u"),
+  );
+  await expect(
+    owner.getByRole("heading", { name: "Manage project", exact: true }),
+  ).toBeVisible();
+  await expect(owner.locator(".breadcrumb")).toHaveText(project.name);
+  await expect(
+    owner.getByRole("button", { name: "Publish changes", exact: true }),
+  ).toBeVisible();
+  await expectAccessible(owner);
 
   // Facts that GitHub does not confirm are refused, never listed.
   // The request API keeps the expected 422 out of the page console.
@@ -500,14 +559,12 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await admin.goto(`/admin?project=${project.id}`, {
     waitUntil: "networkidle",
   });
-  const card = admin.locator(".admin-card", {
-    has: admin.getByText(project.id, { exact: true }),
-  });
-  await expect(card).toContainText("Generated from revision 1");
-  await card.getByRole("button", { name: "Edit project" }).click();
-  await card
-    .getByText("Customize contributor instructions", { exact: true })
-    .click();
+  const card = admin.locator("main");
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(admin).toHaveURL(
+    new RegExp(`/admin\\?project=${project.id}&section=settings$`, "u"),
+  );
+  await expect(card.locator("details")).toHaveCount(0);
   const adminTests = card.getByRole("textbox", { name: /^Required tests/u });
   const originalAdminTests = await adminTests.inputValue();
   await adminTests.fill("x".repeat(2001));
@@ -515,6 +572,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await adminTests.fill(originalAdminTests);
   await expect(adminTests).toBeVisible();
   await card.getByRole("button", { name: "Close and keep draft" }).click();
+  await expect(admin).toHaveURL(`/admin?project=${project.id}`);
   await expectAccessible(admin);
 
   // The installer's trust root: the exact approved bytes and their digest.
@@ -602,8 +660,9 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await openSettings(returningOwner, "Contribution rules");
   await expect(consent).not.toBeChecked();
   await expectAccessible(returningOwner);
-  await returningOwner.goto("/projects/new", { waitUntil: "networkidle" });
-  await returningOwner.getByText("Your projects", { exact: true }).click();
+  await returningOwner.goto(`/projects/${project.id}/manage`, {
+    waitUntil: "networkidle",
+  });
   await expect(returningOwner.locator("main")).toContainText(project.name);
   await expectAccessible(returningOwner);
   await returningContext.close();
@@ -613,8 +672,15 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expect(card).toContainText("3 · updated");
   await card.getByRole("button", { name: "Delist", exact: true }).click();
   await card.getByRole("button", { name: "Delist project" }).click();
-  await expect(admin.getByRole("status")).toContainText("Saved.");
-  await expect(card).toContainText("Delisted.");
+  await expect(
+    card
+      .locator(".admin-facts > div")
+      .filter({ hasText: "Discovery placement" })
+      .getByRole("definition"),
+  ).toHaveText("retired");
+  await expect(card.locator(".admin-project-heading .route-badge")).toHaveText(
+    "paused",
+  );
   expect(await listedProject(admin, project.id)).toMatchObject({
     status: "paused",
     listingTier: "retired",
@@ -644,7 +710,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await expect(admin.locator("h1")).toHaveText(project.name);
   // Native stablecoins use the shared reward label without a token address.
   await expect(admin.locator(".project-reward-status")).toContainText(
-    "$1,000 monthly target, split between contributors",
+    "$1,000 monthly, split between contributors",
   );
   await expect(admin.locator(".project-hero")).not.toContainText(
     "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
@@ -658,7 +724,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toMatchObject({ skillsPublished: false, vetting: { state: "queued" } });
 
   // An incomplete scan quarantines the revision, and it cannot activate.
-  await admin.goto(`/admin?project=${project.id}`, {
+  await admin.goto(`/admin?project=${project.id}&section=security`, {
     waitUntil: "networkidle",
   });
   let vettingCard = admin.getByRole("article", {
@@ -676,7 +742,6 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     name: `Security vetting for ${project.id}`,
   });
   await expect(vettingCard.locator(".admin-badge")).toHaveText("Quarantined");
-  await vettingCard.getByText(/Revision 1 · Incomplete/u).click();
   const quarantinedArtifact = vettingCard
     .locator(".operations-artifact-list li")
     .filter({ hasText: "vendor/addon.node" });
@@ -686,13 +751,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     "A pinned TLS client hid HTTP bodies",
   );
   await expectAccessible(admin);
-  const refusedCard = admin.locator(".admin-card", {
-    has: admin.getByText(project.id, { exact: true }),
-  });
-  await refusedCard.getByRole("button", { name: "Edit project" }).click();
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  const refusedCard = admin.locator("main");
   await refusedCard.getByLabel("Project status").selectOption("active");
   await refusedCard
-    .getByLabel("Reason for this revision (public history)")
+    .getByLabel("Reason for revision (public)")
     .fill("Activate before a clean scan");
   await refusedCard.getByRole("button", { name: "Save revision 2" }).click();
   await expect(refusedCard.getByRole("alert")).toContainText(
@@ -728,13 +791,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     project: { status: "paused" },
     vetting: { state: "queued" },
   });
-  const card = admin.locator(".admin-card", {
-    has: admin.getByText(project.id, { exact: true }),
-  });
-  await card.getByRole("button", { name: "Edit project" }).click();
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  const card = admin.locator("main");
   await card.getByLabel("Project status").selectOption("active");
   await card
-    .getByLabel("Reason for this revision (public history)")
+    .getByLabel("Reason for revision (public)")
     .fill("Activation remains blocked without canonical closure");
   await card.getByRole("button", { name: "Save revision 2" }).click();
   await expect(card.getByRole("alert")).toContainText(
@@ -749,10 +810,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   );
   // A normal paused manifest edit remains available and produces its own notice.
   await card.getByLabel("Project status").selectOption("paused");
-  await card
-    .getByText("Advanced project settings (revision 1)", { exact: true })
-    .click();
-  const manifestEditor = card.getByLabel("Other fields");
+  const manifestEditor = card.getByLabel("Manifest JSON");
   const pausedManifest = JSON.parse(await manifestEditor.inputValue());
   expect(pausedManifest).not.toHaveProperty("status");
   expect(pausedManifest).not.toHaveProperty("contribution");
@@ -773,20 +831,38 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   await card
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("A reviewed paused project awaiting complete security evidence.");
+  const featured = card.getByRole("checkbox", {
+    name: "Featured",
+    exact: true,
+  });
+  await expect(featured).not.toBeChecked();
+  await card.getByLabel("Project status").selectOption("active");
+  await featured.check();
+  await expect(featured).toBeChecked();
+  await expect(card.getByLabel("Project status")).toHaveValue("active");
+  await featured.uncheck();
+  await expect(card.getByLabel("Project status")).toHaveValue("active");
+  expect(JSON.parse(await manifestEditor.inputValue()).listingTier).toBe(
+    "community",
+  );
+  // This fixture has no activation clearance; placement itself never pauses it.
+  await card.getByLabel("Project status").selectOption("paused");
+  await featured.focus();
+  await admin.keyboard.press("Space");
+  await expect(featured).toBeChecked();
+  await expect(card.getByLabel("Project status")).toHaveValue("paused");
   expect(JSON.parse(await manifestEditor.inputValue()).headline).toBe(
     "A reviewed paused project awaiting complete security evidence.",
   );
   await card
-    .getByText("Advanced project settings (revision 1)", { exact: true })
-    .click();
-  await card
-    .getByLabel("Reason for this revision (public history)")
+    .getByLabel("Reason for revision (public)")
     .fill("Clarify paused project description");
   await card.getByRole("button", { name: "Close and keep draft" }).click();
-  await card.getByRole("button", { name: "Edit project" }).click();
-  await expect(
-    card.getByLabel("Reason for this revision (public history)"),
-  ).toHaveValue("Clarify paused project description");
+  await expect(admin).toHaveURL(`/admin?project=${project.id}`);
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(card.getByLabel("Reason for revision (public)")).toHaveValue(
+    "Clarify paused project description",
+  );
   await expect(
     card.getByRole("region", { name: "Revision changes" }),
   ).toContainText("Short description");
@@ -795,6 +871,9 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toHaveValue(
     "A reviewed paused project awaiting complete security evidence.",
   );
+  await expect(
+    card.getByRole("checkbox", { name: "Featured", exact: true }),
+  ).toBeChecked();
   expect(
     await admin.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(await admin.evaluate(() => window.innerWidth));
@@ -810,8 +889,11 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   ).toBe(true);
   await card.getByRole("button", { name: "Save revision 2" }).focus();
   await admin.keyboard.press("Enter");
+  await expect(admin).toHaveURL(`/admin?project=${project.id}`);
   await expect(card).toContainText("2 · updated");
   expect(await listedProject(admin, project.id)).toMatchObject({
+    listingTier: "featured",
+    status: "paused",
     reward: {
       chain: "robinhood",
       currency: "USDG",
@@ -824,6 +906,12 @@ test("an admin cannot activate or publish skills without canonical scan closure 
     await admin.request.get(`/api/v1/project-revisions/${project.id}/1`)
   ).json();
   expect(JSON.parse(prior.manifestText).escrow.chain).toBe("base");
+  expect(JSON.parse(prior.manifestText).listingTier).toBe("community");
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(
+    card.getByRole("checkbox", { name: "Featured", exact: true }),
+  ).toBeChecked();
+  await card.getByRole("button", { name: "Close and keep draft" }).click();
   await expectAccessible(admin);
   await adminContext.close();
 });
@@ -915,10 +1003,8 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   // and a confirmation.
   async function act(action: string, reason: string) {
     await panel().getByLabel("Action").selectOption({ label: action });
-    await panel().getByLabel("Reason (private audit record)").fill(reason);
-    await panel()
-      .getByLabel("Evidence reference (link or case id)")
-      .fill(evidence);
+    await panel().getByLabel("Reason", { exact: true }).fill(reason);
+    await panel().getByLabel("Evidence link or case ID").fill(evidence);
     await panel().getByRole("button", { name: "Preview action" }).click();
     const preview = panel().getByRole("group", {
       name: "Preview",
@@ -933,7 +1019,7 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     "Confirmed malware in the release script",
   );
   await expect(quarantine).toContainText("2 → 3");
-  await expect(quarantine).toContainText("paused, community → paused, retired");
+  await expect(quarantine).toContainText("paused, featured → paused, retired");
   await expect(quarantine).toContainText("Appends the matching revision");
   await expectAccessible(admin);
   await quarantine.getByRole("button", { name: "Confirm: Quarantine" }).click();
@@ -942,6 +1028,14 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   );
   await expect(panel()).toContainText("Quarantined");
   await expect(card()).toContainText("3 · updated");
+  await admin.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(
+    card().getByRole("checkbox", { name: "Featured", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    card().getByRole("checkbox", { name: "Featured", exact: true }),
+  ).not.toBeChecked();
+  await card().getByRole("button", { name: "Close and keep draft" }).click();
 
   // Every public route closes at once: the cached list, the direct project
   // read, the skill, the archive and the discovery index.
@@ -1007,9 +1101,6 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   });
   await admin.reload();
   await expect(panel()).toContainText("Reinstatement requested");
-  await panel()
-    .getByText(/Enforcement history/u)
-    .click();
   await expect(panel()).toContainText("project-steward, owner-request");
 
   // The moderator who placed the restriction cannot decide the appeal. The
@@ -1061,11 +1152,9 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     .getByLabel("Action")
     .selectOption({ label: "Reinstate after review" });
   await moderatorPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Attempt review without complete canonical evidence");
-  await moderatorPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await moderatorPanel.getByLabel("Evidence link or case ID").fill(evidence);
   // Both preview and confirmation must refuse an unscanned appeal. Use the
   // API for the expected refusal so it does not create a console error.
   const unscannedAppeal = await moderator.request.post(
@@ -1113,11 +1202,9 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     .getByLabel("Action")
     .selectOption({ label: "Request reinstatement" });
   await moderatorPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Request a fresh review after the malicious result");
-  await moderatorPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await moderatorPanel.getByLabel("Evidence link or case ID").fill(evidence);
   await moderatorPanel.getByRole("button", { name: "Preview action" }).focus();
   await moderator.keyboard.press("Enter");
   await moderator.screenshot({
@@ -1156,15 +1243,14 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   );
   await postVettingResult(request, project.id, project.repository, "clean");
   await moderator.reload({ waitUntil: "networkidle" });
+  await moderator.getByRole("link", { name: "Overview", exact: true }).click();
   await moderatorPanel
     .getByLabel("Action")
     .selectOption({ label: "Reinstate after review" });
   await moderatorPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Attempt review without complete canonical evidence");
-  await moderatorPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await moderatorPanel.getByLabel("Evidence link or case ID").fill(evidence);
   await moderatorPanel.getByRole("button", { name: "Preview action" }).click();
   await expect(moderatorPanel.getByRole("alert")).toContainText(
     "fresh clean scan",
@@ -1176,7 +1262,6 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     }),
   ).toHaveCount(0);
   await expectAccessible(moderator);
-  await moderatorPanel.getByText(/Enforcement history/u).click();
   await expect(moderatorPanel.locator("li")).toHaveCount(5);
   await expect(moderatorPanel).toContainText(
     "the signed security vetting service",
@@ -1306,34 +1391,34 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   const moderator = await moderatorContext.newPage();
   await signIn(moderator, MODERATOR_TOKEN);
   await moderator.goto("/admin", { waitUntil: "networkidle" });
-  const summary = moderator.locator(".admin-project-summary", {
+  const summary = moderator.locator(".admin-project-row", {
     has: moderator.getByRole("heading", { name: project.name, exact: true }),
   });
-  await expect(summary).toContainText(
-    "Moderator decision needed: confirmed malicious result",
-  );
+  await expect(summary).toContainText("Decision needed");
   await expectAccessible(moderator);
   await moderator.screenshot({
     path: test.info().outputPath("malicious-decision-queue.png"),
     fullPage: true,
   });
-  await summary.getByRole("button", { name: `Open ${project.name}` }).click();
+  await summary.click();
   const panel = moderator
     .locator(".admin-card", {
       has: moderator.getByText(project.id, { exact: true }),
     })
     .getByRole("region", { name: "Enforcement", exact: true });
-  await expect(panel).toContainText("Moderator decision needed");
+  await expect(panel).toContainText("Confirmed malicious result");
   await expect(panel).toContainText("Banned");
   await expect(panel.getByLabel("Action")).toHaveValue("ban");
   await expect(panel.getByLabel("Action").locator("option:checked")).toHaveText(
     "Ban project and maintainer",
   );
   await panel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Reason", { exact: true })
     .fill("Reviewed the signed finding: the install script steals tokens");
-  await panel.getByLabel("Evidence reference (link or case id)").fill(evidence);
-  await panel.getByLabel("Responsible GitHub accounts").fill(login);
+  await panel.getByLabel("Evidence link or case ID").fill(evidence);
+  await panel
+    .getByLabel("Responsible accounts (comma-separated, optional)")
+    .fill(login);
   await panel.getByRole("button", { name: "Preview action" }).click();
   const preview = panel.getByRole("group", {
     name: "Preview",
@@ -1352,9 +1437,8 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   await expect(moderator.getByRole("status").first()).toContainText(
     "Ban project and maintainer recorded",
   );
-  await expect(panel).not.toContainText("Moderator decision needed");
+  await expect(panel).not.toContainText("Confirmed malicious result");
   await expect(panel).toContainText(`Banned maintainers@${login}`);
-  await panel.getByText(/Enforcement history/u).click();
   await expect(panel.locator("li")).toHaveCount(2);
   await expect(panel.locator("li").nth(1)).toContainText(
     "Ban project and maintainer by @e2e-moderator (project-moderator, admin-panel)",
@@ -1461,7 +1545,7 @@ test("a moderator decides a confirmed malicious result and bans the project and 
   await signIn(independent, ADMIN_TOKEN);
   await independent.goto("/admin", { waitUntil: "networkidle" });
   await independent
-    .getByRole("button", { name: `Open ${project.name}`, exact: true })
+    .getByRole("link", { name: `Open ${project.name}`, exact: true })
     .click();
   const accountPanel = independent
     .locator(".admin-card", {
@@ -1482,13 +1566,13 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     }),
   ).toHaveCount(1);
   await accountPanel.getByLabel("Action").selectOption("reinstate_accounts");
-  await accountPanel.getByLabel("GitHub accounts to reinstate").fill(login);
   await accountPanel
-    .getByLabel("Reason (private audit record)")
+    .getByLabel("Accounts to reinstate (comma-separated)")
+    .fill(login);
+  await accountPanel
+    .getByLabel("Reason", { exact: true })
     .fill("The evidence clears this account; the project stays banned");
-  await accountPanel
-    .getByLabel("Evidence reference (link or case id)")
-    .fill(evidence);
+  await accountPanel.getByLabel("Evidence link or case ID").fill(evidence);
   await accountPanel.getByRole("button", { name: "Preview action" }).click();
   const accountPreview = accountPanel.getByRole("group", {
     name: "Preview",
@@ -1585,13 +1669,11 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   );
   await expectAccessible(page);
 
-  // Resumed setup: the owner checks again from "Your projects" on a new
-  // page load.
-  await page.goto("/projects/new", { waitUntil: "networkidle" });
-  await page.getByText("Your projects", { exact: true }).click();
-  const entry = page.locator("#your-projects li", { hasText: project.name });
-  await entry.getByRole("button", { name: "Check setup" }).click();
-  const resumed = entry.locator(".project-setup-status");
+  // Existing projects resume their setup from the management page.
+  await page.goto(`/projects/${project.id}/manage`, {
+    waitUntil: "networkidle",
+  });
+  const resumed = page.locator(".project-setup-status");
   await expect(resumed.locator("h2")).toHaveText(
     "Setup status: Waiting for the security scan",
   );
@@ -2090,12 +2172,10 @@ test("an applicant publishes an application stored before self-service setup wit
     await route.abort();
   });
   await draft.goto("/projects/new", { waitUntil: "networkidle" });
-  await draft.getByLabel("Public GitHub repository").fill(project.repository);
-  await draft.getByRole("button", { name: "Look up on GitHub" }).click();
-  await expect(draft.locator(".lookup-status")).toContainText(
-    `Found ${project.repository}`,
-  );
-  await draft.getByRole("button", { name: "Next: Contribution rules" }).click();
+  await setRepository(draft, project.repository);
+  await expect(
+    draft.getByRole("combobox", { name: "Integration branch", exact: true }),
+  ).toHaveValue("main");
   await draft.getByLabel("Project name").fill(project.name);
   await draft.getByRole("button", { name: "Next: Rewards" }).click();
   await draft.getByRole("button", { name: "Next: Review" }).click();
@@ -2142,11 +2222,33 @@ test("an applicant publishes an application stored before self-service setup wit
   const page = await context.newPage();
   await signIn(page, OWNER_TOKEN);
   await page.goto("/projects/new", { waitUntil: "networkidle" });
-  await page.getByText("Your projects", { exact: true }).click();
-  const entry = page.locator("#your-projects li", { hasText: project.name });
-  await expect(entry).toContainText("submitted 2026-10-01");
-  await setSlopbot(`${project.repository}/installed`);
+  const entry = page.getByTestId(`pending-application-${applicationId}`);
+  await expect(entry).toContainText(project.name);
+  await expect(entry.locator("details")).toHaveCount(0);
+  await expect(page.getByLabel("Project name")).toHaveValue("");
+  await expectAccessible(page, { include: ".setup-pending-applications" });
+  await page.screenshot({
+    path: test.info().outputPath("pending-saved-application.png"),
+    fullPage: true,
+  });
+  const refusedPublish = diagnostics.allowResponse(
+    409,
+    "POST",
+    `/api/v1/project-applications/${applicationId}/publish`,
+  );
   await entry.getByRole("button", { name: "Create this project" }).click();
+  await expect(entry.getByRole("alert")).toContainText(
+    `Install Slopbot on ${project.repository}`,
+  );
+  await expect(
+    entry.getByRole("link", { name: "Install Slopbot" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/apps/slopdotcash/installations/new",
+  );
+  await expectAccessible(page, { include: ".setup-pending-applications" });
+  await setSlopbot(`${project.repository}/installed`);
+  await entry.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(entry.locator(".project-setup-status h2")).toHaveText(
     "Setup status: Waiting for the security scan",
   );
@@ -2156,6 +2258,12 @@ test("an applicant publishes an application stored before self-service setup wit
     "Confirmed",
     `@e2e-owner has admin access to ${project.repository}.`,
   );
+  await expect(entry.locator(".setup-details-compact")).toBeVisible();
+  await expectAccessible(page, { include: ".setup-pending-applications" });
+  await page.screenshot({
+    path: test.info().outputPath("pending-application-published.png"),
+    fullPage: true,
+  });
   expect(await listedProject(page, project.id)).toMatchObject({
     name: project.name,
     status: "paused",
@@ -2168,17 +2276,27 @@ test("an applicant publishes an application stored before self-service setup wit
       (revision: { projectId: string }) => revision.projectId === project.id,
     ),
   ).toMatchObject([{ revision: 1 }]);
+  expect(diagnostics.count(refusedPublish)).toBe(1);
 
   // The application is published once. It leaves the list, and a second
   // publish is refused, so no duplicate row can appear.
   await page.reload({ waitUntil: "networkidle" });
-  await page.getByText("Your projects", { exact: true }).click();
   await expect(
-    page.locator("#your-projects li", { hasText: project.name }),
-  ).toHaveCount(1);
-  await expect(
-    page.locator("#your-projects li", { hasText: project.name }),
-  ).toContainText(`${project.name} · Paused`);
+    page.getByTestId(`pending-application-${applicationId}`),
+  ).toHaveCount(0);
+  await page.goto(`/projects/${project.id}/manage`, {
+    waitUntil: "networkidle",
+  });
+  await expect(page.locator(".project-setup-status h2")).toHaveText(
+    "Setup status: Waiting for the security scan",
+  );
+  await expect(page.locator("main")).toContainText(project.name);
+  const registry = await (await page.request.get("/api/v1/projects")).json();
+  expect(
+    registry.projects.filter(
+      (value: { id: string }) => value.id === project.id,
+    ),
+  ).toHaveLength(1);
   const again = await page.request.post(
     `/api/v1/project-applications/${applicationId}/publish`,
     {
@@ -2218,15 +2336,15 @@ test.describe("private evidence console", () => {
         })
       ).status(),
     ).toBe(403);
-    await page.goto(`/admin?project=${fixtureProjects().queued.id}`, {
-      waitUntil: "networkidle",
-    });
+    await page.goto(
+      `/admin?project=${fixtureProjects().queued.id}&section=security`,
+      {
+        waitUntil: "networkidle",
+      },
+    );
     const consoleLink = page.locator(`a[href="${path}"]`);
-    await consoleLink
-      .locator("xpath=ancestor::details")
-      .locator("summary")
-      .click();
-    await expect(consoleLink).toHaveText("Open restricted evidence console");
+    await expect(consoleLink).toBeVisible();
+    await expect(consoleLink).toHaveText("Evidence");
     await signIn(page, EVIDENCE_OWNER_TOKEN);
     await page.goto(path, { waitUntil: "networkidle" });
     await expect(
@@ -2371,18 +2489,17 @@ test("repository lookup failures explain the next action and preserve the draft 
   await signIn(page, OWNER_TOKEN);
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   const repository = page.getByRole("textbox", {
-    name: "Public GitHub repository",
+    name: "GitHub repository",
     exact: true,
   });
   for (const [name, message] of [
     ["lookup-rate-limited", "GitHub limited lookups."],
     ["lookup-unavailable", "GitHub returned 503."],
   ]) {
-    await repository.fill(`e2e-owner/${name}`);
-    await page
-      .getByRole("button", { name: "Look up on GitHub", exact: true })
-      .click();
-    await expect(page.locator(".lookup-status")).toContainText(message);
+    await setRepository(page, `e2e-owner/${name}`);
+    await expect(page.locator("#field-repository-error")).toContainText(
+      message,
+    );
     await expect(repository).toHaveValue(`e2e-owner/${name}`);
     await expect(page.locator("main")).not.toContainText(
       "Private upstream diagnostic",
@@ -2399,30 +2516,23 @@ test("repository lookup failures explain the next action and preserve the draft 
       )
     ).status,
   ).toBe(204);
-  const lookUp = page.getByRole("button", {
-    name: "Look up on GitHub",
-    exact: true,
-  });
-  await repository.fill(limited);
-  await lookUp.click();
-  await expect(page.locator(".lookup-status")).toContainText(
+  await setRepository(page, limited);
+  await expect(page.locator("#field-repository-error")).toContainText(
     "GitHub limited lookups.",
   );
   await setSlopbot(`${limited}/installed`);
-  await lookUp.click();
-  await expect(page.locator(".lookup-status")).toContainText("Found ");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
-    page.getByRole("textbox", { name: "Integration branch", exact: true }),
+    page.getByRole("combobox", { name: "Integration branch", exact: true }),
   ).toHaveValue("main");
   await page.screenshot({
     path: test.info().outputPath("repository-lookup-through-slopbot.png"),
     fullPage: true,
   });
-  await repository.fill(fixtureProjects().owned.repository);
-  await page
-    .getByRole("button", { name: "Look up on GitHub", exact: true })
-    .click();
-  await expect(page.locator(".lookup-status")).toContainText("Found ");
+  await setRepository(page, fixtureProjects().owned.repository);
+  await expect(
+    page.getByRole("combobox", { name: "Integration branch", exact: true }),
+  ).toHaveValue("main");
   await page.screenshot({
     path: test.info().outputPath("repository-lookup-recovery.png"),
     fullPage: true,
@@ -2585,3 +2695,383 @@ test("two contributors flag through the agent API, pause the project and notify 
   await secondContext.close();
   await adminContext.close();
 });
+
+for (const assetCase of [
+  {
+    id: "usdc",
+    network: "base",
+    kind: "stablecoin",
+    amount: "1200",
+    symbol: "USDC",
+    decimals: 6,
+    minor: "1200000000",
+    gross: "1,200 USDC",
+    researcher: "900 USDC",
+    slop: "300 USDC",
+  },
+  {
+    id: "usdg",
+    network: "robinhood",
+    kind: "stablecoin",
+    amount: "1200",
+    symbol: "USDG",
+    decimals: 6,
+    minor: "1200000000",
+    gross: "1,200 USDG",
+    researcher: "900 USDG",
+    slop: "300 USDG",
+  },
+  {
+    id: "eth",
+    network: "ethereum",
+    kind: "native",
+    amount: "0.004",
+    symbol: "ETH",
+    decimals: 18,
+    minor: "4000000000000000",
+    gross: "0.004 ETH",
+    researcher: "0.003 ETH",
+    slop: "0.001 ETH",
+  },
+  {
+    id: "sol",
+    network: "solana",
+    kind: "native",
+    amount: "1.000000004",
+    symbol: "SOL",
+    decimals: 9,
+    minor: "1000000004",
+    gross: "1.000000004 SOL",
+    researcher: "0.750000003 SOL",
+    slop: "0.250000001 SOL",
+  },
+  {
+    id: "token",
+    network: "base",
+    kind: "token",
+    amount: "12.50000004",
+    symbol: "BOUNTY",
+    decimals: 8,
+    minor: "1250000004",
+    gross: "12.50000004 REQUESTED",
+    researcher: "75%",
+    slop: "25%",
+  },
+] as const) {
+  test(`an owner creates a private bounty in ${assetCase.id} and opens its generic private report form @registry`, async ({
+    browser,
+  }) => {
+    test.skip(
+      process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
+      "The private intake fixture is required",
+    );
+    const suffix = projectSuffix();
+    const project = {
+      id: `private-bounty-${assetCase.id}-${suffix}`,
+      repository: `e2e-owner/private-bounty-${assetCase.id}-${suffix}`,
+      name: `Private bounty ${assetCase.id} ${suffix}`,
+    };
+    const context = await browser.newContext(walkthroughOptions());
+    const page = await context.newPage();
+    await signIn(page, OWNER_TOKEN);
+    await setSlopbot(`${project.repository}/installed`);
+    await page.goto("/projects/new", { waitUntil: "networkidle" });
+    await setRepository(page, project.repository);
+    await expect(page.getByLabel("Integration branch")).toHaveValue("main");
+    await page.getByLabel("Integration branch").selectOption("development");
+    await page.getByLabel("Project name").fill(project.name);
+    await page
+      .getByLabel("Goal", { exact: true })
+      .fill(
+        "Find critical contract defects that permit theft or permanent freezing of funds.",
+      );
+    await page
+      .getByLabel("Acceptance criteria")
+      .fill(
+        "A reproducible critical finding in the selected repository, reviewed by its maintainer.",
+      );
+    await page
+      .getByRole("button", { name: "Next: Rewards", exact: true })
+      .click();
+    await page.getByLabel("Private bounty", { exact: true }).check();
+    await page
+      .getByRole("radio", {
+        name: NETWORK_NAMES[assetCase.network],
+        exact: true,
+      })
+      .check();
+    const network = REWARD_ASSET_NETWORKS[assetCase.network];
+    await page
+      .getByRole("group", { name: "Asset", exact: true })
+      .getByRole("radio", {
+        name:
+          assetCase.kind === "token"
+            ? "Another token"
+            : network[assetCase.kind].symbol,
+        exact: true,
+      })
+      .check();
+    if (assetCase.kind === "token") {
+      await page
+        .getByLabel("Token address", { exact: true })
+        .fill(E2E_REWARD_TOKEN.address);
+      await page.getByLabel("Token symbol", { exact: true }).fill("REQUESTED");
+    }
+    await page
+      .getByLabel(/^Award per accepted finding/u)
+      .fill(assetCase.amount);
+    await page
+      .getByRole("button", { name: "Next: Review", exact: true })
+      .click();
+    const review = page.getByRole("article", { name: "Listing preview" });
+    await expect(review).toContainText(assetCase.gross);
+    await expect(review).toContainText(
+      `${assetCase.researcher} / ${assetCase.slop}`,
+    );
+    await expect(
+      page.getByRole("navigation", { name: "Setup steps" }).getByRole("button"),
+    ).toHaveCount(3);
+    await expect(page.locator("main details, main select")).toHaveCount(0);
+    await expectAccessible(page);
+    const metadataReadsBefore =
+      assetCase.kind === "token"
+        ? (
+            await (
+              await page.request.get(
+                `${GITHUB_FIXTURE}/__fixture/reward-rpc/requests`,
+              )
+            ).json()
+          ).reads
+        : 0;
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Project created", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("main")).toContainText("accepted finding");
+    await expect(page.locator("main")).toContainText(assetCase.symbol);
+    await expect(page.locator("main")).not.toContainText("Points only");
+    const saved = await listedProject(page, project.id);
+    expect(saved).toMatchObject({
+      name: project.name,
+      status: "paused",
+      listingTier: "community",
+      reward: {
+        monthlyCapMinor: "0",
+        committedMinor: "0",
+        paymentMode: "disabled",
+      },
+      securityBounty: {
+        status: "open",
+        rewardMode: "bounty-only",
+        fundingPolicy: "after-approval",
+        amount: {
+          grossMinor: assetCase.minor,
+          currency: assetCase.symbol,
+          decimals: assetCase.decimals,
+          network: assetCase.network,
+          asset: {
+            network: assetCase.network,
+            kind: assetCase.kind,
+            address:
+              assetCase.kind === "token"
+                ? E2E_REWARD_TOKEN.address
+                : network[assetCase.kind].address,
+            symbol: assetCase.symbol,
+            decimals: assetCase.decimals,
+          },
+        },
+        split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+        sponsor: { name: project.name, githubId: "900000003" },
+        funding: { state: "pledged" },
+        scope: {
+          sourceRevisions: [
+            {
+              repository: project.repository,
+              commit: fixtureBranchHead(project.repository, "development"),
+            },
+          ],
+          deployments: [],
+        },
+        intake: {
+          kind: "github-private-vulnerability-reporting",
+          repository: project.repository,
+        },
+      },
+    });
+    expect(saved.rewardAsset).toBeUndefined();
+    expect(saved.securityBounty.settlement).toBeUndefined();
+    expect(saved.escrow).toBeUndefined();
+    if (assetCase.kind === "token") {
+      const reads = await page.request.get(
+        `${GITHUB_FIXTURE}/__fixture/reward-rpc/requests`,
+      );
+      expect((await reads.json()).reads).toBeGreaterThan(metadataReadsBefore);
+    }
+    let vaultReads = 0;
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname.startsWith("/api/v1/project-vaults/"))
+        vaultReads += 1;
+    });
+    await page.goto(`/projects/${project.id}`, { waitUntil: "networkidle" });
+    await expect(
+      page.getByRole("heading", { name: project.name, exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".project-reward-status")).toContainText(
+      "Pledged",
+    );
+    await expect(
+      page.getByText("Points only · no cash rewards", { exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("link", { name: "Report privately", exact: true })
+      .click();
+    await expect(page).toHaveURL(
+      new RegExp(`/projects/${project.id}/security$`),
+    );
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+      "href",
+      new RegExp(`/projects/${project.id}/security$`),
+    );
+    const report = page.locator("form.report-composer");
+    await expect(report).toBeVisible();
+    let submissions = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === "/api/v1/security-submissions"
+      )
+        submissions += 1;
+    });
+    await report
+      .getByLabel("Summary", { exact: true })
+      .fill("Synthetic local contract finding");
+    await report
+      .getByRole("textbox", { name: /^Description/u })
+      .fill(
+        "This local browser test verifies the private draft flow without submitting a report or touching funds.",
+      );
+    await report
+      .getByRole("button", { name: "Review report", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Review your private report",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(report).toContainText("Synthetic local contract finding");
+    expect(submissions).toBe(0);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("created-private-bounty-report-review.png"),
+      fullPage: true,
+    });
+    if (assetCase.kind === "token") {
+      const current = await (
+        await page.request.get(`/api/v1/projects/${project.id}`)
+      ).json();
+      await page.evaluate(
+        ({ id, revision }) =>
+          localStorage.setItem(
+            `slop:project-update:v2:${id}`,
+            JSON.stringify({
+              baseRevision: revision,
+              fundingMode: "monthly",
+              network: "robinhood",
+              assetKind: "stablecoin",
+              monthlyAmount: "500",
+            }),
+          ),
+        { id: project.id, revision: current.revision },
+      );
+    }
+    await page.goto(`/projects/${project.id}/manage`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("heading", { name: "Manage project", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("main")).not.toContainText("Points only");
+    const navigation = page.getByRole("navigation", {
+      name: "Project navigation",
+      exact: true,
+    });
+    await expect(
+      navigation.getByRole("link", { name: "Security bounty", exact: true }),
+    ).toHaveAttribute("href", `/projects/${project.id}/security`);
+    await expect(
+      navigation.getByRole("link", { name: "Funds & awards", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Enable vault setup", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Set up vault", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.locator("summary").filter({ hasText: /^Monthly rewards$/u }),
+    ).toHaveCount(0);
+    const manageBounty = page.getByRole("link", {
+      name: "Manage security bounty",
+      exact: true,
+    });
+    await expect(manageBounty).toBeVisible();
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("bounty-management.png"),
+      fullPage: true,
+    });
+    if (assetCase.kind === "token") {
+      await page
+        .getByLabel("Short description", { exact: true })
+        .fill("Security findings with exact token rewards");
+      await page
+        .getByRole("button", { name: "Publish changes", exact: true })
+        .click();
+      await expect(
+        page.getByRole("status").filter({ hasText: "Published revision" }),
+      ).toBeVisible();
+      const presentation = await listedProject(page, project.id);
+      expect(presentation.reward).toEqual(saved.reward);
+      expect(presentation.rewardAsset).toBeUndefined();
+      expect(presentation.escrow).toBeUndefined();
+      expect(presentation.securityBounty.amount).toEqual(
+        saved.securityBounty.amount,
+      );
+      await manageBounty.click();
+      const editor = page.locator(".security-program-editor");
+      await expect(editor).toBeVisible();
+      await expect(
+        editor.getByLabel("Published gross award (BOUNTY)"),
+      ).toHaveValue(assetCase.amount);
+      await expect(
+        page.getByRole("region", { name: "Bounty funds", exact: true }),
+      ).toHaveCount(0);
+      await editor
+        .getByLabel("Published gross award (BOUNTY)")
+        .fill("20.00000004");
+      await editor
+        .getByRole("button", { name: "Review bounty terms", exact: true })
+        .click();
+      await expect(
+        editor.getByRole("region", { name: "Published bounty offer" }),
+      ).toContainText("15.00000003 BOUNTY");
+      await editor
+        .getByRole("button", { name: "Publish bounty terms", exact: true })
+        .click();
+      await expect(
+        page.getByRole("status").filter({ hasText: "Published revision" }),
+      ).toBeVisible();
+      const updated = await listedProject(page, project.id);
+      expect(updated.securityBounty.amount.grossMinor).toBe("2000000004");
+      expect(updated.securityBounty.amount.asset).toEqual(
+        saved.securityBounty.amount.asset,
+      );
+      expect(updated.securityBounty.settlement).toBeUndefined();
+    }
+    expect(vaultReads).toBe(0);
+    await context.close();
+  });
+}

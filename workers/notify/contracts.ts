@@ -10,6 +10,18 @@ export const SENDER_ADDRESS =
 export const EMAIL_ADDRESS =
   /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/u;
 export const NOTIFY_INTERNAL_HOST = "notify.internal";
+/** Documented pre-acceptance quota errors permit bounded retries. Unknown
+ * transport failures may already have sent mail and must not be resent. */
+export function retryableEmailRejection(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    ["E_RATE_LIMIT_EXCEEDED", "E_DAILY_LIMIT_EXCEEDED"].includes(
+      String(error.code),
+    )
+  );
+}
 export const PROJECT_APPLICATION_NOTICE_PATH = "/v1/project-applications";
 export const MAX_NOTICE_BODY_BYTES = 8 * 1024;
 export type { ProjectApplicationNotice } from "../../src/lib/project-contracts";

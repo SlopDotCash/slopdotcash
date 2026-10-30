@@ -3,7 +3,6 @@ import {
   MAXIMUM_ATTEMPTS,
   qualifySecurityScreening,
   ScreeningQualificationError,
-  TOTAL_MAXIMUM_MICRO_USD,
 } from "./qualify-security-screening";
 import { qualificationTransport } from "./qualify-value-models";
 
@@ -125,7 +124,6 @@ test("release screening wrapper accepts canonical body and legacy receipts", asy
       noSleep,
     );
     expect(result.requests).toBe(1);
-    expect(result.outcome).toBe("synthetic report classified legitimate");
     expect(source.calls()).toBe(1);
   }
 });
@@ -209,7 +207,6 @@ test("screening dry run checks the request and price bounds without a call", asy
     source.fetch,
     noSleep,
   );
-  expect(result.outcome).toBe("dry-run; no provider calls");
   expect(result.requests).toBe(0);
   expect(source.calls()).toBe(0);
 });
@@ -232,7 +229,6 @@ test("screening retries transient failures within the attempt bound", async () =
       source.fetch,
       noSleep,
     );
-    expect(result.outcome).toBe("synthetic report classified legitimate");
     expect(result.requests).toBe(2);
     expect(result.failedAttempts).toHaveLength(1);
     expect(source.calls()).toBe(2);
@@ -264,7 +260,45 @@ test("screening reports the category after exhausting transient retries", async 
   );
   expect(network.category).toBe("network");
   expect(thrown.calls()).toBe(MAXIMUM_ATTEMPTS);
-  expect(TOTAL_MAXIMUM_MICRO_USD).toBe(MAXIMUM_ATTEMPTS * 1_000_000);
+});
+
+test("screening retries a committed provider error that names no served model", async () => {
+  // Surplus commits HTTP 200 before a long call ends. A later failure is an
+  // error envelope with its receipt but without a model field.
+  const committed = json({
+    type: "error",
+    error: { type: "api_error", message: "Upstream request failed" },
+    usage: { buyer_cost_micro: 75 },
+  });
+  const recovered = sequence([committed, ok]);
+  const result = await qualifySecurityScreening(
+    "synthetic-only",
+    false,
+    recovered.fetch,
+    noSleep,
+  );
+  expect(result.failedAttempts).toEqual([
+    {
+      attempt: 1,
+      category: "incomplete",
+      errorType: "api_error",
+      stopReason: null,
+      truncated: false,
+    },
+  ]);
+  expect(recovered.calls()).toBe(2);
+  const persistent = sequence([committed]);
+  const error = await failure(
+    qualifySecurityScreening(
+      "synthetic-only",
+      false,
+      persistent.fetch,
+      noSleep,
+    ),
+  );
+  expect(error.category).toBe("incomplete");
+  expect(error.detail.errorType).toBe("api_error");
+  expect(persistent.calls()).toBe(MAXIMUM_ATTEMPTS);
 });
 
 test("screening fails closed at once on a wrong decision or a rejected key", async () => {

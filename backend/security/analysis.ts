@@ -350,11 +350,15 @@ export type AnalysisDependencies = {
   now: () => Date;
   advisories: AdvisoryReader | null;
   analyzer: SecurityAnalyzer | null;
-  storedReport?: (caseId: string) => Promise<SecurityAnalysisReport | null>;
+  storedReport?: (
+    caseId: string,
+    reportVersion?: number,
+  ) => Promise<SecurityAnalysisReport | null>;
 };
 
 export type CaseAnalysisView = {
   attempt: number;
+  sourceReportVersion: number | null;
   state: "running" | "complete" | "failed" | "unavailable";
   provider: string | null;
   model: string | null;
@@ -374,6 +378,7 @@ export type CaseAnalysisView = {
 
 type AnalysisRow = {
   attempt: number;
+  report_version: number | null;
   state: CaseAnalysisView["state"];
   provider: string | null;
   model: string | null;
@@ -404,13 +409,19 @@ export async function latestCaseAnalysis(
 ): Promise<CaseAnalysisView | null> {
   const row = await deps.db
     .prepare(
-      "SELECT attempt, state, provider, model, prompt_revision, advisory_digest, summary, proposed_severity, potential_loss, duplicate_case_ids, root_cause_key, remediation, started_at, finished_at FROM security_case_analyses WHERE case_id = ? ORDER BY attempt DESC LIMIT 1",
+      `SELECT a.* FROM security_case_analyses a
+       LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+       WHERE a.case_id=? AND a.report_version IS i.report_version
+         AND (i.case_id IS NULL OR i.review_decision='forward'
+              OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+       ORDER BY a.attempt DESC LIMIT 1`,
     )
     .bind(caseId)
     .first<AnalysisRow>();
   if (row === null) return null;
   return {
     attempt: row.attempt,
+    sourceReportVersion: row.report_version,
     state: row.state,
     provider: row.provider,
     model: row.model,
@@ -435,6 +446,18 @@ export async function analysisMayStart(
   deps: Pick<AnalysisDependencies, "db" | "now">,
   caseId: string,
 ): Promise<boolean> {
+  const intake = await deps.db
+    .prepare(
+      "SELECT review_decision, screening_state FROM security_submission_intake WHERE case_id=?",
+    )
+    .bind(caseId)
+    .first<{ review_decision: string | null; screening_state: string }>();
+  if (
+    intake &&
+    intake.review_decision !== "forward" &&
+    (intake.review_decision !== null || intake.screening_state !== "legitimate")
+  )
+    return false;
   const latest = await latestCaseAnalysis(deps, caseId);
   return latest === null || latest.retryable;
 }
@@ -455,7 +478,12 @@ export async function runCaseAnalysis(
 ): Promise<void> {
   const row = await deps.db
     .prepare(
-      "SELECT c.project_id, c.advisory_repository, c.advisory_ghsa, c.reporter_github_id, c.submission_state, p.manifest FROM security_cases c LEFT JOIN project_revisions p ON p.project_id = c.project_id AND p.revision = c.policy_revision WHERE c.id = ?",
+      `SELECT c.project_id, c.advisory_repository, c.advisory_ghsa,
+              c.reporter_github_id, c.submission_state, p.manifest,
+              i.report_version, i.review_decision, i.screening_state
+       FROM security_cases c
+       LEFT JOIN project_revisions p ON p.project_id=c.project_id AND p.revision=c.policy_revision
+       LEFT JOIN security_submission_intake i ON i.case_id=c.id WHERE c.id=?`,
     )
     .bind(caseId)
     .first<{
@@ -465,22 +493,40 @@ export async function runCaseAnalysis(
       reporter_github_id: string;
       submission_state: string;
       manifest: string | null;
+      report_version: number | null;
+      review_decision: string | null;
+      screening_state: string | null;
     }>();
   if (row === null || row.submission_state !== "verified") return;
+  if (
+    row.report_version !== null &&
+    row.review_decision !== "forward" &&
+    (row.review_decision !== null || row.screening_state !== "legitimate")
+  )
+    return;
   const latest = await deps.db
     .prepare(
-      "SELECT attempt, state, started_at FROM security_case_analyses WHERE case_id = ? ORDER BY attempt DESC LIMIT 1",
+      "SELECT attempt, state, started_at, report_version FROM security_case_analyses WHERE case_id = ? ORDER BY attempt DESC LIMIT 1",
     )
     .bind(caseId)
     .first<AnalysisRow>();
-  if (latest !== null && !retryable(latest, deps.now())) return;
+  if (
+    latest !== null &&
+    latest.report_version === row.report_version &&
+    !retryable(latest, deps.now())
+  )
+    return;
   const attempt = (latest?.attempt ?? 0) + 1;
   const startedAt = deps.now().toISOString();
   // The primary key makes a concurrent claim of the same attempt fail.
   try {
     const claimed = await deps.db
       .prepare(
-        "INSERT INTO security_case_analyses (case_id, attempt, state, prompt_revision, provider, model, started_at) VALUES (?, ?, 'running', ?, ?, ?, ?)",
+        `INSERT INTO security_case_analyses (case_id, attempt, state, prompt_revision, provider, model, started_at, report_version)
+         SELECT ?,?,'running',?,?,?,?,?
+         WHERE (? IS NULL AND NOT EXISTS(SELECT 1 FROM security_submission_intake WHERE case_id=?))
+            OR EXISTS(SELECT 1 FROM security_submission_intake WHERE case_id=? AND report_version=?
+                      AND (review_decision='forward' OR (review_decision IS NULL AND screening_state='legitimate')))`,
       )
       .bind(
         caseId,
@@ -489,6 +535,11 @@ export async function runCaseAnalysis(
         deps.analyzer?.provider ?? null,
         deps.analyzer?.model ?? null,
         startedAt,
+        row.report_version,
+        row.report_version,
+        caseId,
+        caseId,
+        row.report_version,
       )
       .run();
     if ((claimed.meta?.changes ?? 0) !== 1) return;
@@ -514,7 +565,12 @@ export async function runCaseAnalysis(
   }
   let report: SecurityAnalysisReport | null;
   try {
-    report = received ?? (await deps.storedReport?.(caseId)) ?? null;
+    // Retained reports always load the exact immutable version claimed above;
+    // an advisory received concurrently cannot replace those source bytes.
+    report =
+      row.report_version !== null
+        ? ((await deps.storedReport?.(caseId, row.report_version)) ?? null)
+        : (received ?? (await deps.storedReport?.(caseId)) ?? null);
   } catch {
     // The retained Slop report cannot be read or verified now. Record this
     // like an unreadable advisory, so the attempt stays retryable.
@@ -522,6 +578,10 @@ export async function runCaseAnalysis(
     return;
   }
   if (report === null) {
+    if (row.report_version !== null) {
+      await finish("unavailable");
+      return;
+    }
     const lookup =
       deps.advisories && row.advisory_ghsa
         ? await deps.advisories.privateReport(
@@ -553,6 +613,7 @@ export async function runCaseAnalysis(
       report.summary,
       report.description,
       report.severity,
+      report.cvss,
       report.cweIds,
       report.packages,
     ]),
@@ -571,7 +632,12 @@ export async function runCaseAnalysis(
     (
       await deps.db
         .prepare(
-          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a WHERE a.case_id = c.id AND a.state = 'complete' ORDER BY a.attempt DESC LIMIT 1) AS summary
+          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
+              LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+              WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
+                AND (i.case_id IS NULL OR i.review_decision='forward'
+                     OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+              ORDER BY a.attempt DESC LIMIT 1) AS summary
              FROM security_cases c
             WHERE c.project_id = ? AND c.id <> ? AND c.submission_state = 'verified'
             ORDER BY c.received_at DESC LIMIT ${PRIOR_CASE_LIMIT}`,
@@ -583,6 +649,20 @@ export async function runCaseAnalysis(
           summary: string | null;
         }>()
     ).results ?? [];
+  if (row.report_version !== null) {
+    const current = await deps.db
+      .prepare(
+        `SELECT 1 AS current FROM security_submission_intake
+         WHERE case_id=? AND report_version=? AND (review_decision='forward'
+           OR (review_decision IS NULL AND screening_state='legitimate'))`,
+      )
+      .bind(caseId, row.report_version)
+      .first();
+    if (!current) {
+      await finish("unavailable", advisoryDigest);
+      return;
+    }
+  }
   try {
     const proposal = await deps.analyzer.analyze(
       {
@@ -783,7 +863,17 @@ export async function runAppealTriage(
   }
   const row = await deps.db
     .prepare(
-      "SELECT c.appeal_from_state, c.severity, c.loss_finding, c.root_cause_key, c.award_state, p.manifest, (SELECT e.reason FROM security_case_events e WHERE e.case_id = c.id AND e.case_revision < ? AND e.kind IN ('decide', 'award', 'decide-related-party') ORDER BY e.case_revision DESC LIMIT 1) AS decision_reason, (SELECT a.summary FROM security_case_analyses a WHERE a.case_id = c.id AND a.state = 'complete' ORDER BY a.attempt DESC LIMIT 1) AS summary FROM security_cases c LEFT JOIN project_revisions p ON p.project_id = c.project_id AND p.revision = c.policy_revision WHERE c.id = ?",
+      `SELECT c.appeal_from_state, c.severity, c.loss_finding, c.root_cause_key, c.award_state, p.manifest,
+        (SELECT e.reason FROM security_case_events e WHERE e.case_id=c.id AND e.case_revision<?
+         AND e.kind IN ('decide','award','decide-related-party') ORDER BY e.case_revision DESC LIMIT 1) AS decision_reason,
+        (SELECT a.summary FROM security_case_analyses a
+         LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+         WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
+           AND (i.case_id IS NULL OR i.review_decision='forward'
+                OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+         ORDER BY a.attempt DESC LIMIT 1) AS summary
+       FROM security_cases c LEFT JOIN project_revisions p
+         ON p.project_id=c.project_id AND p.revision=c.policy_revision WHERE c.id=?`,
     )
     .bind(appeal.revision, caseId)
     .first<{

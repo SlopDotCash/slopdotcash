@@ -17,8 +17,11 @@ import {
 import { EscrowFunding } from "./EscrowFunding";
 import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
-import { projectRewardSummaries } from "./lib/project-reward-summary";
-import { formatSecurityAmount } from "./lib/security-bounty.mjs";
+import {
+  projectRewardSummaries,
+  securityBountyAmountLabel,
+} from "./lib/project-reward-summary";
+import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -358,7 +361,7 @@ function routeHead(route: Route): { title: string; path: string | null } {
     if (route.kind === "security-program") {
       return {
         title: pageTitle(`${project.name} security bounty`),
-        path: hasBountyOverview(project) ? base : `${base}/security`,
+        path: `${base}/security`,
       };
     }
     if (route.kind === "manage-project") {
@@ -392,9 +395,6 @@ function Header() {
   const domain = publicFooterDomain(window.location.hostname);
   return (
     <header className="site-header">
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
       <div className="shell header-inner">
         <Link ariaLabel="Slop home" className="wordmark" href="/">
           <SlopMark size={36} />
@@ -497,6 +497,7 @@ function HeroHeading() {
 function monthlyPoolCapLabel(project: ProjectDefinition): string {
   const reward = project.reward;
   const minor = BigInt(reward.monthlyCapMinor);
+  if (project.rewardAsset?.kind === "native") return reward.monthlyCapDisplay;
   if (project.rewardAsset?.kind === "token")
     return reward.monthlyCapDisplay
       .replace(/^[\d,]+(?=\s)/u, (digits) =>
@@ -601,9 +602,17 @@ function compactPrizeLabel(label: string): string {
   );
 }
 
+function bountyFundingLabel(terms: SecurityBountyTerms): string {
+  return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
+}
+
 function ProjectCard({ project }: { project: ProjectDefinition }) {
-  const amount =
-    project.reward.kind === "monthly-pool"
+  const bounty = hasBountyOverview(project)
+    ? project.securityBounty
+    : undefined;
+  const amount = bounty
+    ? securityBountyAmountLabel(bounty)
+    : project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project)
       : compactPrizeLabel(
           project.reward.externalOpportunity?.advertisedAmountDisplay ??
@@ -620,14 +629,24 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
         <p className="project-summary">{project.description}</p>
         <p className="project-bounty">
           <strong>{amount}</strong>
-          {monthlyPoolPointsOnly(project.reward) ||
-          project.reward.kind === "external-prize-share" ? (
+          {bounty ? (
+            <span>
+              {bounty.eligibility === "critical-loss-of-funds"
+                ? "/ Critical"
+                : "/ Finding"}
+            </span>
+          ) : monthlyPoolPointsOnly(project.reward) ||
+            project.reward.kind === "external-prize-share" ? (
             <span> + points</span>
           ) : (
-            <span>/mo target</span>
+            <span>/mo</span>
           )}
         </p>
-        {monthlyPoolPointsOnly(project.reward) ? (
+        {bounty ? (
+          <small className="project-money-state">
+            {bountyFundingLabel(bounty)}
+          </small>
+        ) : monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
         ) : project.reward.kind === "monthly-pool" ? null : (
           <small className="project-money-state">External prize</small>
@@ -643,11 +662,16 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
 }
 
 function ProjectRow({ project }: { project: ProjectDefinition }) {
-  const amount = monthlyPoolPointsOnly(project.reward)
-    ? "Points only"
-    : project.reward.kind === "monthly-pool"
-      ? `${monthlyPoolCapLabel(project)}/mo target`
-      : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
+  const bounty = hasBountyOverview(project)
+    ? project.securityBounty
+    : undefined;
+  const amount = bounty
+    ? `${securityBountyAmountLabel(bounty)} / ${bounty.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"} · ${bountyFundingLabel(bounty)}`
+    : monthlyPoolPointsOnly(project.reward)
+      ? "Points only"
+      : project.reward.kind === "monthly-pool"
+        ? `${monthlyPoolCapLabel(project)}/mo`
+        : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
   return (
     <li>
       <Link className="project-row" href={`/projects/${project.slug}`}>
@@ -764,19 +788,21 @@ function SecurityBounties() {
                 </div>
                 <div className="project-card-content">
                   <p className="project-summary">
-                    Find a critical security vulnerability in the {project.name}
+                    {terms.eligibility === "critical-loss-of-funds"
+                      ? `Find a critical security vulnerability in ${project.name}`
+                      : `Find a security vulnerability in ${project.name}`}
                   </p>
                   <p className="project-bounty">
-                    <strong>
-                      {compactPrizeLabel(
-                        formatSecurityAmount(
-                          terms.amount.grossMinor,
-                          terms.amount,
-                        ).replace(/^([\d,.]+) USDC$/u, "$$$1"),
-                      )}
-                    </strong>
-                    <span>/ Critical</span>
+                    <strong>{securityBountyAmountLabel(terms)}</strong>
+                    <span>
+                      {terms.eligibility === "critical-loss-of-funds"
+                        ? "/ Critical"
+                        : "/ Finding"}
+                    </span>
                   </p>
+                  <small className="project-money-state">
+                    {bountyFundingLabel(terms)}
+                  </small>
                 </div>
               </Link>
             );
@@ -1344,15 +1370,20 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
                     </ExternalLinkAnchor>
                   </>
                 ) : null}
-                {" monthly target, split between contributors"}
+                {" monthly, split between contributors"}
               </>
-            ) : summary.kind === "critical-loss-of-funds" ? (
+            ) : summary.kind === "security-bounty" ? (
               <>
-                {summary.amount} per critical vulnerability that would result in
-                loss of funds
+                {summary.amount}{" "}
+                {summary.eligibility === "critical-loss-of-funds"
+                  ? "per critical vulnerability that would result in loss of funds"
+                  : "per accepted security finding"}
                 {summary.status === "open"
                   ? null
                   : ` · bounty ${summary.status}`}
+                {project.securityBounty
+                  ? ` · ${bountyFundingLabel(project.securityBounty)}`
+                  : ""}
               </>
             ) : summary.kind === "external-prize" ? (
               <>
@@ -1385,6 +1416,12 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
+        <Link
+          className="button primary-button"
+          href={`/projects/${project.slug}/security`}
+        >
+          Report privately
+        </Link>
         <div id="start">
           <div className="install-heading">
             <h2>Copy this into your agent.</h2>
@@ -1483,7 +1520,10 @@ function AppContent({ route }: { route: Route }) {
       ? "This page needs current project data."
       : undefined);
   const blocked = Boolean(registryError) && !registryIndependent;
-  const needsSnapshot = !blocked && snapshot;
+  const project =
+    route.kind === "project" ? findProject(route.projectId) : undefined;
+  const needsSnapshot =
+    !blocked && snapshot && !(project && hasBountyOverview(project));
   const [state, retry] = useSnapshot(needsSnapshot);
   const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
@@ -1531,7 +1571,6 @@ function AppContent({ route }: { route: Route }) {
       <ProjectUpdatePage key={project.id} project={project} />
     ));
   else if (route.kind === "project") {
-    const project = findProject(route.projectId);
     content = project ? (
       hasBountyOverview(project) ? (
         <main className="route-project">
@@ -1579,8 +1618,8 @@ function AppContent({ route }: { route: Route }) {
   return (
     <>
       <Header />
-      {/* Routes render their own main; the skip link lands on this container. */}
-      <div className="skip-target" id="main" tabIndex={-1}>
+      {/* Routes render their own main landmark inside this layout container. */}
+      <div className="app-content" id="main">
         {staleRegistry && !blocked && !registryIndependent ? (
           <aside
             aria-label="Project data status"

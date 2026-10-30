@@ -77,7 +77,15 @@ test("Settings waits for identity and keeps current sign-out without individual 
     }),
   );
   await page.route(`${site}/api/v1/notifications/email`, (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unverified",
+      },
+    }),
   );
   await page.route(`${site}/api/v1/notifications`, (route) =>
     route.fulfill({
@@ -321,7 +329,15 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
     }),
   );
   await page.route(`${site}/api/v1/notifications/email`, (route) =>
-    route.fulfill({ json: { enabled: false, availability: "unverified" } }),
+    route.fulfill({
+      json: {
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unverified",
+      },
+    }),
   );
   // Explicit identity double, as in login.spec.ts.
   const expiresAt = new Date(

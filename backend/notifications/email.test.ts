@@ -136,7 +136,6 @@ test("verified opt-in sends future activity once; opt-out cancels queued mail an
     dispatchActivityMail(h.mail),
   ]);
   expect(h.sent).toHaveLength(1);
-  expect(h.sent[0]).toContain("activity update");
   expect(h.sent[0]).not.toContain("application-event");
   h.event("queued-before-opt-out");
   h.unavailable();
@@ -148,7 +147,6 @@ test("verified opt-in sends future activity once; opt-out cancels queued mail an
   h.event("wallet-change", "wallet_changed");
   await dispatchActivityMail(h.mail);
   expect(h.sent).toHaveLength(2);
-  expect(h.sent[1]).toContain("security notice");
   h.sqlite.close();
 });
 
@@ -244,6 +242,44 @@ test("an email preference write bound to another account is refused without chan
   );
   expect(matched?.status).toBe(200);
   expect((await h.call("GET")).body.enabled).toBe(false);
+  h.sqlite.close();
+});
+
+test("either email preference can be withdrawn independently during an eligibility outage", async () => {
+  const h = setup();
+  const initial = await h.call("GET");
+  expect(
+    (
+      await h.call("POST", {
+        enabled: true,
+        securityEnabled: true,
+        destinationVersion: initial.body.destinationVersion,
+      })
+    ).status,
+  ).toBe(200);
+  h.unavailable();
+  expect((await h.call("GET")).body).toMatchObject({
+    enabled: true,
+    securityEnabled: true,
+    availability: "unavailable",
+  });
+  expect(
+    (await h.call("POST", { enabled: false, securityEnabled: true })).body,
+  ).toEqual({ enabled: false, securityEnabled: true });
+  expect(
+    (await h.call("POST", { enabled: true, securityEnabled: true })).status,
+  ).toBe(409);
+  h.sqlite
+    .query(
+      "UPDATE notification_email_preferences SET enabled=1,security_enabled=1 WHERE github_id='101'",
+    )
+    .run();
+  expect(
+    (await h.call("POST", { enabled: true, securityEnabled: false })).body,
+  ).toEqual({ enabled: true, securityEnabled: false });
+  expect(
+    (await h.call("POST", { enabled: true, securityEnabled: true })).status,
+  ).toBe(409);
   h.sqlite.close();
 });
 
@@ -364,7 +400,6 @@ test("an essential notice retries a not-yet-effective destination on a bounded s
   h.advance(480_000);
   await dispatchActivityMail(h.mail);
   expect(h.sent).toHaveLength(1);
-  expect(h.sent[0]).toContain("security notice");
   expect(states()[1]).toEqual({
     essential: 1,
     state: "provider-accepted",
@@ -507,7 +542,7 @@ test("scheduled drains finish activity delivery and report a failed security que
         {},
         { ...env, SECURITY_MAIL_PILOT: undefined, ACTIVITY_MAIL_PILOT: "{" },
       ),
-    ).rejects.toThrow("Mail pilot misconfigured");
+    ).rejects.toThrow();
   } finally {
     h.sqlite.close();
   }

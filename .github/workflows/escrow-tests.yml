@@ -5,6 +5,10 @@ on:
     branches: [development, main]
     paths:
       - 'contracts/**'
+      - 'backend/security/**'
+      - 'migrations/**'
+      - 'src/lib/security-bounty.*'
+      - 'scripts/run-security-payments.mjs'
       - '.github/workflows/escrow-tests.yml'
       - 'scripts/ci-scope.mjs'
   schedule:
@@ -173,7 +177,9 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           SLOP_TEST_CLAIM_FAULTS: before,lease,finalized-role
-        run: bun run test:fee-converter:fork --local
+        run: |
+          bun run test:fee-converter:fork --local
+          bun run test:fee-converter:fork --local --direct-receipts
       - run: bunx playwright install --with-deps chromium
         if: github.event_name != 'pull_request'
       - name: Load deployed public ledger for browser checks
@@ -278,6 +284,10 @@ jobs:
         env:
           SLOP_SOLANA_TEST_ARTIFACT: ${{ runner.temp }}/solana-verifiable
           SLOP_SOLANA_ARTIFACT_ATTEMPT: ${{ needs.solana-verifiable.outputs.build-attempt }}
+      - name: Verify direct native and token bounty payments without a vault
+        run: |
+          bun backend/security/direct-solana.integration.ts
+          bun backend/security/direct-solana-api.integration.ts
       - name: Verify the lifecycle-tested program matches the retained artifact
         run: |
           set -euo pipefail

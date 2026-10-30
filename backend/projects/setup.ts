@@ -185,6 +185,16 @@ export function flaggerAuthority(
 function setupFunding(
   manifest: ProjectDefinition,
 ): ProjectSetupStatus["funding"] {
+  const bounty = manifest.securityBounty;
+  if (bounty?.rewardMode === "bounty-only")
+    return {
+      mode: "bounty",
+      network: bounty.amount.network,
+      symbol: bounty.amount.currency,
+      awardAmountMinor: bounty.amount.grossMinor,
+      decimals: bounty.amount.decimals,
+      state: bounty.funding.state === "pledged" ? "pledged" : "verified",
+    };
   const reward = manifest.reward;
   if (reward.kind !== "monthly-pool" || BigInt(reward.monthlyCapMinor) === 0n)
     return { mode: "none" };

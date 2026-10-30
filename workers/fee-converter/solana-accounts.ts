@@ -103,6 +103,8 @@ export function verifySolanaAccountProof(
       publicKey(key);
     if (
       expectation.wallet !== keys[0] ||
+      (expectation.nativeInput !== undefined &&
+        expectation.nativeInput !== true) ||
       !Number.isInteger(expectation.slippageBps) ||
       expectation.slippageBps < 0 ||
       expectation.slippageBps > 10000 ||

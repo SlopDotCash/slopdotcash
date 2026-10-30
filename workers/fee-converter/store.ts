@@ -8,7 +8,10 @@ import {
   serializeTransaction,
   type TransactionSerializedEIP1559,
 } from "viem";
-import { solanaBase58 } from "../../contracts/solana/adapter";
+import {
+  SOLANA_NATIVE_ASSET,
+  solanaBase58,
+} from "../../contracts/solana/adapter";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { Network } from "./config";
 import type {
@@ -134,7 +137,9 @@ export class D1ConversionStore implements ConversionStore {
           if (
             expected.program !== JUPITER_PROGRAM ||
             expected.wallet !== reserved.fee_wallet ||
-            expected.inputMint !== row.token ||
+            (expected.nativeInput
+              ? row.token !== SOLANA_NATIVE_ASSET
+              : expected.inputMint !== row.token) ||
             expected.outputMint !== row.targetToken ||
             expected.amountIn.toString() !== row.amountIn ||
             expected.minimumOut.toString() !== row.minAmountOut
@@ -394,6 +399,108 @@ export class D1ConversionStore implements ConversionStore {
       .first<Record<string, D1Value>>();
     return row ? fromRow(row) : null;
   }
+
+  /**
+   * Native gas deposits are not fee income. Spend only native amounts proven
+   * by finalized vault claims, less prior native conversions and gas. Amounts
+   * stay decimal text in D1; summing them as SQLite integers would overflow.
+   */
+  async nativeFeeBalance(network: Network, token: string, feeWallet: string) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT c.kind,c.state,c.amount_in,c.amount_out,
+                COALESCE(g.created_at,c.created_at) AS created_at
+         FROM fee_conversions c LEFT JOIN fee_native_gas g ON g.id=c.native_gas_id
+         WHERE c.network=? AND c.token=? AND c.fee_wallet=? AND c.mode='live'
+           AND ((c.kind='claim' AND c.state='finalized') OR
+                (c.kind='conversion' AND c.state IN ('quoted','submitted','unknown','finalized')))`,
+      )
+      .bind(network, token, feeWallet)
+      .all<{
+        kind: string;
+        state: string;
+        amount_in: string;
+        amount_out: string | null;
+        created_at: string;
+      }>();
+    let balance = 0n;
+    let firstReceipt: string | null = null;
+    let hasDirectCredit = false;
+    // A completed direct award proves its exact fee transfer without a vault claim.
+    // The worker reads only the fee fields, never private report or payer data.
+    const direct = await this.db
+      .prepare(
+        "SELECT json_extract(p.intent,'$.feeBase') fee_base,json_extract(p.intent,'$.transfers[1].recipient') recipient,json_extract(p.intent,'$.transfers[1].amountBase') transfer_amount,p.prepared_at FROM security_direct_payments p JOIN security_direct_payment_receipts r ON r.case_id=p.case_id WHERE json_extract(p.intent,'$.chain')=? AND json_extract(p.intent,'$.asset.address')=?",
+      )
+      .bind(network, token)
+      .all<{
+        fee_base: string;
+        recipient: string | null;
+        transfer_amount: string | null;
+        prepared_at: string;
+      }>();
+    for (const row of direct.results) {
+      if (!/^(0|[1-9]\d*)$/u.test(row.fee_base))
+        throw new Error("Direct fee has an invalid amount");
+      if (row.fee_base === "0") continue;
+      if (!row.recipient || row.transfer_amount !== row.fee_base)
+        throw new Error("Direct fee differs from its immutable transfers");
+      const sameWallet =
+        network === "solana"
+          ? row.recipient === feeWallet
+          : row.recipient.toLowerCase() === feeWallet.toLowerCase();
+      if (!sameWallet) continue;
+      balance += BigInt(row.fee_base);
+      hasDirectCredit = true;
+      if (firstReceipt === null || row.prepared_at < firstReceipt)
+        firstReceipt = row.prepared_at;
+    }
+    for (const row of results) {
+      if (row.kind === "claim") {
+        if (
+          row.amount_out === null ||
+          !/^(0|[1-9][0-9]*)$/u.test(row.amount_out)
+        )
+          throw new Error("Finalized native claim has no verified amount");
+        balance += BigInt(row.amount_out);
+        if (firstReceipt === null || row.created_at < firstReceipt)
+          firstReceipt = row.created_at;
+      } else {
+        balance -= BigInt(row.amount_in);
+      }
+    }
+    if (firstReceipt === null) return 0n;
+    const { results: gas } = await this.db
+      .prepare(
+        `SELECT id,nonce,maximum_wei,actual_wei FROM fee_native_gas
+         WHERE network=? AND fee_wallet=? AND state!='abandoned'${hasDirectCredit ? "" : " AND created_at>=?"}`,
+      )
+      // Pages timestamps and worker timestamps have independent clocks. Direct
+      // credits conservatively cover every recorded expense; a skew cannot
+      // reclassify a gas top-up as earned native revenue.
+      .bind(
+        ...(hasDirectCredit
+          ? [network, feeWallet]
+          : [network, feeWallet, firstReceipt]),
+      )
+      .all<{
+        id: string;
+        nonce: number;
+        maximum_wei: string;
+        actual_wei: string | null;
+      }>();
+    const liabilities = new Map<string, bigint>();
+    for (const row of gas) {
+      const amount = BigInt(row.actual_wei ?? row.maximum_wei);
+      // EVM replacements consume one account nonce. Each Solana signed
+      // transaction has its own reservation and incurs its own fee.
+      const attempt = network === "solana" ? row.id : String(row.nonce);
+      if ((liabilities.get(attempt) ?? 0n) < amount)
+        liabilities.set(attempt, amount);
+    }
+    for (const amount of liabilities.values()) balance -= amount;
+    return balance > 0n ? balance : 0n;
+  }
 }
 
 /**
@@ -407,30 +514,49 @@ export async function projectRewardTokens(
   network: string,
   escrowNetworks: readonly string[],
 ): Promise<string[]> {
-  const [rewardAssets, deployments] = await Promise.all([
-    db
-      .prepare(
-        `SELECT DISTINCT json_extract(manifest, '$.rewardAsset.address') AS asset
+  const [rewardAssets, deployments, bountyAssets, directAssets] =
+    await Promise.all([
+      db
+        .prepare(
+          `SELECT DISTINCT json_extract(manifest, '$.rewardAsset.address') AS asset
            FROM projects
           WHERE json_extract(manifest, '$.rewardAsset.network') = ?
-            AND json_extract(manifest, '$.rewardAsset.kind') = 'token'`,
-      )
-      .bind(network)
-      .all<{ asset: unknown }>(),
-    db
-      .prepare(
-        `SELECT DISTINCT json_extract(d.value, '$.asset') AS asset
+            AND json_extract(manifest, '$.rewardAsset.kind') IN ('token','native')`,
+        )
+        .bind(network)
+        .all<{ asset: unknown }>(),
+      db
+        .prepare(
+          `SELECT DISTINCT json_extract(d.value, '$.asset') AS asset
            FROM projects,
              json_each('["$.escrow.deployments","$.securityBounty.settlement.deployments"]') AS scope,
              json_each(projects.manifest, scope.value) AS d
           WHERE json_extract(d.value, '$.network') IN (SELECT value FROM json_each(?))`,
-      )
-      .bind(JSON.stringify(escrowNetworks))
-      .all<{ asset: unknown }>(),
-  ]);
+        )
+        .bind(JSON.stringify(escrowNetworks))
+        .all<{ asset: unknown }>(),
+      db
+        .prepare(
+          "SELECT DISTINCT json_extract(manifest,'$.securityBounty.amount.asset.address') asset FROM projects WHERE json_extract(manifest,'$.securityBounty.amount.asset.network')=?",
+        )
+        .bind(network)
+        .all<{ asset: unknown }>(),
+      // Retain the asset of paid historical awards even after the public offer changes.
+      db
+        .prepare(
+          "SELECT DISTINCT json_extract(p.intent,'$.asset.address') asset FROM security_direct_payments p JOIN security_direct_payment_receipts r ON r.case_id=p.case_id WHERE json_extract(p.intent,'$.chain')=? AND json_extract(p.intent,'$.feeBase')<>'0'",
+        )
+        .bind(network)
+        .all<{ asset: unknown }>(),
+    ]);
   return [
     ...new Set(
-      [...rewardAssets.results, ...deployments.results].map((row) => row.asset),
+      [
+        ...rewardAssets.results,
+        ...deployments.results,
+        ...bountyAssets.results,
+        ...directAssets.results,
+      ].map((row) => row.asset),
     ),
   ].filter((asset): asset is string => typeof asset === "string");
 }

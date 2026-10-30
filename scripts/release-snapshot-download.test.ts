@@ -47,9 +47,19 @@ const downloads = generation.match(
 if (downloads?.length !== 2) {
   throw new Error("Expected profile and fallback leaderboard downloads");
 }
+// Pull-request checks read the largest snapshot from the same public origin.
+const pullRequestLedger = step(
+  "Load deployed public ledger for pull-request checks",
+).match(/curl --fail --silent --show-error \\(?:\n {12}[^\n]*)*/)?.[0];
+if (!pullRequestLedger) {
+  throw new Error("Expected the pull-request ledger download");
+}
 
-for (const [index, download] of downloads.entries()) {
-  const name = index === 0 ? "profile history" : "fallback leaderboard";
+for (const [name, download] of [
+  ["profile history", downloads[0]],
+  ["fallback leaderboard", downloads[1]],
+  ["pull-request ledger", pullRequestLedger],
+] as const) {
   for (const failure of [
     "timeout",
     "disconnect",
@@ -111,13 +121,14 @@ for (const [index, download] of downloads.entries()) {
           win32Prefix +
           download
             .replaceAll("$profile_origin", `http://127.0.0.1:${address.port}`)
+            .replaceAll("https://slop.cash", `http://127.0.0.1:${address.port}`)
             .replaceAll("public/data/leaderboard.json", '"$previous_profiles"')
             .replace("'=https'", "'=http'")
             .replace(/--max-time \d+/, "--max-time 1")
             .replace(/--retry-delay \d+/, "--retry-delay 1")
             .replace(/--retry-max-time \d+/, "--retry-max-time 5");
         const process = Bun.spawn(["bash", "-euc", command], {
-          env: { ...Bun.env, previous_profiles: output },
+          env: { ...Bun.env, previous_profiles: output, ledger_file: output },
           stdout: "pipe",
           stderr: "pipe",
         });

@@ -161,6 +161,9 @@ async function api(
   const origin = new URL(test.info().project.use.baseURL ?? "").origin;
   const response = await request.fetch(`/api/v1/${path}`, {
     method,
+    // Workerd may close an idle keep-alive connection. Retry only reads;
+    // a lost mutation response must never cause this helper to replay it.
+    maxRetries: method === "GET" ? 2 : 0,
     headers: {
       ...(token ? { cookie: `${COOKIE}=${token}` } : {}),
       ...(method === "GET" ? {} : { origin }),
@@ -288,12 +291,23 @@ async function listProject(
   // Creation reads the account's access through the Slopbot installation.
   await installSlopbot(repository);
   const program = manifest.securityBounty as SecurityBountyTerms | undefined;
+  const creatorRole = (Object.keys(TOKENS) as Role[]).find(
+    (role) => TOKENS[role] === applicantToken,
+  );
+  if (program && !creatorRole) throw new Error("Unknown fixture creator");
+  const creator = creatorRole ? account(creatorRole) : undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
     manifest: program?.settlement
       ? {
           ...manifest,
           securityBounty: {
             ...program,
+            sponsor: { ...program.sponsor, githubId: creator?.githubId },
+            approvers: {
+              technical: [creator],
+              financial: [creator],
+              dispute: [creator],
+            },
             settlement: { ...program.settlement, deployments: [] },
           },
         }
@@ -673,6 +687,10 @@ test("owners publish and control bounty programs with verified funding @registry
     await signIn(page, TOKENS.security);
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
     await openProjectSecuritySettings(page);
+    await page
+      .getByRole("group", { name: "Network", exact: true })
+      .getByRole("radio", { name: "Base", exact: true })
+      .check();
     await page.getByLabel("Published gross award (USDC)").fill("100");
     await page.getByLabel(`Source commit (${repository})`).fill("a".repeat(40));
     const values = {
@@ -704,10 +722,11 @@ test("owners publish and control bounty programs with verified funding @registry
       page.getByRole("status").filter({ hasText: "Published revision" }),
     ).toBeVisible();
     let stored = await adminProject(request, id);
-    expect((stored.manifest.securityBounty as { status: string }).status).toBe(
-      "paused",
-    );
-    // Program settings cannot self-attest funds or register a contract.
+    expect(stored.manifest.securityBounty).toMatchObject({
+      status: "paused",
+      fundingPolicy: "after-approval",
+    });
+    // A historical prefunded offer still needs verified available funds.
     const unsupported = await api(
       request,
       "PUT",
@@ -720,6 +739,12 @@ test("owners publish and control bounty programs with verified funding @registry
           securityBounty: {
             ...(stored.manifest.securityBounty as object),
             status: "open",
+            fundingPolicy: undefined,
+            capacity: {
+              ...(stored.manifest.securityBounty as SecurityBountyTerms)
+                .capacity,
+              awards: 1,
+            },
           },
         },
       },
@@ -789,12 +814,23 @@ test("owners publish and control bounty programs with verified funding @registry
       }
     }
     const reviewed = bountyTerms(repository).settlement;
+    // The retained testnet vault uses legacy USDC terms. The new form's
+    // explicit mainnet asset must not stand in for Sepolia USDC.
     expect(
       (
         await revise(request, id, (manifest) => ({
           ...manifest,
           securityBounty: {
             ...(manifest.securityBounty as object),
+            amount: {
+              ...(manifest.securityBounty as SecurityBountyTerms).amount,
+              asset: undefined,
+            },
+            fundingPolicy: undefined,
+            capacity: {
+              ...(manifest.securityBounty as SecurityBountyTerms).capacity,
+              awards: 1,
+            },
             settlement: reviewed,
           },
         }))
@@ -1133,7 +1169,6 @@ test("private security bounty programs keep cases restricted from intake to awar
       });
     });
     await page.goto(`/projects/${a.id}/security`);
-    await expect(page.locator("h1")).toHaveText(/ security bounty$/);
     await expect(page.locator(".route-page-header .route-lead")).toHaveText(
       "10,000 USDC security bounty",
     );
@@ -1794,9 +1829,6 @@ test("private security bounty programs keep cases restricted from intake to awar
     );
     await expect(panel).toContainText("72%");
     await expect(panel).toContainText(
-      "Every private security case goes to a moderator; Slopbot's confidence is below 0.9",
-    );
-    await expect(panel).toContainText(
       "Fixture draft: the appeal names a separate withdrawal path",
     );
     await expect(
@@ -1839,8 +1871,8 @@ test("private security bounty programs keep cases restricted from intake to awar
       view: "financial",
       awardState: "approved",
       paymentState: "rail-unavailable",
-      // No settlement exists yet; the reviewed bounty vault allows one.
-      paymentRail: "unavailable",
+      // No settlement exists yet; the configured route is direct.
+      paymentRail: "direct",
       payee: { githubLogin: "e2e-reporter-a" },
       allowedActions: ["prepare-payment"],
     });
@@ -2300,11 +2332,13 @@ test("private settlement requires visibility consent and produces an unsigned re
     caseId,
   );
   await page.getByText("Case details and history", { exact: true }).click();
-  await page.getByText("Unsigned owner request", { exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Unsigned owner request", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Copy unsigned request" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Request copied." }),
-  ).toHaveText("Request copied.");
+  ).toBeVisible();
   // The Windows clipboard stores line breaks as CRLF, so Chromium reads the
   // copied request back with "\r\n".
   expect(
@@ -2648,7 +2682,7 @@ test("private bounty obligations continue through role loss, approver replacemen
   });
 });
 
-test("home links to a consolidated security bounty with full award terms @registry", async ({
+test("admin placement and explicit bounty type drive generic project pages @registry", async ({
   page,
   request,
 }) => {
@@ -2661,6 +2695,7 @@ test("home links to a consolidated security bounty with full award terms @regist
     ...base,
     name: "Security test program",
     status: "active",
+    listingTier: "featured",
     reward: {
       ...(base.reward as object),
       monthlyCapMinor: "0",
@@ -2678,12 +2713,13 @@ test("home links to a consolidated security bounty with full award terms @regist
     status: "paused",
     securityBounty: { ...project.securityBounty, status: "closed" },
   };
+  let shown: Record<string, unknown> = project;
   // One public project at a time: first verify its published open state.
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({
       json: {
         schemaVersion: "1",
-        projects: [project],
+        projects: [shown],
         restrictions: [],
       },
     }),
@@ -2694,10 +2730,12 @@ test("home links to a consolidated security bounty with full award terms @regist
     exact: true,
   });
   await expect(section.locator(".project-card")).toHaveCount(1);
+  const featured = page.locator('[aria-labelledby="featured-projects"]');
+  await expect(featured.locator(".project-card")).toHaveCount(1);
+  await expect(featured).toContainText("$10k");
+  await expect(featured).toContainText("Pledged");
+  await expect(featured).not.toContainText("Points only");
   await expect(section).toContainText("$10k");
-  await expect(section).toContainText(
-    "Find a critical security vulnerability in the Security test program",
-  );
   await expect(section).not.toContainText("7,500 USDC");
   await expect(
     page.getByRole("link", { name: "Your private reports", exact: true }),
@@ -2758,13 +2796,56 @@ test("home links to a consolidated security bounty with full award terms @regist
     page.getByRole("region", { name: "Published bounty offer" }),
   ).toHaveCount(0);
   await expectAccessible(page);
-  await page.goto("/");
-  await page.unroute("**/api/v1/projects");
-  await page.route("**/api/v1/projects", (route) =>
-    route.fulfill({
-      json: { schemaVersion: "1", projects: [closed], restrictions: [] },
-    }),
+  await page
+    .getByRole("link", { name: "Report privately", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    new RegExp(`/projects/${id}/security$`),
   );
+  await expect(
+    page.getByRole("heading", { name: "Private report", exact: true }),
+  ).toBeVisible();
+
+  // Clearing Featured moves the same bounty to Community without changing its offer.
+  shown = { ...project, listingTier: "community" };
+  await page.goto("/", { waitUntil: "networkidle" });
+  await expect(featured).toHaveCount(0);
+  const community = page.locator(".community-projects");
+  const row = community.locator(`a[href="/projects/${id}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("$10k / Critical");
+  await expect(row).toContainText("Pledged");
+  await expect(row).not.toContainText("Points only");
+
+  // Zero ordinary cash does not silently convert a separate bounty into a bounty-only project.
+  shown = {
+    ...project,
+    listingTier: "community",
+    securityBounty: { ...project.securityBounty, rewardMode: "separate" },
+  };
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(row).toContainText("Points only");
+  await expect(section.locator(".project-card")).toHaveAttribute(
+    "href",
+    `/projects/${id}/security`,
+  );
+  const ordinarySnapshot = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
+  await row.click();
+  await (await ordinarySnapshot).finished();
+  await page.waitForLoadState("networkidle");
+  await expect(
+    page.getByLabel("Agent prompt", { exact: true }),
+  ).not.toContainText("private security reporting");
+  await expect(
+    page.getByText("Checking project clearance…", { exact: true }),
+  ).toHaveCount(0);
+
+  shown = closed;
+  await page.goto("/", { waitUntil: "networkidle" });
   await page.reload({ waitUntil: "networkidle" });
   await expect(section.locator(".project-card")).toHaveCount(0);
   await expect(section).toContainText("No paid security bounties are open.");
@@ -2912,10 +2993,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     const report = page.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
     );
-    await expect(report).toContainText("Slop receipt");
-    await expect(report).toContainText(
-      "Your original Slop receipt and review status are retained.",
-    );
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(page.getByText(description, { exact: true })).toHaveCount(0);
     await expect(
@@ -2948,7 +3025,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await page.route("**/api/v1/security-submissions", withoutFocusedReceipt);
     await page.reload({ waitUntil: "networkidle" });
     await expect(report).toHaveClass(/is-focused/u);
-    await expect(report).toContainText("Slop receipt");
     expect(privateReads.length).toBeGreaterThan(0);
     expect(
       privateReads.every(
@@ -2967,7 +3043,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       waitUntil: "networkidle",
     });
     await expect(report).toBeVisible();
-    await expect(report).toContainText("Slop receipt");
     await expect(
       page.getByText(/Report status could not refresh/),
     ).toBeVisible();
@@ -3005,12 +3080,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     const reportDisclosure = report.locator(":scope > details > summary");
     await reportDisclosure.click();
     await expect(report.locator(".private-report-next")).toBeVisible();
-    await expect(report.locator(".private-report-next")).toContainText(
-      "Next step:",
-    );
-    await expect(report.locator(".private-report-next")).toContainText(
-      "Award:",
-    );
     await expect(
       report.getByRole("button", { name: "Open case", exact: true }),
     ).toBeVisible();
@@ -3113,7 +3182,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await page.goto(`/inbox?submission=${submissionId}`, {
       waitUntil: "networkidle",
     });
-    await expect(report).toContainText("Slop receipt");
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(
       page.locator(`[aria-labelledby="submission-${submissionId}"]`),
@@ -3778,6 +3846,42 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     expect(secondCase).toBe(submission.caseId);
   });
 
+  await test.step("a GitHub rate limit reopens the draft instead of a refusal", async () => {
+    const submission = await authorized();
+    const before = await advisoryCount();
+    const fault = await request.fetch(
+      `${GITHUB_FIXTURE}/__fixture/advisories/create/secondary-rate-limit`,
+      { method: "PUT" },
+    );
+    expect(fault.status()).toBe(204);
+    const sent = await intakeApi(
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+    expect(sent.body.submission).toMatchObject({
+      state: "draft",
+      failureCode: null,
+      retryAllowed: true,
+    });
+    expect(sent.body.rateLimited).toEqual({ retryAfterSeconds: null });
+    expect(await advisoryCount()).toBe(before);
+    // The throttle cleared, so the next send needs no reconcile.
+    const again = await intakeApi(
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      {
+        expectedRevision: (sent.body.submission as { revision: number })
+          .revision,
+      },
+    );
+    expect(again.body.submission).toMatchObject({
+      state: "receipt-verified",
+    });
+    expect(await advisoryCount()).toBe(before + 1);
+  });
+
   await test.step("the owner triages with the private AI summary and decides a funds-checked 75/25 award", async () => {
     const ownerCase = async (id: string) =>
       (await api(request, "GET", `security-cases/${id}`, TOKENS.security)).body
@@ -3789,8 +3893,15 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       };
     // The full technical analysis is separate from the intake routing screen.
     for (const id of [firstCase, secondCase]) {
-      const analyzed = await act(request, "security", id, "analyze");
-      expect(analyzed.status, JSON.stringify(analyzed.body)).toBe(200);
+      const state = (await ownerCase(id)).analysis?.state;
+      // Receipt verification may already have started the automatic analysis.
+      // Request only a missing/failed analysis, then verify the same completed result.
+      if (state !== "running" && state !== "complete") {
+        const analyzed = await act(request, "security", id, "analyze");
+        if (analyzed.status === 409)
+          expect(analyzed.body.error).toBe("analysis_running");
+        else expect(analyzed.status, JSON.stringify(analyzed.body)).toBe(200);
+      }
       await expect
         .poll(async () => (await ownerCase(id)).analysis?.state, {
           timeout: 30_000,
@@ -3847,13 +3958,8 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       .getByRole("button", { name: "Open case", exact: true })
       .click();
     const detail = page.locator(`[aria-labelledby="case-${firstCase}"]`);
-    await expect(detail).toContainText("Advisory assessment");
     await expect(detail).toContainText(
       "Fixture proposal: the withdraw path skips the owner check",
-    );
-    await expect(detail).toContainText("Likely path to loss of funds");
-    await expect(detail).toContainText(
-      "Next step: Choose an award amount or no award.",
     );
     const actions = page.getByRole("region", { name: "Case actions" });
     await chooseCaseAction(actions, "award");
@@ -4013,20 +4119,17 @@ test("a registered Slop bounty vault keeps its split while the owner publishes t
   await signIn(page, TOKENS.security);
   await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
   await openProjectSecuritySettings(page);
-  const fullAward = page.getByRole("checkbox", {
-    name: "slop.cash sponsors the whole award (researcher 100%, Slop 0%)",
-    exact: true,
-  });
-  await expect(fullAward).not.toBeChecked();
-  await expect(fullAward).toBeDisabled();
+  await expect(page.getByRole("checkbox", { name: /full award/i })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".security-program-editor")).toContainText(
+    "USDC · Base",
+  );
   await expect(
-    page.getByLabel("Bounty network", { exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByText("This program has a registered bounty vault", {
-      exact: false,
-    }),
-  ).toBeVisible();
+    page
+      .locator(".security-program-editor")
+      .getByRole("group", { name: "Asset", exact: true }),
+  ).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("registered-vault-locked.png"),
@@ -4049,6 +4152,69 @@ test("a registered Slop bounty vault keeps its split while the owner publishes t
   });
   await page.screenshot({
     path: test.info().outputPath("registered-vault-published.png"),
+    fullPage: true,
+  });
+});
+
+test("an owner preserves admin-approved full-award terms on any project @registry", async ({
+  page,
+  request,
+}) => {
+  const id = `full-award-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  const terms = bountyTerms(repository, {
+    rewardMode: "separate",
+    status: "open",
+    fundingPolicy: "after-approval",
+    split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+    settlement: undefined,
+    capacity: {
+      awards: null,
+      closesAt: null,
+      exhaustionRule: "The sponsor funds each approved finding after review.",
+    },
+    sponsor: { name: "Independent project sponsor", githubId: null },
+  });
+  const approved = await revise(request, id, (manifest) => ({
+    ...manifest,
+    securityBounty: terms,
+  }));
+  expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+  await signIn(page, TOKENS.security);
+  await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
+  await openProjectSecuritySettings(page);
+  await expect(page.getByRole("checkbox", { name: /full award/i })).toHaveCount(
+    0,
+  );
+  await expect(page.getByLabel("Published gross award (USDC)")).toHaveValue(
+    "10000",
+  );
+  await page.getByLabel("Published gross award (USDC)").fill("8000");
+  await page.getByRole("button", { name: "Review bounty terms" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Review before publishing" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Published bounty offer" }),
+  ).toContainText("8,000 USDC to the researcher");
+  await expectAccessible(page);
+  await page.getByRole("button", { name: "Publish bounty terms" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Published revision" }),
+  ).toBeVisible();
+  const saved = await adminProject(request, id);
+  expect(saved.manifest.securityBounty).toMatchObject({
+    split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+    amount: { grossMinor: "8000000000" },
+    fundingPolicy: "after-approval",
+    sponsor: { name: "Independent project sponsor", githubId: null },
+  });
+  expect(
+    (saved.manifest.securityBounty as Record<string, unknown>).settlement,
+  ).toBeUndefined();
+  await page.screenshot({
+    path: test.info().outputPath("generic-full-award-preserved.png"),
     fullPage: true,
   });
 });

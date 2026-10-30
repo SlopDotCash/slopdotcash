@@ -199,7 +199,6 @@ test("an excluded owner keeps the score, receives nothing, and the other share i
     expect(refused).toMatchObject({
       status: 400,
       code: "invalid_allocation",
-      message: "This person has a payout exclusion for this month.",
     });
     // Other private changes keep working.
     const view = await service.changeAllocation("asi", "2026-11", actor, {

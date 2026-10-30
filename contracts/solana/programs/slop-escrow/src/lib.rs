@@ -117,6 +117,52 @@ pub mod slop_escrow {
         p.purpose = purpose;
         Ok(())
     }
+    /// SOL stays in a program-owned vault, never a wrapped token account. The asset sentinel
+    /// occupies the existing immutable mint field, so existing Project layouts are unchanged.
+    pub fn initialize_native(
+        ctx: Context<InitializeNative>,
+        project_id: [u8; 32],
+        network: [u8; 32],
+        identity_authority: Pubkey,
+        fee_recipient: Pubkey,
+        binding_delay: i64,
+        rotation_delay: i64,
+        purpose: Purpose,
+    ) -> Result<()> {
+        require!(
+            identity_authority != Pubkey::default()
+                && fee_recipient != Pubkey::default()
+                && identity_authority != ctx.accounts.owner.key()
+                && identity_authority != fee_recipient
+                && fee_recipient != ctx.accounts.owner.key()
+                && fee_recipient != ctx.accounts.project.key()
+                && ctx.accounts.owner.key() != ctx.accounts.config.rotation_authority,
+            EscrowError::InvalidIdentity
+        );
+        // L-3: a new project uses only the identity authority and fee recipient that the
+        // upgrade authority pinned in Config.
+        require!(
+            identity_authority == ctx.accounts.config.identity_authority
+                && fee_recipient == ctx.accounts.config.fee_recipient,
+            EscrowError::ConfigMismatch
+        );
+        require!(
+            valid_delay(binding_delay) && valid_rotation_delay(rotation_delay),
+            EscrowError::InvalidDelay
+        );
+        let p = &mut ctx.accounts.project;
+        p.owner = ctx.accounts.owner.key();
+        p.project_id = project_id;
+        p.network = network;
+        p.identity_authority = identity_authority;
+        p.fee_recipient = fee_recipient;
+        p.mint = anchor_lang::system_program::ID;
+        p.bump = ctx.bumps.project;
+        p.binding_delay = binding_delay;
+        p.rotation_delay = rotation_delay;
+        p.purpose = purpose;
+        Ok(())
+    }
     // The owner starts a public two-party rotation of the identity authority. The current
     // authority has no instruction that can block it.
     pub fn propose_authority_rotation(
@@ -219,6 +265,28 @@ pub mod slop_escrow {
             ),
             amount,
             ctx.accounts.mint.decimals,
+        )?;
+        ctx.accounts.project.deposited = add(ctx.accounts.project.deposited, amount)?;
+        emit!(Deposited {
+            project: ctx.accounts.project.key(),
+            depositor: ctx.accounts.depositor.key(),
+            amount
+        });
+        Ok(())
+    }
+    pub fn deposit_native(ctx: Context<DepositNative>, amount: u64) -> Result<()> {
+        require!(amount > 0, EscrowError::InvalidAmount);
+        // Check the existing vault, including its permanent rent reserve, before accepting funds.
+        vault_amount(&ctx.accounts.vault, &ctx.accounts.project)?;
+        anchor_lang::system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                anchor_lang::system_program::Transfer {
+                    from: ctx.accounts.depositor.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                },
+            ),
+            amount,
         )?;
         ctx.accounts.project.deposited = add(ctx.accounts.project.deposited, amount)?;
         emit!(Deposited {
@@ -334,7 +402,7 @@ pub mod slop_escrow {
         require!(total > 0, EscrowError::InvalidAmount);
         require!(total <= p.monthly_cap, EscrowError::MonthlyCapExceeded);
         require!(
-            free(p)? >= total && ctx.accounts.vault.amount >= add(held(p)?, total)?,
+            free(p)? >= total && vault_amount(&ctx.accounts.vault, p)? >= add(held(p)?, total)?,
             EscrowError::InsufficientFreeBalance
         );
         let message = monthly_message(
@@ -688,6 +756,60 @@ pub mod slop_escrow {
         });
         Ok(())
     }
+    pub fn pay_native(ctx: Context<PayNative>, expected_version: u64) -> Result<()> {
+        let p = &ctx.accounts.project;
+        let a = &ctx.accounts.obligation;
+        let b = &ctx.accounts.binding;
+        require!(!a.paid, EscrowError::AlreadyPaid);
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            now >= add_i64(a.committed_at, p.binding_delay)?,
+            EscrowError::AwardPending
+        );
+        require!(b.version > 0, EscrowError::StaleBinding);
+        // A veto address can only be created by veto_binding; an empty system account
+        // proves the owner did not veto that binding version.
+        require!(unvetoed(&ctx.accounts.veto), EscrowError::BindingVetoed);
+        require!(b.version == expected_version, EscrowError::StaleBinding);
+        let (destination, version) = (b.destination, b.version);
+        require_keys_eq!(
+            ctx.accounts.destination.key(),
+            destination,
+            EscrowError::WrongDestination
+        );
+        send_native(
+            &ctx.accounts.vault,
+            &ctx.accounts.destination,
+            p,
+            a.principal,
+        )?;
+        let principal = a.principal;
+        let fee = a.fee;
+        let p = &mut ctx.accounts.project;
+        p.reserved = p
+            .reserved
+            .checked_sub(add(principal, fee)?)
+            .ok_or(EscrowError::Arithmetic)?;
+        p.paid = add(p.paid, principal)?;
+        p.payout_fees = add(p.payout_fees, fee)?;
+        // The fee stays in the vault until claim_fees, so the fee recipient's token account
+        // can never stop a payout (L-2).
+        p.accrued_fees = add(p.accrued_fees, fee)?;
+        ctx.accounts.obligation.paid = true;
+        let b = &mut ctx.accounts.binding;
+        b.paid_version = version;
+        b.veto_count = 0;
+        emit!(AwardPaid {
+            project: p.key(),
+            award_id: ctx.accounts.obligation.award_id,
+            gross: ctx.accounts.obligation.gross,
+            principal,
+            fee,
+            destination,
+            wallet_version: version
+        });
+        Ok(())
+    }
     pub fn withdraw(ctx: Context<Withdraw>, gross: u64) -> Result<()> {
         let p = &ctx.accounts.project;
         require!(
@@ -707,6 +829,29 @@ pub mod slop_escrow {
             seeds,
             returned,
         )?;
+        let p = &mut ctx.accounts.project;
+        p.withdrawn_gross = add(p.withdrawn_gross, gross)?;
+        p.withdrawal_fees = add(p.withdrawal_fees, fee)?;
+        p.accrued_fees = add(p.accrued_fees, fee)?;
+        emit!(UnusedWithdrawn {
+            project: p.key(),
+            gross,
+            fee,
+            returned
+        });
+        Ok(())
+    }
+    pub fn withdraw_native(ctx: Context<WithdrawNative>, gross: u64) -> Result<()> {
+        let p = &ctx.accounts.project;
+        require!(
+            gross > 0
+                && vault_amount(&ctx.accounts.vault, p)? >= add(held(p)?, gross)?
+                && free(p)? >= gross,
+            EscrowError::InsufficientFreeBalance
+        );
+        let fee = fee_for(gross);
+        let returned = gross.checked_sub(fee).ok_or(EscrowError::Arithmetic)?;
+        send_native(&ctx.accounts.vault, &ctx.accounts.destination, p, returned)?;
         let p = &mut ctx.accounts.project;
         p.withdrawn_gross = add(p.withdrawn_gross, gross)?;
         p.withdrawal_fees = add(p.withdrawal_fees, fee)?;
@@ -778,6 +923,20 @@ pub mod slop_escrow {
         });
         Ok(())
     }
+    pub fn claim_fees_native(ctx: Context<ClaimFeesNative>) -> Result<()> {
+        let p = &ctx.accounts.project;
+        let amount = p.accrued_fees;
+        require!(amount > 0, EscrowError::InvalidAmount);
+        send_native(&ctx.accounts.vault, &ctx.accounts.fee_account, p, amount)?;
+        let p = &mut ctx.accounts.project;
+        p.accrued_fees = 0;
+        emit!(FeesClaimed {
+            project: p.key(),
+            fee_account: ctx.accounts.fee_account.key(),
+            amount
+        });
+        Ok(())
+    }
 }
 /// The only valid award ID for a source in this project.
 pub fn award_id_for(project: &Pubkey, source_digest: &[u8; 32]) -> [u8; 32] {
@@ -786,7 +945,7 @@ pub fn award_id_for(project: &Pubkey, source_digest: &[u8; 32]) -> [u8; 32] {
 #[allow(clippy::too_many_arguments)]
 fn commit_with_fee(
     p: &mut Account<Project>,
-    vault: &InterfaceAccount<TokenAccount>,
+    vault: &UncheckedAccount,
     origin: &mut Account<Origin>,
     a: &mut Account<Obligation>,
     award_id: [u8; 32],
@@ -804,7 +963,7 @@ fn commit_with_fee(
     let principal = gross - fee;
     let reserve = gross;
     require!(
-        vault.amount >= add(held(p)?, reserve)? && free(p)? >= reserve,
+        vault_amount(vault, p)? >= add(held(p)?, reserve)? && free(p)? >= reserve,
         EscrowError::InsufficientFreeBalance
     );
     p.reserved = add(p.reserved, reserve)?;
@@ -1067,6 +1226,58 @@ fn held(p: &Project) -> Result<u64> {
 fn add(a: u64, b: u64) -> Result<u64> {
     a.checked_add(b).ok_or(error!(EscrowError::Arithmetic))
 }
+/// Validate the immutable vault identity before using its balance for any reserve or transfer.
+fn vault_amount(vault: &UncheckedAccount, project: &Account<Project>) -> Result<u64> {
+    if project.mint == anchor_lang::system_program::ID {
+        require!(
+            vault.owner == project.to_account_info().owner && vault.data_is_empty(),
+            EscrowError::WrongMint
+        );
+        return vault
+            .lamports()
+            .checked_sub(Rent::get()?.minimum_balance(0))
+            .ok_or(error!(EscrowError::InsufficientFreeBalance));
+    }
+    require!(
+        admitted_token_account(&vault.to_account_info())?,
+        EscrowError::WrongMint
+    );
+    let data = vault.try_borrow_data()?;
+    let token = TokenAccount::try_deserialize(&mut &data[..])?;
+    require_keys_eq!(token.mint, project.mint, EscrowError::WrongMint);
+    require_keys_eq!(token.owner, project.key(), EscrowError::WrongDestination);
+    Ok(token.amount)
+}
+fn send_native<'info>(
+    source: &UncheckedAccount<'info>,
+    destination: &UncheckedAccount<'info>,
+    project: &Account<'info, Project>,
+    amount: u64,
+) -> Result<()> {
+    require!(
+        project.mint == anchor_lang::system_program::ID,
+        EscrowError::WrongMint
+    );
+    require_keys_neq!(
+        source.key(),
+        destination.key(),
+        EscrowError::WrongDestination
+    );
+    require!(
+        vault_amount(source, project)? >= amount,
+        EscrowError::InsufficientFreeBalance
+    );
+    if amount > 0 {
+        let remaining = source
+            .lamports()
+            .checked_sub(amount)
+            .ok_or(EscrowError::Arithmetic)?;
+        let received = add(destination.lamports(), amount)?;
+        **source.try_borrow_mut_lamports()? = remaining;
+        **destination.try_borrow_mut_lamports()? = received;
+    }
+    Ok(())
+}
 fn send<'info>(
     program: &Interface<'info, TokenInterface>,
     source: &InterfaceAccount<'info, TokenAccount>,
@@ -1127,6 +1338,31 @@ pub struct Initialize<'info> {
     pub config: Box<Account<'info, Config>>,
 }
 #[derive(Accounts)]
+#[instruction(project_id:[u8;32],network:[u8;32],identity_authority:Pubkey,fee_recipient:Pubkey,binding_delay:i64,rotation_delay:i64,purpose:Purpose)]
+pub struct InitializeNative<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(init,payer=owner,space=8+Project::INIT_SPACE,seeds=[b"project",owner.key().as_ref(),&project_id,&[purpose as u8]],bump)]
+    pub project: Box<Account<'info, Project>>,
+    /// CHECK: a program-owned, rent-funded, empty vault initialized at the canonical PDA.
+    #[account(init,payer=owner,space=0,seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+    #[account(seeds=[b"config"],bump=config.bump)]
+    pub config: Box<Account<'info, Config>>,
+}
+#[derive(Accounts)]
+pub struct DepositNative<'info> {
+    #[account(mut)]
+    pub depositor: Signer<'info>,
+    #[account(mut,constraint=project.mint==anchor_lang::system_program::ID @ EscrowError::WrongMint)]
+    pub project: Box<Account<'info, Project>>,
+    /// CHECK: canonical vault; handler validates owner, empty data and rent before transfer.
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+#[derive(Accounts)]
 pub struct Deposit<'info> {
     pub depositor: Signer<'info>,
     #[account(mut,has_one=mint)]
@@ -1146,8 +1382,9 @@ pub struct Commit<'info> {
     pub owner: Signer<'info>,
     #[account(mut,has_one=owner)]
     pub project: Box<Account<'info, Project>>,
-    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project,constraint=admitted_token_account(&vault.to_account_info())?)]
-    pub vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: seeds bind the vault; vault_amount checks its asset, authority, owner and rent.
+    #[account(seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
     #[account(init,payer=owner,space=8+Origin::INIT_SPACE,seeds=[b"origin",project.key().as_ref(),&source_digest],bump)]
     pub origin: Account<'info, Origin>,
     #[account(init,payer=owner,space=8+Obligation::INIT_SPACE,seeds=[b"award",project.key().as_ref(),&award_id],bump)]
@@ -1168,8 +1405,9 @@ pub struct CommitMonthly<'info> {
     pub payer: Signer<'info>,
     #[account(mut)]
     pub project: Box<Account<'info, Project>>,
-    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project,constraint=admitted_token_account(&vault.to_account_info())?)]
-    pub vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: seeds bind the vault; vault_amount checks its asset, authority, owner and rent.
+    #[account(seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
     /// One per project and period, so a period commits once.
     #[account(init,payer=payer,space=8+MonthlyAllocation::INIT_SPACE,seeds=[b"month",project.key().as_ref(),&period.to_le_bytes()],bump)]
     pub month: Box<Account<'info, MonthlyAllocation>>,
@@ -1186,8 +1424,9 @@ pub struct CommitMonthlyAward<'info> {
     pub payer: Signer<'info>,
     #[account(mut)]
     pub project: Box<Account<'info, Project>>,
-    #[account(seeds=[b"vault",project.key().as_ref()],bump,constraint=vault.mint==project.mint,token::authority=project,constraint=admitted_token_account(&vault.to_account_info())?)]
-    pub vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: seeds bind the vault; vault_amount checks its asset, authority, owner and rent.
+    #[account(seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
     #[account(mut,has_one=project,seeds=[b"month",project.key().as_ref(),&period.to_le_bytes()],bump)]
     pub month: Box<Account<'info, MonthlyAllocation>>,
     #[account(init,payer=payer,space=8+Origin::INIT_SPACE,seeds=[b"origin",project.key().as_ref(),&source_digest],bump)]
@@ -1289,6 +1528,47 @@ pub struct Pay<'info> {
     /// CHECK: must be the empty veto address for this project, actor and latest binding version.
     #[account(seeds=[b"veto",project.key().as_ref(),&obligation.actor_id.to_le_bytes(),&binding.version.to_le_bytes()],bump)]
     pub veto: UncheckedAccount<'info>,
+}
+#[derive(Accounts)]
+pub struct PayNative<'info> {
+    #[account(mut,constraint=project.mint==anchor_lang::system_program::ID @ EscrowError::WrongMint)]
+    pub project: Box<Account<'info, Project>>,
+    #[account(mut,has_one=project,seeds=[b"award",project.key().as_ref(),&obligation.award_id],bump)]
+    pub obligation: Box<Account<'info, Obligation>>,
+    #[account(mut,seeds=[b"wallet",project.key().as_ref(),&obligation.actor_id.to_le_bytes()],bump,constraint=binding.actor_id==obligation.actor_id,constraint=binding.network==project.network)]
+    pub binding: Box<Account<'info, WalletBinding>>,
+    /// CHECK: canonical native vault; send_native checks its owner and permanent rent reserve.
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
+    /// CHECK: must equal the latest co-signed binding; receives SOL directly, with no ATA.
+    #[account(mut,address=binding.destination)]
+    pub destination: UncheckedAccount<'info>,
+    /// CHECK: empty veto PDA for this exact project, actor and binding version.
+    #[account(seeds=[b"veto",project.key().as_ref(),&obligation.actor_id.to_le_bytes(),&binding.version.to_le_bytes()],bump)]
+    pub veto: UncheckedAccount<'info>,
+}
+#[derive(Accounts)]
+pub struct WithdrawNative<'info> {
+    pub owner: Signer<'info>,
+    #[account(mut,has_one=owner,constraint=project.mint==anchor_lang::system_program::ID @ EscrowError::WrongMint)]
+    pub project: Box<Account<'info, Project>>,
+    /// CHECK: canonical native vault; send_native checks owner and rent.
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
+    /// CHECK: refund is only to the immutable project owner.
+    #[account(mut,address=project.owner)]
+    pub destination: UncheckedAccount<'info>,
+}
+#[derive(Accounts)]
+pub struct ClaimFeesNative<'info> {
+    #[account(mut,constraint=project.mint==anchor_lang::system_program::ID @ EscrowError::WrongMint)]
+    pub project: Box<Account<'info, Project>>,
+    /// CHECK: canonical native vault; send_native checks owner and rent.
+    #[account(mut,seeds=[b"vault",project.key().as_ref()],bump)]
+    pub vault: UncheckedAccount<'info>,
+    /// CHECK: fees only go to the immutable Config-pinned project fee recipient.
+    #[account(mut,address=project.fee_recipient)]
+    pub fee_account: UncheckedAccount<'info>,
 }
 #[derive(Accounts)]
 pub struct ProposeAuthorityRotation<'info> {
