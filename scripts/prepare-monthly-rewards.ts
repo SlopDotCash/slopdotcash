@@ -19,7 +19,10 @@ import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { buildEscrowCycle } from "../src/lib/payments/escrow-cycle";
 import type { MonthlyBase } from "../src/lib/payments/monthly-allocation";
 import { createPaymentProjectView } from "../src/lib/project-view";
-import type { ProjectDefinition } from "../src/lib/projects.mjs";
+import {
+  findHistoricalProject,
+  type ProjectDefinition,
+} from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import { currentProjectPolicies } from "./project-revision-policy.mjs";
 
@@ -159,7 +162,20 @@ export async function prepareMonthlyBases(options: {
   for (const policy of await currentProjectPolicies(
     options.root ?? REPOSITORY_ROOT,
   )) {
-    if (!hasMonthlyAllocation(policy.project, period)) {
+    // While the paused, retired revision of a Quarantine or Ban is pending,
+    // as after a contributor-flag pause of an active project, projects:sync
+    // stores the project paused but its newest revision still says active.
+    // The ledger collected nothing for it, and a restricted project starts no
+    // new commitment (PRD section 11, Restricted projects).
+    const registered = findHistoricalProject(policy.project.id);
+    if (!registered)
+      throw new TypeError(
+        `Project ${policy.project.id} has revisions but no registry entry`,
+      );
+    if (
+      registered.status !== "active" ||
+      !hasMonthlyAllocation(policy.project, period)
+    ) {
       result.skipped.push(policy.project.id);
       continue;
     }
