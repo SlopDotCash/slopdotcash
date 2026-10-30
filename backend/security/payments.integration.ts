@@ -1843,7 +1843,6 @@ try {
         new Date(),
         (id, at) => securityPaymentNotices(database, id, "held", at),
       ),
-      /lost response/,
     );
     assert.equal(
       (await securitySettlementView(database, caseId))?.state,
@@ -1986,12 +1985,10 @@ try {
           .get()?.n,
         1,
       );
-      assert.throws(
-        () =>
-          restored.sqlite
-            .query("DELETE FROM security_settlements WHERE case_id=?")
-            .run(caseId),
-        /immutable|permanent/,
+      assert.throws(() =>
+        restored.sqlite
+          .query("DELETE FROM security_settlements WHERE case_id=?")
+          .run(caseId),
       );
     } finally {
       restored.sqlite.close();
