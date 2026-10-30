@@ -161,6 +161,9 @@ async function api(
   const origin = new URL(test.info().project.use.baseURL ?? "").origin;
   const response = await request.fetch(`/api/v1/${path}`, {
     method,
+    // Workerd may close an idle keep-alive connection. Retry only reads;
+    // a lost mutation response must never cause this helper to replay it.
+    maxRetries: method === "GET" ? 2 : 0,
     headers: {
       ...(token ? { cookie: `${COOKIE}=${token}` } : {}),
       ...(method === "GET" ? {} : { origin }),
