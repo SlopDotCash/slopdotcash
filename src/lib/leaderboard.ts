@@ -542,7 +542,9 @@ function parseIsoTime(value: string): number {
 }
 
 function uniqueSorted(values: Iterable<string>): string[] {
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+  return [...new Set(values)].sort((left, right) =>
+    left.localeCompare(right, "en"),
+  );
 }
 
 function compareCodeUnits(left: string, right: string): number {
@@ -4995,11 +4997,7 @@ function createSnapshotWithReviewCutoff(
         left.source.number - right.source.number ||
         left.id.localeCompare(right.id),
     ),
-    reviewExclusions: reviewExclusions.sort(
-      (left, right) =>
-        left.pullRequestId.localeCompare(right.pullRequestId) ||
-        left.reviewId.localeCompare(right.reviewId),
-    ),
+    reviewExclusions: reviewExclusions.sort(compareReviewExclusions),
     penalties,
     ...(input.penaltyHistory ? { penaltyHistory: input.penaltyHistory } : {}),
     opportunities,
@@ -5338,6 +5336,18 @@ function assertMethodologyValue(value: unknown, path: string): void {
   );
   assertString(methodology.provenancePolicy, `${path}.provenancePolicy`);
   assertString(methodology.collectionPolicy, `${path}.collectionPolicy`);
+}
+
+// Preserve the published English collation in both writers and readers.
+// GitHub node IDs are opaque: the machine's language must not reorder them.
+function compareReviewExclusions(
+  left: ReviewExclusion,
+  right: ReviewExclusion,
+) {
+  return (
+    left.pullRequestId.localeCompare(right.pullRequestId, "en") ||
+    left.reviewId.localeCompare(right.reviewId, "en")
+  );
 }
 
 function assertReviewExclusionValue(
@@ -6817,11 +6827,7 @@ export function assertLeaderboardSnapshot(
     for (let index = 1; index < validatedReviewExclusions.length; index += 1) {
       const previous = validatedReviewExclusions[index - 1];
       const current = validatedReviewExclusions[index];
-      if (
-        previous.pullRequestId.localeCompare(current.pullRequestId) > 0 ||
-        (previous.pullRequestId === current.pullRequestId &&
-          previous.reviewId.localeCompare(current.reviewId) > 0)
-      ) {
+      if (compareReviewExclusions(previous, current) > 0) {
         throw new Error(
           "snapshot.reviewExclusions must be ordered by pull request and review ID",
         );
