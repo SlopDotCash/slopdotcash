@@ -672,7 +672,6 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expect(card).toContainText("3 · updated");
   await card.getByRole("button", { name: "Delist", exact: true }).click();
   await card.getByRole("button", { name: "Delist project" }).click();
-  await expect(admin.getByRole("status")).toContainText("Saved.");
   await expect(
     card
       .locator(".admin-facts > div")

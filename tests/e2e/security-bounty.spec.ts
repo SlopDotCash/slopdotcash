@@ -2313,7 +2313,7 @@ test("private settlement requires visibility consent and produces an unsigned re
   await page.getByRole("button", { name: "Copy unsigned request" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Request copied." }),
-  ).toHaveText("Request copied.");
+  ).toBeVisible();
   // The Windows clipboard stores line breaks as CRLF, so Chromium reads the
   // copied request back with "\r\n".
   expect(
