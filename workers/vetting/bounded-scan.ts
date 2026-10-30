@@ -256,6 +256,15 @@ type Rule = {
   surfaces?: ScanSurface[];
 };
 
+/** A command token cannot continue into another command or a filename suffix. */
+function commandToken(name: string): string {
+  const word = String.raw`(?:[^\s|;&<>()'"]*/)?${name}`;
+  return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
+}
+const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi)?sh");
+const ENV_COMMAND = commandToken("env");
+const SUDO_COMMAND = commandToken("sudo");
+
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
@@ -306,9 +315,11 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
-    pattern:
-      /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s/iu,
-    summary: "Pipes a remote download straight into a shell",
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a shell",
   },
   {
     threat: "unsafe-execution",
@@ -348,6 +359,18 @@ const RULES: Rule[] = [
     surfaces: ["agentInstructions"],
   },
 ];
+
+// Rule text reaches the reviewer. Bind it, matching semantics, scope and order
+// so identical source bytes cannot reuse a result from a different rule set.
+const RULE_POLICY_SHA256 = sha256(
+  JSON.stringify({
+    schemaVersion: "slop-deterministic-rules-v1",
+    rules: RULES.map(({ pattern, ...rule }) => ({
+      ...rule,
+      pattern: { source: pattern.source, flags: pattern.flags },
+    })),
+  }),
+);
 
 const DOWNLOAD =
   /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
@@ -554,7 +577,7 @@ export type RepositoryInspection = {
 
 /**
  * Inspects one revision's acquired files. Pure and deterministic: the same
- * bytes and surface classifications produce the same inventory digest, so an
+ * bytes, surface classifications and rules produce the same inventory digest, so an
  * unchanged executable inventory reuses its clean result and any change to
  * executable content is scanned again.
  */
@@ -757,6 +780,7 @@ export function inspectRepository(input: {
   const inventory = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: INVENTORY_SCHEMA,
+      rulePolicySha256: RULE_POLICY_SHA256,
       classifications,
       items,
       // Binary and archive bytes are not text items. Bind their digests so
@@ -879,6 +903,7 @@ export function composeAcquisitionRefusal(input: {
   const inventory = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: INVENTORY_SCHEMA,
+      rulePolicySha256: RULE_POLICY_SHA256,
       classifications: [],
       items: [],
       artifacts: [],

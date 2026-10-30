@@ -1004,7 +1004,10 @@ export class VettingEvidence {
             ];
             const classified =
               isRecord(source) && Object.hasOwn(source, "classifications");
+            const policyBound =
+              isRecord(source) && Object.hasOwn(source, "rulePolicySha256");
             if (classified) inventoryKeys.push("classifications");
+            if (policyBound) inventoryKeys.push("rulePolicySha256");
             if (
               !isRecord(source) ||
               !isRecord(final) ||
@@ -1014,6 +1017,11 @@ export class VettingEvidence {
                 (!validClassifications(source.classifications) ||
                   JSON.stringify(source.classifications) !==
                     JSON.stringify(final.classifications))) ||
+              (policyBound &&
+                (!classified ||
+                  typeof source.rulePolicySha256 !== "string" ||
+                  !HEX.test(source.rulePolicySha256) ||
+                  source.rulePolicySha256 !== final.rulePolicySha256)) ||
               source.schemaVersion !== "slop-scan-inventory-v2" ||
               final.schemaVersion !== source.schemaVersion ||
               !Array.isArray(source.items) ||
