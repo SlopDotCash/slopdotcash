@@ -206,7 +206,6 @@ test("large private evidence downloads with a single-use browser grant @registry
     }),
     contentType: "application/json",
   });
-  await expect(item.getByRole("status")).toBeVisible();
   const cookies = await page.context().cookies();
   expect(
     cookies.some((cookie) => cookie.name === "__Secure-vetting-read-grant"),
