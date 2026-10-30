@@ -69,6 +69,58 @@ test("oversized publication downloads bounded parts into the original snapshot b
   });
 });
 
+test("a deployment change restarts from the new manifest instead of retrying removed parts", async () => {
+  await withOutput(async (output) => {
+    const nextBytes = new TextEncoder().encode(
+      JSON.stringify({ retained: "y".repeat(26 * 1024 * 1024), label: "é" }) +
+        "\n",
+    );
+    const next = encodeLeaderboardParts(nextBytes);
+    let active = publication;
+    const roots: string[] = [];
+    let removedPartReads = 0;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const target = new URL(request.url);
+        if (target.pathname === "/data/leaderboard.json") {
+          roots.push(target.searchParams.get("snapshot") ?? "");
+          return new Response(new Uint8Array(active.root).buffer);
+        }
+        const part = active.parts.find((p) => p.path === target.pathname);
+        // Pages replaces the old generated parts after the first part read.
+        if (target.pathname === publication.parts[0].path) active = next;
+        if (!part) {
+          removedPartReads++;
+          return new Response(null, { status: 404 });
+        }
+        return new Response(new Uint8Array(part.bytes).buffer);
+      },
+    });
+    try {
+      await writeFile(output, legacy);
+      const request = (input: RequestInfo | URL, init?: RequestInit) => {
+        const target = new URL(String(input));
+        expect(target.origin).toBe("https://slop.cash");
+        return fetch(
+          new URL(target.pathname + target.search, server.url),
+          init,
+        );
+      };
+      await expect(
+        downloadLeaderboard(url, output, { ...options, request }),
+      ).resolves.toBe(nextBytes.length);
+      expect(new Uint8Array(await readFile(output))).toEqual(nextBytes);
+      expect(roots).toHaveLength(2);
+      expect(new Set(roots).size).toBe(2);
+      expect(removedPartReads).toBe(3);
+    } finally {
+      await server.stop(true);
+    }
+  });
+});
+
 test("missing or corrupted parts never replace the prior complete snapshot", async () => {
   for (const status of [404, 503, 200]) {
     await withOutput(async (output) => {
@@ -84,6 +136,9 @@ test("missing or corrupted parts never replace the prior complete snapshot", asy
       expect(source.calls.filter((path) => path === first)).toHaveLength(
         status === 200 ? 1 : 3,
       );
+      expect(
+        source.calls.filter((path) => path === "/data/leaderboard.json"),
+      ).toHaveLength(status === 404 ? 2 : 1);
     });
   }
 });
