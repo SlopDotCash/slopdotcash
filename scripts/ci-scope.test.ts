@@ -167,6 +167,7 @@ test("a changed registry-only browser test selects the registry lanes that run i
 test("a changed registry runner or fixture server selects the registry lanes", () => {
   const files = [
     "scripts/run-e2e.mjs",
+    "scripts/prepare-e2e-fixture.mjs",
     "playwright.config.ts",
     "tests/github-api-fixture.mjs",
   ];

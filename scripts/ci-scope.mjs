@@ -36,7 +36,7 @@ const ui =
 const registryBrowser = files.some((file) =>
   /^tests\/e2e\/.*\.spec\.ts$/u.test(file)
     ? existsSync(file) && readFileSync(file, "utf8").includes("@registry")
-    : /^(tests\/e2e\/|scripts\/run-e2e|playwright\.config|tests\/(github-api|notify-worker|slopbot-worker)-fixture\.mjs$)/u.test(
+    : /^(tests\/e2e\/|scripts\/(run-e2e|prepare-e2e)|playwright\.config|tests\/(github-api|notify-worker|slopbot-worker)-fixture\.mjs$)/u.test(
         file,
       ),
 );
