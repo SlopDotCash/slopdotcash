@@ -60,6 +60,14 @@ describe("contributor allocation file", () => {
     ["a missing closed flag", { closed: undefined }],
     ["a local close time", { registrationClosesAt: "2027-02-08T17:00:00" }],
     [
+      "a calendar-overflow close time (Feb 29 on a non-leap year)",
+      { registrationClosesAt: "2027-02-29T00:00:00Z" },
+    ],
+    [
+      "a calendar-overflow close time (Apr 31)",
+      { registrationClosesAt: "2027-04-31T00:00:00Z" },
+    ],
+    [
       "a duplicate recipient",
       {
         recipients: [
