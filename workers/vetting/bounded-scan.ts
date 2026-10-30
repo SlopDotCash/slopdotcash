@@ -261,7 +261,7 @@ function commandToken(name: string): string {
   const word = String.raw`(?:[^\s|;&<>()'"]*/)?${name}`;
   return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
 }
-const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi)?sh");
+const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
 
