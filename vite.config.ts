@@ -37,6 +37,11 @@ export default defineConfig(({ command, isPreview }) => {
         "^/(?:api/|v1/oauth/|__dev/)": {
           target: localBackend,
           changeOrigin: false,
+          rewrite: (path) =>
+            path.replace(
+              /^\/__dev\/project-create(?=\?|$)/,
+              "/api/v1/projects",
+            ),
         },
       }
     : {};
@@ -48,6 +53,21 @@ export default defineConfig(({ command, isPreview }) => {
         name: "local-sign-in",
         apply: "serve",
         configureServer(server) {
+          if (localBackend) {
+            server.middlewares.use((request, _response, next) => {
+              // GET /projects stays a public read. Its POST must reach the
+              // local API before the read-only proxy refuses write methods.
+              if (
+                request.method === "POST" &&
+                /^\/api\/v1\/projects(?:\?|$)/.test(request.url ?? "")
+              )
+                request.url = request.url?.replace(
+                  /^\/api\/v1\/projects/,
+                  "/__dev/project-create",
+                );
+              next();
+            });
+          }
           if (!automaticBackend || !localBackend) return;
           let child: ChildProcess | undefined;
           const stop = () => child?.kill("SIGTERM");
