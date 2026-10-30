@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchWithDeadline, readBoundedJson } from "./browser-json";
+import { fetchWithDeadline, readBoundedBytes } from "./browser-json";
 import { type CycleIndex, loadCycleIndex } from "./cycle-index";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "./leaderboard";
+import {
+  MAX_LEADERBOARD_BYTES,
+  MAX_LEADERBOARD_PART_BYTES,
+  readLeaderboardBytes,
+} from "./leaderboard-transport.mjs";
 import {
   createProjectView,
   type ProjectView,
@@ -15,7 +20,6 @@ import { PROJECTS } from "./projects.mjs";
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const SNAPSHOT_CACHE_MS = 60_000;
-const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 export type DataState =
   | { status: "loading" }
   | { status: "error"; message: string }
@@ -69,7 +73,7 @@ async function loadSnapshot(
       SNAPSHOT_TIMEOUT_MS,
     );
     try {
-      const query = `attempt=${attempt}&retry=${retry}`;
+      const query = `attempt=${attempt}&retry=${retry}&at=${Date.now()}`;
       const readSnapshot = async () => {
         const response = await fetchWithDeadline(
           `/data/leaderboard.json?${query}`,
@@ -81,7 +85,25 @@ async function loadSnapshot(
         );
         if (!response.ok)
           throw new Error(`snapshot returned ${response.status}`);
-        return readBoundedJson(response, MAX_LEADERBOARD_BYTES, "snapshot");
+        const bytes = await readLeaderboardBytes(
+          await readBoundedBytes(response, MAX_LEADERBOARD_BYTES, "snapshot"),
+          async (path) => {
+            const part = await fetchWithDeadline(path, {
+              signal: requestSignal,
+              cache: "no-store",
+            });
+            if (!part.ok)
+              throw new Error(`snapshot part returned ${part.status}`);
+            return readBoundedBytes(
+              part,
+              MAX_LEADERBOARD_PART_BYTES,
+              "snapshot part",
+            );
+          },
+        );
+        return JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        );
       };
       const [value, cycleIndex]: [unknown, CycleIndex] = await Promise.all([
         readSnapshot(),

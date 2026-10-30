@@ -238,10 +238,8 @@ snapshot adapter as pull-request CI:
   set -euo pipefail
   ledger_file="$(mktemp)"
   trap 'rm -f "$ledger_file"' EXIT
-  curl --fail --silent --show-error \
-    --proto '=https' --tlsv1.2 \
-    --connect-timeout 10 --max-time 60 --max-filesize 26214400 \
-    --output "$ledger_file" https://slop.cash/data/leaderboard.json
+  bun scripts/download-leaderboard.ts \
+    https://slop.cash/data/leaderboard.json "$ledger_file"
   test -s "$ledger_file"
   bun scripts/prepare-pr-ledger.ts "$ledger_file" public/data/leaderboard.json
 )
