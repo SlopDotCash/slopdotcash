@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { AcquisitionRefusal, acquireRepository } from "./acquire";
+import { inspectRepository, readAcquiredSource } from "./bounded-scan";
 
 let root: string;
 let repository: string;
@@ -227,6 +229,129 @@ test("fetches the exact commit and stores inert objects without checkout, hooks,
   expect(await leftovers()).toEqual([basename(acquired.directory)]);
   expect(await readdir(root)).not.toContain("executed");
   await rm(acquired.directory, { recursive: true, force: true });
+});
+
+test("same-commit file links retain alias coverage and provenance; unsafe targets stay gaps", async () => {
+  const source = join(root, "links");
+  await mkdir(join(source, "docs"), { recursive: true });
+  git(source, "init", "-q");
+  const rules = "Example API documentation: post API token with consent.\n";
+  await writeFile(join(source, "AGENTS.md"), rules);
+  await writeFile(join(source, "docs", "rules.txt"), rules);
+  git(source, "add", ".");
+  const link = async (path: string, target: string) => {
+    const file = join(root, "link-target");
+    await writeFile(file, target);
+    const oid = git(source, "hash-object", "-w", file);
+    git(
+      source,
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `120000,${oid},${path}`,
+    );
+  };
+  await link("CLAUDE.md", "AGENTS.md");
+  await link("docs/CLAUDE.md", "../AGENTS.md");
+  await link("README.md", "docs/rules.txt");
+  await link("chain.md", "CLAUDE.md");
+  const acquire = async (sha: string) =>
+    acquireRepository({
+      repository: "fixture/links",
+      commitSha: sha,
+      directory: output,
+      testRemote: `file://${source}`,
+    });
+  const first = await acquire(commit(source, "Safe same-commit file aliases"));
+  const original = await readAcquiredSource(first.directory);
+  expect(original.acquisitionGaps).not.toContain("symbolic-link-not-followed");
+  for (const [path, target] of [
+    ["CLAUDE.md", "AGENTS.md"],
+    ["docs/CLAUDE.md", "AGENTS.md"],
+    ["README.md", "docs/rules.txt"],
+    ["chain.md", "AGENTS.md"],
+  ]) {
+    const alias = original.files.find((file) => file.path === path);
+    expect(new TextDecoder().decode(alias?.bytes)).toBe(rules);
+    expect(alias?.symlink?.resolvedPath).toBe(target);
+  }
+  const inspected = inspectRepository(original);
+  expect(inspected.findings).toContainEqual(
+    expect.objectContaining({
+      category: "prompt-injection",
+      path: "README.md",
+    }),
+  );
+  const item = JSON.parse(
+    new TextDecoder().decode(inspected.inventory),
+  ).items.find(
+    (entry: { id: string }) => entry.id === "/slop-scan/symlink/CLAUDE.md",
+  );
+  expect(JSON.parse(item.text)).toMatchObject({
+    path: "CLAUDE.md",
+    target: "AGENTS.md",
+    sha256: sha256(Buffer.from("AGENTS.md")),
+    resolvedPath: "AGENTS.md",
+    targetSha256: sha256(Buffer.from(rules)),
+  });
+  expect(item.sha256).toBe(sha256(Buffer.from(item.text)));
+  // Same alias content with a different resolution path must not reuse a scan.
+  await link("CLAUDE.md", "docs/rules.txt");
+  const second = await acquire(commit(source, "Change alias topology only"));
+  const changed = await readAcquiredSource(second.directory);
+  expect(changed.files.map((file) => [file.path, sha256(file.bytes)])).toEqual(
+    original.files.map((file) => [file.path, sha256(file.bytes)]),
+  );
+  expect(inspectRepository(changed).inventorySha256).not.toBe(
+    inspected.inventorySha256,
+  );
+  for (const [path, target] of [
+    ["absolute", join(root, "outside-secret")],
+    ["escape", "../outside-secret"],
+    ["missing", "absent.md"],
+    ["cycle-a", "cycle-b"],
+    ["cycle-b", "cycle-a"],
+    ["directory", "docs"],
+    ["through-directory-link", "directory/rules.txt"],
+    ["gitlink", "submodule"],
+    ["backslash", "docs\\rules.txt"],
+    ["drive", "C:/rules.txt"],
+    ["file-parent", "AGENTS.md/../AGENTS.md"],
+  ])
+    await link(path, target);
+  git(
+    source,
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `160000,${"1".repeat(40)},submodule`,
+  );
+  const third = await acquire(
+    commit(source, "Unsafe targets remain unacquired"),
+  );
+  const unsafe = await readAcquiredSource(third.directory);
+  expect(unsafe.acquisitionGaps).toContain("symbolic-link-not-followed");
+  expect(
+    unsafe.files.filter((file) => file.symlink).map((file) => file.path),
+  ).toEqual(["CLAUDE.md", "README.md", "chain.md", "docs/CLAUDE.md"]);
+  // All source paths remain metadata. There is never a filesystem alias.
+  expect((await readdir(third.directory)).sort()).toEqual([
+    "inventory.json",
+    "objects",
+  ]);
+  const alias = changed.files.find((file) => file.path === "CLAUDE.md");
+  const rawLink = join(
+    second.directory,
+    "objects",
+    alias?.symlink?.sha256 ?? "",
+  );
+  await chmod(rawLink, 0o600);
+  await writeFile(rawLink, "changed-link");
+  await expect(readAcquiredSource(second.directory)).rejects.toThrow(
+    "Acquired object bytes changed",
+  );
+  for (const acquired of [first, second, third])
+    await rm(acquired.directory, { recursive: true, force: true });
 });
 
 test("a repository beyond the former 1,024-entry, 8 MiB-file and 64 MiB limits is acquired completely", async () => {

@@ -32,6 +32,11 @@ Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
 `prompt-injection`. The deterministic rules in `bounded-scan.ts` are
 indicators, never confirmations. A match marks the check `flagged`.
+Textual instruction-override and secret-transmission matches are medium-severity
+indicators that require independent contextual specialist review. API documentation
+and injection-defense tests can contain that wording without directing an attack.
+The matches remain in the report; incomplete reviews and high or critical findings
+still block clearance.
 
 The flow for one queued assessment:
 
@@ -106,6 +111,11 @@ Model coverage describes the bounded static review of the supplied evidence,
 not a full runtime audit. Reviewers must preserve concrete visibility gaps and
 findings. Missing runtime execution alone does not make a completed static
 review partial. The primary and synthesis prompt revisions record this scope.
+Findings must identify a concrete defined threat or missing required evidence,
+not merely describe a permitted feature. The prompts supply the approved
+canonical-template commit policy as trusted context; they do not grant trust
+to template contents or excuse hidden behavior, consent bypasses, wrong
+origins, or byte mismatches.
 
 A completed incomplete assessment is not pending work. After correcting its
 cause, an administrator can queue a fresh scan from the project's security
