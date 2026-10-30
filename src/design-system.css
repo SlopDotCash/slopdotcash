@@ -16,7 +16,7 @@ body {
   min-height: 100dvh;
 }
 
-#root > .skip-target {
+#root > .app-content {
   flex: 1;
 }
 
@@ -28,29 +28,6 @@ body {
 ::selection {
   background: var(--orange);
   color: var(--on-accent);
-}
-
-/* Keyboard users jump past the header; the link is visible only while focused. */
-.skip-link {
-  position: absolute;
-  left: 16px;
-  top: 8px;
-  z-index: 100;
-  padding: 10px 16px;
-  background: var(--orange);
-  color: var(--on-accent);
-  border-radius: 8px;
-  font-weight: 600;
-  transform: translateY(-200%);
-}
-
-.skip-link:focus-visible {
-  transform: none;
-  outline-color: var(--on-accent);
-}
-
-.skip-target:focus {
-  outline: 0;
 }
 
 button:focus-visible,
