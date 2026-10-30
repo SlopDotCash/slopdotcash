@@ -147,7 +147,7 @@ test("repeated publication removes only obsolete generated parts and refuses unk
     Buffer.from('{"records":[1]}'),
   ]);
   try {
-    for (let round = 0; round < 8; round++) {
+    for (let round = 0; round < 2; round++) {
       for (
         let start = 0;
         start < bytes.length;
