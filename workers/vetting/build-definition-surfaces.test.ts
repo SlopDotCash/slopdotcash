@@ -16,7 +16,13 @@ test("a build definition of a recognized build system is an install surface", ()
   for (const path of [
     "Makefile.in",
     "GNUmakefile.in",
+    "Makefile.inc",
     "configure.ac",
+    "configure.in",
+    "m4/ax_check.m4",
+    "build.xml",
+    "build.ninja",
+    "Tupfile",
     "build.sbt",
     "project/plugins.sbt",
     "build.boot",
@@ -27,6 +33,7 @@ test("a build definition of a recognized build system is an install surface", ()
     "tools/defs.bzl",
     "wscript_build",
     "docker-bake.hcl",
+    "ci/bake.hcl",
   ]) {
     const inspection = inspected(path, `${PAYLOAD}\n`);
     expect({ path, surfaces: surfacesOf(path) }).toEqual({
@@ -43,6 +50,54 @@ test("a build definition of a recognized build system is an install surface", ()
         (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
       ),
     }).toEqual({ path, findings: [`${path}:unsafe-execution:high`] });
+  }
+});
+
+test("included Ninja and Tup commands are reviewed and invalidate reuse", () => {
+  for (const definition of [
+    {
+      entry: "build.ninja",
+      entryText: "include rules.ninja\nbuild artifact: fetch\n",
+      included: "rules.ninja",
+      safe: "rule fetch\n  command = echo safe\n",
+      unsafe: `rule fetch\n  command = ${PAYLOAD}\n`,
+    },
+    {
+      entry: "Tupfile",
+      entryText: "include_rules\n: |> !fetch |> artifact\n",
+      included: "Tuprules.tup",
+      safe: "!fetch = |> echo safe |>\n",
+      unsafe: `!fetch = |> ${PAYLOAD} |>\n`,
+    },
+  ]) {
+    const scan = (text: string) =>
+      inspectRepository({
+        files: [
+          {
+            path: definition.entry,
+            bytes: new TextEncoder().encode(definition.entryText),
+          },
+          {
+            path: definition.included,
+            bytes: new TextEncoder().encode(text),
+          },
+        ],
+      });
+    const before = scan(definition.safe);
+    const after = scan(definition.unsafe);
+    expect(after.coverage.installScripts).toEqual({
+      state: "complete",
+      items: 2,
+    });
+    expect(after.findings).toContainEqual(
+      expect.objectContaining({
+        path: definition.included,
+        category: "unsafe-execution",
+        severity: "high",
+      }),
+    );
+    expect(after.downloads).toContain("https://evil.example/install.sh");
+    expect(after.inventorySha256).not.toBe(before.inventorySha256);
   }
 });
 
