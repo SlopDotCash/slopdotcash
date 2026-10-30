@@ -297,7 +297,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern:
-      /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s/iu,
+      /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:\S*\/)?(?:env\s+)?(?:ba|da|k|a|z|fi)?sh\b|\b(?:ba|da|k|a|z|fi)?sh\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s/iu,
     summary: "Pipes a remote download straight into a shell",
   },
   {
