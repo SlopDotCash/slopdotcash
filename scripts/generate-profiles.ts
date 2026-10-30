@@ -7,7 +7,6 @@ import {
   type ProfileIndex,
   type ProfileRecord,
 } from "../src/lib/profiles";
-import { isHistoricalRepositoryId } from "../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import { GitHubGraphqlClient } from "./generate-leaderboard";
 import type { ConnectionPage } from "./github-pagination";
@@ -16,6 +15,7 @@ import {
   type CensusRequest,
   collectProfileIssues,
 } from "./profile-issue-census";
+import { assertRetainedProfiles } from "./published-profiles";
 
 type PullRequestPage = {
   repository: {
@@ -52,19 +52,6 @@ async function publish(path: string, value: ProfileIndex) {
   await writeFile(`${path}.tmp`, `${JSON.stringify(value)}\n`);
   await rename(`${path}.tmp`, path);
 }
-/** Validate retained census bytes against their own recorded, registered inventory. */
-function assertRetainedProfiles(value: ProfileIndex) {
-  const inventory = Array.isArray(value?.repositories)
-    ? value.repositories.map((row) => row.repository)
-    : [];
-  if (!inventory.every((id) => isHistoricalRepositoryId(id)))
-    throw Error("Retained census names an unregistered repository");
-  const collected = Array.isArray(value?.issues?.repositories)
-    ? value.issues.repositories.map((row) => row.repository)
-    : inventory;
-  assertProfiles(value, collected);
-}
-
 if (values.live) {
   const token = await resolveGitHubToken();
   if (!values.previous)
