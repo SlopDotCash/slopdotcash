@@ -264,6 +264,8 @@ function commandToken(name: string): string {
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
+/** A decode stage between the payload and the shell that finally runs it. */
+const DECODER_COMMAND = String.raw`(?:base64\s+(?:-d|--decode)|openssl\s+enc(?:\s+-d)?|gunzip|zcat|unxz|xz\s+(?:-d|--decompress)|bzip2\s+-d)`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -316,10 +318,10 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${DECODER_COMMAND}[^\n|]{0,40}?\|\s*)?(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*${DECODER_COMMAND}[^)]{0,60}|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
-    summary: "Runs a remote download in a shell",
+    summary: "Runs a downloaded or decoded payload in a shell",
   },
   {
     threat: "unsafe-execution",
