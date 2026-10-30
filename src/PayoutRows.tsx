@@ -86,7 +86,8 @@ export function PayoutRow({
 }: {
   chain: PaymentChain;
   network: string;
-  projectId: string;
+  /** Absent for a payout that no project funds. */
+  projectId?: string;
   amount: ReactNode;
   /** Muted context beside the amount, such as the award month. */
   note?: string;
@@ -105,8 +106,15 @@ export function PayoutRow({
       <span className="payout-main">
         {amount}
         <small>
-          <a href={`/projects/${encodeURIComponent(projectId)}`}>{projectId}</a>{" "}
-          · {networkLabel(network)}
+          {projectId ? (
+            <>
+              <a href={`/projects/${encodeURIComponent(projectId)}`}>
+                {projectId}
+              </a>{" "}
+              ·{" "}
+            </>
+          ) : null}
+          {networkLabel(network)}
           {note ? ` · ${note}` : ""}
         </small>
       </span>
