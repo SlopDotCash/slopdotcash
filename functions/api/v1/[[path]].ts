@@ -488,6 +488,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (emailPreferencesResponse !== null) return emailPreferencesResponse;
   const notificationsResponse = await handleNotificationsApi(request, {
     moderatorGithubIds,
+    adminGithubIds,
+    repositoryAccess,
     db,
     sessionActor,
     now,

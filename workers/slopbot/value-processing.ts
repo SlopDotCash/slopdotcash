@@ -160,8 +160,8 @@ export async function finishValueRequest(
   const row = await db
     .prepare(
       `INSERT INTO slopbot_value_processing
-       (delivery_id,claim_token,lease_until,state,outcome,retry_at,updated_at,attempts)
-       SELECT r.delivery_id,?2,?7,?4,?5,?6,?7,?8
+       (delivery_id,claim_token,lease_until,state,outcome,retry_at,updated_at,attempts,incomplete_since)
+       SELECT r.delivery_id,?2,?7,?4,?5,?6,?7,?8,?10
        FROM slopbot_value_processing owner
        JOIN slopbot_value_requests claimed ON claimed.delivery_id=owner.delivery_id
        JOIN slopbot_value_requests r ON r.repository_id=claimed.repository_id
@@ -180,6 +180,8 @@ export async function finishValueRequest(
          attempts=CASE WHEN slopbot_value_processing.delivery_id=?1 AND ?9=1
            THEN slopbot_value_processing.attempts+1
            ELSE slopbot_value_processing.attempts END,
+         incomplete_since=CASE WHEN ?11=1 THEN NULL
+           ELSE COALESCE(slopbot_value_processing.incomplete_since,excluded.incomplete_since) END,
          updated_at=excluded.updated_at
        WHERE slopbot_value_processing.delivery_id=?1
           OR slopbot_value_processing.state='waiting'
@@ -195,6 +197,8 @@ export async function finishValueRequest(
       at.toISOString(),
       0,
       blocked ? 1 : 0,
+      outcome === "source-incomplete" ? at.toISOString() : null,
+      complete && outcome !== "attempts-exhausted" ? 1 : 0,
     )
     .first();
   if (!row) throw new Error("Value request lease is no longer owned");

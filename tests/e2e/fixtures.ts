@@ -191,7 +191,7 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
         allowCanceledBackgroundReads: () =>
           allowed.push(
             new RegExp(
-              `^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET ${escapeRegExp(origin)}/api/v1/(?:project-session|notifications(?:/email)?|project-vaults/[^ /?]+|points/[^ ?]+|payments/[^ ?]+)(?:\\?[^ ]*)?$`,
+              `^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET ${escapeRegExp(origin)}/api/v1/(?:project-session|notifications(?:/(?:email|incomplete-assessments))?|project-vaults/[^ /?]+|points/[^ ?]+|payments/[^ ?]+)(?:\\?[^ ]*)?$`,
               "u",
             ),
           ),

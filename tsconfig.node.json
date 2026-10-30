@@ -57,6 +57,7 @@
     "src/lib/contributor-allocation.ts",
     "src/lib/use-payout-wallets.ts",
     "src/lib/notifications.ts",
+    "src/lib/incomplete-assessments.ts",
     "src/lib/github-actor.ts",
     "src/lib/github-work.ts",
     "src/lib/github-ids.ts",
