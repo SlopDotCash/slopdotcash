@@ -171,7 +171,9 @@ send or an expired in-flight claim is `ambiguous`; neither is resent. A backup
 notice is queued for a failed delivery or a missed acknowledgment, using the
 program's existing `responseTargets.acknowledgeHours`. Backups are not escalated
 recursively. A missing or unauthorized backup remains an operator readiness
-gap, not a successful escalation.
+gap, not a successful escalation. If GitHub cannot confirm the backup's current
+repository authority, no backup notice is created. The failed notice stays
+eligible for the next escalation scan, and unrelated queued deliveries continue.
 
 Private operator service routes (no public routes or `workers.dev` endpoint):
 
