@@ -101,6 +101,7 @@ function planned(evidence: string, items: number): PlannedCall {
 function tier(id: string, risky: Set<string>): number {
   if (
     id === DETERMINISTIC_COVERAGE_ID ||
+    id.startsWith("/slop-scan/symlink/") ||
     id.startsWith("execution:") ||
     id.startsWith("slop-skill-template/")
   )
