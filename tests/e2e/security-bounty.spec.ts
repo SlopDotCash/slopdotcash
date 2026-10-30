@@ -3468,6 +3468,145 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
     });
   }
 
+  await test.step("a refused saved forward keeps its retry controls and can reauthorize", async () => {
+    const submission = await authorized();
+    const before = await advisoryCount();
+    const faultUrl = `${GITHUB_FIXTURE}/__fixture/advisories/create/`;
+    expect((await request.put(`${faultUrl}403`)).status()).toBe(204);
+    let revision = submission.revision;
+    for (let attempt = 1; attempt < 3; attempt++) {
+      const failed = await intakeApi(
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        { expectedRevision: revision },
+      );
+      expect(failed.body.submission).toMatchObject({
+        state: "failed",
+        failureCode: "forbidden",
+        attempt,
+      });
+      revision = (failed.body.submission as { revision: number }).revision;
+    }
+    const context = await browser.newContext({
+      viewport: test.info().project.use.viewport,
+      recordVideo: { dir: test.info().outputPath("forward-recovery-video") },
+    });
+    const page = await context.newPage();
+    try {
+      await context.addCookies(
+        [...jar].map(([name, value]) => ({
+          name,
+          value,
+          domain: "127.0.0.1",
+          path: name === COOKIE ? "/" : "/api/v1/security-submissions",
+          secure: true,
+          httpOnly: name !== COOKIE,
+          sameSite: "Strict" as const,
+        })),
+      );
+      await page.goto(`/inbox?view=reports&submission=${submission.id}`, {
+        waitUntil: "networkidle",
+      });
+      const card = page.locator(
+        `[aria-labelledby="submission-${submission.id}"]`,
+      );
+      await card
+        .getByText("Retry private GitHub delivery", { exact: true })
+        .click();
+      const send = () =>
+        card.getByRole("button", {
+          name: "Send saved report to GitHub",
+          exact: true,
+        });
+      const sent = page.waitForResponse((response) =>
+        response.url().endsWith(`/security-submissions/${submission.id}/send`),
+      );
+      await send().click();
+      expect((await (await sent).json()).submission).toMatchObject({
+        state: "failed",
+        failureCode: "forbidden",
+        attempt: 3,
+      });
+      await expect(send()).toBeVisible();
+      await expect(
+        card.getByRole("textbox", { name: "Summary", exact: true }),
+      ).toHaveCount(0);
+      await expectAccessible(page);
+      await page.screenshot({
+        path: test.info().outputPath("failed-forward-retry.png"),
+        fullPage: true,
+      });
+      expect(await advisoryCount()).toBe(before);
+
+      // Fresh consent is a real round trip through the local OAuth adapter.
+      const authorization = page.waitForRequest(
+        (request) =>
+          new URL(request.url()).pathname === "/login/oauth/authorize",
+      );
+      await card
+        .getByRole("button", {
+          name: "Authorize private GitHub delivery",
+          exact: true,
+        })
+        .click();
+      await authorization;
+      await expect(page).toHaveURL(
+        new RegExp(`/security\\?submission=${submission.id}$`, "u"),
+      );
+      const returned = page.locator(
+        `[aria-labelledby="submission-${submission.id}"]`,
+      );
+      await returned
+        .getByText("Retry private GitHub delivery", { exact: true })
+        .click();
+      expect((await request.put(`${faultUrl}ok`)).status()).toBe(204);
+      const completed = page.waitForResponse((response) =>
+        response.url().endsWith(`/security-submissions/${submission.id}/send`),
+      );
+      await returned
+        .getByRole("button", {
+          name: "Send saved report to GitHub",
+          exact: true,
+        })
+        .click();
+      const receipt = (await (await completed).json()).submission;
+      expect(receipt).toMatchObject({
+        state: "receipt-verified",
+        attempt: 4,
+        caseId: submission.caseId,
+      });
+      await expect(
+        returned.getByRole("link", {
+          name: receipt.advisory.ghsa,
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        returned.getByRole("textbox", { name: "Summary", exact: true }),
+      ).toHaveCount(0);
+      await expectAccessible(page);
+      await page.screenshot({
+        path: test.info().outputPath("forward-receipt-verified.png"),
+        fullPage: true,
+      });
+      expect(await advisoryCount()).toBe(before + 1);
+      const retained = await api(
+        request,
+        "GET",
+        `security-submissions/${submission.id}`,
+        reporterToken,
+      );
+      expect(retained.body.report).toMatchObject(report);
+      expect(retained.body.submission).toMatchObject({
+        caseId: submission.caseId,
+        state: "receipt-verified",
+      });
+    } finally {
+      expect((await request.put(`${faultUrl}ok`)).status()).toBe(204);
+      await context.close();
+    }
+  });
+
   await test.step("a project without paid terms accepts a private report", async () => {
     const context = await browser.newContext({
       viewport: test.info().project.use.viewport,
