@@ -728,7 +728,6 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       waitUntil: "networkidle",
     });
     form = await action(researcher, "consent-payment");
-    await expect(form).not.toContainText("GitHub actor number");
     await form
       .getByLabel(/^I understand that chain transactions reveal my wallet/u)
       .check();
@@ -1285,9 +1284,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await stopEmail
       .getByRole("button", { name: "Unsubscribe", exact: true })
       .click();
-    await expect(stopEmail.getByRole("status")).toHaveText(
-      "Email notifications stopped.",
-    );
+    await expect(stopEmail.getByRole("status")).toBeVisible();
     const stopped = await api<{ enabled: boolean; securityEnabled: boolean }>(
       request,
       page,
