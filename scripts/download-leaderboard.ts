@@ -16,6 +16,12 @@ type DownloadOptions = {
   retryDelayMs?: number;
 };
 
+class PublishedLeaderboardReadError extends Error {
+  constructor(readonly status: number) {
+    super(`Published leaderboard returned ${status}`);
+  }
+}
+
 export async function downloadLeaderboard(
   source: string,
   output: string,
@@ -49,7 +55,7 @@ export async function downloadLeaderboard(
         });
         if (!response.ok) {
           await response.body?.cancel();
-          throw new Error(`Published leaderboard returned ${response.status}`);
+          throw new PublishedLeaderboardReadError(response.status);
         }
         return await readBoundedBytes(response, maximum, "leaderboard");
       } catch (error) {
@@ -70,15 +76,40 @@ export async function downloadLeaderboard(
       });
     }
   };
-  const bytes = await readLeaderboardBytes(
-    await read(root, MAX_LEADERBOARD_BYTES),
-    async (path: string) => {
-      const part = new URL(path, root);
-      if (part.origin !== root.origin)
-        throw new Error("Leaderboard part changed origin");
-      return read(part, MAX_LEADERBOARD_PART_BYTES);
-    },
-  );
+  const snapshot = async (): Promise<Uint8Array> => {
+    let manifest = await read(root, MAX_LEADERBOARD_BYTES);
+    for (let restart = 0; ; restart++) {
+      let missingPart = false;
+      try {
+        return await readLeaderboardBytes(manifest, async (path: string) => {
+          const part = new URL(path, root);
+          if (part.origin !== root.origin)
+            throw new Error("Leaderboard part changed origin");
+          try {
+            return await read(part, MAX_LEADERBOARD_PART_BYTES);
+          } catch (error) {
+            missingPart =
+              error instanceof PublishedLeaderboardReadError &&
+              error.status === 404;
+            throw error;
+          }
+        });
+      } catch (error) {
+        if (!missingPart || restart === 1 || total.aborted) throw error;
+        // A deployment removes the old parts. Restart only from a changed
+        // index; never mix deployments or retry a digest/format failure.
+        root.searchParams.set("snapshot", randomUUID());
+        const current = await read(root, MAX_LEADERBOARD_BYTES);
+        if (
+          current.length === manifest.length &&
+          current.every((byte, index) => byte === manifest[index])
+        )
+          throw error;
+        manifest = current;
+      }
+    }
+  };
+  const bytes = await snapshot();
   // Keep exact reconstructed bytes: Points and monthly bases hash this source.
   const target = resolve(output);
   await mkdir(dirname(target), { recursive: true });
