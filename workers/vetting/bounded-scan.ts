@@ -174,12 +174,17 @@ const INSTALL_FILES = new Set([
 /**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
  * `app.dockerfile`, or by a build-system definition extension, such as
- * `Helper.cmake`, `plugins.sbt` or `defs.bzl`. They run commands at build
- * time, so they are install surfaces like a Makefile, never unreviewed
- * content.
+ * `Helper.cmake`, `plugins.sbt`, `defs.bzl` or `binding.gyp`. They run
+ * commands at build time, so they are install surfaces like a Makefile,
+ * never unreviewed content.
  */
-const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja)$/u;
+const GYP_EXTENSION = "gyp|gypi";
+const BUILD_RECIPE = new RegExp(
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${GYP_EXTENSION})$`,
+  "u",
+);
+/** node-gyp loads these directly; other names are install scripts only via `includes`. */
+const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -575,6 +580,82 @@ export type RepositoryInspection = {
   riskSignals: string[];
 };
 
+/** Quoted paths inside every GYP `includes` array. Not prose that merely says "includes". */
+function gypIncludeSpecifiers(text: string): string[] {
+  const specifiers: string[] = [];
+  for (const match of text.matchAll(
+    /(?:^|[{,])\s*['"]includes['"]\s*:\s*\[([^\]]*)\]/gu,
+  )) {
+    const body = match[1] ?? "";
+    for (const entry of body.matchAll(/['"]([^'"]+)['"]/gu)) {
+      const specifier = entry[1];
+      if (specifier) specifiers.push(specifier);
+    }
+  }
+  return specifiers;
+}
+
+/**
+ * A GYP include is relative to the file that names it. Absolute paths, URLs
+ * and paths that leave the repository are not acquired files.
+ */
+function resolveGypInclude(fromFile: string, specifier: string): string | null {
+  const include = specifier.replaceAll("\\", "/").trim();
+  if (
+    include === "" ||
+    include.startsWith("/") ||
+    include.includes(":") ||
+    include.includes("\0") ||
+    /[<>|?*]/u.test(include)
+  )
+    return null;
+  const directory = fromFile.includes("/")
+    ? fromFile.slice(0, fromFile.lastIndexOf("/") + 1)
+    : "";
+  const normalized: string[] = [];
+  for (const part of `${directory}${include}`.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (normalized.length === 0) return null;
+      normalized.pop();
+      continue;
+    }
+    normalized.push(part);
+  }
+  return normalized.length === 0 ? null : normalized.join("/");
+}
+
+/**
+ * Files a `.gyp` or `.gypi` loads through `includes`, including nested
+ * includes. node-gyp runs command expansions in those files at install even
+ * when the name is not itself a GYP source.
+ */
+function gypIncludedPaths(files: ScanInputFile[]): Set<string> {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const included = new Set<string>();
+  const seen = new Set<string>();
+  const queue = files
+    .filter((file) => GYP_SOURCE.test(file.path))
+    .map((file) => file.path);
+  while (queue.length > 0) {
+    const path = queue.pop();
+    if (path === undefined || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    for (const specifier of gypIncludeSpecifiers(text)) {
+      const resolved = resolveGypInclude(path, specifier);
+      if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
+        continue;
+      included.add(resolved);
+      queue.push(resolved);
+    }
+  }
+  return included;
+}
+
 /**
  * Inspects one revision's acquired files. Pure and deterministic: the same
  * bytes, surface classifications and rules produce the same inventory digest, so an
@@ -609,12 +690,19 @@ export function inspectRepository(input: {
   const candidates: Candidate[] = [];
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
   const downloads = new Set<string>();
+  const gypIncludes = gypIncludedPaths(files);
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
+    // Recorded before later content checks so the reuse identity names this
+    // surface. A GYP include keeps whatever other surfaces it already has.
+    if (gypIncludes.has(file.path)) {
+      if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
+      if (!surfaces.includes("source")) surfaces.push("source");
+    }
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
