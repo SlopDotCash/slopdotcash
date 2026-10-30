@@ -148,6 +148,12 @@ const INSTALL_FILES = new Set([
   "workspace.bazel",
   "docker-bake.hcl",
   "docker-bake.override.hcl",
+  "makefile.inc",
+  "configure.in",
+  "build.xml",
+  "build.ninja",
+  "tupfile",
+  "tuprules.tup",
 ]);
 /**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
@@ -157,7 +163,7 @@ const INSTALL_FILES = new Set([
  * content.
  */
 const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel)$/u;
+  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja)$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
