@@ -1,10 +1,14 @@
 import type { APIRequestContext, APIResponse } from "@playwright/test";
+import {
+  assertLeaderboardSnapshot,
+  type LeaderboardSnapshot,
+} from "../../src/lib/leaderboard";
 import { readLeaderboardBytes } from "../../src/lib/leaderboard-transport.mjs";
 
 export async function readLeaderboardResponse(
   response: APIResponse,
   request: APIRequestContext,
-): Promise<unknown> {
+): Promise<LeaderboardSnapshot> {
   const bytes = await readLeaderboardBytes(
     await response.body(),
     async (path) => {
@@ -14,5 +18,9 @@ export async function readLeaderboardResponse(
       return part.body();
     },
   );
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  const snapshot: unknown = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+  );
+  assertLeaderboardSnapshot(snapshot);
+  return snapshot;
 }
