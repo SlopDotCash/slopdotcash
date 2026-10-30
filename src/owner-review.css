@@ -246,3 +246,42 @@
   border-radius: 12px;
   object-fit: cover;
 }
+
+.security-program-editor .setup-choice {
+  padding: 0;
+  border: 0;
+}
+.security-program-editor .setup-choice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.security-program-editor .setup-choice-options label {
+  position: relative;
+  flex: 1 1 auto;
+  cursor: pointer;
+}
+.security-program-editor .setup-choice-options input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.security-program-editor .setup-choice-options span {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.security-program-editor .setup-choice-options input:checked + span {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 12%, var(--surface));
+}
+.security-program-editor .setup-choice-options input:focus-visible + span {
+  outline: 2px solid var(--orange);
+  outline-offset: 3px;
+}

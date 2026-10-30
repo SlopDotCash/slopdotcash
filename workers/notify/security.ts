@@ -1,3 +1,7 @@
+import {
+  enrolledDestination,
+  issueEmailUnsubscribeToken,
+} from "../../backend/notifications/email-destinations";
 import type { RepositoryAccessReader } from "../../backend/projects/setup";
 /** SEC-16 restricted pilot. No public route, caller-supplied destination or case content. */
 
@@ -7,7 +11,11 @@ import {
 } from "../../backend/security/handler";
 import { reportingAuthorityUnavailable } from "../../backend/security/project-access";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import { EMAIL_ADDRESS, SENDER_ADDRESS } from "./contracts";
+import {
+  EMAIL_ADDRESS,
+  retryableEmailRejection,
+  SENDER_ADDRESS,
+} from "./contracts";
 import { encodeQuotedPrintable } from "./handler";
 
 type Destination = {
@@ -24,6 +32,8 @@ export type SecurityMailConfig = {
 export type SecurityMailDependencies = {
   db: SecurityD1Database;
   config: SecurityMailConfig;
+  generalEmail?: boolean;
+  unsubscribeKey?: string;
   /** Slop moderators, who decide escalated private-case disputes. */
   moderatorGithubIds?: ReadonlySet<string>;
   repositoryAccess?: RepositoryAccessReader;
@@ -41,6 +51,7 @@ type Delivery = {
   state: string;
   attempts: number;
   destination_digest: string | null;
+  destination_version: string | null;
   created_at: string;
   acknowledged_at: string | null;
   escalation_of: string | null;
@@ -165,6 +176,7 @@ export function inboxNoticeMime(notice: {
   deliveryId: string;
   attempt: number;
   text: string;
+  unsubscribeUrl?: string;
 }): string {
   return [
     `From: ${notice.from}`,
@@ -172,6 +184,12 @@ export function inboxNoticeMime(notice: {
     `Subject: ${notice.subject}`,
     `Date: ${notice.date.toUTCString()}`,
     `Message-ID: <slop-notice-${notice.deliveryId}-${notice.attempt}@slop.cash>`,
+    ...(notice.unsubscribeUrl
+      ? [
+          `List-Unsubscribe: <${notice.unsubscribeUrl}>`,
+          "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+        ]
+      : []),
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=utf-8",
     "Content-Transfer-Encoding: quoted-printable",
@@ -203,10 +221,11 @@ export async function recordDelivery(
 }
 
 /**
- * A claimed attempt that made no provider call is a definite non-send, so a
- * retry cannot duplicate mail. Backoff doubles from one minute, and the fifth
- * attempt exhausts. A thrown send is never routed here: it stays ambiguous
- * until independent evidence reconciles it.
+ * A claimed attempt with definite non-delivery can retry without duplicating
+ * mail: either no provider call occurred or the provider rejected it for a
+ * documented quota error. Backoff doubles from one minute and the fifth
+ * attempt exhausts. All other thrown sends remain ambiguous until evidence
+ * reconciles them.
  */
 export async function retryWithoutProviderCall(
   deps: Pick<SecurityMailDependencies, "db" | "now">,
@@ -237,6 +256,7 @@ function mime(
   deps: SecurityMailDependencies,
   row: Delivery,
   email: string,
+  unsubscribeToken?: string,
 ): string {
   return inboxNoticeMime({
     from: deps.fromAddress,
@@ -245,10 +265,18 @@ function mime(
     date: deps.now(),
     deliveryId: row.id,
     attempt: row.attempts + 1,
+    ...(unsubscribeToken
+      ? {
+          unsubscribeUrl: `${new URL(deps.config.inboxUrl).origin}/api/v1/notifications/email/unsubscribe?token=${unsubscribeToken}`,
+        }
+      : {}),
     text:
-      row.template_version === RECEIPT_TEMPLATE
+      (row.template_version === RECEIPT_TEMPLATE
         ? `Your private Slop inbox has a new notice.\n\nSign in: ${deps.config.inboxUrl}\n\nDo not reply with evidence, approvals or payment details.\n`
-        : `Your private Slop inbox needs attention.\n\nSign in: ${deps.config.inboxUrl}\n\nAcknowledge the notice in Slop. Do not reply with evidence, approvals or payment details.\n`,
+        : `Your private Slop inbox needs attention.\n\nSign in: ${deps.config.inboxUrl}\n\nAcknowledge the notice in Slop. Do not reply with evidence, approvals or payment details.\n`) +
+      (unsubscribeToken
+        ? `\nStop email notifications: ${deps.config.inboxUrl}#unsubscribe-email=${unsubscribeToken}\n`
+        : ""),
   });
 }
 
@@ -282,9 +310,16 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
   await deps.db.batch([
     deps.db
       .prepare(`INSERT INTO notifications(event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
-      VALUES (?, ?, 'security_case', ?, NULL, '/security', ?, ?)
+      VALUES (?, ?, 'security_case', ?, NULL, ?, ?, ?)
       ON CONFLICT(event_key, recipient_github_id) DO NOTHING`)
-      .bind(eventKey, backupId, row.case_id, at, at),
+      .bind(
+        eventKey,
+        backupId,
+        row.case_id,
+        `/security?case=${row.case_id}`,
+        at,
+        at,
+      ),
     deps.db
       .prepare(`UPDATE security_notification_outbox SET escalation_of = ?
       WHERE event_key = ? AND recipient_github_id = ? AND escalation_of IS NULL`)
@@ -324,7 +359,30 @@ export async function dispatchSecurityMail(
       await recordDelivery(deps, row, "suppressed");
       continue;
     }
-    const destination = deps.config.recipients[row.recipient_github_id];
+    const registered = deps.generalEmail
+      ? await enrolledDestination(deps.db, row.recipient_github_id)
+      : null;
+    const destination =
+      registered ?? deps.config.recipients[row.recipient_github_id];
+    const preference = await deps.db
+      .prepare(
+        "SELECT security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
+      )
+      .bind(row.recipient_github_id)
+      .first<{
+        security_enabled: number | null;
+        destination_version: string | null;
+      }>();
+    if (
+      preference?.security_enabled === 0 ||
+      (registered &&
+        (preference?.security_enabled !== 1 ||
+          preference.destination_version !== registered.destinationVersion ||
+          row.destination_version !== registered.destinationVersion))
+    ) {
+      await recordDelivery(deps, row, "suppressed");
+      continue;
+    }
     if (!destination) {
       // No operator-verified destination exists for this recipient. Nothing
       // can be sent and none will appear within the retry schedule, so the
@@ -343,15 +401,36 @@ export async function dispatchSecurityMail(
       .prepare(
         "UPDATE security_notification_outbox SET destination_digest = ? WHERE id = ?",
       )
-      .bind(await destinationDigest(destination), row.id)
+      .bind(
+        registered?.destinationVersion ??
+          (await destinationDigest(destination)),
+        row.id,
+      )
       .run();
     try {
       await deps.sendEmail(
         deps.fromAddress,
         destination.email,
-        mime(deps, row, destination.email),
+        mime(
+          deps,
+          row,
+          destination.email,
+          registered && deps.unsubscribeKey
+            ? await issueEmailUnsubscribeToken(
+                deps.db,
+                deps.unsubscribeKey,
+                registered.destinationVersion,
+                deps.now(),
+              )
+            : undefined,
+        ),
       );
-    } catch {
+    } catch (error) {
+      if (retryableEmailRejection(error)) {
+        const state = await retryWithoutProviderCall(deps, row);
+        if (state === "exhausted") await escalate(deps, row);
+        continue;
+      }
       // The binding has no definitive non-acceptance receipt. A thrown send is ambiguous.
       await recordDelivery(deps, row, "ambiguous");
       await escalate(deps, row);

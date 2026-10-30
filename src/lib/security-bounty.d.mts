@@ -1,4 +1,5 @@
 import type { EscrowChain, SecurityEscrowPolicy } from "./escrow-policy.mjs";
+import type { RewardAsset } from "./reward-asset.mjs";
 /** Types for the public terms of a private security bounty program. */
 
 export type SecurityProgramStatus =
@@ -14,8 +15,10 @@ export interface SecurityApprover {
 }
 
 export interface SecurityBountyAmount {
-  readonly currency: "USD" | "USDC";
-  readonly decimals: 2 | 6;
+  /** Exact asset identity for new offers; omitted on historical USD/USDC offers. */
+  readonly asset?: RewardAsset;
+  readonly currency: string;
+  readonly decimals: number;
   readonly network: EscrowChain | null;
   readonly grossMinor: string;
 }
@@ -27,7 +30,7 @@ export interface SecurityBountyTerms {
   readonly version: "1";
   readonly status: SecurityProgramStatus;
   readonly rewardMode: "bounty-only" | "separate";
-  readonly eligibility: "critical-loss-of-funds";
+  readonly eligibility: "critical-loss-of-funds" | "in-scope-security";
   readonly amount: SecurityBountyAmount;
   readonly split: SecurityBountySplitPolicy;
   readonly sponsor: { readonly name: string; readonly githubId: string | null };
@@ -86,7 +89,7 @@ export declare const SECURITY_SPLIT: Readonly<{
   researcherBasisPoints: 7500;
   slopBasisPoints: 2500;
 }>;
-/** 75/25 for sponsored projects; the full award only for Slop's own program. */
+/** Standard 75/25 or an admin-approved full award to the researcher. */
 export type SecurityBountySplitPolicy =
   | { readonly researcherBasisPoints: 7500; readonly slopBasisPoints: 2500 }
   | { readonly researcherBasisPoints: 10000; readonly slopBasisPoints: 0 };
@@ -96,12 +99,6 @@ export declare const SECURITY_FULL_AWARD_SPLIT: Readonly<{
 }>;
 export declare function isFullAwardSplit(
   split: { researcherBasisPoints: number; slopBasisPoints: number } | undefined,
-): boolean;
-export declare const PLATFORM_SECURITY_REPOSITORY: "SlopDotCash/slopdotcash";
-export declare const PLATFORM_SECURITY_PROJECT_ID: "slopdotcash";
-export declare function isPlatformSecurityProgram(
-  projectId: string,
-  repositories: readonly { id: string }[],
 ): boolean;
 export declare function securityBountySplit(
   grossMinor: string,
@@ -113,7 +110,11 @@ export declare function securityBountySplit(
 };
 export declare function formatSecurityAmount(
   minorUnits: string,
-  amount: Pick<SecurityBountyAmount, "currency" | "decimals">,
+  amount: {
+    currency: string;
+    decimals: number;
+    asset?: Pick<RewardAsset, "symbol">;
+  },
 ): string;
 export declare function assertSecurityBountyTerms(
   value: unknown,

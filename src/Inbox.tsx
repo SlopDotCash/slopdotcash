@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { InboxEmailAction } from "./InboxEmail";
 
 import "./private-report-design.css";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
@@ -292,6 +293,7 @@ export default function InboxPage() {
   return (
     <main className="shell route-main inbox-page">
       <RoutePageHeader icon={<Inbox />} title="Inbox" />
+      <InboxEmailAction />
       {state.status === "loading" ? (
         <p role="status">Loading your inbox…</p>
       ) : null}

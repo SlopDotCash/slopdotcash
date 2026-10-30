@@ -51,10 +51,8 @@ export interface MonthlyReview {
 }
 
 /**
- * The project's recorded monthly amount in the vault token's base units.
- * Stablecoin amounts are recorded in 6-decimal micro-units and a token amount
- * in that token's verified decimals. The vault must use that asset, not a
- * different token with the same decimals.
+ * The project's recorded monthly amount in the vault asset's base units.
+ * The vault must use that asset and its recorded decimals.
  */
 export function vaultMonthlyCap(
   project: Pick<ProjectDefinition, "reward" | "rewardAsset">,
@@ -64,10 +62,7 @@ export function vaultMonthlyCap(
   if (project.reward.kind !== "monthly-pool")
     throw new Error("This project has no monthly amount.");
   const network = ESCROW_NETWORKS[deployment.network];
-  const expectedAsset =
-    project.rewardAsset?.kind === "token"
-      ? project.rewardAsset.address
-      : network.asset;
+  const expectedAsset = project.rewardAsset?.address ?? network.asset;
   const canonical = (address: string) =>
     network.family === "evm" ? address.toLowerCase() : address;
   if (
@@ -79,8 +74,7 @@ export function vaultMonthlyCap(
     throw new Error(
       "The vault token differs from the project's reward asset. Update the reward asset in project settings first.",
     );
-  const recorded =
-    project.rewardAsset?.kind === "token" ? project.rewardAsset.decimals : 6;
+  const recorded = project.rewardAsset?.decimals ?? network.assetDecimals;
   if (vaultDecimals !== recorded)
     throw new Error(
       "The vault token's decimals differ from the project's monthly amount. Update the reward asset in project settings first.",

@@ -10,6 +10,7 @@ import {
 } from "../../contracts/solana/token-extensions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import {
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
@@ -192,6 +193,11 @@ export function rpcTokenMetadataReader(
 ): TokenMetadataReader {
   return async (network, address) => {
     const definition = REWARD_ASSET_NETWORKS[network];
+    if (isNativeAssetAddress(network, address))
+      return {
+        decimals: definition.native.decimals,
+        symbol: definition.native.symbol,
+      };
     const url = urls[network] ?? DEFAULT_REWARD_RPC_URLS[network];
     return definition.family === "evm"
       ? evmMetadata(fetcher, url, definition.chainId as string, address)
