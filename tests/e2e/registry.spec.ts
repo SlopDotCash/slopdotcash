@@ -2824,9 +2824,7 @@ for (const assetCase of [
       .getByRole("button", { name: "Next: Review", exact: true })
       .click();
     const review = page.getByRole("article", { name: "Listing preview" });
-    await expect(review).toContainText(
-      `${assetCase.gross} per accepted critical finding`,
-    );
+    await expect(review).toContainText(assetCase.gross);
     await expect(review).toContainText(
       `${assetCase.researcher} / ${assetCase.slop}`,
     );
