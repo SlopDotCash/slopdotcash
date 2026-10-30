@@ -128,6 +128,32 @@ test("a manual award recipient can retain a private dispute and retry without du
   ).toEqual({ n: 0 });
 });
 
+test("a superseded revision cannot open a dispute, but the current revision can", async () => {
+  const h = await fixture();
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const reason = "The accepted work was credited to the wrong month.";
+  expect((await h.call("", { revisionId: h.revision.id, reason })).status).toBe(
+    409,
+  );
+  expect(h.started).toEqual([]);
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 0 });
+  expect((await h.call("", { revisionId: successor.id, reason })).status).toBe(
+    201,
+  );
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 1 });
+});
+
 test("another actor cannot submit or read a recipient's private dispute", async () => {
   const h = await fixture();
   const input = {
