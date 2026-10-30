@@ -68,9 +68,9 @@ async function rpc(
     typeof body.error === "object" &&
     body.error !== null &&
     "code" in body.error &&
-    body.error.code === -32603
+    (body.error.code === -32603 || body.error.code === -32005)
   )
-    throw new Error("The network RPC reported an internal error");
+    throw new Error("The network RPC is temporarily unavailable");
   if (body.error !== undefined || !Object.hasOwn(body, "result"))
     throw new TokenMetadataError("The network RPC refused the request");
   return body.result;
