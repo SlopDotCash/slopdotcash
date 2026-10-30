@@ -244,11 +244,24 @@ export default {
 `,
     );
     const bundle = join(directory, "worker.mjs");
-    const build = spawnSync(
-      "bun",
-      ["build", entry, "--target=browser", `--outfile=${bundle}`],
-      { encoding: "utf8", env, timeout: 20_000 },
-    );
+    const buildArgs = [
+      "build",
+      entry,
+      "--target=browser",
+      `--outfile=${bundle}`,
+    ];
+    const build =
+      process.platform === "win32"
+        ? spawnSync(
+            `bun build "${entry}" --target=browser "--outfile=${bundle}"`,
+            { encoding: "utf8", env, timeout: 20_000, shell: true },
+          )
+        : spawnSync("bun", buildArgs, {
+            encoding: "utf8",
+            env,
+            timeout: 20_000,
+          });
+    assert.equal(build.error, undefined, build.error?.message);
     assert.equal(build.status, 0, build.stderr);
     let outbound = 0;
     runtime = new Miniflare(
@@ -283,21 +296,30 @@ export default {
       "/v1/cancel-unsubmitted": 404,
     };
     for (const [path, status] of Object.entries(routes)) {
-      const response = await runtime.dispatchFetch(
-        `https://attester.internal${path}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            projectId: "fixture",
-            period: "2026-11",
-            network: "base-mainnet",
-            snapshotSha256: "1".repeat(64),
-            vault: `0x${"1".repeat(40)}`,
-          }),
-        },
-      );
-      await response.text();
+      let response;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          response = await runtime.dispatchFetch(
+            `https://attester.internal${path}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                projectId: "fixture",
+                period: "2026-11",
+                network: "base-mainnet",
+                snapshotSha256: "1".repeat(64),
+                vault: `0x${"1".repeat(40)}`,
+              }),
+            },
+          );
+          await response.text();
+          break;
+        } catch (err) {
+          if (attempt === 2 || !err?.message?.includes("terminated")) throw err;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
       if (config.name === "slop-payments-base-mainnet-attester")
         assert.equal(response.status, status, path);
       else assert(response.status >= 400, `${config.name} accepted ${path}`);
