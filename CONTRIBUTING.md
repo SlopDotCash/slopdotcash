@@ -355,11 +355,15 @@ Install the pinned toolchain and run the complete repository check:
 
 ```bash
 bun install --frozen-lockfile
+bun run projects:sync
 bun run leaderboard:generate
 bun run verify
 bun run format:check
 bun run test:e2e
 ```
+
+The committed registry snapshot is empty. Award and skill validation need the
+synced project identities. Do not commit the generated snapshot.
 
 For local pull-request checks without live GitHub ingestion, replace only
 `leaderboard:generate` with the validated public-snapshot preparation in
