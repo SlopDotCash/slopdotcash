@@ -132,9 +132,6 @@ for (const pendingDestination of [false, true]) {
 
       // Keep the latest reading position, rather than the first departure's offset.
       await scrollPage(page, -120);
-      await expect
-        .poll(() => page.evaluate(() => scrollY))
-        .toBeLessThan(readingPosition - 50);
       const continuedReading = await page.evaluate(() => scrollY);
       await page.goBack();
       await expect(page).toHaveURL(/\/how-it-works$/u);

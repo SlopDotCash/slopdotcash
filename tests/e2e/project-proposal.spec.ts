@@ -643,7 +643,14 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
 
   await page.unrouteAll();
   await routeGitHub(page, { repository: 403 });
+  const rateLimitedLookup = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        "/api/v1/project-github/repositories/example/open-protein" &&
+      response.status() === 403,
+  );
   await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await (await rateLimitedLookup).finished();
   await expect(page.locator("#field-repository-error")).toBeVisible();
   await expect(page.getByLabel("Integration branch")).toBeDisabled();
   expect(
