@@ -300,7 +300,7 @@ const RULES: Rule[] = [
     threat: "secret-exfiltration",
     severity: "high",
     pattern:
-      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:curl|wget|nc)\b/iu,
+      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:dict|list|str)\(\s*os\.environ\s*\)|\bos\.environ\.(?:copy|items)\(\)|Object\.(?:entries|values)\(\s*process\.env\s*\)|\{\s*\.\.\.\s*process\.env\s*\}|\/proc\/(?:self|\d+)\/environ\b|\b(?:env|printenv)\s*\|\s*(?:curl|wget|nc)\b/iu,
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
