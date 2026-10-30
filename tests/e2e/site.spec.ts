@@ -1390,7 +1390,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
       },
     }),
   );
-  // The admin project list also reads the private fee report (PRD section 6).
+  // The separate fee report remains available through the admin navigation.
   await page.route("**/api/v1/admin/fee-conversions", (route) =>
     route.fulfill({
       json: {
@@ -1404,11 +1404,22 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
       },
     }),
   );
-  await page.goto("/admin", { waitUntil: "networkidle" });
+  await page.goto("/admin?project", { waitUntil: "networkidle" });
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("admin-project-list.png"),
+    fullPage: true,
+  });
   await page.getByRole("searchbox", { name: "Find a project" }).fill("ASI");
-  await page.getByRole("button", { name: "Open ASI", exact: true }).click();
+  await page.getByRole("link", { name: "Open ASI", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\?project=asi$/u);
-  await page.getByRole("button", { name: "Edit project", exact: true }).click();
+  await expect(page.locator("main details")).toHaveCount(0);
+  await page.getByRole("link", { name: "Skills", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\?project=asi&section=skills$/u);
+  await expect(page.locator("main details")).toHaveCount(0);
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\?project=asi&section=settings$/u);
   const changes = page.getByRole("region", { name: "Revision changes" });
   await expect(changes).toContainText("No changes.");
   await page
@@ -1417,9 +1428,14 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await expect(changes).toContainText("Short description");
   await expect(changes).not.toContainText("Reward asset");
   await page.getByRole("button", { name: "Close and keep draft" }).click();
-  await page.getByRole("button", { name: "All projects", exact: true }).click();
-  await page.getByRole("button", { name: "Open ASI", exact: true }).click();
-  await page.getByRole("button", { name: "Edit project", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\?project=asi$/u);
+  await expect(
+    page.getByRole("heading", { name: "ASI", exact: true }),
+  ).toBeFocused();
+  await page.getByRole("link", { name: "All projects", exact: true }).click();
+  await page.getByRole("link", { name: "Open ASI", exact: true }).click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.locator("main details")).toHaveCount(0);
   await expect(changes).not.toContainText("Reward asset");
   await page.screenshot({
     path: test.info().outputPath("admin-no-implicit-asset.png"),
@@ -1430,6 +1446,34 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page.getByLabel("Discovery placement").selectOption("community");
   await expect(page.getByLabel("Project status")).toHaveValue("paused");
   await expect(changes).toContainText("Discovery placement");
+  await page
+    .getByLabel("Reason for revision (public)")
+    .fill("Update the project description and selected reward asset.");
+  let releaseSave: () => void = () => {};
+  const pendingSave = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route("**/api/v1/admin/projects/asi/manifest", async (route) => {
+    await pendingSave;
+    await route.fulfill({ json: {} });
+  });
+  const saveRequest = page.waitForRequest(
+    "**/api/v1/admin/projects/asi/manifest",
+  );
+  await page.getByRole("button", { name: "Save revision 2" }).click();
+  await saveRequest;
+  await page
+    .getByRole("link", { name: "Fee conversions", exact: true })
+    .click();
+  const saveResponse = page.waitForResponse(
+    "**/api/v1/admin/projects/asi/manifest",
+  );
+  releaseSave();
+  await saveResponse;
+  await expect(
+    page.getByRole("region", { name: "Fee conversions" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\?section=fees$/u);
 });
 
 test("serves byte-consistent bootstrap and read-only site artifacts", {
