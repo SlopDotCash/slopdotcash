@@ -622,6 +622,7 @@ credentials.
 Run from the repository root:
 
 ```bash
+bun run projects:sync
 bun run leaderboard:generate
 bun run projects:check
 bun run evaluations:check
@@ -643,9 +644,10 @@ and policy mirrors; explain why application acceptance does not apply to the
 prose itself. Keep required repository checks. Do not fabricate UI or
 deployment evidence.
 
-Rebase onto current `origin/development`, install the lockfile, and prepare the
-ledger with `bun run leaderboard:generate`. Local pull-request checks may use
-the validated public-snapshot preparation in
+Rebase onto current `origin/development`, install the lockfile, sync the
+project registry with `bun run projects:sync`, and prepare the ledger with
+`bun run leaderboard:generate`. Do not commit the generated registry snapshot.
+Local pull-request checks may use the validated public-snapshot preparation in
 [Local review checks](README.md#local-review-checks) instead of live ingestion.
 Stop if ledger preparation fails; never use a leftover ledger. Releases still
 collect fresh GitHub data through the normal release workflow. Run `bun run
