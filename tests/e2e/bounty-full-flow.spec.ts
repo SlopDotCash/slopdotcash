@@ -8,9 +8,9 @@ import type {
 import { rewardFields } from "../../src/lib/project-proposal";
 import { privateBountyTerms } from "../../src/lib/security-bounty-proposal";
 import {
+  connectLocalDirectEvmFixture,
   rotateVerifiedBountyWallet,
   seedVerifiedBountyWallets,
-  startLocalDirectEvmFixture,
 } from "../direct-bounty-chain";
 import {
   E2E_SECURITY_ACCOUNTS,
@@ -84,7 +84,7 @@ type CaseRecord = {
     ownerRequest: null | { transactions: Transaction[] };
   };
 };
-let chain: Awaited<ReturnType<typeof startLocalDirectEvmFixture>>;
+let chain: Awaited<ReturnType<typeof connectLocalDirectEvmFixture>>;
 
 test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
@@ -93,7 +93,7 @@ test.beforeAll(async () => {
   const persist = process.env.SLOP_E2E_PERSIST_TO;
   if (!endpoint || !persist)
     throw new Error("Missing local direct-payment fixture");
-  chain = await startLocalDirectEvmFixture(Number(new URL(endpoint).port));
+  chain = await connectLocalDirectEvmFixture(Number(new URL(endpoint).port));
   seedVerifiedBountyWallets(persist, [
     { ...owner, address: chain.payer },
     {
@@ -102,9 +102,6 @@ test.beforeAll(async () => {
       address: chain.reporter,
     },
   ]);
-});
-test.afterAll(async () => {
-  await chain?.close();
 });
 
 async function signedIn(
@@ -222,13 +219,28 @@ async function enrollSecurityEmail(
   // than changing an address and hitting the real verification cooldown.
   if (current.body.availability === "verified") {
     expect(current.body.email).toBe(address);
+    await page.bringToFront();
+    // Firefox can activate this window on its first pointer action. Finish
+    // the resulting preference refresh before clicking a consent control.
+    await page
+      .getByRole("heading", { name: "Email preferences", exact: true })
+      .click();
     for (const [name, checked] of [
       ["Activity email", false],
       ["Security email", true],
     ] as const) {
       const toggle = preferences.getByRole("switch", { name, exact: true });
-      await expect(toggle).toBeVisible();
-      if ((await toggle.isChecked()) !== checked) await toggle.click();
+      await expect(toggle).toBeEnabled();
+      await expect(toggle).toHaveAttribute("aria-busy", "false");
+      if ((await toggle.isChecked()) !== checked) {
+        const saved = page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            new URL(response.url()).pathname === "/api/v1/notifications/email",
+        );
+        await toggle.click();
+        expect((await saved).status()).toBe(200);
+      }
       await expect(toggle).toBeChecked({ checked });
       await expect(toggle).toHaveAttribute("aria-busy", "false");
     }

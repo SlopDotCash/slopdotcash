@@ -243,12 +243,17 @@ async function runRegistryPhase() {
   const githubPort = basePort + 3;
   const directBounty = process.env.SLOP_E2E_DIRECT_BOUNTY === "1";
   const solanaBounty = process.env.SLOP_E2E_SOLANA_BOUNTY === "1";
-  let github, notify, slopbot, solana, walletBridge;
+  let github, notify, slopbot, evm, solana, walletBridge;
   let failed = false;
   let failure;
   let status;
   try {
     const database = prepareRegistryDatabase(persistTo);
+    if (directBounty) {
+      // The chain and D1 retain the same payment history across viewports.
+      const fixture = await import("../tests/direct-bounty-chain.ts");
+      evm = await fixture.startLocalDirectEvmFixture(basePort + 6);
+    }
     if (solanaBounty) {
       const fixture = await import("../tests/direct-bounty-solana-chain.ts");
       solana = await fixture.startLocalDirectSolanaFixture(basePort + 60);
@@ -478,6 +483,7 @@ async function runRegistryPhase() {
         return new Promise((resolve) => walletBridge.close(resolve));
       }),
       Promise.resolve().then(() => solana?.close()),
+      Promise.resolve().then(() => evm?.close()),
     ]);
     // The fixture Workers hold the local D1 files until they exit, and
     // Windows refuses to delete an open file. Windows can also release the
