@@ -14,6 +14,7 @@ import { onRequest } from "../functions/api/v1/[[path]]";
 import { isLocalDevelopmentOrigin } from "../src/lib/deployment";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import { D1IdentityPersistence } from "../workers/identity/persistence";
+import { routeRepositoryAccess } from "../workers/slopbot/repository-access";
 import { localNotify } from "./dev-backend-notify";
 import { devIdentityBridge } from "./dev-identity-bridge";
 
@@ -35,6 +36,30 @@ function readVars(path: string): Record<string, string> {
 }
 const identityVars = readVars(resolve("workers/identity/.dev.vars"));
 const setting = (name: string) => process.env[name] || identityVars[name];
+// Use only a contributor-owned test App, as for `wrangler dev`. Running the
+// real read-only Slopbot routes keeps installation and authority checks intact.
+const slopbotVars = readVars(resolve("workers/slopbot/.dev.vars"));
+const slopbotAppId = process.env.SLOPBOT_APP_ID || slopbotVars.SLOPBOT_APP_ID;
+const slopbotPrivateKey =
+  process.env.SLOPBOT_APP_PRIVATE_KEY || slopbotVars.SLOPBOT_APP_PRIVATE_KEY;
+if (Boolean(slopbotAppId) !== Boolean(slopbotPrivateKey))
+  fail("Set both SLOPBOT_APP_ID and SLOPBOT_APP_PRIVATE_KEY for your test App");
+const slopbot =
+  slopbotAppId && slopbotPrivateKey
+    ? {
+        async fetch(request: Request) {
+          return (
+            routeRepositoryAccess(request, {
+              SLOPBOT_APP_ID: slopbotAppId,
+              SLOPBOT_APP_PRIVATE_KEY: slopbotPrivateKey.replaceAll(
+                "\\n",
+                "\n",
+              ),
+            }) ?? new Response("Not found", { status: 404 })
+          );
+        },
+      }
+    : undefined;
 
 const origin = process.env.SLOP_DEV_ORIGIN ?? "http://localhost:4466";
 if (!isLocalDevelopmentOrigin(origin))
@@ -68,6 +93,7 @@ const apiEnv = {
   PAYMENTS_ALLOWED_ORIGIN: origin,
   TRACE_AUTH_SECRET: setting("TRACE_AUTH_SECRET") ?? secret(),
   SLOP_IDENTITY: { fetch: identity },
+  SLOPBOT: slopbot,
   // Lets the Inbox email preference page work; no email is sent.
   SLOP_NOTIFY: localNotify(
     (githubId) =>
