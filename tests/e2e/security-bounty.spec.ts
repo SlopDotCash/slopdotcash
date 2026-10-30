@@ -684,6 +684,10 @@ test("owners publish and control bounty programs with verified funding @registry
     await signIn(page, TOKENS.security);
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
     await openProjectSecuritySettings(page);
+    await page
+      .getByRole("group", { name: "Network", exact: true })
+      .getByRole("radio", { name: "Base", exact: true })
+      .check();
     await page.getByLabel("Published gross award (USDC)").fill("100");
     await page.getByLabel(`Source commit (${repository})`).fill("a".repeat(40));
     const values = {
@@ -807,12 +811,23 @@ test("owners publish and control bounty programs with verified funding @registry
       }
     }
     const reviewed = bountyTerms(repository).settlement;
+    // The retained testnet vault uses legacy USDC terms. The new form's
+    // explicit mainnet asset must not stand in for Sepolia USDC.
     expect(
       (
         await revise(request, id, (manifest) => ({
           ...manifest,
           securityBounty: {
             ...(manifest.securityBounty as object),
+            amount: {
+              ...(manifest.securityBounty as SecurityBountyTerms).amount,
+              asset: undefined,
+            },
+            fundingPolicy: undefined,
+            capacity: {
+              ...(manifest.securityBounty as SecurityBountyTerms).capacity,
+              awards: 1,
+            },
             settlement: reviewed,
           },
         }))
@@ -1853,8 +1868,8 @@ test("private security bounty programs keep cases restricted from intake to awar
       view: "financial",
       awardState: "approved",
       paymentState: "rail-unavailable",
-      // No settlement exists yet; the reviewed bounty vault allows one.
-      paymentRail: "unavailable",
+      // No settlement exists yet; the configured route is direct.
+      paymentRail: "direct",
       payee: { githubLogin: "e2e-reporter-a" },
       allowedActions: ["prepare-payment"],
     });

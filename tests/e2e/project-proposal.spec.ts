@@ -647,7 +647,7 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
     (response) =>
       new URL(response.url()).pathname ===
         "/api/v1/project-github/repositories/example/open-protein" &&
-      response.status() === 403,
+      response.status() === 503,
   );
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await (await rateLimitedLookup).finished();
