@@ -36,12 +36,14 @@ const file = (overrides: Record<string, unknown> = {}) => ({
 const wallet = (
   chain: PaymentsAccount["wallets"][number]["chain"],
   authorized: boolean,
+  firstAuthorizedAt: string | null = "2026-12-01T00:00:00Z",
 ) =>
   ({
     chain,
     claimId: "c",
     address: "0x1",
     authorized,
+    firstAuthorizedAt,
   }) as PaymentsAccount["wallets"][number];
 const before = Date.parse("2026-12-01T00:00:00Z");
 const after = Date.parse("2027-02-08T17:00:00Z");
@@ -173,5 +175,19 @@ describe("contributor allocation state", () => {
     expect(contributorAllocationState(value, unsent, [], after)).toBe(
       "unclaimed",
     );
+    for (const firstAuthorizedAt of [
+      value.registrationClosesAt,
+      "2027-02-09T00:00:00Z",
+      null,
+      "invalid",
+    ])
+      expect(
+        contributorAllocationState(
+          value,
+          unsent,
+          [wallet("robinhood", true, firstAuthorizedAt)],
+          after,
+        ),
+      ).toBe("unclaimed");
   });
 });

@@ -78,6 +78,8 @@ export interface PaymentsAccount {
     claimId: string;
     address: string;
     authorized: boolean;
+    /** First confirmed wallet on this chain; absent on older account responses. */
+    firstAuthorizedAt?: string | null;
   }[];
   payments: AccountPayment[];
   /** Approved monthly awards not yet reserved; never counted in `balances`. */
