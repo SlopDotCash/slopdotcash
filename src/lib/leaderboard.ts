@@ -5192,8 +5192,22 @@ function assertStringArray(value: unknown, path: string): string[] {
   return strings;
 }
 
-function assertActorValue(value: unknown, path: string): void {
+function assertActorValue(
+  value: unknown,
+  path: string,
+  validatedActors?: Map<string, GitHubActor>,
+): void {
   const actor = assertObject(value, path);
+  const validated =
+    typeof actor.id === "string" ? validatedActors?.get(actor.id) : undefined;
+  if (
+    validated &&
+    validated.login === actor.login &&
+    validated.avatarUrl === actor.avatarUrl &&
+    validated.url === actor.url &&
+    validated.kind === actor.kind
+  )
+    return;
   assertString(actor.id, `${path}.id`);
   assertString(actor.login, `${path}.login`);
   if (/\s/.test(actor.login)) {
@@ -5221,14 +5235,22 @@ function assertActorValue(value: unknown, path: string): void {
     );
   }
   assertEnum(actor.kind, GITHUB_ACTOR_KINDS, `${path}.kind`);
+  validatedActors?.set(actor.id, {
+    id: actor.id,
+    login: actor.login,
+    avatarUrl: actor.avatarUrl,
+    url: actor.url,
+    kind: actor.kind,
+  } as GitHubActor);
 }
 
 function assertNullableActor(
   value: unknown,
   path: string,
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is GitHubActor | null {
   if (value !== null) {
-    assertActorValue(value, path);
+    assertActorValue(value, path, validatedActors);
   }
 }
 
@@ -5713,10 +5735,11 @@ function assertNonNegativeNumber(value: unknown, path: string): void {
 function assertLeaderValue(
   value: unknown,
   path: string,
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is LeaderboardEntry {
   const entry = assertObject(value, path);
   assertPositiveInteger(entry.rank, `${path}.rank`);
-  assertActorValue(entry.actor, `${path}.actor`);
+  assertActorValue(entry.actor, `${path}.actor`, validatedActors);
   assertNonNegativeInteger(entry.score, `${path}.score`);
   assertNonNegativeInteger(entry.scoreThirds, `${path}.scoreThirds`);
   if (Math.floor(Number(entry.scoreThirds) / 3) !== entry.score) {
@@ -6114,10 +6137,11 @@ function assertLedgerValue(
   value: unknown,
   path: string,
   repositoryIds: readonly string[],
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is ScoreEvent {
   const event = assertObject(value, path);
   assertString(event.id, `${path}.id`);
-  assertActorValue(event.actor, `${path}.actor`);
+  assertActorValue(event.actor, `${path}.actor`, validatedActors);
   assertEnum(event.category, SCORE_CATEGORIES, `${path}.category`);
   assertNonNegativeNumber(event.points, `${path}.points`);
   const eventPoints = Number(event.points);
@@ -6589,13 +6613,14 @@ export function replayRetainedReviewAttribution(
 function assertAttributionValue(
   value: unknown,
   path: string,
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is ModelAttribution {
   const attribution = assertObject(value, path);
   assertString(attribution.id, `${path}.id`);
   assertString(attribution.sourceId, `${path}.sourceId`);
   assertRepositoryUrl(attribution.sourceUrl, `${path}.sourceUrl`);
   assertString(attribution.artifactId, `${path}.artifactId`);
-  assertNullableActor(attribution.actor, `${path}.actor`);
+  assertNullableActor(attribution.actor, `${path}.actor`, validatedActors);
   assertString(attribution.provider, `${path}.provider`);
   assertString(attribution.model, `${path}.model`);
   assertString(attribution.identifier, `${path}.identifier`);
@@ -6737,8 +6762,15 @@ export function assertLeaderboardSnapshot(
   if (!Array.isArray(snapshot.leaders)) {
     throw new Error("snapshot.leaders must be an array");
   }
+  // The parsed snapshot repeats the same actor facts on thousands of rows.
+  // Retain only successful checks in this validation, with copied field values.
+  const validatedActors = new Map<string, GitHubActor>();
   const validatedLeaders = snapshot.leaders.map((valueEntry, index) => {
-    assertLeaderValue(valueEntry, `snapshot.leaders[${index}]`);
+    assertLeaderValue(
+      valueEntry,
+      `snapshot.leaders[${index}]`,
+      validatedActors,
+    );
     return valueEntry;
   });
   if (
@@ -6754,7 +6786,12 @@ export function assertLeaderboardSnapshot(
     throw new Error("snapshot.ledger must be an array");
   }
   const validatedLedger = snapshot.ledger.map((event, index) => {
-    assertLedgerValue(event, `snapshot.ledger[${index}]`, repositoryIds);
+    assertLedgerValue(
+      event,
+      `snapshot.ledger[${index}]`,
+      repositoryIds,
+      validatedActors,
+    );
     return event;
   });
   if (
@@ -7108,7 +7145,11 @@ export function assertLeaderboardSnapshot(
   }
   const validatedAttributions = snapshot.attributions.map(
     (attribution, index) => {
-      assertAttributionValue(attribution, `snapshot.attributions[${index}]`);
+      assertAttributionValue(
+        attribution,
+        `snapshot.attributions[${index}]`,
+        validatedActors,
+      );
       return attribution;
     },
   );
