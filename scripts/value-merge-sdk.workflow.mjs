@@ -208,7 +208,32 @@ try {
   const file = join(directory, "public.bundle");
   git(["bundle", "create", file, "--all"]);
   git(["bundle", "verify", file]);
-  const bundle = await readFile(file);
+  let bundle = await readFile(file);
+  if (bundle.length <= 24_000_000) {
+    // Git may pack the same public heads below the near-limit test range.
+    // Keep those heads intact and add an inert, deterministic object graph.
+    // Its hash-derived bytes resist compression without using random input.
+    const padding = Buffer.alloc(24_500_000 - bundle.length);
+    for (let offset = 0; offset < padding.length; offset += 32)
+      createHash("sha256")
+        .update(`slop-request-size-control:${offset / 32}`)
+        .digest()
+        .copy(padding, offset);
+    const blob = git(["hash-object", "-w", "--stdin"], padding);
+    const tree = git(
+      ["mktree"],
+      `100644 blob ${blob}\tpublic-request-size-control\n`,
+    );
+    const commit = git(
+      ["commit-tree", tree],
+      "Harmless request-size control\n",
+    );
+    git(["update-ref", "refs/heads/request-size-control", commit]);
+    git(["bundle", "create", file, "--all"]);
+    git(["bundle", "verify", file]);
+    bundle = await readFile(file);
+    report.requestSizeControl = { bytes: padding.length, sha256: sha(padding) };
+  }
   assert(bundle.length > 24_000_000 && bundle.length < 25 * 1024 * 1024);
   report.bundle = { bytes: bundle.length, sha256: sha(bundle) };
   report.gitVersion = fixture.gitVersion;
