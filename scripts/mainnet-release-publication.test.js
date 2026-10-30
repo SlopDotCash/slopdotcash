@@ -9,6 +9,7 @@ import {
   prepareMainnetRelease,
   publishMainnetRelease,
 } from "../workers/payment-executor/release-mainnets.mjs";
+import { bashCommand } from "./bash-command";
 
 const sha = "a".repeat(40);
 const account = "b".repeat(32);
@@ -103,7 +104,7 @@ test("supersession is a clean no-op only before service publication", async () =
         [output, summary, writes].map((path) => writeFile(path, "")),
       );
       const result = spawnSync(
-        "bash",
+        bashCommand(),
         [
           "-e",
           "-c",
