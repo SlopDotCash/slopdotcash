@@ -287,9 +287,10 @@ export class VettingEvidence {
           "INSERT INTO vetting_evidence_case_closures(assessment_id,closed_at,closed_by,reason) VALUES(?,?,?,?) ON CONFLICT(assessment_id) DO NOTHING",
         )
         .bind(assessment, at, actor.githubId, reason),
+      // A replay keeps the original closure, so it records no second close.
       this.deps.db
         .prepare(
-          "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,reason,created_at) VALUES(?,?,?,?,?,?)",
+          "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,reason,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM vetting_evidence_case_closures WHERE assessment_id=? AND closed_at=?) AND NOT EXISTS (SELECT 1 FROM vetting_evidence_audit WHERE assessment_id=? AND action='close-case')",
         )
         .bind(
           this.deps.randomId(),
@@ -298,6 +299,9 @@ export class VettingEvidence {
           assessment,
           reason,
           at,
+          assessment,
+          at,
+          assessment,
         ),
     ]);
     const closure = await this.deps.db
