@@ -125,6 +125,18 @@ export async function handlePointsDisputes(
         "not_authorized",
         "Only the recipient can dispute this Points record.",
       );
+    const current = await deps.db
+      .prepare(
+        `SELECT 1 AS current FROM points_revisions r WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)`,
+      )
+      .bind(body.revisionId)
+      .first<{ current: number }>();
+    if (!current)
+      fail(
+        409,
+        "superseded",
+        "This Points record has a newer revision. Dispute the current record instead.",
+      );
     const id = `points-dispute:${await sha256Hex(`${body.revisionId}:${actor.githubId}`)}`;
     await deps.db.batch([
       deps.db
