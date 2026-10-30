@@ -144,8 +144,9 @@ complete source inventory followed by the exact retained execution items.
 Clean execution reports use the same bounded validator as fresh execution,
 bind the requested artifacts and recorded image, and preserve disabled
 internet access. Every requested artifact needs its own byte-identity coverage.
-Old text-only results retain their final-digest reuse path. An old native
-result without a retained source binding cannot reuse; it needs a fresh scan.
+Old inventories remain readable. Reuse requires the current classification
+digest, so a pre-classification inventory needs a fresh scan. An old native
+result without a retained source binding also needs a fresh scan.
 Deploy the API reuse route before updating the scanner service. A missing
 route (404), unavailable service (503), or invalid lookup response leaves the
 assignment pending at the reuse step; the scanner does not bypass the lookup
