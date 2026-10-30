@@ -99,7 +99,7 @@
   height: 17px;
 }
 
-.admin-search input {
+.admin-page.operations-page .admin-search input[type="search"] {
   width: 100%;
   min-width: 0;
   min-height: 42px;
@@ -109,6 +109,7 @@
   color: var(--ink);
   font: inherit;
   font-size: 14px;
+  box-shadow: none;
 }
 
 .admin-search:focus-within {
