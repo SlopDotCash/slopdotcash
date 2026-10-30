@@ -17,6 +17,10 @@ on:
         description: "First staging publication only: use the reviewed profile seed after verifying no staging Pages deployment exists"
         type: boolean
         default: false
+      use_published_data:
+        description: "Manual main release only: retain the last published production leaderboard and profiles with their original timestamps"
+        type: boolean
+        default: false
 
 concurrency:
   # PR supersessions cancel. Development pushes share one lane: a running
@@ -80,6 +84,16 @@ jobs:
             exit 1
           fi
 
+      - name: Require manual main release for published data
+        if: inputs.use_published_data == true
+        env:
+          BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$BOOTSTRAP_STAGING_PROFILES" = "false"
+
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -134,7 +148,7 @@ jobs:
           bun run verify:contracts
 
       - name: Install the pinned merge collector for trusted Points ingestion
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && inputs.use_published_data != true
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -146,7 +160,7 @@ jobs:
         # Pull-request code is untrusted, so this step never explicitly injects
         # a repository-scoped token into it. Trusted main runs refresh the
         # ledger before producing a deployable build.
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && inputs.use_published_data != true
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -214,6 +228,35 @@ jobs:
             echo "::warning::Profile census did not reconcile; retrying once."
           done
 
+      - name: Load validated published data for manual production release
+        if: inputs.use_published_data == true
+        run: |
+          set -euo pipefail
+          mkdir -p public/data
+          ledger_file="$(mktemp "$RUNNER_TEMP/slop-release-ledger.XXXXXX")"
+          profiles_file="$(mktemp "$RUNNER_TEMP/slop-release-profiles.XXXXXX")"
+          trap 'rm -f "$ledger_file" "$profiles_file"' EXIT
+          curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 180 --max-filesize 26214400 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+            https://slop.cash/data/leaderboard.json --output "$ledger_file"
+          curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+            https://slop.cash/data/profiles.json --output "$profiles_file"
+          bun --no-env-file -e '
+            import { assertLeaderboardSnapshot } from "./src/lib/leaderboard";
+            const snapshot = await Bun.file(process.argv[1]).json();
+            assertLeaderboardSnapshot(snapshot);
+            console.log(`Using published leaderboard generated at ${snapshot.generatedAt}`);
+          ' "$ledger_file"
+          bun scripts/generate-profiles.ts --input "$profiles_file"
+          cp "$ledger_file" public/data/leaderboard.json
+          bun --no-env-file -e '
+            const snapshot = await Bun.file("public/data/profiles.json").json();
+            console.log(`Using published profiles generated at ${snapshot.generatedAt}`);
+          '
+
       - name: Load deployed public ledger for pull-request checks
         if: github.event_name == 'pull_request'
         run: |
@@ -226,7 +269,7 @@ jobs:
             --tlsv1.2 \
             --connect-timeout 10 \
             --compressed \
-            --retry 2 --retry-delay 2 --retry-max-time 600 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
             --max-time 180 \
             --max-filesize 26214400 \
             --output "$ledger_file" \

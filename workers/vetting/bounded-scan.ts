@@ -29,6 +29,7 @@ import {
   type VettingScanResult,
 } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
+import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
 import type { QueuedAssessment } from "./queue";
 import {
   SCAN_PROMPT_REVISION,
@@ -47,7 +48,17 @@ export const MAX_INVENTORY_ITEMS = 1024;
 /** Text files larger than this are reviewed in consecutive parts of this size. */
 export const MAX_TEXT_FILE_BYTES = 256 * 1024;
 
-export type ScanInputFile = { path: string; bytes: Uint8Array };
+export type ScanInputFile = {
+  path: string;
+  bytes: Uint8Array;
+  symlink?: {
+    gitSha: string;
+    sha256: string;
+    target: string;
+    resolvedPath: string;
+    targetSha256: string;
+  };
+};
 
 export type ScanFinding = VettingScanResult["findings"][number] & {
   path: string;
@@ -236,17 +247,17 @@ const RULES: Rule[] = [
   },
   {
     threat: "prompt-injection",
-    severity: "high",
+    severity: "medium",
     pattern:
       /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)/iu,
-    summary: "Text tries to override a coding agent's instructions",
+    summary: "Text matches wording used to override agent instructions",
   },
   {
     threat: "prompt-injection",
-    severity: "high",
+    severity: "medium",
     pattern:
       /\b(?:send|post|upload|exfiltrate|paste)\b[^\n]{0,80}\b(?:api[ _-]?key|token|secret|credential|password|private key|\.env)\b/iu,
-    summary: "Instructions ask an agent to send secrets somewhere",
+    summary: "Text matches wording about sending secrets",
     surfaces: ["agentInstructions"],
   },
   {
@@ -566,7 +577,20 @@ export function inspectRepository(input: {
           : `${candidate.path}#part-${index + 1}-of-${parts.length}`;
       return { id, text, sha256: sha256(text) };
     });
-  let items = candidates.flatMap(itemsOf);
+  // Keep original link bytes and the resolved path in the reviewed/reused
+  // identity, even when two targets happen to contain identical content.
+  // The absolute ID namespace cannot collide with a repository path.
+  const links = files.flatMap((file) => {
+    if (!file.symlink) return [];
+    return textParts(JSON.stringify({ path: file.path, ...file.symlink })).map(
+      (text, index, parts) => ({
+        id: `/slop-scan/symlink/${file.path}${parts.length === 1 ? "" : `#part-${index + 1}-of-${parts.length}`}`,
+        text,
+        sha256: sha256(text),
+      }),
+    );
+  });
+  let items = [...candidates.flatMap(itemsOf), ...links];
   const deterministic: DeterministicRecord[] = [];
   const envelope = (list: typeof items) =>
     list.length > MAX_INVENTORY_ITEMS ||
@@ -579,7 +603,7 @@ export function inspectRepository(input: {
   // checks above and listed by digest instead of sent to the model.
   const excerpted = new Set<string>();
   if (envelope(items)) {
-    items = [];
+    items = [...links];
     for (const candidate of candidates) {
       const kind = bulkClass(candidate.path, candidate.surfaces);
       const excerpt =
@@ -937,7 +961,7 @@ export function composeScanResult(input: {
 /**
  * Reads the immutable source a verified acquisition stored (`acquire.ts`):
  * every inventory record's bytes, rechecked against their SHA-256. Its
- * visibility gaps (submodules, links, LFS objects) carry into the scan.
+ * visibility gaps (submodules, unresolved links, LFS objects) carry into the scan.
  */
 export async function readAcquiredSource(directory: string): Promise<{
   files: ScanInputFile[];
@@ -947,18 +971,54 @@ export async function readAcquiredSource(directory: string): Promise<{
     await readFile(join(directory, "inventory.json"), "utf8"),
   ) as {
     schema: string;
-    records: { path: string; sha256: string | null }[];
+    records: (TreeEntry & {
+      sha256: string | null;
+      resolvedPath?: string;
+    })[];
+    directories?: TreeEntry[];
     visibilityGaps: string[];
   };
   if (inventory.schema !== "slop-source-inventory-v1")
     throw new Error("Unknown source inventory");
   const files: ScanInputFile[] = [];
+  const byPath = new Map(
+    [...(inventory.directories ?? []), ...inventory.records].map((entry) => [
+      entry.path,
+      entry,
+    ]),
+  );
+  const recordsByPath = new Map(
+    inventory.records.map((entry) => [entry.path, entry]),
+  );
   for (const record of inventory.records)
-    if (record.sha256 !== null)
-      files.push({
-        path: record.path,
-        bytes: await readAcquiredObject(directory, record.sha256),
-      });
+    if (record.sha256 !== null) {
+      let bytes = await readAcquiredObject(directory, record.sha256);
+      let symlink: ScanInputFile["symlink"];
+      if (record.resolvedPath !== undefined) {
+        const resolvedPath = await resolveSymlinkTarget(
+          record,
+          byPath,
+          (link) => {
+            const stored = recordsByPath.get(link.path);
+            if (!stored?.sha256) throw new Error("Invalid acquired link");
+            return readAcquiredObject(directory, stored.sha256);
+          },
+        );
+        const target =
+          resolvedPath === null ? null : recordsByPath.get(resolvedPath);
+        if (resolvedPath !== record.resolvedPath || !target?.sha256)
+          throw new Error("Acquired symlink target changed");
+        symlink = {
+          gitSha: record.gitSha,
+          sha256: record.sha256,
+          target: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          resolvedPath,
+          targetSha256: target.sha256,
+        };
+        bytes = await readAcquiredObject(directory, target.sha256);
+      }
+      files.push({ path: record.path, bytes, ...(symlink ? { symlink } : {}) });
+    }
   return { files, acquisitionGaps: [...inventory.visibilityGaps] };
 }
 

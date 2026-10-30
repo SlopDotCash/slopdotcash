@@ -32,6 +32,11 @@ Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
 `prompt-injection`. The deterministic rules in `bounded-scan.ts` are
 indicators, never confirmations. A match marks the check `flagged`.
+Textual instruction-override and secret-transmission matches are medium-severity
+indicators that require independent contextual specialist review. API documentation
+and injection-defense tests can contain that wording without directing an attack.
+The matches remain in the report; incomplete reviews and high or critical findings
+still block clearance.
 
 The flow for one queued assessment:
 
@@ -84,8 +89,8 @@ The flow for one queued assessment:
 
 `run.ts` runs this flow automatically. One pass:
 
-1. calls the signed `POST /api/v1/vetting/refresh`, so Slop queues every
-   changed project;
+1. calls the signed `POST /api/v1/vetting/refresh`, so Slop queues initial
+   admission and required flag recovery;
 2. reads the signed queue;
 3. for each pending assessment, in queue order, acquires the exact inputs
    (`acquireQueuedAssessment`), inspects the repository source and the queued
@@ -101,6 +106,22 @@ The flow for one queued assessment:
    dependency lock and every named artifact under the scan run through the
    signed evidence routes;
 5. publishes the result once with `publishResult`.
+
+Model coverage describes the bounded static review of the supplied evidence,
+not a full runtime audit. Reviewers must preserve concrete visibility gaps and
+findings. Missing runtime execution alone does not make a completed static
+review partial. The primary and synthesis prompt revisions record this scope.
+Findings must identify a concrete defined threat or missing required evidence,
+not merely describe a permitted feature. The prompts supply the approved
+canonical-template commit policy as trusted context; they do not grant trust
+to template contents or excuse hidden behavior, consent bypasses, wrong
+origins, or byte mismatches.
+
+A completed incomplete assessment is not pending work. After correcting its
+cause, an administrator can queue a fresh scan from the project's security
+vetting panel. Older pending rows remain in history but do not hide that action
+after a newer assessment has finished. A current pending assessment still
+blocks a duplicate request. Earlier results and evidence remain unchanged.
 
 A reused result preserves the original run, review and report evidence rather
 than claiming another provider call. Its normal result publication revalidates

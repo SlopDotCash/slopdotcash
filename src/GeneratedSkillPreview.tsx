@@ -19,6 +19,7 @@ export function GeneratedSkillPreview({
   manifest,
   registry,
   draft = false,
+  collapsible = true,
 }: {
   manifest: Pick<
     ProjectDefinition,
@@ -26,6 +27,7 @@ export function GeneratedSkillPreview({
   >;
   registry?: { revision: number; manifestSha256: string };
   draft?: boolean;
+  collapsible?: boolean;
 }) {
   const [selectedRole, setSelectedRole] = useState("Contributor skill");
   const [selectedPath, setSelectedPath] = useState("SKILL.md");
@@ -108,9 +110,8 @@ export function GeneratedSkillPreview({
     previews.find(({ role }) => role === selectedRole) ?? previews[0];
   const paths = Object.keys(preview.files);
   const path = paths.includes(selectedPath) ? selectedPath : paths[0];
-  return (
-    <details className="skill-preview">
-      <summary>Preview generated skills</summary>
+  const content = (
+    <>
       <div className="skill-preview-controls">
         <label>
           Skill
@@ -143,6 +144,16 @@ export function GeneratedSkillPreview({
         spellCheck={false}
         value={decoder.decode(preview.files[path])}
       />
+    </>
+  );
+  return collapsible ? (
+    <details className="skill-preview">
+      <summary>Preview generated skills</summary>
+      {content}
     </details>
+  ) : (
+    <section className="skill-preview" aria-label="Generated skills">
+      {content}
+    </section>
   );
 }

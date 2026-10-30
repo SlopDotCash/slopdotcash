@@ -6,12 +6,33 @@
  * only hides controls a session cannot use.
  */
 
-import { CircleAlert, RotateCcw, ShieldCheck } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  CircleAlert,
+  CircleCheck,
+  Code2,
+  Coins,
+  FolderGit2,
+  LayoutGrid,
+  Pause,
+  RotateCcw,
+  Save,
+  Search,
+  Settings2,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  X,
+} from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
 import "./operations-design.css";
+import "./admin-design.css";
 import { ActivationClearance, VettingSection } from "./AdminVetting";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
+import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
@@ -25,7 +46,6 @@ import {
   type ContributionField,
   PROJECT_SKILL_TEMPLATES,
 } from "./lib/project-schema.mjs";
-import { usesGeneratedSkills } from "./lib/project-skill.mjs";
 import {
   NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
@@ -65,12 +85,7 @@ const changeLabel = (field: string) =>
 function ChangedValue({ value, empty }: { value: unknown; empty: string }) {
   if (value === undefined || value === null) return <>{empty}</>;
   if (typeof value !== "object") return <>{String(value)}</>;
-  return (
-    <details>
-      <summary>View full value</summary>
-      <pre>{JSON.stringify(value, null, 2)}</pre>
-    </details>
-  );
+  return <pre>{JSON.stringify(value, null, 2)}</pre>;
 }
 
 function LoadNotice({
@@ -203,7 +218,6 @@ function ProjectEditor({
     }
   }, [draftKey, text, skill, asset, assetSelected, status, reason]);
   const [busy, setBusy] = useState(false);
-  const [instructionsOpen, setInstructionsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const skillStarted = CONTRIBUTION_FIELDS.some(
     (field) => skill[field].trim() !== "",
@@ -358,10 +372,10 @@ function ProjectEditor({
   };
   return (
     <form className="admin-editor" onSubmit={save}>
+      <h3 className="visually-hidden">Edit project</h3>
       {draftError ? (
         <p role="status">
-          This browser cannot preserve your draft. Keep this editor open until
-          saved.
+          Draft storage unavailable. Keep this editor open until saved.
         </p>
       ) : null}
       <fieldset className="admin-fieldset" disabled={projectFields === null}>
@@ -414,7 +428,13 @@ function ProjectEditor({
             <option value="active">Active</option>
           </select>
         </label>
-        <a href="#admin-vetting">Security vetting details</a>
+        <Link
+          href={adminHref(project.id, "security")}
+          className="admin-inline-link"
+        >
+          <ShieldCheck aria-hidden="true" /> Security vetting{" "}
+          <ArrowUpRight aria-hidden="true" />
+        </Link>
       </fieldset>
       <fieldset className="admin-fieldset">
         <legend>Discovery</legend>
@@ -447,21 +467,11 @@ function ProjectEditor({
             </option>
           </select>
         </label>
-        <p className="admin-status">
-          Changing placement pauses the project. Featured needs security
-          clearance and activation.
-        </p>
+        <p className="admin-status">Placement changes pause the project.</p>
       </fieldset>
-      <details
-        onToggle={(event) => setInstructionsOpen(event.currentTarget.open)}
-        open={
-          instructionsOpen ||
-          Object.values(skillErrors).some((value) => value !== null)
-        }
-      >
-        <summary>Customize contributor instructions</summary>
-        <fieldset className="admin-fieldset">
-          <legend>Contribution fields</legend>
+      <fieldset className="admin-fieldset admin-fields-wide">
+        <legend>Contribution fields</legend>
+        <div className="admin-field-grid">
           {CONTRIBUTION_FIELDS.map((field) => (
             <label key={field}>
               {CONTRIBUTION_LABELS[field].label}
@@ -473,25 +483,21 @@ function ProjectEditor({
                     [field]: event.target.value,
                   }))
                 }
-                rows={field === "securityContact" ? 1 : 4}
+                rows={field === "securityContact" ? 1 : 3}
                 value={skill[field]}
               />
               {skillErrors[field] ? (
                 <small className="field-error">{skillErrors[field]}</small>
-              ) : (
-                <small className="field-hint">
-                  {CONTRIBUTION_LABELS[field].hint}
-                </small>
-              )}
+              ) : null}
             </label>
           ))}
-        </fieldset>
-      </details>
+        </div>
+      </fieldset>
       <fieldset className="admin-fieldset">
         <legend>Reward asset</legend>
         {!assetSelected ? (
           <p>
-            No reward asset is set.{" "}
+            No reward asset.{" "}
             <button
               type="button"
               className="button secondary-button"
@@ -584,12 +590,10 @@ function ProjectEditor({
           </p>
         ) : null}
       </fieldset>
-      <details>
-        <summary>
-          Advanced project settings (revision {project.revision})
-        </summary>
+      <fieldset className="admin-fieldset admin-fields-wide">
+        <legend>Advanced settings · revision {project.revision}</legend>
         <label>
-          Other fields
+          Manifest JSON
           <textarea
             className="admin-manifest"
             onChange={(event) => setText(event.target.value)}
@@ -597,8 +601,11 @@ function ProjectEditor({
             value={text}
           />
         </label>
-      </details>
-      <section aria-label="Revision changes">
+      </fieldset>
+      <section
+        aria-label="Revision changes"
+        className="admin-fields-wide admin-revision-review"
+      >
         <h3>Review changes</h3>
         {previewError ? (
           <p role="status">{previewError}</p>
@@ -625,7 +632,7 @@ function ProjectEditor({
         )}
       </section>
       <label>
-        Reason for this revision (public history)
+        Reason for revision (public)
         <input
           maxLength={1000}
           onChange={(event) => setReason(event.target.value)}
@@ -638,50 +645,52 @@ function ProjectEditor({
           <CircleAlert aria-hidden="true" /> {error}
         </p>
       ) : null}
-      <button
-        className="button primary-button"
-        disabled={
-          busy ||
-          reason.trim() === "" ||
-          preview === null ||
-          changedFields.length === 0
-        }
-        type="submit"
-      >
-        {busy ? "Saving…" : `Save revision ${project.revision + 1}`}
-      </button>
-      <button
-        type="button"
-        className="button secondary-button"
-        disabled={busy}
-        onClick={onCancel}
-      >
-        Close and keep draft
-      </button>
-      <button
-        type="button"
-        className="button ghost-button"
-        disabled={busy}
-        onClick={() => {
-          try {
-            sessionStorage.removeItem(draftKey);
-            onCancel();
-          } catch {
-            setError(
-              "Could not discard the saved draft. Keep this editor open and try again.",
-            );
+      <div className="admin-editor-actions admin-fields-wide">
+        <button
+          className="button primary-button"
+          disabled={
+            busy ||
+            reason.trim() === "" ||
+            preview === null ||
+            changedFields.length === 0
           }
-        }}
-      >
-        Discard draft
-      </button>
+          type="submit"
+        >
+          <Save aria-hidden="true" />{" "}
+          {busy ? "Saving…" : `Save revision ${project.revision + 1}`}
+        </button>
+        <button
+          type="button"
+          className="button secondary-button"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          <X aria-hidden="true" /> Close and keep draft
+        </button>
+        <button
+          type="button"
+          className="button ghost-button"
+          disabled={busy}
+          onClick={() => {
+            try {
+              sessionStorage.removeItem(draftKey);
+              onCancel();
+            } catch {
+              setError(
+                "Could not discard the saved draft. Keep this editor open and try again.",
+              );
+            }
+          }}
+        >
+          <Trash2 aria-hidden="true" /> Discard draft
+        </button>
+      </div>
     </form>
   );
 }
 
 /** Public reads are edge cached for 30 seconds and purged on each write. */
-const SAVED_NOTE =
-  "Saved. Pages update within a minute; points at the next release.";
+const SAVED_NOTE = "Saved.";
 
 /** Delisting keeps history: the project becomes paused and retired. */
 function DelistButton({
@@ -694,8 +703,7 @@ function DelistButton({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (project.manifest.listingTier === "retired")
-    return <p className="admin-status">Delisted.</p>;
+  if (project.manifest.listingTier === "retired") return null;
   const delist = () => {
     setBusy(true);
     setError(null);
@@ -752,7 +760,7 @@ function DelistButton({
             onClick={() => setConfirming(true)}
             type="button"
           >
-            Delist
+            <Trash2 aria-hidden="true" /> Delist
           </button>
         </div>
       )}
@@ -760,125 +768,214 @@ function DelistButton({
   );
 }
 
+type ProjectSection = "overview" | "security" | "settings" | "skills";
+
+function adminHref(projectId: string | null, section = "overview") {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project", projectId);
+  if (section !== "overview") params.set("section", section);
+  return `/admin${params.size ? `?${params}` : ""}`;
+}
+
+function projectState(project: AdminProject) {
+  const restricted = project.enforcement.state !== "clear";
+  const needsDecision = project.enforcement.decisionRequired;
+  return {
+    label: needsDecision
+      ? "Decision needed"
+      : restricted
+        ? project.enforcement.state
+        : project.status,
+    tone:
+      needsDecision || project.enforcement.state === "banned"
+        ? ("danger" as const)
+        : restricted || project.status !== "active"
+          ? ("warning" as const)
+          : ("success" as const),
+    icon:
+      needsDecision || restricted ? (
+        <ShieldAlert />
+      ) : project.status === "active" ? (
+        <CircleCheck />
+      ) : (
+        <Pause />
+      ),
+  };
+}
+
 function ProjectsSection({
-  onChanged,
   selectedProject,
-  onSelect,
+  section,
 }: {
-  onChanged: () => void;
   selectedProject: string | null;
-  onSelect: (id: string | null) => void;
+  section: ProjectSection;
 }) {
   const [query, setQuery] = useState("");
   const [state, reload] = usePublicResource(
     true,
     loadAdminProjects,
-    "Something went wrong.",
+    "Projects could not load.",
   );
-  const [editing, setEditing] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  // Confirmed malicious results that wait for a moderator decision come
-  // first (PRD sections 2 and 8).
   const matchingProjects =
     state.status === "ready"
-      ? [
-          ...state.projects.filter(
-            (project) => project.enforcement.decisionRequired,
-          ),
-          ...state.projects.filter(
-            (project) => !project.enforcement.decisionRequired,
-          ),
-        ].filter((project) =>
-          selectedProject
-            ? project.id === selectedProject
-            : `${project.id} ${project.manifest.name} ${project.manifest.repositories.map((repo) => repo.id).join(" ")}`
-                .toLowerCase()
-                .includes(query.trim().toLowerCase()),
-        )
+      ? [...state.projects]
+          .sort(
+            (a, b) =>
+              Number(b.enforcement.decisionRequired) -
+              Number(a.enforcement.decisionRequired),
+          )
+          .filter((project) =>
+            selectedProject
+              ? project.id === selectedProject
+              : `${project.id} ${project.manifest.name} ${project.manifest.repositories.map((repo) => repo.id).join(" ")}`
+                  .toLowerCase()
+                  .includes(query.trim().toLowerCase()),
+          )
       : [];
+  const backToOverview = () => {
+    const current = new URL(window.location.href);
+    if (
+      current.searchParams.get("project") !== selectedProject ||
+      current.searchParams.get("section") !== "settings"
+    )
+      return;
+    window.history.pushState({}, "", adminHref(selectedProject));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    window.requestAnimationFrame(() => {
+      document.getElementById("admin-project-title")?.focus();
+      window.scrollTo({ top: 0, behavior: "auto" });
+    });
+  };
   return (
     <section aria-labelledby="admin-projects" className="admin-section">
-      {!selectedProject ? (
-        <div className="admin-section-heading">
-          <h2 id="admin-projects">Projects</h2>
-        </div>
-      ) : (
-        <h2 id="admin-projects" className="visually-hidden">
-          Selected project
-        </h2>
-      )}
+      <h2 id="admin-projects" className="visually-hidden">
+        {selectedProject ? "Selected project" : "Projects"}
+      </h2>
       {!selectedProject && state.status === "ready" ? (
-        <MetricGrid className="operations-summary">
-          <MetricTile label="Registered" value={state.projects.length} />
-          <MetricTile
-            label="Active"
-            value={
-              state.projects.filter((project) => project.status === "active")
-                .length
-            }
-            tone="success"
-          />
-          <MetricTile
-            label="Need moderator"
-            value={
-              state.projects.filter(
-                (project) => project.enforcement.decisionRequired,
-              ).length
-            }
-            tone="warning"
-          />
-        </MetricGrid>
+        <div className="admin-list-toolbar">
+          <label className="admin-search">
+            <Search aria-hidden="true" />
+            <span className="visually-hidden">Find a project</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Find a project or repository"
+            />
+          </label>
+          <MetricGrid className="admin-counts">
+            <MetricTile label="Projects" value={state.projects.length} />
+            <MetricTile
+              label="Active"
+              value={
+                state.projects.filter((project) => project.status === "active")
+                  .length
+              }
+              tone="success"
+            />
+            <MetricTile
+              label="Need review"
+              value={
+                state.projects.filter(
+                  (project) => project.enforcement.decisionRequired,
+                ).length
+              }
+              tone="warning"
+            />
+          </MetricGrid>
+        </div>
       ) : null}
       {selectedProject ? (
-        <button
-          type="button"
-          className="button secondary-button"
-          onClick={() => onSelect(null)}
-        >
-          All projects
-        </button>
-      ) : (
-        <label>
-          Find a project
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Project or repository"
-          />
-        </label>
-      )}
+        <Link href="/admin" className="admin-back">
+          <ArrowLeft aria-hidden="true" /> All projects
+        </Link>
+      ) : null}
       {note ? (
         <p className="admin-status" role="status">
-          {note}
+          <CircleCheck aria-hidden="true" /> {note}
         </p>
       ) : null}
       {state.status !== "ready" ? (
         <LoadNotice label="projects" retry={reload} state={state} />
       ) : state.projects.length === 0 ? (
-        <p className="admin-status">No projects are listed yet.</p>
-      ) : (
-        <>
-          {matchingProjects.length === 0 ? <p>No projects match.</p> : null}
-          {matchingProjects.map((project) =>
-            selectedProject ? (
-              <article className="admin-card" key={project.id}>
-                <header>
-                  <h3>{project.manifest.name}</h3>
-                  <StatusBadge
-                    tone={project.status === "active" ? "success" : "warning"}
-                  >
-                    {project.status}
+        <p className="admin-status">No projects.</p>
+      ) : matchingProjects.length === 0 ? (
+        <p className="admin-status">
+          {selectedProject ? "Project not found." : "No matching projects."}
+        </p>
+      ) : selectedProject ? (
+        matchingProjects.map((project) => {
+          const status = projectState(project);
+          const saved = (message: string) => {
+            setNote(message);
+            reload();
+          };
+          return (
+            <article
+              className="admin-card admin-project-detail"
+              key={project.id}
+            >
+              <header className="admin-project-heading">
+                <div>
+                  <h3 id="admin-project-title" tabIndex={-1}>
+                    {project.manifest.name}
+                  </h3>
+                  <span className="admin-project-id">{project.id}</span>
+                </div>
+                <div className="admin-action-bar">
+                  <StatusBadge tone={status.tone} icon={status.icon}>
+                    {status.label}
                   </StatusBadge>
-                </header>
-                <details className="admin-reference">
-                  <summary>
-                    Project configuration · revision {project.revision}
-                  </summary>
+                  <a
+                    className="admin-icon-button"
+                    href={`/projects/${project.manifest.slug}`}
+                    aria-label="View public project"
+                    title="View public project"
+                  >
+                    <ArrowUpRight aria-hidden="true" />
+                  </a>
+                </div>
+              </header>
+              <nav
+                className="admin-section-nav"
+                aria-label="Project administration"
+              >
+                {(
+                  [
+                    ["overview", "Overview", LayoutGrid],
+                    ["security", "Security", ShieldCheck],
+                    ["settings", "Settings", Settings2],
+                    ["skills", "Skills", Code2],
+                  ] as const
+                ).map(([id, label, Icon]) => (
+                  <Link
+                    key={id}
+                    href={adminHref(project.id, id)}
+                    ariaCurrent={section === id ? "page" : undefined}
+                  >
+                    <Icon aria-hidden="true" /> {label}
+                  </Link>
+                ))}
+              </nav>
+              {section === "overview" ? (
+                <>
                   <dl className="admin-facts">
                     <div>
-                      <dt>Project id</dt>
-                      <dd>{project.id}</dd>
+                      <dt>Repositories</dt>
+                      <dd className="admin-repositories">
+                        {project.manifest.repositories.map((repo) => (
+                          <a
+                            key={repo.id}
+                            href={`https://github.com/${repo.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <FolderGit2 aria-hidden="true" /> {repo.id}{" "}
+                            <ArrowUpRight aria-hidden="true" />
+                          </a>
+                        ))}
+                      </dd>
                     </div>
                     <div>
                       <dt>Discovery placement</dt>
@@ -892,108 +989,70 @@ function ProjectsSection({
                       </dd>
                     </div>
                     <div>
-                      <dt>Skills</dt>
+                      <dt>Reward asset</dt>
                       <dd>
-                        {usesGeneratedSkills(project.manifest)
-                          ? `Generated from revision ${project.revision}`
-                          : `${project.manifest.skill.sourcePath} · ${project.manifest.reviewSkill.sourcePath}`}
+                        {project.manifest.rewardAsset
+                          ? `${project.manifest.rewardAsset.symbol} · ${networkName(project.manifest.rewardAsset.network)}`
+                          : "Not set"}
                       </dd>
                     </div>
                   </dl>
-                  <GeneratedSkillPreview
-                    manifest={project.manifest}
-                    registry={{
-                      revision: project.revision,
-                      manifestSha256: project.manifestSha256,
-                    }}
-                  />
-                </details>
-                {editing === project.id ? (
-                  <ProjectEditor
-                    key={`${project.id}:${project.revision}`}
-                    onCancel={() => setEditing(null)}
-                    onSaved={(saved) => {
-                      setEditing(null);
-                      setNote(saved);
-                      reload();
-                      onChanged();
-                    }}
-                    project={project}
-                  />
-                ) : (
-                  <button
-                    className="button secondary-button"
-                    onClick={() => setEditing(project.id)}
-                    type="button"
-                  >
-                    Edit project
-                  </button>
-                )}
-                <DelistButton
-                  onDone={(saved) => {
-                    setNote(saved);
-                    reload();
-                    onChanged();
-                  }}
+                  <ProjectEnforcementPanel onDone={saved} project={project} />
+                  <DelistButton onDone={saved} project={project} />
+                </>
+              ) : section === "security" ? (
+                <VettingSection projectId={project.id} />
+              ) : section === "settings" ? (
+                <ProjectEditor
+                  key={`${project.id}:${project.revision}`}
                   project={project}
-                />
-                <ProjectEnforcementPanel
-                  onDone={(saved) => {
-                    setNote(saved);
-                    reload();
-                    onChanged();
+                  onCancel={backToOverview}
+                  onSaved={(message) => {
+                    saved(message);
+                    backToOverview();
                   }}
-                  project={project}
                 />
-              </article>
-            ) : (
-              <article
-                className="admin-card admin-project-summary"
+              ) : (
+                <GeneratedSkillPreview
+                  manifest={project.manifest}
+                  registry={{
+                    revision: project.revision,
+                    manifestSha256: project.manifestSha256,
+                  }}
+                  collapsible={false}
+                />
+              )}
+            </article>
+          );
+        })
+      ) : (
+        <div className="admin-project-list">
+          {matchingProjects.map((project) => {
+            const status = projectState(project);
+            return (
+              <Link
                 key={project.id}
+                href={adminHref(project.id)}
+                className="admin-project-row"
+                ariaLabel={`Open ${project.manifest.name}`}
               >
-                <div>
+                <FolderGit2 className="admin-project-icon" aria-hidden="true" />
+                <div className="admin-project-name">
                   <h3>{project.manifest.name}</h3>
                   <p>
                     {project.manifest.repositories
-                      .map((repository) => repository.id)
+                      .map((repo) => repo.id)
                       .join(", ")}
                   </p>
-                  <StatusBadge
-                    tone={
-                      project.enforcement.decisionRequired ||
-                      project.enforcement.state === "banned"
-                        ? "danger"
-                        : project.enforcement.state !== "clear" ||
-                            project.status !== "active"
-                          ? "warning"
-                          : "success"
-                    }
-                  >
-                    {project.enforcement.decisionRequired
-                      ? "Moderator decision needed: confirmed malicious result"
-                      : project.enforcement.state !== "clear"
-                        ? project.enforcement.state === "banned"
-                          ? "Banned"
-                          : "Quarantined"
-                        : project.status}
-                  </StatusBadge>
-                  {project.enforcement.state !== "clear" && (
-                    <p className="admin-status">
-                      Registry status: {project.status}
-                    </p>
-                  )}
                 </div>
-                <button
-                  className="button secondary-button"
-                  type="button"
-                  onClick={() => onSelect(project.id)}
-                >
-                  Open {project.manifest.name}
-                </button>
-              </article>
-            ),
-          )}
-        </>
+                <StatusBadge tone={status.tone} icon={status.icon}>
+                  {status.label}
+                </StatusBadge>
+                <ArrowRight className="admin-row-arrow" aria-hidden="true" />
+              </Link>
+            );
+          })}
+        </div>
       )}
     </section>
   );
@@ -1083,9 +1142,7 @@ function FeeConversionsSection() {
                   <dt>{networkName(route.network)}</dt>
                   <dd>
                     <StatusBadge tone="neutral">
-                      {route.status === "usdc"
-                        ? "USDC conversion policy"
-                        : "Not converted"}
+                      {route.status === "usdc" ? "USDC" : "Not converted"}
                     </StatusBadge>
                   </dd>
                   {totals.length > 0 ? (
@@ -1102,13 +1159,9 @@ function FeeConversionsSection() {
                         )}
                       </dd>
                     ))
-                  ) : (
-                    <dd>
-                      {route.status === "usdc"
-                        ? "No finalized conversion yet."
-                        : "Received assets stay in the fee wallet."}
-                    </dd>
-                  )}
+                  ) : route.status === "usdc" ? (
+                    <dd>No conversions</dd>
+                  ) : null}
                 </div>
               );
             })}
@@ -1120,31 +1173,33 @@ function FeeConversionsSection() {
 }
 
 export default function AdminPage() {
-  const [selectedProject, setSelectedProject] = useState(() =>
-    new URLSearchParams(window.location.search).get("project"),
-  );
+  const [location, setLocation] = useState(() => new URL(window.location.href));
   useEffect(() => {
-    const read = () =>
-      setSelectedProject(
-        new URLSearchParams(window.location.search).get("project"),
-      );
+    const read = () => setLocation(new URL(window.location.href));
     window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
+    window.addEventListener("hashchange", read);
+    return () => {
+      window.removeEventListener("popstate", read);
+      window.removeEventListener("hashchange", read);
+    };
   }, []);
-  const selectProject = (id: string | null) => {
-    const url = id
-      ? `/admin?${new URLSearchParams({ project: id })}`
-      : "/admin";
-    window.history.pushState(window.history.state, "", url);
-    setSelectedProject(id);
-  };
+  const selectedProject = location.searchParams.get("project") || null;
+  const requestedSection = location.searchParams.get("section");
+  const section: ProjectSection =
+    requestedSection === "security" ||
+    requestedSection === "settings" ||
+    requestedSection === "skills"
+      ? requestedSection
+      : location.hash === "#admin-vetting"
+        ? "security"
+        : "overview";
+  const fees = !selectedProject && requestedSection === "fees";
   const state = useProjectSession();
-  const [vettingVersion, setVettingVersion] = useState(0);
   let body: ReactNode;
   if (state.status !== "signed-in") {
     body = (
       <SignInPanel
-        next={`${window.location.pathname}${window.location.search}`}
+        next={`${location.pathname}${location.search}`}
         state={state}
       />
     );
@@ -1158,19 +1213,27 @@ export default function AdminPage() {
   } else {
     body = (
       <>
-        <ProjectsSection
-          key={selectedProject ?? "list"}
-          selectedProject={selectedProject}
-          onSelect={selectProject}
-          onChanged={() => setVettingVersion((value) => value + 1)}
-        />
-        {selectedProject ? (
-          <VettingSection
-            projectId={selectedProject}
-            key={`vetting-${selectedProject}-${vettingVersion}`}
-          />
-        ) : (
+        <nav
+          className="admin-section-nav admin-primary-nav"
+          aria-label="Administration"
+        >
+          <Link href="/admin" ariaCurrent={!fees ? "page" : undefined}>
+            <FolderGit2 aria-hidden="true" /> Projects
+          </Link>
+          <Link
+            href={adminHref(null, "fees")}
+            ariaCurrent={fees ? "page" : undefined}
+          >
+            <Coins aria-hidden="true" /> Fee conversions
+          </Link>
+        </nav>
+        {fees ? (
           <FeeConversionsSection />
+        ) : (
+          <ProjectsSection
+            selectedProject={selectedProject}
+            section={section}
+          />
         )}
       </>
     );

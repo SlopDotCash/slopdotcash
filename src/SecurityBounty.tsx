@@ -36,6 +36,7 @@ import { PrivateReportForm, usePrivateDraftSession } from "./PrivateReportForm";
 import {
   GRANT_ERRORS,
   githubSubmissionStatus,
+  rateLimitMessage,
   reportNeedsAction,
   type Submission,
   submissionStatus,
@@ -1527,13 +1528,18 @@ function SubmissionCard({
   const run = (path: string, body: Record<string, unknown>) =>
     void act(async () => {
       try {
-        const result = await privateRequest<{ submission: Submission }>(
+        const result = await privateRequest<{
+          submission: Submission;
+          rateLimited?: { retryAfterSeconds: number | null };
+        }>(
           "POST",
           `security-submissions/${encodeURIComponent(submission.id)}/${path}`,
           body,
         );
         setNeedsGrant(false);
         onUpdated(result.submission);
+        if (result.rateLimited)
+          setError(rateLimitMessage(result.rateLimited.retryAfterSeconds));
       } catch (caught) {
         if (
           !(caught instanceof ProjectApiError) ||

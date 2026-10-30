@@ -119,14 +119,14 @@ test("owner-approved admission exemption requires confirmation and retains revoc
     },
   );
 
-  await page.goto(`/admin?project=${project.id}`, { waitUntil: "networkidle" });
+  await page.goto(`/admin?project=${project.id}&section=security`, {
+    waitUntil: "networkidle",
+  });
   const card = page.getByRole("article", {
     name: `Security vetting for ${project.id}`,
   });
   await expect(card.getByText("Unscanned", { exact: true })).toBeVisible();
-  await card
-    .getByText("Record owner-approved exemption", { exact: true })
-    .click();
+  await expect(page.locator("main details")).toHaveCount(0);
   const grantButton = card.getByRole("button", {
     name: "Record exemption",
     exact: true,
@@ -154,9 +154,9 @@ test("owner-approved admission exemption requires confirmation and retains revoc
   });
   await grantButton.focus();
   await page.keyboard.press("Enter");
-  await expect(
-    card.getByText("Owner-approved exemption", { exact: true }),
-  ).toBeVisible();
+  await expect(card.locator(".admin-badge")).toHaveText(
+    "Owner-approved exemption",
+  );
   expect(grants).toEqual([
     {
       projectId: project.id,
@@ -170,17 +170,14 @@ test("owner-approved admission exemption requires confirmation and retains revoc
   await expect(
     card.getByText("Existing-project exemption", { exact: true }),
   ).toHaveCount(0);
-  await card
-    .getByText("Owner-approved exemption history", { exact: true })
-    .click();
+  await expect(
+    card.getByRole("heading", { name: "Exemption history", exact: true }),
+  ).toBeVisible();
   await expect(card.getByText(grant.reason, { exact: true })).toBeVisible();
   await expect(
     card.getByText(grant.decisionReference, { exact: true }),
   ).toBeVisible();
 
-  await card
-    .getByText("Revoke owner-approved exemption", { exact: true })
-    .click();
   const revokeButton = card.getByRole("button", {
     name: "Revoke exemption",
     exact: true,
@@ -219,9 +216,9 @@ test("owner-approved admission exemption requires confirmation and retains revoc
       confirmation: true,
     },
   ]);
-  await card
-    .getByText("Owner-approved exemption history", { exact: true })
-    .click();
+  await expect(
+    card.getByRole("heading", { name: "Exemption history", exact: true }),
+  ).toBeVisible();
   await expect(card.getByText(grant.reason, { exact: true })).toBeVisible();
   await expect(
     card.getByText(/Restore the normal admission requirement\./u),

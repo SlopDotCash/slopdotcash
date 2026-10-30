@@ -128,6 +128,7 @@ function tier(id: string, risky: Set<string>): number {
   const path = id.replace(/(?:#(?:part-\d+-of-\d+|signals))+$/u, "");
   if (
     path === DETERMINISTIC_COVERAGE_ID ||
+    id.startsWith("/slop-scan/symlink/") ||
     id.startsWith("execution:") ||
     id.startsWith("slop-skill-template/")
   )
@@ -175,12 +176,40 @@ export function planReview(
     inventory.visibilityGaps.every((gap) => gap.length <= 1000);
   if (fits)
     return { mode: "single", call: planned(evidence, inventory.items.length) };
+  const batchEvidence = (
+    index: number,
+    count: number,
+    items: Item[],
+    aliases: Record<string, string[]>,
+  ) =>
+    JSON.stringify({
+      schemaVersion: INVENTORY_SCHEMA,
+      batch: {
+        index,
+        count,
+        inventorySha256: inspection.inventorySha256,
+        note: "One batch of a repository review; coverage refers to the supplied items. A repository-level synthesis follows.",
+      },
+      items,
+      ...(Object.keys(aliases).length > 0 ? { sameBytesAs: aliases } : {}),
+      artifacts: [],
+      visibilityGaps: [],
+    });
   const risky = new Set(inspection.riskSignals);
   const limit = Math.min(batchTokens * BYTES_PER_TOKEN, MAX_INVENTORY_BYTES);
   // An item larger than one batch is reviewed in consecutive parts; a call
   // never receives more than one review call accepts.
   const items = inventory.items.flatMap((item) =>
-    itemBytes(item) > limit ? batchParts(item, limit) : [item],
+    Buffer.byteLength(
+      batchEvidence(
+        Number.MAX_SAFE_INTEGER,
+        Number.MAX_SAFE_INTEGER,
+        [item],
+        {},
+      ),
+    ) > limit
+      ? batchParts(item, limit)
+      : [item],
   );
   // Identical bytes are reviewed once. Every other path is named beside the
   // reviewed copy while it fits that copy's batch; the rest are recorded with
@@ -211,25 +240,6 @@ export function planReview(
     // and keeps every part of a file consecutive.
     .sort((a, b) => a.tier - b.tier || a.position - b.position)
     .map((entry) => entry.item);
-  const batchEvidence = (
-    index: number,
-    count: number,
-    items: Item[],
-    aliases: Record<string, string[]>,
-  ) =>
-    JSON.stringify({
-      schemaVersion: INVENTORY_SCHEMA,
-      batch: {
-        index,
-        count,
-        inventorySha256: inspection.inventorySha256,
-        note: "One batch of a repository review; coverage refers to the supplied items. A repository-level synthesis follows.",
-      },
-      items,
-      ...(Object.keys(aliases).length > 0 ? { sameBytesAs: aliases } : {}),
-      artifacts: [],
-      visibilityGaps: [],
-    });
   /**
    * The aliases that fit beside `item` in its own batch, measured exactly and
    * in linear time: the serialized batch with an empty alias list (at the

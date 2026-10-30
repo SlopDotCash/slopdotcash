@@ -21,6 +21,9 @@ export type CreateFault =
   | "malformed-201"
   | "422"
   | "403"
+  | "403-secondary-rate-limit"
+  | "403-primary-rate-limit"
+  | "429"
   | "404"
   | "401";
 export type ListFault = "ok" | "error" | "paginated";
@@ -173,6 +176,28 @@ export function fakeGithub(options: { now: () => Date }) {
           return reply(422, { message: "Validation Failed" });
         case "403":
           return reply(403, { message: "Forbidden" });
+        case "403-secondary-rate-limit":
+          return reply(403, {
+            message:
+              "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later.",
+          });
+        case "403-primary-rate-limit":
+          return reply(
+            403,
+            { message: "API rate limit exceeded for user ID 1." },
+            {
+              "x-ratelimit-remaining": "0",
+              "x-ratelimit-reset": String(
+                Math.floor(options.now().getTime() / 1000) + 600,
+              ),
+            },
+          );
+        case "429":
+          return reply(
+            429,
+            { message: "Too Many Requests" },
+            { "retry-after": "90" },
+          );
         case "404":
           return reply(404, { message: "Not Found" });
         case "401":
@@ -261,6 +286,7 @@ export function fakeGithub(options: { now: () => Date }) {
     fetch,
     apiOrigin: FAKE_API,
     installation,
+    now: options.now,
   });
 
   return {
