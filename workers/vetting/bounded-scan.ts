@@ -126,14 +126,22 @@ const INSTALL_FILES = new Set([
   "rakefile",
   "brewfile",
   "procfile",
+  "cmakelists.txt",
+  "meson.build",
+  "earthfile",
+  "sconstruct",
+  "sconscript",
+  "wscript",
+  "makefile.am",
 ]);
 /**
- * Container and CI build recipes with a name suffix, such as
- * `Dockerfile.prod` or `app.dockerfile`. They run commands at build time, so
- * they are install surfaces like a Makefile, never unreviewed content.
+ * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
+ * `app.dockerfile`, or by a build-system extension, such as `Helper.cmake`.
+ * They run commands at build time, so they are install surfaces like a
+ * Makefile, never unreviewed content.
  */
 const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.dockerfile$/u;
+  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake)$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
