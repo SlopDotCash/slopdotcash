@@ -24,7 +24,7 @@ mean the code is free of all malware.
 | `source` | Code and configuration files of the executable inventory |
 | `manifests` | `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod` and similar |
 | `dependencies` | Lockfiles; each lock digest is recorded |
-| `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `SConscript`, `wscript`, `Makefile.am`, `Makefile.in`, `GNUmakefile.in`, `configure.ac`, `build.sbt`, `<name>.sbt`, `BUILD.bazel`, `MODULE.bazel`, `WORKSPACE`, `<name>.bzl`, `build.boot`, `build`, `wscript_build`, `docker-bake.hcl`, `docker-bake.override.hcl`), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts, and previously unclassified files whose first two bytes are `#!` (an interpreter script such as `configure`) |
+| `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `SConscript`, `wscript`, `Makefile.am`, `Makefile.in`, `GNUmakefile.in`, `configure.ac`, `build.sbt`, `<name>.sbt`, `BUILD.bazel`, `MODULE.bazel`, `WORKSPACE`, `<name>.bzl`, `build.boot`, `build`, `wscript_build`, `docker-bake.hcl`, `docker-bake.override.hcl`, node-gyp `binding.gyp`, `<name>.gyp`, `<name>.gypi`, and repository files named by a GYP `includes` entry), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts, and previously unclassified files whose first two bytes are `#!` (an interpreter script such as `configure`) |
 | `downloads` | URLs that install-time content downloads, and committed binaries or archives |
 | `agentInstructions` | `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`, `CONTRIBUTING.md`, README, `SKILL.md`, `WARP.md`, `llms.txt`, Cursor, Claude, Copilot (`.github/instructions`, `.github/chatmodes`), Windsurf, JetBrains Junie (`.junie`), Project IDX (`.idx`), Goose, Continue, Zed `.rules` and similar rule files |
 
@@ -33,6 +33,10 @@ same bytes are classified the same way whether they sit in a `Makefile`, a
 `Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Each keeps its
 `installScripts` coverage, its install-time download extraction and its place
 in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
+
+node-gyp loads `binding.gyp`, any `<name>.gyp` or `<name>.gypi`, and every
+repository file named by a GYP `includes` entry, then runs command expansions
+and actions from those files at install.
 
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
