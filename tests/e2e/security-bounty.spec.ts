@@ -684,6 +684,10 @@ test("owners publish and control bounty programs with verified funding @registry
     await signIn(page, TOKENS.security);
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
     await openProjectSecuritySettings(page);
+    await page
+      .getByRole("group", { name: "Network", exact: true })
+      .getByRole("radio", { name: "Base", exact: true })
+      .check();
     await page.getByLabel("Published gross award (USDC)").fill("100");
     await page.getByLabel(`Source commit (${repository})`).fill("a".repeat(40));
     const values = {
