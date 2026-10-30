@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { type PointRevision, pointRevisionId } from "../../src/lib/points";
+import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import { escalateAppeal } from "../../workers/slopbot/appeals";
@@ -313,6 +315,181 @@ test("a concurrent triage lease is respected and an expired one can recover", as
     h.sqlite.query("SELECT claim_token,claim_until FROM points_disputes").get(),
   ).toEqual({ claim_token: null, claim_until: null });
 });
+
+test.each(["before restart", "after the initial restart read"])(
+  "a draft saved %s resumes moderator escalation without another model call",
+  async (timing) => {
+    const { processPendingPointsDisputes } = await import(
+      "../../workers/slopbot/points-disputes"
+    );
+    const { recordDraft } = await import("../../workers/slopbot/appeals");
+    const h = await fixture();
+    const created = await (
+      await h.call("", {
+        revisionId: h.revision.id,
+        reason: "The manual award needs a date correction.",
+      })
+    ).json();
+    const manifest = JSON.stringify(
+      applicationManifest("alpha", "example/alpha", {
+        status: "active",
+        rewardAsset: {
+          network: "ethereum",
+          kind: "stablecoin",
+          address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          symbol: "USDC",
+          chainId: "1",
+          cluster: null,
+          decimals: 6,
+          verifiedAt: NOW,
+        },
+      }),
+    );
+    const digest = createHash("sha256").update(manifest).digest("hex");
+    h.sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('alpha',1,?,?,'recovery fixture',?)",
+      )
+      .run(manifest, digest, NOW);
+    h.sqlite
+      .query(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('alpha','active',1,?,?,?,?)",
+      )
+      .run(manifest, digest, NOW, NOW);
+    h.sqlite
+      .query(
+        "INSERT INTO project_repositories(repository_key,project_id) VALUES('example/alpha','alpha')",
+      )
+      .run();
+    h.sqlite
+      .query(
+        "UPDATE points_disputes SET claim_token='crashed-worker',claim_until='2099-01-01T00:00:00.000Z'",
+      )
+      .run();
+    let draft: unknown;
+    const saveDraftAndExpire = async () => {
+      await recordDraft(h.db, created.id, "uphold", 0.7, "points_disputes", {
+        claimToken: "crashed-worker",
+      });
+      draft = h.sqlite
+        .query("SELECT draft,draft_confidence,drafted_at FROM points_disputes")
+        .get();
+      // The first worker stopped after the durable draft but before escalation.
+      h.sqlite
+        .query(
+          "UPDATE points_disputes SET claim_until='2000-01-01T00:00:00.000Z'",
+        )
+        .run();
+    };
+    if (timing === "before restart") await saveDraftAndExpire();
+    let savedAfterRead = false;
+    const db: typeof h.db = {
+      ...h.db,
+      prepare(sql) {
+        const statement = h.db.prepare(sql);
+        if (!sql.includes("FROM points_disputes WHERE appeal_key = ?"))
+          return statement;
+        return {
+          ...statement,
+          bind(...values) {
+            const bound = statement.bind(...values);
+            return {
+              ...bound,
+              async first<T>() {
+                const value = await bound.first<T>();
+                if (timing !== "before restart" && !savedAfterRead) {
+                  savedAfterRead = true;
+                  await saveDraftAndExpire();
+                }
+                return value;
+              },
+            };
+          },
+        };
+      },
+    };
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    const reads: string[] = [];
+    const nativeFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      expect(url.origin).toBe("https://api.github.com");
+      reads.push(url.pathname);
+      switch (url.pathname) {
+        case "/repos/example/alpha/installation":
+          return Response.json({ id: 1 });
+        case "/app/installations/1/access_tokens":
+          return Response.json({ token: "synthetic-read-token" });
+        case "/repos/example/alpha":
+          return Response.json({ id: 123456789 });
+        case "/repos/example/alpha/collaborators/recipient/permission":
+          return Response.json({ permission: "read", user: { id: 42 } });
+        default:
+          throw new Error("Unexpected request during retained-draft recovery");
+      }
+    }) as typeof fetch;
+    try {
+      const env = {
+        SLOPBOT_DB: db,
+        SLOPBOT_APP_ID: "1",
+        SLOPBOT_APP_PRIVATE_KEY: privateKey,
+        PROJECT_MODERATOR_GITHUB_IDS: moderator.githubId,
+      };
+      // Both scheduled workers see pending work, but only one may resume it.
+      await Promise.all([
+        processPendingPointsDisputes(env),
+        processPendingPointsDisputes(env),
+      ]);
+      await processPendingPointsDisputes(env);
+      const detail = await (
+        await h.call(`/${created.id}`, undefined, otherToken)
+      ).json();
+      expect(detail).toMatchObject({
+        state: "review",
+        draft: "uphold",
+        mayDecide: true,
+      });
+      expect(reads).toHaveLength(4);
+      expect(
+        h.sqlite
+          .query(
+            "SELECT draft,draft_confidence,drafted_at FROM points_disputes",
+          )
+          .get(),
+      ).toEqual(draft);
+      expect(
+        h.sqlite
+          .query(
+            "SELECT claim_token,claim_until,escalation FROM points_disputes",
+          )
+          .get(),
+      ).toEqual({
+        claim_token: null,
+        claim_until: null,
+        escalation: "Original work evidence needs independent moderator review",
+      });
+      expect(
+        h.sqlite
+          .query(
+            "SELECT COUNT(*) AS n FROM notifications WHERE recipient_github_id=?",
+          )
+          .get(moderator.githubId),
+      ).toEqual({ n: 1 });
+      expect(
+        h.sqlite.query("SELECT COUNT(*) AS n FROM slopbot_costs").get(),
+      ).toEqual({ n: 0 });
+      expect(
+        h.sqlite.query("SELECT COUNT(*) AS n FROM points_revisions").get(),
+      ).toEqual({ n: 1 });
+    } finally {
+      globalThis.fetch = nativeFetch;
+    }
+  },
+);
 
 test("signed-out and cross-origin requests cannot create a dispute", async () => {
   const h = await fixture();
