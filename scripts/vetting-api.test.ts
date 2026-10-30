@@ -469,6 +469,14 @@ describe("community security vetting", () => {
     expect(
       (await retained.evidence.run(id, result.environment.runId)).expires_at,
     ).toBe(expiry);
+    // The replay records no second closure in the audit trail.
+    expect(
+      sqlite
+        .query(
+          "SELECT created_at FROM vetting_evidence_audit WHERE assessment_id=? AND action='close-case'",
+        )
+        .all(id),
+    ).toEqual([{ created_at: NOW.toISOString() }]);
     expect((await vetting.getAssessment(id))?.state).toBe("incomplete");
     const readGrant = () =>
       retained.evidence.handle(
