@@ -17,7 +17,7 @@ async function session(page: Page, signedIn = () => true) {
   );
 }
 
-test("selected admin project folds scan and flag detail but preserves reasoned queuing", async ({
+test("selected admin project can queue after a superseded pending scan and preserves reasoned queuing", async ({
   page,
   diagnostics,
 }, info) => {
@@ -33,8 +33,8 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
     commitSha: "a".repeat(40),
     templateSha256: "b".repeat(64),
     policyVersion: "scan-policy-v2",
-    requestedAt: "2026-10-26T10:00:00.000Z",
-    completedAt: "2026-10-26T11:00:00.000Z",
+    requestedAt: "2026-10-28T10:00:00.000Z",
+    completedAt: "2026-10-28T11:00:00.000Z",
     modelRuns: [],
     artifacts: 1,
     heldArtifacts: 1,
@@ -53,6 +53,24 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
       findings: [],
       confirmation: null,
     },
+  };
+  // Superseded requests remain pending in the immutable scan history. Only
+  // the newest request controls the queue for this project.
+  const superseded = {
+    ...scan,
+    id: "superseded-scan",
+    state: "pending",
+    requestedAt: "2026-10-27T10:00:00.000Z",
+    completedAt: null,
+    result: null,
+  };
+  const nextScan = {
+    ...scan,
+    id: "next-scan",
+    state: "pending",
+    requestedAt: "2026-10-29T10:00:00.000Z",
+    completedAt: null,
+    result: null,
   };
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({
@@ -97,12 +115,12 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
             name: project.name,
             status: project.status,
             revision: 1,
-            clearance: { state: "quarantined", assessment: scan },
+            clearance: queued
+              ? { state: "queued", assessment: nextScan }
+              : { state: "quarantined", assessment: scan },
           },
         ],
-        assessments: queued
-          ? [{ ...scan, id: "next-scan", state: "pending", result: null }, scan]
-          : [scan],
+        assessments: queued ? [nextScan, scan, superseded] : [scan, superseded],
         flags: [
           {
             id: "flag-layout",
@@ -231,6 +249,10 @@ test("selected admin project folds scan and flag detail but preserves reasoned q
       reason: "Recheck the unresolved dependency source",
     },
   ]);
+  await expect(card.locator(".admin-badge")).toHaveText("Queued");
+  await expect(
+    card.getByRole("button", { name: "Queue scan of revision 1" }),
+  ).toHaveCount(0);
 });
 
 test("evidence deep links load only after sign-in and select one reasoned reader", async ({
