@@ -214,10 +214,16 @@ Legacy OAuth, forwarding and receipt-verification routes return 404 unless
 (`GITHUB_INTAKE_APP_CLIENT_ID`, `GITHUB_INTAKE_APP_CLIENT_SECRET`,
 `GITHUB_INTAKE_APP_ID`, `GITHUB_INTAKE_APP_PRIVATE_KEY`,
 `SLOP_INTAKE_GRANT_KEY`). Owner decision D10: these hold the existing
-slopdotcash GitHub App (5257625) with "Repository security advisories:
-read"; there is no separate intake App and no long-lived token. Each
-installation owner must accept that permission. Until then intake stays off
-and the manual flow below applies.
+slopdotcash GitHub App (5257625); there is no separate intake App and no
+long-lived token. Owner decision, 30 October 2026: the App configuration may
+request "Repository security advisories: write" for the researcher's
+user-authorized private-report request. Backend installation tokens still
+request only `repository_advisories: read` and must never file or change an
+advisory. Each installation owner must accept the requested permission.
+Keep optional forwarding unavailable until reporter authorization and an
+independently verified GitHub receipt qualify the flow; the saved private
+Slop report and its review do not depend on forwarding. The permission change
+is approved, not evidence that live delivery has succeeded.
 
 Provision the five intake secrets and `SURPLUS_API_KEY` on the production
 Pages project `eliza-computer`. The release secret inventory permits staged
