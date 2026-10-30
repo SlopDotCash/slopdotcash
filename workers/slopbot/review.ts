@@ -2616,18 +2616,20 @@ async function appealStatement(
     }>(
       `/repos/${job.owner}/${job.repo}/issues/comments/${job.appealCommentId}`,
     );
+    // The same test the webhook used to open this job (index.ts jobFor).
+    const body = (comment?.body ?? "").trim();
     if (
       !comment ||
       comment.user?.id !== appellantId ||
       comment.issue_url !==
         `https://api.github.com/repos/${job.owner}/${job.repo}/issues/${job.number}` ||
-      !/^\/slopbot (?:appeal|dispute)(?:\s|$)/u.test(comment.body ?? "")
+      !/^\/slopbot (?:appeal|dispute(?:\s|$))/u.test(body)
     )
       throw new Error(
         "The original dispute comment is unavailable or changed source",
       );
     return (
-      (comment.body ?? "")
+      body
         .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
         .trim()
         .slice(0, 4000) || "(no reason given)"
