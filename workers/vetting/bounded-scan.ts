@@ -130,6 +130,7 @@ const INSTALL_FILES = new Set([
   "meson.build",
   "earthfile",
   "sconstruct",
+  "sconscript",
   "wscript",
   "makefile.am",
 ]);
