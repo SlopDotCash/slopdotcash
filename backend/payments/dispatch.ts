@@ -97,15 +97,29 @@ export async function dispatchPayment(
         .prepare(
           // A retirement that raced this completion leaves the row `failed`
           // without a transaction; the signature that landed keeps its receipt.
-          "UPDATE payment_attempts SET state='submitted',transaction_id=? WHERE id=? AND (state IN ('prepared','unknown','submitted') OR (state='failed' AND transaction_id IS NULL))",
+          // A recorded transaction id is never replaced. The lease can expire
+          // while this submit is still in flight, and the retry uses the same
+          // attempt. A different id is a second payout, so it must not erase
+          // the receipt already stored.
+          `UPDATE payment_attempts SET state='submitted',transaction_id=? WHERE id=? AND ((transaction_id IS NULL AND (state IN ('prepared','unknown','submitted') OR state='failed')) OR (transaction_id=? AND state IN ('prepared','unknown','submitted')))`,
         )
-        .bind(result.transactionId, id),
+        .bind(result.transactionId, id, result.transactionId),
       db
         .prepare(
-          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=?",
+          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=? AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='submitted' AND transaction_id=?)",
         )
-        .bind(timestamp, obligationId, lease),
+        .bind(timestamp, obligationId, lease, id, result.transactionId),
     ]);
+    const recorded = await db
+      .prepare(
+        "SELECT transaction_id id FROM payment_attempts WHERE id=? AND state='submitted'",
+      )
+      .bind(id)
+      .first<{ id: string }>();
+    if (recorded?.id !== result.transactionId)
+      throw new Error(
+        "Submitted transaction conflicts with the recorded attempt",
+      );
     return "submitted";
   } catch (error) {
     await db.batch([
