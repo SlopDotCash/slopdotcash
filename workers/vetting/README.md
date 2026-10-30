@@ -144,10 +144,10 @@ complete source inventory followed by the exact retained execution items.
 Clean execution reports use the same bounded validator as fresh execution,
 bind the requested artifacts and recorded image, and preserve disabled
 internet access. Every requested artifact needs its own byte-identity coverage.
-Old inventories remain readable. Reuse requires the current classification
-digest, so a pre-classification inventory needs a fresh scan. An old native
+Old inventories remain readable. Reuse requires the current classifications
+and rule fingerprint, so an older inventory needs a fresh scan. An old native
 result without a retained source binding also needs a fresh scan.
-Deploy the API reuse route and classification-aware evidence reader before
+Deploy the API reuse route and policy-aware evidence reader before
 updating the scanner service. A missing
 route (404), unavailable service (503), or invalid lookup response leaves the
 assignment pending at the reuse step; the scanner does not bypass the lookup
@@ -243,8 +243,10 @@ paths before recording the controller as operational.
 ### Cache and rescans
 
 The inventory digest covers executable content, each file's sorted scan surfaces,
-and the digests of retained binary, archive and quarantined artifacts. A new
-classification requires a fresh scan even when file bytes have not changed.
+the ordered deterministic rules and the digests of retained binary, archive and
+quarantined artifacts. The rule fingerprint includes patterns, flags, summaries,
+severity and surface scope. Changed rules or classifications require a fresh scan
+even when file bytes have not changed.
 Documentation that is not an agent
 instruction file does not change it. A later commit whose
 executable inventory, skill template and scan policy are byte-identical to a
