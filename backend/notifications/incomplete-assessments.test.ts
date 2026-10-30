@@ -40,6 +40,8 @@ function fixture() {
   );
   let permission = true;
   let unavailable = false;
+  let installation: "installed" | "suspended" | "missing" = "installed";
+  let repositoryId = 123456789;
   let afterAccess: (() => void) | undefined;
   const repositoryAccess = async (
     _repository: unknown,
@@ -47,6 +49,9 @@ function fixture() {
   ): Promise<RepositoryAccess> => {
     if (unavailable) throw new Error("Synthetic provider outage");
     afterAccess?.();
+    if (installation === "missing") return { installation };
+    if (installation === "suspended")
+      return { installation, installationId: 1 };
     return {
       installation: "installed",
       installationId: 1,
@@ -54,7 +59,7 @@ function fixture() {
         actor.githubId === MAINTAINER.githubId && permission ? "write" : "read",
       roleName: "maintain",
       repository: {
-        id: 123456789,
+        id: repositoryId,
         node_id: "R_example",
         full_name: "example/repo",
         private: false,
@@ -119,6 +124,8 @@ function fixture() {
     list,
     deny: () => (permission = false),
     outage: () => (unavailable = true),
+    installation: (value: typeof installation) => (installation = value),
+    replaceRepository: () => (repositoryId = 987654320),
     duringAccess: (callback: () => void) => (afterAccess = callback),
   };
 }
@@ -291,4 +298,16 @@ test("initial Inbox includes the private queue and retains notices during an aut
   expect(kept.incompleteAssessments).toBeNull();
   expect(kept.notifications).toEqual([]);
   f.sqlite.close();
+});
+
+test("an inaccessible or replaced repository is unavailable, never a successful empty queue", async () => {
+  for (const state of ["missing", "suspended", "replaced"] as const) {
+    const f = fixture();
+    await f.seed();
+    if (state === "replaced") f.replaceRepository();
+    else f.installation(state);
+    expect((await f.inbox())?.status).toBe(503);
+    expect((await f.list(ADMIN)).items).toHaveLength(1);
+    f.sqlite.close();
+  }
 });

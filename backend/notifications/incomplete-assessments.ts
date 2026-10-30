@@ -118,18 +118,20 @@ export async function readIncompleteAssessments(
             { path: repository, githubId: String(row.repository_id) },
             actor as GithubActor,
           );
-          if (result.installation === "installed" && !result.repository)
+          if (
+            result.installation !== "installed" ||
+            !result.repository ||
+            result.repository.id !== row.repository_id ||
+            result.repository.full_name.toLowerCase() !==
+              repository.toLowerCase()
+          )
             fail(
               503,
               "github_unavailable",
               "Repository identity could not be checked.",
             );
           access =
-            result.installation === "installed" &&
             (result.permission === "admin" || result.permission === "write") &&
-            result.repository?.id === row.repository_id &&
-            result.repository.full_name.toLowerCase() ===
-              repository.toLowerCase() &&
             result.repository.private === false;
         } catch {
           fail(
