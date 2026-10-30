@@ -24,7 +24,7 @@ import {
 
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -352,7 +352,7 @@ async function runFixturePhases() {
     },
     timeoutMs: 60 * 60_000,
   });
-  return status.finally(() => {
+  return status.finally(async () => {
     try {
       // CI uploads diagnostics from this checkout, not the temporary copy.
       for (const folder of ["playwright-report", "test-results"]) {
@@ -361,7 +361,12 @@ async function runFixturePhases() {
           cpSync(source, join(packageRoot, folder), { recursive: true });
       }
     } finally {
-      rmSync(workspace, { recursive: true, force: true });
+      await rm(workspace, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
     }
   });
 }

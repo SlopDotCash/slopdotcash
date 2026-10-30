@@ -18,6 +18,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -131,7 +132,12 @@ export async function prepareE2eFixture() {
     });
     return workspace;
   } catch (error) {
-    rmSync(workspace, { recursive: true, force: true });
+    await rm(workspace, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    });
     throw error;
   }
 }
