@@ -22,6 +22,7 @@ import {
   securityBountyAmountLabel,
 } from "./lib/project-reward-summary";
 import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
+import { ProjectWork } from "./ProjectWork";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -1459,6 +1460,7 @@ function ProjectPage({
         </div>
       </section>
       <div className="shell">
+        <ProjectWork project={project} state={state} retry={retry} />
         <ProjectFundsAndAwards
           key={`funding:${project.id}`}
           project={project}

@@ -401,6 +401,56 @@
 .route-project .section-heading h2 {
   font-size: clamp(1.4rem, 3vw, 2rem);
 }
+.project-work .muted {
+  color: var(--muted);
+}
+.project-work-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.route-project .project-work-heading h2,
+.route-project .project-work-heading p {
+  margin: 0;
+}
+.route-project .project-work-heading h2 {
+  font-size: 1.4rem;
+}
+.route-project .project-work-heading p,
+.project-work-list .muted {
+  font-size: 0.8rem;
+}
+.project-work-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.route-project .project-work-list li {
+  border-top: 1px solid var(--line);
+}
+.project-work-list a {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 44px;
+  padding-block: 0.75rem;
+  text-decoration: none;
+}
+.project-work-list svg {
+  flex-shrink: 0;
+  color: #ff7c3b;
+}
+.project-work-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.project-work-list .muted {
+  white-space: nowrap;
+}
 .profile-page .profile-hero {
   margin-bottom: 1.75rem;
 }
