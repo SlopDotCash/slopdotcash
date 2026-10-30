@@ -1074,8 +1074,8 @@ export default function ProjectProposalPage() {
     p.rewardKind === "token"
       ? p.rewardAssetSymbol.trim() || "token"
       : p.rewardKind === "native"
-        ? REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork].native
-            .symbol
+        ? (REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
+            ?.native.symbol ?? REWARD_ASSET_NETWORKS.base.native.symbol)
         : (REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
             ?.stablecoin.symbol ?? "USDC");
   const manifest = useMemo(() => {
@@ -1222,7 +1222,12 @@ export default function ProjectProposalPage() {
         : {}),
       // Optional funding: none, or one asset on one network with its vault
       // policy. The server verifies the asset and stores its decimals.
-      ...rewardFields(funding, now),
+      ...rewardFields(
+        REWARD_ASSET_NETWORKS[funding.network as RewardAssetNetwork]
+          ? funding
+          : { ...funding, mode: "none" },
+        now,
+      ),
       ...(bounty ? { securityBounty: bounty } : {}),
       funding: {
         mode: "direct-noncustodial",
@@ -1753,7 +1758,7 @@ export default function ProjectProposalPage() {
                   <dt>{bounty ? "Private bounty" : "Monthly funding"}</dt>
                   <dd>
                     {bounty && bountyAmounts
-                      ? `${bountyAmounts.gross} per accepted critical finding · pledge`
+                      ? `${bountyAmounts.gross} per accepted finding · pledge`
                       : p.fundingMode !== "monthly"
                         ? "None"
                         : pool.valid
