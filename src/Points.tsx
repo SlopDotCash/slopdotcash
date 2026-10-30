@@ -1485,6 +1485,13 @@ function People({ query }: { query: string }) {
             Retry contributors
           </button>
         </p>
+      ) : census.state.refreshError ? (
+        <p role="status">
+          Contributor records may be outdated.{" "}
+          <button type="button" onClick={census.retry}>
+            Retry contributors
+          </button>
+        </p>
       ) : null}
       {members.status === "preview" ? (
         <p>
