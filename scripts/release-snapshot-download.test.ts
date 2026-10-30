@@ -45,22 +45,10 @@ const generation = step("Generate live contribution data");
 const downloads = generation.match(
   /curl --fail --silent --show-error[^\n]*(?:\n {14}[^\n]*)*/g,
 );
-if (downloads?.length !== 2) {
-  throw new Error("Expected profile and fallback leaderboard downloads");
+if (downloads?.length !== 1) {
+  throw new Error("Expected profile history download");
 }
-// Pull-request checks read the largest snapshot from the same public origin.
-const pullRequestLedger = step(
-  "Load deployed public ledger for pull-request checks",
-).match(/curl --fail --silent --show-error \\(?:\n {12}[^\n]*)*/)?.[0];
-if (!pullRequestLedger) {
-  throw new Error("Expected the pull-request ledger download");
-}
-
-for (const [name, download] of [
-  ["profile history", downloads[0]],
-  ["fallback leaderboard", downloads[1]],
-  ["pull-request ledger", pullRequestLedger],
-] as const) {
+for (const [name, download] of [["profile history", downloads[0]]] as const) {
   for (const failure of [
     "timeout",
     "disconnect",
@@ -154,3 +142,21 @@ for (const [name, download] of [
     });
   }
 }
+
+test("all published leaderboard workflow consumers reconstruct the supported transport", async () => {
+  const escrow = await readFile(
+    new URL("../.github/workflows/escrow-tests.yml", import.meta.url),
+    "utf8",
+  );
+  expect(workflow.match(/bun scripts\/download-leaderboard\.ts/g)).toHaveLength(
+    3,
+  );
+  expect(escrow.match(/bun scripts\/download-leaderboard\.ts/g)).toHaveLength(
+    2,
+  );
+  for (const source of [workflow, escrow]) {
+    expect(source).not.toMatch(
+      /curl[\s\S]{0,400}https:\/\/slop\.cash\/data\/leaderboard\.json/,
+    );
+  }
+});
