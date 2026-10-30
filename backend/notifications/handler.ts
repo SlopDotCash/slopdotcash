@@ -21,13 +21,22 @@ import {
   json,
   requireActor,
 } from "../http";
+import type { RepositoryAccessReader } from "../projects/setup";
 import { SCAM_REVIEW_PATH, scamReviewGitHubUrl } from "./events";
+import {
+  incompleteAssessments,
+  readIncompleteAssessments,
+} from "./incomplete-assessments";
 
 export interface NotificationsDependencies {
   db: D1Database<D1QueryStatement>;
-  sessionActor(request: Request): Promise<{ githubId: string } | null>;
+  sessionActor(
+    request: Request,
+  ): Promise<{ githubId: string; githubLogin?: string } | null>;
   now(): Date;
   moderatorGithubIds?: ReadonlySet<string>;
+  adminGithubIds?: ReadonlySet<string>;
+  repositoryAccess?: RepositoryAccessReader;
 }
 
 const NOTIFICATIONS_PATH = "/api/v1/notifications";
@@ -85,9 +94,12 @@ export async function handleNotificationsApi(
   const appealPrefix = `${NOTIFICATIONS_PATH}/appeals/`;
   const appealRoute = url.pathname.startsWith(appealPrefix);
   const scamRoute = url.pathname.startsWith(SCAM_REVIEW_PATH);
+  const incompleteRoute =
+    url.pathname === `${NOTIFICATIONS_PATH}/incomplete-assessments`;
   if (
     !appealRoute &&
     !scamRoute &&
+    !incompleteRoute &&
     url.pathname !== NOTIFICATIONS_PATH &&
     url.pathname !== READ_PATH
   )
@@ -101,6 +113,8 @@ export async function handleNotificationsApi(
     return json(403, { error: "origin_forbidden" });
   try {
     const actor = await requireActor(request, deps);
+    if (incompleteRoute)
+      return await incompleteAssessments(request, deps, actor);
     const moderator = deps.moderatorGithubIds?.has(actor.githubId) === true;
     if (scamRoute) {
       // Moderator access is rechecked on every open (owner decision D4). The
@@ -249,7 +263,15 @@ export async function handleNotificationsApi(
         }),
         unread: unread.results[0]?.count ?? 0,
       };
-      return json(200, body);
+      // An unavailable maintainer queue must not hide the actor's other notices.
+      // It has its own explicit retry in Inbox; no provider error text is exposed.
+      let assessments = null;
+      try {
+        assessments = await readIncompleteAssessments(request, deps, actor);
+      } catch {
+        // null is an unavailable queue, distinct from a verified empty list.
+      }
+      return json(200, { ...body, incompleteAssessments: assessments });
     }
     let body: unknown;
     try {
