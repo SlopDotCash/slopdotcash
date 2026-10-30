@@ -147,6 +147,7 @@ type Run = {
   closeByMaintainer: () => void;
   reopen: (senderId?: number, occurredAt?: string) => Promise<Job>;
   head: (sha: string) => void;
+  base: (sha: string) => void;
   loseNextLabelDelete: () => void;
   maintainerPermission: (value: boolean | "unavailable") => void;
   writes: string[];
@@ -261,6 +262,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let pauseClose: (() => Promise<void>) | null = null;
   let closeOptions: { loseResponse?: boolean; afterWrite?: () => void } = {};
   let head = "b".repeat(40);
+  let comparisonBase = "c".repeat(40);
   let loseLabelDelete = false;
   let maintainerPermission: boolean | "unavailable" = true;
   let pauseReopen: (() => Promise<void>) | null = null;
@@ -537,7 +539,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
                 : head,
           },
           base: {
-            sha: "c".repeat(40),
+            sha: comparisonBase,
             ref: "main",
             repo: { id: repositoryId },
           },
@@ -546,11 +548,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           changed_files: reportedFiles,
         });
       if (path.endsWith("/branches/main"))
-        return Response.json({ commit: { sha: "c".repeat(40) } });
+        return Response.json({ commit: { sha: comparisonBase } });
       if (path.includes("/compare/"))
         return Response.json({
-          base_commit: { sha: "c".repeat(40) },
-          merge_base_commit: { sha: "c".repeat(40) },
+          base_commit: { sha: comparisonBase },
+          merge_base_commit: { sha: comparisonBase },
           files:
             !emptyComparison &&
             (url.searchParams.get("page") === "1" ||
@@ -934,6 +936,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       head: (sha) => {
         head = sha;
       },
+      base: (sha) => {
+        comparisonBase = sha;
+      },
       loseNextLabelDelete: () => {
         loseLabelDelete = true;
       },
@@ -1210,6 +1215,37 @@ test("an ordinary value dispute is triaged and resolved without changing the ass
     expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
     expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(false);
     expect(run.comments.some((body) => body.includes(digest))).toBe(true);
+  });
+});
+
+test("a value dispute with the same head and a changed comparison base needs a moderator", async () => {
+  await closedItem(async (run) => {
+    const digest = run.seedValue();
+    // The stored assessment used base c. The current target now resolves to d,
+    // so its comparison is not the assessment's source even with the same head.
+    run.base("d".repeat(40));
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: AUTHOR, subject: "value" }),
+      ),
+    ).toBe("value dispute escalated");
+    expect(run.sql("SELECT draft_confidence FROM slopbot_appeals")).toEqual([
+      { draft_confidence: 0.89 },
+    ]);
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          senderId: AUTHOR,
+          command: "accept",
+          appealKey: `value-appeal:single:${digest}:${AUTHOR}:${run.repositoryId}:5`,
+        }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql("SELECT resolved_at FROM slopbot_appeals")).toEqual([
+      { resolved_at: null },
+    ]);
+    expect(run.sql(PENALTY)).toEqual([]);
+    expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(false);
   });
 });
 

@@ -226,6 +226,7 @@ export async function draftValueDispute(input: {
   sourceText: string;
   sourceGaps: string[];
   currentHead: string;
+  currentBaseSha: string;
   policyText: string;
   statement: string;
   mayCall(): Promise<boolean>;
@@ -234,8 +235,13 @@ export async function draftValueDispute(input: {
   { deferredUntil: string } | { draft: "uphold" | "deny"; confidence: number }
 > {
   const { value } = input;
+  // The retained policy revision is the original comparison base. A stable
+  // head alone does not prove that GitHub still returns the assessed diff.
+  const baseChanged = input.currentBaseSha !== value.source.policySha;
   const gap =
-    input.currentHead !== value.source.headSha || input.sourceGaps.length > 0;
+    input.currentHead !== value.source.headSha ||
+    baseChanged ||
+    input.sourceGaps.length > 0;
   const result = await runStructuredRoute(
     input.env,
     TRIAGE_ROUTE,
@@ -248,6 +254,7 @@ export async function draftValueDispute(input: {
         source: input.sourceText,
         sourceGaps: input.sourceGaps,
         headChanged: input.currentHead !== value.source.headSha,
+        baseChanged,
         dispute: input.statement,
       }),
     },
