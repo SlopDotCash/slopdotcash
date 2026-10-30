@@ -2417,6 +2417,7 @@ async function recordValueDispute(
           : []),
       ],
       currentHead: context.revision,
+      currentBaseSha: context.baseSha,
       policyText: JSON.stringify(policy),
       statement,
       mayCall: () => scopeAllowed(db, job, session.registration.scope),
