@@ -722,6 +722,14 @@ export function applyPointsSnapshot(
     if (omitted) omittedReviews.set(key, exclusion.reason);
     else excludedReviews.add(key);
   }
+  const coverageByPull = new Map<
+    string,
+    NonNullable<LeaderboardSnapshot["valueAssessmentCoverage"]>[number]
+  >();
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    const key = `${row.repository}\0${row.pullRequestNumber}`;
+    if (!coverageByPull.has(key)) coverageByPull.set(key, row);
+  }
   // A complete newer census can correct a formerly accepted source. Never infer
   // deletion from missing pages or a shortened rolling window.
   for (const previous of previousPoints.values()) {
@@ -760,11 +768,9 @@ export function applyPointsSnapshot(
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
       );
-      const coverage = snapshot.valueAssessmentCoverage.find(
-        (row) =>
-          row.repository === repository?.id &&
-          row.pullRequestNumber === Number(match[3]),
-      );
+      const coverage = repository
+        ? coverageByPull.get(`${repository.id}\0${Number(match[3])}`)
+        : undefined;
       // The exact completion source can invalidate its prior joint decision
       // even when it no longer has an eligible actor for a replacement award.
       if (
