@@ -325,7 +325,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern:
-      /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
+      /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\b(?:eval|exec)\s*\(\s*compile\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|\b(?:new\s+)?Function\s*\(\s*(?:atob|Buffer\.from)\s*\(|\b(?:setTimeout|setInterval)\s*\(\s*(?:atob|Buffer\.from)\s*\(|\brunIn(?:This|New)Context\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
     summary: "Executes decoded or obfuscated code",
   },
   {
