@@ -1,3 +1,8 @@
+import {
+  type IncompleteAssessments,
+  parseIncompleteAssessments,
+} from "./incomplete-assessments";
+
 /** In-app inbox contract shared by the API and the page (PRD NOT-01). */
 
 /**
@@ -77,6 +82,8 @@ export interface NotificationsResponse {
   notifications: Notification[];
   unread: number;
   nextCursor?: string | null;
+  /** null means unavailable; omitted by older servers. */
+  incompleteAssessments?: IncompleteAssessments | null;
 }
 
 /** The most event keys one read request may mark. */
@@ -151,6 +158,14 @@ export function parseNotificationsResponse(
     if (typeof body.nextCursor !== "string")
       throw new Error("Invalid notification cursor");
     notificationCursor(body.nextCursor);
+  }
+  if (
+    body.incompleteAssessments !== undefined &&
+    body.incompleteAssessments !== null
+  ) {
+    const queue = parseIncompleteAssessments(body.incompleteAssessments);
+    if (queue.recipientGithubId !== body.recipientGithubId)
+      throw new Error("The assessment queue account changed.");
   }
   return body as NotificationsResponse;
 }
