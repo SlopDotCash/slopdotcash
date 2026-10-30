@@ -147,6 +147,13 @@ const SOURCE_EXTENSIONS =
 const EXECUTABLE_BINARIES =
   /\.(?:node|wasm|so|dylib|dll|exe|jar|pyc|class|bin|a|o)$/iu;
 const ARCHIVES = /\.(?:zip|tar|tgz|gz|bz2|xz|7z|rar|whl|gem|crate)$/iu;
+
+/**
+ * A leading `#!` marks content as a potential interpreter script.
+ */
+function declaresInterpreter(bytes: Uint8Array): boolean {
+  return bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x21;
+}
 /** Lifecycle hooks package managers run on install, without being asked. */
 const INSTALL_HOOKS = [
   "preinstall",
@@ -532,6 +539,10 @@ export function inspectRepository(input: {
   const downloads = new Set<string>();
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
+    // Previously unclassified interpreter scripts still need review, even
+    // when their name has no recognized extension (for example, configure).
+    if (surfaces.length === 0 && declaresInterpreter(file.bytes))
+      surfaces.push("installScripts", "source");
     const digest = sha256(file.bytes);
     if (
       EXECUTABLE_BINARIES.test(file.path) ||
