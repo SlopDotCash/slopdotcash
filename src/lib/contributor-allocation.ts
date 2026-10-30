@@ -40,7 +40,8 @@ const positiveBase = (v: unknown): v is string =>
 const utcInstant = (v: unknown): v is string =>
   typeof v === "string" &&
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(v) &&
-  !Number.isNaN(Date.parse(v));
+  Number.isFinite(Date.parse(v)) &&
+  new Date(v).toISOString().startsWith(v.slice(0, 19));
 
 /** The published file, or null when no allocation is published. Throws on any invalid field. */
 export function contributorAllocation(
