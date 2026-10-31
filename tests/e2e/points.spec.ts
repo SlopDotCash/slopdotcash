@@ -1,4 +1,87 @@
 import { expect, expectAccessible, test } from "./fixtures";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { assertPointsJournal, pointRevisionId } from "../../src/lib/points";
+
+test("This month uses the current UTC month after a period switch", async ({
+  page,
+}) => {
+  const journal = JSON.parse(readFileSync("data/points/history.json", "utf8"));
+  journal.generatedAt = "2026-07-31T23:59:00.000Z";
+  const { id: _id, ...revision } = journal.revisions[0];
+  revision.recordedAt = journal.generatedAt;
+  journal.revisions = [{ ...revision, id: pointRevisionId(revision) }];
+  journal.coverage = [{ ...journal.coverage[0], to: journal.generatedAt }];
+  assertPointsJournal(journal);
+  const shards = Array.from({ length: 16 }, (_, i) => {
+    const rows = journal.revisions
+      .map((revision, sequence) => ({ revision, sequence }))
+      .filter(({ revision }) => revision.award.key.startsWith(i.toString(16)));
+    const text = `${JSON.stringify(rows)}\n`;
+    return {
+      text,
+      path: `/data/points/${i.toString(16)}.json`,
+      count: rows.length,
+      sha256: createHash("sha256").update(text).digest("hex"),
+    };
+  });
+  await page.clock.install({ time: new Date("2026-07-31T23:59:59.000Z") });
+  await page.route("**/data/points.json", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        ruleVersion: journal.ruleVersion,
+        generatedAt: journal.generatedAt,
+        coverage: journal.coverage,
+        revisionCount: 1,
+        shards: shards.map(({ text: _text, ...entry }) => entry),
+      },
+    }),
+  );
+  await page.route("**/data/points/*.json", (route) => {
+    const shard = shards.find(
+      (s) => s.path === new URL(route.request().url()).pathname,
+    );
+    return shard
+      ? route.fulfill({ body: shard.text, contentType: "application/json" })
+      : route.abort();
+  });
+  await page.goto("/points");
+  const table = page.getByRole("region", {
+    name: "Contributor standings table",
+    exact: true,
+  });
+  await expect(
+    table.getByRole("cell", { name: "10", exact: true }),
+  ).toHaveCount(1);
+  await page.clock.runFor(2000);
+  await page.getByRole("button", { name: "All time", exact: true }).click();
+  await expect(
+    table.getByRole("cell", { name: "10", exact: true }),
+  ).toHaveCount(1);
+  await page.getByRole("button", { name: "This month", exact: true }).click();
+  await expect(
+    table.getByRole("cell", { name: "10", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "All time", exact: true }).click();
+  await expect(
+    table.getByRole("cell", { name: "10", exact: true }),
+  ).toHaveCount(1);
+  await expectAccessible(page);
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  const thisMonth = page.getByRole("button", {
+    name: "This month",
+    exact: true,
+  });
+  await thisMonth.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    table.getByRole("cell", { name: "10", exact: true }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
+});
 
 test("legacy people navigation preserves the pending ranking read and URL query", async ({
   page,
