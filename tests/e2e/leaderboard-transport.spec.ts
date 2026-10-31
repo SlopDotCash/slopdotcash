@@ -41,7 +41,7 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
         await new Promise((resolve) => setTimeout(resolve, 4_000));
       await route.fulfill({
         body: broken ? Buffer.from("changed") : Buffer.from(bytes),
-        contentType: "application/octet-stream",
+        contentType: "text/plain; charset=utf-8",
       });
     });
     await page.route("**/data/leaderboard.json?**", async (route) => {
