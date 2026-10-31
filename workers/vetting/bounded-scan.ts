@@ -316,7 +316,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
@@ -373,7 +373,7 @@ const RULE_POLICY_SHA256 = sha256(
 );
 
 const DOWNLOAD =
-  /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
+  /\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
 
 function decode(bytes: Uint8Array): string | null {
   // NUL bytes mean binary content, not text to read.
