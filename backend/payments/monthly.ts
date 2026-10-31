@@ -1026,21 +1026,16 @@ export function monthlyOwnerService(deps: {
       }
       // Proposal reads may cross the cutoff. Use the write's time, after
       // those reads, for both eligibility and the recorded change.
-      const automatic = cutoff
-        ? await automaticMonthlyPayment(deps.db, project.id)
-        : false;
       const changedAt = deps.now();
-      if (cutoff && automatic && changedAt.getTime() >= cutoff.getTime())
-        throw new MonthlyPaymentError(
-          409,
-          "cutoff_passed",
-          "The cutoff for this month has passed. The automatic process pays the current allocations.",
-        );
+      const cutoffPassed =
+        cutoff !== null && changedAt.getTime() >= cutoff.getTime();
       let changed: number | undefined;
       try {
+        // Enabling automatic payment in another tab must also take effect
+        // before this allocation write, not only at an earlier settings read.
         const inserted = await deps.db
           .prepare(
-            `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+            `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at) SELECT ?,?,?,?,?,?,? WHERE (?=0 OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=0) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
           )
           .bind(
             project.id,
@@ -1050,6 +1045,8 @@ export function monthlyOwnerService(deps: {
             change.grossBase,
             actor.githubId,
             changedAt.toISOString(),
+            Number(cutoffPassed),
+            project.id,
             actor.githubId,
           )
           .run();
@@ -1072,6 +1069,15 @@ export function monthlyOwnerService(deps: {
       }
       if (changed !== 1) {
         await assertMonthlyParticipation(deps.db, actor.githubId);
+        if (
+          cutoffPassed &&
+          (await automaticMonthlyPayment(deps.db, project.id))
+        )
+          throw new MonthlyPaymentError(
+            409,
+            "cutoff_passed",
+            "The cutoff for this month has passed. The automatic process pays the current allocations.",
+          );
         throw new MonthlyPaymentError(
           409,
           "allocations_changed",
