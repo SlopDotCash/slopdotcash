@@ -374,6 +374,7 @@ const RULE_POLICY_SHA256 = sha256(
   JSON.stringify({
     schemaVersion: "slop-deterministic-rules-v1",
     msbuildAttributeWhitespace: "cr-lf-to-space",
+    xmlAttributeReferences: "decimal-hex-and-named",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -415,70 +416,130 @@ function binaryMagic(bytes: Uint8Array): boolean {
   );
 }
 
+const XML_NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+/** One character reference at `index`, or null when the text is not one. */
+function xmlCharacterReference(
+  text: string,
+  index: number,
+): { value: string; length: number } | null {
+  if (text[index] !== "&") return null;
+  const numeric = /^&#(?:([0-9]{1,7})|[xX]([0-9a-fA-F]{1,6}));/u.exec(
+    text.slice(index),
+  );
+  if (numeric) {
+    const code = Number.parseInt(
+      numeric[1] ?? numeric[2] ?? "",
+      numeric[1] ? 10 : 16,
+    );
+    // Surrogates and values past Unicode are not character references here.
+    if (
+      !Number.isInteger(code) ||
+      code < 0 ||
+      code > 0x10ffff ||
+      (code >= 0xd800 && code <= 0xdfff)
+    )
+      return null;
+    return { value: String.fromCodePoint(code), length: numeric[0].length };
+  }
+  const named = /^&(amp|lt|gt|quot|apos);/u.exec(text.slice(index));
+  if (!named) return null;
+  return {
+    value: XML_NAMED_ENTITIES[named[1] ?? ""] ?? "",
+    length: named[0].length,
+  };
+}
+
 /**
- * MSBuild runs an attribute value after XML turns each CR and LF inside the
- * quotes into whitespace. A newline before `| sh` therefore still executes
- * the pipe. The same newline in a shell script ends the command, so only
- * MSBuild files are rewritten, and only inside a quoted attribute value.
- * Each CR or LF becomes one space, so a match index refers to the same place
- * in the original text.
+ * MSBuild and Ant run an attribute value after XML expands character
+ * references and then turns each CR and LF into whitespace. `&#124;` and
+ * `&amp;&amp;` are therefore a pipe and `&&`. A shell script does not expand
+ * either, so only these attribute values are rewritten. `indexes[i]` is the
+ * original index of decoded character `i`, so a finding line stays on the
+ * source text.
  */
-function msbuildRuleText(text: string): string {
+function msbuildRuleText(text: string): { text: string; indexes: number[] } {
   let result = "";
+  const indexes: number[] = [];
   let index = 0;
   let mode: "text" | "tag" | "comment" | "cdata" | "value" = "text";
   let quote = "";
+  const emit = (value: string, at: number, mapToStart = false) => {
+    for (let offset = 0; offset < value.length; offset += 1) {
+      const unit = value[offset] ?? "";
+      result += unit === "\r" || unit === "\n" ? " " : unit;
+      indexes.push(mapToStart ? at : at + offset);
+    }
+  };
   while (index < text.length) {
     const char = text[index] ?? "";
     if (mode === "text") {
       if (text.startsWith("<!--", index)) {
         mode = "comment";
-        result += "<!--";
+        emit("<!--", index);
         index += 4;
         continue;
       }
       if (text.startsWith("<![CDATA[", index)) {
         mode = "cdata";
-        result += "<![CDATA[";
+        emit("<![CDATA[", index);
         index += 9;
         continue;
       }
       if (char === "<") mode = "tag";
-      result += char;
+      emit(char, index);
       index += 1;
       continue;
     }
     if (mode === "comment") {
       if (text.startsWith("-->", index)) {
         mode = "text";
-        result += "-->";
+        emit("-->", index);
         index += 3;
         continue;
       }
-      result += char;
+      emit(char, index);
       index += 1;
       continue;
     }
     if (mode === "cdata") {
       if (text.startsWith("]]>", index)) {
         mode = "text";
-        result += "]]>";
+        emit("]]>", index);
         index += 3;
         continue;
       }
-      result += char;
+      emit(char, index);
       index += 1;
       continue;
     }
     if (mode === "value") {
-      if (char === quote) mode = "tag";
-      result += char === "\r" || char === "\n" ? " " : char;
+      if (char === quote) {
+        mode = "tag";
+        emit(char, index);
+        index += 1;
+        continue;
+      }
+      const reference = xmlCharacterReference(text, index);
+      if (reference) {
+        // References expand before newline normalization, so &#10; is a space.
+        emit(reference.value, index, true);
+        index += reference.length;
+        continue;
+      }
+      emit(char, index);
       index += 1;
       continue;
     }
     if (char === ">") {
       mode = "text";
-      result += char;
+      emit(char, index);
       index += 1;
       continue;
     }
@@ -491,10 +552,10 @@ function msbuildRuleText(text: string): string {
         quote = char;
       }
     }
-    result += char;
+    emit(char, index);
     index += 1;
   }
-  return result;
+  return { text: result, indexes };
 }
 
 function checkText(
@@ -502,6 +563,7 @@ function checkText(
   text: string,
   surfaces: ScanSurface[],
   evidenceText = text,
+  indexes?: number[],
 ): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const rule of RULES) {
@@ -509,11 +571,15 @@ function checkText(
       continue;
     const match = rule.pattern.exec(text);
     if (match === null) continue;
+    const at = indexes?.[match.index];
     findings.push({
       severity: rule.severity,
       category: rule.threat,
       summary: rule.summary,
-      evidence: `${path}:${lineOf(evidenceText, match.index)}`.slice(0, 300),
+      evidence: `${path}:${lineOf(evidenceText, at ?? match.index)}`.slice(
+        0,
+        300,
+      ),
       path,
     });
   }
@@ -753,11 +819,20 @@ export function inspectRepository(input: {
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
-    // MSBuild attribute newlines are spaces at execution. Shell text is not.
-    const ruleText = MSBUILD_RECIPE.test(file.path)
-      ? msbuildRuleText(text)
-      : text;
-    const found = checkText(file.path, ruleText, surfaces, text);
+    // MSBuild and Ant expand attribute references and newlines. Shell text
+    // does not.
+    const normalized =
+      MSBUILD_RECIPE.test(file.path) || /<project(?=[\t\n\r />])/u.test(text)
+        ? msbuildRuleText(text)
+        : null;
+    const ruleText = normalized?.text ?? text;
+    const found = checkText(
+      file.path,
+      ruleText,
+      surfaces,
+      text,
+      normalized?.indexes,
+    );
     findings.push(...found);
     const hooks = installHookCommands(file.path, text);
     if (hooks.length > 0) {
