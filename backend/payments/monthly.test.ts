@@ -137,16 +137,220 @@ const coordinate = (now: Date, configured = schedule) =>
     schedule: configured,
     now,
   });
-const owner = () =>
+const owner = (verifyAuthority = async () => {}) =>
   monthlyOwnerService({
     db,
     ...projects(),
     networks: () => ["base-sepolia"],
-    verifyAuthority: async () => {},
+    verifyAuthority,
     schedule: () => schedule,
     now: () => clock,
   });
 const actor = { githubId: OWNER, githubLogin: "owner" };
+for (const boundary of ["session", "body"] as const) {
+  test(`the HTTP ${boundary} boundary preserves a later monthly opt-out`, async () => {
+    await owner().setAutomatic(project.id, actor, false);
+    const token = "o".repeat(43);
+    sqlite
+      .query(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('fixture-owner',?,'owner',?,0)",
+      )
+      .run(OWNER, clock.toISOString());
+    sqlite
+      .query("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(await sha256Hex(token), "fixture-owner", "2027-01-01T00:00:00.000Z");
+    let enter = () => {};
+    let resume = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    let armed = true;
+    let sessionRead = false;
+    let bodyWaiting = false;
+    const prepare = db.prepare.bind(db);
+    db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (
+        !sql.startsWith(
+          "SELECT m.github_id,m.login FROM points_members m JOIN points_sessions",
+        )
+      )
+        return statement;
+      return new Proxy(statement, {
+        get(target, key) {
+          if (key === "bind")
+            return (...args: unknown[]) => {
+              const bound = target.bind(...args);
+              return new Proxy(bound, {
+                get(inner, method) {
+                  if (method === "first")
+                    return async () => {
+                      if (boundary === "session" && armed) {
+                        armed = false;
+                        enter();
+                        await released;
+                      }
+                      const result = await inner.first();
+                      sessionRead = true;
+                      if (boundary === "body" && bodyWaiting) enter();
+                      return result;
+                    };
+                  const value = Reflect.get(inner, method);
+                  return typeof value === "function"
+                    ? value.bind(inner)
+                    : value;
+                },
+              });
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+    const headers = {
+      origin: "https://slop.cash",
+      "content-type": "application/json",
+      cookie: `__Host-slop_points=${token}`,
+      "x-slop-expected-github-id": OWNER,
+    };
+    const body =
+      boundary === "body"
+        ? new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('{"automatic":true}'),
+              );
+            },
+            async pull(controller) {
+              bodyWaiting = true;
+              if (sessionRead) enter();
+              await released;
+              controller.close();
+            },
+          })
+        : JSON.stringify({ automatic: true });
+    const url = `https://slop.cash/api/v1/payments/projects/${project.id}/monthly-settings`;
+    const deps = { db, monthly: owner(), now: () => clock };
+    const pending = handlePaymentsApi(
+      new Request(url, { method: "POST", headers, body }),
+      deps,
+    );
+    try {
+      await entered;
+      const off = await handlePaymentsApi(
+        new Request(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ automatic: false }),
+        }),
+        deps,
+      );
+      expect(off.status).toBe(200);
+      expect(await off.json()).toEqual({ automatic: false });
+      resume();
+      const stale = await pending;
+      expect(stale.status).toBe(409);
+      expect((await stale.json()).error).toBe("setting_changed");
+    } finally {
+      resume();
+      db.prepare = prepare;
+    }
+    expect((await owner().view(project.id, "2026-11", actor)).automatic).toBe(
+      false,
+    );
+    expect((await coordinate(clock)).frozen).toEqual([]);
+    expect(count("monthly_payment_runs")).toBe(0);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    const fresh = await handlePaymentsApi(
+      new Request(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ automatic: true }),
+      }),
+      deps,
+    );
+    expect(fresh.status).toBe(200);
+    expect(await fresh.json()).toEqual({ automatic: true });
+    expect((await coordinate(clock)).frozen).toEqual([`${project.id}/2026-11`]);
+  });
+}
+for (const [boundary, initiallyOff] of [
+  ["authority", false],
+  ["write", true],
+] as const) {
+  test(`a later opt-out survives a delayed enable at the ${boundary} boundary`, async () => {
+    if (initiallyOff) await owner().setAutomatic(project.id, actor, false);
+    const prepare = db.prepare.bind(db);
+    let armed = true;
+    const optOut = async () => {
+      if (!armed) return;
+      armed = false;
+      expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+        automatic: false,
+      });
+    };
+    if (boundary === "write")
+      db.prepare = (sql) => {
+        const statement = prepare(sql);
+        if (!sql.startsWith("INSERT INTO monthly_payment_settings("))
+          return statement;
+        return new Proxy(statement, {
+          get(target, key) {
+            if (key === "bind")
+              return (...args: unknown[]) => {
+                const bound = target.bind(...args);
+                return new Proxy(bound, {
+                  get(inner, method) {
+                    if (method === "run")
+                      return async () => {
+                        await optOut();
+                        return inner.run();
+                      };
+                    const value = Reflect.get(inner, method);
+                    return typeof value === "function"
+                      ? value.bind(inner)
+                      : value;
+                  },
+                });
+              };
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      };
+    try {
+      await rejects(
+        (boundary === "authority" ? owner(optOut) : owner()).setAutomatic(
+          project.id,
+          actor,
+          true,
+        ),
+        "setting_changed",
+      );
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(armed).toBe(false);
+    expect((await owner().view(project.id, "2026-11", actor)).automatic).toBe(
+      false,
+    );
+    const waiting = await coordinate(clock);
+    expect(waiting.frozen).toEqual([]);
+    expect(waiting.waiting).toContainEqual({
+      key: `${project.id}/2026-11`,
+      reason: "automatic-off",
+    });
+    expect(count("monthly_payment_runs")).toBe(0);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    expect(await owner().setAutomatic(project.id, actor, true)).toEqual({
+      automatic: true,
+    });
+    expect((await coordinate(clock)).frozen).toEqual([`${project.id}/2026-11`]);
+  });
+}
 for (const automatic of [false, true]) {
   test(`${automatic ? "automatic" : "owner"} finalization preserves a project pause committed before the freeze write`, async () => {
     clock = automatic ? afterCutoff : beforeCutoff;
