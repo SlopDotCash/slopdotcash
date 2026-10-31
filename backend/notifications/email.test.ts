@@ -288,8 +288,8 @@ test("either email preference can be withdrawn independently during an eligibili
   h.sqlite.close();
 });
 
-for (const existing of [false, true]) {
-  test(`a delayed opt-in cannot replace a newer opt-out with ${existing ? "existing" : "first-time"} preferences`, async () => {
+for (const existing of [null, true, false]) {
+  test(`a delayed opt-in cannot replace a newer opt-out with ${existing === null ? "first-time" : existing ? "enabled" : "already disabled"} preferences`, async () => {
     let pause = false;
     let entered!: () => void;
     let release!: () => void;
@@ -306,13 +306,15 @@ for (const existing of [false, true]) {
     });
     try {
       const initial = await h.call("GET");
-      if (existing)
+      if (existing !== null)
         expect(
           (
             await h.call("POST", {
               enabled: false,
-              securityEnabled: true,
-              destinationVersion: initial.body.destinationVersion,
+              securityEnabled: existing,
+              ...(existing
+                ? { destinationVersion: initial.body.destinationVersion }
+                : {}),
             })
           ).status,
         ).toBe(200);
