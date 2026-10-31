@@ -358,10 +358,11 @@ export function enforcedManifest(manifest: ProjectDefinition): boolean {
 /**
  * A moderator quarantine or ban applies a paused, retired revision. The
  * project stays registered, so what a restriction keeps (existing private
- * cases, Slopbot's security-only review) still applies to it. The retained
- * before and after revisions must prove that enforcement caused retirement;
- * an owner's earlier retirement or an unapplied restriction cannot. Null
- * means the retained revision evidence is missing.
+ * cases, Slopbot's security-only review) still applies to it. New private
+ * reports stay closed (#1360). The retained before and after revisions must
+ * prove that enforcement caused retirement; an owner's earlier retirement or
+ * an unapplied restriction cannot. Null means the retained revision evidence
+ * is missing.
  */
 export async function retiredByRestriction(
   persistence: Pick<ProjectPersistence, "listEnforcements" | "getRevisionText">,

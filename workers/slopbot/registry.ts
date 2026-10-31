@@ -138,8 +138,10 @@ export async function repositoryCapabilities(
           project.id,
         )
       : false;
+  // Without the revision proof the retirement counts as the owner's: no
+  // review, while an appeal or a reopen can still reverse a penalty.
   if (restrictionRetired === null)
-    throw new Error("The restriction revision evidence is missing");
+    console.error("slopbot restriction revision evidence unavailable");
   return {
     projectId: project.id,
     project,
@@ -151,7 +153,7 @@ export async function repositoryCapabilities(
           ? "active"
           : "paused",
       listingTier: project.listingTier,
-      retiredByRestriction: restrictionRetired,
+      retiredByRestriction: restrictionRetired === true,
       restriction: restricted?.state ?? "clear",
     }),
   };
