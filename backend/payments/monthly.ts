@@ -204,6 +204,20 @@ async function loadChanges(
   };
 }
 
+/** Bind an enable to the setting state before a request's asynchronous checks. */
+export async function monthlyPaymentSettingSequence(
+  db: D1Database,
+  projectId: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      "SELECT COALESCE(MAX(sequence),0) sequence FROM monthly_payment_settings WHERE project_id=?",
+    )
+    .bind(projectId)
+    .first<{ sequence: number }>();
+  return row?.sequence ?? 0;
+}
+
 /** Automatic monthly payment is the PRD default; only the owner turns it off. */
 export async function automaticMonthlyPayment(
   db: D1Database,
@@ -1106,14 +1120,25 @@ export function monthlyOwnerService(deps: {
       }
       return view(project, period);
     },
-    async setAutomatic(projectId: string, actor: GithubActor, on: boolean) {
+    async setAutomatic(
+      projectId: string,
+      actor: GithubActor,
+      on: boolean,
+      requestSequence?: number,
+    ) {
+      // An enable may wait on authority checks while a later opt-out succeeds.
+      // Capture its generation first; even another saved off must invalidate it.
+      const expectedSequence = on
+        ? (requestSequence ??
+          (await monthlyPaymentSettingSequence(deps.db, projectId)))
+        : 0;
       const project = await authorized(projectId, actor);
       await assertMonthlyParticipation(deps.db, actor.githubId);
       let changed: number | undefined;
       try {
         const inserted = await deps.db
           .prepare(
-            `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+            `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND (?=0 OR COALESCE(MAX(sequence),0)=?)`,
           )
           .bind(
             project.id,
@@ -1122,6 +1147,8 @@ export function monthlyOwnerService(deps: {
             deps.now().toISOString(),
             project.id,
             actor.githubId,
+            Number(on),
+            expectedSequence,
           )
           .run();
         changed = inserted.meta?.changes;

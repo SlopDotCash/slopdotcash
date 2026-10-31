@@ -43,6 +43,7 @@ import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
   MonthlyPaymentError,
+  monthlyPaymentSettingSequence,
 } from "./monthly";
 import { readMonthlyAuthorization } from "./monthly-publication";
 import {
@@ -173,6 +174,14 @@ export async function handlePaymentsApi(
   )
     return json(403, { error: "origin_forbidden" });
   try {
+    const monthlySettingsRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly-settings$/.exec(path);
+    // Capture before session resolution or body reads can wait behind an opt-out.
+    // This is server state, never an expected generation supplied by the client.
+    const monthlySettingSequence =
+      monthlySettingsRoute && request.method === "POST" && deps.monthly
+        ? await monthlyPaymentSettingSequence(deps.db, monthlySettingsRoute[1])
+        : undefined;
     const fundingRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-funding$/.exec(path);
     if (fundingRoute && request.method === "POST") {
@@ -632,8 +641,6 @@ export async function handlePaymentsApi(
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))(?:\/(allocations|finalize|commitment|reserve-release))?$/.exec(
         path,
       );
-    const monthlySettingsRoute =
-      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly-settings$/.exec(path);
     if (monthlyRoute || monthlySettingsRoute) {
       if (!deps.monthly)
         return json(503, { error: "monthly_awards_unavailable" });
@@ -654,6 +661,7 @@ export async function handlePaymentsApi(
               monthlySettingsRoute[1],
               member,
               body.automatic,
+              monthlySettingSequence,
             ),
           );
         }
