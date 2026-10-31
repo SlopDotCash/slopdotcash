@@ -54,6 +54,7 @@ import {
 } from "./Points";
 import {
   cycleLifecycleLabel,
+  DataNotice,
   EmptyState,
   ExternalLinkAnchor,
   formatCycleMonth,
@@ -1469,6 +1470,11 @@ function ProjectPage({
           project={project}
           state={state}
         />
+        {state.status === "ready" ? null : (
+          // Payment history and standings need the snapshot; say why they
+          // are absent and offer a retry instead of leaving the page short.
+          <DataNotice state={state} retry={retry} />
+        )}
         {view && state.status === "ready" && view.leaders.length > 0 ? (
           <div id="contributors">
             <ContributorStandings
