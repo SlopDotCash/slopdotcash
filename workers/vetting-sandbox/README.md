@@ -29,10 +29,9 @@ The service does not accept shell fragments, extra arguments, URLs, arbitrary
 paths or environment variables. Missing dependencies and blocked network
 requests are execution failures or coverage gaps, not clean results.
 
-SDK 0.12.14 is pinned to work with the repository's Wrangler 4.129.1.
-The new native Container execution API needs a newer Wrangler; adopting it
-would require a separate release-toolchain change. The 0.x API remains
-published in the vendor's SDK documentation.
+The service uses SDK 0.12.14's 0.x command-execution API and Wrangler 4.156.0.
+Adopting the native Container execution API requires a separate service change.
+The 0.x API remains published in the vendor's SDK documentation.
 
 The Pages route `/api/v1/vetting/sandbox` uses the existing Ed25519 request
 signature. GET reads the private Worker's health; POST forwards only the
