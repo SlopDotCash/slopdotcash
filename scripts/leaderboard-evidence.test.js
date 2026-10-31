@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   encodeLeaderboardParts,
   readLeaderboardBytes,
@@ -52,7 +53,7 @@ test("release evidence verifies referenced part bytes and refuses changed or red
   const response = (body) => Response.json(body);
   const request = async () =>
     new Response(contents, {
-      headers: { "content-type": "application/octet-stream" },
+      headers: { "content-type": "text/plain; charset=utf-8" },
     });
   await expect(
     verifyRemoteArtifacts({
@@ -75,4 +76,34 @@ test("release evidence verifies referenced part bytes and refuses changed or red
       fetchImpl: request,
     }),
   ).rejects.toThrow("invalid artifact");
+});
+
+test("release evidence requires leaderboard parts in a compressible text type", async () => {
+  const contents = Buffer.from('{"ledger":[');
+  const digest = createHash("sha256").update(contents).digest("hex");
+  const artifact = { path: `data/leaderboard/${digest}.part`, contents };
+  // The edge does not compress application/octet-stream, which made a
+  // 31 MB snapshot miss the browser's 12 second snapshot deadline.
+  await expect(
+    verifyRemoteArtifacts({
+      artifacts: [artifact],
+      cacheKey: "test",
+      fetchImpl: async () =>
+        new Response(contents, {
+          headers: { "content-type": "application/octet-stream" },
+        }),
+    }),
+  ).rejects.toThrow("expected text/plain");
+});
+
+test("the published headers serve leaderboard parts as compressible text", () => {
+  const rules = readFileSync(
+    new URL("../public/_headers", import.meta.url),
+    "utf8",
+  ).split(/\r?\n\r?\n/u);
+  const part = rules.find((rule) =>
+    rule.startsWith("/data/leaderboard/*.part"),
+  );
+  expect(part).toContain("Content-Type: text/plain; charset=utf-8");
+  expect(part).not.toContain("application/octet-stream");
 });

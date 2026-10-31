@@ -52,8 +52,11 @@ function artifactContentType(path) {
   if (path === "index.html") return "text/html";
   if (path === "llms.txt") return "text/plain";
   if (path.startsWith("downloads/")) return "application/octet-stream";
+  // A part is a byte slice of the UTF-8 leaderboard JSON. The edge compresses
+  // text/plain but not application/octet-stream, and an uncompressed snapshot
+  // is too large to load within the browser's snapshot deadline.
   if (path.startsWith("data/leaderboard/") && path.endsWith(".part"))
-    return "application/octet-stream";
+    return "text/plain";
   if (path.endsWith(".json")) return "application/json";
   if (path.endsWith(".md")) return "text/markdown";
   throw new TypeError(`remote artifact has no MIME contract: ${path}`);
