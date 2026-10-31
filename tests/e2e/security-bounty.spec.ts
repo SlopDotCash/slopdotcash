@@ -2863,6 +2863,157 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(section).toContainText("No paid security bounties are open.");
 });
 
+for (const slowPage of [false, true]) {
+  test(`a late accepted private report respects later navigation ${slowPage ? "while loading" : "after selection"} @registry @private-intake`, async ({
+    page,
+    request,
+    diagnostics,
+  }) => {
+    test.skip(
+      process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
+      "Private intake lane",
+    );
+    test.setTimeout(120_000);
+    const id = `late-report-${slowPage ? "loading" : "selected"}-${projectSuffix()}`;
+    const repository = `e2e-security/${id}`;
+    const role = test.info().project.name.endsWith("-mobile")
+      ? "reporter-b"
+      : "reporter-a";
+    diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+    await listProject(request, TOKENS.security, repository, id, {});
+    await setIntake(request, repository, "disabled");
+    await signIn(page, TOKENS[role]);
+    await page.goto(`/projects/${id}/security`, { waitUntil: "networkidle" });
+    await page
+      .getByRole("textbox", { name: "Summary", exact: true })
+      .fill(`Local report ${id}`);
+    await page
+      .getByRole("textbox", { name: /^Description/u })
+      .fill(
+        `Synthetic local report ${id}: the isolated fixture permits an unauthorized withdrawal. No production account, private finding, or funds are involved.`,
+      );
+    let releasePage = () => {};
+    let pageRequested = () => {};
+    const pageRequest = new Promise<void>((resolve) => {
+      pageRequested = resolve;
+    });
+    if (slowPage) {
+      const pageDelivery = new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+      await page.route("**/assets/PublicPages-*.js", async (route) => {
+        const response = await route.fetch();
+        pageRequested();
+        await pageDelivery;
+        await route.fulfill({ response });
+      });
+    }
+    let release!: () => void;
+    let saved!: () => void;
+    const delivery = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const persisted = new Promise<void>((resolve) => {
+      saved = resolve;
+    });
+    let submissionId = "";
+    let attemptedReport: unknown;
+    await page.route("**/api/v1/security-submissions", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      attemptedReport = route.request().postDataJSON();
+      const response = await route.fetch();
+      expect(response.status()).toBe(201);
+      submissionId = (await response.json()).submission.id;
+      saved();
+      await delivery;
+      await route.fulfill({ response });
+    });
+    try {
+      await page
+        .getByRole("button", { name: "Review report", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Submit private report", exact: true })
+        .click();
+      await persisted;
+      const receipt = await api(
+        request,
+        "GET",
+        `security-submissions/${submissionId}`,
+        TOKENS[role],
+      );
+      expect(receipt.status).toBe(200);
+      const destination = page.getByRole("link", {
+        name: "How it works",
+        exact: true,
+      });
+      await destination.focus();
+      await destination.press("Enter");
+      await expect(page).toHaveURL(/\/how-it-works$/u);
+      if (slowPage) await pageRequest;
+      const unexpectedNavigation = page
+        .waitForURL(/\/inbox\?/u, { timeout: 1_000 })
+        .then(
+          () => true,
+          () => false,
+        );
+      const delivered = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname === "/api/v1/security-submissions",
+      );
+      release();
+      await (await delivered).finished();
+      // The accepted report remains available in Inbox; its old composer cannot
+      // take over the page selected after it was unmounted.
+      await page.getByRole("link", { name: "Slop home", exact: true }).focus();
+      expect(await unexpectedNavigation).toBe(false);
+      await expect(page).toHaveURL(/\/how-it-works$/u);
+      await page.screenshot({
+        path: test.info().outputPath("late-report-navigation.png"),
+        fullPage: true,
+      });
+      await expectAccessible(page);
+      await page.unroute("**/api/v1/security-submissions");
+      await page.goBack();
+      await expect(page).toHaveURL(
+        new RegExp(`/projects/${id}/security$`, "u"),
+      );
+      await expect(
+        page.getByRole("button", { name: "Retry same report", exact: true }),
+      ).toBeEnabled();
+      if (slowPage) {
+        const loaded = page.waitForResponse((response) =>
+          new URL(response.url()).pathname.includes("/assets/PublicPages-"),
+        );
+        releasePage();
+        await (await loaded).finished();
+      }
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = "2";
+      });
+      await expectAccessible(page);
+      const retry = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname === "/api/v1/security-submissions",
+      );
+      await page
+        .getByRole("button", { name: "Retry same report", exact: true })
+        .click();
+      const reconciled = await retry;
+      expect(reconciled.status()).toBe(200);
+      expect(reconciled.request().postDataJSON()).toEqual(attemptedReport);
+      await expect(page).toHaveURL(
+        new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`, "u"),
+      );
+    } finally {
+      release();
+      releasePage();
+    }
+  });
+}
+
 test("Slop receives a private report before GitHub and keeps it in Inbox @registry @private-intake", async ({
   browser,
   request,
@@ -4368,4 +4519,124 @@ test("an owner preserves admin-approved full-award terms on any project @registr
     path: test.info().outputPath("generic-full-award-preserved.png"),
     fullPage: true,
   });
+});
+
+test("a late private session check preserves the restored actor's new draft @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `late-session-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  const first: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-b"
+    : "reporter-a";
+  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  await listProject(request, TOKENS.security, repository, id, {});
+  await setIntake(request, repository, "disabled");
+  await signIn(page, TOKENS[first]);
+  await page.goto(`/projects/${id}/security`, { waitUntil: "networkidle" });
+  await page
+    .getByRole("textbox", { name: "Summary", exact: true })
+    .fill(`Original local draft ${id}`);
+  await page
+    .getByRole("textbox", { name: /^Description/u })
+    .fill(
+      `Synthetic original report ${id}, describing an isolated fixture authorization check with no production accounts or funds.`,
+    );
+  await page
+    .getByRole("button", { name: "Review report", exact: true })
+    .click();
+  const switchActor = async (role: Role) => {
+    // Models sign-in replacement in another tab using the existing local sessions.
+    await page.evaluate(
+      ([name, value]) => {
+        document.cookie = `${name}=${value}; Path=/; Secure; SameSite=Strict`;
+      },
+      [COOKIE, TOKENS[role]],
+    );
+  };
+  let release!: () => void;
+  let observed!: () => void;
+  const delivery = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const checked = new Promise<void>((resolve) => {
+    observed = resolve;
+  });
+  let delayed = false;
+  await page.route("**/api/v1/project-session", async (route) => {
+    if (delayed) return route.continue();
+    delayed = true;
+    const response = await route.fetch();
+    expect((await response.json()).session.githubId).toBe(
+      account(second).githubId,
+    );
+    observed();
+    await delivery;
+    await route.fulfill({ response });
+  });
+  try {
+    await switchActor(second);
+    await page
+      .getByRole("button", { name: "Submit private report", exact: true })
+      .click();
+    await checked;
+    await page.getByRole("link", { name: "How it works", exact: true }).click();
+    await expect(page.locator("form.report-composer")).toHaveCount(0);
+    await page.goBack();
+    await expect(
+      page.getByText(
+        `Draft kept in this tab for @${account(second).githubLogin}. It is not submitted yet.`,
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await switchActor(first);
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(
+      page.getByText(
+        `Draft kept in this tab for @${account(first).githubLogin}. It is not submitted yet.`,
+        { exact: true },
+      ),
+    ).toBeVisible();
+    const summary = `New local draft after returning ${id}`;
+    await page
+      .getByRole("textbox", { name: "Summary", exact: true })
+      .fill(summary);
+    await page
+      .getByRole("textbox", { name: /^Description/u })
+      .fill(
+        `Synthetic replacement draft ${id}; no report is submitted during this account restoration check.`,
+      );
+    const storageKey = `slop-report-compose:${account(first).githubId}:${id}`;
+    const storedSummary = () =>
+      page.evaluate((key) => {
+        const raw = sessionStorage.getItem(key);
+        return raw ? JSON.parse(raw).draft.summary : null;
+      }, storageKey);
+    await expect.poll(storedSummary).toBe(summary);
+    const delivered = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/project-session",
+    );
+    release();
+    await (await delivered).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(await storedSummary()).toBe(summary);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(
+      page.getByRole("textbox", { name: "Summary", exact: true }),
+    ).toHaveValue(summary);
+  } finally {
+    release();
+  }
 });
