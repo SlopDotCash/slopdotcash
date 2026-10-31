@@ -2685,6 +2685,7 @@ test("private bounty obligations continue through role loss, approver replacemen
 test("admin placement and explicit bounty type drive generic project pages @registry", async ({
   page,
   request,
+  diagnostics,
 }) => {
   const id = `home-bounty-${projectSuffix()}`;
   const repository = `e2e-security/${id}`;
@@ -2834,6 +2835,12 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   const ordinarySnapshot = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
   );
+  // Switching this fixture to the ordinary view can cancel its background
+  // discovery transport after the response is read. Require the resolved
+  // blocked state below, and allow at most this one exact canceled read.
+  const canceledDiscovery =
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:\d+\/\.well-known\/slop\/projects\.json$/u;
+  diagnostics.allow(canceledDiscovery);
   await row.click();
   await (await ordinarySnapshot).finished();
   await page.waitForLoadState("networkidle");
@@ -2843,6 +2850,10 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(
     page.getByText("Checking project clearance…", { exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page.getByText("This project is not cleared for agents.", { exact: false }),
+  ).toBeVisible();
+  expect(diagnostics.count(canceledDiscovery)).toBeLessThanOrEqual(1);
 
   shown = closed;
   await page.goto("/", { waitUntil: "networkidle" });
