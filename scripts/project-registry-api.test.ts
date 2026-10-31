@@ -60,6 +60,7 @@ import {
 } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { vettingResult } from "../tests/vetting-fixtures";
+import { reviewRegistration } from "../workers/slopbot/registry";
 import { handleRepositoryRead } from "../workers/slopbot/repository-access";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 
@@ -84,6 +85,7 @@ class MemoryCache implements EdgeCache {
 
 let persistence: CloudflareProjectPersistence;
 let sqlite: Database;
+let db: ReturnType<typeof sqliteD1>["db"];
 
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
 
@@ -113,6 +115,7 @@ beforeEach(async () => {
       .sort(),
   );
   sqlite = database.sqlite;
+  db = database.db;
   persistence = new CloudflareProjectPersistence(database.db);
   retained = await localVettingEvidence(
     database.db,
@@ -2113,6 +2116,63 @@ describe("project enforcement (ADM-06)", () => {
     const afterDenial = await enforce("moderator", "reinstate");
     expect(afterDenial.status).toBe(409);
     expect((await afterDenial.json()).error).toBe("no_open_appeal");
+  });
+
+  // Slopbot's live registry for the listed repository (the record's GitHub id).
+  const slopbotReview = () =>
+    reviewRegistration(db as never, {
+      owner: "example",
+      repo: "open-registry",
+      repositoryId: 123456789,
+    });
+
+  test("Slopbot keeps the security-only review after a quarantine or ban revision lands", async () => {
+    await listProject();
+    // A paused project keeps the security-only review (owner decision D12).
+    expect(await slopbotReview()).toEqual({
+      scope: "security",
+      projectId: "open-registry",
+    });
+    const quarantined = await enforce("admin", "quarantine");
+    expect((await quarantined.json()).record.result).toBe("revision_appended");
+    expect(
+      (await persistence.getProject("open-registry"))?.manifest.listingTier,
+    ).toBe("retired");
+    // The quarantine's own retirement is not the owner's retirement.
+    expect(await slopbotReview()).toEqual({
+      scope: "security",
+      projectId: "open-registry",
+    });
+    expect((await enforce("admin", "ban")).status).toBe(200);
+    expect(await slopbotReview()).toEqual({
+      scope: "security",
+      projectId: "open-registry",
+    });
+  });
+
+  test("an owner's retirement still ends Slopbot review when a quarantine follows", async () => {
+    await listProject();
+    const project = await persistence.getProject("open-registry");
+    if (project === null) throw new Error("open-registry is not listed");
+    const retired = await call(
+      "PUT",
+      "admin/projects/open-registry/manifest",
+      "admin",
+      {
+        manifest: {
+          ...project.manifest,
+          status: "paused",
+          listingTier: "retired",
+        },
+        expectedRevision: project.revision,
+        reason: "Retire the project",
+      },
+    );
+    expect(retired.status).toBe(200);
+    expect(await slopbotReview()).toBeNull();
+    const quarantined = await enforce("admin", "quarantine");
+    expect((await quarantined.json()).record.result).toBe("no_revision_needed");
+    expect(await slopbotReview()).toBeNull();
   });
 
   test("quarantines and bans while refusing an appeal with only historical clean metadata", async () => {
