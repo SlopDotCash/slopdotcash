@@ -187,6 +187,8 @@ const MSBUILD_RECIPE = new RegExp(
   String.raw`\.(?:${MSBUILD_EXTENSIONS})$`,
   "iu",
 );
+/** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
+const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -373,7 +375,8 @@ const RULES: Rule[] = [
 const RULE_POLICY_SHA256 = sha256(
   JSON.stringify({
     schemaVersion: "slop-deterministic-rules-v1",
-    msbuildAttributeWhitespace: "cr-lf-to-space",
+    xmlAttributeWhitespace: "msbuild-and-ant-build-xml-literal-cr-lf-to-space",
+    xmlAttributeCharacterReferences: "decimal-hex-and-predefined-entities",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -415,70 +418,164 @@ function binaryMagic(bytes: Uint8Array): boolean {
   );
 }
 
+const NAMED_XML_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+/** XML 1.0 Char. Surrogates and noncharacters are not character references. */
+function xmlScalar(code: number): boolean {
+  return (
+    code === 0x9 ||
+    code === 0xa ||
+    code === 0xd ||
+    (code >= 0x20 && code <= 0xd7ff) ||
+    (code >= 0xe000 && code <= 0xfffd) ||
+    (code >= 0x10000 && code <= 0x10ffff)
+  );
+}
+
 /**
- * MSBuild runs an attribute value after XML turns each CR and LF inside the
- * quotes into whitespace. A newline before `| sh` therefore still executes
- * the pipe. The same newline in a shell script ends the command, so only
- * MSBuild files are rewritten, and only inside a quoted attribute value.
- * Each CR or LF becomes one space, so a match index refers to the same place
- * in the original text.
+ * One numeric character reference or predefined entity at `index`, inside an
+ * attribute value delimited by `quote`. The scan stops at that delimiter, so
+ * a semicolon later in the file cannot finish a reference the quote ended.
  */
-function msbuildRuleText(text: string): string {
+function xmlCharacterReference(
+  text: string,
+  index: number,
+  quote: string,
+): { value: string; length: number } | null {
+  if (text[index] !== "&") return null;
+  let cursor = index + 1;
+  let semi = -1;
+  while (cursor < text.length) {
+    const char = text[cursor] ?? "";
+    if (char === ";") {
+      semi = cursor;
+      break;
+    }
+    if (char === quote || char === "&" || char === "<") return null;
+    cursor += 1;
+  }
+  if (semi < 0) return null;
+  const body = text.slice(index + 1, semi);
+  if (body.startsWith("#")) {
+    const hex = body[1] === "x" || body[1] === "X";
+    const digits = body.slice(hex ? 2 : 1);
+    if (
+      digits.length === 0 ||
+      (hex ? !/^[0-9A-Fa-f]+$/u.test(digits) : !/^\d+$/u.test(digits))
+    )
+      return null;
+    // Leading zeros do not change the code point. A value above U+10FFFF
+    // is not a character reference, whatever its written length.
+    const trimmed = digits.replace(/^0+/u, "") || "0";
+    if (trimmed.length > (hex ? 6 : 7)) return null;
+    const code = Number.parseInt(trimmed, hex ? 16 : 10);
+    if (!xmlScalar(code)) return null;
+    return { value: String.fromCodePoint(code), length: semi - index + 1 };
+  }
+  const named = NAMED_XML_ENTITIES[body];
+  if (named === undefined) return null;
+  return { value: named, length: semi - index + 1 };
+}
+
+/**
+ * MSBuild and Ant run an attribute value after XML attribute normalization.
+ * A literal CR or LF inside the quotes becomes one space, so a newline
+ * before `| sh` still executes the pipe. A numeric character reference
+ * (`&#124;`, `&#x7C;`) or predefined entity (`&amp;`, `&lt;`, `&gt;`,
+ * `&quot;`, `&apos;`) becomes that character, so `&amp;&amp;` is `&&`.
+ * A reference to CR or LF stays that character: XML does not turn it into
+ * a space, and it still ends a shell command. Only quoted attribute values
+ * are rewritten, and only in MSBuild project/import files and Ant
+ * `build.xml`. `origin` maps each index of the rewritten text back to the
+ * original text, so a finding's line is the line of the source bytes.
+ */
+function xmlAttributeRuleText(text: string): {
+  text: string;
+  origin: (index: number) => number;
+} {
   let result = "";
   let index = 0;
   let mode: "text" | "tag" | "comment" | "cdata" | "value" = "text";
   let quote = "";
+  let delta = 0;
+  const breaks = [0];
+  const deltas = [0];
+  const emit = (value: string, sourceLength = value.length) => {
+    result += value;
+    const growth = sourceLength - value.length;
+    if (growth === 0) return;
+    delta += growth;
+    breaks.push(result.length);
+    deltas.push(delta);
+  };
   while (index < text.length) {
     const char = text[index] ?? "";
     if (mode === "text") {
       if (text.startsWith("<!--", index)) {
         mode = "comment";
-        result += "<!--";
+        emit("<!--");
         index += 4;
         continue;
       }
       if (text.startsWith("<![CDATA[", index)) {
         mode = "cdata";
-        result += "<![CDATA[";
+        emit("<![CDATA[");
         index += 9;
         continue;
       }
       if (char === "<") mode = "tag";
-      result += char;
+      emit(char);
       index += 1;
       continue;
     }
     if (mode === "comment") {
       if (text.startsWith("-->", index)) {
         mode = "text";
-        result += "-->";
+        emit("-->");
         index += 3;
         continue;
       }
-      result += char;
+      emit(char);
       index += 1;
       continue;
     }
     if (mode === "cdata") {
       if (text.startsWith("]]>", index)) {
         mode = "text";
-        result += "]]>";
+        emit("]]>");
         index += 3;
         continue;
       }
-      result += char;
+      emit(char);
       index += 1;
       continue;
     }
     if (mode === "value") {
-      if (char === quote) mode = "tag";
-      result += char === "\r" || char === "\n" ? " " : char;
+      if (char === quote) {
+        mode = "tag";
+        emit(char);
+        index += 1;
+        continue;
+      }
+      const reference = xmlCharacterReference(text, index, quote);
+      if (reference !== null) {
+        emit(reference.value, reference.length);
+        index += reference.length;
+        continue;
+      }
+      emit(char === "\r" || char === "\n" ? " " : char);
       index += 1;
       continue;
     }
     if (char === ">") {
       mode = "text";
-      result += char;
+      emit(char);
       index += 1;
       continue;
     }
@@ -491,10 +588,23 @@ function msbuildRuleText(text: string): string {
         quote = char;
       }
     }
-    result += char;
+    emit(char);
     index += 1;
   }
-  return result;
+  const origin =
+    breaks.length === 1
+      ? (decodedIndex: number) => decodedIndex
+      : (decodedIndex: number) => {
+          let lo = 0;
+          let hi = breaks.length - 1;
+          while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if ((breaks[mid] ?? 0) <= decodedIndex) lo = mid;
+            else hi = mid - 1;
+          }
+          return decodedIndex + (deltas[lo] ?? 0);
+        };
+  return { text: result, origin };
 }
 
 function checkText(
@@ -502,6 +612,7 @@ function checkText(
   text: string,
   surfaces: ScanSurface[],
   evidenceText = text,
+  origin?: (index: number) => number,
 ): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const rule of RULES) {
@@ -509,11 +620,12 @@ function checkText(
       continue;
     const match = rule.pattern.exec(text);
     if (match === null) continue;
+    const at = origin?.(match.index) ?? match.index;
     findings.push({
       severity: rule.severity,
       category: rule.threat,
       summary: rule.summary,
-      evidence: `${path}:${lineOf(evidenceText, match.index)}`.slice(0, 300),
+      evidence: `${path}:${lineOf(evidenceText, at)}`.slice(0, 300),
       path,
     });
   }
@@ -753,11 +865,20 @@ export function inspectRepository(input: {
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
-    // MSBuild attribute newlines are spaces at execution. Shell text is not.
-    const ruleText = MSBUILD_RECIPE.test(file.path)
-      ? msbuildRuleText(text)
-      : text;
-    const found = checkText(file.path, ruleText, surfaces, text);
+    // MSBuild and Ant build.xml execute attribute values after XML
+    // normalization. Shell text, and every other file, is left as written.
+    const attributes =
+      MSBUILD_RECIPE.test(file.path) || ANT_BUILD_XML.test(file.path)
+        ? xmlAttributeRuleText(text)
+        : undefined;
+    const ruleText = attributes?.text ?? text;
+    const found = checkText(
+      file.path,
+      ruleText,
+      surfaces,
+      text,
+      attributes?.origin,
+    );
     findings.push(...found);
     const hooks = installHookCommands(file.path, text);
     if (hooks.length > 0) {
