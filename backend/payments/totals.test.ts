@@ -32,19 +32,23 @@ function insertCursor(
   sqlite: ReturnType<typeof sqliteD1>["sqlite"],
   project: string,
   network: string,
+  position = "12345",
+  syncedAt = when,
 ) {
   sqlite
     .query(
       `INSERT INTO payment_chain_cursors (project_id,network,position,synced_at)
        VALUES(?,?,?,?)`,
     )
-    .run(project, network, "12345", when);
+    .run(project, network, position, syncedAt);
 }
 
 interface TotalsBody {
   assets?: { network: string }[];
   error?: string;
   network?: string | null;
+  coverage?: { kind: string; completeThrough: string | null };
+  syncedAt?: string | null;
 }
 
 async function totals(
@@ -105,4 +109,45 @@ test("project totals ignore a testnet chain cursor in production but keep it in 
   expect(staging.status).toBe(200);
   expect(staging.body.network).toBe("base-sepolia");
   expect(networks(staging.body)).toContain("base-sepolia");
+});
+
+test("mainnet indexing remains visible beside a newer testnet cursor", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    const database = db as unknown as D1TransactionalDatabase;
+    const mainnetAt = "2026-12-04T12:00:00.000Z";
+    insertCursor(sqlite, "project-solana", "solana-devnet", "devnet-tip");
+    insertCursor(
+      sqlite,
+      "project-solana",
+      "solana-mainnet",
+      "mainnet-tip",
+      mainnetAt,
+    );
+
+    // The same project can retain devnet history after its mainnet setup.
+    // No awards is a verified zero only when the mainnet cursor is retained.
+    const production = await totals(database, "project-solana");
+    expect(production.status).toBe(200);
+    expect(production.body).toMatchObject({
+      network: "solana-mainnet",
+      assets: [],
+      coverage: {
+        kind: "finalized-payment-events",
+        completeThrough: "mainnet-tip",
+      },
+      syncedAt: mainnetAt,
+    });
+
+    // Staging includes testnets and reports its most recently synced cursor.
+    const staging = await totals(database, "project-solana", "staging");
+    expect(staging.status).toBe(200);
+    expect(staging.body).toMatchObject({
+      network: "solana-devnet",
+      coverage: { completeThrough: "devnet-tip" },
+      syncedAt: when,
+    });
+  } finally {
+    sqlite.close();
+  }
 });
