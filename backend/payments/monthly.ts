@@ -321,7 +321,7 @@ async function freezeMonthlyPeriod(
     expectedSequence?: number;
     now: Date;
   },
-): Promise<"frozen" | "already-frozen" | "automatic-off"> {
+): Promise<"frozen" | "already-frozen" | "automatic-off" | "project-changed"> {
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   const { project, deployment } = input;
   const period = assertPeriod(input.period);
@@ -393,7 +393,7 @@ async function freezeMonthlyPeriod(
   });
   const inserted = await db
     .prepare(
-      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
+      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=? AND status='active') AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
     )
     .bind(
       project.id,
@@ -412,12 +412,32 @@ async function freezeMonthlyPeriod(
       sequence,
       input.trigger,
       project.id,
+      project.id,
+      project.revision,
+      project.manifestSha256,
       input.actorId,
     )
     .run();
   if (inserted.meta?.changes === 1) return "frozen";
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   if (await loadRun(db, project.id, period)) return "already-frozen";
+  const current = await db
+    .prepare("SELECT revision,manifest_sha256,status FROM projects WHERE id=?")
+    .bind(project.id)
+    .first<{ revision: number; manifest_sha256: string; status: string }>();
+  if (
+    !current ||
+    current.revision !== project.revision ||
+    current.manifest_sha256 !== project.manifestSha256 ||
+    current.status !== "active"
+  ) {
+    if (input.trigger === "automatic") return "project-changed";
+    throw new MonthlyPaymentError(
+      409,
+      "project_changed",
+      "The project changed. Reload its awards.",
+    );
+  }
   // The owner may turn automatic payment off during the reads above. Only
   // the atomic insert can decide whether this automatic freeze is allowed.
   if (
@@ -682,7 +702,7 @@ export async function coordinateMonthlyPayments(input: {
           now,
         });
         if (frozen === "frozen") report.frozen.push(key);
-        else if (frozen === "automatic-off")
+        else if (frozen === "automatic-off" || frozen === "project-changed")
           report.waiting.push({ key, reason: frozen });
       } catch (error) {
         report.failures.push(error);

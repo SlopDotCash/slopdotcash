@@ -147,6 +147,103 @@ const owner = () =>
     now: () => clock,
   });
 const actor = { githubId: OWNER, githubLogin: "owner" };
+for (const automatic of [false, true]) {
+  test(`${automatic ? "automatic" : "owner"} finalization preserves a project pause committed before the freeze write`, async () => {
+    clock = automatic ? afterCutoff : beforeCutoff;
+    const persistence = new CloudflareProjectPersistence(db);
+    const revise = async (status: "active" | "paused") => {
+      const current = await persistence.getProject(project.id);
+      if (!current) throw new Error("Missing fixture project");
+      const manifest = { ...current.manifest, status };
+      const text = JSON.stringify(manifest);
+      expect(
+        await persistence.appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: current.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Owner changes project status during monthly finalization",
+            actor,
+            at: clock.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+    };
+    const prepare = db.prepare.bind(db);
+    let armed = true;
+    db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (!sql.startsWith("INSERT INTO monthly_payment_runs("))
+        return statement;
+      return new Proxy(statement, {
+        get(target, key) {
+          if (key === "bind")
+            return (...args: unknown[]) => {
+              const bound = target.bind(...args);
+              return new Proxy(bound, {
+                get(inner, method) {
+                  if (method === "run")
+                    return async () => {
+                      if (armed) {
+                        armed = false;
+                        await revise("paused");
+                      }
+                      return inner.run();
+                    };
+                  const value = Reflect.get(inner, method);
+                  return typeof value === "function"
+                    ? value.bind(inner)
+                    : value;
+                },
+              });
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+    try {
+      if (automatic) {
+        const report = await coordinate(clock);
+        expect(report.frozen).toEqual([]);
+        expect(report.failures).toEqual([]);
+        expect(report.waiting).toContainEqual({
+          key: `${project.id}/2026-11`,
+          reason: "project-changed",
+        });
+      } else
+        await rejects(
+          owner().finalize(project.id, "2026-11", actor, 0),
+          "project_changed",
+        );
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(armed).toBe(false);
+    expect((await persistence.getProject(project.id))?.manifest.status).toBe(
+      "paused",
+    );
+    expect(count("monthly_payment_runs")).toBe(0);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    await revise("active");
+    if (automatic)
+      expect((await coordinate(clock)).frozen).toEqual([
+        `${project.id}/2026-11`,
+      ]);
+    else {
+      await owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: "300",
+        expectedSequence: 0,
+      });
+      await owner().finalize(project.id, "2026-11", actor, 1);
+    }
+    expect(count("monthly_payment_runs")).toBe(1);
+  });
+}
 function vault(
   free: string,
   observedAt = afterCutoff.toISOString(),
