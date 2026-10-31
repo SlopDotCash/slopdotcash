@@ -134,6 +134,10 @@ export function OwnerVaultSetup({
         if (!active) return null;
         if (!(result as unknown as { session: unknown }).session) {
           setSignInRequired(true);
+          setInfo(null);
+          setClaims([]);
+          setWallet(null);
+          setReview(null);
           return null;
         }
         setSignInRequired(false);
@@ -154,7 +158,12 @@ export function OwnerVaultSetup({
         setClaims((account as unknown as { wallets: WalletClaim[] }).wallets);
       })
       .catch((e: unknown) => {
-        if (active) setError(errorMessage(e, "Vault setup could not load."));
+        if (!active) return;
+        setInfo(null);
+        setClaims([]);
+        setWallet(null);
+        setReview(null);
+        setError(errorMessage(e, "Vault setup could not load."));
       });
     return () => {
       active = false;
@@ -393,7 +402,7 @@ export function OwnerVaultSetup({
           I checked wallet activity; clear the unreadable saved request
         </button>
       ) : null}
-      {!active && info ? (
+      {!active && !signInRequired && info ? (
         info.networks.length === 0 ? (
           <p>Vault creation is not available on this network yet.</p>
         ) : (
