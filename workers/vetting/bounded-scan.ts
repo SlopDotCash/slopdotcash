@@ -200,6 +200,19 @@ const INSTALL_HOOKS = [
   "prepare",
   "prepublish",
 ];
+/**
+ * Composer runs these `scripts` events itself on `install` and `update`. The
+ * commands live in the same `scripts` field package.json uses, but the
+ * manifest is only reviewed as a manifest, so without this the command is
+ * never checked as install content and its download is not collected.
+ */
+const COMPOSER_INSTALL_HOOKS = [
+  "pre-install-cmd",
+  "post-install-cmd",
+  "pre-update-cmd",
+  "post-update-cmd",
+  "post-autoload-dump",
+];
 
 function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
@@ -429,13 +442,27 @@ function checkText(
 }
 
 function installHookCommands(path: string, text: string): string[] {
-  if (basename(path) !== "package.json") return [];
+  const name = basename(path);
+  const hooks =
+    name === "package.json"
+      ? INSTALL_HOOKS
+      : name === "composer.json"
+        ? COMPOSER_INSTALL_HOOKS
+        : null;
+  if (hooks === null) return [];
   try {
     const scripts = (JSON.parse(text) as { scripts?: Record<string, unknown> })
       .scripts;
-    return INSTALL_HOOKS.flatMap((hook) =>
-      typeof scripts?.[hook] === "string" ? [scripts[hook] as string] : [],
-    );
+    // Composer accepts one command or an ordered list of commands per event.
+    return hooks.flatMap((hook) => {
+      const value = scripts?.[hook];
+      if (typeof value === "string") return [value];
+      return Array.isArray(value)
+        ? value.filter(
+            (command): command is string => typeof command === "string",
+          )
+        : [];
+    });
   } catch {
     return [];
   }
