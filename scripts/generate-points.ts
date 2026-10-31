@@ -195,7 +195,23 @@ export function retainPublishedHistory(
     )
   )
     throw new Error("Published points history diverged from its checkpoint");
-  return later;
+  // A complete snapshot can add coverage without changing an award. Revision
+  // count alone therefore cannot select all retained source history, including
+  // when a checkpoint completed before its Pages publication failed.
+  const covered = new Set(later.coverage.map((entry) => JSON.stringify(entry)));
+  return {
+    ...later,
+    generatedAt:
+      checkpoint.generatedAt > published.generatedAt
+        ? checkpoint.generatedAt
+        : published.generatedAt,
+    coverage: [
+      ...later.coverage,
+      ...earlier.coverage.filter(
+        (entry) => !covered.has(JSON.stringify(entry)),
+      ),
+    ],
+  };
 }
 export function pointsSql(journal: PointsJournal): string {
   assertPointsJournal(journal);
