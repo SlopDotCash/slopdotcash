@@ -30,7 +30,12 @@ mean the code is free of all malware.
 
 A build, install or provisioning recipe is recognized by its name, so the
 same bytes are classified the same way whether they sit in a `Makefile`, a
-`Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Each keeps its
+`Dockerfile`, a `Containerfile` or a `Jenkinsfile`.
+
+CMake evaluates a file named by `include()` during configure, so that file is
+install content even when its name carries no recipe extension. Only a literal
+path relative to the naming list file is followed; a variable expansion, an
+absolute path or a path leaving the repository is not acquired. Each keeps its
 `installScripts` coverage, its install-time download extraction and its place
 in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
 
