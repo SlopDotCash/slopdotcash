@@ -5,7 +5,7 @@ import { readdirSync } from "node:fs";
 import { findProject } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { Job } from "./contracts";
-import worker from "./index";
+import worker, { jobFor } from "./index";
 
 test("Slopbot queue confirms appeal labels and refuses private or replaced repositories", async () => {
   const { db, sqlite } = sqliteD1(
@@ -310,4 +310,103 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
     server.stop(true);
     sqlite.close();
   }
+});
+
+test("jobFor matches /slopbot appeal and /slopbot dispute on any line and with a colon", () => {
+  const basePayload = {
+    action: "created",
+    installation: { id: 1 },
+    sender: { id: 42, type: "User" },
+    repository: {
+      id: 100,
+      name: "repo",
+      private: false,
+      owner: { login: "owner" },
+    },
+    issue: { number: 1, node_id: "PR_1", pull_request: {} },
+  };
+
+  // Trailing command after explanation
+  const trailingAppeal = jobFor(
+    "issue_comment",
+    "del-1",
+    {
+      ...basePayload,
+      comment: {
+        id: 10,
+        body: "The sha256 digest is verified.\n/slopbot appeal",
+      },
+    },
+    "99",
+  );
+  assert.equal(trailingAppeal?.kind, "appeal");
+  assert.equal(trailingAppeal?.appealCommentId, 10);
+
+  // Command with colon
+  const colonAppeal = jobFor(
+    "issue_comment",
+    "del-2",
+    {
+      ...basePayload,
+      comment: {
+        id: 11,
+        body: "/slopbot appeal: This is a legitimate PR",
+      },
+    },
+    "99",
+  );
+  assert.equal(colonAppeal?.kind, "appeal");
+  assert.equal(colonAppeal?.appealCommentId, 11);
+
+  // Leading blank line and spaces
+  const leadingBlankAppeal = jobFor(
+    "issue_comment",
+    "del-3",
+    {
+      ...basePayload,
+      comment: { id: 12, body: "\n\n   /slopbot appeal reason" },
+    },
+    "99",
+  );
+  assert.equal(leadingBlankAppeal?.kind, "appeal");
+
+  // Dispute after explanation
+  const trailingDispute = jobFor(
+    "issue_comment",
+    "del-4",
+    {
+      ...basePayload,
+      comment: {
+        id: 13,
+        body: "Points allocation was incorrect.\n/slopbot dispute",
+      },
+    },
+    "99",
+  );
+  assert.equal(trailingDispute?.kind, "appeal");
+  assert.equal((trailingDispute as { subject?: string }).subject, "value");
+  assert.equal(trailingDispute?.appealCommentId, 13);
+
+  // Negative controls: inline mention or plural should not match
+  const inlineMention = jobFor(
+    "issue_comment",
+    "del-5",
+    {
+      ...basePayload,
+      comment: { id: 14, body: "Why would anyone /slopbot appeal here?" },
+    },
+    "99",
+  );
+  assert.equal(inlineMention, null);
+
+  const pluralWord = jobFor(
+    "issue_comment",
+    "del-6",
+    {
+      ...basePayload,
+      comment: { id: 15, body: "/slopbot appeals are recorded" },
+    },
+    "99",
+  );
+  assert.equal(pluralWord, null);
 });
