@@ -240,13 +240,16 @@ test("selected admin project can queue after a superseded pending scan and prese
   await restore();
   await card.getByRole("button", { name: "Queue scan of revision 1" }).focus();
   await page.keyboard.press("Enter");
-  expect(writes).toEqual([
-    {
-      projectId: project.id,
-      revision: 1,
-      reason: "Recheck the unresolved dependency source",
-    },
-  ]);
+  // The key press resolves before the queue request reaches the route.
+  await expect
+    .poll(() => writes)
+    .toEqual([
+      {
+        projectId: project.id,
+        revision: 1,
+        reason: "Recheck the unresolved dependency source",
+      },
+    ]);
   await expect(card.locator(".admin-badge")).toHaveText("Queued");
   await expect(
     card.getByRole("button", { name: "Queue scan of revision 1" }),
