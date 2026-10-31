@@ -50,8 +50,7 @@ if(args[0] === "api") {
   // gh api --paginate emits each page as a separate JSON object; jq --slurp
   // collects them into an array so .[].jobs[] spans all pages.
   process.stdout.write(JSON.stringify({ jobs: [{ name: "Prepare checked browser bundle", conclusion: "success" }] }));
-  process.stdout.write("
-");
+  process.stdout.write("\n");
   process.stdout.write(JSON.stringify({ jobs: [{ name, conclusion: state.deployed.includes(Number(job[1])) ? "success" : "skipped" }] }));
  }
 } else if(args[0] === "run" && args[1] === "list") {
