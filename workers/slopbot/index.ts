@@ -140,7 +140,7 @@ export function jobFor(
       };
     if (action !== "created") return null;
     const text = (payload.comment?.body ?? "").trim();
-    if (/^\/slopbot dispute(?:\s|$)/u.test(text))
+    if (/(?:^|\r?\n)\s*\/slopbot\s+dispute(?::|\s|$)/u.test(text))
       return {
         kind: "appeal",
         subject: "value",
@@ -149,7 +149,7 @@ export function jobFor(
         ...item,
         senderId: sender.id,
       };
-    if (text.startsWith("/slopbot appeal"))
+    if (/(?:^|\r?\n)\s*\/slopbot\s+appeal(?::|\s|$)/u.test(text))
       return {
         kind: "appeal",
         ...base,
