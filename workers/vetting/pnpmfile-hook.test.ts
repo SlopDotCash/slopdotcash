@@ -12,9 +12,10 @@ function inspected(path: string, text: string) {
 
 test("a pnpmfile hook is an install surface", () => {
   // PRD section 8: the scan checks install and build scripts. pnpm loads
-  // `.pnpmfile.cjs` before resolving any dependency and runs its hooks, so a
-  // repository root file with that name executes without being named by
-  // package.json.
+  // `.pnpmfile.cjs` from the workspace root before resolving any dependency
+  // and runs its hooks, so a root file with that name executes without being
+  // named by package.json. The classification is by basename, so a nested
+  // copy is also install content even where pnpm would not load it.
   for (const path of [".pnpmfile.cjs", ".pnpmfile.js", "tools/.pnpmfile.cjs"]) {
     const inspection = inspected(
       path,
