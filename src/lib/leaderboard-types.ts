@@ -718,11 +718,6 @@ export interface LeaderboardSnapshot {
 }
 
 export interface LeaderboardInput {
-  /** Temporary census inventory used by synthetic fixture snapshots. */
-  repositories?: (
-    | Omit<TargetRepository, "aliases" | "expectedNodeId">
-    | TargetRepository
-  )[];
   /** The versioned policy that value decisions apply under; required with them. */
   valuePolicy?: ValueScoringPolicy;
   /** GitHub-resolved identities for assessment coauthors absent from ordinary hydration. */

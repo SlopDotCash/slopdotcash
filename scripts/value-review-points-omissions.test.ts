@@ -16,7 +16,6 @@ import {
   latestPoints,
   pointKey,
 } from "../src/lib/points";
-import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import {
   AFTER_NOVEMBER,
   GENERATED_AT,
@@ -51,9 +50,6 @@ function build(
   generatedAt = GENERATED_AT,
 ) {
   const census = penaltyScoreInput([], generatedAt);
-  // Synthetic fixture snapshots still need the registry inventory that Points
-  // uses when deciding whether an adverse exclusion can correct a prior award.
-  census.repositories = [...TARGET_REPOSITORIES];
   if (generatedAt !== GENERATED_AT) {
     // The reusable fixture has October work that the later window omits.
     census.mergedPullRequests = census.mergedPullRequests.filter(
