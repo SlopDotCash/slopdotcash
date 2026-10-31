@@ -199,7 +199,11 @@ export function assertQualityEvidence(
   }
   return value as QualityEvidence;
 }
-/** Stable largest remainder, including zero-weight contributors. */
+/**
+ * Stable largest remainder, including zero-weight contributors. Ties follow
+ * the canonical actor order with English case folding and collation, so the
+ * leftover units land on the same contributors on every host.
+ */
 export function allocateQualityWeights(
   weights: Map<string, bigint>,
   capMinor: string,
@@ -221,10 +225,12 @@ export function allocateQualityWeights(
     if (a.remainder !== b.remainder) return a.remainder > b.remainder ? -1 : 1;
     const left = actorLogins.get(a.id) ?? a.id,
       right = actorLogins.get(b.id) ?? b.id;
+    const leftLogin = left.toLocaleLowerCase("en"),
+      rightLogin = right.toLocaleLowerCase("en");
     return (
-      left.toLowerCase().localeCompare(right.toLowerCase()) ||
-      left.localeCompare(right) ||
-      a.id.localeCompare(b.id)
+      leftLogin.localeCompare(rightLogin, "en") ||
+      left.localeCompare(right, "en") ||
+      a.id.localeCompare(b.id, "en")
     );
   });
   let remaining = total
