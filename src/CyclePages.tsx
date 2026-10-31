@@ -92,6 +92,9 @@ export function CyclePage({
   const from = record?.contributionWindow.from ?? view?.cycle.from;
   const to = record?.contributionWindow.to ?? view?.cycle.endsAt;
   if (!from || !to) return <NotFound title="Cycle unavailable" />;
+  // The window end is exclusive: the first instant of the next UTC month.
+  // A date range shows the last included day instead.
+  const lastDay = new Date(Date.parse(to) - 1).toISOString();
   const lifecycle =
     record?.state ?? (view?.cycle.status === "live" ? "live" : "closed");
   const reminder = cycleSettlementReminder({
@@ -120,7 +123,7 @@ export function CyclePage({
           ? 0
           : 1;
   const stages = [
-    ["Contribution", `${formatDate(from)}–${formatDate(to)}`],
+    ["Contribution", `${formatDate(from)}–${formatDate(lastDay)}`],
     ownerCutoff
       ? [
           "Owner changes",
@@ -186,7 +189,7 @@ export function CyclePage({
           icon={<CalendarDays />}
           lead={
             <>
-              {formatDate(from)}–{formatDate(to)}
+              {formatDate(from)}–{formatDate(lastDay)}
             </>
           }
         >
