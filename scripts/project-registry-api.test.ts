@@ -60,7 +60,10 @@ import {
 } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { vettingResult } from "../tests/vetting-fixtures";
-import { reviewRegistration } from "../workers/slopbot/registry";
+import {
+  reversalOnlyRegistration,
+  reviewRegistration,
+} from "../workers/slopbot/registry";
 import { handleRepositoryRead } from "../workers/slopbot/repository-access";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 
@@ -2119,12 +2122,12 @@ describe("project enforcement (ADM-06)", () => {
   });
 
   // Slopbot's live registry for the listed repository (the record's GitHub id).
-  const slopbotReview = () =>
-    reviewRegistration(db as never, {
-      owner: "example",
-      repo: "open-registry",
-      repositoryId: 123456789,
-    });
+  const SLOPBOT_JOB = {
+    owner: "example",
+    repo: "open-registry",
+    repositoryId: 123456789,
+  };
+  const slopbotReview = () => reviewRegistration(db as never, SLOPBOT_JOB);
 
   test("Slopbot keeps the security-only review after a quarantine or ban revision lands", async () => {
     await listProject();
@@ -2173,6 +2176,40 @@ describe("project enforcement (ADM-06)", () => {
     const quarantined = await enforce("admin", "quarantine");
     expect((await quarantined.json()).record.result).toBe("no_revision_needed");
     expect(await slopbotReview()).toBeNull();
+  });
+
+  test("missing quarantine revision evidence leaves Slopbot only an appeal's penalty reversal", async () => {
+    await listProject();
+    const quarantined = await enforce("admin", "quarantine");
+    expect((await quarantined.json()).record.result).toBe("revision_appended");
+    // Revisions are permanent, so the read of the retained rows is hidden.
+    const withoutRevisions = {
+      ...db,
+      prepare: (sql: string) => {
+        const statement = db.prepare(sql);
+        if (
+          !sql.includes(
+            "SELECT manifest, manifest_sha256 FROM project_revisions",
+          )
+        )
+          return statement;
+        return {
+          ...statement,
+          bind: (...values: unknown[]) => ({
+            ...statement.bind(...values),
+            first: async () => null,
+          }),
+        };
+      },
+    };
+    // Unproved, the retirement counts as the owner's: no review, but an
+    // appeal or a maintainer reopen still reaches the penalty reversal.
+    expect(
+      await reviewRegistration(withoutRevisions as never, SLOPBOT_JOB),
+    ).toBeNull();
+    expect(
+      await reversalOnlyRegistration(withoutRevisions as never, SLOPBOT_JOB),
+    ).toEqual({ projectId: "open-registry" });
   });
 
   test("quarantines and bans while refusing an appeal with only historical clean metadata", async () => {
