@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { type AddressInfo, createServer } from "node:net";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import {
   fetchProjectPenaltyState,
   loadParticipationBans,
@@ -27,30 +27,48 @@ test("an interrupted ban feed body reports an unavailable feed", async () => {
 });
 
 test("a ban feed that times out after its headers reports unavailable", async () => {
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch() {
-      return new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode('{"schemaVersion":'));
-          },
-        }),
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.once("data", () => {
+      // Keep a declared body incomplete until the client aborts it. A partial
+      // streaming Response can otherwise arrive as a complete malformed body.
+      socket.write(
+        'HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{"schemaVersion":',
       );
-    },
+    });
   });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let receivedHeaders = false;
   const transport = Object.assign(
-    async (_input: unknown, init?: RequestInit) =>
-      fetch(server.url, { ...init, signal: AbortSignal.timeout(50) }),
+    async (_input: unknown, init?: RequestInit) => {
+      const response = await fetch(`http://127.0.0.1:${port}/`, {
+        ...init,
+        signal: controller.signal,
+      });
+      receivedHeaders = true;
+      timeout = setTimeout(
+        () => controller.abort(new DOMException("Timed out", "TimeoutError")),
+        50,
+      );
+      return response;
+    },
     { preconnect: fetch.preconnect },
   );
   try {
     await expect(
       loadParticipationBans(github, transport),
     ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
+    expect(receivedHeaders).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
   } finally {
-    server.stop(true);
+    clearTimeout(timeout);
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 
