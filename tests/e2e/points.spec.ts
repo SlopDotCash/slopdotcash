@@ -1,7 +1,7 @@
-import { expect, expectAccessible, test } from "./fixtures";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { assertPointsJournal, pointRevisionId } from "../../src/lib/points";
+import { expect, expectAccessible, test } from "./fixtures";
 
 test("This month uses the current UTC month after a period switch", async ({
   page,
