@@ -135,6 +135,7 @@ import {
   REGISTERED_REPOSITORIES,
   type RepositoryId,
   TARGET_REPOSITORIES,
+  type TargetRepository,
 } from "./repositories.mjs";
 import {
   assertReviewRecord,
@@ -4912,9 +4913,15 @@ function createSnapshotWithReviewCutoff(
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
-    repositories: TARGET_REPOSITORIES.map(
-      ({ aliases: _aliases, expectedNodeId: _expectedNodeId, ...repository }) =>
-        repository,
+    repositories: (input.repositories ?? TARGET_REPOSITORIES).map(
+      (repository) => {
+        const {
+          aliases: _aliases,
+          expectedNodeId: _expectedNodeId,
+          ...row
+        } = repository as TargetRepository;
+        return row;
+      },
     ),
     ruleVersion: SCORE_RULE_VERSION,
     generatedAt: input.generatedAt,

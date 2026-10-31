@@ -1,7 +1,7 @@
 /**
- * A policy or window omission preserves a prior review award, while an adverse
- * allocation exclusion can correct it to zero. These tests pin the distinction
- * in the Points layer (PRD section 7) for value reviews.
+ * Policy and window omissions preserve a prior review award, while a genuine
+ * zero-share allocation exclusion corrects it to zero. These tests pin the
+ * distinction in the Points layer (PRD section 7) for value reviews.
  */
 
 import { afterAll, beforeAll, expect, setSystemTime, test } from "bun:test";
@@ -16,40 +16,66 @@ import {
   latestPoints,
   pointKey,
 } from "../src/lib/points";
+import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import {
   AFTER_NOVEMBER,
   GENERATED_AT,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
 
-beforeAll(() => setSystemTime(new Date(GENERATED_AT)));
+beforeAll(() => setSystemTime(new Date("2026-12-08T00:00:00.000Z")));
 afterAll(() => setSystemTime());
-const reviewer: GitHubActor = {
+
+const reviewer1: GitHubActor = {
   id: "MDQ6VXNlcjQ0",
-  login: "reviewer",
-  avatarUrl: "https://avatars.githubusercontent.com/u/44?v=4",
-  url: "https://github.com/reviewer",
+  login: "reviewer-1",
+  avatarUrl: "https://avatars.githubusercontent.com/u/48?v=4",
+  url: "https://github.com/reviewer-1",
+  kind: "User",
+};
+const reviewer2: GitHubActor = {
+  id: "MDQ6VXNlcjQx",
+  login: "reviewer-2",
+  avatarUrl: "https://avatars.githubusercontent.com/u/49?v=4",
+  url: "https://github.com/reviewer-2",
   kind: "User",
 };
 
-function build(submittedAt: string) {
-  const census = penaltyScoreInput([], GENERATED_AT);
+function build(
+  reviews: {
+    id: string;
+    author: GitHubActor;
+    submittedAt: string;
+    tier: "triage" | "specialist";
+  }[],
+  generatedAt = GENERATED_AT,
+) {
+  const census = penaltyScoreInput([], generatedAt);
+  // Synthetic fixture snapshots still need the registry inventory that Points
+  // uses when deciding whether an adverse exclusion can correct a prior award.
+  census.repositories = [...TARGET_REPOSITORIES];
+  if (generatedAt !== GENERATED_AT) {
+    // The reusable fixture has October work that the later window omits.
+    census.mergedPullRequests = census.mergedPullRequests.filter(
+      (row) => row.id === "PR_november",
+    );
+  }
   const pull = census.mergedPullRequests.find(
     (row) => row.id === "PR_november",
   );
   if (!pull?.mergedAt) throw new Error("missing fixture pull request");
-  pull.reviews = [
-    {
-      id: "PRR_points",
-      body: "Looks good.",
-      state: "APPROVED",
-      submittedAt,
-      url: `${pull.url}#pullrequestreview-1`,
-      author: reviewer,
-      inlineCommentCount: 0,
-    },
-  ];
-
+  pull.reviews = reviews.map((review, index) => ({
+    id: review.id,
+    body: "Looks good.",
+    state: "APPROVED" as const,
+    submittedAt: review.submittedAt,
+    url: `${pull.url}#pullrequestreview-${index + 1}`,
+    author: review.author,
+    inlineCommentCount: 0,
+  }));
+  census.detailEligibleMergedPullRequestIds = [];
+  // Only the fields review allocation reads; readValueDecision validates the
+  // stored journal record before a snapshot is generated.
   const decision = {
     status: "assessed",
     implementationActorNodeIds: [],
@@ -58,29 +84,17 @@ function build(submittedAt: string) {
       repository: "elizaOS/asi",
       headSha: pull.headRefOid,
       occurredAt: pull.mergedAt,
-      assessment: {
-        tier: "micro",
-        reviews: [
-          {
-            sourceId: "PRR_points",
-            tier: "triage",
-            finding: "validates the fix",
-            outcome: "useful validation",
-          },
-        ],
-      },
+      assessment: { tier: "medium", reviews: [] },
     },
     assessment: {
       status: "assessed",
       tier: "medium",
-      reviews: [
-        {
-          sourceId: "PRR_points",
-          tier: "triage",
-          finding: "confirms the fix",
-          outcome: "useful validation",
-        },
-      ],
+      reviews: reviews.map((review) => ({
+        sourceId: review.id,
+        tier: review.tier,
+        finding: "confirms the fix",
+        outcome: "useful validation",
+      })),
     },
     history: [
       {
@@ -105,17 +119,21 @@ function build(submittedAt: string) {
   return createLeaderboardSnapshot(census);
 }
 
-function journalWithPriorReview(sourceUrl: string, occurredAt: string) {
+function journalWithPriorReview(
+  reviewId: string,
+  sourceUrl: string,
+  occurredAt: string,
+) {
   const award = {
-    key: pointKey("asi", reviewer.id, "substantive-review", "PRR_points"),
-    actor: { id: reviewer.id, login: reviewer.login },
+    key: pointKey("asi", reviewer1.id, "substantive-review", reviewId),
+    actor: { id: reviewer1.id, login: reviewer1.login },
     projectId: "asi",
     category: "substantive-review" as const,
     amount: 10,
     occurredAt,
-    sourceId: "PRR_points",
+    sourceId: reviewId,
     sourceUrl,
-    workUnitId: "wu_value_review_prr_points",
+    workUnitId: `wu_value_review_${reviewId.toLowerCase()}`,
     provisional: true,
   };
   return appendPointAwards(
@@ -123,7 +141,14 @@ function journalWithPriorReview(sourceUrl: string, occurredAt: string) {
       schemaVersion: "1",
       ruleVersion: "slop-points-v1",
       generatedAt: GENERATED_AT,
-      coverage: [],
+      coverage: [
+        {
+          repository: "elizaOS/asi",
+          from: "2026-11-01T00:00:00.000Z",
+          to: GENERATED_AT,
+          digest: "a".repeat(64),
+        },
+      ],
       revisions: [],
     },
     [award],
@@ -136,8 +161,19 @@ function journalWithPriorReview(sourceUrl: string, occurredAt: string) {
 test("a before-policy review omission keeps its prior review award", () => {
   const sourceUrl =
     "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-1";
-  const snapshot = build("2026-10-31T12:00:00.000Z");
-  const prior = journalWithPriorReview(sourceUrl, "2026-10-31T12:00:00.000Z");
+  const snapshot = build([
+    {
+      id: "PRR_points",
+      author: reviewer1,
+      submittedAt: "2026-10-31T12:00:00.000Z",
+      tier: "triage",
+    },
+  ]);
+  const prior = journalWithPriorReview(
+    "PRR_points",
+    sourceUrl,
+    "2026-10-31T12:00:00.000Z",
+  );
   expect(snapshot.reviewExclusions?.map((entry) => entry.reason)).toEqual([
     "review-credit-before-policy",
   ]);
@@ -153,28 +189,81 @@ test("a before-policy review omission keeps its prior review award", () => {
 });
 
 test("an outside-window review omission keeps its prior review award", () => {
+  // The December run starts scoring on 2 November. This review is under the
+  // value policy but before the current scoring window; Points must keep its
+  // prior award unchanged.
   const sourceUrl =
     "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-1";
-  const snapshot = build("2026-10-25T12:00:00.000Z");
-  const prior = journalWithPriorReview(sourceUrl, "2026-10-25T12:00:00.000Z");
+  const snapshot = build(
+    [
+      {
+        id: "PRR_points",
+        author: reviewer1,
+        submittedAt: "2026-11-01T12:00:00.000Z",
+        tier: "specialist",
+      },
+    ],
+    "2026-12-08T00:00:00.000Z",
+  );
+  const prior = journalWithPriorReview(
+    "PRR_points",
+    sourceUrl,
+    "2026-11-01T12:00:00.000Z",
+  );
   expect(snapshot.reviewExclusions?.map((entry) => entry.reason)).toEqual([
-    "review-credit-before-policy",
+    "review-credit-outside-window",
   ]);
+  expect(snapshot.reviewExclusions?.[0]?.reviewId).toBe("PRR_points");
   const updated = applyPointsSnapshot(
     prior,
     snapshot,
     "b".repeat(64),
-    AFTER_NOVEMBER,
+    "2026-12-08T00:00:00.000Z",
   );
   expect(
     latestPoints(updated).get(prior.revisions[0]?.award.key)?.award,
   ).toEqual(prior.revisions[0]?.award);
 });
+
 test("a zero-share exclusion corrects its prior in-window review award", () => {
-  const sourceUrl =
-    "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-1";
-  const snapshot = build("2026-11-04T12:00:00.000Z");
-  const prior = journalWithPriorReview(sourceUrl, "2026-11-04T12:00:00.000Z");
+  // A medium pull request has only nine review-credit thirds. The specialist
+  // consumes the whole pool, so the triage reviewer receives a zero share.
+  // The prior journal carries recorded coverage, so it is not a retained batch.
+  const triageUrl =
+    "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-2";
+  const snapshot = build([
+    {
+      id: "PRR_specialist",
+      author: reviewer1,
+      submittedAt: "2026-11-01T12:00:00.000Z",
+      tier: "specialist",
+    },
+    {
+      id: "PRR_triage",
+      author: reviewer2,
+      submittedAt: "2026-11-02T12:00:00.000Z",
+      tier: "triage",
+    },
+  ]);
+  const prior = journalWithPriorReview(
+    "PRR_triage",
+    triageUrl,
+    "2026-11-02T12:00:00.000Z",
+  );
+  expect(snapshot.reviewExclusions?.map((entry) => entry.reason)).toEqual([
+    "review-credit-zero-share",
+  ]);
+  expect(snapshot.reviewExclusions?.[0]?.reviewId).toBe("PRR_triage");
+  const reviewEvents = snapshot.ledger.filter(
+    (event) => event.category === "substantive-review",
+  );
+  expect(reviewEvents.map((event) => event.source.id)).toEqual([
+    "PRR_specialist",
+  ]);
+  expect(reviewEvents[0]?.scoreThirds).toBe(9);
+  expect(reviewEvents[0]?.reason).toContain(
+    "reviewer 1 of 2 credited, 9 of 9 review-credit thirds",
+  );
   const updated = applyPointsSnapshot(
     prior,
     snapshot,
@@ -183,5 +272,8 @@ test("a zero-share exclusion corrects its prior in-window review award", () => {
   );
   expect(
     latestPoints(updated).get(prior.revisions[0]?.award.key)?.award,
-  ).toEqual(prior.revisions[0]?.award);
+  ).toEqual({
+    ...prior.revisions[0]?.award,
+    amount: 0,
+  });
 });
