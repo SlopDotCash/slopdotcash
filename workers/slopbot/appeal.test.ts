@@ -409,4 +409,47 @@ test("jobFor matches /slopbot appeal and /slopbot dispute on any line and with a
     "99",
   );
   assert.equal(pluralWord, null);
+
+  // The first command wins even when a quoted example appears later.
+  const quotedDispute = jobFor(
+    "issue_comment",
+    "del-7",
+    {
+      ...basePayload,
+      comment: {
+        id: 16,
+        body: [
+          "/slopbot accept",
+          "",
+          "The original report used this command:",
+          "```text",
+          "/slopbot dispute: the allocation was wrong",
+          "```",
+        ].join("\n"),
+      },
+    },
+    "99",
+  );
+  assert.equal(quotedDispute?.kind, "appeal_command");
+  assert.equal((quotedDispute as { command?: string }).command, "accept");
+
+  // A command inside a fenced example is not active.
+  const fencedDispute = jobFor(
+    "issue_comment",
+    "del-8",
+    {
+      ...basePayload,
+      comment: {
+        id: 17,
+        body: [
+          "Example only:",
+          "```text",
+          "/slopbot dispute: the allocation was wrong",
+          "```",
+        ].join("\n"),
+      },
+    },
+    "99",
+  );
+  assert.equal(fencedDispute, null);
 });
