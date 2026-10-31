@@ -321,7 +321,7 @@ async function freezeMonthlyPeriod(
     expectedSequence?: number;
     now: Date;
   },
-): Promise<"frozen" | "already-frozen"> {
+): Promise<"frozen" | "already-frozen" | "automatic-off"> {
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   const { project, deployment } = input;
   const period = assertPeriod(input.period);
@@ -393,7 +393,7 @@ async function freezeMonthlyPeriod(
   });
   const inserted = await db
     .prepare(
-      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
+      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
     )
     .bind(
       project.id,
@@ -410,12 +410,21 @@ async function freezeMonthlyPeriod(
       project.id,
       period,
       sequence,
+      input.trigger,
+      project.id,
       input.actorId,
     )
     .run();
   if (inserted.meta?.changes === 1) return "frozen";
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   if (await loadRun(db, project.id, period)) return "already-frozen";
+  // The owner may turn automatic payment off during the reads above. Only
+  // the atomic insert can decide whether this automatic freeze is allowed.
+  if (
+    input.trigger === "automatic" &&
+    !(await automaticMonthlyPayment(db, project.id))
+  )
+    return "automatic-off";
   throw new MonthlyPaymentError(
     409,
     "allocations_changed",
@@ -664,17 +673,17 @@ export async function coordinateMonthlyPayments(input: {
           report.waiting.push({ key, reason: "vault-not-served" });
           continue;
         }
-        if (
-          (await freezeMonthlyPeriod(db, {
-            project,
-            deployment,
-            period,
-            trigger: "automatic",
-            actorId: null,
-            now,
-          })) === "frozen"
-        )
-          report.frozen.push(key);
+        const frozen = await freezeMonthlyPeriod(db, {
+          project,
+          deployment,
+          period,
+          trigger: "automatic",
+          actorId: null,
+          now,
+        });
+        if (frozen === "frozen") report.frozen.push(key);
+        else if (frozen === "automatic-off")
+          report.waiting.push({ key, reason: frozen });
       } catch (error) {
         report.failures.push(error);
       }
