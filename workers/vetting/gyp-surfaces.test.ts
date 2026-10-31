@@ -152,9 +152,14 @@ test("GYP includes do not adopt files outside the repository or ordinary prose",
   expect(inspection.findings).toEqual([]);
   expect(inspection.downloads).toEqual([]);
   expect(inspection.coverage.installScripts).toEqual({
-    state: "complete",
+    state: "partial",
     items: 1,
   });
+  expect(inspection.visibilityGaps).toEqual([
+    "GYP include not acquired: ../payload.txt",
+    "GYP include not acquired: /tmp/payload.txt",
+    "GYP include not acquired: https://evil.example/payload.txt",
+  ]);
   expect(surfacesOf("binding.gyp.bak")).toEqual([]);
   expect(surfacesOf("notes.gyp.txt")).toEqual([]);
   expect(surfacesOf("dir.gyp/addon.c")).toEqual(["source"]);
@@ -392,4 +397,68 @@ test("a backslash newline inside a GYP include keeps a following hash in the pat
 `,
     "ev#il.txt",
   );
+});
+
+test("a missing GYP include is a visibility gap", () => {
+  // gyp hard-fails when the named file is absent. The scan either missed an
+  // acquired file or the file is generated at install, so its commands were
+  // not reviewed. Coverage cannot stay complete.
+  const inspection = inspected([
+    {
+      path: "binding.gyp",
+      text: "{'includes': ['deps/generated.gypi']}\n",
+    },
+  ]);
+  expect(inspection.visibilityGaps).toEqual([
+    "GYP include not acquired: deps/generated.gypi",
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "partial",
+    items: 1,
+  });
+  expect(inspection.findings).toEqual([]);
+  expect(new TextDecoder().decode(inspection.inventory)).toContain(
+    "GYP include not acquired: deps/generated.gypi",
+  );
+});
+
+test("a GYP include that leaves the repository is a visibility gap", () => {
+  // `../a.inc` from a root binding.gyp is not an acquired file. The in-repo
+  // `a.inc` is a different path and must not be scanned in its place.
+  const inspection = inspected([
+    {
+      path: "binding.gyp",
+      text: "{'includes': ['../a.inc']}\n",
+    },
+    includedPayload("a.inc"),
+  ]);
+  expect(inspection.visibilityGaps).toEqual([
+    "GYP include not acquired: ../a.inc",
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "partial",
+    items: 1,
+  });
+  expect(inspection.findings).toEqual([]);
+});
+
+test("a nested GYP include the scan cannot acquire is a visibility gap", () => {
+  const inspection = inspected([
+    {
+      path: "binding.gyp",
+      text: "{'includes': ['deps/a.gypi']}\n",
+    },
+    {
+      path: "deps/a.gypi",
+      text: "{'includes': ['missing.inc']}\n",
+    },
+  ]);
+  expect(inspection.visibilityGaps).toEqual([
+    "GYP include not acquired: missing.inc",
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "partial",
+    items: 2,
+  });
+  expect(inspection.findings).toEqual([]);
 });
