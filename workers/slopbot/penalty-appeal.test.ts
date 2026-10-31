@@ -2460,7 +2460,7 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       projects: 1,
     });
     const original = structuredClone(journal.revisions);
-    const originalBadges = [...member()?.badges];
+    const originalBadges = [...(member()?.badges ?? [])];
 
     setSystemTime(new Date(CLOSED_AT));
     expect(await run.review()).toBe("closed (spam)");
