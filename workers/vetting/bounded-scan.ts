@@ -167,6 +167,8 @@ const INSTALL_FILES = new Set([
   "makefile.inc",
   "configure.in",
   "build.xml",
+  "build.zig",
+  "build.zig.zon",
   "build.ninja",
   "tupfile",
   "tuprules.tup",
