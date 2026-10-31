@@ -244,6 +244,14 @@ export function allocateIntegerTotal(
   total: bigint,
   contributors: readonly ProjectContributor[],
 ): Map<string, bigint> {
+  if (
+    contributors.some(
+      (entry) =>
+        !Number.isSafeInteger(entry.adjustedWeight) || entry.adjustedWeight < 0,
+    )
+  ) {
+    throw new TypeError("allocation weights must be non-negative integers");
+  }
   const result = new Map(contributors.map((entry) => [entry.actor.id, 0n]));
   const totalWeight = contributors.reduce(
     (sum, entry) => sum + BigInt(entry.adjustedWeight),
