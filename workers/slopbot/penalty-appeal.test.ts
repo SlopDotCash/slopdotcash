@@ -644,7 +644,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       }
       if (path.endsWith("/issues/comments/77") && request.method === "GET")
         return Response.json({
-          body: "/slopbot dispute Exact dispute from comment 77",
+          body: "Context first.\n\n/slopbot dispute Exact dispute from comment 77",
           user: { id: AUTHOR },
           issue_url: `https://api.github.com/repos/${owner}/${repo}/issues/5`,
         });
@@ -2460,7 +2460,7 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       projects: 1,
     });
     const original = structuredClone(journal.revisions);
-    const originalBadges = [...member()!.badges];
+    const originalBadges = [...member()?.badges];
 
     setSystemTime(new Date(CLOSED_AT));
     expect(await run.review()).toBe("closed (spam)");
@@ -2497,7 +2497,7 @@ test("a recorded debit reaches the published score once and an upheld appeal res
       projects: 1,
     });
     expect(journal.revisions.slice(0, original.length)).toEqual(original);
-    expect(member()!.badges).toEqual(originalBadges);
+    expect(member()?.badges).toEqual(originalBadges);
     expect(adjustments()).toMatchObject([
       {
         award: { amount: -10 },

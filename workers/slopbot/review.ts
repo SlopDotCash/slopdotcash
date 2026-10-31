@@ -2621,14 +2621,16 @@ async function appealStatement(
       comment.user?.id !== appellantId ||
       comment.issue_url !==
         `https://api.github.com/repos/${job.owner}/${job.repo}/issues/${job.number}` ||
-      !/^\/slopbot (?:appeal|dispute)(?:\s|$)/u.test(comment.body ?? "")
+      // Keep the statement check aligned with webhook parsing, which accepts
+      // the command on any line of a longer comment.
+      !/^\/slopbot (?:appeal|dispute)(?:\s|$)/mu.test(comment.body ?? "")
     )
       throw new Error(
         "The original dispute comment is unavailable or changed source",
       );
     return (
       (comment.body ?? "")
-        .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
+        .replace(/^\/slopbot (?:appeal|dispute)\b/mu, "")
         .trim()
         .slice(0, 4000) || "(no reason given)"
     );
@@ -2646,12 +2648,11 @@ async function appealStatement(
       const body = (comment.body ?? "").trim();
       if (
         comment.user?.id === appellantId &&
-        (body.startsWith("/slopbot appeal") ||
-          body.startsWith("/slopbot dispute"))
+        /^\/slopbot (?:appeal|dispute)(?:\s|$)/mu.test(body)
       )
         statement =
           body
-            .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
+            .replace(/^\/slopbot (?:appeal|dispute)\b/mu, "")
             .trim()
             .slice(0, 4000) || "(no reason given)";
     }

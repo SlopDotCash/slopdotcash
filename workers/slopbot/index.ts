@@ -149,7 +149,9 @@ export function jobFor(
         ...item,
         senderId: sender.id,
       };
-    if (text.startsWith("/slopbot appeal"))
+    // A review can be several paragraphs long before its appeal command, so
+    // an end-of-comment command must still be recognized.
+    if (/^\/slopbot appeal(?:\s|$)/mu.test(text))
       return {
         kind: "appeal",
         ...base,

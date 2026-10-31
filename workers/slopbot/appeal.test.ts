@@ -5,7 +5,30 @@ import { readdirSync } from "node:fs";
 import { findProject } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { Job } from "./contracts";
-import worker from "./index";
+import worker, { jobFor } from "./index";
+
+test("jobFor accepts an appeal command on any line of a longer comment", () => {
+  const payload = {
+    action: "created",
+    installation: { id: 1 },
+    repository: {
+      id: 1,
+      name: "repo",
+      private: false,
+      owner: { login: "owner" },
+    },
+    sender: { id: 42, type: "User" },
+    issue: { number: 1, pull_request: {} },
+    comment: {
+      id: 5,
+      body: "First paragraph explains the finding.\n\n/slopbot appeal\n\nLater evidence.",
+    },
+  };
+  const job = jobFor("issue_comment", "appeal-any-line", payload, "999");
+  assert.equal(job?.kind, "appeal");
+  if (job.kind !== "appeal") throw new Error("unexpected job kind");
+  assert.equal(job.appealCommentId, 5);
+});
 
 test("Slopbot queue confirms appeal labels and refuses private or replaced repositories", async () => {
   const { db, sqlite } = sqliteD1(
@@ -74,7 +97,7 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
           default_branch: "main",
           owner: { login: owner, id: 77, type: "Organization" },
         });
-      throw Error("unexpected local request " + path);
+      throw Error(`unexpected local request ${path}`);
     },
   });
   const nativeFetch = globalThis.fetch;
@@ -120,7 +143,7 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
             {
               body: {
                 kind: "appeal",
-                deliveryId: "local-" + status,
+                deliveryId: `local-${status}`,
                 installationId: 1,
                 repositoryId: Number(project.authority.repositoryId),
                 owner,
