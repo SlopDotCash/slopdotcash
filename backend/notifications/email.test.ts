@@ -18,7 +18,7 @@ import { handleEmailPreferences } from "./email";
 import { notifyProjectEnforcement, notifyVettingBanAudience } from "./events";
 import type { NotificationsDependencies } from "./handler";
 
-function setup() {
+function setup(afterEligibilityRead?: () => Promise<void>) {
   const { db: source, sqlite } = sqliteD1(
     readdirSync("migrations")
       .filter((p) => p.endsWith(".sql"))
@@ -64,8 +64,13 @@ function setup() {
         db: db as unknown as NotificationsDependencies["db"],
         sessionActor: async () => ({ githubId }),
         now: () => now,
-        eligibility: async (id) =>
-          available ? activityMailEligibility(config, id, now) : null,
+        eligibility: async (id) => {
+          const destination = available
+            ? await activityMailEligibility(config, id, now)
+            : null;
+          await afterEligibilityRead?.();
+          return destination;
+        },
       },
     );
     if (!response) throw new Error("Preference route missing");
@@ -282,6 +287,82 @@ test("either email preference can be withdrawn independently during an eligibili
   ).toBe(409);
   h.sqlite.close();
 });
+
+for (const existing of [false, true]) {
+  test(`a delayed opt-in cannot replace a newer opt-out with ${existing ? "existing" : "first-time"} preferences`, async () => {
+    let pause = false;
+    let entered!: () => void;
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const h = setup(async () => {
+      if (!pause) return;
+      entered();
+      await waiting;
+    });
+    try {
+      const initial = await h.call("GET");
+      if (existing)
+        expect(
+          (
+            await h.call("POST", {
+              enabled: false,
+              securityEnabled: true,
+              destinationVersion: initial.body.destinationVersion,
+            })
+          ).status,
+        ).toBe(200);
+      pause = true;
+      const pending = h.call("POST", {
+        enabled: true,
+        securityEnabled: true,
+        destinationVersion: initial.body.destinationVersion,
+      });
+      await started;
+      expect(
+        (await h.call("POST", { enabled: false, securityEnabled: false }))
+          .status,
+      ).toBe(200);
+      pause = false;
+      release();
+      const late = await pending;
+      const current = await h.call("GET");
+      h.event("after-newer-opt-out");
+      h.event("wallet-after-newer-opt-out", "wallet_changed");
+      await dispatchActivityMail(h.mail);
+      expect({
+        status: late.status,
+        enabled: current.body.enabled,
+        securityEnabled: current.body.securityEnabled,
+        sends: h.sent.length,
+      }).toEqual({
+        status: 409,
+        enabled: false,
+        securityEnabled: false,
+        sends: 0,
+      });
+      expect(
+        (
+          await h.call("POST", {
+            enabled: true,
+            securityEnabled: true,
+            destinationVersion: current.body.destinationVersion,
+          })
+        ).status,
+      ).toBe(200);
+      h.event("after-fresh-opt-in");
+      await dispatchActivityMail(h.mail);
+      expect(h.sent).toHaveLength(1);
+    } finally {
+      release();
+      h.sqlite.close();
+    }
+  });
+}
 
 test("unverified and changed destinations cannot inherit activity consent", async () => {
   const h = setup();
