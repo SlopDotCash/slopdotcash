@@ -139,6 +139,10 @@ export interface PaymentDeploymentIdentity {
 }
 /** The attester must still have this long to submit a binding authorization. */
 const BINDING_SUBMISSION_WINDOW_SECONDS = 600;
+/** bind-challenge only ever issues consents with this lifetime. */
+const BINDING_CONSENT_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
+/** Clock-skew allowance between challenge issuance and the authorize call. */
+const BINDING_EXPIRY_SLACK_SECONDS = 3600;
 function directTransferQuery(
   column: "project_id" | "github_user_id",
   separate = false,
@@ -947,7 +951,7 @@ export async function handlePaymentsApi(
       const nowSeconds = Math.floor(Date.parse(now) / 1000);
       const expiresAt = authorize
         ? (body.expiresAt as string)
-        : String(nowSeconds + 90 * 24 * 60 * 60);
+        : String(nowSeconds + BINDING_CONSENT_LIFETIME_SECONDS);
       const binding = {
         githubUserId: member.githubId,
         destination: wallet.wallet_address,
@@ -966,6 +970,18 @@ export async function handlePaymentsApi(
         BigInt(nowSeconds + BINDING_SUBMISSION_WINDOW_SECONDS)
       )
         return json(400, { error: "authorization_expires_too_soon" });
+      // The challenge only ever issues a 90-day consent, so a signature
+      // over a later expiry is not one it issued; refuse to store an
+      // effectively non-expiring authorization.
+      if (
+        BigInt(expiresAt) >
+        BigInt(
+          nowSeconds +
+            BINDING_CONSENT_LIFETIME_SECONDS +
+            BINDING_EXPIRY_SLACK_SECONDS,
+        )
+      )
+        return json(400, { error: "authorization_expires_too_late" });
       // Store the encoding the vault accepts: a recovery byte of 0 or 1
       // becomes 27 or 28; a high-s signature is refused.
       const signature = canonicalEvmSignature(body.signature as string);
