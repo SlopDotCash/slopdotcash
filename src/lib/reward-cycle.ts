@@ -153,9 +153,17 @@ export function additiveReviewBudgetWeights(
   }));
 }
 
-function intentComponent(value: string): string {
+/**
+ * Actor and project suffix of a frozen payout intent id. ASCII case folding
+ * only: `toLowerCase()` follows the host locale, and on a Turkish host `I`
+ * becomes `ı`, which the symbol filter then deletes. The cycle index joins
+ * regenerated proposals on this id, so the suffix has to stay the English one.
+ */
+export function intentComponent(value: string): string {
   return value
-    .toLowerCase()
+    .replace(/[A-Z]/gu, (letter) =>
+      String.fromCharCode(letter.charCodeAt(0) + 32),
+    )
     .replace(/[^a-z0-9]+/gu, "_")
     .replace(/^_+|_+$/gu, "")
     .slice(0, 48);
