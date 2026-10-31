@@ -207,19 +207,30 @@ async function handleEmailPreferenceForActor(
       ...(securityPresent ? { securityEnabled: body.securityEnabled } : {}),
     });
   }
-  await deps.db
+  // A verified destination is not proof that the preference read before that
+  // check is still current. In particular, do not undo a concurrent opt-out.
+  const result = await deps.db
     .prepare(`INSERT INTO notification_email_preferences(github_id,enabled,destination_version,updated_at,security_enabled) VALUES (?,?,?,?,?)
     ON CONFLICT(github_id) DO UPDATE SET enabled=excluded.enabled,
       destination_version=CASE WHEN excluded.destination_version='' THEN notification_email_preferences.destination_version ELSE excluded.destination_version END,
-      security_enabled=COALESCE(excluded.security_enabled,notification_email_preferences.security_enabled),updated_at=excluded.updated_at`)
+      security_enabled=COALESCE(excluded.security_enabled,notification_email_preferences.security_enabled),updated_at=excluded.updated_at
+    WHERE ?=0 OR (notification_email_preferences.enabled IS ?
+      AND notification_email_preferences.security_enabled IS ?
+      AND notification_email_preferences.destination_version IS ?)`)
     .bind(
       githubId,
       body.enabled ? 1 : 0,
       version,
       deps.now().toISOString(),
       securityPresent ? (body.securityEnabled ? 1 : 0) : null,
+      Number(enabled),
+      prior?.enabled ?? null,
+      prior?.security_enabled ?? null,
+      prior?.destination_version ?? null,
     )
     .run();
+  if ((result.meta?.changes ?? 0) === 0)
+    return json(409, { error: "preference_changed" });
   return json(200, {
     enabled: body.enabled,
     ...(securityPresent ? { securityEnabled: body.securityEnabled } : {}),
