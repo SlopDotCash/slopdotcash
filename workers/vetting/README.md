@@ -33,9 +33,9 @@ same bytes are classified the same way whether they sit in a `Makefile`, a
 `Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Each keeps its
 `installScripts` coverage, its install-time download extraction and its place
 in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
-MSBuild matches attribute values after each carriage return or line feed
-inside the quotes becomes a space. A newline in a shell script still ends
-the command.
+MSBuild and Ant match attribute values after character references are
+decoded and each carriage return or line feed inside the quotes becomes a
+space. A newline or a character reference in a shell script is unchanged.
 
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
