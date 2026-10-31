@@ -1162,14 +1162,11 @@ export function ContributorStandings({
     window.history.replaceState(window.history.state, "", url);
   }, [period, query, project, page, projectId, compact]);
   const { state } = usePoints();
+  const month = new Date().toISOString().slice(0, 7);
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
-    return pointMembers(
-      state.journal,
-      new Date().toISOString().slice(0, 7),
-      project || undefined,
-    );
-  }, [state, project]);
+    return pointMembers(state.journal, month, project || undefined);
+  }, [state, project, month]);
   const currentActors = new Map(
     scores.status === "ready"
       ? scores.snapshot.leaders.map(({ actor }) => [actor.id, actor] as const)
