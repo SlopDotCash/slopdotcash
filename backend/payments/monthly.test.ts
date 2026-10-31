@@ -184,6 +184,80 @@ async function rejects(promise: Promise<unknown>, code: string) {
 }
 
 describe("monthly coordinator", () => {
+  for (const boundary of ["restriction check", "freeze write"] as const) {
+    test(`an owner opt-out completed during the ${boundary} leaves the month editable`, async () => {
+      const turnOff = async () => {
+        expect(count("monthly_payment_runs")).toBe(0);
+        expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+          automatic: false,
+        });
+      };
+      const prepare = db.prepare.bind(db);
+      if (boundary === "freeze write") {
+        db.prepare = (query) => {
+          const statement = prepare(query);
+          if (!query.startsWith("INSERT INTO monthly_payment_runs"))
+            return statement;
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async run() {
+                  await turnOff();
+                  return bound.run();
+                },
+              };
+            },
+          };
+        };
+      }
+      try {
+        const report = await coordinateMonthlyPayments({
+          db,
+          projects: {
+            ...projects(),
+            restricted: async () => {
+              if (boundary === "restriction check") await turnOff();
+              return false;
+            },
+          },
+          networks: ["base-sepolia"],
+          schedule,
+          now: afterCutoff,
+        });
+        db.prepare = prepare;
+        expect(report.failures).toEqual([]);
+        expect(report.frozen).toEqual([]);
+        expect(report.waiting).toEqual([
+          { key: `${project.id}/2026-11`, reason: "automatic-off" },
+        ]);
+        expect(count("monthly_payment_runs")).toBe(0);
+        expect(count("monthly_payment_obligations")).toBe(0);
+        const changed = await owner().changeAllocation(
+          project.id,
+          "2026-11",
+          actor,
+          { githubUserId: B, grossBase: "300", expectedSequence: 0 },
+        );
+        expect(changed.proposal?.allocationSequence).toBe(1);
+        expect(
+          changed.proposal?.allocations.map((row) => row.grossBase),
+        ).toEqual(["600", "300"]);
+        const finalized = await owner().finalize(
+          project.id,
+          "2026-11",
+          actor,
+          1,
+        );
+        expect(finalized.run?.trigger).toBe("owner");
+      } finally {
+        db.prepare = prepare;
+      }
+    });
+  }
+
   test("Solana refuses a monthly cap above its token range before storing an allocation", async () => {
     sqlite.close();
     await setupFixture(solanaDeployment, 10n ** 18n);
