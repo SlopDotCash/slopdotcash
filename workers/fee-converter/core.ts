@@ -349,6 +349,16 @@ export function slippageWithin(quote: Quote, limits: Limits): boolean {
   );
 }
 
+const MAX_SAFE_QUOTE_MICRO = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * `fee_conversions.quote_value_micro` is a STRICT SQLite INTEGER bound through
+ * JavaScript numbers. Refuse lossy or non-integer float conversions.
+ */
+function exactQuoteMicro(value: bigint): number | null {
+  return value >= 0n && value <= MAX_SAFE_QUOTE_MICRO ? Number(value) : null;
+}
+
 async function reconcile(
   row: ConversionRow,
   client: ChainClient,
@@ -811,15 +821,18 @@ async function claimVaultFees(
         }
         value = quote.amountOut;
       }
+      const quoteValueMicro = exactQuoteMicro(value);
       const cost = await fees.claimCostMicro(vault);
       const reason =
-        cost === null
-          ? "claim network fee could not be priced"
-          : value < limits.minValueMicro
-            ? "below the minimum conversion value"
-            : value < cost * limits.gasMultiple
-              ? "below the gas-cost multiple"
-              : null;
+        quoteValueMicro === null
+          ? "claim value exceeds safe integer accounting"
+          : cost === null
+            ? "claim network fee could not be priced"
+            : value < limits.minValueMicro
+              ? "below the minimum conversion value"
+              : value < cost * limits.gasMultiple
+                ? "below the gas-cost multiple"
+                : null;
       if (reason) {
         report("fee_claim_skipped", { amount, reason });
         continue;
@@ -847,7 +860,7 @@ async function claimVaultFees(
           quoteAmountOut: null,
           minAmountOut: null,
           // The claimed fee's USDC value bounds any later fee replacement.
-          quoteValueMicro: Number(value),
+          quoteValueMicro,
           quote: JSON.stringify(vault),
           priceImpactBps: null,
           approvalTxId: null,
@@ -995,18 +1008,18 @@ async function convert(
     remaining > 0n;
     attempt++
   ) {
-    amount = (amount * remaining * 98n) / (quoted.amountOut * 100n);
-    if (amount > 0n) {
-      const requoted = await client.quote(token, amount);
-      if ("noRoute" in requoted)
-        return record({
-          ...base(),
-          amountIn: amount.toString(),
-          state: "no_route",
-          reason: requoted.noRoute,
-        });
-      quoted = requoted;
-    } else break;
+    const scaled = (amount * remaining * 98n) / (quoted.amountOut * 100n);
+    if (scaled <= 0n) break;
+    amount = scaled;
+    const requoted = await client.quote(token, amount);
+    if ("noRoute" in requoted)
+      return record({
+        ...base(),
+        amountIn: amount.toString(),
+        state: "no_route",
+        reason: requoted.noRoute,
+      });
+    quoted = requoted;
   }
   const quote = quoted;
   const row: ConversionRow = {
@@ -1015,7 +1028,7 @@ async function convert(
     route: quote.route,
     quoteAmountOut: quote.amountOut.toString(),
     minAmountOut: quote.minAmountOut.toString(),
-    quoteValueMicro: Number(quote.amountOut),
+    quoteValueMicro: exactQuoteMicro(quote.amountOut),
     priceImpactBps: quote.priceImpactBps,
     quote: JSON.stringify(quote.summary).slice(0, 8192),
   };
@@ -1026,7 +1039,7 @@ async function convert(
   const pending = (reason: string) =>
     record({ ...row, state: "pending", reason });
 
-  if (remaining <= 0n || amount === 0n)
+  if (remaining <= 0n)
     return skip(
       limits.runCapMicro - budget.runValue <= 0n
         ? "per-run value cap reached"
@@ -1034,6 +1047,8 @@ async function convert(
     );
   if (quote.amountOut > remaining)
     return skip("quote exceeds the remaining value cap");
+  if (row.quoteValueMicro === null)
+    return skip("quote value exceeds safe integer accounting");
   if (quote.amountOut < limits.minValueMicro)
     return pending("below the minimum conversion value");
   if (quote.amountOut < quote.gasCostMicro * limits.gasMultiple)

@@ -696,6 +696,103 @@ describe("conversion policy", () => {
     await runNetwork(h.network, h.deps);
     expect(h.rows()[2].state).toBe("submitted");
   });
+
+  test("an oversized quote that cannot rescale below one unit records a single cap skip without crashing strict integer storage", async () => {
+    const h = harness({ projectTokens: [OTHER] });
+    h.deps.trigger = "receipts";
+    h.chain.balances.set(TOKEN, 10n);
+    h.chain.balances.set(OTHER, 10n);
+    let otherQuotes = 0;
+    h.chain.quoteFor = (token, amount) => {
+      if (token === OTHER) {
+        otherQuotes += 1;
+        return linearQuote(amount, {
+          amountOut: 10n ** 20n,
+          minAmountOut: (10n ** 20n * 9_950n) / 10_000n,
+        });
+      }
+      return linearQuote(amount, {
+        amountOut: 10_000_000_000n,
+        minAmountOut: (10_000_000_000n * 9_950n) / 10_000n,
+      });
+    };
+
+    await runNetwork(h.network, h.deps);
+
+    expect(
+      h.events.filter((event) => event.event === "fee_conversion_error"),
+    ).toEqual([]);
+    expect(h.rows()).toMatchObject([
+      {
+        token: OTHER,
+        state: "skipped",
+        amount_in: "10",
+        token_balance_before: "10",
+        quote_amount_out: (10n ** 20n).toString(),
+        quote_value_micro: null,
+        reason: "quote exceeds the remaining value cap",
+      },
+      {
+        token: TOKEN,
+        state: "skipped",
+        amount_in: "10",
+        token_balance_before: "10",
+        quote_amount_out: "10000000000",
+        quote_value_micro: 10_000_000_000,
+        reason: "quote exceeds the remaining value cap",
+      },
+    ]);
+
+    expect(otherQuotes).toBe(1);
+    await runNetwork(h.network, h.deps);
+    expect(otherQuotes).toBe(1);
+    expect(h.rows()).toHaveLength(2);
+  });
+
+  test("an oversized vault fee claim quote skips before signing or storing a lossy value", async () => {
+    const h = harness();
+    h.chain.balances.set(TOKEN, 0n);
+    h.chain.quoteFor = (_token, amount) =>
+      linearQuote(amount, {
+        amountOut: BigInt(Number.MAX_SAFE_INTEGER) + 10n,
+        minAmountOut: BigInt(Number.MAX_SAFE_INTEGER),
+      });
+    let claimCalled = false;
+    h.deps.projectVaults = async () => [
+      {
+        vault: OTHER,
+        projectId: "test-project",
+        payoutPolicy: "ordinary",
+        deployment: { vault: OTHER, asset: TOKEN },
+      },
+    ];
+    h.chain.vaultFees = {
+      async accrued() {
+        return { asset: TOKEN, amount: 10n };
+      },
+      async claimCostMicro() {
+        return 10_000n;
+      },
+      async claim() {
+        claimCalled = true;
+        return { txId: `0x${"c".repeat(64)}` };
+      },
+    };
+
+    const result = await runNetwork(h.network, h.deps);
+
+    expect(result.claimed).toBe(0);
+    expect(claimCalled).toBe(false);
+    expect(h.rows()).toEqual([]);
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        event: "fee_claim_skipped",
+        vault: OTHER,
+        amount: "10",
+        reason: "claim value exceeds safe integer accounting",
+      }),
+    );
+  });
 });
 
 describe("idempotent sends", () => {
