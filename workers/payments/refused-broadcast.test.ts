@@ -25,6 +25,7 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { JournalStore } from "../payment-executor/core";
 import { PaymentSignerJournal } from "../payment-executor/index";
 import { recoverUncertainAttempts, runPaymentDispatch } from "./index";
+import { reconcileFailedAttempts } from "./reconcile";
 
 const registered = "2026-10-01T00:00:00.000Z";
 const contributor = privateKeyToAccount(`0x${"9".repeat(64)}`);
@@ -70,7 +71,9 @@ const deployment: EscrowDeployment = {
 const chain = {
   funded: false,
   accepted: new Map<string, Hex>(),
+  reverted: new Set<string>(),
 };
+const blockHash = `0x${"10".repeat(32)}`;
 const word = (value: bigint | string) =>
   (typeof value === "bigint"
     ? value.toString(16)
@@ -112,13 +115,25 @@ function answer(method: string, params: unknown[]) {
       return `0x${result}`;
     }
     case "eth_getBlockByNumber":
-      return { number: "0x10", timestamp: "0x68000000", baseFeePerGas: "0x1" };
+      return {
+        number: "0x10",
+        hash: blockHash,
+        timestamp: "0x68000000",
+        baseFeePerGas: "0x1",
+      };
     case "eth_getTransactionCount":
       return `0x${chain.accepted.size.toString(16)}`;
     case "eth_estimateGas":
       return "0x186a0";
     case "eth_getTransactionReceipt":
-      return null;
+      return chain.reverted.has(String(params[0]))
+        ? {
+            status: "0x0",
+            transactionHash: params[0],
+            blockHash,
+            blockNumber: "0x10",
+          }
+        : null;
     case "eth_getTransactionByHash": {
       const raw = chain.accepted.get(String(params[0]).toLowerCase());
       return raw ? { hash: keccak256(raw) } : null;
@@ -305,6 +320,7 @@ async function scheduledRun(env: Awaited<ReturnType<typeof stack>>["env"]) {
 test("a payment the node refused is resent with the same bytes after the gas wallet is funded", async () => {
   chain.funded = false;
   chain.accepted.clear();
+  chain.reverted.clear();
   const { env, journal, payRequests, state } = await stack();
   expect(await scheduledRun(env)).toHaveLength(1);
   expect(chain.accepted.size).toBe(0);
@@ -347,6 +363,7 @@ test("a payment the node refused is resent with the same bytes after the gas wal
 test("a broadcast the node accepted is recorded after the dispatcher lost the response", async () => {
   chain.funded = true;
   chain.accepted.clear();
+  chain.reverted.clear();
   const { env, payRequests, state } = await stack();
   const deliver = env.EVM_PAYMENT_EXECUTOR.fetch;
   let lose = true;
@@ -369,4 +386,92 @@ test("a broadcast the node accepted is recorded after the dispatcher lost the re
     },
   ]);
   expect(payRequests).toHaveLength(1);
+});
+
+test("late recovery preserves a finalized failure and lets the payment retry", async () => {
+  chain.funded = true;
+  chain.accepted.clear();
+  chain.reverted.clear();
+  const { env, payRequests, state } = await stack();
+  const deliver = env.EVM_PAYMENT_EXECUTOR.fetch;
+  let lose = true;
+  let delay = true;
+  let captured!: () => void;
+  let release!: () => void;
+  const statusCaptured = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  const statusReleased = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  env.EVM_PAYMENT_EXECUTOR.fetch = async (request: Request) => {
+    const response = await deliver(request);
+    const path = new URL(request.url).pathname;
+    if (lose && path === "/v1/pay") {
+      lose = false;
+      return new Response("lost response", { status: 503 });
+    }
+    if (delay && path === "/v1/attempt-status") {
+      delay = false;
+      captured();
+      await statusReleased;
+    }
+    return response;
+  };
+  expect(await scheduledRun(env)).toHaveLength(1);
+  const [transactionId] = chain.accepted.keys();
+  expect(state()).toEqual([
+    { attempt: "unknown", transactionId: null, outbox: "ready" },
+  ]);
+
+  // One run's submitted response is delayed while another run records the
+  // transaction and reconciles its canonical finalized revert.
+  const lateRecovery = recoverUncertainAttempts(env);
+  await statusCaptured;
+  try {
+    await recoverUncertainAttempts(env);
+    expect(state()).toEqual([
+      { attempt: "submitted", transactionId, outbox: "submitted" },
+    ]);
+    chain.reverted.add(transactionId);
+    await reconcileFailedAttempts(
+      env.PAYMENTS_DB,
+      [paymentDeploymentRecord("project-1", deployment)],
+      { "base-sepolia": rpcUrl },
+    );
+    expect(state()).toEqual([
+      { attempt: "failed", transactionId, outbox: "ready" },
+    ]);
+  } finally {
+    release();
+    await lateRecovery;
+  }
+  expect(state()).toEqual([
+    { attempt: "failed", transactionId, outbox: "ready" },
+  ]);
+
+  // The next scheduled run must actually submit a fresh attempt, while retaining
+  // the original transaction and finalized-failure evidence for reconciliation.
+  expect(await scheduledRun(env)).toEqual([]);
+  expect(payRequests).toHaveLength(2);
+  const transactions = [...chain.accepted.keys()];
+  expect(transactions).toHaveLength(2);
+  expect(state()).toEqual([
+    { attempt: "failed", transactionId, outbox: "submitted" },
+    {
+      attempt: "submitted",
+      transactionId: transactions[1],
+      outbox: "submitted",
+    },
+  ]);
+  const failure = await env.PAYMENTS_DB.prepare(
+    "SELECT transaction_id,evidence_json AS proof FROM payment_attempt_failures",
+  ).first<{ transaction_id: string; proof: string }>();
+  expect(failure?.transaction_id).toBe(transactionId);
+  expect(JSON.parse(failure?.proof ?? "null")).toMatchObject({
+    transactionId,
+    blockHash,
+    status: "reverted",
+    finality: "finalized",
+  });
 });
