@@ -837,3 +837,161 @@ test("a stale or expired worker cannot write a draft or escalation at the databa
       .get(moderator.githubId),
   ).toEqual({ n: 0 });
 });
+
+test("triage resolves the current repository path after a project rename or transfer", async () => {
+  const { processPointsDispute } = await import(
+    "../../workers/slopbot/points-disputes"
+  );
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award was credited to the wrong UTC month.",
+    })
+  ).json();
+  const base = applicationManifest("alpha", "example/alpha", {
+    status: "active",
+    rewardAsset: {
+      network: "ethereum",
+      kind: "stablecoin",
+      address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      symbol: "USDC",
+      chainId: "1",
+      cluster: null,
+      decimals: 6,
+      verifiedAt: NOW,
+    },
+    repositories: [
+      {
+        id: "example/alpha",
+        aliases: ["renamed-org/alpha-next"],
+        displayName: "renamed-org/alpha-next",
+        githubUrl: "https://github.com/renamed-org/alpha-next",
+        description: "Reproducible research tooling for everyone.",
+        integrationBranch: "main",
+      },
+    ],
+    links: {
+      repository: "https://github.com/renamed-org/alpha-next",
+      issues: "https://github.com/renamed-org/alpha-next/issues",
+    },
+  });
+  const manifest = JSON.stringify(base);
+  const digest = createHash("sha256").update(manifest).digest("hex");
+  h.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('alpha',1,?,?,'repository transfer',?)",
+    )
+    .run(manifest, digest, NOW);
+  h.sqlite
+    .query(
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('alpha','active',1,?,?,?,?)",
+    )
+    .run(manifest, digest, NOW, NOW);
+  for (const key of ["example/alpha", "renamed-org/alpha-next"]) {
+    h.sqlite
+      .query(
+        "INSERT INTO project_repositories(repository_key,project_id) VALUES(?,'alpha')",
+      )
+      .run(key);
+  }
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const reads: string[] = [];
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (
+      url.origin === "https://surplus.test" &&
+      url.pathname === "/v1/messages"
+    ) {
+      return Response.json(
+        {
+          id: "msg_points_dispute_renamed",
+          type: "message",
+          role: "assistant",
+          model: "claude-opus-5.5",
+          stop_reason: "end_turn",
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ draft: "uphold", confidence: 0.72 }),
+            },
+          ],
+          usage: {
+            input_tokens: 120,
+            output_tokens: 18,
+            buyer_cost_micro: 1500,
+          },
+        },
+        { headers: { "x-request-id": "req_points_renamed_1" } },
+      );
+    }
+    expect(url.origin).toBe("https://api.github.com");
+    reads.push(url.pathname);
+    if (url.pathname.startsWith("/repos/example/alpha")) {
+      return new Response(null, {
+        status: 301,
+        headers: {
+          location: "https://api.github.com/repositories/123456789",
+        },
+      });
+    }
+    switch (url.pathname) {
+      case "/repos/renamed-org/alpha-next/installation":
+        return Response.json({ id: 1 });
+      case "/app/installations/1/access_tokens":
+        return Response.json({ token: "synthetic-read-token" });
+      case "/repos/renamed-org/alpha-next":
+        return Response.json({ id: 123456789 });
+      case "/repos/renamed-org/alpha-next/collaborators/recipient/permission":
+        return Response.json({ permission: "read", user: { id: 42 } });
+      default:
+        throw new Error(`Unexpected GitHub request: ${url.pathname}`);
+    }
+  }) as typeof fetch;
+  try {
+    await processPointsDispute(
+      {
+        SLOPBOT_DB: h.db,
+        SLOPBOT_APP_ID: "1",
+        SLOPBOT_APP_PRIVATE_KEY: privateKey,
+        PROJECT_MODERATOR_GITHUB_IDS: moderator.githubId,
+        SURPLUS_API_KEY: "synthetic-surplus-key",
+        SURPLUS_BASE_URL: "https://surplus.test",
+      },
+      created.id,
+    );
+    const detail = await (
+      await h.call(`/${created.id}`, undefined, otherToken)
+    ).json();
+    expect(detail).toMatchObject({
+      state: "review",
+      draft: "uphold",
+      mayDecide: true,
+    });
+    expect(reads).toEqual([
+      "/repos/renamed-org/alpha-next/installation",
+      "/app/installations/1/access_tokens",
+      "/repos/renamed-org/alpha-next",
+      "/repos/renamed-org/alpha-next/collaborators/recipient/permission",
+    ]);
+    expect(
+      h.sqlite
+        .query("SELECT draft,draft_confidence,escalation FROM points_disputes")
+        .get(),
+    ).toEqual({
+      draft: "uphold",
+      draft_confidence: 0.72,
+      escalation: "Original work evidence needs independent moderator review",
+    });
+    expect(
+      h.sqlite.query("SELECT COUNT(*) AS n FROM slopbot_costs").get(),
+    ).toEqual({ n: 1 });
+  } finally {
+    globalThis.fetch = nativeFetch;
+  }
+});
