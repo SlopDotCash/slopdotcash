@@ -8,8 +8,9 @@
  *
  * "Clean" means these defined checks passed on every defined surface. It is
  * not a guarantee that the code contains no malware. Unread, oversized or
- * undecodable content, an unretrieved install-time download and an
- * unanalyzed binary keep the result incomplete. Execution is never needed
+ * undecodable content, an unretrieved install-time download, a GYP include
+ * the scan cannot acquire, and an unanalyzed binary keep the result
+ * incomplete. Execution is never needed
  * for ordinary source; an operator runs an install hook or download in an
  * isolated runner only when its bytes cannot be judged statically, and that
  * runner never receives secrets.
@@ -587,7 +588,9 @@ export type RepositoryInspection = {
  * comment, so it cannot hide an entry or end the list, and a `#` inside a
  * quoted path stays part of that path. Adjacent quoted fragments are one
  * path. `+`, parentheses and f-string interpolation are not evaluated.
- * Prose that merely says "includes" is not an include list.
+ * Prose that merely says "includes" is not an include list. A bare name
+ * such as `{includes: [...]}` is a variable lookup under gyp's empty-builtin
+ * eval, not the string key, so it is not treated as an include list.
  */
 function gypIncludeSpecifiers(text: string): string[] {
   const specifiers: string[] = [];
@@ -853,11 +856,17 @@ function resolveGypInclude(fromFile: string, specifier: string): string | null {
 /**
  * Files a `.gyp` or `.gypi` loads through `includes`, including nested
  * includes. node-gyp runs command expansions in those files at install even
- * when the name is not itself a GYP source.
+ * when the name is not itself a GYP source. A specifier that does not resolve
+ * inside the acquired tree is returned as a visibility gap, and install-script
+ * coverage is partial.
  */
-function gypIncludedPaths(files: ScanInputFile[]): Set<string> {
+function gypIncludedPaths(files: ScanInputFile[]): {
+  included: Set<string>;
+  unacquired: string[];
+} {
   const byPath = new Map(files.map((file) => [file.path, file]));
   const included = new Set<string>();
+  const unacquired = new Set<string>();
   const seen = new Set<string>();
   const queue = files
     .filter((file) => GYP_SOURCE.test(file.path))
@@ -872,13 +881,20 @@ function gypIncludedPaths(files: ScanInputFile[]): Set<string> {
     if (text === null) continue;
     for (const specifier of gypIncludeSpecifiers(text)) {
       const resolved = resolveGypInclude(path, specifier);
-      if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
+      // `resolveGypInclude` returns null for an empty, absolute, URL-like or
+      // out-of-repository path. A resolved path missing from the acquired
+      // tree was not fetched or is generated at install. A file already
+      // queued was acquired; repeating it is not a gap.
+      if (resolved !== null && byPath.has(resolved)) {
+        if (seen.has(resolved)) continue;
+        included.add(resolved);
+        queue.push(resolved);
         continue;
-      included.add(resolved);
-      queue.push(resolved);
+      }
+      unacquired.add(`GYP include not acquired: ${specifier.slice(0, 500)}`);
     }
   }
-  return included;
+  return { included, unacquired: [...unacquired].sort() };
 }
 
 /**
@@ -915,7 +931,12 @@ export function inspectRepository(input: {
   const candidates: Candidate[] = [];
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
   const downloads = new Set<string>();
-  const gypIncludes = gypIncludedPaths(files);
+  const gyp = gypIncludedPaths(files);
+  const gypIncludes = gyp.included;
+  if (gyp.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...gyp.unacquired);
+  }
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even

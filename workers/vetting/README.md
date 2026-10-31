@@ -36,7 +36,10 @@ in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
 
 node-gyp loads `binding.gyp`, any `<name>.gyp` or `<name>.gypi`, and every
 repository file named by a GYP `includes` entry, then runs command expansions
-and actions from those files at install.
+and actions from those files at install. An `includes` entry that is not in
+the acquired tree, or whose path is absolute, a URL, or outside the
+repository, is a visibility gap `GYP include not acquired: <specifier>`, and
+install-script coverage is partial.
 
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
