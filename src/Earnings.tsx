@@ -249,7 +249,7 @@ export function EarningsPage({
         AbortSignal.timeout(30_000),
       ]);
       const value = account(await request("me", undefined, signal));
-      if (value.directTransfersPaged)
+      if (!walletsOnly && value.directTransfersPaged)
         value.directTransfers = await loadDirectTransfers(
           `actors/${value.githubUserId}`,
           signal,
@@ -273,7 +273,7 @@ export function EarningsPage({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [revision]);
+  }, [revision, walletsOnly]);
 
   useEffect(() => {
     if (pendingChange) changeHeading.current?.focus();
