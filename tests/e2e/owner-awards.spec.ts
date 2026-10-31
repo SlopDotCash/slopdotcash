@@ -1,8 +1,8 @@
 /** Browser coverage of private monthly allocations; the API rules are tested in backend/payments/monthly.test.ts. */
 
 import type { Page } from "@playwright/test";
-import type { CycleIndex } from "../../src/lib/cycle-index";
 import { deriveAllocationFundingBasis } from "../../src/lib/allocation-funding";
+import type { CycleIndex } from "../../src/lib/cycle-index";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { archivedPaidCycleIndex } from "../fixtures";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
