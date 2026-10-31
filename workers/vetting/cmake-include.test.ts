@@ -24,11 +24,23 @@ test("a file pulled in by include() is scanned under its own name", () => {
   const scan = (command: string) =>
     inspected([
       { path: "CMakeLists.txt", text: LIST("include(deps/fetch.txt)") },
-      { path: "deps/fetch.txt", text: `execute_process(COMMAND sh -c "${command}")\n` },
-      { path: "nested/CMakeLists.txt", text: LIST('include("../deps/deep.txt")') },
-      { path: "deps/deep.txt", text: `execute_process(COMMAND sh -c "${command}")\n` },
+      {
+        path: "deps/fetch.txt",
+        text: `execute_process(COMMAND sh -c "${command}")\n`,
+      },
+      {
+        path: "nested/CMakeLists.txt",
+        text: LIST('include("../deps/deep.txt")'),
+      },
+      {
+        path: "deps/deep.txt",
+        text: `execute_process(COMMAND sh -c "${command}")\n`,
+      },
       { path: "tools/list.cmake", text: LIST('include("helper.inc")') },
-      { path: "tools/helper.inc", text: `execute_process(COMMAND sh -c "${command}")\n` },
+      {
+        path: "tools/helper.inc",
+        text: `execute_process(COMMAND sh -c "${command}")\n`,
+      },
     ]);
   const before = scan("echo safe");
   const after = scan(PAYLOAD);
@@ -60,7 +72,7 @@ test("a file pulled in by include() is scanned under its own name", () => {
 
 test("include() forms that cannot be resolved keep the list file alone", () => {
   const cases = [
-    "include(${MODULES}/vars.txt)",
+    `include(\${MODULES}/vars.txt)`,
     "include(/opt/shared/vars.txt)",
     "include(module_without_extension)",
     "# include(commented.txt)",
@@ -84,7 +96,10 @@ test("a quoted path and a trailing comment still resolve", () => {
       path: "CMakeLists.txt",
       text: LIST('include("deps/fetch.txt") # build helper'),
     },
-    { path: "deps/fetch.txt", text: `execute_process(COMMAND sh -c "${PAYLOAD}")\n` },
+    {
+      path: "deps/fetch.txt",
+      text: `execute_process(COMMAND sh -c "${PAYLOAD}")\n`,
+    },
   ]);
   expect(inspection.findings.map((finding) => finding.path)).toEqual([
     "deps/fetch.txt",
