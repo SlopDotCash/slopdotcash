@@ -4640,3 +4640,212 @@ test("a late private session check preserves the restored actor's new draft @reg
     release();
   }
 });
+
+test("a departed Inbox read action preserves a new account's report draft @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `inbox-draft-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  const first: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-b"
+    : "reporter-a";
+  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  await listProject(request, TOKENS.security, repository, id, {});
+  await setIntake(request, repository, "disabled");
+  const received = await api(
+    request,
+    "POST",
+    "security-submissions",
+    TOKENS[first],
+    {
+      projectId: id,
+      idempotencyKey: key(),
+      origin: "slop",
+      report: {
+        summary: `Synthetic local receipt ${id}`,
+        description: `Isolated local report ${id}, with no production accounts, private findings or funds.`,
+        cvssVectorString: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      },
+    },
+  );
+  expect(received.status, JSON.stringify(received.body)).toBe(201);
+  const base = (await adminProject(request, id)).manifest;
+  const terms = bountyTerms(repository);
+  // Explicit public projection lets the user follow real SPA links to this local project.
+  await page.route("**/api/v1/projects", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        projects: [
+          {
+            ...base,
+            status: "active",
+            listingTier: "community",
+            reward: {
+              ...(base.reward as object),
+              monthlyCapMinor: "0",
+              monthlyCapDisplay: "$0",
+            },
+            securityBounty: {
+              ...terms,
+              status: "open",
+              fundingPolicy: "after-approval",
+              capacity: { ...(terms.capacity as object), awards: null },
+            },
+          },
+        ],
+        restrictions: [],
+      },
+    }),
+  );
+  await signIn(page, TOKENS[first]);
+  await page.goto("/inbox", { waitUntil: "networkidle" });
+  await expect(page).toHaveURL(/\/inbox$/u);
+  await expect(
+    page.getByRole("button", { name: "Mark shown as read", exact: true }),
+  ).toBeVisible();
+  let readCompleted = false;
+  let delayed = false;
+  let released = false;
+  const lateRequests: string[] = [];
+  page.on("request", (request) => {
+    if (released && new URL(request.url()).pathname.startsWith("/api/v1/"))
+      lateRequests.push(new URL(request.url()).pathname);
+  });
+  let marked = 0;
+  let release!: () => void;
+  let checked!: () => void;
+  const delivery = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const captured = new Promise<void>((resolve) => {
+    checked = resolve;
+  });
+  await page.route("**/api/v1/notifications/read", async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    marked = (await response.json()).marked;
+    expect(marked).toBeGreaterThan(0);
+    readCompleted = true;
+    await route.fulfill({ response });
+  });
+  await page.route("**/api/v1/project-session", async (route) => {
+    if (!readCompleted || delayed) return route.continue();
+    delayed = true;
+    // Capture the real first account's response before its cookie changes.
+    const response = await route.fetch();
+    expect((await response.json()).session.githubId).toBe(
+      account(first).githubId,
+    );
+    checked();
+    await delivery;
+    await route.fulfill({ response });
+  });
+  try {
+    const mark = page.getByRole("button", {
+      name: "Mark shown as read",
+      exact: true,
+    });
+    await mark.focus();
+    await mark.press("Enter");
+    await captured;
+    await page.evaluate(
+      ([name, value]) => {
+        document.cookie = `${name}=${value}; Path=/; Secure; SameSite=Strict`;
+      },
+      [COOKIE, TOKENS[second]],
+    );
+    // Real SPA links unmount Inbox without destroying the pending action's document.
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await page
+      .locator(`a.project-card[href="/projects/${id}"]`)
+      .first()
+      .click();
+    await page
+      .getByRole("link", { name: "Report privately", exact: true })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
+    await expect(
+      page.getByText(
+        `Draft kept in this tab for @${account(second).githubLogin}. It is not submitted yet.`,
+        { exact: true },
+      ),
+    ).toBeVisible();
+    const summary = `New draft after leaving Inbox ${id}`;
+    const description = `Synthetic replacement draft ${id}; this new draft is not submitted.`;
+    await page
+      .getByRole("textbox", { name: "Summary", exact: true })
+      .fill(summary);
+    await page
+      .getByRole("textbox", { name: /^Description/u })
+      .fill(description);
+    const storageKey = `slop-report-compose:${account(second).githubId}:${id}`;
+    const storedSummary = () =>
+      page.evaluate((key) => {
+        const raw = sessionStorage.getItem(key);
+        return raw ? JSON.parse(raw).draft.summary : null;
+      }, storageKey);
+    await expect.poll(storedSummary).toBe(summary);
+    const delivered = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/project-session",
+    );
+    let lateNotificationsSeen = false;
+    page.on("response", (response) => {
+      if (
+        released &&
+        new URL(response.url()).pathname === "/api/v1/notifications"
+      )
+        lateNotificationsSeen = true;
+    });
+    // A prior networkidle event is already satisfied here. Observe the old
+    // callback's final identity read, or the bounded absence of that callback.
+    const oldCallbackSettled = page
+      .waitForResponse(
+        (response) =>
+          lateNotificationsSeen &&
+          new URL(response.url()).pathname === "/api/v1/project-session",
+        { timeout: 3_000 },
+      )
+      .then(
+        (response) => response.finished(),
+        () => null,
+      );
+    released = true;
+    release();
+    await (await delivered).finished();
+    await oldCallbackSettled;
+    await page.waitForLoadState("networkidle");
+    const retained = await storedSummary();
+    await test.info().attach("departed-inbox-observation", {
+      body: JSON.stringify({
+        marked,
+        lateRequests,
+        retained: retained === summary,
+      }),
+      contentType: "application/json",
+    });
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.reload({ waitUntil: "networkidle" });
+    await page.screenshot({
+      path: test.info().outputPath("departed-inbox-draft-reload.png"),
+      fullPage: true,
+    });
+    await expectAccessible(page);
+    expect(retained).toBe(summary);
+    await expect(
+      page.getByRole("textbox", { name: "Summary", exact: true }),
+    ).toHaveValue(summary);
+    await expect(
+      page.getByRole("textbox", { name: /^Description/u }),
+    ).toHaveValue(description);
+    expect(marked).toBeGreaterThan(0);
+  } finally {
+    release();
+  }
+});
