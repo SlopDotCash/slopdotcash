@@ -125,6 +125,20 @@ const AGENT_INSTRUCTIONS = new Set([
   "claude.local.md",
   "llms.txt",
 ]);
+/**
+ * Package-manager configuration read on every install or run. Each file can
+ * make the package manager execute code (`node-options` and `script-shell` in
+ * `.npmrc`, `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the
+ * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`), so it is an
+ * install surface, never unreviewed content.
+ */
+const PACKAGE_MANAGER_CONFIGS = new Set([
+  ".npmrc",
+  ".yarnrc",
+  ".yarnrc.yml",
+  ".pnpmfile.cjs",
+  "bunfig.toml",
+]);
 const INSTALL_FILES = new Set([
   "setup.py",
   "build.rs",
@@ -234,6 +248,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
