@@ -774,6 +774,66 @@ export function grounded(
   return { ok: true, why: "rule and evidence verified" };
 }
 
+// Deterministic refutation of model claims the item text itself disproves
+// (#1930): a 64-character lowercase-hex value is a well-formed SHA-256
+// digest, and a 0x-prefixed token is an integer literal, never an identifier.
+// Only claims about the value's form are checked: a claim that compares a
+// digest or literal against other evidence is never refuted.
+const CLAIM_TOKEN_DISTANCE = 120;
+const SHA_256_HEX_TOKEN = /\b[0-9a-f]{64}\b/gu;
+const HEX_LITERAL_TOKEN = /\b0x[0-9a-fA-F]{1,16}\b/gu;
+const SHA_256_FORM_CLAIM =
+  /\b(?:not (?:a|an) (?:valid |well-formed )?(?:sha-?256 hex |sha-?256 |hex )?(?:value|string|digest)|(?:invalid|malformed) (?:sha-?256 hex |sha-?256 |hex )?(?:value|string|digest))\b/gu;
+const UNDEFINED_NAME_CLAIM =
+  /\b(?:undefined (?:name|variable|identifier)|NameError)\b/gu;
+const SHA_256_DIGEST_REFUTED =
+  "the verdict calls a 64-character lowercase-hex value in the item an invalid digest, but that value is a well-formed SHA-256 digest";
+const HEX_LITERAL_REFUTED =
+  "the verdict calls a 0x hexadecimal token in the item an undefined name, but a 0x token is an integer literal";
+const REFUTED_CLAIM_SUMMARY =
+  "The review model made a claim that the submitted text disproves. Slopbot publishes no finding from that claim. A maintainer can still review this change.";
+
+function claimTokens(text: string, claim: RegExp, token: RegExp): string[] {
+  const tokens: string[] = [];
+  for (const match of text.matchAll(claim)) {
+    const window = text.slice(
+      Math.max(0, match.index - CLAIM_TOKEN_DISTANCE),
+      Math.min(
+        text.length,
+        match.index + match[0].length + CLAIM_TOKEN_DISTANCE,
+      ),
+    );
+    for (const found of window.matchAll(token))
+      if (!tokens.includes(found[0])) tokens.push(found[0]);
+  }
+  return tokens;
+}
+
+/** Returns a short refutation when the verdict asserts, about a value the
+ * reviewed text contains, a form property the text disproves. Returns null
+ * when the verdict makes no such claim. */
+export function refutedClaim(
+  verdict: Pick<Verdict, "summary" | "evidence" | "limitations">,
+  itemText: string,
+): string | null {
+  if (itemText.length === 0) return null;
+  const text = [
+    verdict.summary,
+    ...verdict.evidence,
+    ...verdict.limitations,
+  ].join("\n");
+  if (text.length === 0) return null;
+  for (const digest of claimTokens(text, SHA_256_FORM_CLAIM, SHA_256_HEX_TOKEN))
+    if (itemText.includes(digest)) return SHA_256_DIGEST_REFUTED;
+  for (const literal of claimTokens(
+    text,
+    UNDEFINED_NAME_CLAIM,
+    HEX_LITERAL_TOKEN,
+  ))
+    if (itemText.includes(literal)) return HEX_LITERAL_REFUTED;
+  return null;
+}
+
 async function closureState(
   env: ReviewEnv,
   job: Job,
@@ -1346,6 +1406,12 @@ async function runReview(
       limitations: [...context.limitations, ...verdict.limitations],
     };
   const category: Category = verdict.category;
+  // A claim the item text itself disproves is mechanically false, not
+  // uncertain (#1930). Every other claim stays exactly as uncertain as the
+  // model made it.
+  const refuted = deterministic
+    ? null
+    : refutedClaim(verdict, modelItemText(context));
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
   if (scope === "security" && !SECURITY_CATEGORIES.has(category)) {
@@ -1369,19 +1435,31 @@ async function runReview(
         "review source or authorization changed before publication",
       );
     // Keep explicit category opt-outs. Limited coverage never becomes a hold,
-    // label or close, even if a model returns a confident finding.
+    // label or close, even if a model returns a confident finding. A refuted
+    // claim is dropped from the published text in every publication path; the
+    // coverage limitations and the original verdict in the journal stay.
     const published =
-      mode === "off" && category !== "none"
+      refuted !== null
         ? {
             ...verdict,
             category: "none" as const,
             rule_refs: [],
             evidence: [],
-            limitations: context.limitations,
-            summary:
-              "The enabled review is incomplete. A maintainer must review the omitted content.",
+            objective_defect: null,
+            limitations: [refuted, ...context.limitations],
+            summary: REFUTED_CLAIM_SUMMARY,
           }
-        : verdict;
+        : mode === "off" && category !== "none"
+          ? {
+              ...verdict,
+              category: "none" as const,
+              rule_refs: [],
+              evidence: [],
+              limitations: context.limitations,
+              summary:
+                "The enabled review is incomplete. A maintainer must review the omitted content.",
+            }
+          : verdict;
     await upsertComment(
       env,
       job,
@@ -1418,6 +1496,55 @@ async function runReview(
       action: "none",
     });
     return `no action (${category})`;
+  }
+
+  // A model claim the item text itself disproves is mechanically false, not
+  // uncertain (PRD section 5): publish no finding from it, no label, no
+  // maintainer hold, and keep the original verdict in the review journal.
+  if (refuted !== null) {
+    const fresh = await loadContext(env, job, context.registration);
+    if (
+      !(await sameReviewEvidence(job, fresh, context)) ||
+      !(await store.installationActive(db, job.installationId))
+    )
+      throw new Error(
+        "review source or authorization changed before publication",
+      );
+    await upsertComment(
+      env,
+      job,
+      context,
+      commentBody({
+        verdict: {
+          ...verdict,
+          category: "none",
+          rule_refs: [],
+          evidence: [],
+          objective_defect: null,
+          limitations: [refuted],
+          summary: REFUTED_CLAIM_SUMMARY,
+        },
+        action: "comment",
+        blockedClose: null,
+        context,
+        triage,
+        confirm: null,
+      }),
+      claim,
+    );
+    await store.recordAction(
+      db,
+      reviewKey,
+      job.repositoryId,
+      issue.node_id,
+      "comment",
+      "refuted model claim",
+    );
+    await store.finishReview(db, reviewKey, claimToken, "completed", {
+      verdict,
+      action: "comment",
+    });
+    return "no finding published (model claim refuted by the item text)";
   }
 
   const proof = grounded(verdict, context, deterministic);
