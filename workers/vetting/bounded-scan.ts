@@ -580,16 +580,241 @@ export type RepositoryInspection = {
   riskSignals: string[];
 };
 
-/** Quoted paths inside every GYP `includes` array. Not prose that merely says "includes". */
+/**
+ * Quoted paths inside every GYP `includes` array.
+ *
+ * gyp evaluates the file as a Python literal. A `#` outside a string is a
+ * comment, so it cannot hide an entry or end the list, and a `#` inside a
+ * quoted path stays part of that path. Adjacent quoted fragments are one
+ * path. `+`, parentheses and f-string interpolation are not evaluated.
+ * Prose that merely says "includes" is not an include list.
+ */
 function gypIncludeSpecifiers(text: string): string[] {
   const specifiers: string[] = [];
-  for (const match of text.matchAll(
-    /(?:^|[{,])\s*['"]includes['"]\s*:\s*\[([^\]]*)\]/gu,
-  )) {
-    const body = match[1] ?? "";
-    for (const entry of body.matchAll(/['"]([^'"]+)['"]/gu)) {
-      const specifier = entry[1];
-      if (specifier) specifiers.push(specifier);
+  const n = text.length;
+  let i = 0;
+
+  const isQuote = (char: string | undefined): char is "'" | '"' =>
+    char === "'" || char === '"';
+
+  const skipSpaceAndComments = () => {
+    while (i < n) {
+      const c = text[i];
+      if (
+        c === " " ||
+        c === "\t" ||
+        c === "\n" ||
+        c === "\r" ||
+        c === "\f" ||
+        c === "\v"
+      ) {
+        i += 1;
+        continue;
+      }
+      // A backslash-newline outside a string is a line continuation.
+      if (c === "\\" && (text[i + 1] === "\n" || text[i + 1] === "\r")) {
+        i += 2;
+        if (text[i - 1] === "\r" && text[i] === "\n") i += 1;
+        continue;
+      }
+      if (c === "#") {
+        while (i < n && text[i] !== "\n" && text[i] !== "\r") i += 1;
+        continue;
+      }
+      return;
+    }
+  };
+
+  /** True when the quote at `at` opens a raw string (`r`, `fr`, `rb`, …). */
+  const rawPrefix = (at: number) => {
+    let start = at;
+    while (start > 0 && /[rRuUbBfF]/u.test(text[start - 1] ?? "")) start -= 1;
+    if (start === at) return false;
+    if (start > 0 && /[A-Za-z0-9_]/u.test(text[start - 1] ?? "")) return false;
+    return /r/iu.test(text.slice(start, at));
+  };
+
+  /** Python string escape. `i` points just after the backslash. */
+  const decodeEscape = (raw: boolean) => {
+    if (i >= n) return "\\";
+    const next = text[i] ?? "";
+    i += 1;
+    if (raw) {
+      if (next === "\r" && text[i] === "\n") {
+        i += 1;
+        return "\\\r\n";
+      }
+      return `\\${next}`;
+    }
+    if (next === "\n") return "";
+    if (next === "\r") {
+      if (text[i] === "\n") i += 1;
+      return "";
+    }
+    if (next === "n") return "\n";
+    if (next === "r") return "\r";
+    if (next === "t") return "\t";
+    if (next === "a") return "\u0007";
+    if (next === "b") return "\b";
+    if (next === "f") return "\f";
+    if (next === "v") return "\v";
+    if (next === "\\" || next === "'" || next === '"') return next;
+    if (next === "x" || next === "u" || next === "U") {
+      const width = next === "x" ? 2 : next === "u" ? 4 : 8;
+      const digits = text.slice(i, i + width);
+      if (digits.length === width && /^[0-9a-fA-F]+$/u.test(digits)) {
+        const code = Number.parseInt(digits, 16);
+        if (code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)) {
+          i += width;
+          return String.fromCodePoint(code);
+        }
+      }
+      return `\\${next}`;
+    }
+    if (next >= "0" && next <= "7") {
+      let digits = next;
+      while (
+        digits.length < 3 &&
+        i < n &&
+        (text[i] ?? "") >= "0" &&
+        (text[i] ?? "") <= "7"
+      ) {
+        digits += text[i];
+        i += 1;
+      }
+      return String.fromCharCode(Number.parseInt(digits, 8));
+    }
+    return `\\${next}`;
+  };
+
+  /** One Python string starting at a quote. Null when the literal is unclosed. */
+  const readString = (): string | null => {
+    if (!isQuote(text[i])) return null;
+    const quote = text[i];
+    const raw = rawPrefix(i);
+    const triple = text.startsWith(quote.repeat(3), i);
+    const delimiter = triple ? quote.repeat(3) : quote;
+    i += delimiter.length;
+    let value = "";
+    while (i < n) {
+      const c = text[i] ?? "";
+      if (c === "\\") {
+        i += 1;
+        value += decodeEscape(raw);
+        continue;
+      }
+      if (text.startsWith(delimiter, i)) {
+        i += delimiter.length;
+        return value;
+      }
+      // A raw newline ends a non-triple string. Stop so the rest of the file
+      // is not swallowed as string content.
+      if (!triple && (c === "\n" || c === "\r")) return null;
+      value += c;
+      i += 1;
+    }
+    return null;
+  };
+
+  /** Adjacent string literals, joined the way Python joins them. */
+  const readConcatenatedString = (): string | null => {
+    const first = readString();
+    if (first === null) return null;
+    let value = first;
+    while (i < n) {
+      const mark = i;
+      skipSpaceAndComments();
+      if (!isQuote(text[i])) {
+        i = mark;
+        return value;
+      }
+      const next = readString();
+      if (next === null) return value;
+      value += next;
+    }
+    return value;
+  };
+
+  /**
+   * One non-string list element, so a later quoted path in the same includes
+   * list is still read. Strings and comments inside it stay intact.
+   */
+  const skipOneValue = (): boolean => {
+    skipSpaceAndComments();
+    if (i >= n) return false;
+    const start = text[i];
+    if (start === "," || start === "]" || start === "}" || start === ")")
+      return false;
+    if (isQuote(start)) {
+      readConcatenatedString();
+      return true;
+    }
+    if (start === "[" || start === "{" || start === "(") {
+      const closing = start === "[" ? "]" : start === "{" ? "}" : ")";
+      i += 1;
+      while (i < n) {
+        skipSpaceAndComments();
+        if (i >= n) return false;
+        if (text[i] === closing) {
+          i += 1;
+          return true;
+        }
+        if (text[i] === ",") {
+          i += 1;
+          continue;
+        }
+        if (!skipOneValue()) return false;
+      }
+      return false;
+    }
+    if (/[A-Za-z0-9_]/u.test(start ?? "")) {
+      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      return true;
+    }
+    i += 1;
+    return true;
+  };
+
+  while (i < n) {
+    skipSpaceAndComments();
+    if (i >= n) break;
+    if (!isQuote(text[i])) {
+      i += 1;
+      continue;
+    }
+    const key = readConcatenatedString();
+    if (key !== "includes") continue;
+    const afterKey = i;
+    skipSpaceAndComments();
+    if (text[i] !== ":") {
+      i = afterKey;
+      continue;
+    }
+    i += 1;
+    const afterColon = i;
+    skipSpaceAndComments();
+    if (text[i] !== "[") {
+      i = afterColon;
+      continue;
+    }
+    i += 1;
+    while (i < n) {
+      skipSpaceAndComments();
+      if (i >= n) break;
+      if (text[i] === "]") {
+        i += 1;
+        break;
+      }
+      if (text[i] === ",") {
+        i += 1;
+        continue;
+      }
+      if (isQuote(text[i])) {
+        const specifier = readConcatenatedString();
+        if (specifier) specifiers.push(specifier);
+        continue;
+      }
+      if (!skipOneValue()) break;
     }
   }
   return specifiers;

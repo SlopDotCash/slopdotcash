@@ -160,3 +160,236 @@ test("GYP includes do not adopt files outside the repository or ordinary prose",
   expect(surfacesOf("dir.gyp/addon.c")).toEqual(["source"]);
   expect(surfacesOf("LICENSE")).toEqual([]);
 });
+
+/** A file gyp would execute only if an includes entry names it. */
+function includedPayload(path: string) {
+  return {
+    path,
+    text: `{\n  'variables': { 'x': '<!(${PAYLOAD})' },\n}\n`,
+  };
+}
+
+function scanGyp(gyp: string, paths: string[]) {
+  return inspected([
+    { path: "binding.gyp", text: gyp },
+    ...paths.map(includedPayload),
+  ]);
+}
+
+function expectIncluded(gyp: string, path: string) {
+  expect(scanGyp(gyp, [path]).findings).toContainEqual(
+    expect.objectContaining({
+      path,
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+}
+
+test("a comment containing ] cannot hide a GYP includes entry", () => {
+  // gyp evaluates the file as Python, so the bracket inside the comment is
+  // not the end of the list.
+  expectIncluded(
+    `{
+'includes': [ # ] sneak
+'evil.txt',
+],
+}
+`,
+    "evil.txt",
+  );
+});
+
+test("a comment between a GYP includes key and its colon cannot hide the list", () => {
+  expectIncluded(
+    `{
+'includes' # comment about includes
+: [
+'evil.txt',
+],
+}
+`,
+    "evil.txt",
+  );
+});
+
+test("a hash inside a quoted GYP include path is part of the path", () => {
+  // A `#` in a string is content. Truncating at the hash would scan `path`
+  // and miss the file gyp loads.
+  const path = "path#with#hash.txt";
+  const inspection = scanGyp(
+    `{\n  'includes': ['${path}', "dir/path#hash.txt"],\n}\n`,
+    [path, "dir/path#hash.txt", "path", "dir/path"],
+  );
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path,
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path: "dir/path#hash.txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
+    "path",
+  );
+  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
+    "dir/path",
+  );
+});
+
+test("comments around a GYP includes list cannot hide its entries", () => {
+  // Same list shape gyp accepts: comments between the colon and the bracket,
+  // between the bracket and the first item, and between items. Both quote
+  // styles. A `]` inside those comments is not the end of the list.
+  expectIncluded(
+    `{
+"includes": # before the list
+[ # ] still open
+"kept.txt", # ] not the end
+'evil.txt',
+],
+}
+`,
+    "evil.txt",
+  );
+  expectIncluded(
+    `{
+'includes':
+# between the colon and the bracket
+[
+# before the item
+"evil.txt"
+]
+}
+`,
+    "evil.txt",
+  );
+  // A backslash-newline outside a string is Python whitespace.
+  expectIncluded(
+    `{
+'includes'\\
+: [
+'evil.txt',
+],
+}
+`,
+    "evil.txt",
+  );
+});
+
+test("a GYP include named only inside a Python comment is not scanned", () => {
+  const inspection = scanGyp(
+    `{\n  'includes': [\n    'evil.txt', # 'decoy.txt'\n  ],\n}\n`,
+    ["evil.txt", "decoy.txt"],
+  );
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path: "evil.txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
+    "decoy.txt",
+  );
+});
+
+test("adjacent GYP include strings divided by a comment are one path", () => {
+  // Inside the list, Python concatenates adjacent literals. The comment is
+  // not a separator, and the `]` in it is not the end of the list.
+  expectIncluded(
+    `{
+'includes': [
+'ev' # ]
+'il.txt',
+],
+}
+`,
+    "evil.txt",
+  );
+});
+
+test("a ] inside a quoted GYP include path does not hide the next entry", () => {
+  const inspection = scanGyp(
+    `{
+'includes': [
+'file].txt',
+'evil.txt',
+],
+}
+`,
+    ["file].txt", "evil.txt"],
+  );
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path: "file].txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path: "evil.txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  // A `# ]` inside a triple-quoted entry is still string content.
+  expectIncluded(
+    `{
+'includes': [
+'''# ]
+''',
+'evil.txt',
+],
+}
+`,
+    "evil.txt",
+  );
+});
+
+test("an escaped quote does not turn the rest of a GYP include into a comment", () => {
+  // Python keeps the hash inside the string. A comment-blind read, or one
+  // that ends the string at the escaped quote, scans a different path.
+  const path = "foo'#bar.txt";
+  const inspection = scanGyp(
+    `{\n  'includes': ['foo\\'#bar.txt', 'evil.txt'],\n}\n`,
+    [path, "evil.txt", "#bar.txt"],
+  );
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path,
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path: "evil.txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
+    "#bar.txt",
+  );
+});
+
+test("a backslash newline inside a GYP include keeps a following hash in the path", () => {
+  expectIncluded(
+    `{
+'includes': [
+'ev\\
+#il.txt',
+],
+}
+`,
+    "ev#il.txt",
+  );
+});
