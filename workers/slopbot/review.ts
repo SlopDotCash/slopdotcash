@@ -2621,14 +2621,19 @@ async function appealStatement(
       comment.user?.id !== appellantId ||
       comment.issue_url !==
         `https://api.github.com/repos/${job.owner}/${job.repo}/issues/${job.number}` ||
-      !/^\/slopbot (?:appeal|dispute)(?:\s|$)/u.test(comment.body ?? "")
+      !/(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\s|$)/u.test(
+        comment.body ?? "",
+      )
     )
       throw new Error(
         "The original dispute comment is unavailable or changed source",
       );
     return (
       (comment.body ?? "")
-        .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
+        .replace(
+          /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\b)\s*/u,
+          "\n",
+        )
         .trim()
         .slice(0, 4000) || "(no reason given)"
     );
@@ -2643,15 +2648,17 @@ async function appealStatement(
     if (!Array.isArray(comments))
       throw new Error("the appeal comments are unreadable");
     for (const comment of comments) {
-      const body = (comment.body ?? "").trim();
+      const body = comment.body ?? "";
       if (
         comment.user?.id === appellantId &&
-        (body.startsWith("/slopbot appeal") ||
-          body.startsWith("/slopbot dispute"))
+        /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\s|$)/u.test(body)
       )
         statement =
           body
-            .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
+            .replace(
+              /(?:^|\r?\n)\s*\/slopbot\s+(?:appeal|dispute)(?::|\b)\s*/u,
+              "\n",
+            )
             .trim()
             .slice(0, 4000) || "(no reason given)";
     }

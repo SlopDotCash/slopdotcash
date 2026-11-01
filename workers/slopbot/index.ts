@@ -85,6 +85,36 @@ type Payload = {
   comment?: { body: string; id?: number };
 };
 
+// The first active Slopbot command wins, but fenced examples are quoted
+// evidence rather than live commands. CommonMark closes a fence only with a
+// longer-or-equal run of the same marker and no info string.
+function firstActiveCommand(
+  text: string,
+): { command: string; args: string } | null {
+  let fence: { marker: string; length: number } | null = null;
+  for (const line of text.split(/\r?\n/u)) {
+    const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fenceMatch?.[1]) {
+      const marker = fenceMatch[1].charAt(0);
+      const length = fenceMatch[1].length;
+      if (fence === null) fence = { marker, length };
+      else if (
+        marker === fence.marker &&
+        length >= fence.length &&
+        (fenceMatch[2] ?? "").trim() === ""
+      )
+        fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const commandMatch = line.match(
+      /^\s*\/slopbot\s+([A-Za-z][A-Za-z0-9_-]*)(?::|\s|$)(.*)$/u,
+    );
+    if (commandMatch?.[1])
+      return { command: commandMatch[1], args: commandMatch[2] ?? "" };
+  }
+  return null;
+}
 export function jobFor(
   event: string,
   deliveryId: string,
@@ -140,7 +170,8 @@ export function jobFor(
       };
     if (action !== "created") return null;
     const text = (payload.comment?.body ?? "").trim();
-    if (/^\/slopbot dispute(?:\s|$)/u.test(text))
+    const active = firstActiveCommand(text);
+    if (active?.command === "dispute")
       return {
         kind: "appeal",
         subject: "value",
@@ -149,7 +180,7 @@ export function jobFor(
         ...item,
         senderId: sender.id,
       };
-    if (text.startsWith("/slopbot appeal"))
+    if (active?.command === "appeal")
       return {
         kind: "appeal",
         ...base,
@@ -157,14 +188,10 @@ export function jobFor(
         senderId: sender.id,
         ...(payload.comment?.id ? { appealCommentId: payload.comment.id } : {}),
       };
-    const command = APPEAL_COMMANDS.find(
-      (name) =>
-        text === `/slopbot ${name}` ||
-        text.startsWith(`/slopbot ${name}\n`) ||
-        text.startsWith(`/slopbot ${name} `),
-    );
-    if (command === undefined) return null;
-    const target = text.slice(`/slopbot ${command}`.length).trim();
+    if (active === null || !APPEAL_COMMANDS.includes(active.command as never))
+      return null;
+    const command = active.command as (typeof APPEAL_COMMANDS)[number];
+    const target = active.args.trim();
     if (
       /^(?:appeal|value-appeal):/u.test(target) &&
       !/^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u.test(target)
