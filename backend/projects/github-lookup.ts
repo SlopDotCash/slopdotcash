@@ -12,6 +12,7 @@ import {
  */
 
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { validIntegrationBranch } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import {
   GITHUB_API,
@@ -36,6 +37,14 @@ export class GithubLookupError extends Error {
 const MAX_OWNED_REPOSITORY_PAGES = 20;
 const MAX_REPOSITORY_BRANCH_PAGES = 20;
 const REQUEST_TIMEOUT_MS = 10_000;
+
+/** Keep every branch byte inside the authenticated read route's path segment. */
+function branchPath(branch: string): string {
+  return encodeURIComponent(branch).replace(
+    /[!'()]/gu,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
 
 export function validGithubLogin(value: string): boolean {
   return GITHUB_LOGIN.test(value);
@@ -235,31 +244,6 @@ function unknownLicense(
   return { ...facts, license: { state: "unknown", reason } };
 }
 
-function validBranchName(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 255 &&
-    value !== "@" &&
-    value !== "HEAD" &&
-    !value.startsWith("-") &&
-    !value.endsWith(".") &&
-    !value.includes("..") &&
-    !value.includes("@{") &&
-    !/[~^:?*[\\]/u.test(value) &&
-    [...value].every((character) => {
-      const code = character.charCodeAt(0);
-      return code > 32 && code !== 127;
-    }) &&
-    value
-      .split("/")
-      .every(
-        (part) =>
-          part !== "" && !part.startsWith(".") && !part.endsWith(".lock"),
-      )
-  );
-}
-
 /** Returns complete branch options, never a partial list after a failed page. */
 async function repositoryBranches(
   fetcher: GithubFetch,
@@ -303,7 +287,7 @@ async function repositoryBranches(
       if (
         !branch ||
         typeof branch !== "object" ||
-        !validBranchName(branch.name)
+        !validIntegrationBranch(branch.name)
       )
         throw new GithubLookupError(
           502,
@@ -397,7 +381,7 @@ export async function lookupGitHubRepository(
     !/^[A-Za-z0-9_=-]{1,100}$/u.test(repo.node_id) ||
     typeof repo.full_name !== "string" ||
     !validRepositoryPath(repo.full_name) ||
-    !validBranchName(repo.default_branch) ||
+    !validIntegrationBranch(repo.default_branch) ||
     !owner ||
     !Number.isSafeInteger(owner.id) ||
     typeof owner.login !== "string" ||
@@ -441,7 +425,7 @@ export async function lookupGitHubRepository(
     const branch = await githubJson(
       fetcher,
       token,
-      `/repos/${repo.full_name}/branches/${encodeURIComponent(repo.default_branch)}`,
+      `/repos/${repo.full_name}/branches/${branchPath(repo.default_branch)}`,
       apiOrigin,
     );
     const commitSha = (branch?.commit as Record<string, unknown> | undefined)
@@ -491,8 +475,6 @@ export async function lookupGitHubRepository(
   }
 }
 
-const BRANCH = /^[A-Za-z0-9._/-]{1,255}$/u;
-
 /**
  * Reads the current head commit of one branch. Security vetting binds an
  * assessment to this exact commit (PRD VET-07), so every failure throws and
@@ -505,7 +487,7 @@ export async function readBranchHead(
   branch: string,
   apiOrigin = GITHUB_API,
 ): Promise<string> {
-  if (!validRepositoryPath(repository) || !BRANCH.test(branch))
+  if (!validRepositoryPath(repository) || !validIntegrationBranch(branch))
     throw new GithubLookupError(
       400,
       "invalid_request",
@@ -514,7 +496,7 @@ export async function readBranchHead(
   const value = await githubJson(
     fetcher,
     token,
-    `/repos/${repository}/branches/${encodeURIComponent(branch)}`,
+    `/repos/${repository}/branches/${branchPath(branch)}`,
     apiOrigin,
   );
   const commitSha = (value?.commit as Record<string, unknown> | undefined)?.sha;
