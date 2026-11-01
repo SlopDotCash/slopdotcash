@@ -127,8 +127,20 @@ test("a manual Points award reaches private Inbox review and an independent mode
     path: test.info().outputPath("points-private-receipt.png"),
     fullPage: true,
   });
+  const completedRequests = new WeakSet<object>();
+  page.on("requestfinished", (request) => completedRequests.add(request));
+  const readAcknowledgement = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/notifications/read",
+  );
   await page.getByRole("button", { name: /^Mark as read:/u }).click();
   await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
+  const readRequest = (await readAcknowledgement).request();
+  expect(readRequest.failure()).toBeNull();
+  expect(completedRequests.has(readRequest)).toBe(true);
   // The browser test covers the actual API/D1/Inbox transition; separate real
   // provider evidence qualifies the model. This fixture sets only its draft.
   const notice = notifySlopbotAppeal(
