@@ -51,7 +51,7 @@ const COLUMNS: Record<(typeof CUMULATIVE | typeof CURRENT)[number], string> = {
   reserved: "reserved",
 };
 
-function sameAddress(chain: PaymentChain, a: string, b: string) {
+export function sameAddress(chain: PaymentChain, a: string, b: string) {
   return chainFamily(chain) === "evm"
     ? a.toLowerCase() === b.toLowerCase()
     : a === b;
