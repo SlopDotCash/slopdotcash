@@ -439,8 +439,17 @@ async function freezeMonthlyPeriod(
     .prepare("SELECT revision,manifest_sha256,status FROM projects WHERE id=?")
     .bind(project.id)
     .first<{ revision: number; manifest_sha256: string; status: string }>();
+  // The registry is append-only: a registered project cannot disappear.
+  // Isolated payment DBs have an empty projects table. Fail this unsupported
+  // topology explicitly instead of reporting a policy wait forever; keep the
+  // atomic project/revision guard for the shared production/staging database.
+  if (!current)
+    throw new MonthlyPaymentError(
+      503,
+      "payment_registry_unavailable",
+      "Monthly finalization requires the current project registry in the payment database.",
+    );
   if (
-    !current ||
     current.revision !== project.revision ||
     current.manifest_sha256 !== project.manifestSha256 ||
     current.status !== "active"
