@@ -198,9 +198,7 @@ test("hexMisreadFinding drops #1930 truncated digest quote 8190d3f7…f697", () 
       lowQuality({
         summary:
           "The pinned value 8190d3f7…f697 is not a sha256 hex value, so the hash assertion cannot succeed.",
-        evidence: [
-          `assert.equal(digest, "${DIGEST}");`,
-        ],
+        evidence: [`assert.equal(digest, "${DIGEST}");`],
       }),
     ),
   ).toBe(true);
