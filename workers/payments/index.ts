@@ -275,9 +275,12 @@ export async function runPaymentDispatch(
   if (!env.EVM_PAYMENT_EXECUTOR && !env.SOLANA_PAYMENT_EXECUTOR)
     throw new Error("Payment execution service unavailable");
   const rows = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(obligation_id) ids FROM (SELECT obligation_id FROM payment_outbox WHERE state='ready' OR (state='processing' AND lease_until<?) ORDER BY updated_at LIMIT 50)",
+    "SELECT json_group_array(obligation_id) ids FROM (SELECT b.obligation_id FROM payment_outbox b JOIN payment_obligations o ON o.id=b.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND (b.state='ready' OR (b.state='processing' AND b.lease_until<?)) ORDER BY b.updated_at LIMIT 50)",
   )
-    .bind(now().toISOString())
+    .bind(
+      JSON.stringify(parsePaymentNetworks(env.PAYMENT_NETWORKS)),
+      now().toISOString(),
+    )
     .first<{ ids: string }>();
   const failures: unknown[] = [];
   for (const id of JSON.parse(rows?.ids ?? "[]") as string[]) {
