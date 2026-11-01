@@ -309,15 +309,15 @@ export async function prepareDirectIntent(
 /**
  * A payer-side condition that stops the unsigned Solana request (too few
  * lamports or tokens, a non-wallet payer, a failing simulation) is the
- * payer's refusal to act on, so it reaches the API as 409 with its reason.
- * Every other failure stays an internal fault.
+ * payer's refusal to act on, so it reaches the API as 409 `payer_refused`
+ * with its reason. Every other failure stays an internal fault.
  */
 async function solanaDirectOrRefuse<T>(prepare: () => Promise<T>): Promise<T> {
   try {
     return await prepare();
   } catch (error) {
     if (error instanceof DirectPayerRefused)
-      fail(409, "payer_unfunded", error.message);
+      fail(409, "payer_refused", error.message);
     throw error;
   }
 }
