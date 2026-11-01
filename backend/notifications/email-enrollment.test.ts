@@ -427,6 +427,34 @@ test("address changes bind new consent, cancel stale deliveries and reject old u
   h.sqlite.close();
 });
 
+test("a saved enrollment remains replayable while the sender is paused", async () => {
+  const h = await setup();
+  try {
+    expect((await h.enroll()).status).toBe(202);
+    h.ready(false);
+    const body = {
+      email: "member@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "enrollment-request-1",
+    };
+    expect((await h.call("/verification", body)).status).toBe(202);
+    expect(
+      (
+        await h.call("/verification", {
+          ...body,
+          email: "different@example.com",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await h.enroll("new@example.com")).status).toBe(503);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("the private sending route rejects fabricated challenge tokens and public GET never consumes a link", async () => {
   const h = await setup();
   await h.enroll();
