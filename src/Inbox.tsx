@@ -109,6 +109,7 @@ async function markRead(
   if (response.status === 401) return "signed-out";
   if (!response.ok)
     throw new Error("Could not mark the notification as read. Please retry.");
+  await readBoundedJson(response, 1_024, "notification read receipt");
   return "ok";
 }
 
@@ -133,6 +134,7 @@ async function acknowledgeSecurity(
   if (response.status === 401) return "signed-out";
   if (!response.ok)
     throw new Error("Could not acknowledge the security notice. Please retry.");
+  await readBoundedJson(response, 1_024, "security acknowledgement receipt");
   return "ok";
 }
 
