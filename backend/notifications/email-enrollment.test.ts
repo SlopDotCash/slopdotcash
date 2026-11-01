@@ -455,6 +455,32 @@ test("a saved enrollment remains replayable while the sender is paused", async (
   }
 });
 
+test("a competing enrollment with the same key returns conflict after the initial read", async () => {
+  const h = await setup();
+  try {
+    const body = {
+      email: "first@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "competing-enrollment-key",
+    };
+    const batch = h.db.batch.bind(h.db);
+    h.db.batch = async (statements) => {
+      h.db.batch = batch;
+      expect((await h.call("/verification", body)).status).toBe(202);
+      return batch(statements);
+    };
+    expect(
+      (await h.call("/verification", { ...body, email: "second@example.com" }))
+        .status,
+    ).toBe(409);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("the private sending route rejects fabricated challenge tokens and public GET never consumes a link", async () => {
   const h = await setup();
   await h.enroll();
