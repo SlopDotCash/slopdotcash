@@ -168,9 +168,38 @@ async function provenPromotion() {
     tree: [{ path: "fix.ts", mode: "100644", type: "blob", sha: blob }],
   });
   const client = {
+    async graphql<T>(): Promise<T> {
+      return {
+        search: {
+          issueCount: 1,
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [
+            {
+              id: promotion.evidence.pull.node_id,
+              number: promotion.evidence.pull.number,
+              url: promotion.evidence.pull.html_url,
+              mergedAt: promotion.evidence.pull.merged_at,
+              repository: {
+                id: "R_promotion",
+                databaseId: 42,
+                nameWithOwner: repository.id,
+                isPrivate: false,
+              },
+              mergeCommit: { oid: integrated },
+              commits: {
+                totalCount: 1,
+                nodes: [{ commit: { oid: accepted } }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          ],
+        },
+      } as T;
+    },
     async get<T>(path: string): Promise<T | null> {
       if (path === `/repos/${repository.id}`)
         return { id: 42, node_id: "R_promotion", private: false } as T;
+      if (/\/commits\/[a-f0-9]{40}\/pulls\?/.test(path)) return [] as T;
       return (responses.get(path) as T | undefined) ?? null;
     },
   };
