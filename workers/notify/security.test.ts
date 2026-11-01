@@ -660,10 +660,11 @@ test("a primary authority outage does not stop another failed notice's escalatio
     await dispatchSecurityMail(h.deps);
     const primary = h
       .rows()
-      .find((row) => row.recipient_github_id === owner.githubId)!;
+      .find((row) => row.recipient_github_id === owner.githubId);
     const receipt = h
       .rows()
-      .find((row) => row.recipient_github_id === reporter.githubId)!;
+      .find((row) => row.recipient_github_id === reporter.githubId);
+    if (!primary || !receipt) throw new Error("Original notices missing");
     // Both sends failed after provider acceptance. Check the owner first,
     // then escalate the reporter's independent notice to an available backup.
     h.sqlite
