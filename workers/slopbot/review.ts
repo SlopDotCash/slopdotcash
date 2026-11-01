@@ -704,6 +704,54 @@ async function sameReviewEvidence(
   return JSON.stringify(current) === JSON.stringify(related);
 }
 
+/** 64-character lowercase hex is a well-formed SHA-256 digest encoding. */
+const SHA256_HEX_TOKEN = /\b[0-9a-f]{64}\b/u;
+/** Python / C-style hex integer literal, not a name. */
+const HEX_INTEGER_LITERAL = /\b0x[0-9A-Fa-f]+\b/u;
+/** Model claims that a cited digest or hex string is invalid. */
+const INVALID_HEX_CLAIM =
+  /\b(?:not\s+a\s+(?:valid\s+)?(?:sha-?256(?:\s+hex(?:\s+value)?)?|hex(?:adecimal)?(?:\s+value)?)|(?:sha-?256|hex(?:adecimal)?)\s+(?:digest\s+)?(?:is\s+)?(?:invalid|malformed|not\s+valid)|invalid\s+(?:sha-?256|hex(?:adecimal)?))\b/iu;
+/** Model claims that a 0x... token is an undefined name. */
+const UNDEFINED_HEX_NAME_CLAIM =
+  /\b(?:undefined\s+name|NameError|assigns?\b[\s\S]{0,80}?\bundefined)\b/iu;
+
+function verdictReviewText(verdict: Verdict): string {
+  return [verdict.summary, ...verdict.evidence, ...verdict.limitations].join(
+    "\n",
+  );
+}
+
+/**
+ * True when a low_quality finding rests on calling a well-formed SHA-256
+ * digest or 0x hex integer literal invalid or undefined (#1930 problems 1-2).
+ * The check is deterministic and does not trust the model claim.
+ */
+export function hexMisreadFinding(verdict: Verdict): boolean {
+  if (verdict.category !== "low_quality") return false;
+  const text = verdictReviewText(verdict);
+  if (INVALID_HEX_CLAIM.test(text) && SHA256_HEX_TOKEN.test(text)) return true;
+  if (UNDEFINED_HEX_NAME_CLAIM.test(text) && HEX_INTEGER_LITERAL.test(text))
+    return true;
+  return false;
+}
+
+/** Downgrade a hex-misread low_quality verdict to an explicit no-finding. */
+export function dropHexMisreadFinding(verdict: Verdict): Verdict {
+  return {
+    category: "none",
+    confidence: verdict.confidence,
+    rule_refs: [],
+    evidence: [],
+    summary:
+      "A low_quality finding claimed a SHA-256 digest or hex integer literal was invalid or undefined. A deterministic check confirmed the cited token is a valid hex digest or 0x literal, so no finding is published.",
+    limitations: [
+      ...verdict.limitations,
+      "Dropped a low_quality finding after a deterministic hex digest or 0x literal check.",
+    ],
+    objective_defect: null,
+  };
+}
+
 export function prefilter(
   context: Pick<Context, "pull" | "issue">,
 ): Verdict | null {
@@ -1345,6 +1393,12 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // Deterministic guard for model hex misreads (#1930 problems 1-2). A
+  // 64-character [0-9a-f] digest is a valid SHA-256 encoding, and a
+  // 0x[0-9A-Fa-f]+ token is a literal, not a name. Drop low_quality findings
+  // that rest on calling those invalid or undefined. Appeal matching is
+  // handled separately (#1950).
+  if (hexMisreadFinding(verdict)) verdict = dropHexMisreadFinding(verdict);
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
