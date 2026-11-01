@@ -90,9 +90,9 @@ export async function handleEmailPreferences(
     if (url.pathname !== PATH) {
       if (request.method !== "POST")
         return json(405, { error: "method_not_allowed" });
-      return url.pathname.endsWith("/verification")
+      return await (url.pathname.endsWith("/verification")
         ? requestEmailVerification(request, deps, actor.githubId)
-        : verifyEmail(request, deps, actor.githubId);
+        : verifyEmail(request, deps, actor.githubId));
     }
     return await handleEmailPreferenceForActor(request, deps, actor.githubId);
   } catch (caught) {
