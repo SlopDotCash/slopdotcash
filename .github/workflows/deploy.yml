@@ -453,6 +453,12 @@ jobs:
             echo "::warning::Playwright browser installation stalled or failed; retrying once."
           done
 
+      - name: Install pinned Chromium streaming fix
+        if: contains(matrix.browsers, 'chromium')
+        run: |
+          bash scripts/install-ci-chromium.sh "$RUNNER_TEMP/slop-ci-chromium"
+          echo "SLOP_E2E_CHROMIUM_EXECUTABLE_PATH=$RUNNER_TEMP/slop-ci-chromium/chrome-headless-shell-linux64/chrome-headless-shell" >> "$GITHUB_ENV"
+
       # run-e2e.mjs verifies the exact bundle, then runs only the lane's phase.
       # Preview and Pages lanes run in the frozen-registry fixture workspace.
       - name: Run complete assigned browser coverage
