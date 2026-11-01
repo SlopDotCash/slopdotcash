@@ -617,3 +617,57 @@ test("issued unsubscribe links survive signing-key rotation and sender pause but
   );
   h.sqlite.close();
 });
+
+test("a saved enrollment remains replayable while the sender is paused", async () => {
+  const h = await setup();
+  try {
+    expect((await h.enroll()).status).toBe(202);
+    h.ready(false);
+    const body = {
+      email: "member@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "enrollment-request-1",
+    };
+    expect((await h.call("/verification", body)).status).toBe(202);
+    expect(
+      (
+        await h.call("/verification", {
+          ...body,
+          email: "different@example.com",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await h.enroll("new@example.com")).status).toBe(503);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a competing enrollment with the same key returns conflict after the initial read", async () => {
+  const h = await setup();
+  try {
+    const body = {
+      email: "first@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "competing-enrollment-key",
+    };
+    const batch = h.db.batch.bind(h.db);
+    h.db.batch = async (statements) => {
+      h.db.batch = batch;
+      expect((await h.call("/verification", body)).status).toBe(202);
+      return batch(statements);
+    };
+    expect(
+      (await h.call("/verification", { ...body, email: "second@example.com" }))
+        .status,
+    ).toBe(409);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
+});
