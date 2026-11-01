@@ -57,6 +57,15 @@ const amount = (v: unknown): v is string =>
   typeof v === "string" &&
   /^(0|[1-9][0-9]{0,77})$/.test(v) &&
   BigInt(v) < 1n << 256n;
+// A timestamp that Date.parse accepts is not enough: it silently rolls an
+// impossible calendar date forward (2027-02-29 becomes 2027-03-01), so an
+// overflow date would pass validation and then shift the 48-hour freshness
+// check in reviewReferralClaim. The backend writes these fields with
+// toISOString, so an exact round-trip holds for every legitimate record.
+const instant = (v: unknown): v is string =>
+  typeof v === "string" &&
+  Number.isFinite(Date.parse(v)) &&
+  new Date(v).toISOString() === v;
 
 export function referralResponse(value: unknown): ReferralResponse {
   const data = value as ReferralResponse;
@@ -72,8 +81,7 @@ export function referralResponse(value: unknown): ReferralResponse {
       (v) => typeof v === "boolean",
     ) ||
     ![data.observedAt, data.finalizedAt, data.pendingUntil].every(
-      (v) =>
-        v === null || (typeof v === "string" && Number.isFinite(Date.parse(v))),
+      (v) => v === null || instant(v),
     ) ||
     !(data.wallet === null || address(data.wallet))
   )
