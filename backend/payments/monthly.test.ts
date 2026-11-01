@@ -1649,6 +1649,27 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     now: afterCutoff,
     authorize: async () => first,
   };
+  const prepare = db.prepare.bind(db);
+  let unavailable = true;
+  const failingDb = {
+    ...db,
+    prepare(query: string) {
+      if (
+        unavailable &&
+        query.startsWith("SELECT automatic FROM monthly_payment_settings")
+      )
+        throw new Error("Synthetic settings storage outage");
+      return prepare(query);
+    },
+  };
+  const settingsFailure = await publishMonthlyAuthorizations({
+    ...publication,
+    db: failingDb,
+  });
+  expect(settingsFailure.published).toEqual([]);
+  expect(settingsFailure.failures).toHaveLength(1);
+  expect(count("monthly_payment_authorizations")).toBe(0);
+  unavailable = false;
   const failed = await publishMonthlyAuthorizations({
     ...publication,
     authorize: async () => {
