@@ -2843,11 +2843,35 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     "href",
     `/projects/${id}/security`,
   );
+  // Root manifests can finish before the data reads they start. Do not leave
+  // this page until its declared snapshot and Points shards really finish.
+  const completedData = new Set<string>();
+  page.on("requestfinished", (request) => {
+    completedData.add(new URL(request.url()).pathname);
+  });
+  const ordinaryPoints = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/points.json",
+  );
   const ordinarySnapshot = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
   );
   await row.click();
-  await (await ordinarySnapshot).finished();
+  const snapshotResponse = await ordinarySnapshot;
+  await snapshotResponse.finished();
+  const snapshot = (await snapshotResponse.json()) as {
+    parts?: { path: string }[];
+  };
+  const points = (await (await ordinaryPoints).json()) as {
+    shards: { path: string }[];
+  };
+  const dataPaths = [...(snapshot.parts ?? []), ...points.shards].map(
+    (part) => part.path,
+  );
+  await expect
+    .poll(() => dataPaths.filter((path) => !completedData.has(path)), {
+      timeout: 30_000,
+    })
+    .toEqual([]);
   await page.waitForLoadState("networkidle");
   await expect(
     page.getByLabel("Agent prompt", { exact: true }),
