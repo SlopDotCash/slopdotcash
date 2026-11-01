@@ -60,6 +60,36 @@ test("changing an interpreter script changes the reviewed inventory", () => {
   expect(before.inventorySha256 === after.inventorySha256).toBe(false);
 });
 
+test("seed phrase or private key next to a wallet signing or broadcast method is detected", () => {
+  // The wallet-drainer medium rule matches mnemonic/seed-phrase/private-key
+  // within 120 chars of a network-send method. `sendTransaction` was already
+  // covered, but `sendSignedTransaction`, `signTransaction`, and
+  // `sendRawTransaction` each contain `Transaction` after a word-boundary
+  // break, so `\bsendTransaction\b` stopped inside them and missed the match.
+  const walletDrainerPayloads = [
+    // sendSignedTransaction: the method web3.js uses to broadcast a pre-signed tx
+    'const mnemonic = "word1 word2 word3"; web3.eth.sendSignedTransaction(rawTx)',
+    // signTransaction: signs a transaction with a private key before sending
+    "const privateKey = wallet.privateKey; web3.eth.signTransaction(tx, privateKey)",
+    // sendRawTransaction: ethers.js / low-level broadcast of a signed raw tx
+    'const seedPhrase = words.join(" "); provider.sendRawTransaction(signedTx)',
+    // eth_sendRawTransaction: JSON-RPC method used by ethers, viem and raw RPC clients
+    'const privateKey = "0xdeadbeef"; provider.request({ method: "eth_sendRawTransaction", params: [signed] })',
+    // eth_sendTransaction: JSON-RPC form without pre-signing
+    'const mnemonic = "word1 word2 word3"; rpc.call("eth_sendTransaction", tx)',
+  ];
+  for (const payload of walletDrainerPayloads) {
+    const inspection = inspected("scripts/drain.js", `${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["wallet-drainer"],
+    });
+  }
+});
+
 test("recognized Python and shell source keeps its existing unsafe-execution check", () => {
   for (const path of ["tools/check.py", "tools/check.sh"]) {
     const content = path.endsWith(".py")

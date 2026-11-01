@@ -281,7 +281,7 @@ const RULES: Rule[] = [
     threat: "wallet-drainer",
     severity: "medium",
     pattern:
-      /\b(?:mnemonic|seed[ _-]?phrase|private[ _-]?key)\b[^\n]{0,120}\b(?:fetch|axios|https?:\/\/|XMLHttpRequest|sendTransaction|transfer)\b/iu,
+      /\b(?:mnemonic|seed[ _-]?phrase|private[ _-]?key)\b[^\n]{0,120}\b(?:fetch|axios|https?:\/\/|XMLHttpRequest|sendTransaction|sendSignedTransaction|signTransaction|sendRawTransaction|eth_sendRawTransaction|eth_sendTransaction|transfer)\b/iu,
     summary: "Handles a seed phrase or private key next to a network send",
   },
   {
