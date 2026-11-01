@@ -299,7 +299,7 @@ export async function prepareSolanaDirect(input: SolanaDirectInput): Promise<{
   );
   if (simulation.err !== null)
     throw new DirectPayerRefused(
-      "The direct award simulation failed; check funds and recipient account rent",
+      "The direct award simulation failed. Check funds and recipient account rent, or retry if the RPC node is lagging",
     );
   return {
     transaction,
