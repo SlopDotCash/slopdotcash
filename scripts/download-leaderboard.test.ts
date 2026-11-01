@@ -91,43 +91,41 @@ test("missing or corrupted parts never replace the prior complete snapshot", asy
 test("a stalled request retries once recovered, and a total deadline leaves the old file intact", async () => {
   await withOutput(async (output) => {
     let attempts = 0;
-    const request = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (++attempts > 1) return new Response(legacy);
-      await new Promise((_, reject) => {
-        init?.signal?.addEventListener("abort", () =>
-          reject(init.signal?.reason),
-        );
-      });
-      throw new Error("unreachable");
-    }) as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-    await downloadLeaderboard(url, output, {
-      request,
-      attemptTimeoutMs: 10,
-      totalTimeoutMs: 1_000,
-      retryDelayMs: 0,
+    let unavailable = false;
+    // Exercise native fetch cancellation on a real pending HTTP request.
+    // The unresolved request mock hangs on the pinned Bun runtime on Windows.
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        if (++attempts > 1 && !unavailable) return new Response(legacy);
+        return new Promise<Response>(() => {});
+      },
     });
-    expect(attempts).toBe(2);
-    expect(new Uint8Array(await readFile(output))).toEqual(legacy);
-    const unavailable = (async (
-      _input: RequestInfo | URL,
-      init?: RequestInit,
-    ) => {
-      await new Promise((_, reject) => {
-        init?.signal?.addEventListener("abort", () =>
-          reject(init.signal?.reason),
-        );
-      });
-      throw new Error("unreachable");
-    }) as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-    await expect(
-      downloadLeaderboard(url, output, {
-        request: unavailable,
-        attemptTimeoutMs: 1_000,
-        totalTimeoutMs: 10,
+    const request = (_input: RequestInfo | URL, init?: RequestInit) =>
+      fetch(server.url, init);
+    try {
+      await downloadLeaderboard(url, output, {
+        request,
+        attemptTimeoutMs: 100,
+        totalTimeoutMs: 2_000,
         retryDelayMs: 0,
-      }),
-    ).rejects.toThrow();
-    expect(new Uint8Array(await readFile(output))).toEqual(legacy);
+      });
+      expect(attempts).toBe(2);
+      expect(new Uint8Array(await readFile(output))).toEqual(legacy);
+      unavailable = true;
+      await expect(
+        downloadLeaderboard(url, output, {
+          request,
+          attemptTimeoutMs: 1_000,
+          totalTimeoutMs: 100,
+          retryDelayMs: 0,
+        }),
+      ).rejects.toThrow();
+      expect(new Uint8Array(await readFile(output))).toEqual(legacy);
+    } finally {
+      server.stop(true);
+    }
   });
 });
 
