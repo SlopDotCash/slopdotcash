@@ -218,7 +218,9 @@ export default defineConfig({
   // stream EOF and ERR_ABORTED
   // (https://github.com/microsoft/playwright/issues/42742). Keep the bounded
   // readers and strict failure assertions, and run these workflows
-  // in Firefox at both widths. Firefox also repeats the private evidence
+  // in Firefox at both widths. Only the discovery-dependent admin-placement
+  // case moves; the other private-report workflows keep their Chromium coverage.
+  // Firefox also repeats the private evidence
   // download. The registry lane shards by test order, and each viewport's
   // registry workflow is one serial group, so Firefox comes first: the
   // desktop group then starts in the first shard and the mobile group in the
@@ -230,7 +232,6 @@ export default defineConfig({
         "**/evidence-download.spec.ts",
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
-        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Firefox"],
@@ -242,19 +243,27 @@ export default defineConfig({
       testMatch: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
-        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Firefox"],
         viewport: { width: 320, height: 800 },
       },
     },
+    ...([1440, 320] as const).map((width) => ({
+      name: `firefox-discovery-${width === 1440 ? "desktop" : "mobile"}`,
+      testMatch: "**/security-bounty.spec.ts",
+      grep: /admin placement and explicit bounty type/,
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width, height: width === 1440 ? 1000 : 800 },
+      },
+    })),
     {
       name: "chromium-desktop",
+      grepInvert: /admin placement and explicit bounty type/,
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
-        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -263,11 +272,10 @@ export default defineConfig({
     },
     {
       name: "chromium-mobile",
-      grepInvert: /@desktop-only/,
+      grepInvert: /@desktop-only|admin placement and explicit bounty type/,
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
-        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
