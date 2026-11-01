@@ -783,11 +783,58 @@ const CLAIM_SUBJECT_STOPWORDS = new Set([
   "before",
   "after",
   "defined",
+  // Reporting verbs that sit between a cited 0x literal and the claim
+  // ("was called an undefined name") and must not win nearest-token.
+  "called",
+  "treated",
+  "considered",
+  "described",
+  "reported",
+  "labeled",
+  "flagged",
 ]);
 
 function verdictReviewText(verdict: Verdict): string {
   return [verdict.summary, ...verdict.evidence, ...verdict.limitations].join(
     "\n",
+  );
+}
+
+/** Truncated digest quote: prefix…suffix or prefix...suffix. */
+const TRUNCATED_DIGEST_QUOTE =
+  /\b([0-9a-fA-F]{4,})\s*(?:…|\.\.\.)\s*([0-9a-fA-F]{2,})\b/gu;
+/** Anaphoric reference to a previously cited value inside an assigns claim. */
+const ANAPHORIC_VALUE = /\b(?:that|this|the)\s+value\b/iu;
+
+/**
+ * Expand truncated digest quotes (8190d3f7…f697) to the matching full
+ * 64-hex token elsewhere in the same text, so a claim that cites the
+ * truncated form can still correlate to the well-formed digest.
+ */
+function expandTruncatedDigests(text: string): string {
+  return text.replace(
+    new RegExp(TRUNCATED_DIGEST_QUOTE.source, TRUNCATED_DIGEST_QUOTE.flags),
+    (full, prefix: string, suffix: string) => {
+      const flags = HEX_LOOKING_DIGEST.flags.includes("g")
+        ? HEX_LOOKING_DIGEST.flags
+        : `${HEX_LOOKING_DIGEST.flags}g`;
+      const prefixLower = prefix.toLowerCase();
+      const suffixLower = suffix.toLowerCase();
+      for (const match of text.matchAll(
+        new RegExp(HEX_LOOKING_DIGEST.source, flags),
+      )) {
+        const token = match[0];
+        const lower = token.toLowerCase();
+        if (
+          SHA256_HEX_TOKEN.test(token) &&
+          lower.startsWith(prefixLower) &&
+          lower.endsWith(suffixLower)
+        ) {
+          return token;
+        }
+      }
+      return full;
+    },
   );
 }
 
@@ -818,6 +865,22 @@ function nearestMatchInWindow(
   return best?.token ?? null;
 }
 
+/** True when a 0x literal appears in the window before an assigns claim. */
+function precedingHexLiteral(
+  text: string,
+  claimIndex: number,
+  windowSize: number,
+): boolean {
+  const start = Math.max(0, claimIndex - windowSize);
+  const preceding = text.slice(start, claimIndex);
+  return new RegExp(
+    HEX_INTEGER_LITERAL.source,
+    HEX_INTEGER_LITERAL.flags.includes("g")
+      ? HEX_INTEGER_LITERAL.flags
+      : `${HEX_INTEGER_LITERAL.flags}g`,
+  ).test(preceding);
+}
+
 /**
  * True when a low_quality finding rests on calling a well-formed SHA-256
  * digest or 0x hex integer literal invalid or undefined (#1930 problems 1-2).
@@ -826,7 +889,9 @@ function nearestMatchInWindow(
  */
 export function hexMisreadFinding(verdict: Verdict): boolean {
   if (verdict.category !== "low_quality") return false;
-  const text = verdictReviewText(verdict);
+  // Expand truncated digest quotes so claims that cite 8190d3f7…f697 still
+  // correlate to the full 64-hex token carried in evidence (#1930 phrasing).
+  const text = expandTruncatedDigests(verdictReviewText(verdict));
 
   for (const claim of text.matchAll(
     new RegExp(INVALID_HEX_CLAIM.source, INVALID_HEX_CLAIM.flags),
@@ -845,12 +910,21 @@ export function hexMisreadFinding(verdict: Verdict): boolean {
     new RegExp(UNDEFINED_HEX_NAME_CLAIM.source, UNDEFINED_HEX_NAME_CLAIM.flags),
   )) {
     const claimText = claim[0];
-    // assigns … undefined: only the name inside that span is the target.
+    const claimIndex = claim.index ?? 0;
+    // assigns … undefined: the name inside that span is the target. When the
+    // span only says "that value", resolve the anaphora to a 0x literal just
+    // before the claim (the #1930 "assigns that value" shape).
     if (/^assigns?\b/iu.test(claimText)) {
       if (
         new RegExp(HEX_INTEGER_LITERAL.source, HEX_INTEGER_LITERAL.flags).test(
           claimText,
         )
+      ) {
+        return true;
+      }
+      if (
+        ANAPHORIC_VALUE.test(claimText) &&
+        precedingHexLiteral(text, claimIndex, CLAIM_TOKEN_WINDOW)
       ) {
         return true;
       }
@@ -860,7 +934,7 @@ export function hexMisreadFinding(verdict: Verdict): boolean {
     // token to the claim is itself a 0x literal.
     const nearest = nearestMatchInWindow(
       text,
-      claim.index ?? 0,
+      claimIndex,
       claim[0].length,
       IDENTIFIER_OR_HEX,
       CLAIM_TOKEN_WINDOW,

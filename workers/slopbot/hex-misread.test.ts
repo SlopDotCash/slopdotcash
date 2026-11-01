@@ -160,3 +160,57 @@ test("hexMisreadFinding keeps real undefined-variable findings near 0x literals"
     ),
   ).toBe(false);
 });
+
+test("hexMisreadFinding drops #1930 'was called an undefined name' phrasing", () => {
+  // Summary-only shape from the live #1930 reviews: a reporting verb sits
+  // between the 0x literal and the claim. Must not anchor on "called".
+  expect(
+    hexMisreadFinding(
+      lowQuality({
+        summary:
+          "SLOT_TOKEN_SIDE = 0x57738c8 was called an undefined name that should raise NameError.",
+        evidence: ["SLOT_TOKEN_SIDE = 0x57738c8"],
+      }),
+    ),
+  ).toBe(true);
+});
+
+test("hexMisreadFinding drops #1930 'assigns that value' anaphora", () => {
+  // Same summary as the existing positive test, but without the incidental
+  // 0xF4 limitations line that previously made the test pass for the wrong
+  // reason. The literal is only referenced as "that value".
+  expect(
+    hexMisreadFinding(
+      lowQuality({
+        summary:
+          "SLOT_TOKEN_SIDE = 0x57738c8 assigns that value to an undefined name and should raise NameError.",
+        evidence: ["SLOT_TOKEN_SIDE = 0x57738c8"],
+      }),
+    ),
+  ).toBe(true);
+});
+
+test("hexMisreadFinding drops #1930 truncated digest quote 8190d3f7…f697", () => {
+  // Live reviews cited a truncated digest in the summary while evidence held
+  // the full 64-hex token. Expand the quote before correlating.
+  expect(
+    hexMisreadFinding(
+      lowQuality({
+        summary:
+          "The pinned value 8190d3f7…f697 is not a sha256 hex value, so the hash assertion cannot succeed.",
+        evidence: [
+          `assert.equal(digest, "${DIGEST}");`,
+        ],
+      }),
+    ),
+  ).toBe(true);
+  expect(
+    hexMisreadFinding(
+      lowQuality({
+        summary:
+          "The pinned value 8190d3f7...f697 is not a sha256 hex value, so the hash assertion cannot succeed.",
+        evidence: [DIGEST],
+      }),
+    ),
+  ).toBe(true);
+});
