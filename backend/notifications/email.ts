@@ -323,8 +323,6 @@ async function requestEmailVerification(
     typeof body.securityEnabled !== "boolean"
   )
     return json(400, { error: "invalid_request" });
-  if (!(await generalEmailAvailable(deps.mailService)))
-    return json(503, { error: "email_unavailable" });
   const email = body.email.trim();
   const existing = await deps.db
     .prepare(
@@ -345,6 +343,8 @@ async function requestEmailVerification(
       return json(409, { error: "idempotency_conflict" });
     return emailPreferenceView(deps, githubId, 202);
   }
+  if (!(await generalEmailAvailable(deps.mailService)))
+    return json(503, { error: "email_unavailable" });
   const token = randomEmailToken();
   const id = randomEmailToken();
   const now = deps.now();
