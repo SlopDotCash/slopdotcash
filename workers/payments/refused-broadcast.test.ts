@@ -307,7 +307,7 @@ test.each(["processing", "submitted"] as const)(
   async (phase) => {
     chain.funded = true;
     chain.accepted.clear();
-    const { env, payRequests, state } = await stack();
+    const { env, journal, payRequests, state } = await stack();
     let reached!: () => void;
     let resume!: () => void;
     const readReached = new Promise<void>((resolve) => {
@@ -380,9 +380,21 @@ test.each(["processing", "submitted"] as const)(
       lease_token: string | null;
       lease_until: string | null;
     }>();
+    const attempt = await env.PAYMENTS_DB.prepare(
+      "SELECT id FROM payment_attempts",
+    ).first<{ id: string }>();
+    const signedBefore = await journal.get<{
+      rawTransaction: Hex;
+      transactionId: Hex;
+    }>(`pay:${attempt?.id}`);
     resume();
     try {
       await oldRun;
+      expect(
+        await journal.get<{ rawTransaction: Hex; transactionId: Hex }>(
+          `pay:${attempt?.id}`,
+        ),
+      ).toEqual(signedBefore);
       expect(
         await env.PAYMENTS_DB.prepare(
           "SELECT state,lease_token,lease_until FROM payment_outbox",
@@ -410,6 +422,15 @@ test.each(["processing", "submitted"] as const)(
     expect(parseTransaction([...chain.accepted.values()][0]).nonce).toBe(0);
     expect(state()[0].attempt).toBe("submitted");
     expect(state()[0].outbox).toBe("submitted");
+    expect(await journal.get(`pay:${attempt?.id}`)).toMatchObject({
+      transactionId: state()[0].transactionId,
+      rawTransaction: [...chain.accepted.values()][0],
+    });
+    await runPaymentDispatch(env, () => new Date(started.getTime() + 122_000));
+    expect(payRequests).toHaveLength(1);
+    expect(
+      await journal.get<number>(`nonce:84532:${relayer.address.toLowerCase()}`),
+    ).toBe(1);
   },
 );
 
