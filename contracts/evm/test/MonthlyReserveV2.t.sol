@@ -353,22 +353,27 @@ contract MonthlyReserveV2Test {
         }
     }
 
-    function test_aLegacyMonthlyCommitmentIsNotBlockedByAStuckReserve() public {
-        reserve(
-            vault,
-            PERIOD,
-            ProjectEscrow.MonthlyReservation(
-                keccak256("random"), keccak256("random root"), CAP, CAP, 1, vault.ordinarySourceSequence()
-            )
-        );
+    function test_aLegacyMonthlyCommitmentWaitsForAPendingReserve() public {
+        ProjectEscrow.MonthlyAward[] memory shared = new ProjectEscrow.MonthlyAward[](1);
+        shared[0] = ProjectEscrow.MonthlyAward(11, 100e6, keccak256("shared-source"));
+        reserve(vault, PERIOD, plan(vault, shared, 100e6));
         vm.warp(NOVEMBER_CLOSES);
-        ProjectEscrow.MonthlyAward[] memory e = entries(2, 7);
         (uint8 v, bytes32 r, bytes32 s) =
-            vm.sign(AUTHORITY_KEY, vault.monthlyDigest(NEXT_PERIOD, vault.allocationRoot(e)));
+            vm.sign(AUTHORITY_KEY, vault.monthlyDigest(NEXT_PERIOD, vault.allocationRoot(shared)));
+        bytes memory signature = abi.encodePacked(r, s, v);
+        // The legacy root reuses the pending leaf's source. Without the guard the legacy
+        // award would consume it and the leaf could never commit.
         vm.prank(SUBMITTER);
-        vault.commitMonthly(NEXT_PERIOD, e, abi.encodePacked(r, s, v));
-        require(vault.freeBalance() == 10_000e6 - CAP - sum(e), "legacy month funded from free balance");
-        require(vault.pendingMonthlyGross() == CAP, "stuck reserve unchanged");
+        vm.expectRevert(ProjectEscrow.MonthlyLeavesPending.selector);
+        vault.commitMonthly(NEXT_PERIOD, shared, signature);
+        // Releasing the whole reserve makes the source free again, then the legacy month commits.
+        bytes memory release = signRelease(vault, AUTHORITY_KEY, PERIOD, 100e6, 100e6);
+        vm.prank(OWNER);
+        vault.releaseMonthlyReserve(PERIOD, 100e6, 100e6, release);
+        vm.prank(SUBMITTER);
+        vault.commitMonthly(NEXT_PERIOD, shared, signature);
+        require(vault.pendingMonthlyGross() == 0, "nothing left pending");
+        require(vault.freeBalance() == 10_000e6 - 100e6, "legacy month funded once");
     }
 
     // ------------------------------------------------------------------

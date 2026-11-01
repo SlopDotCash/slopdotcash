@@ -524,6 +524,10 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// awards only; matching existing awards retain their payment state and are never reserved twice.
     function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        // A V1 allocation is not source-checked against an admitted V2 tree. While a V2
+        // reserve is pending, a shared source would be consumed by the V1 award and its
+        // leaf could never commit. Wait for the V2 leaves to settle or be released.
+        if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
