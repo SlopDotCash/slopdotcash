@@ -882,10 +882,65 @@ function precedingHexLiteral(
 }
 
 /**
+ * Qualifiers that turn an "invalid digest" claim into a checksum-mismatch
+ * claim ("invalid SHA-256 for the tarball") rather than an encoding complaint.
+ */
+const MISMATCH_CLAIM_QUALIFIER = /\b(?:for|of|against|expected|actual)\b/iu;
+
+/** Distinct well-formed 64-hex digests in text (case-insensitive). */
+function distinctSha256Digests(text: string): Set<string> {
+  const found = new Set<string>();
+  const flags = HEX_LOOKING_DIGEST.flags.includes("g")
+    ? HEX_LOOKING_DIGEST.flags
+    : `${HEX_LOOKING_DIGEST.flags}g`;
+  for (const match of text.matchAll(
+    new RegExp(HEX_LOOKING_DIGEST.source, flags),
+  )) {
+    if (SHA256_HEX_TOKEN.test(match[0])) found.add(match[0].toLowerCase());
+  }
+  return found;
+}
+
+/**
+ * True when the claim (and a short trailing window) is qualified as a
+ * mismatch against some other digest/artifact, not a pure encoding complaint.
+ */
+function claimHasMismatchQualifier(
+  text: string,
+  claimIndex: number,
+  claimLength: number,
+): boolean {
+  const end = Math.min(text.length, claimIndex + claimLength + 48);
+  return MISMATCH_CLAIM_QUALIFIER.test(text.slice(claimIndex, end));
+}
+
+/**
+ * Encoding-shaped claim language: not hex, malformed, or wrong length.
+ * Broader "invalid sha256" phrases still reach this path via INVALID_HEX_CLAIM,
+ * then mismatch filters below refuse the drop.
+ */
+const ENCODING_HEX_SIGNAL =
+  /\b(?:not\s+(?:a\s+)?(?:valid\s+)?(?:sha-?256\s+)?hex(?:adecimal)?(?:\s+value)?|malformed|wrong\s+length|not\s+64(?:\s+hex)?(?:\s+(?:chars?|characters?))?|truncated|too\s+short)\b/iu;
+
+function claimIsEncodingComplaint(claimText: string): boolean {
+  return (
+    ENCODING_HEX_SIGNAL.test(claimText) ||
+    /\b(?:sha-?256|hex(?:adecimal)?)\s+(?:digest\s+)?(?:is\s+)?(?:invalid|malformed|not\s+valid)\b/iu.test(
+      claimText,
+    ) ||
+    /\binvalid\s+(?:sha-?256|hex(?:adecimal)?)\b/iu.test(claimText) ||
+    /\bnot\s+a\s+(?:valid\s+)?(?:sha-?256|hex(?:adecimal)?)/iu.test(claimText)
+  );
+}
+
+/**
  * True when a low_quality finding rests on calling a well-formed SHA-256
  * digest or 0x hex integer literal invalid or undefined (#1930 problems 1-2).
  * Correlates each claim to the nearest target token in a bounded window so an
  * incidental valid token elsewhere cannot suppress a genuine finding.
+ * Digest drops are encoding-only (not hex / malformed / wrong length); a
+ * checksum-mismatch claim that cites two digests or is qualified by
+ * for/of/against/expected/actual is never dropped.
  */
 export function hexMisreadFinding(verdict: Verdict): boolean {
   if (verdict.category !== "low_quality") return false;
@@ -896,10 +951,17 @@ export function hexMisreadFinding(verdict: Verdict): boolean {
   for (const claim of text.matchAll(
     new RegExp(INVALID_HEX_CLAIM.source, INVALID_HEX_CLAIM.flags),
   )) {
+    const claimIndex = claim.index ?? 0;
+    const claimText = claim[0];
+    // Digest drops are encoding-only. Mismatch claims ("invalid for/of/against
+    // expected/actual …") and verdicts that cite two distinct digests stay.
+    if (!claimIsEncodingComplaint(claimText)) continue;
+    if (claimHasMismatchQualifier(text, claimIndex, claimText.length)) continue;
+    if (distinctSha256Digests(text).size >= 2) continue;
     const nearest = nearestMatchInWindow(
       text,
-      claim.index ?? 0,
-      claim[0].length,
+      claimIndex,
+      claimText.length,
       HEX_LOOKING_DIGEST,
       CLAIM_TOKEN_WINDOW,
     );
