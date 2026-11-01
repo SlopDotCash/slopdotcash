@@ -166,6 +166,37 @@ test("cache failure and expiry preserve last verified totals; never-activated is
   dryRun.sqlite.close();
 });
 
+test("a calendar-overflow observed_at is rejected instead of shifting the freshness check", async () => {
+  const h = harness();
+  h.save({ ...h.snapshot, observedAt: "2027-02-29T00:00:00.000Z" });
+  const rejected = await h.read();
+  expect(rejected.status).toBe(500);
+  expect(rejected.body).toMatchObject({ error: "internal_error" });
+  h.save({ ...h.snapshot, observedAt: "2024-02-29T00:00:00.000Z" });
+  const legit = await h.read();
+  expect(legit.status).toBe(200);
+  expect(legit.body).toMatchObject({ status: "stale" });
+  h.sqlite.close();
+});
+
+test("a future-dated observed_at is rejected instead of staying permanently fresh", async () => {
+  const h = harness();
+  h.save({
+    ...h.snapshot,
+    observedAt: new Date(now.getTime() + 30 * 24 * 3600_000).toISOString(),
+  });
+  const rejected = await h.read();
+  expect(rejected.status).toBe(500);
+  expect(rejected.body).toMatchObject({ error: "internal_error" });
+  h.save({
+    ...h.snapshot,
+    observedAt: new Date(now.getTime() + 60_000).toISOString(),
+  });
+  const withinSkew = await h.read();
+  expect(withinSkew.status).toBe(200);
+  h.sqlite.close();
+});
+
 test("a paused pending window never matures, and a void retains the preceding root", async () => {
   const h = harness();
   const time = h.snapshot.block.timestamp;
