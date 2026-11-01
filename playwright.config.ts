@@ -8,7 +8,7 @@ import { availableParallelism } from "node:os";
 import { defineConfig, devices } from "@playwright/test";
 
 const firefoxStreamWorkflows =
-  /admin placement and explicit bounty type|a manual Points award reaches private Inbox review|private security bounty programs keep cases restricted/;
+  /admin placement and explicit bounty type|a manual Points award reaches private Inbox review|private security bounty programs keep cases restricted|an escalated contribution appeal opens from the moderator Inbox/;
 
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
@@ -255,7 +255,11 @@ export default defineConfig({
     },
     ...([1440, 320] as const).map((width) => ({
       name: `firefox-stream-${width === 1440 ? "desktop" : "mobile"}`,
-      testMatch: ["**/security-bounty.spec.ts", "**/points-disputes.spec.ts"],
+      testMatch: [
+        "**/security-bounty.spec.ts",
+        "**/points-disputes.spec.ts",
+        "**/slopbot-appeal-inbox.spec.ts",
+      ],
       grep: firefoxStreamWorkflows,
       use: {
         ...devices["Desktop Firefox"],
