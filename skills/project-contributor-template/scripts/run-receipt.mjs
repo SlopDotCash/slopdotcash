@@ -1449,7 +1449,7 @@ export async function slopIdentityAssertion(
   );
   const expiresAt = Date.parse(started.expiresAt);
   process.stderr.write(
-    `This link expires in ${Math.max(0, Math.round((expiresAt - nowImpl()) / 1000))} seconds; authorize promptly.\n`,
+    `This link expires in ${Math.max(0, Math.round((expiresAt - nowImpl()) / 1000))} seconds. Open it in the same browser, authorize GitHub, and return before it expires.\n`,
   );
   let retryAfterSeconds = started.pollAfterSeconds;
   while (nowImpl() < expiresAt) {
@@ -1492,7 +1492,7 @@ export async function slopIdentityAssertion(
         (errorCode === "flow_expired" || nowImpl() >= expiresAt)
       ) {
         fail(
-          "Slop identity authorization expired before completion; run register again and authorize within the deadline",
+          "Slop identity authorization expired before completion; run the command again and authorize within the deadline",
         );
       }
       fail(
