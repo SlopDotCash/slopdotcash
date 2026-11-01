@@ -39,7 +39,7 @@ import {
   dispatchActivityMail,
 } from "../notify/activity";
 import type { Category, Job } from "./contracts";
-import worker from "./index";
+import worker, { jobFor } from "./index";
 import type { D1TransactionalDatabase } from "./persistence";
 import { type ReviewEnv, reviewItem } from "./review";
 
@@ -126,6 +126,8 @@ type Run = {
     loseResponse?: boolean;
     afterWrite?: () => void;
   }) => { entered: Promise<void>; release: () => void };
+  /** The body GitHub returns for opening comment 77. */
+  openingComment: (body: string) => void;
   beforeAppealResolution: (callback: () => void) => void;
   beforePenaltyInsert: (callback: () => Promise<void>) => void;
   currentState: () => string;
@@ -271,6 +273,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let loseReopenResponse = false;
   let failCommentUpdate = false;
   let appealResponse: "accepted" | "unknown" | null = null;
+  let openingComment = "/slopbot dispute Exact dispute from comment 77";
   let appealRejection: number | null = null;
   let pauseAppeal: (() => Promise<void>) | null = null;
   let appealHistoryMode = "normal";
@@ -644,7 +647,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       }
       if (path.endsWith("/issues/comments/77") && request.method === "GET")
         return Response.json({
-          body: "/slopbot dispute Exact dispute from comment 77",
+          body: openingComment,
           user: { id: AUTHOR },
           issue_url: `https://api.github.com/repos/${owner}/${repo}/issues/5`,
         });
@@ -1160,6 +1163,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       closureEnabled: (value) => {
         env.SLOPBOT_CLOSURE_ENABLED = String(value);
       },
+      openingComment: (body) => {
+        openingComment = body;
+      },
       beforeAppealResolution: (callback) => {
         beforeAppealResolution = callback;
       },
@@ -1462,6 +1468,55 @@ test("a value dispute reads the opening comment rather than a newer unrelated ap
     );
   });
 });
+
+// The webhook accepts any comment that starts with `/slopbot appeal` after
+// trimming, so triage must read the same comment back.
+for (const [form, body] of [
+  [
+    "a colon after the command",
+    "/slopbot appeal: Not spam, this is my project page.",
+  ],
+  [
+    "a leading blank line",
+    "\n/slopbot appeal Not spam, this is my project page.",
+  ],
+] as const) {
+  test(`a finding appeal opened with ${form} reaches triage`, async () => {
+    expect(
+      jobFor(
+        "issue_comment",
+        "appeal-delivery",
+        {
+          action: "created",
+          installation: { id: 1 },
+          repository: {
+            id: 1,
+            name: "asi",
+            private: false,
+            owner: { login: "SlopDotCash" },
+          },
+          sender: { id: AUTHOR, type: "User" },
+          issue: { number: 5, pull_request: {} } as never,
+          comment: { id: 77, body },
+        },
+        "999",
+      ),
+    ).toMatchObject({ kind: "appeal", appealCommentId: 77 });
+    await closedItem(async (run) => {
+      expect(await run.review()).toBe("closed (spam)");
+      run.openingComment(body);
+      run.model("none", 0.95);
+      expect(
+        await run.deliver(
+          run.job("appeal", { senderId: AUTHOR, appealCommentId: 77 }),
+        ),
+      ).toBe("appeal drafted (uphold)");
+      expect(run.modelInputs.at(-1)?.item).toContain(
+        "Not spam, this is my project page.",
+      );
+    });
+  });
+}
 
 const PENALTY =
   "SELECT category, debit_thirds, moderator_review, reversal FROM slopbot_penalties";
