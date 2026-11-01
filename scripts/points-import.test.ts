@@ -13,6 +13,7 @@ import {
   latestPoints,
   type PointsJournal,
   pointKey,
+  pointMembers,
   pointRevisionId,
   reconcilePointPenalties,
 } from "../src/lib/points";
@@ -668,5 +669,66 @@ test("X-connection awards recorded from 24 October 2026 report no points", async
     ).toEqual({ alice: [5, 10], bob: [5, 0], carol: [0, 0] });
   } finally {
     sqlite.close();
+  }
+});
+
+test("a penalty batch preserves the journal prefix, caps the month's total debit and replays once", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const feed = Array.from({ length: 20 }, (_, index) => ({
+    itemNodeId: `PR_batch_${index}`,
+    authorGithubId: "42",
+    category: "spam",
+    tableVersion: "slopbot-penalties-v1",
+    debitThirds: 3,
+    period: "2026-11",
+    recordedAt: `2026-11-10T00:00:${String(index).padStart(2, "0")}.000Z`,
+  }));
+  const input = penaltyScoreInput(feed);
+  const closed = input.closedUnmergedPullRequests?.[0];
+  if (!closed) throw new Error("Missing closed-source fixture");
+  input.closedUnmergedPullRequests = feed.map((row, index) => ({
+    ...closed,
+    id: row.itemNodeId,
+    number: 20000 + index,
+    url: `https://github.com/SlopDotCash/asi/pull/${20000 + index}`,
+  }));
+  const snapshot = createLeaderboardSnapshot(input);
+  const work = applyPointsSnapshot(
+    checkpoint(),
+    createLeaderboardSnapshot({ ...input, penalties: [] }),
+    "b".repeat(64),
+    GENERATED_AT,
+  );
+  const member = pointMembers(work).find(
+    (entry) => entry.actor.id === PENALIZED_AUTHOR.id,
+  );
+  if (!member) throw new Error("Missing accepted-work fixture");
+  const available = member.monthly;
+  const corrected = reconcilePointPenalties(
+    work,
+    "a".repeat(64),
+    GENERATED_AT,
+    snapshot,
+  );
+  expect(corrected.revisions.slice(0, work.revisions.length)).toEqual(
+    work.revisions,
+  );
+  const appended = corrected.revisions.slice(work.revisions.length);
+  expect(appended).toHaveLength(20);
+  expect(
+    appended.reduce((sum, revision) => sum + revision.award.amount, 0),
+  ).toBe(-Math.min(available, 600));
+  expect(
+    reconcilePointPenalties(corrected, "a".repeat(64), GENERATED_AT, snapshot),
+  ).toBe(corrected);
+  const api = startPointsApi();
+  try {
+    api.apply(corrected);
+    const response = await api.read("/journal?after=0");
+    expect(response.status).toBe(200);
+    const page = (await response.json()) as { total: number };
+    expect(page.total).toBe(corrected.revisions.length);
+  } finally {
+    api.close();
   }
 });
