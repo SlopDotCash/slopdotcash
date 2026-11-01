@@ -23,6 +23,9 @@ if (!Number.isInteger(localPort) || localPort < 1024 || localPort > 65535)
   throw new Error("SLOP_E2E_PORT must be an unprivileged TCP port");
 const localOrigin = `http://127.0.0.1:${localPort}`;
 const requestedWorkers = process.env.SLOP_E2E_WORKERS;
+const chromiumLaunchOptions = process.env.SLOP_E2E_CHROMIUM_EXECUTABLE_PATH
+  ? { executablePath: process.env.SLOP_E2E_CHROMIUM_EXECUTABLE_PATH }
+  : {};
 
 // The registry lane gives Pages a fresh local D1, test-only admins and
 // test-only project moderators.
@@ -254,6 +257,7 @@ export default defineConfig({
       ],
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 1440, height: 1000 },
       },
     },
@@ -266,6 +270,7 @@ export default defineConfig({
       ],
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 320, height: 800 },
       },
     },
@@ -274,6 +279,7 @@ export default defineConfig({
       grep: /@breakpoint/,
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 1024, height: 768 },
       },
     },
@@ -282,6 +288,7 @@ export default defineConfig({
       grep: /@breakpoint/,
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 768, height: 1024 },
       },
     },

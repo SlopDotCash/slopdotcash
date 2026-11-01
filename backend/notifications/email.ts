@@ -90,9 +90,9 @@ export async function handleEmailPreferences(
     if (url.pathname !== PATH) {
       if (request.method !== "POST")
         return json(405, { error: "method_not_allowed" });
-      return url.pathname.endsWith("/verification")
+      return await (url.pathname.endsWith("/verification")
         ? requestEmailVerification(request, deps, actor.githubId)
-        : verifyEmail(request, deps, actor.githubId);
+        : verifyEmail(request, deps, actor.githubId));
     }
     return await handleEmailPreferenceForActor(request, deps, actor.githubId);
   } catch (caught) {
@@ -323,8 +323,6 @@ async function requestEmailVerification(
     typeof body.securityEnabled !== "boolean"
   )
     return json(400, { error: "invalid_request" });
-  if (!(await generalEmailAvailable(deps.mailService)))
-    return json(503, { error: "email_unavailable" });
   const email = body.email.trim();
   const existing = await deps.db
     .prepare(
@@ -345,6 +343,8 @@ async function requestEmailVerification(
       return json(409, { error: "idempotency_conflict" });
     return emailPreferenceView(deps, githubId, 202);
   }
+  if (!(await generalEmailAvailable(deps.mailService)))
+    return json(503, { error: "email_unavailable" });
   const token = randomEmailToken();
   const id = randomEmailToken();
   const now = deps.now();
@@ -396,6 +396,7 @@ async function requestEmailVerification(
       replay.security_enabled === Number(body.securityEnabled)
     )
       return emailPreferenceView(deps, githubId, 202);
+    if (replay) return json(409, { error: "idempotency_conflict" });
     const recent = (
       await deps.db
         .prepare(
