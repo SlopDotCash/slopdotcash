@@ -36,7 +36,11 @@ import {
   assertTokenProofAvailable,
   PaymentProofUnavailable,
 } from "./direct-evm-balances";
-import { prepareSolanaDirect, verifySolanaDirect } from "./direct-solana";
+import {
+  DirectPayerRefused,
+  prepareSolanaDirect,
+  verifySolanaDirect,
+} from "./direct-solana";
 import { retireSolanaPlans } from "./direct-solana-recovery";
 
 type Database = D1TransactionalDatabase<D1QueryStatement>;
@@ -289,16 +293,33 @@ export async function prepareDirectIntent(
       nonces: nonces.length === 2 ? [nonces[1], nonces[0]] : nonces,
     });
   } else {
-    intent.solana = await prepareSolanaDirect({
-      rpcUrl: settings.rpcUrl,
-      genesisHash: settings.genesisHash ?? (network.genesisHash as string),
-      payer: payer.address,
-      asset: intent.asset,
-      transfers,
-    });
+    intent.solana = await solanaDirectOrRefuse(() =>
+      prepareSolanaDirect({
+        rpcUrl: settings.rpcUrl,
+        genesisHash: settings.genesisHash ?? (network.genesisHash as string),
+        payer: payer.address,
+        asset: intent.asset,
+        transfers,
+      }),
+    );
     intent.afterBlock = intent.solana.afterSlot;
   }
   return intent;
+}
+/**
+ * A payer-side condition that stops the unsigned Solana request (too few
+ * lamports or tokens, a non-wallet payer, a failing simulation) is the
+ * payer's refusal to act on, so it reaches the API as 409 with its reason.
+ * Every other failure stays an internal fault.
+ */
+async function solanaDirectOrRefuse<T>(prepare: () => Promise<T>): Promise<T> {
+  try {
+    return await prepare();
+  } catch (error) {
+    if (error instanceof DirectPayerRefused)
+      fail(409, "payer_unfunded", error.message);
+    throw error;
+  }
 }
 export function insertDirectIntent(
   db: Database,
@@ -1261,15 +1282,17 @@ export async function recoverDirectIntent(
             : {}),
         },
       };
-    next.solana = await prepareSolanaDirect({
-      ...settings,
-      genesisHash:
-        settings.genesisHash ??
-        (ESCROW_NETWORKS["solana-mainnet"].genesisHash as string),
-      payer: c.intent.payer.address,
-      asset: c.intent.asset,
-      transfers: next.transfers,
-    });
+    next.solana = await solanaDirectOrRefuse(() =>
+      prepareSolanaDirect({
+        ...settings,
+        genesisHash:
+          settings.genesisHash ??
+          (ESCROW_NETWORKS["solana-mainnet"].genesisHash as string),
+        payer: c.intent.payer.address,
+        asset: c.intent.asset,
+        transfers: next.transfers,
+      }),
+    );
     next.afterBlock = next.solana.afterSlot;
     retirement = { kind: "solana-expired", proof: result.proof };
   } else if (!original || retireEvm) {
