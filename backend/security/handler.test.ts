@@ -1754,6 +1754,62 @@ describe("quarantined private cases", () => {
       expect(result.status).toBe(404);
     },
   );
+  test.each(["reinstated", "missing"] as const)(
+    "existing appeal triage needs the current quarantine's revision proof: %s",
+    async (proof) => {
+      const env = open();
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      await env.decide(id, "appeal-root");
+      expect(
+        (
+          await env.act(MAINTAINER, id, {
+            action: "award",
+            decision: "none",
+            reason: "Owner decision for review",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(false);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "appeal",
+            reason:
+              "Review the scope and decision that applied to this private report",
+          })
+        ).status,
+      ).toBe(200);
+      env.setAnalyzerConfigured(true);
+      env.restrictProgram("quarantine", true);
+      const prepare = env.db.prepare;
+      if (proof === "reinstated") {
+        // The reinstated listing stayed retired, so the next quarantine
+        // found a retirement it did not apply.
+        env.reinstateProgram();
+        env.restrictProgram("quarantine");
+      } else
+        env.db.prepare = (sql) => {
+          const statement = prepare(sql);
+          if (
+            !sql.includes(
+              "SELECT manifest, manifest_sha256 FROM project_revisions",
+            )
+          )
+            return statement;
+          return {
+            ...statement,
+            bind: (...values: unknown[]) => ({
+              ...statement.bind(...values),
+              first: async () => null,
+            }),
+          };
+        };
+      const result = await env.act(DISPUTE, id, { action: "triage-appeal" });
+      // A lost revision row is a server fault, not an owner's retirement.
+      expect(result.status).toBe(proof === "reinstated" ? 404 : 500);
+      env.db.prepare = prepare;
+    },
+  );
   test("a receipt check imports no new report after an applied quarantine", async () => {
     const env = open();
     const linked = report(REPORTER, "2026-10-19T09:10:00.000Z");
