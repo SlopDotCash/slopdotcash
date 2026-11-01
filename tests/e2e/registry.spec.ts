@@ -2278,6 +2278,31 @@ test("an applicant publishes an application stored before self-service setup wit
   ).toMatchObject([{ revision: 1 }]);
   expect(diagnostics.count(refusedPublish)).toBe(1);
 
+  // Follow the published application's real link before any manual reload.
+  // The new project was absent from the registry when this page loaded.
+  await enlargeText(entry);
+  await expectAccessible(page, { include: ".setup-pending-applications" });
+  const manageProject = entry.getByRole("link", {
+    name: project.name,
+    exact: true,
+  });
+  await manageProject.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(manageProject).toBeFocused();
+  await expect(manageProject).toBeInViewport();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".project-setup-status h2")).toHaveText(
+    "Setup status: Waiting for the security scan",
+  );
+  await expect(page.locator("main")).toContainText(project.name);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("pending-application-manage.png"),
+    fullPage: true,
+  });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+
   // The application is published once. It leaves the list, and a second
   // publish is refused, so no duplicate row can appear.
   await page.reload({ waitUntil: "networkidle" });
