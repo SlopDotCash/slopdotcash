@@ -208,17 +208,20 @@ export interface EvmClientOptions {
   nativeGas?: NativeGasJournal;
 }
 
-/** Parses a non-negative decimal dollar string into integer micro-units. */
+/**
+ * Parses a non-negative decimal dollar string into integer micro-units,
+ * rounded up so a cap is never undercounted, as on Solana.
+ */
 export function usdMicro(value: unknown): bigint | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const text = String(value);
   const match = /^(\d+)(?:\.(\d+))?(?:e-(\d+))?$/u.exec(text);
   if (!match) return null;
   if (match[3]) return 0n; // exponent form only appears for tiny values
-  return (
-    BigInt(match[1]) * 1_000_000n +
-    BigInt((match[2] ?? "").padEnd(6, "0").slice(0, 6))
-  );
+  const fraction = (match[2] ?? "").padEnd(6, "0");
+  const whole = BigInt(match[1]) * 1_000_000n + BigInt(fraction.slice(0, 6));
+  const rest = /[1-9]/u.test((match[2] ?? "").slice(6)) ? 1n : 0n;
+  return whole + rest;
 }
 
 interface KyberRoute {
