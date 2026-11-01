@@ -18,7 +18,16 @@ test("local projects use local reads and writes while read-only public requests 
   const scans: string[] = [];
   const localCalls: string[] = [];
   const publicCalls: string[] = [];
+  const walletCalls: string[] = [];
   const snapshotPart = `/data/leaderboard/${"a".repeat(64)}.part`;
+  const publicPaymentPaths = [
+    "/api/v1/payments/projects/eliza/vault?chainId=8453",
+    "/api/v1/payments/projects/eliza/direct-transfers?limit=5",
+    "/api/v1/payments/actors/900000002/direct-transfers?limit=5",
+    "/api/v1/payments/received?projectId=eliza",
+  ];
+  const publicWalletPath =
+    "/api/v1/wallet-claims/actors/900000002/current?chainId=8453";
   const dependencies: ProjectApiDependencies = {
     persistence,
     adminGithubIds: new Set(),
@@ -26,7 +35,7 @@ test("local projects use local reads and writes while read-only public requests 
     now: () => new Date("2026-10-30T00:00:00.000Z"),
     randomId: () => crypto.randomUUID(),
     // Identity, GitHub and scan boundaries are protocol doubles. The API,
-    // migrations, Vite middleware and both HTTP proxy destinations are real.
+    // migrations, Vite middleware and HTTP proxy destinations are real.
     sessionActor: async (request) =>
       request.headers.get("cookie") === "fixture-session=owner"
         ? { githubId: "900000002", githubLogin: "fixture-owner" }
@@ -69,10 +78,28 @@ test("local projects use local reads and writes while read-only public requests 
     fetch(request) {
       expect(request.headers.has("cookie")).toBe(false);
       expect(request.headers.has("authorization")).toBe(false);
-      publicCalls.push(`${request.method} ${new URL(request.url).pathname}`);
-      if (new URL(request.url).pathname === snapshotPart)
+      const url = new URL(request.url);
+      publicCalls.push(`${request.method} ${url.pathname}${url.search}`);
+      if (url.pathname === snapshotPart)
         return new Response("retained snapshot part");
-      return Response.json({ projects: [] });
+      return Response.json(
+        { projects: [] },
+        { headers: { "x-fixture-upstream": "public-site" } },
+      );
+    },
+  });
+  const publicWallet = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      expect(request.headers.has("cookie")).toBe(false);
+      expect(request.headers.has("authorization")).toBe(false);
+      const url = new URL(request.url);
+      walletCalls.push(`${request.method} ${url.pathname}${url.search}`);
+      return Response.json(
+        { actorId: "900000002" },
+        { headers: { "x-fixture-upstream": "public-api" } },
+      );
     },
   });
   try {
@@ -90,7 +117,11 @@ test("local projects use local reads and writes while read-only public requests 
           typeof proxy !== "string" &&
           String(proxy.target).startsWith("https:")
         )
-          proxy.target = `http://127.0.0.1:${publicRead.port}`;
+          proxy.target = `http://127.0.0.1:${
+            proxy.target === "https://api.slop.cash"
+              ? publicWallet.port
+              : publicRead.port
+          }`;
       const vite = await createServer({
         ...config,
         root: fileURLToPath(new URL("../", import.meta.url)),
@@ -150,6 +181,25 @@ test("local projects use local reads and writes while read-only public requests 
         expect(
           (await fetch(`${origin}${snapshotPart}`, { method: "POST" })).status,
         ).toBe(404);
+        for (const path of [...publicPaymentPaths, publicWalletPath]) {
+          for (const method of ["GET", "HEAD"]) {
+            const read = await fetch(`${origin}${path}`, {
+              method,
+              headers: {
+                cookie: "fixture-session=owner",
+                authorization: "Bearer synthetic-test-only",
+              },
+            });
+            expect(read.status).toBe(200);
+            expect(read.headers.get("x-fixture-upstream")).toBe(
+              path === publicWalletPath ? "public-api" : "public-site",
+            );
+            await read.text();
+          }
+          expect(
+            (await fetch(`${origin}${path}`, { method: "POST" })).status,
+          ).toBe(404);
+        }
       } finally {
         await vite.close();
       }
@@ -160,17 +210,30 @@ test("local projects use local reads and writes while read-only public requests 
       "GET /api/v1/projects",
     ]);
     expect(scans).toEqual(["local-project"]);
+    const paymentReads = publicPaymentPaths.flatMap((path) => [
+      `GET ${path}`,
+      `HEAD ${path}`,
+    ]);
     expect(publicCalls).toEqual([
       `GET ${snapshotPart}`,
+      ...paymentReads,
       "GET /api/v1/projects",
       "HEAD /api/v1/projects",
       `GET ${snapshotPart}`,
+      ...paymentReads,
+    ]);
+    expect(walletCalls).toEqual([
+      `GET ${publicWalletPath}`,
+      `HEAD ${publicWalletPath}`,
+      `GET ${publicWalletPath}`,
+      `HEAD ${publicWalletPath}`,
     ]);
   } finally {
     if (previousBackend === undefined) delete process.env.SLOP_DEV_BACKEND;
     else process.env.SLOP_DEV_BACKEND = previousBackend;
     backend.stop(true);
     publicRead.stop(true);
+    publicWallet.stop(true);
     sqlite.close();
   }
 });
