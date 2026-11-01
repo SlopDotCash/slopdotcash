@@ -777,10 +777,17 @@ export function grounded(
 // Deterministic refutation of model claims the item text itself disproves
 // (#1930): a 64-character lowercase-hex value is a well-formed SHA-256
 // digest, and a 0x-prefixed token is an integer literal, never an identifier.
-// Only claims about the value's form are checked: a claim that compares a
-// digest or literal against other evidence is never refuted.
+// A form claim is bound to the value it names, so a claim that merely sits
+// beside an unrelated digest is never refuted: either the claim quotes a
+// truncated form of the value (#1930's verdicts quote "8190d3f7…f697" beside
+// the claim and ground the full digest in the evidence), or it names the whole
+// digest before the claim phrase as the claim's subject. Distances are
+// measured between full-text match positions; no side ever matches inside a
+// truncated window. A claim that compares a digest against other evidence is
+// never refuted.
 const CLAIM_TOKEN_DISTANCE = 120;
 const SHA_256_HEX_TOKEN = /\b[0-9a-f]{64}\b/gu;
+const TRUNCATED_HEX_FRAGMENT = /\b[0-9a-f]{4,63}\b/gu;
 const HEX_LITERAL_TOKEN = /\b0x[0-9a-fA-F]{1,16}\b/gu;
 const SHA_256_FORM_CLAIM =
   /\b(?:not (?:a|an) (?:valid |well-formed )?(?:sha-?256 hex |sha-?256 |hex )?(?:value|string|digest)|(?:invalid|malformed) (?:sha-?256 hex |sha-?256 |hex )?(?:value|string|digest))\b/gu;
@@ -793,20 +800,27 @@ const HEX_LITERAL_REFUTED =
 const REFUTED_CLAIM_SUMMARY =
   "The review model made a claim that the submitted text disproves. Slopbot publishes no finding from that claim. A maintainer can still review this change.";
 
-function claimTokens(text: string, claim: RegExp, token: RegExp): string[] {
-  const tokens: string[] = [];
-  for (const match of text.matchAll(claim)) {
-    const window = text.slice(
-      Math.max(0, match.index - CLAIM_TOKEN_DISTANCE),
-      Math.min(
-        text.length,
-        match.index + match[0].length + CLAIM_TOKEN_DISTANCE,
-      ),
-    );
-    for (const found of window.matchAll(token))
-      if (!tokens.includes(found[0])) tokens.push(found[0]);
-  }
-  return tokens;
+/** Position spans of every claim phrase in the verdict text. */
+function claimSpans(
+  text: string,
+  claim: RegExp,
+): [start: number, end: number][] {
+  return [...text.matchAll(claim)].map((match) => {
+    const start = match.index;
+    return [start, start + match[0].length];
+  });
+}
+
+/** True when the match starts within CLAIM_TOKEN_DISTANCE of a claim span. */
+function startsNearClaim(
+  spans: [start: number, end: number][],
+  start: number,
+): boolean {
+  return spans.some(
+    ([claimStart, claimEnd]) =>
+      start >= claimStart - CLAIM_TOKEN_DISTANCE &&
+      start <= claimEnd + CLAIM_TOKEN_DISTANCE,
+  );
 }
 
 /** Returns a short refutation when the verdict asserts, about a value the
@@ -823,14 +837,38 @@ export function refutedClaim(
     ...verdict.limitations,
   ].join("\n");
   if (text.length === 0) return null;
-  for (const digest of claimTokens(text, SHA_256_FORM_CLAIM, SHA_256_HEX_TOKEN))
-    if (itemText.includes(digest)) return SHA_256_DIGEST_REFUTED;
-  for (const literal of claimTokens(
-    text,
-    UNDEFINED_NAME_CLAIM,
-    HEX_LITERAL_TOKEN,
-  ))
-    if (itemText.includes(literal)) return HEX_LITERAL_REFUTED;
+  const formClaims = claimSpans(text, SHA_256_FORM_CLAIM);
+  if (formClaims.length > 0) {
+    const digests = [...text.matchAll(SHA_256_HEX_TOKEN)];
+    for (const fragment of text.matchAll(TRUNCATED_HEX_FRAGMENT)) {
+      if (!startsNearClaim(formClaims, fragment.index)) continue;
+      if (
+        digests.some(
+          (digest) =>
+            digest[0].startsWith(fragment[0]) && itemText.includes(digest[0]),
+        )
+      )
+        return SHA_256_DIGEST_REFUTED;
+    }
+    for (const digest of digests) {
+      const end = digest.index + digest[0].length;
+      if (
+        itemText.includes(digest[0]) &&
+        formClaims.some(
+          ([claimStart]) =>
+            end <= claimStart && claimStart - end <= CLAIM_TOKEN_DISTANCE,
+        )
+      )
+        return SHA_256_DIGEST_REFUTED;
+    }
+  }
+  const nameClaims = claimSpans(text, UNDEFINED_NAME_CLAIM);
+  for (const literal of text.matchAll(HEX_LITERAL_TOKEN))
+    if (
+      startsNearClaim(nameClaims, literal.index) &&
+      itemText.includes(literal[0])
+    )
+      return HEX_LITERAL_REFUTED;
   return null;
 }
 

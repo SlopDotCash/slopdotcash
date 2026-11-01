@@ -381,6 +381,48 @@ test("refutedClaim reports each incident misread", () => {
   ).toContain("integer literal");
 });
 
+test("a truncated digest quote with the full value in evidence is refuted", () => {
+  // The live shape from #1930's reviews: the verdict quotes the truncated
+  // digest beside the claim and grounds the full value in the diff evidence.
+  expect(
+    refutedClaim(
+      claim(
+        "The pinned value 8190d3f7…f697 is not a sha256 hex value, so the hash assertion cannot succeed.",
+        { evidence: [DIGEST_LINE] },
+      ),
+      REVIEWED_TEXT,
+    ),
+  ).toContain("64-character lowercase-hex");
+});
+
+test("a claim about a truncated subject with a suggested digest is unrefuted", () => {
+  // The adversarial shape: the claim is about a 48-character value, and the
+  // valid 64-character digest appears only as a suggestion after the claim,
+  // while that digest also exists in the item. A true finding must survive.
+  const truncated = "deadbeef".repeat(6);
+  expect(truncated.length).toBe(48);
+  expect(PINNED_DIGEST.startsWith(truncated)).toBe(false);
+  expect(
+    refutedClaim(
+      claim(
+        `The 48-char value ${truncated} is not a sha256 hex value; pin the full ${PINNED_DIGEST} instead.`,
+      ),
+      REVIEWED_TEXT,
+    ),
+  ).toBeNull();
+});
+
+test("a truncated quote beyond the claimed distance is unrefuted", () => {
+  expect(
+    refutedClaim(
+      claim(
+        `The value is not a valid hex value, and ${"fill ".repeat(40)} the pinned 8190d3f7 quote stays as-is.`,
+      ),
+      REVIEWED_TEXT,
+    ),
+  ).toBeNull();
+});
+
 test("refutedClaim reads limits and evidence text too", () => {
   expect(
     refutedClaim(
@@ -392,6 +434,8 @@ test("refutedClaim reads limits and evidence text too", () => {
       REVIEWED_TEXT,
     ),
   ).toContain("64-character lowercase-hex");
+  // An unquoted-subject form claim does not bind to the digest in the
+  // evidence: the model may mean a different, genuinely malformed value.
   expect(
     refutedClaim(
       claim("The item embeds a malformed hex string.", {
@@ -399,7 +443,7 @@ test("refutedClaim reads limits and evidence text too", () => {
       }),
       REVIEWED_TEXT,
     ),
-  ).toContain("64-character lowercase-hex");
+  ).toBeNull();
 });
 
 test("refutedClaim leaves every other claim alone", () => {
