@@ -704,6 +704,326 @@ async function sameReviewEvidence(
   return JSON.stringify(current) === JSON.stringify(related);
 }
 
+/** Well-formed SHA-256 digest encoding (64 hex chars, case-insensitive). */
+const SHA256_HEX_TOKEN = /^[0-9a-fA-F]{64}$/u;
+/** Long hex run that could be a digest-like citation near a claim. */
+const HEX_LOOKING_DIGEST = /\b[0-9a-fA-F]{16,}\b/gu;
+/** Python / C-style hex integer literal, not a name. */
+const HEX_INTEGER_LITERAL = /\b0x[0-9A-Fa-f]+\b/gu;
+/** Identifier or 0x literal, used to find the name a claim targets. */
+const IDENTIFIER_OR_HEX = /\b(?:0x[0-9A-Fa-f]+|[A-Za-z_][A-Za-z0-9_]*)\b/gu;
+/**
+ * Model claims that a cited digest or hex string is invalid.
+ * Negative lookbehind skips "as not a …" framings where the model reports
+ * that code treats a digest as invalid, rather than asserting it itself.
+ */
+const INVALID_HEX_CLAIM =
+  /\b(?:(?<!\bas\s)not\s+a\s+(?:valid\s+)?(?:sha-?256(?:\s+hex(?:\s+value)?)?|hex(?:adecimal)?(?:\s+value)?)|(?:sha-?256|hex(?:adecimal)?)\s+(?:digest\s+)?(?:is\s+)?(?:invalid|malformed|not\s+valid)|invalid\s+(?:sha-?256|hex(?:adecimal)?))\b/giu;
+/** Model claims that a 0x... token is an undefined name. */
+const UNDEFINED_HEX_NAME_CLAIM =
+  /\b(?:undefined\s+name|NameError|assigns?\b[\s\S]{0,80}?\bundefined)\b/giu;
+/** Bounded window around a claim match when searching for its target token. */
+const CLAIM_TOKEN_WINDOW = 80;
+const CLAIM_SUBJECT_STOPWORDS = new Set([
+  "undefined",
+  "name",
+  "nameerror",
+  "assigns",
+  "assign",
+  "the",
+  "a",
+  "an",
+  "to",
+  "that",
+  "value",
+  "is",
+  "was",
+  "are",
+  "and",
+  "or",
+  "of",
+  "in",
+  "on",
+  "for",
+  "with",
+  "as",
+  "by",
+  "from",
+  "should",
+  "raise",
+  "raises",
+  "uses",
+  "use",
+  "used",
+  "where",
+  "appears",
+  "intended",
+  "slice",
+  "this",
+  "it",
+  "its",
+  "be",
+  "been",
+  "being",
+  "not",
+  "no",
+  "at",
+  "call",
+  "site",
+  "leaves",
+  "leave",
+  "left",
+  "but",
+  "config",
+  "constant",
+  "expected",
+  "slot",
+  "id",
+  "runtime",
+  "before",
+  "after",
+  "defined",
+  // Reporting verbs that sit between a cited 0x literal and the claim
+  // ("was called an undefined name") and must not win nearest-token.
+  "called",
+  "treated",
+  "considered",
+  "described",
+  "reported",
+  "labeled",
+  "flagged",
+]);
+
+function verdictReviewText(verdict: Verdict): string {
+  return [verdict.summary, ...verdict.evidence, ...verdict.limitations].join(
+    "\n",
+  );
+}
+
+/** Truncated digest quote: prefix…suffix or prefix...suffix. */
+const TRUNCATED_DIGEST_QUOTE =
+  /\b([0-9a-fA-F]{4,})\s*(?:…|\.\.\.)\s*([0-9a-fA-F]{2,})\b/gu;
+/** Anaphoric reference to a previously cited value inside an assigns claim. */
+const ANAPHORIC_VALUE = /\b(?:that|this|the)\s+value\b/iu;
+
+/**
+ * Expand truncated digest quotes (8190d3f7…f697) to the matching full
+ * 64-hex token elsewhere in the same text, so a claim that cites the
+ * truncated form can still correlate to the well-formed digest.
+ */
+function expandTruncatedDigests(text: string): string {
+  return text.replace(
+    new RegExp(TRUNCATED_DIGEST_QUOTE.source, TRUNCATED_DIGEST_QUOTE.flags),
+    (full, prefix: string, suffix: string) => {
+      const flags = HEX_LOOKING_DIGEST.flags.includes("g")
+        ? HEX_LOOKING_DIGEST.flags
+        : `${HEX_LOOKING_DIGEST.flags}g`;
+      const prefixLower = prefix.toLowerCase();
+      const suffixLower = suffix.toLowerCase();
+      for (const match of text.matchAll(
+        new RegExp(HEX_LOOKING_DIGEST.source, flags),
+      )) {
+        const token = match[0];
+        const lower = token.toLowerCase();
+        if (
+          SHA256_HEX_TOKEN.test(token) &&
+          lower.startsWith(prefixLower) &&
+          lower.endsWith(suffixLower)
+        ) {
+          return token;
+        }
+      }
+      return full;
+    },
+  );
+}
+
+/** Nearest regex match to an anchor, within a bounded window. */
+function nearestMatchInWindow(
+  text: string,
+  anchorIndex: number,
+  anchorLength: number,
+  pattern: RegExp,
+  windowSize: number,
+  exclude?: (token: string) => boolean,
+): string | null {
+  const center = anchorIndex + anchorLength / 2;
+  const start = Math.max(0, anchorIndex - windowSize);
+  const end = Math.min(text.length, anchorIndex + anchorLength + windowSize);
+  const slice = text.slice(start, end);
+  const flags = pattern.flags.includes("g")
+    ? pattern.flags
+    : `${pattern.flags}g`;
+  let best: { token: string; dist: number } | null = null;
+  for (const match of slice.matchAll(new RegExp(pattern.source, flags))) {
+    const token = match[0];
+    if (exclude?.(token)) continue;
+    const absIndex = start + (match.index ?? 0);
+    const dist = Math.abs(absIndex + token.length / 2 - center);
+    if (best === null || dist < best.dist) best = { token, dist };
+  }
+  return best?.token ?? null;
+}
+
+/** True when a 0x literal appears in the window before an assigns claim. */
+function precedingHexLiteral(
+  text: string,
+  claimIndex: number,
+  windowSize: number,
+): boolean {
+  const start = Math.max(0, claimIndex - windowSize);
+  const preceding = text.slice(start, claimIndex);
+  return new RegExp(
+    HEX_INTEGER_LITERAL.source,
+    HEX_INTEGER_LITERAL.flags.includes("g")
+      ? HEX_INTEGER_LITERAL.flags
+      : `${HEX_INTEGER_LITERAL.flags}g`,
+  ).test(preceding);
+}
+
+/**
+ * Qualifiers that turn an "invalid digest" claim into a checksum-mismatch
+ * claim ("invalid SHA-256 for the tarball") rather than an encoding complaint.
+ */
+const MISMATCH_CLAIM_QUALIFIER = /\b(?:for|of|against|expected|actual)\b/iu;
+
+/** Distinct well-formed 64-hex digests in text (case-insensitive). */
+function distinctSha256Digests(text: string): Set<string> {
+  const found = new Set<string>();
+  const flags = HEX_LOOKING_DIGEST.flags.includes("g")
+    ? HEX_LOOKING_DIGEST.flags
+    : `${HEX_LOOKING_DIGEST.flags}g`;
+  for (const match of text.matchAll(
+    new RegExp(HEX_LOOKING_DIGEST.source, flags),
+  )) {
+    if (SHA256_HEX_TOKEN.test(match[0])) found.add(match[0].toLowerCase());
+  }
+  return found;
+}
+
+/**
+ * True when the claim (and a short trailing window) is qualified as a
+ * mismatch against some other digest/artifact, not a pure encoding complaint.
+ */
+function claimHasMismatchQualifier(
+  text: string,
+  claimIndex: number,
+  claimLength: number,
+): boolean {
+  const end = Math.min(text.length, claimIndex + claimLength + 48);
+  return MISMATCH_CLAIM_QUALIFIER.test(text.slice(claimIndex, end));
+}
+
+/**
+ * Encoding-shaped claim language: not hex, malformed, or wrong length.
+ * Broader "invalid sha256" phrases still reach this path via INVALID_HEX_CLAIM,
+ * then mismatch filters below refuse the drop.
+ */
+const ENCODING_HEX_SIGNAL =
+  /\b(?:not\s+(?:a\s+)?(?:valid\s+)?(?:sha-?256\s+)?hex(?:adecimal)?(?:\s+value)?|malformed|wrong\s+length|not\s+64(?:\s+hex)?(?:\s+(?:chars?|characters?))?|truncated|too\s+short)\b/iu;
+
+function claimIsEncodingComplaint(claimText: string): boolean {
+  return (
+    ENCODING_HEX_SIGNAL.test(claimText) ||
+    /\b(?:sha-?256|hex(?:adecimal)?)\s+(?:digest\s+)?(?:is\s+)?(?:invalid|malformed|not\s+valid)\b/iu.test(
+      claimText,
+    ) ||
+    /\binvalid\s+(?:sha-?256|hex(?:adecimal)?)\b/iu.test(claimText) ||
+    /\bnot\s+a\s+(?:valid\s+)?(?:sha-?256|hex(?:adecimal)?)/iu.test(claimText)
+  );
+}
+
+/**
+ * True when a low_quality finding rests on calling a well-formed SHA-256
+ * digest or 0x hex integer literal invalid or undefined (#1930 problems 1-2).
+ * Correlates each claim to the nearest target token in a bounded window so an
+ * incidental valid token elsewhere cannot suppress a genuine finding.
+ * Digest drops are encoding-only (not hex / malformed / wrong length); a
+ * checksum-mismatch claim that cites two digests or is qualified by
+ * for/of/against/expected/actual is never dropped.
+ */
+export function hexMisreadFinding(verdict: Verdict): boolean {
+  if (verdict.category !== "low_quality") return false;
+  // Expand truncated digest quotes so claims that cite 8190d3f7…f697 still
+  // correlate to the full 64-hex token carried in evidence (#1930 phrasing).
+  const text = expandTruncatedDigests(verdictReviewText(verdict));
+
+  for (const claim of text.matchAll(
+    new RegExp(INVALID_HEX_CLAIM.source, INVALID_HEX_CLAIM.flags),
+  )) {
+    const claimIndex = claim.index ?? 0;
+    const claimText = claim[0];
+    // Digest drops are encoding-only. Mismatch claims ("invalid for/of/against
+    // expected/actual …") and verdicts that cite two distinct digests stay.
+    if (!claimIsEncodingComplaint(claimText)) continue;
+    if (claimHasMismatchQualifier(text, claimIndex, claimText.length)) continue;
+    if (distinctSha256Digests(text).size >= 2) continue;
+    const nearest = nearestMatchInWindow(
+      text,
+      claimIndex,
+      claimText.length,
+      HEX_LOOKING_DIGEST,
+      CLAIM_TOKEN_WINDOW,
+    );
+    if (nearest !== null && SHA256_HEX_TOKEN.test(nearest)) return true;
+  }
+
+  for (const claim of text.matchAll(
+    new RegExp(UNDEFINED_HEX_NAME_CLAIM.source, UNDEFINED_HEX_NAME_CLAIM.flags),
+  )) {
+    const claimText = claim[0];
+    const claimIndex = claim.index ?? 0;
+    // assigns … undefined: the name inside that span is the target. When the
+    // span only says "that value", resolve the anaphora to a 0x literal just
+    // before the claim (the #1930 "assigns that value" shape).
+    if (/^assigns?\b/iu.test(claimText)) {
+      if (
+        new RegExp(HEX_INTEGER_LITERAL.source, HEX_INTEGER_LITERAL.flags).test(
+          claimText,
+        )
+      ) {
+        return true;
+      }
+      if (
+        ANAPHORIC_VALUE.test(claimText) &&
+        precedingHexLiteral(text, claimIndex, CLAIM_TOKEN_WINDOW)
+      ) {
+        return true;
+      }
+      continue;
+    }
+    // "undefined name" / NameError: drop only when the nearest name-like
+    // token to the claim is itself a 0x literal.
+    const nearest = nearestMatchInWindow(
+      text,
+      claimIndex,
+      claim[0].length,
+      IDENTIFIER_OR_HEX,
+      CLAIM_TOKEN_WINDOW,
+      (token) => CLAIM_SUBJECT_STOPWORDS.has(token.toLowerCase()),
+    );
+    if (nearest !== null && /^0x[0-9A-Fa-f]+$/u.test(nearest)) return true;
+  }
+  return false;
+}
+
+/** Downgrade a hex-misread low_quality verdict to an explicit no-finding. */
+export function dropHexMisreadFinding(verdict: Verdict): Verdict {
+  return {
+    category: "none",
+    confidence: verdict.confidence,
+    rule_refs: [],
+    evidence: [],
+    summary:
+      "A low_quality finding claimed a SHA-256 digest or hex integer literal was invalid or undefined. A deterministic check confirmed the cited token is a valid hex digest or 0x literal, so no finding is published.",
+    limitations: [
+      ...verdict.limitations,
+      "Dropped a low_quality finding after a deterministic hex digest or 0x literal check.",
+    ],
+    objective_defect: null,
+  };
+}
+
 export function prefilter(
   context: Pick<Context, "pull" | "issue">,
 ): Verdict | null {
@@ -1345,6 +1665,12 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // Deterministic guard for model hex misreads (#1930 problems 1-2). A
+  // 64-character [0-9a-f] digest is a valid SHA-256 encoding, and a
+  // 0x[0-9A-Fa-f]+ token is a literal, not a name. Drop low_quality findings
+  // that rest on calling those invalid or undefined. Appeal matching is
+  // handled separately (#1950).
+  if (hexMisreadFinding(verdict)) verdict = dropHexMisreadFinding(verdict);
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
