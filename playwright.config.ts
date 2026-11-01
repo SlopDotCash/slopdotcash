@@ -7,8 +7,6 @@ import { availableParallelism } from "node:os";
 
 import { defineConfig, devices } from "@playwright/test";
 
-const firefoxStreamWorkflows = /admin placement and explicit bounty type/;
-
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
   process.env.GITARMY_BASE_URL ??
@@ -25,6 +23,9 @@ if (!Number.isInteger(localPort) || localPort < 1024 || localPort > 65535)
   throw new Error("SLOP_E2E_PORT must be an unprivileged TCP port");
 const localOrigin = `http://127.0.0.1:${localPort}`;
 const requestedWorkers = process.env.SLOP_E2E_WORKERS;
+const chromiumLaunchOptions = process.env.SLOP_E2E_CHROMIUM_EXECUTABLE_PATH
+  ? { executablePath: process.env.SLOP_E2E_CHROMIUM_EXECUTABLE_PATH }
+  : {};
 
 // The registry lane gives Pages a fresh local D1, test-only admins and
 // test-only project moderators.
@@ -250,44 +251,35 @@ export default defineConfig({
     },
     {
       name: "chromium-desktop",
-      grepInvert: firefoxStreamWorkflows,
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 1440, height: 1000 },
       },
     },
     {
       name: "chromium-mobile",
-      grepInvert: [/@desktop-only/, firefoxStreamWorkflows],
+      grepInvert: /@desktop-only/,
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 320, height: 800 },
       },
     },
-    // The observed registry no-store stream uses the existing Firefox runtime;
-    // retain its original assertions and strict native network diagnostics.
-    ...([1440, 320] as const).map((width) => ({
-      name: `firefox-stream-${width === 1440 ? "desktop" : "mobile"}`,
-      testMatch: ["**/security-bounty.spec.ts"],
-      grep: firefoxStreamWorkflows,
-      use: {
-        ...devices["Desktop Firefox"],
-        viewport: { width, height: width === 1440 ? 1000 : 800 },
-      },
-    })),
     {
       name: "chromium-laptop",
       grep: /@breakpoint/,
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 1024, height: 768 },
       },
     },
@@ -296,6 +288,7 @@ export default defineConfig({
       grep: /@breakpoint/,
       use: {
         ...devices["Desktop Chrome"],
+        launchOptions: chromiumLaunchOptions,
         viewport: { width: 768, height: 1024 },
       },
     },

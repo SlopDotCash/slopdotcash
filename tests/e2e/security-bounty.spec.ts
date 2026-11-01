@@ -1938,6 +1938,15 @@ test("private security bounty programs keep cases restricted from intake to awar
     const acknowledge = notice.getByRole("button", {
       name: /^Acknowledge: Private security case /u,
     });
+    const completedRequests = new WeakSet<object>();
+    page.on("requestfinished", (request) => completedRequests.add(request));
+    const acknowledgement = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        /^\/api\/v1\/security-cases\/[^/]+\/acknowledge$/u.test(
+          new URL(response.url()).pathname,
+        ),
+    );
     await acknowledge.focus();
     await page.keyboard.press("Enter");
     await expect(
@@ -1948,10 +1957,13 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
-    await page.reload();
+    await page.reload({ waitUntil: "networkidle" });
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
+    const acknowledgementRequest = (await acknowledgement).request();
+    expect(acknowledgementRequest.failure()).toBeNull();
+    expect(completedRequests.has(acknowledgementRequest)).toBe(true);
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("security-notice-acknowledged.png"),
