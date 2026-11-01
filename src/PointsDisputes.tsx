@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "./Link";
-import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import { fetchWithDeadline } from "./lib/browser-json";
 import type { PointAward, PointRevision } from "./lib/points";
 import { currentProjectSession } from "./lib/project-api";
 import { formatDateTime } from "./Presentation";
@@ -77,7 +77,7 @@ export default function PointsDisputes({
         ? {}
         : { method: "POST", body: JSON.stringify(body) }),
     });
-    const value = await readBoundedJson(response, 512 * 1024, "Points review");
+    const value = (await response.json()) as unknown;
     if (!response.ok)
       throw new Error(
         (value as { message?: string }).message ??
