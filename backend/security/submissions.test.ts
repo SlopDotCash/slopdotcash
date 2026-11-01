@@ -2825,4 +2825,129 @@ describe("optional GitHub forwarding of a saved report", () => {
       states: { [submission.id]: "uncertain", [other.id]: "draft" },
     });
   });
+  test("a claim or manual record during an uncertain forward never yields two verified cases for one advisory", async () => {
+    const claimFirst = setup({ durable: true });
+    const accepted = await claimFirst.create(REPORTER, { report: REPORT });
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const [savedCase] = claimFirst.cases();
+    const auth = await claimFirst.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await claimFirst.authorize(REPORTER, auth.body.authorizeUrl as string);
+    claimFirst.github.faults.create = "timeout-after-create";
+    const sent = await claimFirst.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.body.submission?.state).toBe("uncertain");
+    const ghsa = claimFirst.github.advisories[0].advisory.ghsa_id;
+
+    // While the forward is still uncertain, a manual claim for that GHSA lands.
+    const claimed = await claimFirst.call(OTHER, "POST", "security-cases", {
+      mode: "claim",
+      projectId: PROJECT,
+      advisory: ghsa,
+      idempotencyKey: claimFirst.key(),
+    });
+    expect(claimed.status).toBe(201);
+    const claimId = (claimed.body.case as { id: string }).id;
+
+    // Reconcile links the GitHub advisory to the saved Slop case.
+    const reconciled = await claimFirst.reconcile(
+      submission.id,
+      sent.body.submission?.revision as number,
+    );
+    expect(reconciled.status).toBe(200);
+    expect(reconciled.body.submission?.state).toBe("receipt-verified");
+
+    // Verifying the pending claim afterwards must refuse duplicate adoption.
+    const verifiedClaim = await claimFirst.call(
+      MAINTAINER,
+      "POST",
+      `security-cases/${claimId}/actions`,
+      {
+        action: "verify-link",
+        expectedRevision: 1,
+        idempotencyKey: claimFirst.key(),
+        receivedAt: START,
+        confirmation: true,
+      },
+    );
+    expect(verifiedClaim.status).toBe(409);
+    expect(verifiedClaim.body.error).toBe("advisory_already_recorded");
+    expect(
+      claimFirst
+        .cases()
+        .filter((entry) => entry.submission_state === "verified")
+        .map((entry) => entry.id),
+    ).toEqual([savedCase.id]);
+
+    // Reverse order: a maintainer records the advisory while the forward is uncertain.
+    const recordFirst = setup({ durable: true });
+    const accepted2 = await recordFirst.create(REPORTER, { report: REPORT });
+    const submission2 = accepted2.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const [savedCase2] = recordFirst.cases();
+    const auth2 = await recordFirst.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission2.id}/authorize`,
+      {},
+    );
+    await recordFirst.authorize(REPORTER, auth2.body.authorizeUrl as string);
+    recordFirst.github.faults.create = "timeout-after-create";
+    const sent2 = await recordFirst.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission2.id}/send`,
+      { expectedRevision: submission2.revision },
+    );
+    expect(sent2.body.submission?.state).toBe("uncertain");
+    const ghsa2 = recordFirst.github.advisories[0].advisory.ghsa_id;
+
+    const recorded = await recordFirst.call(
+      MAINTAINER,
+      "POST",
+      "security-cases",
+      {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: ghsa2,
+        idempotencyKey: recordFirst.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: START,
+        confirmation: true,
+      },
+    );
+    expect(recorded.status).toBe(201);
+
+    const reconciled2 = await recordFirst.reconcile(
+      submission2.id,
+      sent2.body.submission?.revision as number,
+    );
+    expect(reconciled2.status).toBe(409);
+    expect(reconciled2.body.error).toBe("advisory_already_recorded");
+    expect(JSON.stringify(reconciled2.body)).not.toContain("sc_");
+    expect(recordFirst.row(submission2.id)).toMatchObject({
+      state: "failed",
+      failure_code: "already-recorded",
+    });
+    const viewedSaved = await recordFirst.call(
+      REPORTER,
+      "GET",
+      `security-cases/${savedCase2.id}`,
+    );
+    expect(
+      (viewedSaved.body.case as { advisory: unknown }).advisory,
+    ).toBeNull();
+  });
 });
