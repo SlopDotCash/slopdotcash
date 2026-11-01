@@ -133,6 +133,8 @@ const INSTALL_FILES = new Set([
   "install.sh",
   "postinstall.js",
   "preinstall.js",
+  ".pnpmfile.cjs",
+  ".pnpmfile.js",
   ".envrc",
   "tasks.json",
   "devcontainer.json",
