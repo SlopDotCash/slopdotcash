@@ -1008,5 +1008,7 @@ try {
   server?.stop(true);
   journal.close();
   sql.close();
+  // Uncached query statements can retain SQLite handles after close() on Windows.
+  Bun.gc(true);
   rmSync(directory, { recursive: true, force: true });
 }

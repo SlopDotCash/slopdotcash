@@ -16,7 +16,9 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
+import { indexPaymentEvent } from "../../backend/payments/ledger";
 import { buildPaymentWalletMessage } from "../../backend/payments/possession";
+import { storeVaultSnapshot } from "../../backend/payments/vault-snapshots";
 import {
   type EscrowDeployment,
   paymentDeploymentRecord,
@@ -25,6 +27,7 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { JournalStore } from "../payment-executor/core";
 import { PaymentSignerJournal } from "../payment-executor/index";
 import { recoverUncertainAttempts, runPaymentDispatch } from "./index";
+import { reconcileFailedAttempts } from "./reconcile";
 
 const registered = "2026-10-01T00:00:00.000Z";
 const contributor = privateKeyToAccount(`0x${"9".repeat(64)}`);
@@ -70,7 +73,9 @@ const deployment: EscrowDeployment = {
 const chain = {
   funded: false,
   accepted: new Map<string, Hex>(),
+  reverted: new Set<string>(),
 };
+const blockHash = `0x${"10".repeat(32)}`;
 const word = (value: bigint | string) =>
   (typeof value === "bigint"
     ? value.toString(16)
@@ -112,13 +117,25 @@ function answer(method: string, params: unknown[]) {
       return `0x${result}`;
     }
     case "eth_getBlockByNumber":
-      return { number: "0x10", timestamp: "0x68000000", baseFeePerGas: "0x1" };
+      return {
+        number: "0x10",
+        hash: blockHash,
+        timestamp: "0x68000000",
+        baseFeePerGas: "0x1",
+      };
     case "eth_getTransactionCount":
       return `0x${chain.accepted.size.toString(16)}`;
     case "eth_estimateGas":
       return "0x186a0";
     case "eth_getTransactionReceipt":
-      return null;
+      return chain.reverted.has(String(params[0]))
+        ? {
+            status: "0x0",
+            transactionHash: params[0],
+            blockHash,
+            blockNumber: "0x10",
+          }
+        : null;
     case "eth_getTransactionByHash": {
       const raw = chain.accepted.get(String(params[0]).toLowerCase());
       return raw ? { hash: keccak256(raw) } : null;
@@ -285,7 +302,7 @@ async function stack() {
         { attempt: string; transactionId: string | null; outbox: string },
         []
       >(
-        "SELECT a.state attempt,a.transaction_id transactionId,b.state outbox FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id",
+        "SELECT a.state attempt,a.transaction_id transactionId,b.state outbox FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id ORDER BY a.rowid",
       )
       .all();
   return { env, journal, payRequests, state };
@@ -305,6 +322,7 @@ async function scheduledRun(env: Awaited<ReturnType<typeof stack>>["env"]) {
 test("a payment the node refused is resent with the same bytes after the gas wallet is funded", async () => {
   chain.funded = false;
   chain.accepted.clear();
+  chain.reverted.clear();
   const { env, journal, payRequests, state } = await stack();
   expect(await scheduledRun(env)).toHaveLength(1);
   expect(chain.accepted.size).toBe(0);
@@ -347,6 +365,7 @@ test("a payment the node refused is resent with the same bytes after the gas wal
 test("a broadcast the node accepted is recorded after the dispatcher lost the response", async () => {
   chain.funded = true;
   chain.accepted.clear();
+  chain.reverted.clear();
   const { env, payRequests, state } = await stack();
   const deliver = env.EVM_PAYMENT_EXECUTOR.fetch;
   let lose = true;
@@ -370,3 +389,226 @@ test("a broadcast the node accepted is recorded after the dispatcher lost the re
   ]);
   expect(payRequests).toHaveLength(1);
 });
+
+test.each(["ready", "processing", "paid"] as const)(
+  "late recovery preserves a finalized failure while the outbox is %s",
+  async (outboxAtRecovery) => {
+    chain.funded = true;
+    chain.accepted.clear();
+    chain.reverted.clear();
+    const { env, payRequests, state } = await stack();
+    const deliver = env.EVM_PAYMENT_EXECUTOR.fetch;
+    let lose = true;
+    let delay = true;
+    let captured!: () => void;
+    let release!: () => void;
+    const statusCaptured = new Promise<void>((resolve) => {
+      captured = resolve;
+    });
+    const statusReleased = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let retryCaptured!: () => void;
+    let releaseRetry!: () => void;
+    const retryReached = new Promise<void>((resolve) => {
+      retryCaptured = resolve;
+    });
+    const retryReleased = new Promise<void>((resolve) => {
+      releaseRetry = resolve;
+    });
+    env.EVM_PAYMENT_EXECUTOR.fetch = async (request: Request) => {
+      const response = await deliver(request);
+      const path = new URL(request.url).pathname;
+      if (lose && path === "/v1/pay") {
+        lose = false;
+        return new Response("lost response", { status: 503 });
+      }
+      if (outboxAtRecovery === "processing" && path === "/v1/pay") {
+        retryCaptured();
+        await retryReleased;
+      }
+      if (delay && path === "/v1/attempt-status") {
+        delay = false;
+        captured();
+        await statusReleased;
+      }
+      return response;
+    };
+    expect(await scheduledRun(env)).toHaveLength(1);
+    const [transactionId] = chain.accepted.keys();
+    expect(state()).toEqual([
+      { attempt: "unknown", transactionId: null, outbox: "ready" },
+    ]);
+
+    // One run's submitted response is delayed while another run records the
+    // transaction and reconciles its canonical finalized revert.
+    const lateRecovery = recoverUncertainAttempts(env);
+    await statusCaptured;
+    let retry: Promise<void> | undefined;
+    let lease: { lease_token: string; lease_until: string } | null = null;
+    try {
+      await recoverUncertainAttempts(env);
+      expect(state()).toEqual([
+        { attempt: "submitted", transactionId, outbox: "submitted" },
+      ]);
+      chain.reverted.add(transactionId);
+      await reconcileFailedAttempts(
+        env.PAYMENTS_DB,
+        [paymentDeploymentRecord("project-1", deployment)],
+        { "base-sepolia": rpcUrl },
+      );
+      expect(state()).toEqual([
+        { attempt: "failed", transactionId, outbox: "ready" },
+      ]);
+      if (outboxAtRecovery === "processing") {
+        retry = runPaymentDispatch(env);
+        await retryReached;
+        lease = await env.PAYMENTS_DB.prepare(
+          "SELECT lease_token,lease_until FROM payment_outbox WHERE obligation_id=?",
+        )
+          .bind(obligationId)
+          .first<{ lease_token: string; lease_until: string }>();
+        expect(lease?.lease_token).toBeTruthy();
+      } else if (outboxAtRecovery === "paid") {
+        await runPaymentDispatch(env);
+        const paidTransaction = [...chain.accepted.keys()][1];
+        // Feed the real ledger a finalized-event fixture. This proves the paid
+        // DB transition, not public-chain finality or a real payout.
+        await storeVaultSnapshot(
+          env.PAYMENTS_DB,
+          {
+            projectId: "project-1",
+            network: "base-sepolia",
+            chain: "base",
+            vault,
+            asset,
+          },
+          {
+            network: "base-sepolia",
+            vault,
+            asset,
+            decimals: 6,
+            blockNumber: "16",
+            blockTime: registered,
+            totalDeposited: "100000000",
+            totalPaid: "98000000",
+            totalPayoutFees: "2000000",
+            totalGrossWithdrawn: "0",
+            totalWithdrawalFees: "0",
+            freeBalance: "0",
+            reservedPrincipal: "0",
+            reservedFees: "0",
+            accruedFees: "2000000",
+            reserved: null,
+          },
+          registered,
+        );
+        await indexPaymentEvent(
+          env.PAYMENTS_DB,
+          {
+            async verifyFinalized() {
+              return {
+                kind: "paid",
+                transactionId: paidTransaction,
+                eventIndex: 0,
+                blockId: blockHash,
+                obligationId,
+                projectId: "project-1",
+                network: "base-sepolia",
+                chain: "base",
+                vault,
+                githubUserId: "101",
+                grossMicro: "100000000",
+                netMicro: "98000000",
+                feeMicro: "2000000",
+                sourceDigest,
+                destination: contributor.address,
+              };
+            },
+          },
+          {
+            kind: "paid",
+            transactionId: paidTransaction,
+            eventIndex: 0,
+            obligationId,
+          },
+          registered,
+        );
+      }
+    } catch (error) {
+      releaseRetry();
+      await retry;
+      throw error;
+    } finally {
+      release();
+      await lateRecovery;
+    }
+    try {
+      expect(state()[0]).toEqual({
+        attempt: "failed",
+        transactionId,
+        outbox: outboxAtRecovery,
+      });
+      if (retry) {
+        expect(
+          await env.PAYMENTS_DB.prepare(
+            "SELECT lease_token,lease_until FROM payment_outbox WHERE obligation_id=?",
+          )
+            .bind(obligationId)
+            .first<{ lease_token: string; lease_until: string }>(),
+        ).toEqual(lease);
+        expect(state()[1]).toEqual({
+          attempt: "prepared",
+          transactionId: null,
+          outbox: "processing",
+        });
+      }
+    } finally {
+      releaseRetry();
+      await retry;
+    }
+
+    // The next scheduled run must actually submit a fresh attempt, while retaining
+    // the original transaction and finalized-failure evidence for reconciliation.
+    expect(await scheduledRun(env)).toEqual([]);
+    expect(payRequests).toHaveLength(2);
+    const transactions = [...chain.accepted.keys()];
+    expect(transactions).toHaveLength(2);
+    const finalOutbox = outboxAtRecovery === "paid" ? "paid" : "submitted";
+    expect(state()).toEqual([
+      { attempt: "failed", transactionId, outbox: finalOutbox },
+      {
+        attempt: outboxAtRecovery === "paid" ? "finalized" : "submitted",
+        transactionId: transactions[1],
+        outbox: finalOutbox,
+      },
+    ]);
+    expect(
+      await env.PAYMENTS_DB.prepare(
+        "SELECT state,gross_base,fee_base,paid_transaction FROM payment_obligations WHERE id=?",
+      )
+        .bind(obligationId)
+        .first<{
+          state: string;
+          gross_base: string;
+          fee_base: string;
+          paid_transaction: string | null;
+        }>(),
+    ).toEqual({
+      state: outboxAtRecovery === "paid" ? "paid" : "reserved",
+      gross_base: "100000000",
+      fee_base: "2000000",
+      paid_transaction: outboxAtRecovery === "paid" ? transactions[1] : null,
+    });
+    const failure = await env.PAYMENTS_DB.prepare(
+      "SELECT transaction_id,evidence_json AS proof FROM payment_attempt_failures",
+    ).first<{ transaction_id: string; proof: string }>();
+    expect(failure?.transaction_id).toBe(transactionId);
+    expect(JSON.parse(failure?.proof ?? "null")).toMatchObject({
+      transactionId,
+      blockHash,
+      status: "reverted",
+      finality: "finalized",
+    });
+  },
+);
