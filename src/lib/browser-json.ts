@@ -19,14 +19,23 @@ export async function readBoundedBytes(
   maxBytes: number,
   label: string,
 ): Promise<Uint8Array> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null) {
-    if (!/^[0-9]+$/u.test(declaredLength)) {
-      throw new Error(`${label} returned an invalid content length`);
+  try {
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null) {
+      if (!/^[0-9]+$/u.test(declaredLength)) {
+        throw new Error(`${label} returned an invalid content length`);
+      }
+      if (BigInt(declaredLength) > BigInt(maxBytes)) {
+        throw new RangeError(`${label} exceeded the ${maxBytes}-byte limit`);
+      }
     }
-    if (BigInt(declaredLength) > BigInt(maxBytes)) {
-      throw new RangeError(`${label} exceeded the ${maxBytes}-byte limit`);
+  } catch (error) {
+    try {
+      await response.body?.cancel();
+    } catch {
+      // Keep the header refusal when cancellation also fails.
     }
+    throw error;
   }
 
   const reader = response.body?.getReader();
