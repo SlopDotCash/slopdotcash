@@ -192,6 +192,10 @@ function prepareRegistryDatabase(persistTo) {
   const vettingKey = generateKeyPairSync("ed25519");
   return {
     persistTo,
+    githubActors: Object.entries(sessions).map(([role, session]) => ({
+      id: session.githubId,
+      login: `e2e-${role}`,
+    })),
     env: {
       SLOP_E2E_VETTING_PUBLIC_KEY: Buffer.from(
         vettingKey.publicKey.export({ format: "jwk" }).x,
@@ -395,6 +399,21 @@ async function runRegistryPhase() {
       });
     }
     github = await startGitHubApiFixture(githubPort);
+    // The owned-repository picker resolves the current login by actor ID.
+    // Mirror the seeded sessions in the GitHub fixture. Flag tests still
+    // supply their own eligibility facts through the same control route.
+    for (const actor of database.githubActors) {
+      const url = new URL(
+        `/__fixture/github-users/${actor.id}`,
+        `http://127.0.0.1:${githubPort}`,
+      );
+      url.searchParams.set("login", actor.login);
+      url.searchParams.set("createdAt", "2020-01-01T00:00:00Z");
+      url.searchParams.set("merged", "0");
+      const response = await fetch(url, { method: "PUT" });
+      if (response.status !== 204)
+        throw new Error("Could not seed the GitHub account fixture");
+    }
     notify = await startNotifyWorkerFixture(
       packageRoot,
       persistTo,
