@@ -427,6 +427,81 @@ test("address changes bind new consent, cancel stale deliveries and reject old u
   h.sqlite.close();
 });
 
+test.each(["/verification", "/verify"])(
+  "email %s returns a client error for malformed JSON",
+  async (path) => {
+    const h = await setup();
+    try {
+      const response = await handleEmailPreferences(
+        new Request(`${ORIGIN}/api/v1/notifications/email${path}`, {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/json" },
+          body: "{",
+        }),
+        {
+          db: h.db,
+          now: h.worker.now,
+          sessionActor: async () => ({ githubId: MEMBER }),
+          eligibility: async () => ({ available: false }),
+          mailService: h.service,
+        },
+      );
+      expect(response?.status).toBe(400);
+      expect(await response?.json()).toEqual({ error: "invalid_request" });
+      expect(h.mail).toHaveLength(0);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
+test.each(["/verification", "/verify"])(
+  "email %s returns a storage error and permits the same request to recover",
+  async (path) => {
+    const h = await setup();
+    try {
+      if (path === "/verify") await h.enroll();
+      const body =
+        path === "/verify"
+          ? { token: h.token() }
+          : {
+              email: "member@example.com",
+              idempotencyKey: "retry-storage-failure",
+              enabled: true,
+              securityEnabled: true,
+            };
+      const batch = h.db.batch.bind(h.db);
+      h.db.batch = async () => {
+        throw new Error("Fixture private storage failure");
+      };
+      expect(await h.call(path, body)).toEqual({
+        status: 500,
+        body: { error: "internal_error" },
+      });
+      expect(
+        h.sqlite
+          .query("SELECT github_id FROM notification_email_destinations")
+          .all(),
+      ).toEqual([]);
+      h.db.batch = batch;
+      expect((await h.call(path, body)).status).toBe(
+        path === "/verify" ? 200 : 202,
+      );
+      expect(h.mail).toHaveLength(1);
+      if (path === "/verify") {
+        expect((await h.call(path, body)).status).toBe(409);
+        expect((await h.call()).body.availability).toBe("verified");
+      } else {
+        expect((await h.call(path, body)).status).toBe(202);
+        expect((await h.verify()).status).toBe(200);
+      }
+      expect(h.mail).toHaveLength(1);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
 test("the private sending route rejects fabricated challenge tokens and public GET never consumes a link", async () => {
   const h = await setup();
   await h.enroll();
