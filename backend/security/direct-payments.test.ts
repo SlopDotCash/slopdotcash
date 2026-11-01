@@ -199,7 +199,7 @@ test("an underfunded Solana payer gets a refusal that names the cause", async ()
   expect(caught).toBeInstanceOf(Error);
   expect(caught).toMatchObject({
     status: 409,
-    code: "payer_unfunded",
+    code: "payer_refused",
     message: "The payer needs the award, transaction fee and account rent",
   });
 });
@@ -219,7 +219,7 @@ test("a payer that is not a plain wallet account gets the same refusal", async (
   });
   expect(caught).toMatchObject({
     status: 409,
-    code: "payer_unfunded",
+    code: "payer_refused",
     message: "The payer is not a native wallet account",
   });
 });
