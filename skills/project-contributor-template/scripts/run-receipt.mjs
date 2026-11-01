@@ -1321,6 +1321,7 @@ async function jsonRequest(
     try {
       response = await fetchImpl(url, {
         ...options,
+        redirect: "error",
         signal: AbortSignal.timeout(30_000),
       });
     } catch {
@@ -1350,6 +1351,7 @@ async function authoritativePrivateIntake(fetchImpl) {
     response = await fetchImpl(PRIVATE_REQUEST_INTAKE_STATUS, {
       method: "GET",
       headers: { Accept: "application/json" },
+      redirect: "error",
       signal: AbortSignal.timeout(30_000),
     });
   } catch {
@@ -1459,6 +1461,7 @@ export async function slopIdentityAssertion(
       response = await fetchImpl(`${IDENTITY_AUTHORITY}/v1/oauth/poll`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        redirect: "error",
         body: JSON.stringify({
           flowId: started.flowId,
           pollCapability: started.pollCapability,
