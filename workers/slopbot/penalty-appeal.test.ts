@@ -1366,6 +1366,44 @@ test("parallel value disputes use their exact keys rather than another actor's n
   });
 });
 
+test("a keyless appeal command answers the finding appeal, not a newer value dispute", async () => {
+  await closedItem(async (run) => {
+    // Closure is off, so the finding only labels the open PR.
+    run.closureEnabled(false);
+    expect(await run.review()).toBe("labeled (spam)");
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // The finding appeal's draft prints the keyless command.
+    expect(run.comments.at(-1)).toContain("comment `/slopbot accept`");
+    // A maintainer merges the PR, then a reviewer disputes its value.
+    run.closeByMaintainer();
+    run.merged(true);
+    run.seedValue();
+    run.disputeModel("deny", 0.95);
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: REVIEWER, subject: "value" }),
+      ),
+    ).toBe("value dispute drafted (deny)");
+    // The maintainer answers the finding appeal's draft as it instructs.
+    const outcome = await run.deliver(
+      run.job("appeal_command", { senderId: MAINTAINER, command: "accept" }),
+    );
+    expect(
+      run.sql(
+        "SELECT substr(appeal_key, 1, instr(appeal_key, ':')) AS kind, resolution FROM slopbot_appeals ORDER BY kind",
+      ),
+    ).toEqual([
+      { kind: "appeal:", resolution: "upheld" },
+      { kind: "value-appeal:", resolution: null },
+    ]);
+    expect(outcome).toStartWith("appeal upheld by the maintainer");
+    expect(run.labels).not.toContain("slopbot: spam");
+  });
+});
+
 test("a retained value dispute on a retired project reaches a moderator without new review or GitHub writes", async () => {
   await closedItem(async (run) => {
     run.seedValue();
