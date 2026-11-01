@@ -150,7 +150,10 @@ export async function dispatchActivityMail(
     "activity",
     deps.now,
   )) {
-    if (row.event_key.startsWith("slopbot-appeal:")) {
+    if (
+      row.event_key.startsWith("slopbot-appeal:") ||
+      row.event_key.startsWith("slopbot-value-appeal:")
+    ) {
       const appeal = await deps.db
         .prepare(
           "SELECT appellant_github_id, resolved_at FROM slopbot_appeals WHERE appeal_key = ? AND escalated_at IS NOT NULL",
@@ -163,6 +166,35 @@ export async function dispatchActivityMail(
         appeal.resolved_at !== null ||
         appeal.appellant_github_id === row.recipient_github_id
       ) {
+        await recordDelivery(deps, row, "suppressed", null, "activity");
+        continue;
+      }
+    }
+    if (row.event_key.startsWith("slopbot-points-dispute:")) {
+      const resolvedNotice = row.event_key.endsWith(":resolved");
+      const appealKey = resolvedNotice
+        ? row.event_key.slice("slopbot-".length, -":resolved".length)
+        : row.event_key.slice("slopbot-".length);
+      const dispute = await deps.db
+        .prepare(
+          "SELECT appellant_github_id, escalated_at, resolved_at FROM points_disputes WHERE appeal_key = ?",
+        )
+        .bind(appealKey)
+        .first<{
+          appellant_github_id: string;
+          escalated_at: string | null;
+          resolved_at: string | null;
+        }>();
+      const allowed =
+        dispute !== null &&
+        (resolvedNotice
+          ? dispute.resolved_at !== null &&
+            dispute.appellant_github_id === row.recipient_github_id
+          : dispute.appellant_github_id === row.recipient_github_id ||
+            (deps.moderatorGithubIds?.has(row.recipient_github_id) === true &&
+              dispute.escalated_at !== null &&
+              dispute.resolved_at === null));
+      if (!allowed) {
         await recordDelivery(deps, row, "suppressed", null, "activity");
         continue;
       }
