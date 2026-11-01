@@ -214,9 +214,10 @@ export default defineConfig({
       },
   // Every spec runs at the 1440 px desktop and the 320 px mobile viewport; the
   // 1024 px laptop and 768 px tablet viewports run representative @breakpoint layouts.
-  // The email workflow observed a Chromium no-store stream EOF and ERR_ABORTED
+  // The email and project discovery workflows observed Chromium no-store
+  // stream EOF and ERR_ABORTED
   // (https://github.com/microsoft/playwright/issues/42742). Keep the bounded
-  // private reader and strict failure assertions, and run the email workflow
+  // readers and strict failure assertions, and run these workflows
   // in Firefox at both widths. Firefox also repeats the private evidence
   // download. The registry lane shards by test order, and each viewport's
   // registry workflow is one serial group, so Firefox comes first: the
@@ -229,6 +230,7 @@ export default defineConfig({
         "**/evidence-download.spec.ts",
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
+        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Firefox"],
@@ -240,6 +242,7 @@ export default defineConfig({
       testMatch: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
+        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Firefox"],
@@ -251,6 +254,7 @@ export default defineConfig({
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
+        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -263,6 +267,7 @@ export default defineConfig({
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
+        "**/security-bounty.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
