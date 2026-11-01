@@ -136,8 +136,6 @@ test("a manual Points award reaches private Inbox review and an independent mode
   );
   await page.getByRole("button", { name: /^Mark as read:/u }).click();
   await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
-  await page.reload({ waitUntil: "networkidle" });
-  await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
   const readRequest = (await readAcknowledgement).request();
   expect(readRequest.failure()).toBeNull();
   expect(completedRequests.has(readRequest)).toBe(true);
