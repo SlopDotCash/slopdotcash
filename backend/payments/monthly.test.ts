@@ -27,11 +27,15 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
+import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
-import { runMonthlyCommitments } from "../../workers/payments/index";
+import {
+  runMonthlyCommitments,
+  runMonthlyCoordinator,
+} from "../../workers/payments/index";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
@@ -147,6 +151,80 @@ const owner = (verifyAuthority = async () => {}) =>
     now: () => clock,
   });
 const actor = { githubId: OWNER, githubLogin: "owner" };
+for (const worker of [false, true]) {
+  test(`${worker ? "worker" : "coordinator"} reports an isolated payment database without a project registry as a failure`, async () => {
+    // The configured isolated test stack has real registry and payment DBs.
+    // Copy only the proposed payment inputs; do not remove protected registry
+    // rows or disable any migration trigger to manufacture this topology.
+    const isolated = sqliteD1(MIGRATIONS);
+    try {
+      for (const table of [
+        "monthly_reward_bases",
+        "monthly_reward_base_rows",
+      ]) {
+        const rows = sqlite.query(`SELECT * FROM ${table}`).all() as Record<
+          string,
+          string | number | null
+        >[];
+        for (const row of rows)
+          isolated.sqlite
+            .query(
+              `INSERT INTO ${table}(${Object.keys(row).join(",")}) VALUES(${Object.keys(
+                row,
+              )
+                .map(() => "?")
+                .join(",")})`,
+            )
+            .run(...Object.values(row));
+      }
+      expect(await projects().getProject(project.id)).not.toBeNull();
+      expect(
+        isolated.sqlite.query("SELECT COUNT(*) n FROM projects").get(),
+      ).toEqual({ n: 0 });
+      if (worker)
+        await expect(
+          runMonthlyCoordinator(
+            {
+              PAYMENTS_DB: isolated.db,
+              REGISTRY_DB: db,
+              PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
+              PAYMENT_RPC_URLS: "{}",
+              MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
+            },
+            clock,
+          ),
+        ).rejects.toThrow("Monthly coordinator failures");
+      else {
+        const report = await coordinateMonthlyPayments({
+          db: isolated.db,
+          projects: projects(),
+          networks: ["base-sepolia"],
+          schedule,
+          now: clock,
+        });
+        expect(report.frozen).toEqual([]);
+        expect(report.waiting).toEqual([]);
+        expect(report.failures).toHaveLength(1);
+        expect(report.failures[0]).toMatchObject({
+          status: 503,
+          code: "payment_registry_unavailable",
+        });
+      }
+      expect(
+        isolated.sqlite
+          .query("SELECT COUNT(*) n FROM monthly_payment_runs")
+          .get(),
+      ).toEqual({ n: 0 });
+      expect(
+        isolated.sqlite
+          .query("SELECT COUNT(*) n FROM monthly_payment_obligations")
+          .get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      isolated.sqlite.close();
+    }
+  });
+}
 for (const boundary of ["session", "body"] as const) {
   test(`the HTTP ${boundary} boundary preserves a later monthly opt-out`, async () => {
     await owner().setAutomatic(project.id, actor, false);

@@ -7,6 +7,8 @@ import { availableParallelism } from "node:os";
 
 import { defineConfig, devices } from "@playwright/test";
 
+const firefoxStreamWorkflows = /admin placement and explicit bounty type/;
+
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
   process.env.GITARMY_BASE_URL ??
@@ -248,6 +250,7 @@ export default defineConfig({
     },
     {
       name: "chromium-desktop",
+      grepInvert: firefoxStreamWorkflows,
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
@@ -259,7 +262,7 @@ export default defineConfig({
     },
     {
       name: "chromium-mobile",
-      grepInvert: /@desktop-only/,
+      grepInvert: [/@desktop-only/, firefoxStreamWorkflows],
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
@@ -269,6 +272,17 @@ export default defineConfig({
         viewport: { width: 320, height: 800 },
       },
     },
+    // The observed registry no-store stream uses the existing Firefox runtime;
+    // retain its original assertions and strict native network diagnostics.
+    ...([1440, 320] as const).map((width) => ({
+      name: `firefox-stream-${width === 1440 ? "desktop" : "mobile"}`,
+      testMatch: ["**/security-bounty.spec.ts"],
+      grep: firefoxStreamWorkflows,
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width, height: width === 1440 ? 1000 : 800 },
+      },
+    })),
     {
       name: "chromium-laptop",
       grep: /@breakpoint/,
