@@ -173,11 +173,28 @@ export function pendingPeriods(
   return pending;
 }
 
-/** The window closes `months` calendar months after the first paid event. */
+/** The window closes `months` calendar months after the first paid event.
+ *
+ * The day is clamped to the last day of the target month instead of letting
+ * Date roll a day past month-end: setUTCMonth(31, +3) yields May 1, which
+ * silently extends the window past the end of the fourth calendar month and
+ * accrues payouts the closed window must refuse.
+ */
 export function windowEnd(firstPaidAt: string, months: number): string {
   const first = new Date(firstPaidAt);
-  const end = new Date(first.getTime());
-  end.setUTCMonth(end.getUTCMonth() + months);
+  const targetMonth = first.getUTCMonth() + months;
+  // Day 0 of the following month is the last day of the target month.
+  const lastDay = new Date(
+    Date.UTC(first.getUTCFullYear(), targetMonth + 1, 0),
+  ).getUTCDate();
+  const day = Math.min(first.getUTCDate(), lastDay);
+  const end = new Date(Date.UTC(first.getUTCFullYear(), targetMonth, day));
+  end.setUTCHours(
+    first.getUTCHours(),
+    first.getUTCMinutes(),
+    first.getUTCSeconds(),
+    first.getUTCMilliseconds(),
+  );
   return end.toISOString();
 }
 

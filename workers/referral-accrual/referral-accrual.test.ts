@@ -11,7 +11,7 @@ import {
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
-import { LOCK_MS, runAccrual } from "./core";
+import { LOCK_MS, runAccrual, windowEnd } from "./core";
 import worker, { type Env, runOnce } from "./index";
 import { leafHash } from "./merkle";
 import { D1AccrualStore } from "./store";
@@ -584,6 +584,41 @@ describe("one accrual run", () => {
     });
     expect(byId.get(late.id)?.outcome).toBe("window_closed");
     expect(byId.get(late.id)?.reason).toContain("2026-10-10T00:00:00.000Z");
+
+    // A month-end first payout closes the window on the last day of the
+    // final calendar month. setUTCMonth used to roll 31 + 3 months to the
+    // 1st of the following month, extending the window past its end.
+    const { db: db3, sqlite: s3 } = sqliteD1();
+    addProject(s3, "rollover", REFERRER);
+    addWallet(s3, REFERRER, WALLET);
+    const firstOfRollover = addPaid(
+      s3,
+      "rollover",
+      1_000_000n,
+      "2026-01-31T12:00:00.000Z",
+    );
+    const rolloverEdge = addPaid(
+      s3,
+      "rollover",
+      1_000_000n,
+      "2026-04-30T12:00:00.000Z",
+    );
+    await runOnce(
+      env(db3, {
+        REFERRAL_FIRST_PERIOD: "2026-01",
+        REFERRAL_WINDOW_MONTHS: "3",
+      }),
+      at("2026-05-01T00:00:00.000Z"),
+    );
+    const byId3 = new Map(rows(s3).map((row) => [row.obligation_id, row]));
+    expect(byId3.get(firstOfRollover.id)?.outcome).toBe("accrued");
+    expect(byId3.get(rolloverEdge.id)).toMatchObject({
+      outcome: "window_closed",
+      accrued_base: "0",
+    });
+    expect(byId3.get(rolloverEdge.id)?.reason).toContain(
+      "2026-04-30T12:00:00.000Z",
+    );
     // Only the one old pre-program payout stays unjudged: it is before the
     // first period and never becomes a row.
     expect(rows(sqlite)).toHaveLength(6);
@@ -846,5 +881,27 @@ describe("public accrual route", () => {
         )
       )?.status,
     ).toBe(405);
+  });
+});
+
+describe("referral window end", () => {
+  test("a month-end first payout closes on the last day of the target month", () => {
+    expect(windowEnd("2026-01-31T12:00:00.000Z", 3)).toBe(
+      "2026-04-30T12:00:00.000Z",
+    );
+    expect(windowEnd("2026-06-30T00:00:00.000Z", 2)).toBe(
+      "2026-08-30T00:00:00.000Z",
+    );
+    expect(windowEnd("2026-12-31T00:00:00.000Z", 11)).toBe(
+      "2027-11-30T00:00:00.000Z",
+    );
+  });
+  test("a mid-month first payout keeps the same day", () => {
+    expect(windowEnd("2026-02-28T05:06:07.008Z", 1)).toBe(
+      "2026-03-28T05:06:07.008Z",
+    );
+    expect(windowEnd("2026-01-15T10:00:00.000Z", 12)).toBe(
+      "2027-01-15T10:00:00.000Z",
+    );
   });
 });
