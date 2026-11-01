@@ -28,6 +28,23 @@ export interface WorkUnitSource {
   mergeRecipe?: ValueMergeRecipe;
 }
 
+/** Discovery and valuation must use the same accepted commit selection.
+ * Merge-resolution scope is verified below before any claim is admitted.
+ */
+export function acceptedWorkUnitCommits(
+  evidence: ValueEvidence,
+): ValueEvidence["commits"] {
+  const indirect = evidence.indirectAcceptance;
+  return evidence.commits.filter(
+    (entry) =>
+      (entry.parents.length <= 1 ||
+        evidence.mergeResolutions?.some(
+          (resolution) => resolution.commitSha === entry.sha,
+        )) &&
+      (!indirect || indirect.acceptedCommitShas.includes(entry.sha)),
+  );
+}
+
 export interface WorkUnitClaim {
   id: string;
   repositoryNodeId: string;
@@ -204,14 +221,7 @@ export async function prepareWorkUnitEvidence(
       ...(changedPaths.has(path) ? [path] : []),
       ...(relocated.get(JSON.stringify([sha, path])) ?? []),
     ];
-    for (const commit of evidence.commits.filter(
-      (entry) =>
-        (entry.parents.length <= 1 ||
-          evidence.mergeResolutions?.some(
-            (resolution) => resolution.commitSha === entry.sha,
-          )) &&
-        (!indirect || indirect.acceptedCommitShas.includes(entry.sha)),
-    )) {
+    for (const commit of acceptedWorkUnitCommits(evidence)) {
       const resolutions = (evidence.mergeResolutions ?? []).filter(
         (resolution) => resolution.commitSha === commit.sha,
       );
