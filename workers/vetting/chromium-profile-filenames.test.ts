@@ -62,6 +62,29 @@ test("Chromium profile filenames are still theft indicators", () => {
       "const file = `login data`;\n",
       "credential-theft",
     ],
+    // A separator variable, Chromium's account-password file, and a quoted
+    // directory with a trailing slash are the same reads. The name only needs
+    // filename context on the left.
+    [
+      "src/passwords-account.py",
+      'os.path.join(profile, "Login Data For Account")\n',
+      "credential-theft",
+    ],
+    [
+      "src/passwords-sep.py",
+      'f"{profile}{os.sep}Login Data"\n',
+      "credential-theft",
+    ],
+    [
+      "src/passwords-template.ts",
+      "`${profile}${path.sep}Login Data`\n",
+      "credential-theft",
+    ],
+    [
+      "src/extensions-slash.py",
+      '"Local Extension Settings/" + walletId\n',
+      "wallet-drainer",
+    ],
   ] as const) {
     expect({ path, findings: described([{ path, text }]) }).toEqual({
       path,
