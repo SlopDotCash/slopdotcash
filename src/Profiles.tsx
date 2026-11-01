@@ -10,6 +10,7 @@ import type { PointsMember } from "./lib/points";
 import { dailyPoints } from "./lib/profile-activity";
 import {
   assertProfiles,
+  contributorPullSearchUrl,
   type ProfileIndex,
   profileCounts,
 } from "./lib/profiles";
@@ -181,9 +182,7 @@ function PullRequestBar({
         {PR_SEGMENTS.map(([key, label, query]) => (
           <li key={key}>
             <span className={`pr-dot pr-bar-${key}`} aria-hidden="true" />
-            <a
-              href={`https://github.com/pulls?q=${encodeURIComponent(`is:pr author:${login} ${query}`)}`}
-            >
+            <a href={contributorPullSearchUrl(login, query)}>
               <strong>{counts[key].toLocaleString()}</strong> PRs{" "}
               {label.toLowerCase()}
             </a>
