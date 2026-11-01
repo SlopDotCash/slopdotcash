@@ -94,6 +94,7 @@ export function PrivateReportForm({
   const [storageAvailable, setStorageAvailable] = useState(true);
   const heading = useRef<HTMLHeadingElement>(null);
   const accepted = useRef(false);
+  const form = useRef<HTMLFormElement>(null);
   const [invalid, setInvalid] = useState<{
     id: string;
     message: string;
@@ -131,6 +132,11 @@ export function PrivateReportForm({
       setError(null);
       return;
     }
+    const route = window.location.pathname + window.location.search;
+    // A new URL can precede the lazy route replacing this form.
+    const isCurrent = () =>
+      form.current !== null &&
+      window.location.pathname + window.location.search === route;
     const attempt = { ...saved, attempted: true };
     setSaved(attempt);
     persist(attempt);
@@ -138,6 +144,7 @@ export function PrivateReportForm({
     setError(null);
     try {
       const current = await currentProjectSession();
+      if (!isCurrent()) return;
       if (current?.githubId !== owner) {
         try {
           sessionStorage.removeItem(storageKey);
@@ -165,6 +172,7 @@ export function PrivateReportForm({
           report: body(saved.draft),
         },
       );
+      if (!isCurrent()) return;
       try {
         sessionStorage.removeItem(storageKey);
       } catch {
@@ -175,6 +183,7 @@ export function PrivateReportForm({
         `/inbox?view=reports&submission=${encodeURIComponent(result.submission.id)}`,
       );
     } catch (cause) {
+      if (!isCurrent()) return;
       setError(errorMessage(cause));
       // A definite validation refusal did not accept a report. Uncertain and
       // authentication failures keep the original payload for reconciliation.
@@ -197,12 +206,14 @@ export function PrivateReportForm({
       if (cause instanceof ProjectApiError && cause.status === 400) {
         setSaved({ ...saved, attempted: false, key: crypto.randomUUID() });
       }
+    } finally {
       setBusy(false);
     }
   };
   const reviewed = body(saved.draft);
   return (
     <form
+      ref={form}
       className="security-form report-composer"
       onSubmit={submit}
       onInvalidCapture={(event) => {

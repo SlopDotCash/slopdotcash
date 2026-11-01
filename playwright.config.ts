@@ -7,6 +7,9 @@ import { availableParallelism } from "node:os";
 
 import { defineConfig, devices } from "@playwright/test";
 
+const firefoxStreamWorkflows =
+  /admin placement and explicit bounty type|a manual Points award reaches private Inbox review|private security bounty programs keep cases restricted|an escalated contribution appeal opens from the moderator Inbox/;
+
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
   process.env.GITARMY_BASE_URL ??
@@ -214,10 +217,14 @@ export default defineConfig({
       },
   // Every spec runs at the 1440 px desktop and the 320 px mobile viewport; the
   // 1024 px laptop and 768 px tablet viewports run representative @breakpoint layouts.
-  // The email workflow observed a Chromium no-store stream EOF and ERR_ABORTED
+  // The email and project discovery workflows observed Chromium no-store
+  // stream EOF and ERR_ABORTED
   // (https://github.com/microsoft/playwright/issues/42742). Keep the bounded
-  // private reader and strict failure assertions, and run the email workflow
-  // in Firefox at both widths. Firefox also repeats the private evidence
+  // readers and strict failure assertions, and run these workflows
+  // in Firefox at both widths. Scope this to discovery and the two Inbox
+  // receipt workflows with observed native aborts; other private-report
+  // workflows keep their Chromium coverage.
+  // Firefox also repeats the private evidence
   // download. The registry lane shards by test order, and each viewport's
   // registry workflow is one serial group, so Firefox comes first: the
   // desktop group then starts in the first shard and the mobile group in the
@@ -246,8 +253,22 @@ export default defineConfig({
         viewport: { width: 320, height: 800 },
       },
     },
+    ...([1440, 320] as const).map((width) => ({
+      name: `firefox-stream-${width === 1440 ? "desktop" : "mobile"}`,
+      testMatch: [
+        "**/security-bounty.spec.ts",
+        "**/points-disputes.spec.ts",
+        "**/slopbot-appeal-inbox.spec.ts",
+      ],
+      grep: firefoxStreamWorkflows,
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width, height: width === 1440 ? 1000 : 800 },
+      },
+    })),
     {
       name: "chromium-desktop",
+      grepInvert: firefoxStreamWorkflows,
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
@@ -259,7 +280,7 @@ export default defineConfig({
     },
     {
       name: "chromium-mobile",
-      grepInvert: /@desktop-only/,
+      grepInvert: new RegExp(`@desktop-only|${firefoxStreamWorkflows.source}`),
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",

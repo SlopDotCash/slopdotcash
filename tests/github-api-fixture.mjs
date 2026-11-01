@@ -36,6 +36,10 @@ export const E2E_ORGANIZATION = { githubId: "987654320", login: "example" };
 export const E2E_SECURITY_ACCOUNTS = Object.freeze({
   "reporter-a": "900000011",
   "reporter-b": "900000012",
+  // Forwarding journeys share a D1 with other private-intake workflows. Keep
+  // their rolling admission budgets independent without changing the real cap.
+  "intake-desktop": "900000031",
+  "intake-mobile": "900000032",
   security: "900000013",
   triager: "900000014",
   finance: "900000015",
