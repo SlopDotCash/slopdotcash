@@ -396,6 +396,7 @@ async function requestEmailVerification(
       replay.security_enabled === Number(body.securityEnabled)
     )
       return emailPreferenceView(deps, githubId, 202);
+    if (replay) return json(409, { error: "idempotency_conflict" });
     const recent = (
       await deps.db
         .prepare(
