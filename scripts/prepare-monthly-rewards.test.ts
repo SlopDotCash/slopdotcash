@@ -443,3 +443,19 @@ test("a contributor-flag pause skips that project and keeps every other project'
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test.each([
+  ["2026-09-31T00:00:00.000Z", "September 31"],
+  ["2027-02-29T12:00:00.000Z", "February 29 in a common year"],
+])(
+  "refuses an impossible generatedAt %s (%s) before reading any ledger",
+  async (generatedAt) => {
+    await expect(
+      prepareMonthlyBases({
+        generatedAt,
+        period: "2026-09",
+        snapshotPath: join(tmpdir(), "slop-missing-ledger.json"),
+      }),
+    ).rejects.toThrow("generatedAt must be an exact UTC timestamp");
+  },
+);
