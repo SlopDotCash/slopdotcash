@@ -135,6 +135,7 @@ const INSTALL_FILES = new Set([
   "preinstall.js",
   ".envrc",
   "tasks.json",
+  "tox.ini",
   "devcontainer.json",
   "gnumakefile",
   "dockerfile",
