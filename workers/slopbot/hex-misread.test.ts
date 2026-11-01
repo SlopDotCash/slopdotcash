@@ -114,3 +114,49 @@ test("hexMisreadFinding catches invalid-sha256 phrasing around a digest", () => 
     ),
   ).toBe(true);
 });
+
+const TRUNCATED_CHECKSUM = "8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce1f806f2b"; // 48 hex chars
+
+test("hexMisreadFinding keeps truncated checksum findings", () => {
+  // Genuine finding: pinned value really is truncated. Evidence quotes the
+  // correct 64-char reference digest for comparison; that incidental token
+  // must not suppress the claim about the truncated checksum.
+  expect(
+    hexMisreadFinding(
+      lowQuality({
+        summary: `Pinned checksum ${TRUNCATED_CHECKSUM} is not a valid sha256 hex value.`,
+        evidence: [
+          `Reference digest ${DIGEST} matches the canonical artifact.`,
+        ],
+      }),
+    ),
+  ).toBe(false);
+});
+
+test("hexMisreadFinding keeps findings that the code misreads digests", () => {
+  // Genuine finding: the model correctly reports that production code treats
+  // a valid digest as invalid. "as not a …" is reporting code behavior, not
+  // a model misread of the digest itself.
+  expect(
+    hexMisreadFinding(
+      lowQuality({
+        summary: `validators.ts: the production regex treats ${DIGEST} as not a sha256 hex value when checking pinned artifacts.`,
+        evidence: [DIGEST],
+      }),
+    ),
+  ).toBe(false);
+});
+
+test("hexMisreadFinding keeps real undefined-variable findings near 0x literals", () => {
+  // Genuine finding about slot_registry. A nearby 0x literal inside the
+  // assigns…undefined window must not be treated as the undefined name.
+  expect(
+    hexMisreadFinding(
+      lowQuality({
+        summary:
+          "The patch assigns slot_registry from config but leaves it undefined at the call site. Constant 0x57738c8 is the expected slot id.",
+        evidence: ["slot_registry", "0x57738c8"],
+      }),
+    ),
+  ).toBe(false);
+});

@@ -704,16 +704,86 @@ async function sameReviewEvidence(
   return JSON.stringify(current) === JSON.stringify(related);
 }
 
-/** 64-character lowercase hex is a well-formed SHA-256 digest encoding. */
-const SHA256_HEX_TOKEN = /\b[0-9a-f]{64}\b/u;
+/** Well-formed SHA-256 digest encoding (64 hex chars, case-insensitive). */
+const SHA256_HEX_TOKEN = /^[0-9a-fA-F]{64}$/u;
+/** Long hex run that could be a digest-like citation near a claim. */
+const HEX_LOOKING_DIGEST = /\b[0-9a-fA-F]{16,}\b/gu;
 /** Python / C-style hex integer literal, not a name. */
-const HEX_INTEGER_LITERAL = /\b0x[0-9A-Fa-f]+\b/u;
-/** Model claims that a cited digest or hex string is invalid. */
+const HEX_INTEGER_LITERAL = /\b0x[0-9A-Fa-f]+\b/gu;
+/** Identifier or 0x literal, used to find the name a claim targets. */
+const IDENTIFIER_OR_HEX = /\b(?:0x[0-9A-Fa-f]+|[A-Za-z_][A-Za-z0-9_]*)\b/gu;
+/**
+ * Model claims that a cited digest or hex string is invalid.
+ * Negative lookbehind skips "as not a …" framings where the model reports
+ * that code treats a digest as invalid, rather than asserting it itself.
+ */
 const INVALID_HEX_CLAIM =
-  /\b(?:not\s+a\s+(?:valid\s+)?(?:sha-?256(?:\s+hex(?:\s+value)?)?|hex(?:adecimal)?(?:\s+value)?)|(?:sha-?256|hex(?:adecimal)?)\s+(?:digest\s+)?(?:is\s+)?(?:invalid|malformed|not\s+valid)|invalid\s+(?:sha-?256|hex(?:adecimal)?))\b/iu;
+  /\b(?:(?<!\bas\s)not\s+a\s+(?:valid\s+)?(?:sha-?256(?:\s+hex(?:\s+value)?)?|hex(?:adecimal)?(?:\s+value)?)|(?:sha-?256|hex(?:adecimal)?)\s+(?:digest\s+)?(?:is\s+)?(?:invalid|malformed|not\s+valid)|invalid\s+(?:sha-?256|hex(?:adecimal)?))\b/giu;
 /** Model claims that a 0x... token is an undefined name. */
 const UNDEFINED_HEX_NAME_CLAIM =
-  /\b(?:undefined\s+name|NameError|assigns?\b[\s\S]{0,80}?\bundefined)\b/iu;
+  /\b(?:undefined\s+name|NameError|assigns?\b[\s\S]{0,80}?\bundefined)\b/giu;
+/** Bounded window around a claim match when searching for its target token. */
+const CLAIM_TOKEN_WINDOW = 80;
+const CLAIM_SUBJECT_STOPWORDS = new Set([
+  "undefined",
+  "name",
+  "nameerror",
+  "assigns",
+  "assign",
+  "the",
+  "a",
+  "an",
+  "to",
+  "that",
+  "value",
+  "is",
+  "was",
+  "are",
+  "and",
+  "or",
+  "of",
+  "in",
+  "on",
+  "for",
+  "with",
+  "as",
+  "by",
+  "from",
+  "should",
+  "raise",
+  "raises",
+  "uses",
+  "use",
+  "used",
+  "where",
+  "appears",
+  "intended",
+  "slice",
+  "this",
+  "it",
+  "its",
+  "be",
+  "been",
+  "being",
+  "not",
+  "no",
+  "at",
+  "call",
+  "site",
+  "leaves",
+  "leave",
+  "left",
+  "but",
+  "config",
+  "constant",
+  "expected",
+  "slot",
+  "id",
+  "runtime",
+  "before",
+  "after",
+  "defined",
+]);
 
 function verdictReviewText(verdict: Verdict): string {
   return [verdict.summary, ...verdict.evidence, ...verdict.limitations].join(
@@ -721,17 +791,83 @@ function verdictReviewText(verdict: Verdict): string {
   );
 }
 
+/** Nearest regex match to an anchor, within a bounded window. */
+function nearestMatchInWindow(
+  text: string,
+  anchorIndex: number,
+  anchorLength: number,
+  pattern: RegExp,
+  windowSize: number,
+  exclude?: (token: string) => boolean,
+): string | null {
+  const center = anchorIndex + anchorLength / 2;
+  const start = Math.max(0, anchorIndex - windowSize);
+  const end = Math.min(text.length, anchorIndex + anchorLength + windowSize);
+  const slice = text.slice(start, end);
+  const flags = pattern.flags.includes("g")
+    ? pattern.flags
+    : `${pattern.flags}g`;
+  let best: { token: string; dist: number } | null = null;
+  for (const match of slice.matchAll(new RegExp(pattern.source, flags))) {
+    const token = match[0];
+    if (exclude?.(token)) continue;
+    const absIndex = start + (match.index ?? 0);
+    const dist = Math.abs(absIndex + token.length / 2 - center);
+    if (best === null || dist < best.dist) best = { token, dist };
+  }
+  return best?.token ?? null;
+}
+
 /**
  * True when a low_quality finding rests on calling a well-formed SHA-256
  * digest or 0x hex integer literal invalid or undefined (#1930 problems 1-2).
- * The check is deterministic and does not trust the model claim.
+ * Correlates each claim to the nearest target token in a bounded window so an
+ * incidental valid token elsewhere cannot suppress a genuine finding.
  */
 export function hexMisreadFinding(verdict: Verdict): boolean {
   if (verdict.category !== "low_quality") return false;
   const text = verdictReviewText(verdict);
-  if (INVALID_HEX_CLAIM.test(text) && SHA256_HEX_TOKEN.test(text)) return true;
-  if (UNDEFINED_HEX_NAME_CLAIM.test(text) && HEX_INTEGER_LITERAL.test(text))
-    return true;
+
+  for (const claim of text.matchAll(
+    new RegExp(INVALID_HEX_CLAIM.source, INVALID_HEX_CLAIM.flags),
+  )) {
+    const nearest = nearestMatchInWindow(
+      text,
+      claim.index ?? 0,
+      claim[0].length,
+      HEX_LOOKING_DIGEST,
+      CLAIM_TOKEN_WINDOW,
+    );
+    if (nearest !== null && SHA256_HEX_TOKEN.test(nearest)) return true;
+  }
+
+  for (const claim of text.matchAll(
+    new RegExp(UNDEFINED_HEX_NAME_CLAIM.source, UNDEFINED_HEX_NAME_CLAIM.flags),
+  )) {
+    const claimText = claim[0];
+    // assigns … undefined: only the name inside that span is the target.
+    if (/^assigns?\b/iu.test(claimText)) {
+      if (
+        new RegExp(HEX_INTEGER_LITERAL.source, HEX_INTEGER_LITERAL.flags).test(
+          claimText,
+        )
+      ) {
+        return true;
+      }
+      continue;
+    }
+    // "undefined name" / NameError: drop only when the nearest name-like
+    // token to the claim is itself a 0x literal.
+    const nearest = nearestMatchInWindow(
+      text,
+      claim.index ?? 0,
+      claim[0].length,
+      IDENTIFIER_OR_HEX,
+      CLAIM_TOKEN_WINDOW,
+      (token) => CLAIM_SUBJECT_STOPWORDS.has(token.toLowerCase()),
+    );
+    if (nearest !== null && /^0x[0-9A-Fa-f]+$/u.test(nearest)) return true;
+  }
   return false;
 }
 
