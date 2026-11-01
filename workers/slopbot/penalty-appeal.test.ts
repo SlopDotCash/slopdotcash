@@ -648,6 +648,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           user: { id: AUTHOR },
           issue_url: `https://api.github.com/repos/${owner}/${repo}/issues/5`,
         });
+      if (path.endsWith("/issues/comments/78") && request.method === "GET")
+        return Response.json({
+          body: "The SPL Token ELF sha256 is correct and verified locally.\n/slopbot appeal",
+          user: { id: AUTHOR },
+          issue_url: `https://api.github.com/repos/${owner}/${repo}/issues/5`,
+        });
       if (/\/issues\/comments\/\d+$/u.test(path)) {
         if (failCommentUpdate) {
           failCommentUpdate = false;
@@ -1459,6 +1465,21 @@ test("a value dispute reads the opening comment rather than a newer unrelated ap
     expect(run.modelInputs[0].item).toContain("Exact dispute from comment 77");
     expect(run.modelInputs[0].item).not.toContain(
       "This is my real project page",
+    );
+  });
+});
+
+test("an appeal comment where the command follows the explanation reaches triage", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    await run.deliver(
+      run.job("appeal", {
+        senderId: AUTHOR,
+        appealCommentId: 78,
+      }),
+    );
+    expect(run.modelInputs[0].item).toContain(
+      "The SPL Token ELF sha256 is correct and verified locally.",
     );
   });
 });
