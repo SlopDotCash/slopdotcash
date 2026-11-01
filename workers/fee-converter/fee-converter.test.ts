@@ -509,6 +509,14 @@ describe("Kyber gas pricing in the conversion workflow", () => {
     expect(usdMicro("unpriced")).toBeNull();
   });
 
+  test("usdMicro with direction down truncates the sub-micro remainder", () => {
+    expect(usdMicro("0.97999999", "down")).toBe(979_999n);
+    expect(usdMicro("0.004650942632151648", "down")).toBe(4_650n);
+    // Exact-micro values are unchanged in either direction.
+    expect(usdMicro("2.000001", "down")).toBe(2_000_001n);
+    expect(usdMicro("0.004650", "down")).toBe(4_650n);
+  });
+
   test("a quote counts price impact from untruncated USD inputs", async () => {
     const cfg = config();
     const network = cfg.networks[0];
@@ -541,6 +549,44 @@ describe("Kyber gas pricing in the conversion workflow", () => {
     expect("noRoute" in quote ? null : quote.priceImpactBps).toBe(202);
     expect("noRoute" in quote ? null : quote.gasCostMicro).toBe(0n);
   });
+
+  // The output must not round up: 1 -> 0.97999999 USD is exactly
+  // 200.0001 bps of impact, over the 200 bps cap. Ceiling the output to
+  // 980000 micro would shrink the difference and report 200.
+  for (const [amountOutUsd, bps] of [
+    ["0.97999999", 201],
+    ["0.98999999", 101],
+  ] as const) {
+    test(`a quote counts impact against a truncated output (${amountOutUsd} USD)`, async () => {
+      const cfg = config();
+      const network = cfg.networks[0];
+      const client = createEvmClient({
+        config: network,
+        limits: cfg.limits,
+        kyberClientId: "test",
+        fetch: (async () =>
+          Response.json({
+            code: 0,
+            data: {
+              routerAddress: network.definition.router,
+              routeSummary: {
+                tokenIn: TOKEN,
+                tokenOut: network.definition.usdc,
+                amountIn: "20000000",
+                amountOut: "20000000",
+                amountInUsd: "1",
+                amountOutUsd,
+                gas: "330498",
+                gasUsd: "0",
+                l1FeeUsd: "0",
+              },
+            },
+          })) as unknown as typeof fetch,
+      });
+      const quote = await client.quote(TOKEN, 20_000_000n);
+      expect("noRoute" in quote ? null : quote.priceImpactBps).toBe(bps);
+    });
+  }
 });
 
 describe("receipt-triggered conversion", () => {
