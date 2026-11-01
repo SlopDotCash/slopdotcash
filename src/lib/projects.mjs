@@ -172,6 +172,41 @@ export function isHistoricalRepositoryId(repositoryId) {
   return findHistoricalRepository(repositoryId) !== null;
 }
 
+/**
+ * Every name a record lists for one repository, joined across records. A
+ * removed pre-registry record keeps a transferred repository's old name with
+ * its current name as an alias, while the registry may list the repository
+ * under its current name only. That registry entry takes the current name in
+ * HISTORY_REPOSITORIES, so the two names resolve to different canonical ids
+ * there. Here the names stay one repository, named by the last record that
+ * lists any of them, which is the registry entry when there is one.
+ */
+const HISTORY_REPOSITORY_IDENTITIES = new Map();
+for (const repository of [...LEGACY_PROJECTS, ...HISTORICAL_PROJECTS].flatMap(
+  (project) => project.repositories,
+)) {
+  const identity = { repositoryId: repository.id, names: new Set() };
+  for (const name of [repository.id, ...(repository.aliases ?? [])]) {
+    const key = name.toLowerCase();
+    for (const linked of HISTORY_REPOSITORY_IDENTITIES.get(key)?.names ?? [key])
+      identity.names.add(linked);
+  }
+  for (const name of identity.names)
+    HISTORY_REPOSITORY_IDENTITIES.set(name, identity);
+}
+
+/**
+ * Resolves any recorded name of a registry or removed pre-registry repository,
+ * including a transferred repository's old name, to one canonical id.
+ */
+export function findHistoricalRepositoryIdentity(repositoryId) {
+  if (typeof repositoryId !== "string") return null;
+  return (
+    HISTORY_REPOSITORY_IDENTITIES.get(repositoryId.toLowerCase())
+      ?.repositoryId ?? null
+  );
+}
+
 /** Returns the canonical project for an id or slug. */
 export function findProject(value) {
   if (typeof value !== "string") return null;

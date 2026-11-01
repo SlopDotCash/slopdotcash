@@ -257,6 +257,10 @@ export declare function findHistoricalRepository(
 export declare function isHistoricalRepositoryId(
   repositoryId: unknown,
 ): boolean;
+/** Resolves any recorded name of one repository, old or current, to one id. */
+export declare function findHistoricalRepositoryIdentity(
+  repositoryId: unknown,
+): string | null;
 export declare function findHistoricalProject(
   projectId: string,
 ): ProjectDefinition | null;
