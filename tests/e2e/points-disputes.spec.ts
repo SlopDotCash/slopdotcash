@@ -65,6 +65,8 @@ test("a manual Points award reaches private Inbox review and an independent mode
   await expect(
     page.getByRole("heading", { name: "How Slop works", exact: true }),
   ).toBeVisible();
+  // A visible heading does not finish deferred fonts before navigation.
+  await page.evaluate(() => document.fonts.ready);
   await page.evaluate((value) => {
     // biome-ignore lint/suspicious/noDocumentCookie: Seed only this isolated local session with the real cookie path.
     document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
@@ -176,6 +178,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
     await expect(
       deniedPage.getByRole("heading", { name: "How Slop works", exact: true }),
     ).toBeVisible();
+    await deniedPage.evaluate(() => document.fonts.ready);
     await deniedPage.evaluate((value) => {
       // biome-ignore lint/suspicious/noDocumentCookie: Seed only this isolated local session with the real cookie path.
       document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
@@ -210,11 +213,12 @@ test("a manual Points award reaches private Inbox review and an independent mode
     await expect(
       moderator.getByRole("heading", { name: "How Slop works", exact: true }),
     ).toBeVisible();
+    await moderator.evaluate(() => document.fonts.ready);
     await moderator.evaluate((value) => {
       // biome-ignore lint/suspicious/noDocumentCookie: Seed only this isolated local session with the real cookie path.
       document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
     }, moderatorToken);
-    await moderator.goto("/inbox", { waitUntil: "load" });
+    await moderator.goto("/inbox", { waitUntil: "networkidle" });
     await moderator
       .locator(`a[href="/inbox?pointsDispute=${encodeURIComponent(key)}"]`)
       .click();
