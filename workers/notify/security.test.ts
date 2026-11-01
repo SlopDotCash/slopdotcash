@@ -642,6 +642,79 @@ test("a backup authority outage does not stop another recipient's queued receipt
   }
 });
 
+test("a primary authority outage does not stop another failed notice's escalation", async () => {
+  const h = await setup(false, true);
+  try {
+    for (const actor of [owner, backup])
+      h.sqlite
+        .query(
+          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES (?,?,?,?,1)",
+        )
+        .run(`U_${actor.githubId}`, actor.githubId, actor.githubLogin, at);
+    h.sqlite
+      .query(
+        "UPDATE security_cases SET submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=? WHERE id=?",
+      )
+      .run(at, at, owner.githubId, h.caseId);
+    await h.db.batch([notifySecurityReportReceived(h.db, h.caseId)]);
+    await dispatchSecurityMail(h.deps);
+    const primary = h
+      .rows()
+      .find((row) => row.recipient_github_id === owner.githubId)!;
+    const receipt = h
+      .rows()
+      .find((row) => row.recipient_github_id === reporter.githubId)!;
+    // Both sends failed after provider acceptance. Check the owner first,
+    // then escalate the reporter's independent notice to an available backup.
+    h.sqlite
+      .query(
+        "UPDATE security_notification_outbox SET state='bounced',escalation_checked_at=? WHERE id=?",
+      )
+      .run(at, primary.id);
+    h.sqlite
+      .query(
+        "UPDATE security_notification_outbox SET state='bounced',escalation_checked_at=? WHERE id=?",
+      )
+      .run("2026-10-19T12:00:01.000Z", receipt.id);
+    h.deps.config.recipients[reporter.githubId].backupGithubId =
+      backup.githubId;
+    let unavailable = true;
+    h.deps.repositoryAccess = async (_repository, actor) => {
+      if (unavailable && actor.githubId === owner.githubId)
+        throw new Error("Fixture GitHub authority outage");
+      return h.repositoryAccess();
+    };
+    h.advance(2000);
+    await dispatchSecurityMail(h.deps);
+    expect(
+      h
+        .rows()
+        .filter((row) => row.escalation_of)
+        .map((row) => [row.escalation_of, row.recipient_github_id]),
+    ).toEqual([[receipt.id, backup.githubId]]);
+    expect(h.rows().find((row) => row.id === primary.id)?.state).toBe(
+      "bounced",
+    );
+    unavailable = false;
+    await dispatchSecurityMail(h.deps);
+    await dispatchSecurityMail(h.deps);
+    expect(
+      h.rows().filter((row) => row.escalation_of === primary.id),
+    ).toHaveLength(1);
+    expect(
+      h.rows().filter((row) => row.escalation_of === receipt.id),
+    ).toHaveLength(1);
+    expect(
+      h
+        .rows()
+        .filter((row) => row.escalation_of === null)
+        .map((row) => row.attempts),
+    ).toEqual([1, 1]);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("provider suppression evidence is a failed delivery that reaches the backup", async () => {
   const h = await setup();
   await dispatchSecurityMail(h.deps);
