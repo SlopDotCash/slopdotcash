@@ -96,7 +96,11 @@ export async function storeVaultSnapshot(
     if (BigInt(totals.blockNumber) < BigInt(prior.block_number as string))
       return "older";
     if (
-      prior.asset_address !== deployment.asset ||
+      !sameAddress(
+        deployment.chain,
+        prior.asset_address as string,
+        deployment.asset,
+      ) ||
       prior.asset_decimals !== totals.decimals
     )
       throw new Error("Vault asset changed");
@@ -115,6 +119,10 @@ export async function storeVaultSnapshot(
     const column = COLUMNS[key];
     return `(length(excluded.${column}) > length(vault_snapshots.${column}) OR (length(excluded.${column}) = length(vault_snapshots.${column}) AND excluded.${column} >= vault_snapshots.${column}))`;
   }).join(" AND ");
+  const assetMatches =
+    chainFamily(deployment.chain) === "evm"
+      ? "lower(excluded.asset_address)=lower(vault_snapshots.asset_address)"
+      : "excluded.asset_address=vault_snapshots.asset_address";
   const result = await db
     .prepare(
       `INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,${keys.map((k) => COLUMNS[k]).join(",")},total_service_fees,block_number,block_time,observed_at) VALUES(${Array(
@@ -123,7 +131,7 @@ export async function storeVaultSnapshot(
         .fill("?")
         .join(
           ",",
-        )}) ON CONFLICT(project_id,network,vault) DO UPDATE SET ${keys.map((k) => `${COLUMNS[k]}=excluded.${COLUMNS[k]}`).join(",")},block_number=excluded.block_number,block_time=excluded.block_time,observed_at=excluded.observed_at WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_snapshots.block_number AS INTEGER) AND excluded.asset_address=vault_snapshots.asset_address AND excluded.asset_decimals=vault_snapshots.asset_decimals AND excluded.chain=vault_snapshots.chain AND ${monotonicCounters}`,
+        )}) ON CONFLICT(project_id,network,vault) DO UPDATE SET ${keys.map((k) => `${COLUMNS[k]}=excluded.${COLUMNS[k]}`).join(",")},block_number=excluded.block_number,block_time=excluded.block_time,observed_at=excluded.observed_at WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_snapshots.block_number AS INTEGER) AND ${assetMatches} AND excluded.asset_decimals=vault_snapshots.asset_decimals AND excluded.chain=vault_snapshots.chain AND ${monotonicCounters}`,
     )
     .bind(
       deployment.projectId,

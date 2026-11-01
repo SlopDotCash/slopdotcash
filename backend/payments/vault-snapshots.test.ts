@@ -40,6 +40,78 @@ const totals = (overrides: Partial<VaultTotals> = {}): VaultTotals => ({
 });
 const observed = "2026-10-18T10:05:00.000Z";
 
+test("an EVM asset spelling change keeps the finalized vault cache refreshable", async () => {
+  const db = open();
+  await storeVaultSnapshot(db, deployment, totals(), observed);
+  const checksummed = { ...deployment, asset: totals().asset };
+  expect(
+    await storeVaultSnapshot(
+      db,
+      checksummed,
+      totals({
+        blockNumber: "1001",
+        totalDeposited: "600000000",
+        freeBalance: "400000000",
+      }),
+      observed,
+    ),
+  ).toBe("stored");
+  const response = await handlePaymentsApi(
+    new Request("https://slop.cash/api/v1/payments/projects/acme/vault"),
+    { db, now: () => new Date(observed) },
+  );
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as {
+    snapshots: { blockNumber: string; totalDeposited: string }[];
+  };
+  expect(body.snapshots[0].blockNumber).toBe("1001");
+  expect(body.snapshots[0].totalDeposited).toBe("600000000");
+  await expect(
+    storeVaultSnapshot(
+      db,
+      { ...checksummed, asset: "0x1111111111111111111111111111111111111111" },
+      totals(),
+      observed,
+    ),
+  ).rejects.toThrow();
+});
+
+test("a Solana mint spelling change remains a different asset", async () => {
+  const db = open();
+  const solana: SnapshotDeployment = {
+    projectId: "sol",
+    network: "solana-devnet",
+    chain: "solana",
+    vault: "fixture-vault",
+    projectPda: "fixture-pda",
+    asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  };
+  const value = totals({
+    network: solana.network,
+    vault: solana.projectPda!,
+    asset: solana.asset,
+  });
+  await storeVaultSnapshot(db, solana, value, observed);
+  const changed = { ...solana, asset: solana.asset.toLowerCase() };
+  await expect(
+    storeVaultSnapshot(
+      db,
+      changed,
+      { ...value, asset: changed.asset, blockNumber: "1001" },
+      observed,
+    ),
+  ).rejects.toThrow("Vault asset changed");
+  expect(
+    (
+      await db
+        .prepare(
+          "SELECT block_number FROM vault_snapshots WHERE project_id='sol'",
+        )
+        .first<{ block_number: string }>()
+    )?.block_number,
+  ).toBe("1000");
+});
+
 test("refreshes both chain caches and preserves the last verified public totals after invalid reads", async () => {
   const db = open();
   const solana: SnapshotDeployment = {
