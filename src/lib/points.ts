@@ -856,6 +856,11 @@ export function applyPointsSnapshot(
  * retaining the raw string: owner/repo casing variants, the explicit
  * default port (:443, dropped as default by the URL parser), an empty query
  * marker, and dot-segment paths (including percent-encoded dot-segments).
+ * The literal `pull` path segment is matched case-insensitively because the
+ * validator (githubUrl in src/lib/evaluator-awards.ts) compares the whole
+ * pathname case-folded; a case-sensitive match would return no identity for
+ * an uppercase `/PULL/` variant, evading the evaluated-review suppression
+ * (PRD section 14 anti-duplication rule).
  *
  * The owner/repo is resolved through the registered project repository
  * inventory (registry and removed projects via findHistoricalRepository), so a
@@ -887,7 +892,7 @@ export function canonicalReviewIdentity(url: string): string | undefined {
   // non-empty query is rejected by the validator and must yield no identity.
   if (parsed.port) return undefined;
   if (parsed.search) return undefined;
-  const path = /^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/.exec(parsed.pathname);
+  const path = /^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/i.exec(parsed.pathname);
   if (!path) return undefined;
   const fragment = parsed.hash.toLowerCase();
   if (!/^#(pullrequestreview-|discussion_r)\d+$/.test(fragment))
