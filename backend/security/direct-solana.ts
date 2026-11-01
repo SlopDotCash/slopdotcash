@@ -24,6 +24,13 @@ import {
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { isExactUtc } from "../../src/lib/record-validation.mjs";
 
+/**
+ * The payer wallet cannot fund this award as it stands. The owner can fix
+ * the condition (fund the wallet, use a plain wallet account), so the API
+ * reports it as a refusal with its reason, not as an internal fault.
+ */
+export class DirectPayerRefused extends Error {}
+
 export type SolanaDirectInput = {
   rpcUrl: string;
   genesisHash: string;
@@ -234,7 +241,7 @@ export async function prepareSolanaDirect(input: SolanaDirectInput): Promise<{
   );
   const payerAccount = record(await account(input, input.payer));
   if (payerAccount.owner !== SYSTEM)
-    throw new Error("The payer is not a native wallet account");
+    throw new DirectPayerRefused("The payer is not a native wallet account");
   let required = BigInt(fee + rent) + (plan.native ? plan.total : 0n);
   if (!plan.native && plan.tokenProgram) {
     if (
@@ -245,7 +252,9 @@ export async function prepareSolanaDirect(input: SolanaDirectInput): Promise<{
         plan.tokenProgram,
       ) < plan.total
     )
-      throw new Error("The payer has insufficient tokens for this award");
+      throw new DirectPayerRefused(
+        "The payer has insufficient tokens for this award",
+      );
     for (const recipient of plan.recipients.keys()) {
       const destination = await account(
         input,
@@ -274,7 +283,7 @@ export async function prepareSolanaDirect(input: SolanaDirectInput): Promise<{
     }
   }
   if (BigInt(integer(payerAccount.lamports)) < required)
-    throw new Error(
+    throw new DirectPayerRefused(
       "The payer needs the award, transaction fee and account rent",
     );
   const transaction = solanaBase64(
@@ -289,7 +298,7 @@ export async function prepareSolanaDirect(input: SolanaDirectInput): Promise<{
     ).value,
   );
   if (simulation.err !== null)
-    throw new Error(
+    throw new DirectPayerRefused(
       "The direct award simulation failed; check funds and recipient account rent",
     );
   return {
