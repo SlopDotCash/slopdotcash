@@ -273,8 +273,12 @@ const RULES: Rule[] = [
   {
     threat: "wallet-drainer",
     severity: "high",
+    // "Local Extension Settings" is a directory name. Match when a quote,
+    // slash, backslash, or closing brace is immediately on the left, in any
+    // case. A closing quote is not required. A bare phrase is ordinary
+    // English, and a high finding stays open after specialist review.
     pattern:
-      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|Local Extension Settings|\.ethereum\/keystore/iu,
+      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`\/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
@@ -287,8 +291,12 @@ const RULES: Rule[] = [
   {
     threat: "credential-theft",
     severity: "high",
+    // "Login Data" is Chromium's password-file name. Match when a quote,
+    // slash, backslash, or closing brace is immediately on the left, in any
+    // case, including "Login Data For Account". A bare phrase is ordinary
+    // English, and a high finding stays open after specialist review.
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|\bLogin Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`\/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
