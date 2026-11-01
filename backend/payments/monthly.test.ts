@@ -47,6 +47,7 @@ import {
   prepareMonthlyAttestation,
 } from "./monthly-attestation";
 import { publishMonthlyAuthorizations } from "./monthly-publication";
+import { sameAddress, storeVaultSnapshot } from "./vault-snapshots";
 
 const testAttester = privateKeyToAccount(`0x${"01".repeat(32)}`);
 const deployment = {
@@ -175,6 +176,40 @@ function vault(
 }
 const count = (table: string) =>
   (sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get() as { n: number }).n;
+function solanaSnapshot(asset: string, free: string, blockNumber: string) {
+  const escrow = project.manifest.escrow;
+  const selected = escrow?.deployments[0];
+  if (escrow?.chain !== "solana" || !selected || selected.projectPda === null)
+    throw new Error("Missing Solana fixture deployment");
+  return {
+    deployment: {
+      projectId: project.id,
+      network: selected.network,
+      chain: escrow.chain,
+      vault: selected.vault,
+      asset: selected.asset,
+      projectPda: selected.projectPda,
+    },
+    totals: {
+      network: selected.network,
+      vault: selected.projectPda,
+      asset,
+      decimals: 6,
+      blockNumber,
+      blockTime: afterCutoff.toISOString(),
+      totalDeposited: "5000",
+      totalPaid: "0",
+      totalPayoutFees: "0",
+      totalGrossWithdrawn: "0",
+      totalWithdrawalFees: "0",
+      freeBalance: free,
+      reservedPrincipal: null,
+      reservedFees: null,
+      accruedFees: null,
+      reserved: "0",
+    },
+  };
+}
 async function rejects(promise: Promise<unknown>, code: string) {
   const error = await promise.then(
     () => null,
@@ -922,16 +957,38 @@ describe("monthly coordinator", () => {
     ).toMatchObject({ award: { githubUserId: A, gross: "600", fee: "12" } });
   });
 
-  test("a Solana funding reading for a different mint case does not fund the month", async () => {
+  test("monthly funding follows the vault writer's address comparison", async () => {
+    const evmMixed = `0x${deployment.asset.slice(2).toUpperCase()}`;
+    expect(evmMixed).not.toBe(deployment.asset);
+    expect(sameAddress("base", deployment.asset, evmMixed)).toBe(true);
+    await coordinate(afterCutoff);
+    // sameAddress treats this checksum as the reviewed asset. The monthly
+    // read uses that helper, so the stored checksum still funds the month.
+    vault("5000", afterCutoff.toISOString(), 6, evmMixed);
+    expect((await coordinate(afterCutoff)).created).toEqual([
+      `${project.id}/2026-11`,
+    ]);
+
     sqlite.close();
     await setupFixture(solanaDeployment);
-    await coordinate(afterCutoff);
     const caseVariant = solanaDeployment.asset.replace("z", "Z");
     expect(caseVariant).not.toBe(solanaDeployment.asset);
-    expect(caseVariant.toLowerCase()).toBe(
-      solanaDeployment.asset.toLowerCase(),
+    expect(sameAddress("solana", solanaDeployment.asset, caseVariant)).toBe(
+      false,
     );
-    // Enough free balance for the whole month, recorded against another mint.
+    const rejected = solanaSnapshot(caseVariant, "1000000", "100");
+    await expect(
+      storeVaultSnapshot(
+        db,
+        rejected.deployment,
+        rejected.totals,
+        afterCutoff.toISOString(),
+      ),
+    ).rejects.toThrow("Vault totals differ from the reviewed deployment");
+    expect(count("vault_snapshots")).toBe(0);
+    // The writer never stores that mint. The read applies the same comparison,
+    // so a fixture row outside the writer stays unfunded and writes nothing.
+    await coordinate(afterCutoff);
     vault("1000000", afterCutoff.toISOString(), 6, caseVariant);
     expect((await coordinate(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2026-11`, reason: "stale-funding" },
@@ -943,13 +1000,32 @@ describe("monthly coordinator", () => {
   test("a Solana month with the exact mint still reports underfunded when the free balance is short", async () => {
     sqlite.close();
     await setupFixture(solanaDeployment);
+    expect(
+      sameAddress("solana", solanaDeployment.asset, solanaDeployment.asset),
+    ).toBe(true);
     await coordinate(afterCutoff);
-    vault("1");
+    const short = solanaSnapshot(solanaDeployment.asset, "1", "100");
+    expect(
+      await storeVaultSnapshot(
+        db,
+        short.deployment,
+        short.totals,
+        afterCutoff.toISOString(),
+      ),
+    ).toBe("stored");
     expect((await coordinate(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2026-11`, reason: "underfunded" },
     ]);
     expect(count("monthly_payment_obligations")).toBe(0);
-    vault("1000");
+    const covered = solanaSnapshot(solanaDeployment.asset, "1000", "101");
+    expect(
+      await storeVaultSnapshot(
+        db,
+        covered.deployment,
+        covered.totals,
+        afterCutoff.toISOString(),
+      ),
+    ).toBe("stored");
     expect((await coordinate(afterCutoff)).created).toEqual([
       `${project.id}/2026-11`,
     ]);

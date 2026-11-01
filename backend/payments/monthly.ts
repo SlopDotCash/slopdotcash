@@ -67,6 +67,7 @@ import type {
   MonthlyReleaseCheck,
   MonthlyReleaseRequest,
 } from "./monthly-reserve-release";
+import { sameAddress } from "./vault-snapshots";
 
 export class MonthlyPaymentError extends Error {
   constructor(
@@ -424,19 +425,6 @@ async function freezeMonthlyPeriod(
 }
 
 /**
- * EVM asset addresses are case-insensitive. A Solana mint is base58 and
- * case-sensitive: a case variant is a different mint, so its free balance
- * cannot fund the frozen asset.
- */
-function sameVaultAsset(network: string, stored: string, frozen: string) {
-  const family =
-    ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.family;
-  return family === "evm"
-    ? stored.toLowerCase() === frozen.toLowerCase()
-    : stored === frozen;
-}
-
-/**
  * Creates the obligations of a frozen month once, and only when the vault's
  * finalized free balance covers them together with every earlier obligation
  * still awaiting reservation in the same vault. Nothing is created for an
@@ -541,9 +529,15 @@ async function createMonthlyObligations(
         free_balance: string | null;
         observed_at: string;
       }>();
+    // The snapshot writer accepts a read only when sameAddress matches the
+    // reviewed asset. Funding uses that helper, so both sides share one rule.
+    const network = Object.hasOwn(ESCROW_NETWORKS, run.network)
+      ? ESCROW_NETWORKS[run.network as keyof typeof ESCROW_NETWORKS]
+      : undefined;
     if (
       !vault ||
-      !sameVaultAsset(run.network, vault.asset_address, run.snapshot.asset) ||
+      !network ||
+      !sameAddress(network.chain, vault.asset_address, run.snapshot.asset) ||
       now.getTime() - Date.parse(vault.observed_at) > VAULT_SNAPSHOT_STALE_MS
     )
       return "stale-funding";
