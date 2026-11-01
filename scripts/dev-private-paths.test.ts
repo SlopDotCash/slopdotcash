@@ -65,17 +65,23 @@ describe("privateDevRequest blocks private locations", () => {
   // drive path follows it directly with no separating slash. The URL parser
   // turns the backslashes into forward slashes before the guard runs, and the
   // raw-backslash form reaches the same resolve when Vite has not seen it yet.
-  test("an @fs Windows drive path is blocked in every served form", () => {
-    const directory = "C:\\Users\\dev\\slop-dev-private-data-1";
-    const slashed = directory.replaceAll("\\", "/");
-    for (const candidate of [
-      `/@fs${slashed}/slop.sqlite`,
-      `/@fs/${slashed}/slop.sqlite`,
-      `/@fs${directory}/slop.sqlite`,
-      `/@fs/${directory}/slop.sqlite`,
-    ])
-      expect(privateDevRequest(candidate, root, directory)).toBeTrue();
-  });
+  // Vite serves this form only on a Windows host and the guard resolves it
+  // with Windows path semantics, so the test runs only there; the POSIX form
+  // above runs on every platform.
+  test.skipIf(process.platform !== "win32")(
+    "an @fs Windows drive path is blocked in every served form",
+    () => {
+      const directory = "C:\\Users\\dev\\slop-dev-private-data-1";
+      const slashed = directory.replaceAll("\\", "/");
+      for (const candidate of [
+        `/@fs${slashed}/slop.sqlite`,
+        `/@fs/${slashed}/slop.sqlite`,
+        `/@fs${directory}/slop.sqlite`,
+        `/@fs/${directory}/slop.sqlite`,
+      ])
+        expect(privateDevRequest(candidate, root, directory)).toBeTrue();
+    },
+  );
 
   test("a private alias and encoded dev-var markers are blocked", () => {
     for (const candidate of [
