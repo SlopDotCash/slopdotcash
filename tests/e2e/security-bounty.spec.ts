@@ -3049,13 +3049,11 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
   );
   test.setTimeout(180_000);
   diagnostics.allow(/net::ERR_FAILED.*security-submissions/u);
-  // Independent viewport journeys use distinct seeded reporters. The real
-  // same-actor workload cap remains covered by the API integration cases.
-  const reporterRole = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const otherReporterRole =
-    reporterRole === "reporter-a" ? "reporter-b" : "reporter-a";
+  // This multi-step journey must not spend another workflow's rolling budget.
+  // The same-actor workload cap is unchanged and covered by the API tests.
+  const mobile = test.info().project.name.endsWith("-mobile");
+  const reporterRole = mobile ? "intake-mobile" : "intake-desktop";
+  const otherReporterRole = mobile ? "reporter-a" : "reporter-b";
   const reporterToken = TOKENS[reporterRole];
   const otherReporterToken = TOKENS[otherReporterRole];
   const suffix = projectSuffix();
