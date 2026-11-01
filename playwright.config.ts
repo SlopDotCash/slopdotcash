@@ -7,6 +7,9 @@ import { availableParallelism } from "node:os";
 
 import { defineConfig, devices } from "@playwright/test";
 
+const firefoxStreamWorkflows =
+  /admin placement and explicit bounty type|a manual Points award reaches private Inbox review|private security bounty programs keep cases restricted/;
+
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
   process.env.GITARMY_BASE_URL ??
@@ -218,8 +221,9 @@ export default defineConfig({
   // stream EOF and ERR_ABORTED
   // (https://github.com/microsoft/playwright/issues/42742). Keep the bounded
   // readers and strict failure assertions, and run these workflows
-  // in Firefox at both widths. Only the discovery-dependent admin-placement
-  // case moves; the other private-report workflows keep their Chromium coverage.
+  // in Firefox at both widths. Scope this to discovery and the two Inbox
+  // receipt workflows with observed native aborts; other private-report
+  // workflows keep their Chromium coverage.
   // Firefox also repeats the private evidence
   // download. The registry lane shards by test order, and each viewport's
   // registry workflow is one serial group, so Firefox comes first: the
@@ -250,9 +254,9 @@ export default defineConfig({
       },
     },
     ...([1440, 320] as const).map((width) => ({
-      name: `firefox-discovery-${width === 1440 ? "desktop" : "mobile"}`,
-      testMatch: "**/security-bounty.spec.ts",
-      grep: /admin placement and explicit bounty type/,
+      name: `firefox-stream-${width === 1440 ? "desktop" : "mobile"}`,
+      testMatch: ["**/security-bounty.spec.ts", "**/points-disputes.spec.ts"],
+      grep: firefoxStreamWorkflows,
       use: {
         ...devices["Desktop Firefox"],
         viewport: { width, height: width === 1440 ? 1000 : 800 },
@@ -260,7 +264,7 @@ export default defineConfig({
     })),
     {
       name: "chromium-desktop",
-      grepInvert: /admin placement and explicit bounty type/,
+      grepInvert: firefoxStreamWorkflows,
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
@@ -272,7 +276,7 @@ export default defineConfig({
     },
     {
       name: "chromium-mobile",
-      grepInvert: /@desktop-only|admin placement and explicit bounty type/,
+      grepInvert: new RegExp(`@desktop-only|${firefoxStreamWorkflows.source}`),
       testIgnore: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
