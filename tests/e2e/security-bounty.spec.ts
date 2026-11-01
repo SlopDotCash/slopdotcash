@@ -2848,6 +2848,13 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   );
   await row.click();
   await (await ordinarySnapshot).finished();
+  const clearance = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/.well-known/slop/projects.json",
+  );
+  const clearanceResponse = await clearance;
+  const clearanceFailure = await clearanceResponse.finished();
+  expect(clearanceFailure).toBeNull();
   await page.waitForLoadState("networkidle");
   await expect(
     page.getByLabel("Agent prompt", { exact: true }),
