@@ -67,6 +67,16 @@ const instant = (v: unknown): v is string =>
   Number.isFinite(Date.parse(v)) &&
   new Date(v).toISOString() === v;
 
+// Observation stamps must sit in a two-sided window: the 48-hour freshness
+// check in reviewReferralClaim only bounds age from below, so an unbounded
+// future stamp would read as permanently fresh. pendingUntil is exempt: a
+// maturity deadline is supposed to sit in the future. Five minutes matches
+// the clock-skew tolerance the repo already uses for client-checked
+// backend timestamps (backend/security/submissions.ts, backend/trace/handler.ts).
+export const REFERRAL_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const observed = (v: unknown): v is string =>
+  instant(v) && Date.parse(v) <= Date.now() + REFERRAL_MAX_FUTURE_SKEW_MS;
+
 export function referralResponse(value: unknown): ReferralResponse {
   const data = value as ReferralResponse;
   if (data?.enabled === false) return { enabled: false };
@@ -80,9 +90,10 @@ export function referralResponse(value: unknown): ReferralResponse {
     ![data.paused, data.ended, data.latestVoided].every(
       (v) => typeof v === "boolean",
     ) ||
-    ![data.observedAt, data.finalizedAt, data.pendingUntil].every(
-      (v) => v === null || instant(v),
+    ![data.observedAt, data.finalizedAt].every(
+      (v) => v === null || observed(v),
     ) ||
+    !(data.pendingUntil === null || instant(data.pendingUntil)) ||
     !(data.wallet === null || address(data.wallet))
   )
     throw new Error("Referral rewards could not be verified. Retry.");
