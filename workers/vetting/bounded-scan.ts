@@ -143,6 +143,7 @@ const PACKAGE_MANAGER_CONFIGS = new Set([
 const INSTALL_FILES = new Set([
   "setup.py",
   "build.rs",
+  "hatch_build.py",
   "extconf.rb",
   "makefile",
   "makefile.pl",
