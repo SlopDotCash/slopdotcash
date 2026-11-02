@@ -488,6 +488,24 @@ const RULES: Rule[] = [
       /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
     summary: "Runs a remote script URL directly",
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // The fetched-code rule above names the fetch APIs of Python and
+    // JavaScript. The same act through the fetch idioms of the other
+    // languages the scan reviews matched nothing: an eval whose argument
+    // reads from the network through Ruby's `URI.open` or the open-uri
+    // `open`, Perl's LWP `get`, or PHP's `file_get_contents`, each with
+    // the URL written out, and a PHP include or require of a remote URL,
+    // which executes the fetched file with no eval at all. Fetching data
+    // without executing it, and an eval of local content, keep no
+    // finding. A method call such as `requests.get` stays with the rule
+    // above; Ruby's `Net::HTTP.get` and `get_response` over a `URI` are
+    // named here because that rule names no Ruby fetch API.
+    pattern:
+      /\b(?:eval|exec)\s*\([^\n]{0,160}?\b(?:Net::HTTP\.get(?:_response)?\s*\(\s*URI\s*\(\s*["']https?:\/\/|URI\.open\s*\(\s*["']https?:\/\/|open\s*\(\s*["']https?:\/\/|file_get_contents\s*\(\s*["']https?:\/\/|(?<![\w$.])get\s*\(\s*["']https?:\/\/)|\b(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//iu,
+    summary: "Executes code fetched from the network",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
