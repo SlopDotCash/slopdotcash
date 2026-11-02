@@ -3885,6 +3885,18 @@ function createSnapshotWithReviewCutoff(
       history: { recorded_at: string }[];
     };
   };
+  // The ledger only grows through appendScore, so index each new merge
+  // credit once instead of scanning the whole ledger for every review.
+  const mergeCredits = new Set<string>();
+  let mergeCreditsIndexed = 0;
+  const hasMergeCredit = (pullRequestId: string, actorId: string) => {
+    for (; mergeCreditsIndexed < ledger.length; mergeCreditsIndexed++) {
+      const event = ledger[mergeCreditsIndexed] as ScoreEvent;
+      if (event.category === "merged-pull-request")
+        mergeCredits.add(`${event.source.id}\0${event.actor.id}`);
+    }
+    return mergeCredits.has(`${pullRequestId}\0${actorId}`);
+  };
   // Returns the review's assessed value when it qualifies for review credit.
   // Integrity failures throw; unassessed or zero-valued reviews earn nothing.
   const valueReviewCandidate = (
@@ -3984,12 +3996,7 @@ function createSnapshotWithReviewCutoff(
     // credited on this pull request, reviews its own work.
     if (
       implementationActorNodeIds.includes(review.author.id) ||
-      ledger.some(
-        (event) =>
-          event.category === "merged-pull-request" &&
-          event.source.id === pullRequest.id &&
-          event.actor.id === review.author?.id,
-      )
+      hasMergeCredit(pullRequest.id, review.author.id)
     ) {
       excludeReview(pullRequest, review, "self-review");
       return null;
