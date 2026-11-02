@@ -1,4 +1,11 @@
-import { repositoryIdentity } from "../../backend/projects/enforcement";
+import {
+  CloudflareProjectPersistence,
+  type ProjectD1Database,
+} from "../../backend/projects/cloudflare-persistence";
+import {
+  repositoryIdentity,
+  retiredByRestriction,
+} from "../../backend/projects/enforcement";
 import {
   evaluateProjectCapabilities,
   type ProjectCapabilities,
@@ -121,6 +128,20 @@ export async function repositoryCapabilities(
       ORDER BY e.state_after = 'banned' DESC LIMIT 1`)
     .bind(project.id, identity.githubId, JSON.stringify(identity.keys))
     .first<{ state: ProjectRestrictionState }>();
+  // A quarantine or ban retires the listing it pauses. Only an owner's
+  // retirement ends review (owner decision D12).
+  const restrictionRetired =
+    restricted !== null && project.listingTier === "retired"
+      ? await retiredByRestriction(
+          // Reads only: the restriction records and two retained revisions.
+          new CloudflareProjectPersistence(db as ProjectD1Database),
+          project.id,
+        )
+      : false;
+  // Without the revision proof the retirement counts as the owner's: no
+  // review, while an appeal or a reopen can still reverse a penalty.
+  if (restrictionRetired === null)
+    console.error("slopbot restriction revision evidence unavailable");
   return {
     projectId: project.id,
     project,
@@ -132,6 +153,7 @@ export async function repositoryCapabilities(
           ? "active"
           : "paused",
       listingTier: project.listingTier,
+      retiredByRestriction: restrictionRetired === true,
       restriction: restricted?.state ?? "clear",
     }),
   };
