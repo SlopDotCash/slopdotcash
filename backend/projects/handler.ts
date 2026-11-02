@@ -1580,7 +1580,13 @@ async function publishOwnerRevision(
   const current = await deps.persistence.getProject(projectId);
   if (current === null) fail(404, "not_found", "Project not found");
   if (current.revision !== expectedRevision)
-    fail(409, "stale_revision", "The project changed since you loaded it");
+    fail(
+      409,
+      "stale_revision",
+      stored
+        ? "The project changed after this update was saved; make the change again in the project's settings"
+        : "The project changed since you loaded it",
+    );
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = publicRestrictionOf(current, enforcements);
@@ -1762,10 +1768,32 @@ async function listSetup(
       listingTier: project.manifest.listingTier,
       revision: project.revision,
     })),
-    applications: applications
-      .filter((application) => application.status === "pending")
+    applications: (
+      await Promise.all(
+        applications
+          .filter((application) => application.status === "pending")
+          .map(async (application) =>
+            (await isPublishable(deps, application)) ? [application] : [],
+          ),
+      )
+    )
+      .flat()
       .map(publicApplication),
   });
+}
+
+/**
+ * A stored update publishes only against its own base revision. Once another
+ * revision is published it can never succeed, so setup stops offering it;
+ * the owner makes the change again from the project's settings.
+ */
+async function isPublishable(
+  deps: ProjectApiDependencies,
+  application: ProjectApplication,
+): Promise<boolean> {
+  if (application.expectedRevision === undefined) return true;
+  const project = await deps.persistence.getProject(application.projectId);
+  return project?.revision === application.expectedRevision;
 }
 
 async function checkSetup(

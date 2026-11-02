@@ -62,9 +62,10 @@ test("refreshes both chain caches and preserves the last verified public totals 
   const readPublic = async (projectId: string) => {
     const response = await handlePaymentsApi(
       new Request(
-        `https://slop.cash/api/v1/payments/projects/${projectId}/vault`,
+        `https://staging.slop.cash/api/v1/payments/projects/${projectId}/vault`,
       ),
-      { db, now: () => new Date(observed) },
+      // Test data uses testnet networks; staging tier keeps them visible.
+      { db, now: () => new Date(observed), tier: "staging" },
     );
     expect(response.status).toBe(200);
     return ((await response.json()) as { snapshots: Record<string, unknown>[] })
@@ -145,7 +146,7 @@ test("refreshes both chain caches and preserves the last verified public totals 
 });
 
 describe("GET /api/v1/payments/projects/:id/vault", () => {
-  const url = "https://slop.cash/api/v1/payments/projects/acme/vault";
+  const url = "https://staging.slop.cash/api/v1/payments/projects/acme/vault";
   test("serves cached rows with public edge caching and never reads a chain", async () => {
     const db = open();
     await storeVaultSnapshot(
@@ -174,6 +175,7 @@ describe("GET /api/v1/payments/projects/:id/vault", () => {
         db,
         edgeCache,
         now: () => new Date(observed),
+        tier: "staging",
       });
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe(
@@ -212,6 +214,7 @@ describe("GET /api/v1/payments/projects/:id/vault", () => {
       const cached = await handlePaymentsApi(new Request(url), {
         db,
         edgeCache,
+        tier: "staging",
       });
       expect(
         ((await cached.json()) as { snapshots: unknown[] }).snapshots,
@@ -222,7 +225,10 @@ describe("GET /api/v1/payments/projects/:id/vault", () => {
   });
 
   test("an unindexed project returns no rows, not zero totals", async () => {
-    const response = await handlePaymentsApi(new Request(url), { db: open() });
+    const response = await handlePaymentsApi(new Request(url), {
+      db: open(),
+      tier: "staging",
+    });
     expect(response.status).toBe(200);
     expect(
       ((await response.json()) as { snapshots: unknown[] }).snapshots,
@@ -467,6 +473,71 @@ test("bounded refresh advances healthy vaults while earlier reads wait and repor
   } finally {
     for (const gate of gates) gate.finish();
     await refreshing.catch(() => {});
+    sqlite.close();
+  }
+});
+
+test("vault route excludes testnet snapshots in production but keeps them in staging", async () => {
+  const { db, sqlite } = sqliteD1(MIGRATIONS);
+  try {
+    const database = db as unknown as D1Database;
+    // One mainnet and one testnet snapshot for the same project.
+    const mainnetDeployment: SnapshotDeployment = {
+      projectId: "vault-tier-proof",
+      network: "base",
+      chain: "base",
+      vault: "0x1111111111111111111111111111111111111111",
+      asset: "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+    };
+    const testnetDeployment: SnapshotDeployment = {
+      projectId: "vault-tier-proof",
+      network: "base-sepolia",
+      chain: "base",
+      vault: "0x2222222222222222222222222222222222222222",
+      asset: "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+    };
+    const baseTotals = (network: string, vault: string) =>
+      totals({ network, vault });
+    const r1 = await storeVaultSnapshot(
+      database,
+      mainnetDeployment,
+      baseTotals("base", "0x1111111111111111111111111111111111111111"),
+      observed,
+    );
+    const r2 = await storeVaultSnapshot(
+      database,
+      testnetDeployment,
+      baseTotals("base-sepolia", "0x2222222222222222222222222222222222222222"),
+      observed,
+    );
+    expect(r1).toBe("stored");
+    expect(r2).toBe("stored");
+
+    const readNetworks = async (
+      tier: "staging" | "production" | undefined,
+    ): Promise<string[]> => {
+      const origin =
+        tier === "staging" ? "https://staging.slop.cash" : "https://slop.cash";
+      const response = await handlePaymentsApi(
+        new Request(
+          `${origin}/api/v1/payments/projects/vault-tier-proof/vault`,
+        ),
+        { db: database, now: () => new Date(observed), tier },
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        snapshots: { network: string }[];
+      };
+      return body.snapshots.map((s) => s.network).sort();
+    };
+
+    // Without the fix, production would return both (bug).
+    // With the fix, production excludes the testnet snapshot.
+    expect(await readNetworks(undefined)).toEqual(["base"]);
+    expect(await readNetworks("production")).toEqual(["base"]);
+    // Staging keeps both.
+    expect(await readNetworks("staging")).toEqual(["base", "base-sepolia"]);
+  } finally {
     sqlite.close();
   }
 });
