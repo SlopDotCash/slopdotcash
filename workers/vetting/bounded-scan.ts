@@ -214,6 +214,14 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * Next.js loads `next.config.<ext>` by evaluating it as code at server
+ * start and on every build, in each of the spellings its config loader
+ * looks up, so the file is build-time code like a Makefile, never parsed
+ * configuration. The `.cjs` and `.cts` spellings stay out: the loader
+ * refuses those names outright instead of evaluating them.
+ */
+const NEXT_CONFIG = /^next\.config\.(?:js|mjs|ts|mts)$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +291,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    NEXT_CONFIG.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
