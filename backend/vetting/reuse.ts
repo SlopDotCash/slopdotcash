@@ -14,16 +14,30 @@ export function reusableCleanScan(
   cached: VettingAssessment | null,
   result: VettingScanResult,
   restriction: ProjectRestriction,
+  coversActiveFlags = true,
 ): boolean {
+  const latestRestriction =
+    restriction.state === "clear"
+      ? undefined
+      : restriction.records
+          .filter(
+            (record) =>
+              record.action === "quarantine" || record.action === "ban",
+          )
+          .at(-1);
   const prior = cached?.result;
   return (
     !pausedByFlagsOnly(restriction) &&
+    coversActiveFlags &&
     result.disposition === "clean" &&
     cached !== null &&
     cached.id === result.reusedAssessmentId &&
     cached.projectId === result.projectId &&
     cached.state === "clean" &&
-    (restriction.since === null || cached.requestedAt >= restriction.since) &&
+    (latestRestriction === undefined ||
+      (latestRestriction.actorRole === "vetting-service"
+        ? cached.requestedAt > latestRestriction.createdAt
+        : cached.requestedAt >= latestRestriction.createdAt)) &&
     prior != null &&
     isScanResult(prior) &&
     prior.projectId === result.projectId &&
