@@ -953,9 +953,7 @@ describe("durable private report controls", () => {
     // Even if a verified case already has a descriptive root-cause key in DB,
     // intake screening must only see the id (reporter-visible reasons).
     t.sqlite
-      .query(
-        "UPDATE security_cases SET root_cause_key = ? WHERE id = ?",
-      )
+      .query("UPDATE security_cases SET root_cause_key = ? WHERE id = ?")
       .run("vault-withdraw-reentrancy", first.caseId);
     const distinct = {
       ...REPORT,
