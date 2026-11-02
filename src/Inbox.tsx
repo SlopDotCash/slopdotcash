@@ -156,6 +156,12 @@ export default function InboxPage() {
   );
   const [recipient, setRecipient] = useState<string | null>(null);
   const previousRecipient = useRef<string | null>(null);
+  // The last notification page that loaded, and the cursor it belongs to.
+  // A refresh of that same page retains it; a new page starts from loading.
+  const lastReady = useRef<{
+    cursor: string | null;
+    value: NotificationsResponse;
+  } | null>(null);
   const acceptRecipient = useCallback((id: string | null) => {
     const changed =
       previousRecipient.current !== null && previousRecipient.current !== id;
@@ -173,17 +179,16 @@ export default function InboxPage() {
       window.history.replaceState(window.history.state, "", url);
       setCursor(null);
       setPreviousPages([]);
+      // A changed or signed-out identity invalidates the retained page at
+      // once: the previous account's list must not stay rendered while the
+      // replacement request is still in flight.
+      lastReady.current = null;
+      setState({ status: "loading" });
     }
     previousRecipient.current = id;
     setRecipient(id);
     return changed;
   }, []);
-  // The last notification page that loaded, and the cursor it belongs to.
-  // A refresh of that same page retains it; a new page starts from loading.
-  const lastReady = useRef<{
-    cursor: string | null;
-    value: NotificationsResponse;
-  } | null>(null);
   const receive = useCallback(
     (next: InboxState) => {
       if (next.status === "ready" || next.status === "signed-out") {
