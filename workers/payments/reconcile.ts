@@ -58,10 +58,17 @@ export async function reconcileFailedAttempts(
   genesisHashes: Record<string, string> = {},
   now = new Date(),
 ): Promise<void> {
+  // Only the served networks' attempts can be reconciled here: the reviewed
+  // deployments and RPC endpoints of this run name them. The shared database
+  // also holds every other network's attempts; selecting one of those can
+  // only fail the deployment match below, so every run would report a
+  // reconciliation failure for work that belongs to another network's run.
+  const networks = [...new Set(deployments.map((d) => d.network))];
   const result = await db
     .prepare(
-      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'",
+      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'",
     )
+    .bind(JSON.stringify(networks))
     .first<{ items: string }>();
   // One attempt's failure must not stop reconciliation of the others (PAY-07).
   const failures: unknown[] = [];

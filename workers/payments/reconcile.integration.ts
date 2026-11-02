@@ -255,15 +255,16 @@ try {
     console.log("phase 1 passed: RPC outage isolated to its own attempt");
   }
 
-  // Phase 2: the first attempt names a deployment outside the reviewed set.
-  // The later Base attempt must still be reconciled from its revert proof.
+  // Phase 2: the first attempt names a vault outside the reviewed set on a
+  // network this run does serve. The later Base attempt must still be
+  // reconciled from its revert proof.
   {
     const { directory, sql, db } = makeDatabase();
     try {
       seedAttempt(sql, {
         id: "attempt-ghost",
         actor: "303",
-        network: "ghost-net",
+        network: "base-local",
         chain: "base",
         vault: "vault-ghost",
         transactionId: `0x${"d".repeat(64)}`,
@@ -334,6 +335,52 @@ try {
       rmSync(directory, { recursive: true, force: true });
     }
     console.log("phase 3 passed: healthy attempt reconciles cleanly");
+  }
+
+  // Phase 4: an attempt of a network this run does not serve belongs to that
+  // network's own run (the shared database holds every network's rows). It
+  // is neither reconciled nor reported as a failure; the served attempt
+  // still reconciles and the run reports no error.
+  {
+    const { directory, sql, db } = makeDatabase();
+    try {
+      seedAttempt(sql, {
+        id: "attempt-foreign",
+        actor: "404",
+        network: "ethereum-sepolia",
+        chain: "base",
+        vault: "vault-foreign",
+        transactionId: `0x${"e".repeat(64)}`,
+        seed: "4",
+      });
+      seedAttempt(sql, {
+        id: "attempt-base",
+        actor: "101",
+        network: "base-local",
+        chain: "base",
+        vault: "vault-base",
+        transactionId: BASE_TX,
+        seed: "1",
+      });
+      const error = await captureError(() =>
+        reconcileFailedAttempts(db, deployments, rpcUrls, genesisHashes, now),
+      );
+      assert.equal(error, null);
+      assert.deepEqual(attemptState(sql, "attempt-base"), {
+        attemptState: "failed",
+        outboxState: "ready",
+        failureCount: 1,
+      });
+      assert.deepEqual(attemptState(sql, "attempt-foreign"), {
+        attemptState: "submitted",
+        outboxState: "held",
+        failureCount: 0,
+      });
+    } finally {
+      sql.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+    console.log("phase 4 passed: foreign network attempt left to its own run");
   }
 } finally {
   globalThis.fetch = originalFetch;
