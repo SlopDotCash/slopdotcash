@@ -37,14 +37,13 @@ import {
   projectRestriction,
   repositoryIdentity,
 } from "../projects/enforcement";
-import { quarantinedScanMessage } from "../projects/setup";
 import type { VettingArtifact } from "./result";
 import {
   isScanResult,
   type RecordedVettingResult,
   resultReviewers,
-  TEMPLATE_PREFIX,
 } from "./scan-result";
+import { findingsLocationOf, quarantinedScanMessage } from "./summary";
 
 export type {
   AssessmentState,
@@ -157,44 +156,11 @@ function admissionRepository(manifest: object): string | null {
   });
 }
 
-function extractPathFromEvidence(evidence: string): string | null {
-  if (!evidence || typeof evidence !== "string") return null;
-  const trimmed = evidence.trim();
-  const match = trimmed.match(
-    /^([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)(?::\d+(?::\d+)?)?$/,
-  );
-  return match ? match[1] : null;
-}
-
-function isTemplatePath(filePath: string): boolean {
-  const normalized = filePath.trim().replace(/^\.\//, "");
-  return (
-    normalized === TEMPLATE_PREFIX ||
-    normalized.startsWith(`${TEMPLATE_PREFIX}/`)
-  );
-}
-
 export function summarize(assessment: VettingAssessment): AssessmentSummary {
   const artifacts: VettingArtifact[] = assessment.result?.artifacts ?? [];
   const held = artifacts.filter((artifact) => artifact.state !== "released");
   const result = assessment.result;
-  let findingsLocation: AssessmentSummary["findingsLocation"];
-  if (result) {
-    let hasTemplate = held.some((a) => isTemplatePath(a.path));
-    let hasRepo = held.some((a) => !isTemplatePath(a.path));
-    let hasUnknown = false;
-    const findings = "findings" in result ? result.findings : [];
-    for (const f of findings) {
-      const extractedPath = extractPathFromEvidence(f.evidence);
-      if (extractedPath === null) hasUnknown = true;
-      else if (isTemplatePath(extractedPath)) hasTemplate = true;
-      else hasRepo = true;
-    }
-    if (hasUnknown) findingsLocation = "unknown";
-    else if (hasTemplate && hasRepo) findingsLocation = "both";
-    else if (hasTemplate) findingsLocation = "template";
-    else if (hasRepo) findingsLocation = "repository";
-  }
+  const findingsLocation = findingsLocationOf(result);
   return {
     id: assessment.id,
     revision: assessment.revision,
@@ -669,31 +635,12 @@ export class CloudflareVettingPersistence {
         input.livePin,
         input.at,
       );
-    // Private inbox detail mirrors setup copy (issue #1991). summarize()
-    // needs a VettingAssessment shell; only `result` and `completedAt` drive
-    // the owner-facing location message.
     const scanFailedDetail =
       result.disposition === "incomplete"
-        ? quarantinedScanMessage(
-            summarize({
-              id: result.assessmentId,
-              projectId: result.projectId,
-              revision: result.revision,
-              manifestSha256: result.manifestSha256,
-              contentSha256: "0".repeat(64),
-              commitSha: result.assessed.commitSha,
-              templateSha256: result.assessed.templateSha256,
-              requestedBy: { githubId: "0", githubLogin: "scan" },
-              requestedAt: input.at,
-              requestReason: "scan",
-              state: "incomplete",
-              policyVersion: result.policyVersion,
-              result,
-              resultSha256: input.resultSha256,
-              signingKeySha256: input.signingKeySha256,
-              completedAt: input.at,
-            }),
-          )
+        ? quarantinedScanMessage({
+            completedAt: input.at,
+            findingsLocation: findingsLocationOf(result),
+          })
         : null;
     try {
       await this.db.batch([
