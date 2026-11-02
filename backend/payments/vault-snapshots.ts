@@ -58,6 +58,21 @@ function sameAddress(chain: PaymentChain, a: string, b: string) {
 }
 
 /**
+ * A block time is a UTC instant that names a real calendar moment. Date.parse
+ * rolls an impossible date such as 2026-02-31 into March, so the parsed
+ * instant must print back as the same calendar fields before it is stored.
+ */
+function isBlockTime(value: string) {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d{1,3})?Z$/u.exec(
+    value,
+  );
+  if (!match) return false;
+  const milliseconds = Date.parse(value);
+  if (Number.isNaN(milliseconds)) return false;
+  return new Date(milliseconds).toISOString().slice(0, 19) === match[1];
+}
+
+/**
  * Stores one finalized read for a reviewed deployment. The read must name the
  * reviewed vault and asset. Cumulative counters and the block never go back:
  * a read that contradicts the stored row fails and the stored row stays.
@@ -81,7 +96,7 @@ export async function storeVaultSnapshot(
     !isAssetDecimals(totals.decimals) ||
     !/^(0|[1-9][0-9]{0,17})$/.test(totals.blockNumber) ||
     typeof totals.blockTime !== "string" ||
-    Number.isNaN(Date.parse(totals.blockTime)) ||
+    !isBlockTime(totals.blockTime) ||
     !CUMULATIVE.every((key) => isBaseUnits(totals[key])) ||
     !CURRENT.every((key) => totals[key] === null || isBaseUnits(totals[key]))
   )

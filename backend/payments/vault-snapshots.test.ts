@@ -470,3 +470,29 @@ test("bounded refresh advances healthy vaults while earlier reads wait and repor
     sqlite.close();
   }
 });
+
+test("refuses a block time that names an impossible calendar date instead of storing a shifted instant", async () => {
+  const db = open();
+  for (const blockTime of [
+    "2026-02-31T10:00:00Z",
+    "2026-04-31T10:00:00.000Z",
+    "2026-13-01T10:00:00Z",
+    "Oct 18 2026 10:00",
+  ]) {
+    await expect(
+      storeVaultSnapshot(db, deployment, totals({ blockTime }), observed),
+    ).rejects.toThrow("Vault totals differ from the reviewed deployment");
+  }
+  const count = await db
+    .prepare("SELECT COUNT(*) AS n FROM vault_snapshots")
+    .first<{ n: number }>();
+  expect(count?.n).toBe(0);
+  await expect(
+    storeVaultSnapshot(
+      db,
+      deployment,
+      totals({ blockTime: "2028-02-29T10:00:00Z" }),
+      observed,
+    ),
+  ).resolves.toBe("stored");
+});
