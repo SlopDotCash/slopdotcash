@@ -1701,8 +1701,9 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await resumed.getByRole("button", { name: "Check again" }).click();
   await expect(resumed.locator("h2")).toHaveText("Setup status: Action needed");
   await expect(resumed.getByRole("status")).toContainText(
-    "The last scan could not finish, so it did not clear the project.",
+    "Findings in the project repository block clearance.",
   );
+  await expect(resumed.getByText("Not cleared", { exact: true })).toBeVisible();
   await resumed.getByRole("button", { name: "Request a new scan" }).click();
   await expect(resumed.locator("h2")).toHaveText(
     "Setup status: Waiting for the security scan",
@@ -1712,7 +1713,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await page.goto("/inbox");
   await expect(
     page.locator(".inbox-item", {
-      hasText: `The security scan of ${project.id} could not finish.`,
+      hasText: `The security scan of ${project.id} did not clear.`,
     }),
   ).toHaveCount(1);
   await expectAccessible(page);

@@ -282,6 +282,54 @@ test("self-verification enables future private notices without pilot records; un
   h.sqlite.close();
 });
 
+test.each(["activity", "security"] as const)(
+  "%s mail retries failed unsubscribe preparation before contacting the provider",
+  async (channel) => {
+    const h = await setup();
+    try {
+      await h.enroll();
+      await h.verify();
+      h[channel]("prepare-storage-outage");
+      h.sqlite.exec(`CREATE TRIGGER fixture_unsubscribe_outage
+        BEFORE INSERT ON notification_email_unsubscribe_tokens
+        BEGIN SELECT RAISE(ABORT, 'Fixture unsubscribe storage outage'); END`);
+      const dispatch = () =>
+        channel === "activity"
+          ? dispatchActivityMail(h.worker)
+          : dispatchSecurityMail(h.worker);
+      const row = () =>
+        h.sqlite
+          .query(
+            `SELECT id,state,attempts FROM ${channel}_notification_outbox WHERE event_key=? AND recipient_github_id=?`,
+          )
+          .get("prepare-storage-outage", MEMBER) as {
+          id: string;
+          state: string;
+          attempts: number;
+        };
+      await dispatch();
+      expect(row()).toMatchObject({ state: "retrying", attempts: 1 });
+      expect(h.mail).toHaveLength(1); // The enrollment verification only.
+      h.sqlite.exec("DROP TRIGGER fixture_unsubscribe_outage");
+      h.advance();
+      await dispatch();
+      expect(row()).toMatchObject({ state: "provider-accepted", attempts: 2 });
+      expect(h.mail).toHaveLength(2);
+      await dispatch();
+      expect(h.mail).toHaveLength(2);
+      expect(
+        h.sqlite
+          .query(
+            `SELECT state FROM ${channel}_notification_delivery_events WHERE delivery_id=? ORDER BY attempt`,
+          )
+          .all(row().id),
+      ).toEqual([{ state: "retrying" }, { state: "provider-accepted" }]);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
 test("verification resends are bounded and invalidate old links without changing the active destination", async () => {
   const h = await setup();
   const body = {
@@ -427,6 +475,81 @@ test("address changes bind new consent, cancel stale deliveries and reject old u
   h.sqlite.close();
 });
 
+test.each(["/verification", "/verify"])(
+  "email %s returns a client error for malformed JSON",
+  async (path) => {
+    const h = await setup();
+    try {
+      const response = await handleEmailPreferences(
+        new Request(`${ORIGIN}/api/v1/notifications/email${path}`, {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/json" },
+          body: "{",
+        }),
+        {
+          db: h.db,
+          now: h.worker.now,
+          sessionActor: async () => ({ githubId: MEMBER }),
+          eligibility: async () => ({ available: false }),
+          mailService: h.service,
+        },
+      );
+      expect(response?.status).toBe(400);
+      expect(await response?.json()).toEqual({ error: "invalid_request" });
+      expect(h.mail).toHaveLength(0);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
+test.each(["/verification", "/verify"])(
+  "email %s returns a storage error and permits the same request to recover",
+  async (path) => {
+    const h = await setup();
+    try {
+      if (path === "/verify") await h.enroll();
+      const body =
+        path === "/verify"
+          ? { token: h.token() }
+          : {
+              email: "member@example.com",
+              idempotencyKey: "retry-storage-failure",
+              enabled: true,
+              securityEnabled: true,
+            };
+      const batch = h.db.batch.bind(h.db);
+      h.db.batch = async () => {
+        throw new Error("Fixture private storage failure");
+      };
+      expect(await h.call(path, body)).toEqual({
+        status: 500,
+        body: { error: "internal_error" },
+      });
+      expect(
+        h.sqlite
+          .query("SELECT github_id FROM notification_email_destinations")
+          .all(),
+      ).toEqual([]);
+      h.db.batch = batch;
+      expect((await h.call(path, body)).status).toBe(
+        path === "/verify" ? 200 : 202,
+      );
+      expect(h.mail).toHaveLength(1);
+      if (path === "/verify") {
+        expect((await h.call(path, body)).status).toBe(409);
+        expect((await h.call()).body.availability).toBe("verified");
+      } else {
+        expect((await h.call(path, body)).status).toBe(202);
+        expect((await h.verify()).status).toBe(200);
+      }
+      expect(h.mail).toHaveLength(1);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
 test("the private sending route rejects fabricated challenge tokens and public GET never consumes a link", async () => {
   const h = await setup();
   await h.enroll();
@@ -541,4 +664,58 @@ test("issued unsubscribe links survive signing-key rotation and sender pause but
     409,
   );
   h.sqlite.close();
+});
+
+test("a saved enrollment remains replayable while the sender is paused", async () => {
+  const h = await setup();
+  try {
+    expect((await h.enroll()).status).toBe(202);
+    h.ready(false);
+    const body = {
+      email: "member@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "enrollment-request-1",
+    };
+    expect((await h.call("/verification", body)).status).toBe(202);
+    expect(
+      (
+        await h.call("/verification", {
+          ...body,
+          email: "different@example.com",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await h.enroll("new@example.com")).status).toBe(503);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a competing enrollment with the same key returns conflict after the initial read", async () => {
+  const h = await setup();
+  try {
+    const body = {
+      email: "first@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "competing-enrollment-key",
+    };
+    const batch = h.db.batch.bind(h.db);
+    h.db.batch = async (statements) => {
+      h.db.batch = batch;
+      expect((await h.call("/verification", body)).status).toBe(202);
+      return batch(statements);
+    };
+    expect(
+      (await h.call("/verification", { ...body, email: "second@example.com" }))
+        .status,
+    ).toBe(409);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
 });

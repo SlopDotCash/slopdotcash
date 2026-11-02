@@ -145,6 +145,7 @@ async function authenticate(fetchImpl, assertionProvider) {
   const response = await fetchImpl(`${API_ORIGIN}/api/v1/auth/session`, {
     method: "POST",
     headers: { "X-Slop-Identity-Assertion": assertion },
+    redirect: "error",
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) {
@@ -185,7 +186,7 @@ export async function registerWalletClaim(
   const headers = { Authorization: `Bearer ${token}` };
   const currentResponse = await fetchImpl(
     `${API_ORIGIN}/api/v1/wallet-claims/current`,
-    { headers, signal: AbortSignal.timeout(30_000) },
+    { headers, redirect: "error", signal: AbortSignal.timeout(30_000) },
   );
   let current = null;
   if (currentResponse.status !== 404) {
@@ -205,6 +206,7 @@ export async function registerWalletClaim(
   const created = await fetchImpl(`${API_ORIGIN}/api/v1/wallet-claims`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
+    redirect: "error",
     body: JSON.stringify({
       address,
       supersedesClaimId: current?.claimId ?? null,
