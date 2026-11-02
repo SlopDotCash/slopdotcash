@@ -322,7 +322,7 @@ const SUDO_COMMAND = commandToken("sudo");
 const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
-const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?|${commandToken("bun")}\s+-)`;
+const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?|${commandToken("bun")}(?:\s+run)?\s+-)`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -426,8 +426,9 @@ const RULES: Rule[] = [
     // name. It matches only when the interpreter reads its program from
     // the pipe: bare, with `-`, or with Python's unbuffered option. Bun
     // executes stdin only with an explicit `-` (bare `bun` on a non-TTY
-    // prints help), so it joins the list under that form only. Arbitrary
-    // flags can instead print a version or select a different program.
+    // prints help), so it joins the list as `bun -` and `bun run -` only.
+    // Arbitrary flags can instead print a version or select a different
+    // program.
     pattern: new RegExp(
       String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()]))`,
       "iu",
