@@ -78,9 +78,10 @@ const DUPLICATE_EVIDENCE_REASON =
 type PriorCase = SecurityAnalysisInput["priorCases"][number];
 
 /**
- * Recent verified cases for the same project (ids and root-cause keys only).
- * Intake screening reasons are visible to reporters, so summaries must not
- * reach the screening model; case analysis still loads summaries separately.
+ * Recent verified cases for the same project (ids only).
+ * Intake screening reasons are visible to reporters, so root-cause keys and
+ * summaries must not reach the screening model; case analysis still loads
+ * both separately for the owner path.
  */
 async function loadPriorCases(
   deps: Pick<SecurityApiDependencies, "db">,
@@ -91,7 +92,7 @@ async function loadPriorCases(
     (
       await deps.db
         .prepare(
-          `SELECT c.id, c.root_cause_key
+          `SELECT c.id
              FROM security_cases c
             WHERE c.project_id = ? AND c.submission_state = 'verified'${
               excludeCaseId ? " AND c.id <> ?" : ""
@@ -101,12 +102,11 @@ async function loadPriorCases(
         .bind(...(excludeCaseId ? [projectId, excludeCaseId] : [projectId]))
         .all<{
           id: string;
-          root_cause_key: string | null;
         }>()
     ).results ?? [];
   return rows.map((entry) => ({
     id: entry.id,
-    rootCauseKey: entry.root_cause_key,
+    rootCauseKey: null,
     summary: null,
   }));
 }
