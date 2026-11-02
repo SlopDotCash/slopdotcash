@@ -535,11 +535,13 @@ async function routedNotice(
 const PRIOR_CASE_LIMIT = 25;
 
 /**
- * Recent cases of the same project in the analyzer's input shape. Intake
- * screening passed none, so the model could not compare a report with the cases
- * a maintainer sees in analysis (#2010). Verification is not required: intake
- * runs before a receipt is verified, and the duplicate pair in #2010 arrived 45
- * seconds apart. Rejected links and spam-only cases stay out of the context.
+ * Recent case ids of the same project for the screening prompt. Ids only:
+ * screening reasons are reporter-visible (`intakeView`), so another reporter's
+ * root-cause key or analysis summary must never reach the screening model
+ * (#2013 review; #2010 asks for the comparison context, not its content).
+ * Verification is not required: intake runs before a receipt exists, and the
+ * duplicate pair in #2010 arrived 45 seconds apart. Rejected links and
+ * spam-only cases stay out.
  */
 async function priorCaseRefs(
   deps: Pick<SecurityApiDependencies, "db">,
@@ -550,12 +552,7 @@ async function priorCaseRefs(
     (
       await deps.db
         .prepare(
-          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
-              LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
-              WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
-                AND (i.case_id IS NULL OR i.review_decision='forward'
-                     OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
-              ORDER BY a.attempt DESC LIMIT 1) AS summary
+          `SELECT c.id
              FROM security_cases c
             WHERE c.project_id = ? AND c.id <> ?
               AND c.submission_state <> 'link-rejected'
@@ -564,16 +561,12 @@ async function priorCaseRefs(
             ORDER BY c.received_at DESC LIMIT ${PRIOR_CASE_LIMIT}`,
         )
         .bind(projectId, caseId)
-        .all<{
-          id: string;
-          root_cause_key: string | null;
-          summary: string | null;
-        }>()
+        .all<{ id: string }>()
     ).results ?? [];
   return rows.map((entry) => ({
     id: entry.id,
-    rootCauseKey: entry.root_cause_key,
-    summary: entry.summary,
+    rootCauseKey: null,
+    summary: null,
   }));
 }
 

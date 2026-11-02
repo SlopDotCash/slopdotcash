@@ -1063,7 +1063,7 @@ describe("durable private report controls", () => {
     expect(t.analyzed).toHaveLength(1);
   });
 
-  test("intake screening carries the project's earlier cases", async () => {
+  test("intake screening carries the project's earlier case ids only", async () => {
     const t = fixture();
     const first = await t.create("prior-case-first0", REPORTER, {
       ...REPORT,
@@ -1078,9 +1078,14 @@ describe("durable private report controls", () => {
     });
     expect(second.status).toBe(201);
     const screened = required(t.screened.at(-1));
-    expect(screened.priorCases.map((entry) => entry.id)).toContain(
-      earlier.caseId,
-    );
+    // Ids only: the screening reason is reporter-visible, so another reporter's
+    // root-cause key or analysis summary must not reach this model (#2013).
+    expect(screened.priorCases).toContainEqual({
+      id: earlier.caseId,
+      rootCauseKey: null,
+      summary: null,
+    });
+    expect(JSON.stringify(screened.priorCases)).not.toContain("Assessment");
   });
 
   test.each(["needs-information", "spam"] as const)(
