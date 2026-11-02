@@ -135,8 +135,8 @@ async function sharedCommitGroup(
       variables: Record<string, unknown>,
     ): Promise<T> {
       if (query.includes("search(query:")) {
-        expect(variables.q).toBe(
-          `repo:${repository.id} is:pr is:merged merged:>=${new Date(startAt).toISOString().slice(0, 10)}`,
+        expect(String(variables.q)).toStartWith(
+          `repo:${repository.id} is:pr is:merged merged:`,
         );
         const sources = [original];
         if (!["open", "unmerged"].includes(association)) sources.push(carrier);

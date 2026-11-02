@@ -41,9 +41,23 @@ export async function collectAcceptedCommitCensus(
   evidence: ValueEvidence,
   startAt: number,
 ): Promise<AcceptedCommitCensus | null> {
+  return collectRange(github, evidence, startAt);
+}
+
+type MergeRange = { start: number; end: number };
+
+async function collectRange(
+  github: ValueClient,
+  evidence: ValueEvidence,
+  startAt: number,
+  range?: MergeRange,
+): Promise<AcceptedCommitCensus | null> {
   if (!github.graphql || !Number.isFinite(startAt)) return null;
   const [owner, name] = evidence.repository.split("/");
-  const query = `repo:${evidence.repository} is:pr is:merged merged:>=${new Date(startAt).toISOString().slice(0, 10)}`;
+  const period = range
+    ? `merged:${new Date(range.start).toISOString().replace(".000Z", "Z")}..${new Date(range.end).toISOString().replace(".000Z", "Z")}`
+    : `merged:>=${new Date(startAt).toISOString().slice(0, 10)}`;
+  const query = `repo:${evidence.repository} is:pr is:merged ${period}`;
   const ids = new Set<string>();
   const carriers = new Map<string, Carrier[]>();
   const cursors = new Set<string>();
@@ -63,13 +77,39 @@ export async function collectAcceptedCommitCensus(
       !search ||
       !Number.isSafeInteger(search.issueCount) ||
       search.issueCount < 0 ||
-      // GitHub search exposes at most 1,000 results. Do not call a truncated
-      // search a complete source group or reset an inference attempt cap.
-      search.issueCount > 1000 ||
       (count !== null && count !== search.issueCount)
     )
       return null;
     count = search.issueCount;
+    // GitHub search exposes at most 1,000 results per query. Subdivide the
+    // merged-time range instead of imposing that limit on the repository.
+    // Its timestamps have second precision, so the ranges do not overlap.
+    if (count > 1000) {
+      const start =
+        range?.start ??
+        Date.parse(new Date(startAt).toISOString().slice(0, 10));
+      const end = range?.end ?? Math.floor(Date.now() / 1000) * 1000;
+      if (start >= end) return null;
+      const middle = Math.floor((start + end) / 2000) * 1000;
+      const left = await collectRange(github, evidence, startAt, {
+        start,
+        end: middle,
+      });
+      if (left === null) return null;
+      const right = await collectRange(github, evidence, startAt, {
+        start: middle + 1000,
+        end,
+      });
+      if (right === null || left.ids.size + right.ids.size !== count)
+        return null;
+      for (const id of right.ids) {
+        if (left.ids.has(id)) return null;
+        left.ids.add(id);
+      }
+      for (const [sha, matches] of right.carriers)
+        left.carriers.set(sha, [...(left.carriers.get(sha) ?? []), ...matches]);
+      return left;
+    }
     for (const pull of search.nodes) {
       const repo = pull.repository;
       if (
@@ -78,6 +118,9 @@ export async function collectAcceptedCommitCensus(
         !Number.isSafeInteger(pull.number) ||
         pull.number <= 0 ||
         !Number.isFinite(Date.parse(pull.mergedAt)) ||
+        (range !== undefined &&
+          (Date.parse(pull.mergedAt) < range.start ||
+            Date.parse(pull.mergedAt) > range.end)) ||
         !repo ||
         repo.isPrivate !== false ||
         repo.id !== evidence.repositoryNodeId ||
