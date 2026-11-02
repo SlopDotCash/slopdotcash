@@ -89,8 +89,11 @@ export async function dispatchPayment(
       )
       .bind(id, obligationId, payment.claimId, timestamp)
       .run();
+  // A different id is a second payout. Hold that outbox under this lease,
+  // outside the submit catch, so the catch cannot return it to `ready`.
+  let result: { transactionId: string };
   try {
-    const result = await executor.submit({ ...payment, idempotencyKey: id });
+    result = await executor.submit({ ...payment, idempotencyKey: id });
     if (!result.transactionId) throw new Error("Missing submitted transaction");
     await db.batch([
       db
@@ -110,17 +113,6 @@ export async function dispatchPayment(
         )
         .bind(timestamp, obligationId, lease, id, result.transactionId),
     ]);
-    const recorded = await db
-      .prepare(
-        "SELECT transaction_id id FROM payment_attempts WHERE id=? AND state='submitted'",
-      )
-      .bind(id)
-      .first<{ id: string }>();
-    if (recorded?.id !== result.transactionId)
-      throw new Error(
-        "Submitted transaction conflicts with the recorded attempt",
-      );
-    return "submitted";
   } catch (error) {
     await db.batch([
       db
@@ -136,4 +128,25 @@ export async function dispatchPayment(
     ]);
     throw error;
   }
+  const recorded = await db
+    .prepare(
+      "SELECT transaction_id id FROM payment_attempts WHERE id=? AND state='submitted'",
+    )
+    .bind(id)
+    .first<{ id: string }>();
+  if (recorded?.id === result.transactionId) return "submitted";
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE payment_outbox SET state='held',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=?",
+      )
+      .bind(timestamp, obligationId, lease),
+    ...(heldNotices
+      ? await heldNotices(obligationId, timestamp)
+      : [
+          notifyPayoutHeld(db, obligationId, timestamp),
+          notifyPayoutException(db, obligationId, timestamp),
+        ]),
+  ]);
+  throw new Error("Submitted transaction conflicts with the recorded attempt");
 }
