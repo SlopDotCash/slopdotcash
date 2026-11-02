@@ -394,41 +394,62 @@ export function appendPointAwards(
   };
   const latest = latestPoints(journal);
   for (const award of [...awards].sort((a, b) => a.key.localeCompare(b.key))) {
-    const previous = latest.get(award.key);
-    const decision = decisions?.get(award.key);
-    const penalty = penalties?.get(award.key);
-    if (
-      previous &&
-      JSON.stringify(previous.award) === JSON.stringify(award) &&
-      JSON.stringify(previous.penalty) === JSON.stringify(penalty) &&
-      (!decision ||
-        (previous.decision?.sourceId === decision.sourceId &&
-          previous.decision.effectiveAt === decision.effectiveAt &&
-          previous.decision.reason === decision.reason))
-    )
-      continue;
-    const revision = {
-      previous: previous?.id ?? null,
-      recordedAt,
+    appendPointAward(
+      output,
+      latest,
+      award,
       sourceDigest,
       sourceRule,
-      award,
-      ...(penalty ? { penalty } : {}),
-      ...(decision
-        ? {
-            decision: {
-              ...decision,
-              delta: award.amount - (previous?.award.amount ?? 0),
-            },
-          }
-        : {}),
-    };
-    const next = { id: pointRevisionId(revision), ...revision };
-    output.revisions.push(next);
-    latest.set(award.key, next);
+      recordedAt,
+      decisions,
+      penalties,
+    );
   }
   assertPointsJournal(output);
   return output;
+}
+function appendPointAward(
+  output: PointsJournal,
+  latest: Map<string, PointRevision>,
+  award: PointAward,
+  sourceDigest: string,
+  sourceRule: string,
+  recordedAt: string,
+  decisions?: ReadonlyMap<string, PointDecision>,
+  penalties?: ReadonlyMap<string, NonNullable<PointRevision["penalty"]>>,
+) {
+  const previous = latest.get(award.key);
+  const decision = decisions?.get(award.key);
+  const penalty = penalties?.get(award.key);
+  if (
+    previous &&
+    JSON.stringify(previous.award) === JSON.stringify(award) &&
+    JSON.stringify(previous.penalty) === JSON.stringify(penalty) &&
+    (!decision ||
+      (previous.decision?.sourceId === decision.sourceId &&
+        previous.decision.effectiveAt === decision.effectiveAt &&
+        previous.decision.reason === decision.reason))
+  )
+    return;
+  const revision = {
+    previous: previous?.id ?? null,
+    recordedAt,
+    sourceDigest,
+    sourceRule,
+    award,
+    ...(penalty ? { penalty } : {}),
+    ...(decision
+      ? {
+          decision: {
+            ...decision,
+            delta: award.amount - (previous?.award.amount ?? 0),
+          },
+        }
+      : {}),
+  };
+  const next = { id: pointRevisionId(revision), ...revision };
+  output.revisions.push(next);
+  latest.set(award.key, next);
 }
 /**
  * Keys of positive retained-history awards (substantive reviews and
@@ -585,9 +606,18 @@ export function reconcilePointPenalties(
       JSON.stringify(prior.penalty) === JSON.stringify(evidence)
     )
       continue;
-    result = appendPointAwards(
+    if (result === journal) {
+      assertPointsJournal(journal);
+      result = {
+        ...journal,
+        generatedAt: recordedAt,
+        revisions: [...journal.revisions],
+      };
+    }
+    appendPointAward(
       result,
-      [award],
+      latest,
+      award,
       digest,
       candidate.sourceRule,
       recordedAt,
@@ -608,6 +638,7 @@ export function reconcilePointPenalties(
       new Map([[award.key, evidence]]),
     );
   }
+  if (result !== journal) assertPointsJournal(result);
   return result;
 }
 
