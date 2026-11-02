@@ -3,6 +3,7 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import type { IssueRecord } from "../src/lib/leaderboard-types";
 import { snapshotFixture } from "../tests/fixtures";
 import {
   AFTER_NOVEMBER,
@@ -166,5 +167,58 @@ test("Turkish generation keeps expand-review opportunity on English-first review
       (entry) => entry.kind === "expand-review",
     );
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
+  });
+});
+
+// Two claim comments written in the same second on one open issue: the
+// newest-claim pick falls to the comment node IDs, and a Turkish default
+// collation reverses which comment wins, so the published work-queue claim
+// names a different contributor. The comment IDs carry the same i/I
+// divergence as the production pair in `ids` above.
+const claimCommentIds = [
+  "IC_kwDOMT5cIs8AAAABG3i2Yg",
+  "IC_kwDOMT5cIs8AAAABG3IwgQ",
+];
+
+test("Turkish generation keeps the published claim of tied claim comments", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const issue: IssueRecord = {
+    id: "I_kwDOAdj8Claim",
+    number: 8,
+    title: "Open issue with two same-time claim comments",
+    url: "https://github.com/SlopDotCash/asi/issues/8",
+    body: "Feature request.",
+    createdAt: "2026-11-12T00:00:00.000Z",
+    updatedAt: "2026-11-18T12:00:00.000Z",
+    closedAt: null,
+    stateReason: null,
+    author: PENALIZED_AUTHOR,
+    assignees: [],
+    labels: [],
+    comments: claimCommentIds.map((id, index) => ({
+      id,
+      artifactId: "I_kwDOAdj8Claim",
+      kind: "comment" as const,
+      body: "CLAIMING: I will take this issue.",
+      url: `https://github.com/SlopDotCash/asi/issues/8#issuecomment-${index}`,
+      createdAt: "2026-11-18T12:00:00.000Z",
+      updatedAt: "2026-11-18T12:00:00.000Z",
+      author: index === 0 ? PENALIZED_AUTHOR : PROJECT_OWNER,
+      authorAssociation: "MEMBER",
+    })),
+    closedByPullRequests: [],
+  };
+  input.openIssues = [issue];
+  input.source.counts.openIssues = 1;
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    const item = snapshot.workQueue.issues.find(
+      (entry) => entry.id === issue.id,
+    );
+    expect(item?.claim.status).toBe("claimed");
+    expect(item?.claim.actors.map((actor) => actor.id)).toEqual([
+      PENALIZED_AUTHOR.id,
+    ]);
   });
 });
