@@ -447,6 +447,22 @@ const RULES: Rule[] = [
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A decoder between the download and the executor changes nothing
+    // about what runs: the shell or interpreter still receives the
+    // downloaded bytes, decoded. The pipe rules above require the
+    // executor immediately after the first pipe, so
+    // `curl … | base64 -d | sh` matched nothing. Only a decode stage
+    // qualifies: encoding, checksumming or saving a download keeps no
+    // finding, and decoding local content has no download to run.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode)|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a decoded remote download in a shell or interpreter",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
