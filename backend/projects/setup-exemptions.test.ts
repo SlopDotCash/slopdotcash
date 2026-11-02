@@ -486,7 +486,7 @@ describe("summarize findings location classification", () => {
             severity: "high",
             category: "unsafe-execution",
             summary: "Command injection in skill template",
-            evidence: "skills/slopdotcash/SKILL.md:10",
+            evidence: "slop-skill-template/skills/SKILL.md:10",
           },
           {
             severity: "high",
@@ -499,6 +499,62 @@ describe("summarize findings location classification", () => {
       },
     });
     expect(summary.findingsLocation).toBe("both");
+  });
+
+  test("classifies project's own skills directory at repository root as repository finding", () => {
+    const summary = summarize({
+      ...dummyAssessment,
+      result: {
+        schemaVersion: "slop-vetting-result-v2",
+        assessmentId: dummyAssessment.id,
+        projectId: dummyAssessment.projectId,
+        revision: 1,
+        manifestSha256: dummyAssessment.manifestSha256,
+        disposition: "incomplete",
+        policyVersion: "1",
+        assessed: {
+          repository: "owner/repo",
+          commitSha: dummyAssessment.commitSha,
+          templateSha256: dummyAssessment.templateSha256,
+          inputManifestSha256: "i".repeat(64),
+          dependencyLocks: [],
+        },
+        scan: {
+          runId: "r1",
+          startedAt: at,
+          completedAt: at,
+          reportSha256: "r".repeat(64),
+        },
+        coverage: {} as unknown as VettingScanResult["coverage"],
+        checks: {} as unknown as VettingScanResult["checks"],
+        visibilityGaps: [],
+        execution: null,
+        reusedAssessmentId: null,
+        primaryReview: {
+          provider: "p",
+          model: "m",
+          promptPolicyRevision: "1",
+          inputManifestSha256: "i".repeat(64),
+          runId: "r",
+          status: "completed",
+          verdict: "findings",
+          risk: "high",
+          findingCount: 1,
+        },
+        specialistReview: null,
+        artifacts: [],
+        findings: [
+          {
+            severity: "high",
+            category: "unsafe-execution",
+            summary: "Command execution in project skill",
+            evidence: "skills/my-agent-skill/SKILL.md:15",
+          },
+        ],
+        confirmation: null,
+      },
+    });
+    expect(summary.findingsLocation).toBe("repository");
   });
 
   test("remains undefined when scan result has no findings or held artifacts", () => {

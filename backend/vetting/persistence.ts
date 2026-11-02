@@ -155,6 +155,8 @@ function admissionRepository(manifest: object): string | null {
   });
 }
 
+export const TEMPLATE_PREFIX = "slop-skill-template";
+
 function extractPathFromEvidence(evidence: string): string | null {
   if (!evidence || typeof evidence !== "string") return null;
   const trimmed = evidence.trim();
@@ -167,8 +169,8 @@ function extractPathFromEvidence(evidence: string): string | null {
 function isTemplatePath(filePath: string): boolean {
   const normalized = filePath.trim().replace(/^\.\//, "");
   return (
-    normalized.startsWith("slop-skill-template/") ||
-    normalized.startsWith("skills/")
+    normalized === TEMPLATE_PREFIX ||
+    normalized.startsWith(`${TEMPLATE_PREFIX}/`)
   );
 }
 
