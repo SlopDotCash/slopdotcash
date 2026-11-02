@@ -101,7 +101,7 @@ export function allocateReviewBudgetMinor(
     .filter(
       ({ scoreThirds }) => Number.isSafeInteger(scoreThirds) && scoreThirds > 0,
     )
-    .sort((left, right) => left.actorId.localeCompare(right.actorId));
+    .sort((left, right) => left.actorId.localeCompare(right.actorId, "en"));
   if (eligible.length === 0 || totalMinor === 0n) return new Map();
   const totalWeight = eligible.reduce(
     (total, contributor) => total + BigInt(contributor.scoreThirds),
@@ -119,7 +119,7 @@ export function allocateReviewBudgetMinor(
     [...allocations.values()].reduce((total, amount) => total + amount, 0n);
   remainders.sort((left, right) =>
     left.remainder === right.remainder
-      ? left.actorId.localeCompare(right.actorId)
+      ? left.actorId.localeCompare(right.actorId, "en")
       : left.remainder > right.remainder
         ? -1
         : 1,
