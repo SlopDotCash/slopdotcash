@@ -157,14 +157,15 @@ export function jobFor(
         senderId: sender.id,
         ...(payload.comment?.id ? { appealCommentId: payload.comment.id } : {}),
       };
-    const command = APPEAL_COMMANDS.find(
-      (name) =>
-        text === `/slopbot ${name}` ||
-        text.startsWith(`/slopbot ${name}\n`) ||
-        text.startsWith(`/slopbot ${name} `),
-    );
-    if (command === undefined) return null;
-    const target = text.slice(`/slopbot ${command}`.length).trim();
+    const commandMatch = new RegExp(
+      `(?:^|\\r?\\n)\\s*/slopbot\\s+(${APPEAL_COMMANDS.join("|")})(?=\\s|$)`,
+      "u",
+    ).exec(text);
+    const command = APPEAL_COMMANDS.find((name) => name === commandMatch?.[1]);
+    if (command === undefined || commandMatch === null) return null;
+    const target = text
+      .slice(commandMatch.index + commandMatch[0].length)
+      .trim();
     if (
       /^(?:appeal|value-appeal):/u.test(target) &&
       !/^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u.test(target)
