@@ -227,6 +227,7 @@ export async function collectValueGroup(
           github,
           evidence,
           startAt,
+          `${repository.owner}/${repository.name}`,
         );
         if (collected === null) return null;
         census = collected;
