@@ -127,6 +127,16 @@ const AGENT_INSTRUCTIONS = new Set([
   "llms.txt",
 ]);
 /**
+ * Git hook manager configuration. Lefthook, pre-commit and simple-git-hooks
+ * install these commands as Git hooks, so Git runs them on commit, push or
+ * checkout, like a `.husky` hook; pre-commit also downloads and runs every
+ * hook repository its configuration names. Each is an install surface, never
+ * unreviewed content. `.pre-commit-hooks.yaml` only describes hooks for other
+ * repositories and is not included.
+ */
+const GIT_HOOK_CONFIGS =
+  /^(?:\.?lefthook(?:-local)?\.ya?ml|\.pre-commit-config\.yaml|\.?simple-git-hooks\.json)$/u;
+/**
  * Package-manager configuration read on every install or run. Each file can
  * make the package manager execute code (`node-options` and `script-shell` in
  * `.npmrc`, `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the
@@ -286,6 +296,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
+    GIT_HOOK_CONFIGS.test(name) ||
     lower.startsWith(".devcontainer/") ||
     lower.startsWith(".vscode/") ||
     /(?:^|\/)(?:install|setup|bootstrap)[^/]*\.(?:sh|ps1|bat|cmd|py|js|mjs)$/u.test(
