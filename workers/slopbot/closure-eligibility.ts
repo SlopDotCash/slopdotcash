@@ -1,6 +1,8 @@
 // Automatic closure scope (PRD section 5): only verified slop.cash members
 // using the Slop skill, never project maintainers. This is an authority
 // boundary, separate from the review itself: advisory review stays broad.
+import { currentRepositoryPath } from "../../backend/projects/setup";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import type { Exemption } from "./github";
 import type { D1Database } from "./persistence";
 
@@ -80,14 +82,34 @@ export async function hasRecordedSkillRun(
   },
 ): Promise<boolean> {
   const repository = `${item.owner}/${item.repo}`.toLowerCase();
+  const accepted = new Set([repository]);
+  const registered = await db
+    .prepare("SELECT manifest FROM projects WHERE id = ?")
+    .bind(item.projectId)
+    .first<{ manifest: string }>();
+  if (registered) {
+    const project = assertProjectDefinition(JSON.parse(registered.manifest));
+    for (const entry of project.repositories) {
+      const names = [
+        entry.id,
+        ...(entry.aliases ?? []),
+        currentRepositoryPath(entry),
+      ].map((name) => name.toLowerCase());
+      if (names.includes(repository)) {
+        for (const name of names) accepted.add(name);
+      }
+    }
+  }
+  const repositories = [...accepted];
+  const placeholders = repositories.map(() => "?").join(", ");
   const row = await db
     .prepare(`SELECT 1 AS ok FROM run_progress_events e
       JOIN trace_runs r ON r.id = e.run_id AND r.github_user_id = e.github_user_id
       WHERE e.github_user_id = ? AND e.kind = 'pull_request_opened'
-        AND r.project_id = ? AND lower(r.repository) = ?
+        AND r.project_id = ? AND lower(r.repository) IN (${placeholders})
         AND e.github_object_id = ?
       LIMIT 1`)
-    .bind(String(item.authorId), item.projectId, repository, item.nodeId)
+    .bind(String(item.authorId), item.projectId, ...repositories, item.nodeId)
     .first();
   return row !== null;
 }
