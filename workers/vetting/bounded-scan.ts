@@ -324,7 +324,7 @@ const RULES: Rule[] = [
     // case. A closing quote is not required. A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`\/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
+      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
@@ -342,7 +342,7 @@ const RULES: Rule[] = [
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`\/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
@@ -362,10 +362,8 @@ const RULES: Rule[] = [
   {
     threat: "secret-exfiltration",
     severity: "high",
-    pattern: new RegExp(
-      String.raw`JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*/)?(?:curl|wget|ncat|netcat|nc)\b`,
-      "iu",
-    ),
+    pattern:
+      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b/iu,
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
@@ -1363,7 +1361,10 @@ function gypIncludeSpecifiers(text: string): {
  * A GYP include is relative to the file that names it. Absolute paths, URLs
  * and paths that leave the repository are not acquired files.
  */
-function resolveGypInclude(fromFile: string, specifier: string): string | null {
+function resolveBuildInclude(
+  fromFile: string,
+  specifier: string,
+): string | null {
   const include = specifier.replaceAll("\\", "/").trim();
   if (
     include === "" ||
@@ -1419,7 +1420,7 @@ function gypIncludedPaths(files: ScanInputFile[]): {
     if (includes.unresolved)
       unacquired.add("GYP include not acquired: unresolved");
     for (const specifier of includes.paths) {
-      const resolved = resolveGypInclude(path, specifier);
+      const resolved = resolveBuildInclude(path, specifier);
       // `resolveGypInclude` returns null for an empty, absolute, URL-like or
       // out-of-repository path. A resolved path missing from the acquired
       // tree was not fetched or is generated at install. A file already
@@ -1475,34 +1476,6 @@ function cmakeIncludeSpecifiers(text: string): string[] {
  * variable expansions and paths that leave the repository are not acquired
  * files, so they resolve to null.
  */
-function resolveRelativeInclude(
-  fromFile: string,
-  specifier: string,
-): string | null {
-  const include = specifier.replaceAll("\\", "/").trim();
-  if (
-    include === "" ||
-    include.startsWith("/") ||
-    include.includes(":") ||
-    include.includes("\0") ||
-    /[<>|?*]/u.test(include)
-  )
-    return null;
-  const directory = fromFile.includes("/")
-    ? fromFile.slice(0, fromFile.lastIndexOf("/") + 1)
-    : "";
-  const normalized: string[] = [];
-  for (const part of `${directory}${include}`.split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      if (normalized.length === 0) return null;
-      normalized.pop();
-      continue;
-    }
-    normalized.push(part);
-  }
-  return normalized.length === 0 ? null : normalized.join("/");
-}
 
 /**
  * Files a CMake list file pulls in with `include()`, including nested ones.
@@ -1525,7 +1498,7 @@ function cmakeIncludedPaths(files: ScanInputFile[]): Set<string> {
     const text = decode(file.bytes);
     if (text === null) continue;
     for (const specifier of cmakeIncludeSpecifiers(text)) {
-      const resolved = resolveRelativeInclude(path, specifier);
+      const resolved = resolveBuildInclude(path, specifier);
       if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
         continue;
       included.add(resolved);
