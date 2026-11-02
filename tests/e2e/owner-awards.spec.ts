@@ -708,9 +708,9 @@ test("a monthly proposal with no public cycle is reachable", async ({
   ).toBeDisabled();
 });
 
-test("a stale public cycle does not lock the review month", async ({
+test("a stale public cycle does not lock the review month or discard its draft", async ({
   page,
-}) => {
+}, info) => {
   // The public index holds only a stale September cycle. The review must
   // open on the last closed month and walk calendar months in both
   // directions. The archived fixture supplies a valid published entry;
@@ -761,6 +761,7 @@ test("a stale public cycle does not lock the review month", async ({
     name: "Previous award month",
   });
   const next = page.getByRole("button", { name: "Next award month" });
+  await awards.getByLabel("Award for first-contributor").fill("1.8");
   await expect(next).toBeDisabled();
   await previous.click();
   await expect(navigation).toContainText("October 2026");
@@ -775,4 +776,14 @@ test("a stale public cycle does not lock the review month", async ({
   await next.click();
   await expect(navigation).toContainText("November 2026");
   await expect(awards).toContainText("first-contributor");
+  await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
+    "1.8",
+  );
+  await expect(
+    awards.getByRole("button", { name: "Save first-contributor", exact: true }),
+  ).toBeEnabled();
+  await page.screenshot({
+    path: info.outputPath("retained-month-draft.png"),
+    fullPage: true,
+  });
 });
