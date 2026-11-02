@@ -147,3 +147,19 @@ test("fetch APIs the fetched-code rule already names are reported once, by that 
     });
   }
 });
+
+test("response objects and unrelated later fetches are not executed bodies", () => {
+  for (const body of [
+    'eval(URI.open("https://example.com/payload.rb"))',
+    'eval(Net::HTTP.get_response(URI("https://example.com/payload.rb")))',
+    'eval("puts :local"); URI.open("https://example.com/data").read',
+    'exec("local command"); file_get_contents("https://example.com/data")',
+    'eval(file_get_contents("https://example.com/data").length)',
+    'regexp.exec(get("https://example.com/data"))',
+  ]) {
+    expect({
+      body,
+      findings: categories(inspected("tools/setup.rb", body)),
+    }).toEqual({ body, findings: [] });
+  }
+});
