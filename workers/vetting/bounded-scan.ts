@@ -266,6 +266,18 @@ const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
 
 /**
+ * A script interpreter that reads its program from standard input, such as a
+ * bare `python3`. A `-m`, `-c`, or `-e` argument, an `--eval`/`--print`
+ * argument, or a script file argument means standard input is data or
+ * ignored, so those forms stay unflagged. Only stdin flags may follow the
+ * name; anything else ends the command or is a script argument.
+ */
+const STDIN_INTERPRETER = (() => {
+  const word = String.raw`(?:[^\s|;&<>()'"]*/)?(?:python(?:[23](?:\.\d+)?)?|perl|ruby|node|php)`;
+  return String.raw`(?:"${word}"|'${word}'|${word})(?!\s+-[mce]\b)(?!\s+--(?:eval|print)\b)(?!\s+[^-\s;|&<>()])(?:(?:\\\r?\n)*\s+-[A-Za-z]*)?(?:\\\r?\n)*(?=$|[\s;|&<>()'"])`;
+})();
+
+/**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
  */
@@ -316,10 +328,10 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${STDIN_INTERPRETER})|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
-    summary: "Runs a remote download in a shell",
+    summary: "Runs a remote download in a shell or script interpreter",
   },
   {
     threat: "unsafe-execution",

