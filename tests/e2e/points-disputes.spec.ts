@@ -61,12 +61,17 @@ test("a manual Points award reaches private Inbox review and an independent mode
   sql(`INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(${q(actorId)},${q(githubId)},${q(`points-${suffix}`)},${q(now)},1);
     INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(${q(createHash("sha256").update(session).digest("hex"))},${q(actorId)},'2099-01-01T00:00:00.000Z');
     INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(${q(revision.id)},${q(record.award.key)},NULL,${q(now)},${q(JSON.stringify(revision))});`);
-  await page.goto("/how-it-works", { waitUntil: "domcontentloaded" });
+  await page.goto("/how-it-works", { waitUntil: "load" });
+  await expect(
+    page.getByRole("heading", { name: "How Slop works", exact: true }),
+  ).toBeVisible();
+  // A visible heading does not finish deferred fonts before navigation.
+  await page.evaluate(() => document.fonts.ready);
   await page.evaluate((value) => {
     // biome-ignore lint/suspicious/noDocumentCookie: Seed only this isolated local session with the real cookie path.
     document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
   }, session);
-  await page.goto("/inbox?points", { waitUntil: "domcontentloaded" });
+  await page.goto("/inbox?points", { waitUntil: "load" });
   await expect(
     page.getByRole("heading", { name: "Review Points" }),
   ).toBeVisible();
@@ -127,8 +132,20 @@ test("a manual Points award reaches private Inbox review and an independent mode
     path: test.info().outputPath("points-private-receipt.png"),
     fullPage: true,
   });
+  const completedRequests = new WeakSet<object>();
+  page.on("requestfinished", (request) => completedRequests.add(request));
+  const readAcknowledgement = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/notifications/read",
+  );
   await page.getByRole("button", { name: /^Mark as read:/u }).click();
   await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator(".inbox-item .inbox-state")).toHaveText("Read");
+  const readRequest = (await readAcknowledgement).request();
+  expect(readRequest.failure()).toBeNull();
+  expect(completedRequests.has(readRequest)).toBe(true);
   // The browser test covers the actual API/D1/Inbox transition; separate real
   // provider evidence qualifies the model. This fixture sets only its draft.
   const notice = notifySlopbotAppeal(
@@ -156,8 +173,12 @@ test("a manual Points award reaches private Inbox review and an independent mode
   diagnostics.allowResponse(404, "GET", privatePath);
   try {
     await deniedPage.goto(new URL("/how-it-works", page.url()).href, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "load",
     });
+    await expect(
+      deniedPage.getByRole("heading", { name: "How Slop works", exact: true }),
+    ).toBeVisible();
+    await deniedPage.evaluate(() => document.fonts.ready);
     await deniedPage.evaluate((value) => {
       // biome-ignore lint/suspicious/noDocumentCookie: Seed only this isolated local session with the real cookie path.
       document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
@@ -165,7 +186,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
     await deniedPage.goto(
       new URL(`/inbox?pointsDispute=${encodeURIComponent(key)}`, page.url())
         .href,
-      { waitUntil: "domcontentloaded" },
+      { waitUntil: "load" },
     );
     await expect(deniedPage.getByRole("alert")).toContainText(
       "Points dispute not found.",
@@ -187,13 +208,17 @@ test("a manual Points award reaches private Inbox review and an independent mode
   const moderator = await context.newPage();
   try {
     await moderator.goto(new URL("/how-it-works", page.url()).href, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "load",
     });
+    await expect(
+      moderator.getByRole("heading", { name: "How Slop works", exact: true }),
+    ).toBeVisible();
+    await moderator.evaluate(() => document.fonts.ready);
     await moderator.evaluate((value) => {
       // biome-ignore lint/suspicious/noDocumentCookie: Seed only this isolated local session with the real cookie path.
       document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
     }, moderatorToken);
-    await moderator.goto("/inbox", { waitUntil: "domcontentloaded" });
+    await moderator.goto("/inbox", { waitUntil: "networkidle" });
     await moderator
       .locator(`a[href="/inbox?pointsDispute=${encodeURIComponent(key)}"]`)
       .click();
@@ -245,7 +270,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
       path: test.info().outputPath("points-moderator-decision.png"),
       fullPage: true,
     });
-    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.reload({ waitUntil: "load" });
     await expect(page.locator(".inbox-unread")).toHaveCount(1);
     await expect(page.locator(".inbox-unread")).toContainText(
       "The Points dispute was resolved.",
