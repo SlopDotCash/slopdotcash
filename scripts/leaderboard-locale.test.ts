@@ -3,6 +3,8 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import type { PublishedPenalty } from "../src/lib/leaderboard-types";
+import { penaltyDeductions } from "../src/lib/score-penalties";
 import { snapshotFixture } from "../tests/fixtures";
 import {
   AFTER_NOVEMBER,
@@ -166,5 +168,50 @@ test("Turkish generation keeps expand-review opportunity on English-first review
       (entry) => entry.kind === "expand-review",
     );
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
+  });
+});
+
+// Two penalties recorded at the same time for one actor, project and month
+// whose month's score covers only one debit: application order decides
+// which penalty is recorded as applied, and a Turkish default collation
+// reverses that order because the penalty IDs are the production i/I pair
+// in `ids` above with a `:penalty` suffix. Every reader of the score runs
+// this same function, so the split must not depend on the host locale.
+test("Turkish generation keeps which same-time penalty is applied", () => {
+  const events = [
+    {
+      actor: PENALIZED_AUTHOR,
+      repository: "asi",
+      occurredAt: "2026-11-05T00:00:00.000Z",
+      scoreThirds: 3,
+      points: 1,
+    },
+  ];
+  const penalties: PublishedPenalty[] = ids.map((pullId, index) => ({
+    id: `${pullId}:penalty`,
+    actor: PENALIZED_AUTHOR,
+    repository: "asi",
+    occurredAt: "2026-11-15T12:00:00.000Z",
+    category: "spam",
+    tableVersion: "slopbot-penalties-v1",
+    debitThirds: 3,
+    source: {
+      id: pullId,
+      kind: "pull-request",
+      number: 500 + index,
+      title: "Followers",
+      url: `https://github.com/SlopDotCash/asi/pull/${500 + index}`,
+    },
+  }));
+  withTurkishLocale(() => {
+    const deductions = penaltyDeductions(
+      events,
+      penalties,
+      (repository) => repository,
+    );
+    expect([...deductions.byPenalty.entries()]).toEqual([
+      [`${ids[0]}:penalty`, 3],
+    ]);
+    expect(deductions.byActor.get(PENALIZED_AUTHOR.id)).toBe(3);
   });
 });
