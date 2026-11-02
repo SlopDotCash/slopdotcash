@@ -6,6 +6,8 @@ import {
 import { snapshotFixture } from "../tests/fixtures";
 import {
   AFTER_NOVEMBER,
+  PENALIZED_AUTHOR,
+  PROJECT_OWNER,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
 
@@ -106,5 +108,63 @@ test("Turkish generation keeps the published review exclusion order", () => {
       snapshot.reviewExclusions?.map((entry) => entry.pullRequestId),
     ).toEqual(ids);
     expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  });
+});
+
+// Same i/I pair shape as `ids` above; English collation keeps ...i before ...I,
+// Turkish default collation reverses them.
+const reviewIds = ["PRR_kwDOMT5cIs8AAAABG3i2Yg", "PRR_kwDOMT5cIs8AAAABG3IwgQ"];
+
+test("Turkish generation keeps expand-review opportunity on English-first review id", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const submittedAt = "2026-11-15T12:00:00.000Z";
+  input.openPullRequests = [
+    {
+      id: "PR_open_locale",
+      number: 42,
+      title: "Open change awaiting a fuller review",
+      url: "https://github.com/SlopDotCash/asi/pull/42",
+      body: "Implements the accepted behavior.",
+      createdAt: "2026-11-14T00:00:00.000Z",
+      updatedAt: submittedAt,
+      lastEditedAt: null,
+      editor: null,
+      mergedAt: null,
+      closedAt: null,
+      headRefOid: "a".repeat(40),
+      isDraft: false,
+      reviewDecision: "CHANGES_REQUESTED",
+      activeReviewRequestCount: 0,
+      author: PROJECT_OWNER,
+      assignees: [],
+      labels: [],
+      files: [{ path: "src/fix.py", additions: 4, deletions: 1 }],
+      comments: [],
+      reviews: reviewIds.map((id, index) => ({
+        id,
+        body: "Looks fine.",
+        state: "CHANGES_REQUESTED" as const,
+        submittedAt,
+        url: `https://github.com/SlopDotCash/asi/pull/42#pullrequestreview-${index + 1}`,
+        author: PENALIZED_AUTHOR,
+        inlineCommentCount: 0,
+      })),
+      closingIssueIds: [],
+      additions: 4,
+      deletions: 1,
+      changedFiles: 1,
+      commitCount: 1,
+    },
+  ];
+  const englishFirst = [...reviewIds].sort((left, right) =>
+    left.localeCompare(right, "en"),
+  )[0];
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    const expand = snapshot.opportunities?.filter(
+      (entry) => entry.kind === "expand-review",
+    );
+    expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
