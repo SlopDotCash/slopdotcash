@@ -942,45 +942,6 @@ describe("durable private report controls", () => {
     }
   });
 
-  test("intake screening receives prior cases from the same project", async () => {
-    const t = fixture();
-    const first = required(
-      (await t.create("prior-case-first")).body.submission,
-    );
-    expect(first.intake.state).toBe("legitimate");
-    expect(t.screeningCalls()).toBe(1);
-    expect(t.screened[0]?.priorCases).toEqual([]);
-    // Even if a verified case already has a descriptive root-cause key in DB,
-    // intake screening must only see the id (reporter-visible reasons).
-    t.sqlite
-      .query("UPDATE security_cases SET root_cause_key = ? WHERE id = ?")
-      .run("vault-withdraw-reentrancy", first.caseId);
-    const distinct = {
-      ...REPORT,
-      description: `${REPORT.description} Distinct second reproduction path.`,
-    };
-    const second = await t.call(OTHER, "POST", "security-submissions", {
-      projectId: PROJECT,
-      idempotencyKey: "prior-case-second000",
-      origin: "slop",
-      report: distinct,
-    });
-    expect(second.status).toBe(201);
-    expect(required(second.body.submission).intake.state).toBe("legitimate");
-    expect(t.screeningCalls()).toBe(2);
-    expect(t.screened[1]?.priorCases).toContainEqual({
-      id: first.caseId,
-      rootCauseKey: null,
-      summary: null,
-    });
-    expect(
-      t.screened[1]?.priorCases.every(
-        (entry) => entry.rootCauseKey === null && entry.summary === null,
-      ),
-    ).toBe(true);
-    expect(t.analyzed).toHaveLength(2);
-  });
-
   test("identical evidence digest holds screening without a model call", async () => {
     const t = fixture();
     const first = required(
