@@ -49,6 +49,7 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
+import { suppressHexMisreads } from "./hex-misread";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -1346,6 +1347,11 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // #1930, PRD section 5. A well-formed digest or 0x literal near another
+  // claim is not proof that the other claim is false. Remove only the
+  // contradicted encoding or literal line. Limitations stay. Category none
+  // is published only when no claim remains.
+  verdict = suppressHexMisreads(verdict);
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
