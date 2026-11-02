@@ -288,20 +288,25 @@ export async function handlePaymentsApi(
       ).filter(
         (row) => deps.tier === "staging" || !isTestnetNetwork(row.network),
       );
-      const storedCursor = await deps.db
-        .prepare(
-          "SELECT network,position,synced_at FROM payment_chain_cursors WHERE project_id=?",
-        )
-        .bind(projectId)
-        .first<{ network: string; position: string; synced_at: string }>();
-      // A cursor on an excluded network is treated as absent, so the reported
-      // coverage stays consistent with the filtered amount rows under the same
-      // tier rule.
+      // A project keeps one cursor per scanned network. A cursor on an
+      // excluded network is treated as absent, so the reported coverage stays
+      // consistent with the filtered amount rows under the same tier rule; a
+      // testnet cursor must not hide a production cursor that sorts after it.
+      const storedCursors = JSON.parse(
+        (
+          await deps.db
+            .prepare(
+              "SELECT json_group_array(json_object('network',network,'position',position,'synced_at',synced_at)) items FROM (SELECT * FROM payment_chain_cursors WHERE project_id=? ORDER BY network)",
+            )
+            .bind(projectId)
+            .first<{ items: string }>()
+        )?.items ?? "[]",
+      ) as { network: string; position: string; synced_at: string }[];
       const cursor =
-        storedCursor &&
-        (deps.tier === "staging" || !isTestnetNetwork(storedCursor.network))
-          ? storedCursor
-          : null;
+        storedCursors.find(
+          (stored) =>
+            deps.tier === "staging" || !isTestnetNetwork(stored.network),
+        ) ?? null;
       if (!rows.length && !cursor)
         return json(503, { error: "project_payments_not_indexed" });
       const assets = new Map<
