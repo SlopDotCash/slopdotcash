@@ -1,5 +1,5 @@
 import {
-  findHistoricalRepository,
+  findHistoricalRepositoryIdentity,
   isHistoricalRepositoryId,
 } from "./projects.mjs";
 import { TARGET_REPOSITORIES } from "./repositories.mjs";
@@ -298,9 +298,8 @@ export function contributorPullSearchUrl(
 
 /** Canonical repository behind a census repository name, if it resolves. */
 export function profileCanonicalRepository(repository: string): string | null {
-  return (
-    findHistoricalRepository(repository)?.repositoryId.toLowerCase() ?? null
-  );
+  // A transferred repository's old and current names resolve to the same one.
+  return findHistoricalRepositoryIdentity(repository)?.toLowerCase() ?? null;
 }
 
 /** Canonical identities behind the currently collected repositories. */

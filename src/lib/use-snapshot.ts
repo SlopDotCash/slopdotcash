@@ -17,7 +17,6 @@ import {
 } from "./project-view";
 import { PROJECTS } from "./projects.mjs";
 
-const SNAPSHOT_TIMEOUT_MS = 12_000;
 const SNAPSHOT_RETRIES = 1;
 const SNAPSHOT_CACHE_MS = 60_000;
 export type DataState =
@@ -68,13 +67,11 @@ async function loadSnapshot(
     signal.throwIfAborted();
     const requestController = new AbortController();
     const requestSignal = AbortSignal.any([signal, requestController.signal]);
-    const timeout = window.setTimeout(
-      () => requestController.abort(new Error("snapshot request timed out")),
-      SNAPSHOT_TIMEOUT_MS,
-    );
     try {
       const query = `attempt=${attempt}&retry=${retry}&at=${Date.now()}`;
       const readSnapshot = async () => {
+        // Each root and part request keeps fetchWithDeadline's own deadline.
+        // A complete snapshot can need several healthy sequential reads.
         const response = await fetchWithDeadline(
           `/data/leaderboard.json?${query}`,
           {
@@ -128,7 +125,6 @@ async function loadSnapshot(
       if (signal.aborted || retry >= SNAPSHOT_RETRIES) throw error;
     } finally {
       requestController.abort();
-      window.clearTimeout(timeout);
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
   }

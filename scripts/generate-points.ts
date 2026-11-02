@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readBoundedJson, readBoundedText } from "../src/lib/browser-json";
@@ -40,32 +40,57 @@ async function loadPublishedProjection(
   origin: PointsOrigin,
   indexResponse?: Response,
 ): Promise<PointsJournal> {
-  indexResponse ??= await fetch(`${origin}/data/points.json`, {
-    signal: AbortSignal.timeout(30000),
-    cache: "no-store",
-  });
-  if (!indexResponse.ok)
-    throw new Error("Published points projection unavailable");
-  const index = (await readBoundedJson(
-    indexResponse,
-    1024 * 1024,
-    "points index",
-  )) as PointsIndex;
-  if (!Array.isArray(index.shards) || index.shards.length !== 16)
-    throw new Error("Invalid published points index");
-  const parts = await Promise.all(
-    index.shards.map(async (shard, i) => {
-      if (shard.path !== `/data/points/${i.toString(16)}.json`)
-        throw new Error("Invalid published points shard path");
-      const response = await fetch(`${origin}${shard.path}`, {
+  let previousIndex: string | undefined;
+  let mismatch: unknown;
+  for (;;) {
+    indexResponse ??= await fetch(
+      `${origin}/data/points.json${previousIndex === undefined ? "" : `?snapshot=${randomUUID()}`}`,
+      {
         signal: AbortSignal.timeout(30000),
         cache: "no-store",
-      });
-      if (!response.ok) throw new Error("Published points history unavailable");
-      return readBoundedText(response, 8 * 1024 * 1024, "points shard");
-    }),
-  );
-  return assemblePoints(index, parts);
+      },
+    );
+    if (!indexResponse.ok)
+      throw new Error("Published points projection unavailable");
+    const index = (await readBoundedJson(
+      indexResponse,
+      1024 * 1024,
+      "points index",
+    )) as PointsIndex;
+    const identity = JSON.stringify(index);
+    // A deployment can replace the fixed shard URLs after the index read.
+    // Retry once only when a fresh index proves publication changed. An
+    // unchanged or still-corrupt publication remains an explicit failure.
+    if (identity === previousIndex) throw mismatch;
+    if (!Array.isArray(index.shards) || index.shards.length !== 16)
+      throw new Error("Invalid published points index");
+    const parts = await Promise.all(
+      index.shards.map(async (shard, i) => {
+        if (shard.path !== `/data/points/${i.toString(16)}.json`)
+          throw new Error("Invalid published points shard path");
+        const response = await fetch(`${origin}${shard.path}`, {
+          signal: AbortSignal.timeout(30000),
+          cache: "no-store",
+        });
+        if (!response.ok)
+          throw new Error("Published points history unavailable");
+        return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+      }),
+    );
+    try {
+      return assemblePoints(index, parts);
+    } catch (error) {
+      if (
+        previousIndex !== undefined ||
+        !(error instanceof Error) ||
+        error.message !== "Points shard checksum mismatch"
+      )
+        throw error;
+      previousIndex = identity;
+      mismatch = error;
+      indexResponse = undefined;
+    }
+  }
 }
 
 export async function loadPublishedPoints(
@@ -195,7 +220,23 @@ export function retainPublishedHistory(
     )
   )
     throw new Error("Published points history diverged from its checkpoint");
-  return later;
+  // A complete snapshot can add coverage without changing an award. Revision
+  // count alone therefore cannot select all retained source history, including
+  // when a checkpoint completed before its Pages publication failed.
+  const covered = new Set(later.coverage.map((entry) => JSON.stringify(entry)));
+  return {
+    ...later,
+    generatedAt:
+      checkpoint.generatedAt > published.generatedAt
+        ? checkpoint.generatedAt
+        : published.generatedAt,
+    coverage: [
+      ...later.coverage,
+      ...earlier.coverage.filter(
+        (entry) => !covered.has(JSON.stringify(entry)),
+      ),
+    ],
+  };
 }
 export function pointsSql(journal: PointsJournal): string {
   assertPointsJournal(journal);
@@ -424,6 +465,25 @@ export function retainedHistoryAwards(events: ScoreEvent[]): PointAward[] {
   });
 }
 
+/** Partition once, retaining each revision's original sequence and order. */
+export function pointShardRows(journal: PointsJournal) {
+  const shards = Array.from(
+    { length: 16 },
+    () =>
+      [] as {
+        sequence: number;
+        revision: PointsJournal["revisions"][number];
+      }[],
+  );
+  journal.revisions.forEach((revision, sequence) => {
+    shards[Number.parseInt(revision.award.key[0], 16)].push({
+      sequence,
+      revision,
+    });
+  });
+  return shards;
+}
+
 /** Every contributor's all-time total, derived from the same journal. */
 export function pointsSummary(
   journal: PointsJournal,
@@ -543,11 +603,10 @@ export async function generatePoints(
     revisionCount: journal.revisions.length,
     shards: [],
   };
+  const shards = pointShardRows(journal);
   for (let i = 0; i < 16; i++) {
     const name = i.toString(16);
-    const rows = journal.revisions
-      .map((revision, sequence) => ({ sequence, revision }))
-      .filter((r) => r.revision.award.key.startsWith(name));
+    const rows = shards[i];
     const bytes = JSON.stringify(rows) + "\n";
     if (Buffer.byteLength(bytes) > 8 * 1024 * 1024)
       throw new Error("Points shard exceeds size limit");
