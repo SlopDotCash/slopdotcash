@@ -214,6 +214,15 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * postcss-load-config loads `postcss.config.<ext>` and
+ * `.postcssrc.<ext>` as code — import(), with the TypeScript spellings
+ * transpiled by tsx/jiti — in the six code spellings its search list
+ * names, so the file is build-time code like a Makefile. The `.json`,
+ * `.yaml`/`.yml` and extensionless `.postcssrc` spellings are parsed
+ * data and stay out.
+ */
+const POSTCSS_CONFIG = /^(?:postcss\.config\.|\.postcssrc\.)[cm]?[jt]s$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +292,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    POSTCSS_CONFIG.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
