@@ -80,6 +80,15 @@ function resolvedWallet(
     : null;
 }
 
+/**
+ * Orders immutable actor IDs with English collation pinned, as compareActors
+ * and the funding-review allocator do, so a tied leftover base unit lands on
+ * the same contributor whatever the host locale is.
+ */
+function compareActorIds(left: string, right: string): number {
+  return left.localeCompare(right, "en");
+}
+
 export function allocateReviewBudgetMinor(
   totalMinor: bigint,
   contributors: readonly { actorId: string; scoreThirds: number }[],
@@ -101,7 +110,7 @@ export function allocateReviewBudgetMinor(
     .filter(
       ({ scoreThirds }) => Number.isSafeInteger(scoreThirds) && scoreThirds > 0,
     )
-    .sort((left, right) => left.actorId.localeCompare(right.actorId));
+    .sort((left, right) => compareActorIds(left.actorId, right.actorId));
   if (eligible.length === 0 || totalMinor === 0n) return new Map();
   const totalWeight = eligible.reduce(
     (total, contributor) => total + BigInt(contributor.scoreThirds),
@@ -119,7 +128,7 @@ export function allocateReviewBudgetMinor(
     [...allocations.values()].reduce((total, amount) => total + amount, 0n);
   remainders.sort((left, right) =>
     left.remainder === right.remainder
-      ? left.actorId.localeCompare(right.actorId)
+      ? compareActorIds(left.actorId, right.actorId)
       : left.remainder > right.remainder
         ? -1
         : 1,
