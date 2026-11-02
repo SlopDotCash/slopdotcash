@@ -587,12 +587,19 @@ export function assignLeaderboardRanks(
   });
 }
 
+/**
+ * Order reviews by submission time, then GitHub node ID. Node IDs are opaque
+ * and mixed-case; host-default localeCompare can reverse i/I pairs (Turkish),
+ * which would flip expand-review opportunity source ids and legacy same-time
+ * award order. Pin English collation like compareReviewExclusions so English
+ * hosts keep their published order.
+ */
 function compareReviews(
   left: PullRequestReview,
   right: PullRequestReview,
 ): number {
   if (left.submittedAt === right.submittedAt) {
-    return left.id.localeCompare(right.id);
+    return left.id.localeCompare(right.id, "en");
   }
   if (left.submittedAt === null) {
     return -1;
@@ -600,6 +607,7 @@ function compareReviews(
   if (right.submittedAt === null) {
     return 1;
   }
+  // ISO-8601 timestamps are ASCII digits and punctuation; any collation agrees.
   return left.submittedAt.localeCompare(right.submittedAt);
 }
 
