@@ -7,7 +7,10 @@ import {
 import { readBoundedJson } from "./lib/browser-json";
 import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
-import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
+import {
+  appliedPenaltyThirds,
+  createGlobalLeaders,
+} from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
 import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
@@ -136,9 +139,7 @@ export function ProfilePage({
   const penalties = (state.snapshot.penalties ?? []).filter(
     (penalty) => penalty.actor.id === actor.id,
   );
-  // The same open-month deductions as the accepted-work credits.
-  const appliedPenalties = openMonthScores(state.snapshot, state.cycleIndex)
-    .deductions.byPenalty;
+  const appliedPenalties = appliedPenaltyThirds(state.snapshot);
   const historicalWallet = history.find(({ contributor }) => contributor.wallet)
     ?.contributor.wallet;
   const wallet =
