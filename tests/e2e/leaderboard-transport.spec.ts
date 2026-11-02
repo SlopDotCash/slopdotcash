@@ -22,6 +22,9 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
       }),
     );
+    await page.route("**/api/v1/wallet-claims/actors/*/current", (route) =>
+      route.fulfill({ json: null }),
+    );
     const chunks = new Map<string, Uint8Array>();
     let partReads = 0;
     let rootReads = 0;
