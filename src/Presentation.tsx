@@ -13,6 +13,12 @@ import {
   useProjectMaintainer,
 } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import {
+  formatMicroUsdc,
+  formatRewardMinor,
+  monthlyPoolLabel,
+  monthlyPoolUnfunded,
+} from "./lib/reward-amount";
 import type { DataState } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
@@ -332,17 +338,13 @@ export function NotFound({
   );
 }
 
-export function formatMicroUsdc(value: string): string {
-  const amount = BigInt(value);
-  const fraction = amount % 1_000_000n;
-  if (fraction === 0n) {
-    return `$${new Intl.NumberFormat("en-US").format(amount / 1_000_000n)}`;
-  }
-  const roundedCents = (amount + 5_000n) / 10_000n;
-  const whole = roundedCents / 100n;
-  const cents = (roundedCents % 100n).toString().padStart(2, "0");
-  return `$${new Intl.NumberFormat("en-US").format(whole)}.${cents}`;
-}
+export type { RewardAmountAsset } from "./lib/reward-amount";
+export {
+  formatMicroUsdc,
+  formatRewardMinor,
+  monthlyPoolLabel,
+  monthlyPoolUnfunded,
+};
 
 export function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
@@ -491,29 +493,6 @@ export function reviewBudgetLabel(
   return reviewBudget.fundingState === "committed"
     ? `${formatMicroUsdc(reviewBudget.committedMinor)} of ${reviewBudget.monthlyCapDisplay} review budget funded`
     : `${reviewBudget.monthlyCapDisplay} review budget · not funded`;
-}
-
-/**
- * Commitment is a balance claim, never proof that signers can act. This
- * protocol has no authenticated accessibility evidence type yet.
- */
-export function monthlyPoolUnfunded(
-  reward: Pick<ProjectDefinition["reward"], "committedMinor" | "fundingState">,
-): boolean {
-  return (
-    reward.fundingState !== "committed" || BigInt(reward.committedMinor) === 0n
-  );
-}
-
-export function monthlyPoolLabel(
-  reward: Pick<
-    ProjectDefinition["reward"],
-    "committedMinor" | "fundingState" | "monthlyCapDisplay"
-  >,
-): string {
-  return monthlyPoolUnfunded(reward)
-    ? `${reward.monthlyCapDisplay} monthly · not funded`
-    : `${formatMicroUsdc(reward.committedMinor)} funded · ${reward.monthlyCapDisplay} monthly`;
 }
 
 export function Avatar({

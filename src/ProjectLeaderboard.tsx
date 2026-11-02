@@ -17,6 +17,7 @@ import {
   formatMicroUsdc,
   formatPercent,
   formatPointsFromThirds,
+  formatRewardMinor,
   monthlyPoolLabel,
   monthlyPoolUnfunded,
   reviewBudgetLabel,
@@ -58,7 +59,7 @@ export function CycleAllocation({
           <p>
             {monthlyPoolUnfunded(view.project.reward)
               ? `${UNFUNDED_POOL_HEADLINE}.`
-              : `Projected from accepted work · ${monthlyPoolLabel(view.project.reward)}.`}
+              : `Projected from accepted work · ${monthlyPoolLabel(view.project.reward, view.project.rewardAsset)}.`}
           </p>
         ) : null}
       </div>
@@ -158,14 +159,19 @@ function RewardValue({
         share
       </>
     );
-  // Token amounts are in the token's base units, never dollars.
-  if (
-    (!view.project.rewardAsset ||
-      view.project.rewardAsset.kind === "stablecoin") &&
-    !monthlyPoolUnfunded(view.project.reward)
-  ) {
-    return formatMicroUsdc(
-      requiredProjection(leader.simulatedDisplayMinor, "display amount"),
+  // A funded stablecoin is USDC. A funded token or native coin uses that
+  // asset's base units. The cent-rounded display field is USDC-only, so a
+  // token must use the exact simulated base units (PRD section 6).
+  if (!monthlyPoolUnfunded(view.project.reward)) {
+    const asset = view.project.rewardAsset;
+    if (!asset || asset.kind === "stablecoin") {
+      return formatMicroUsdc(
+        requiredProjection(leader.simulatedDisplayMinor, "display amount"),
+      );
+    }
+    return formatRewardMinor(
+      requiredProjection(leader.simulatedMinor, "amount"),
+      asset,
     );
   }
   const totalWeight = view.leaders.reduce(

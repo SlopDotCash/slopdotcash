@@ -28,6 +28,7 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
+  formatRewardMinor,
   NotFound,
   RoutePageHeader,
   StatusBadge,
@@ -168,7 +169,10 @@ export function CyclePage({
               : record.reward.suggestedMinor,
         )
     : view?.reward.kind === "monthly-pool"
-      ? formatMicroUsdc(view.reward.projectedPrincipalMinor)
+      ? formatRewardMinor(
+          view.reward.projectedPrincipalMinor,
+          project.rewardAsset,
+        )
       : `${(view?.reward.totalSharePartsPerMillion ?? 0) / 10_000}%`;
   return (
     <main className="shell route-main cycle-page route-cycle">
