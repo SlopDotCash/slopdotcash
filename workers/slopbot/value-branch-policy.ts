@@ -15,7 +15,15 @@ export function declaredIntegrationBranch(text: string): string | null {
     .replace(/<!--[\s\S]*?(?:-->|$)/gu, "")
     .split(/\r?\n/u)) {
     const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
-    if (delimiter) {
+    // CommonMark: the info string of a backtick fence cannot contain a
+    // backtick, so a line like "```bun run verify``` passes." is an inline
+    // code span, not a fence opening. Tilde fences may contain backticks.
+    const inlineSpan =
+      delimiter !== null &&
+      fence === null &&
+      delimiter[1][0] === "`" &&
+      delimiter[2].includes("`");
+    if (delimiter && !inlineSpan) {
       if (fence === null)
         fence = { marker: delimiter[1][0], length: delimiter[1].length };
       else if (
