@@ -455,13 +455,21 @@ export async function dispatchSecurityMail(
       )
       .bind(at, row.id)
       .run();
-    const access = await securityNotificationAccess(
-      deps.db,
-      row.case_id,
-      row.recipient_github_id,
-      deps.moderatorGithubIds,
-      deps.repositoryAccess,
-    );
+    let access: Awaited<ReturnType<typeof securityNotificationAccess>>;
+    try {
+      access = await securityNotificationAccess(
+        deps.db,
+        row.case_id,
+        row.recipient_github_id,
+        deps.moderatorGithubIds,
+        deps.repositoryAccess,
+      );
+    } catch (error) {
+      if (!reportingAuthorityUnavailable(error)) throw error;
+      // Keep this notice for a later authority check without blocking the
+      // other failed or overdue notices in this scan.
+      continue;
+    }
     if (!access.allowed) continue;
     const overdue =
       row.template_version !== RECEIPT_TEMPLATE &&
