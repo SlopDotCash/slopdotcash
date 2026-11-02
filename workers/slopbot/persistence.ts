@@ -3,14 +3,21 @@
 
 import type {
   D1Database,
-  D1Statement,
+  D1QueryStatement,
   D1TransactionalDatabase,
 } from "../../backend/d1";
-import { notifySlopbotInstallationLost } from "../../backend/notifications/events";
+import {
+  notifySlopbotInstallationLost,
+  projectsServedByInstallation,
+} from "../../backend/notifications/events";
 import { PRICE_VERSION, priceUsage } from "./contracts";
 import type { CallRecord } from "./models";
 
-export type { D1Database, D1TransactionalDatabase } from "../../backend/d1";
+export type {
+  D1Database,
+  D1QueryStatement,
+  D1TransactionalDatabase,
+} from "../../backend/d1";
 
 const now = () => new Date().toISOString();
 
@@ -98,11 +105,11 @@ type InstallationUpdate =
     };
 
 export async function completeInstallationDelivery(
-  db: D1TransactionalDatabase,
+  db: D1TransactionalDatabase<D1QueryStatement>,
   deliveryId: string,
   update: InstallationUpdate | null,
 ) {
-  const statements: D1Statement[] = [];
+  const statements: D1QueryStatement[] = [];
   if (update?.kind === "upsert") {
     statements.push(
       db
@@ -161,7 +168,15 @@ export async function completeInstallationDelivery(
     );
     if (changedAt !== null) {
       statements.push(
-        notifySlopbotInstallationLost(db, update.installation.id, changedAt),
+        notifySlopbotInstallationLost(
+          db,
+          update.installation.id,
+          changedAt,
+          await projectsServedByInstallation(
+            db,
+            update.installation.account.login,
+          ),
+        ),
       );
     }
   }
