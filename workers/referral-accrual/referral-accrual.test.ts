@@ -11,7 +11,7 @@ import {
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
-import { LOCK_MS, runAccrual } from "./core";
+import { LOCK_MS, runAccrual, windowEnd } from "./core";
 import worker, { type Env, runOnce } from "./index";
 import { leafHash } from "./merkle";
 import { D1AccrualStore } from "./store";
@@ -782,6 +782,26 @@ describe("one accrual run", () => {
       ),
     );
     expect((await worker.fetch()).status).toBe(404);
+  });
+});
+
+describe("referral window end", () => {
+  test("a first payout on a day the end month lacks closes on that month's last day", () => {
+    expect(windowEnd("2027-01-31T10:00:00.000Z", 1)).toBe(
+      "2027-02-28T10:00:00.000Z",
+    );
+    expect(windowEnd("2027-08-31T10:00:00.000Z", 6)).toBe(
+      "2028-02-29T10:00:00.000Z",
+    );
+    expect(windowEnd("2028-02-29T10:00:00.000Z", 12)).toBe(
+      "2029-02-28T10:00:00.000Z",
+    );
+    expect(windowEnd("2026-11-15T08:30:00.000Z", 12)).toBe(
+      "2027-11-15T08:30:00.000Z",
+    );
+    expect(windowEnd("2026-12-31T23:59:59.999Z", 2)).toBe(
+      "2027-02-28T23:59:59.999Z",
+    );
   });
 });
 
