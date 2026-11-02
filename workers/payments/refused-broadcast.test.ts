@@ -302,6 +302,138 @@ async function scheduledRun(env: Awaited<ReturnType<typeof stack>>["env"]) {
   return failures;
 }
 
+test.each(["processing", "submitted"] as const)(
+  "an expired dispatcher cannot create a second payment while its replacement is %s",
+  async (phase) => {
+    chain.funded = true;
+    chain.accepted.clear();
+    const { env, journal, payRequests, state } = await stack();
+    let reached!: () => void;
+    let resume!: () => void;
+    const readReached = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const releaseRead = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const delayedDb: D1Database = {
+      ...env.PAYMENTS_DB,
+      prepare(sql) {
+        const statement = env.PAYMENTS_DB.prepare(sql);
+        if (!sql.startsWith("SELECT id,claim_id FROM payment_attempts"))
+          return statement;
+        return {
+          ...statement,
+          bind(...values) {
+            const bound = statement.bind(...values);
+            return {
+              ...bound,
+              async first<T>() {
+                const value = await bound.first<T>();
+                reached();
+                await releaseRead;
+                return value;
+              },
+            };
+          },
+        };
+      },
+    };
+    const started = new Date("2026-10-01T00:01:00.000Z");
+    const oldRun = runPaymentDispatch(
+      { ...env, PAYMENTS_DB: delayedDb },
+      () => started,
+    );
+    await readReached;
+    let replacementReached!: () => void;
+    let resumeReplacement!: () => void;
+    const atExecutor = new Promise<void>((resolve) => {
+      replacementReached = resolve;
+    });
+    const releaseExecutor = new Promise<void>((resolve) => {
+      resumeReplacement = resolve;
+    });
+    const replacementRun = runPaymentDispatch(
+      {
+        ...env,
+        EVM_PAYMENT_EXECUTOR: {
+          async fetch(request: Request) {
+            if (
+              phase === "processing" &&
+              new URL(request.url).pathname === "/v1/pay"
+            ) {
+              replacementReached();
+              await releaseExecutor;
+            }
+            return env.EVM_PAYMENT_EXECUTOR.fetch(request);
+          },
+        },
+      },
+      () => new Date(started.getTime() + 61_000),
+    );
+    if (phase === "processing") await atExecutor;
+    else await replacementRun;
+    const before = await env.PAYMENTS_DB.prepare(
+      "SELECT state,lease_token,lease_until FROM payment_outbox",
+    ).first<{
+      state: string;
+      lease_token: string | null;
+      lease_until: string | null;
+    }>();
+    const attempt = await env.PAYMENTS_DB.prepare(
+      "SELECT id FROM payment_attempts",
+    ).first<{ id: string }>();
+    const signedBefore = await journal.get<{
+      rawTransaction: Hex;
+      transactionId: Hex;
+    }>(`pay:${attempt?.id}`);
+    resume();
+    try {
+      await oldRun;
+      expect(
+        await journal.get<{ rawTransaction: Hex; transactionId: Hex }>(
+          `pay:${attempt?.id}`,
+        ),
+      ).toEqual(signedBefore);
+      expect(
+        await env.PAYMENTS_DB.prepare(
+          "SELECT state,lease_token,lease_until FROM payment_outbox",
+        ).first<{
+          state: string;
+          lease_token: string | null;
+          lease_until: string | null;
+        }>(),
+      ).toEqual(before);
+      if (phase === "processing") {
+        expect(payRequests).toHaveLength(0);
+        expect(state()).toEqual([
+          { attempt: "prepared", transactionId: null, outbox: "processing" },
+        ]);
+      }
+    } finally {
+      resumeReplacement();
+      await replacementRun;
+    }
+    expect({
+      requests: payRequests.length,
+      signedTransactions: chain.accepted.size,
+      attempts: state().length,
+    }).toEqual({ requests: 1, signedTransactions: 1, attempts: 1 });
+    expect(parseTransaction([...chain.accepted.values()][0]).nonce).toBe(0);
+    expect(state()[0].attempt).toBe("submitted");
+    expect(state()[0].outbox).toBe("submitted");
+    expect(await journal.get(`pay:${attempt?.id}`)).toMatchObject({
+      transactionId: state()[0].transactionId,
+      rawTransaction: [...chain.accepted.values()][0],
+    });
+    await runPaymentDispatch(env, () => new Date(started.getTime() + 122_000));
+    expect(payRequests).toHaveLength(1);
+    expect(
+      await journal.get<number>(`nonce:84532:${relayer.address.toLowerCase()}`),
+    ).toBe(1);
+  },
+);
+
 test("a payment the node refused is resent with the same bytes after the gas wallet is funded", async () => {
   chain.funded = false;
   chain.accepted.clear();
