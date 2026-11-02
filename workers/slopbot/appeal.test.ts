@@ -409,4 +409,26 @@ test("jobFor matches /slopbot appeal and /slopbot dispute on any line and with a
     "99",
   );
   assert.equal(pluralWord, null);
+
+  for (const command of ["accept", "reject", "uphold", "deny"] as const) {
+    for (const separator of [" ", "\n"]) {
+      const job = jobFor(
+        "issue_comment",
+        `moderator-${command}-${separator.length}`,
+        {
+          ...basePayload,
+          comment: {
+            id: 16,
+            body: `Reviewed the evidence.\n/slopbot ${command}${separator}value-appeal:fixture`,
+          },
+        },
+        "99",
+      );
+      assert.equal(job?.kind, "appeal_command");
+      if (job?.kind === "appeal_command") {
+        assert.equal(job.command, command);
+        assert.equal(job.appealKey, "value-appeal:fixture");
+      }
+    }
+  }
 });
