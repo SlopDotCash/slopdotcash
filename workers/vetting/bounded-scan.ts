@@ -178,6 +178,7 @@ const INSTALL_FILES = new Set([
   "configure.ac",
   "build",
   "build.pl",
+  "build.jl",
   "build.sbt",
   "build.boot",
   "build.bazel",
