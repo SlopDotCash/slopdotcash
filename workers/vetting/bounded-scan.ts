@@ -9,7 +9,7 @@
  * "Clean" means these defined checks passed on every defined surface. It is
  * not a guarantee that the code contains no malware. Unread, oversized or
  * undecodable content, an unretrieved install-time download, a GYP include
- * the scan cannot acquire, and an unanalyzed binary keep the result
+ * the scan cannot acquire or resolve, and an unanalyzed binary keep the result
  * incomplete. Execution is never needed
  * for ordinary source; an operator runs an install hook or download in an
  * isolated runner only when its bytes cannot be judged statically, and that
@@ -582,18 +582,38 @@ export type RepositoryInspection = {
 };
 
 /**
- * Quoted paths inside every GYP `includes` array.
+ * One Python literal the includes reader understood, or a value it refused.
+ * A tuple keeps its members so a nested `('evil.txt',)` still yields paths.
+ * A list is only an includes value; a list used as one entry is not a path.
+ */
+type GypLiteral =
+  | { kind: "string"; value: string }
+  | { kind: "list"; items: GypLiteral[] }
+  | { kind: "tuple"; items: GypLiteral[] }
+  | { kind: "unresolved" };
+
+/**
+ * Quoted paths inside every GYP `includes` list or tuple.
  *
- * gyp evaluates the file as a Python literal. A `#` outside a string is a
- * comment, so it cannot hide an entry or end the list, and a `#` inside a
- * quoted path stays part of that path. Adjacent quoted fragments are one
- * path. `+`, parentheses and f-string interpolation are not evaluated.
+ * gyp evaluates the file as a Python literal and iterates `includes`,
+ * including an `includes` key nested under `conditions` or
+ * `target_conditions`. A `#` outside a string is a comment, so it cannot
+ * hide an entry or end the list, and a `#` inside a quoted path stays part
+ * of that path. Adjacent quoted fragments are one path. Parentheses that
+ * only group a value are that value, so `('evil.txt')` is the string
+ * `evil.txt`. A tuple is read like a list. `+`, names, calls and any other
+ * form that is not a plain string literal are not evaluated: each is an
+ * unresolved include, and install-script coverage stays partial.
  * Prose that merely says "includes" is not an include list. A bare name
  * such as `{includes: [...]}` is a variable lookup under gyp's empty-builtin
  * eval, not the string key, so it is not treated as an include list.
  */
-function gypIncludeSpecifiers(text: string): string[] {
-  const specifiers: string[] = [];
+function gypIncludeSpecifiers(text: string): {
+  paths: string[];
+  unresolved: boolean;
+} {
+  const paths: string[] = [];
+  let unresolved = false;
   const n = text.length;
   let i = 0;
 
@@ -738,10 +758,7 @@ function gypIncludeSpecifiers(text: string): string[] {
     return value;
   };
 
-  /**
-   * One non-string list element, so a later quoted path in the same includes
-   * list is still read. Strings and comments inside it stay intact.
-   */
+  /** A `{...}` value. Strings and comments inside it stay intact. */
   const skipOneValue = (): boolean => {
     skipSpaceAndComments();
     if (i >= n) return false;
@@ -778,6 +795,219 @@ function gypIncludeSpecifiers(text: string): string[] {
     return true;
   };
 
+  const isOperatorChar = (char: string | undefined): boolean =>
+    char !== undefined && "+-*/%|&^<>=!~@".includes(char);
+
+  /** Quote index of a string that may carry an `r`/`u`/`b`/`f` prefix. */
+  const stringAt = (at: number): number | null => {
+    let j = at;
+    if (j > 0 && /[A-Za-z0-9_]/u.test(text[j - 1] ?? "")) return null;
+    while (j < n && /[rRuUbBfF]/u.test(text[j] ?? "")) j += 1;
+    return isQuote(text[j]) ? j : null;
+  };
+
+  const startsAtom = (char: string | undefined): boolean =>
+    char === "(" ||
+    char === "[" ||
+    char === "{" ||
+    isQuote(char) ||
+    (char !== undefined && /[A-Za-z0-9_]/u.test(char));
+
+  const readOneString = (): GypLiteral => {
+    const quote = stringAt(i);
+    if (quote === null) return { kind: "unresolved" };
+    i = quote;
+    const value = readString();
+    return value === null ? { kind: "unresolved" } : { kind: "string", value };
+  };
+
+  const consumeOperator = () => {
+    while (i < n && isOperatorChar(text[i])) i += 1;
+  };
+
+  /**
+   * Calls, subscripts and attributes that follow a name. The literal under
+   * them is not a path, but the source still has to be consumed.
+   */
+  const consumeTrailers = () => {
+    while (i < n) {
+      const mark = i;
+      skipSpaceAndComments();
+      if (text[i] === "(") {
+        readParen();
+        continue;
+      }
+      if (text[i] === "[") {
+        readBracket();
+        continue;
+      }
+      if (text[i] === ".") {
+        i += 1;
+        skipSpaceAndComments();
+        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+        continue;
+      }
+      i = mark;
+      return;
+    }
+  };
+
+  const readAtom = (): GypLiteral => {
+    skipSpaceAndComments();
+    if (i >= n) return { kind: "unresolved" };
+    if (stringAt(i) !== null) return readOneString();
+    if (text[i] === "(") return readParen();
+    if (text[i] === "[") return readBracket();
+    if (text[i] === "{") {
+      skipOneValue();
+      return { kind: "unresolved" };
+    }
+    if (/[A-Za-z_]/u.test(text[i] ?? "")) {
+      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      consumeTrailers();
+      return { kind: "unresolved" };
+    }
+    if (/[0-9]/u.test(text[i] ?? "")) {
+      while (i < n && /[0-9A-Za-z_.]/u.test(text[i] ?? "")) i += 1;
+      consumeTrailers();
+      return { kind: "unresolved" };
+    }
+    if (isOperatorChar(text[i])) {
+      consumeOperator();
+      readAtom();
+      return { kind: "unresolved" };
+    }
+    i += 1;
+    return { kind: "unresolved" };
+  };
+
+  /**
+   * One expression. Stops before a comma or a closing bracket so a later
+   * entry is still read. Adjacent strings stay one value. Any operator,
+   * keyword, call or other trailer makes the whole expression unresolved
+   * and is consumed, so `'ev' + 'il.txt'` is not two paths.
+   */
+  const readExpr = (): GypLiteral => {
+    skipSpaceAndComments();
+    const start = i;
+    let value = readAtom();
+    if (i === start && i < n) i += 1;
+    while (i < n) {
+      const before = i;
+      skipSpaceAndComments();
+      if (i >= n) return value;
+      if (value.kind === "string" && stringAt(i) !== null) {
+        const next = readOneString();
+        if (next.kind === "string" && value.kind === "string") {
+          value = { kind: "string", value: value.value + next.value };
+        } else value = { kind: "unresolved" };
+        continue;
+      }
+      const char = text[i];
+      if (char === "(" || char === "[" || char === ".") {
+        value = { kind: "unresolved" };
+        if (char === "(") readParen();
+        else if (char === "[") readBracket();
+        else i += 1;
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (isOperatorChar(char)) {
+        value = { kind: "unresolved" };
+        consumeOperator();
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (value.kind !== "string" && startsAtom(char)) {
+        value = { kind: "unresolved" };
+        readAtom();
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (char !== undefined && /[A-Za-z_]/u.test(char)) {
+        value = { kind: "unresolved" };
+        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      i = before;
+      return value;
+    }
+    return value;
+  };
+
+  const readDelimited = (
+    closing: ")" | "]",
+    kind: "tuple" | "list",
+  ): GypLiteral => {
+    i += 1;
+    const items: GypLiteral[] = [];
+    let comma = false;
+    while (i < n) {
+      skipSpaceAndComments();
+      if (i >= n) return { kind: "unresolved" };
+      if (text[i] === closing) {
+        i += 1;
+        // No comma: Python grouping, so `('evil.txt')` is the string.
+        if (kind === "tuple" && !comma && items.length === 1)
+          return items[0] ?? { kind: "unresolved" };
+        if (kind === "tuple" && !comma && items.length === 0)
+          return { kind: "tuple", items: [] };
+        if (comma && items.length === 0) return { kind: "unresolved" };
+        return { kind, items };
+      }
+      if (text[i] === ",") {
+        comma = true;
+        i += 1;
+        continue;
+      }
+      const before = i;
+      items.push(readExpr());
+      if (i === before) i += 1;
+    }
+    return { kind: "unresolved" };
+  };
+
+  const readParen = (): GypLiteral => readDelimited(")", "tuple");
+  const readBracket = (): GypLiteral => readDelimited("]", "list");
+
+  const markUnresolved = () => {
+    unresolved = true;
+  };
+
+  const collectEntry = (item: GypLiteral) => {
+    if (item.kind === "string") {
+      if (item.value) paths.push(item.value);
+      return;
+    }
+    // A tuple contributes its string members, including through nested tuples.
+    if (item.kind === "tuple") {
+      if (item.items.length === 0) {
+        markUnresolved();
+        return;
+      }
+      for (const member of item.items) collectEntry(member);
+      return;
+    }
+    markUnresolved();
+  };
+
+  const collectValue = (item: GypLiteral) => {
+    if (item.kind === "list" || item.kind === "tuple") {
+      for (const entry of item.items) collectEntry(entry);
+      return;
+    }
+    // A resolved string is one include path. gyp iterates a string value by
+    // character; recording the whole string still reviews that path, and an
+    // unreadable value stays unresolved below.
+    if (item.kind === "string") {
+      if (item.value) paths.push(item.value);
+      else markUnresolved();
+      return;
+    }
+    markUnresolved();
+  };
+
   while (i < n) {
     skipSpaceAndComments();
     if (i >= n) break;
@@ -794,33 +1024,9 @@ function gypIncludeSpecifiers(text: string): string[] {
       continue;
     }
     i += 1;
-    const afterColon = i;
-    skipSpaceAndComments();
-    if (text[i] !== "[") {
-      i = afterColon;
-      continue;
-    }
-    i += 1;
-    while (i < n) {
-      skipSpaceAndComments();
-      if (i >= n) break;
-      if (text[i] === "]") {
-        i += 1;
-        break;
-      }
-      if (text[i] === ",") {
-        i += 1;
-        continue;
-      }
-      if (isQuote(text[i])) {
-        const specifier = readConcatenatedString();
-        if (specifier) specifiers.push(specifier);
-        continue;
-      }
-      if (!skipOneValue()) break;
-    }
+    collectValue(readExpr());
   }
-  return specifiers;
+  return { paths, unresolved };
 }
 
 /**
@@ -857,8 +1063,8 @@ function resolveGypInclude(fromFile: string, specifier: string): string | null {
  * Files a `.gyp` or `.gypi` loads through `includes`, including nested
  * includes. node-gyp runs command expansions in those files at install even
  * when the name is not itself a GYP source. A specifier that does not resolve
- * inside the acquired tree is returned as a visibility gap, and install-script
- * coverage is partial.
+ * inside the acquired tree, and an includes value the reader cannot reduce to
+ * a string literal, are visibility gaps. Install-script coverage is partial.
  */
 function gypIncludedPaths(files: ScanInputFile[]): {
   included: Set<string>;
@@ -879,7 +1085,10 @@ function gypIncludedPaths(files: ScanInputFile[]): {
     if (!file) continue;
     const text = decode(file.bytes);
     if (text === null) continue;
-    for (const specifier of gypIncludeSpecifiers(text)) {
+    const includes = gypIncludeSpecifiers(text);
+    if (includes.unresolved)
+      unacquired.add("GYP include not acquired: unresolved");
+    for (const specifier of includes.paths) {
       const resolved = resolveGypInclude(path, specifier);
       // `resolveGypInclude` returns null for an empty, absolute, URL-like or
       // out-of-repository path. A resolved path missing from the acquired
