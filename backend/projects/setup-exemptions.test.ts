@@ -125,6 +125,24 @@ describe("quarantined scan status presentation", () => {
     );
   });
 
+  test("scan that completed but has no findingsLocation (e.g. check/review did not complete) reports scan could not finish", () => {
+    const result = status({
+      state: "quarantined",
+      assessment: {
+        ...baseAssessment,
+        completedAt: at,
+        findingsLocation: undefined,
+      },
+    });
+    expect(result.state).toBe("action_required");
+    expect(result.checks.scan.message).toBe(
+      "The last scan could not finish, so it did not clear the project.",
+    );
+    expect(result.nextAction.message).toContain(
+      "The last scan could not finish, so it did not clear the project. Fix the cause if you know it, then request a new scan.",
+    );
+  });
+
   test("scan that finished with repository findings mentions the repository", () => {
     const result = status({
       state: "quarantined",
@@ -301,6 +319,118 @@ describe("summarize findings location classification", () => {
             category: "credential-theft",
             summary: "Hardcoded secret in src/config.ts",
             evidence: "src/config.ts:42",
+          },
+        ],
+        confirmation: null,
+      },
+    });
+    expect(summary.findingsLocation).toBe("repository");
+  });
+
+  test("does not misclassify repository findings as template when summary mentions skill template", () => {
+    const summary = summarize({
+      ...dummyAssessment,
+      result: {
+        schemaVersion: "slop-vetting-result-v2",
+        assessmentId: dummyAssessment.id,
+        projectId: dummyAssessment.projectId,
+        revision: 1,
+        manifestSha256: dummyAssessment.manifestSha256,
+        disposition: "incomplete",
+        policyVersion: "1",
+        assessed: {
+          repository: "owner/repo",
+          commitSha: dummyAssessment.commitSha,
+          templateSha256: dummyAssessment.templateSha256,
+          inputManifestSha256: "i".repeat(64),
+          dependencyLocks: [],
+        },
+        scan: {
+          runId: "r1",
+          startedAt: at,
+          completedAt: at,
+          reportSha256: "r".repeat(64),
+        },
+        coverage: {} as unknown as VettingScanResult["coverage"],
+        checks: {} as unknown as VettingScanResult["checks"],
+        visibilityGaps: [],
+        execution: null,
+        reusedAssessmentId: null,
+        primaryReview: {
+          provider: "p",
+          model: "m",
+          promptPolicyRevision: "1",
+          inputManifestSha256: "i".repeat(64),
+          runId: "r",
+          status: "completed",
+          verdict: "findings",
+          risk: "high",
+          findingCount: 1,
+        },
+        specialistReview: null,
+        artifacts: [],
+        findings: [
+          {
+            severity: "high",
+            category: "credential-theft",
+            summary: "Secret near skill template install path",
+            evidence: "src/config.ts:42",
+          },
+        ],
+        confirmation: null,
+      },
+    });
+    expect(summary.findingsLocation).toBe("repository");
+  });
+
+  test("does not misclassify repository paths with skills substring as template", () => {
+    const summary = summarize({
+      ...dummyAssessment,
+      result: {
+        schemaVersion: "slop-vetting-result-v2",
+        assessmentId: dummyAssessment.id,
+        projectId: dummyAssessment.projectId,
+        revision: 1,
+        manifestSha256: dummyAssessment.manifestSha256,
+        disposition: "incomplete",
+        policyVersion: "1",
+        assessed: {
+          repository: "owner/repo",
+          commitSha: dummyAssessment.commitSha,
+          templateSha256: dummyAssessment.templateSha256,
+          inputManifestSha256: "i".repeat(64),
+          dependencyLocks: [],
+        },
+        scan: {
+          runId: "r1",
+          startedAt: at,
+          completedAt: at,
+          reportSha256: "r".repeat(64),
+        },
+        coverage: {} as unknown as VettingScanResult["coverage"],
+        checks: {} as unknown as VettingScanResult["checks"],
+        visibilityGaps: [],
+        execution: null,
+        reusedAssessmentId: null,
+        primaryReview: {
+          provider: "p",
+          model: "m",
+          promptPolicyRevision: "1",
+          inputManifestSha256: "i".repeat(64),
+          runId: "r",
+          status: "completed",
+          verdict: "findings",
+          risk: "high",
+          findingCount: 1,
+        },
+        specialistReview: null,
+        artifacts: [],
+        findings: [
+          {
+            severity: "high",
+            category: "unsafe-execution",
+            summary: "Unsafe exec",
+            evidence: "packages/skills/runner.ts:1",
           },
         ],
         confirmation: null,

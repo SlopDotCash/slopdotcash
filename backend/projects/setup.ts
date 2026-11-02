@@ -255,14 +255,14 @@ function scanCheck(
       };
     case "quarantined": {
       const assessment = clearance.assessment;
-      if (assessment.completedAt === null) {
+      const loc = assessment.findingsLocation;
+      if (assessment.completedAt === null || !loc) {
         return {
           state: "quarantined",
           message:
             "The last scan could not finish, so it did not clear the project.",
         };
       }
-      const loc = assessment.findingsLocation;
       let message = "The last scan finished, but findings block clearance.";
       if (loc === "template") {
         message =
