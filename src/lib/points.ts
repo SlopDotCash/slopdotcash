@@ -97,12 +97,7 @@ function exact(value: object, keys: string[]) {
 export function pointRevisionId(revision: Omit<PointRevision, "id">): string {
   return sha256Hex(JSON.stringify(revision));
 }
-export function assertPointsJournal(
-  value: unknown,
-): asserts value is PointsJournal {
-  if (!value || typeof value !== "object")
-    throw new Error("Invalid points journal");
-  const p = value as PointsJournal;
+function assertJournalHeader(p: PointsJournal): void {
   exact(p, [
     "schemaVersion",
     "ruleVersion",
@@ -119,9 +114,15 @@ export function assertPointsJournal(
     !Array.isArray(p.coverage)
   )
     throw new Error("Invalid points journal header");
-  const latest = new Map<string, PointRevision>();
-  const ids = new Set<string>();
-  for (const r of p.revisions) {
+}
+function assertRevisionChain(
+  p: PointsJournal,
+  start: number,
+  latest: Map<string, PointRevision>,
+  ids: Set<string>,
+): void {
+  for (let index = start; index < p.revisions.length; index++) {
+    const r = p.revisions[index];
     exact(r, [
       "id",
       "previous",
@@ -294,6 +295,8 @@ export function assertPointsJournal(
     latest.set(a.key, r);
     ids.add(id);
   }
+}
+function assertJournalCoverage(p: PointsJournal): void {
   for (const c of p.coverage) {
     exact(c, ["repository", "from", "to", "digest"]);
     if (
@@ -305,6 +308,39 @@ export function assertPointsJournal(
     )
       throw new Error("Invalid points coverage");
   }
+}
+export function assertPointsJournal(
+  value: unknown,
+): asserts value is PointsJournal {
+  if (!value || typeof value !== "object")
+    throw new Error("Invalid points journal");
+  const p = value as PointsJournal;
+  assertJournalHeader(p);
+  assertRevisionChain(p, 0, new Map(), new Set());
+  assertJournalCoverage(p);
+}
+/**
+ * Validate a journal whose first `prefix` revisions were already asserted
+ * in this call chain and carried over unmodified: the append paths assert
+ * their input journal, then only push new revisions onto a copy of its
+ * revision list. The carried prefix still seeds the chain state and is
+ * rechecked against the journal's (possibly newer) generatedAt, but only
+ * the appended suffix pays the full per-revision cost — content hashes,
+ * key sorts, timestamp and URL parsing — that the prefix already passed.
+ */
+function assertAppendedRevisions(journal: PointsJournal, prefix: number): void {
+  assertJournalHeader(journal);
+  const latest = new Map<string, PointRevision>();
+  const ids = new Set<string>();
+  for (let index = 0; index < prefix; index++) {
+    const r = journal.revisions[index];
+    if (r.recordedAt > journal.generatedAt)
+      throw new Error("Invalid point award");
+    latest.set(r.award.key, r);
+    ids.add(r.id);
+  }
+  assertRevisionChain(journal, prefix, latest, ids);
+  assertJournalCoverage(journal);
 }
 export function pointKey(
   project: string,
@@ -405,7 +441,9 @@ export function appendPointAwards(
       penalties,
     );
   }
-  assertPointsJournal(output);
+  // The input journal was asserted above and its revisions are carried
+  // over unmodified; only the appended suffix needs full validation.
+  assertAppendedRevisions(output, journal.revisions.length);
   return output;
 }
 function appendPointAward(
@@ -638,7 +676,8 @@ export function reconcilePointPenalties(
       new Map([[award.key, evidence]]),
     );
   }
-  if (result !== journal) assertPointsJournal(result);
+  if (result !== journal)
+    assertAppendedRevisions(result, journal.revisions.length);
   return result;
 }
 
