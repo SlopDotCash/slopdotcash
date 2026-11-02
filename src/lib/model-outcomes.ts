@@ -391,10 +391,10 @@ export function summarizeModelOutcomes(
 
   const modelRows: ModelOutcomeRow[] = [...models.entries()]
     .map(([key, bucket]) => {
-      const outcomes = [...bucket.outcomesByActor.values()].reduce(
-        (sum, count) => sum + count,
-        0,
-      );
+      // The model's distinct accepted outcomes. A joint merge emits one event
+      // per commit author sharing a source id, so summing the per-actor counts
+      // would double-count it; the deduped outcome sets are the denominator.
+      const outcomes = bucket.mergedPullRequests.size + bucket.acceptedReviews;
       const top = Math.max(0, ...bucket.outcomesByActor.values());
       const separator = key.indexOf("/");
       return {
