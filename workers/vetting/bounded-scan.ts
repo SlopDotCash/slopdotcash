@@ -481,6 +481,24 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // A decoder between the download and the executor, in the forms a
+    // plainly written decode flag does not spell: the flag folded into
+    // a cluster (`base64 -di`, `base64 -qdi`), the decoder swapped for
+    // `xxd -r` (a hex decode) or for `uudecode -o /dev/stdout`. The
+    // executor still runs the downloaded bytes, decoded. A decoder
+    // writing to a file, an `xxd` without `-r` (an encode), a
+    // `uudecode` writing its embedded filename, a decoder feeding a
+    // non-executor and a local file decoded into a shell keep no
+    // finding.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:(?:[^\s|;&<>()'"]*/)?base64\b[^\n|]*?(?<!-)-(?:(?=[a-zA-Z]*[dD])[a-zA-Z]{2,})\b|(?:[^\s|;&<>()'"]*/)?xxd\b[^\n|]*?(?<!-)-(?:(?=[a-zA-Z]*r)[a-zA-Z]+)\b|(?:[^\s|;&<>()'"]*/)?uudecode\b[^\n|]*?-o\s+(?:/dev/stdout|-)(?=[\s|;&<>()]|$))[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND})(?:\s+-[a-zA-Z]+)*(?:\s+-)?(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a decoded remote download in a shell or interpreter",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     // A direct script argument can execute a URL without a separate download.
     // Match a command line or a JSON task value, with only known no-value
     // Deno permission flags. A URL after a local script is just script data.
