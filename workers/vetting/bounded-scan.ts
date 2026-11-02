@@ -1385,6 +1385,99 @@ function gypIncludedPaths(files: ScanInputFile[]): {
  * unchanged executable inventory reuses its clean result and any change to
  * executable content is scanned again.
  */
+/**
+ * A CMake list file: `CMakeLists.txt` or any `.cmake` module. Both are
+ * already install surfaces by name; this is the set whose `include()` calls
+ * are followed.
+ */
+const CMAKE_SOURCE = /(?:^|\/)cmakelists\.txt$|\.cmake$/iu;
+
+/**
+ * Literal `include(<path>)` arguments. CMake resolves a relative path
+ * against the list file that names it, so only a path with no variable
+ * expansion and no absolute form can be followed here. A bare module name
+ * resolves to `<name>.cmake` through `CMAKE_MODULE_PATH`, which is covered by
+ * the extension, so it needs no entry.
+ */
+function cmakeIncludeSpecifiers(text: string): string[] {
+  const specifiers: string[] = [];
+  for (const line of text.split(/\r?\n/u)) {
+    const code = line.replace(/#.*$/u, "");
+    for (const match of code.matchAll(/\binclude\s*\(/giu)) {
+      const rest = code.slice((match.index ?? 0) + match[0].length);
+      const argument = /^\s*(?:"([^"]*)"|([^\s")]+))/u.exec(rest);
+      const value = argument?.[1] ?? argument?.[2];
+      if (value !== undefined && value !== "") specifiers.push(value);
+    }
+  }
+  return specifiers;
+}
+
+/**
+ * Resolves an include specifier against the naming file. Absolute paths,
+ * variable expansions and paths that leave the repository are not acquired
+ * files, so they resolve to null.
+ */
+function resolveRelativeInclude(
+  fromFile: string,
+  specifier: string,
+): string | null {
+  const include = specifier.replaceAll("\\", "/").trim();
+  if (
+    include === "" ||
+    include.startsWith("/") ||
+    include.includes(":") ||
+    include.includes("\0") ||
+    /[<>|?*]/u.test(include)
+  )
+    return null;
+  const directory = fromFile.includes("/")
+    ? fromFile.slice(0, fromFile.lastIndexOf("/") + 1)
+    : "";
+  const normalized: string[] = [];
+  for (const part of `${directory}${include}`.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (normalized.length === 0) return null;
+      normalized.pop();
+      continue;
+    }
+    normalized.push(part);
+  }
+  return normalized.length === 0 ? null : normalized.join("/");
+}
+
+/**
+ * Files a CMake list file pulls in with `include()`, including nested ones.
+ * CMake evaluates the included file during configure, so its commands run
+ * even when its name carries no recipe extension.
+ */
+function cmakeIncludedPaths(files: ScanInputFile[]): Set<string> {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const included = new Set<string>();
+  const seen = new Set<string>();
+  const queue = files
+    .filter((file) => CMAKE_SOURCE.test(file.path))
+    .map((file) => file.path);
+  while (queue.length > 0) {
+    const path = queue.pop();
+    if (path === undefined || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    for (const specifier of cmakeIncludeSpecifiers(text)) {
+      const resolved = resolveRelativeInclude(path, specifier);
+      if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
+        continue;
+      included.add(resolved);
+      queue.push(resolved);
+    }
+  }
+  return included;
+}
+
 export function inspectRepository(input: {
   files: ScanInputFile[];
   /** Source the acquisition could not read; each keeps the scan incomplete. */
@@ -1419,15 +1512,15 @@ export function inspectRepository(input: {
     partial.add("installScripts");
     gaps.push(...gyp.unacquired);
   }
+  const cmakeIncludes = cmakeIncludedPaths(files);
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
-    // Recorded before later content checks so the reuse identity names this
-    // surface. A GYP include keeps whatever other surfaces it already has.
-    if (gypIncludes.has(file.path)) {
+    // Both build systems execute included files during configuration.
+    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
