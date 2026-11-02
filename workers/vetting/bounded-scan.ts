@@ -426,16 +426,21 @@ const RULES: Rule[] = [
     // callback instead of nesting the fetch inside the call:
     // `.then((t) => eval(t))` runs the response body exactly as the
     // direct await form above does, and `.then(eval)` passes it
-    // unaltered. Only the chain form counts. A `.text()` step must
-    // turn the response into text first (a `.json()` result is data;
-    // evaluating it runs no fetched code), the executor must receive
-    // the chain value itself (the backreference — a property or a
-    // transformation of it is a different data flow and stays with
-    // source review, as does an axios response object), and no
-    // statement boundary may intervene, so an unrelated `.then(eval)`
-    // on a local promise in a later statement stays clean.
+    // unaltered. The callback may be an arrow or a `function`
+    // expression — the same act in older syntax. Only the chain form
+    // counts. A `.text()` step must turn the response into text first
+    // (a `.json()` result is data; evaluating it runs no fetched
+    // code), the executor must receive the chain value itself (the
+    // backreference — a property or a transformation of it is a
+    // different data flow and stays with source review, as does an
+    // axios response object; for `new Function` the value may sit in
+    // the last, body argument position, provided the constructed
+    // function is then invoked — constructing without calling
+    // executes nothing), and no statement boundary may intervene, so
+    // an unrelated `.then(eval)` on a local promise in a later
+    // statement stays clean.
     pattern:
-      /(?<![\w$.])fetch\s*\([^()\n]*\)[^;]{0,600}?\.text\s*\(\s*\)[^;]{0,600}?\.then\(\s*(?<![\w$.])(?:eval|Function)\s*\)|(?<![\w$.])fetch\s*\([^()\n]*\)[^;]{0,600}?\.text\s*\(\s*\)[^;]{0,600}?\.then\(\s*(?:async\s+)?\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*(?:\{\s*)?(?:return\s+)?(?<![\w$.])(?:eval|\(\s*0\s*,\s*eval\s*\)|new\s+Function|setTimeout)\s*\(\s*\1\s*(?=[,)])/iu,
+      /(?<![\w$.])fetch\s*\([^()\n]*\)[^;]{0,600}?\.text\s*\(\s*\)[^;]{0,600}?\.then\(\s*(?<![\w$.])(?:eval|Function)\s*\)|(?<![\w$.])fetch\s*\([^()\n]*\)[^;]{0,600}?\.text\s*\(\s*\)[^;]{0,600}?\.then\(\s*(?:async\s+)?(?:function\s*(?:[A-Za-z_$][\w$]*)?\s*)?\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*(?:=>|\{)\s*(?:\{\s*)?(?:return\s+)?(?<![\w$.])(?:(?:eval|\(\s*0\s*,\s*eval\s*\)|setTimeout)\s*\(\s*\1\s*(?=[,)])|new\s+Function\s*\(\s*\1\s*(?=[,)])|new\s+Function\s*\([^()\n]*,\s*\1\s*\)\s*\(\s*\))/iu,
     summary: "Executes code fetched from the network through a promise chain",
   },
   {
