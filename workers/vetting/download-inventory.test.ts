@@ -84,3 +84,12 @@ test("local-file invocations of the same tools collect nothing", () => {
     });
   }
 });
+
+test("upload-only transfers do not claim an unreviewed download", () => {
+  for (const body of [
+    "bitsadmin /transfer job /upload /priority normal https://example.com/inbox local.bin\n",
+    "Start-BitsTransfer -TransferType Upload -Source local.bin -Destination https://example.com/inbox\n",
+  ]) {
+    expect(inspected("setup.ps1", body).downloads).toEqual([]);
+  }
+});
