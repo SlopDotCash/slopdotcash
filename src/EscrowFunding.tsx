@@ -243,7 +243,7 @@ export function useVaultTotals(
       status: "ready",
       vault: state.vault,
       refreshing: false,
-      refreshError: null,
+      refreshError: state.refreshError ?? null,
       retry,
     };
   const previous = lastGood?.projectId === project.id ? lastGood.vault : null;

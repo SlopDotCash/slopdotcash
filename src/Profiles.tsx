@@ -432,6 +432,15 @@ function ProfilePaymentHistory({
         ) : directState.status === "loading" ? (
           <p role="status">Loading direct payments…</p>
         ) : null}
+        {!scope ? null : directState.status === "ready" &&
+          directState.refreshError ? (
+          <p role="status">
+            Direct payment records may be outdated.{" "}
+            <button className="text-button" type="button" onClick={retryDirect}>
+              Retry payment records
+            </button>
+          </p>
+        ) : null}
         {!scope ? null : vaultState.status === "error" ? (
           <p role="status">
             Project payment records unavailable.{" "}
@@ -441,6 +450,15 @@ function ProfilePaymentHistory({
           </p>
         ) : vaultState.status === "loading" ? (
           <p role="status">Loading project payments…</p>
+        ) : null}
+        {!scope ? null : vaultState.status === "ready" &&
+          vaultState.refreshError ? (
+          <p role="status">
+            Project payment records may be outdated.{" "}
+            <button className="text-button" type="button" onClick={retryVault}>
+              Retry project payments
+            </button>
+          </p>
         ) : null}
       </div>
       {entries.length > 0 ? (

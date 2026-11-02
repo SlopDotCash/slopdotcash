@@ -1216,6 +1216,18 @@ function ProjectPaymentHistory({
           </button>
         </p>
       ) : null}
+      {directState.status === "ready" && directState.refreshError ? (
+        <p role="status">
+          Direct payments may be outdated.{" "}
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={retryDirect}
+          >
+            Retry direct payments
+          </button>
+        </p>
+      ) : null}
       {(showHistory ? directMonths : directMonths.slice(0, 3)).map(
         ([month, { amount, count, paidOn }]) => (
           <p className="money-summary" key={month}>

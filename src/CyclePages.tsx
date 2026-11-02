@@ -507,6 +507,18 @@ export function CycleArchivePage({
             {formatDate(state.cycleIndex.generatedAt)}
           </p>
         ) : null}
+        {state.status === "ready" && state.refreshError ? (
+          <p className="data-notice data-stale" role="status">
+            Cycle history may be outdated.{" "}
+            <button
+              className="button secondary-button button-small"
+              type="button"
+              onClick={retry}
+            >
+              Retry
+            </button>
+          </p>
+        ) : null}
       </RoutePageHeader>
       <VaultPaymentHistory scope={{ all: true }} />
       {all.length > 0 ? (

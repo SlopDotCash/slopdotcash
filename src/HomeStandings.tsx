@@ -57,6 +57,13 @@ export function HomeStandings() {
             Retry
           </button>
         </p>
+      ) : points.refreshError ? (
+        <p role="status">
+          <span>Top contributors may be outdated.</span>{" "}
+          <button type="button" onClick={retryPoints}>
+            Retry
+          </button>
+        </p>
       ) : null}
       {points.status === "ready" ? (
         ranked.length === 0 ? (

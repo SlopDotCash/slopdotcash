@@ -15,6 +15,14 @@ export function VaultPaymentHistory({ scope }: { scope: PublicPaymentScope }) {
       <div className="profile-card-heading">
         <h2>Finalized project payments</h2>
       </div>
+      {state.status === "ready" && state.refreshError ? (
+        <p role="status">
+          Payment records may be outdated.{" "}
+          <button type="button" className="text-button" onClick={retry}>
+            Retry project payments
+          </button>
+        </p>
+      ) : null}
       {state.status === "loading" ? (
         <p role="status">Loading project payments…</p>
       ) : state.status === "error" ? (

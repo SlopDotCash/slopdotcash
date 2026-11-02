@@ -93,7 +93,10 @@ function LoadNotice({
   retry,
   label,
 }: {
-  state: { status: "loading" } | { status: "error"; message: string };
+  state:
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "ready"; refreshError?: string };
   retry: () => void;
   label: string;
 }) {
@@ -102,6 +105,18 @@ function LoadNotice({
       <p aria-live="polite" className="admin-status">
         Loading {label}…
       </p>
+    );
+  }
+  if (state.status === "ready") {
+    if (!state.refreshError) return null;
+    return (
+      <div className="form-error" role="alert">
+        <CircleAlert aria-hidden="true" /> {state.refreshError} Showing the last
+        loaded {label}.{" "}
+        <button className="text-button" onClick={retry} type="button">
+          <RotateCcw aria-hidden="true" /> Retry
+        </button>
+      </div>
     );
   }
   return (
@@ -901,9 +916,8 @@ function ProjectsSection({
           <CircleCheck aria-hidden="true" /> {note}
         </p>
       ) : null}
-      {state.status !== "ready" ? (
-        <LoadNotice label="projects" retry={reload} state={state} />
-      ) : state.projects.length === 0 ? (
+      <LoadNotice label="projects" retry={reload} state={state} />
+      {state.status !== "ready" ? null : state.projects.length === 0 ? (
         <p className="admin-status">No projects.</p>
       ) : matchingProjects.length === 0 ? (
         <p className="admin-status">
@@ -1133,9 +1147,8 @@ function FeeConversionsSection() {
       <div className="admin-section-heading">
         <h2 id="admin-fee-conversions">Fee conversions</h2>
       </div>
-      {state.status !== "ready" ? (
-        <LoadNotice label="fee conversions" retry={reload} state={state} />
-      ) : (
+      <LoadNotice label="fee conversions" retry={reload} state={state} />
+      {state.status !== "ready" ? null : (
         <article className="admin-card">
           <dl className="admin-facts">
             {state.routes.map((route) => {
