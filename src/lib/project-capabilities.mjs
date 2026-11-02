@@ -54,9 +54,10 @@ export function evaluateProjectCapabilities(state) {
         : "project vault is not funded"
       : null;
   // Owner decision D12: a retired project gets no review; retired means off.
+  // The retirement a quarantine or ban applies keeps the security review.
   const securityRefusal = !registered
     ? "repository is not registered on slop.cash"
-    : state.listingTier === "retired"
+    : state.listingTier === "retired" && state.retiredByRestriction !== true
       ? "project is retired"
       : null;
   return {

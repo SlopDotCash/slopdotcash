@@ -915,12 +915,13 @@ async function serviceResult(
     // content of the same repository under the same policy and template.
     // Reinstatement after a contributor-flag pause requires a fresh clean scan
     // requested on or after the pause (PRD sections 1, 8, 11).
-    const [cached, enforcements] = await Promise.all([
+    const [cached, enforcements, coversActiveFlags] = await Promise.all([
       deps.vetting.getAssessment(result.reusedAssessmentId),
       deps.projects.listEnforcements(),
+      deps.vetting.assessmentCoversActiveFlags(result.reusedAssessmentId),
     ]);
     const restriction = projectRestriction(project.id, enforcements);
-    if (!reusableCleanScan(cached, result, restriction))
+    if (!reusableCleanScan(cached, result, restriction, coversActiveFlags))
       fail(
         422,
         "reuse_mismatch",
@@ -1057,7 +1058,15 @@ async function serviceReuse(
       reusedAssessmentId: cached.id,
     };
     if (scanSourceInventory(result) !== value.inputManifestSha256) continue;
-    if (!reusableCleanScan(cached, result, restriction)) continue;
+    if (
+      !reusableCleanScan(
+        cached,
+        result,
+        restriction,
+        await deps.vetting.assessmentCoversActiveFlags(cached.id),
+      )
+    )
+      continue;
     if (recordedResultProblems(result).length > 0) continue;
     if (!(await deps.evidence?.retained(result))) continue;
     return json(200, { schemaVersion: "slop-vetting-reuse-v1", result });

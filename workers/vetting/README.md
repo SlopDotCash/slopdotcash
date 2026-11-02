@@ -24,15 +24,47 @@ mean the code is free of all malware.
 | `source` | Code and configuration files of the executable inventory |
 | `manifests` | `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod` and similar |
 | `dependencies` | Lockfiles; each lock digest is recorded |
-| `installScripts` | Package lifecycle hooks, `setup.py`, `build.rs`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `SConscript`, `wscript`, `Makefile.am`, `Makefile.in`, `GNUmakefile.in`, `configure.ac`, `build.sbt`, `<name>.sbt`, `BUILD.bazel`, `MODULE.bazel`, `WORKSPACE`, `<name>.bzl`, `build.boot`, `build`, `wscript_build`, `docker-bake.hcl`, `docker-bake.override.hcl`), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts, and previously unclassified files whose first two bytes are `#!` (an interpreter script such as `configure`) |
+| `installScripts` | Package lifecycle hooks, pnpm file hooks (`.pnpmfile.cjs`, `.pnpmfile.js`), `setup.py`, `build.rs`, `build.zig`, `build.zig.zon`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `SConscript`, `wscript`, `Makefile.am`, `Makefile.in`, `GNUmakefile.in`, `configure.ac`, `build.sbt`, `<name>.sbt`, `BUILD.bazel`, `MODULE.bazel`, `WORKSPACE`, `<name>.bzl`, `build.boot`, `build`, `wscript_build`, `docker-bake.hcl`, `docker-bake.override.hcl`, MSBuild projects and imports such as `<name>.csproj`, `<name>.fsproj`, `<name>.vbproj`, `<name>.vcxproj`, `<name>.proj`, `<name>.props` and `<name>.targets`, node-gyp `binding.gyp`, `<name>.gyp`, `<name>.gypi`, and repository files named by a GYP `includes` entry), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts, and previously unclassified files whose first two bytes are `#!` (an interpreter script such as `configure`) |
 | `downloads` | URLs that install-time content downloads, and committed binaries or archives |
 | `agentInstructions` | `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`, `CONTRIBUTING.md`, README, `SKILL.md`, `WARP.md`, `llms.txt`, Cursor, Claude, Copilot (`.github/instructions`, `.github/chatmodes`), Windsurf, JetBrains Junie (`.junie`), Project IDX (`.idx`), Goose, Continue, Zed `.rules` and similar rule files |
 
 A build, install or provisioning recipe is recognized by its name, so the
 same bytes are classified the same way whether they sit in a `Makefile`, a
-`Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Each keeps its
+`Dockerfile`, a `Containerfile` or a `Jenkinsfile`.
+
+CMake evaluates a file named by `include()` during configure, so that file is
+install content even when its name carries no recipe extension. Only a literal
+path relative to the naming list file is followed; a variable expansion, an
+absolute path or a path leaving the repository is not acquired. Each keeps its
 `installScripts` coverage, its install-time download extraction and its place
 in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
+MSBuild project and import files, and Ant `build.xml`, match a quoted
+attribute value after XML attribute normalization. A literal carriage
+return or line feed inside the quotes becomes a space. A numeric character
+reference, or one of the five predefined entities, becomes the character it
+names; a reference to a newline stays a newline. In an MSBuild file, element
+text decodes those same character references, so a property such as
+`PreBuildEvent`, or any property later expanded into `Exec`, is matched as
+the command MSBuild runs. A literal carriage return or line feed in that
+element text stays a line break. Comments, `CDATA`, and the element text of
+`Exec` are not decoded: `Exec` ignores its element text and reads
+`Command`. A newline in a shell script still ends the command. Other files
+are not rewritten.
+
+node-gyp loads `binding.gyp`, any `<name>.gyp` or `<name>.gypi`, and every
+repository file named by a GYP `includes` entry, then runs command expansions
+and actions from those files at install. `includes` may be a list or a tuple,
+and gyp also loads an `includes` entry nested in `conditions` or
+`target_conditions`. An entry that is not in the acquired tree, or whose path
+is absolute, a URL, or outside the repository, is a visibility gap
+`GYP include not acquired: <specifier>`. A value or entry that is not a plain
+string literal is a visibility gap `GYP include not acquired: unresolved`.
+Either gap makes install-script coverage partial.
+
+Package-manager configuration that the package manager reads on every install
+or run (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`) is
+also an `installScripts` surface, at any depth. Each can make the package
+manager execute code, for example through `node-options` in `.npmrc`.
 
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and

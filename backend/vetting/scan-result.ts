@@ -38,6 +38,8 @@ import {
 } from "./result";
 
 export const VETTING_SCAN_SCHEMA = "slop-vetting-result-v2";
+/** Template inputs are scanned apart from repository paths. */
+export const TEMPLATE_PREFIX = "slop-skill-template";
 
 /** What a scan must read. Each surface must be complete for "clean". */
 export const SCAN_SURFACES = [

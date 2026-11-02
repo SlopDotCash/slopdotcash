@@ -8,8 +8,9 @@
  *
  * "Clean" means these defined checks passed on every defined surface. It is
  * not a guarantee that the code contains no malware. Unread, oversized or
- * undecodable content, an unretrieved install-time download and an
- * unanalyzed binary keep the result incomplete. Execution is never needed
+ * undecodable content, an unretrieved install-time download, a GYP include
+ * the scan cannot acquire or resolve, and an unanalyzed binary keep the result
+ * incomplete. Execution is never needed
  * for ordinary source; an operator runs an install hook or download in an
  * isolated runner only when its bytes cannot be judged statically, and that
  * runner never receives secrets.
@@ -125,6 +126,20 @@ const AGENT_INSTRUCTIONS = new Set([
   "claude.local.md",
   "llms.txt",
 ]);
+/**
+ * Package-manager configuration read on every install or run. Each file can
+ * make the package manager execute code (`node-options` and `script-shell` in
+ * `.npmrc`, `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the
+ * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`), so it is an
+ * install surface, never unreviewed content.
+ */
+const PACKAGE_MANAGER_CONFIGS = new Set([
+  ".npmrc",
+  ".yarnrc",
+  ".yarnrc.yml",
+  ".pnpmfile.cjs",
+  "bunfig.toml",
+]);
 const INSTALL_FILES = new Set([
   "setup.py",
   "build.rs",
@@ -133,8 +148,11 @@ const INSTALL_FILES = new Set([
   "install.sh",
   "postinstall.js",
   "preinstall.js",
+  ".pnpmfile.cjs",
+  ".pnpmfile.js",
   ".envrc",
   "tasks.json",
+  "tox.ini",
   "devcontainer.json",
   "gnumakefile",
   "dockerfile",
@@ -167,6 +185,8 @@ const INSTALL_FILES = new Set([
   "makefile.inc",
   "configure.in",
   "build.xml",
+  "build.zig",
+  "build.zig.zon",
   "build.ninja",
   "tupfile",
   "tuprules.tup",
@@ -174,12 +194,24 @@ const INSTALL_FILES = new Set([
 /**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
  * `app.dockerfile`, or by a build-system definition extension, such as
- * `Helper.cmake`, `plugins.sbt` or `defs.bzl`. They run commands at build
- * time, so they are install surfaces like a Makefile, never unreviewed
- * content.
+ * `Helper.cmake`, `plugins.sbt`, `defs.bzl` or `App.csproj`. They run
+ * commands at build time, so they are install surfaces like a Makefile,
+ * never unreviewed content.
  */
-const BUILD_RECIPE =
-  /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja)$/u;
+const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
+const GYP_EXTENSION = "gyp|gypi";
+const BUILD_RECIPE = new RegExp(
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
+  "u",
+);
+const MSBUILD_RECIPE = new RegExp(
+  String.raw`\.(?:${MSBUILD_EXTENSIONS})$`,
+  "iu",
+);
+/** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
+const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/** node-gyp loads these directly; other names are install scripts only via `includes`. */
+const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -199,6 +231,19 @@ const INSTALL_HOOKS = [
   "postinstall",
   "prepare",
   "prepublish",
+];
+/**
+ * Composer runs these `scripts` events itself on `install` and `update`. The
+ * commands live in the same `scripts` field package.json uses, but the
+ * manifest is only reviewed as a manifest, so without this the command is
+ * never checked as install content and its download is not collected.
+ */
+const COMPOSER_INSTALL_HOOKS = [
+  "pre-install-cmd",
+  "post-install-cmd",
+  "pre-update-cmd",
+  "post-update-cmd",
+  "post-autoload-dump",
 ];
 
 function basename(path: string): string {
@@ -234,6 +279,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
@@ -261,7 +307,7 @@ function commandToken(name: string): string {
   const word = String.raw`(?:[^\s|;&<>()'"]*/)?${name}`;
   return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
 }
-const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi)?sh");
+const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
 
@@ -273,22 +319,30 @@ const RULES: Rule[] = [
   {
     threat: "wallet-drainer",
     severity: "high",
+    // "Local Extension Settings" is a directory name. Match when a quote,
+    // slash, backslash, or closing brace is immediately on the left, in any
+    // case. A closing quote is not required. A bare phrase is ordinary
+    // English, and a high finding stays open after specialist review.
     pattern:
-      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|Local Extension Settings|\.ethereum\/keystore/iu,
+      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
     threat: "wallet-drainer",
     severity: "medium",
     pattern:
-      /\b(?:mnemonic|seed[ _-]?phrase|private[ _-]?key)\b[^\n]{0,120}\b(?:fetch|axios|https?:\/\/|XMLHttpRequest|sendTransaction|transfer)\b/iu,
+      /\b(?:mnemonic|seed[ _-]?phrase|private[ _-]?key)\b[^\n]{0,120}\b(?:fetch|axios|https?:\/\/|XMLHttpRequest|sendTransaction|sendSignedTransaction|signTransaction|sendRawTransaction|eth_sendRawTransaction|eth_sendTransaction|transfer)\b/iu,
     summary: "Handles a seed phrase or private key next to a network send",
   },
   {
     threat: "credential-theft",
     severity: "high",
+    // "Login Data" is Chromium's password-file name. Match when a quote,
+    // slash, backslash, or closing brace is immediately on the left, in any
+    // case, including "Login Data For Account". A bare phrase is ordinary
+    // English, and a high finding stays open after specialist review.
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|\bLogin Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
@@ -309,14 +363,14 @@ const RULES: Rule[] = [
     threat: "secret-exfiltration",
     severity: "high",
     pattern:
-      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:curl|wget|nc)\b/iu,
+      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b/iu,
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
@@ -362,9 +416,14 @@ const RULES: Rule[] = [
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
 // so identical source bytes cannot reuse a result from a different rule set.
+// XML normalization is part of that semantics: it changes which bytes match.
 const RULE_POLICY_SHA256 = sha256(
   JSON.stringify({
     schemaVersion: "slop-deterministic-rules-v1",
+    xmlAttributeWhitespace: "msbuild-and-ant-build-xml-literal-cr-lf-to-space",
+    xmlAttributeCharacterReferences: "decimal-hex-and-predefined-entities",
+    xmlElementCharacterReferences:
+      "msbuild-element-text-except-exec-comments-and-cdata",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -373,7 +432,7 @@ const RULE_POLICY_SHA256 = sha256(
 );
 
 const DOWNLOAD =
-  /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
+  /\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
 
 function decode(bytes: Uint8Array): string | null {
   // NUL bytes mean binary content, not text to read.
@@ -406,10 +465,270 @@ function binaryMagic(bytes: Uint8Array): boolean {
   );
 }
 
+const NAMED_XML_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+/** XML 1.0 Char. Surrogates and noncharacters are not character references. */
+function xmlScalar(code: number): boolean {
+  return (
+    code === 0x9 ||
+    code === 0xa ||
+    code === 0xd ||
+    (code >= 0x20 && code <= 0xd7ff) ||
+    (code >= 0xe000 && code <= 0xfffd) ||
+    (code >= 0x10000 && code <= 0x10ffff)
+  );
+}
+
+/**
+ * One numeric character reference or predefined entity at `index`. `quote`
+ * is the attribute delimiter, or empty in element text. The scan stops at
+ * that delimiter, so a semicolon later in the file cannot finish a reference
+ * the quote ended. Element text has no quote; `<` still ends the scan.
+ */
+function xmlCharacterReference(
+  text: string,
+  index: number,
+  quote: string,
+): { value: string; length: number } | null {
+  if (text[index] !== "&") return null;
+  let cursor = index + 1;
+  let semi = -1;
+  while (cursor < text.length) {
+    const char = text[cursor] ?? "";
+    if (char === ";") {
+      semi = cursor;
+      break;
+    }
+    if (char === quote || char === "&" || char === "<") return null;
+    cursor += 1;
+  }
+  if (semi < 0) return null;
+  const body = text.slice(index + 1, semi);
+  if (body.startsWith("#")) {
+    const hex = body[1] === "x" || body[1] === "X";
+    const digits = body.slice(hex ? 2 : 1);
+    if (
+      digits.length === 0 ||
+      (hex ? !/^[0-9A-Fa-f]+$/u.test(digits) : !/^\d+$/u.test(digits))
+    )
+      return null;
+    // Leading zeros do not change the code point. A value above U+10FFFF
+    // is not a character reference, whatever its written length.
+    const trimmed = digits.replace(/^0+/u, "") || "0";
+    if (trimmed.length > (hex ? 6 : 7)) return null;
+    const code = Number.parseInt(trimmed, hex ? 16 : 10);
+    if (!xmlScalar(code)) return null;
+    return { value: String.fromCodePoint(code), length: semi - index + 1 };
+  }
+  const named = NAMED_XML_ENTITIES[body];
+  if (named === undefined) return null;
+  return { value: named, length: semi - index + 1 };
+}
+
+/**
+ * MSBuild and Ant run an attribute value after XML attribute normalization.
+ * A literal CR or LF inside the quotes becomes one space, so a newline
+ * before `| sh` still executes the pipe. A numeric character reference
+ * (`&#124;`, `&#x7C;`) or predefined entity (`&amp;`, `&lt;`, `&gt;`,
+ * `&quot;`, `&apos;`) becomes that character, so `&amp;&amp;` is `&&`.
+ * A reference to CR or LF stays that character: XML does not turn it into
+ * a space, and it still ends a shell command. MSBuild also runs property
+ * element text after the XML reader decodes those same references there
+ * (`PreBuildEvent`, and any property expanded into `Exec`). Element text in
+ * an MSBuild file is decoded the same way, except comments, CDATA, and the
+ * text of an `Exec` element: the task ignores that text and reads
+ * `Command`. Literal CR or LF in element text stays a line break. Ant
+ * `build.xml` rewrites quoted attributes only. `origin` maps each index of
+ * the rewritten text back to the original text, so a finding's line is the
+ * line of the source bytes.
+ */
+function xmlAttributeRuleText(
+  text: string,
+  elementText = false,
+): {
+  text: string;
+  origin: (index: number) => number;
+} {
+  let result = "";
+  let index = 0;
+  let mode: "text" | "tag" | "comment" | "cdata" | "value" = "text";
+  let quote = "";
+  let delta = 0;
+  const breaks = [0];
+  const deltas = [0];
+  const stack: string[] = [];
+  let tagKind: "start" | "end" | "other" = "start";
+  let tagName = "";
+  let readingName = false;
+  let selfClosing = false;
+  const emit = (value: string, sourceLength = value.length) => {
+    result += value;
+    const growth = sourceLength - value.length;
+    if (growth === 0) return;
+    delta += growth;
+    breaks.push(result.length);
+    deltas.push(delta);
+  };
+  while (index < text.length) {
+    const char = text[index] ?? "";
+    if (mode === "text") {
+      if (text.startsWith("<!--", index)) {
+        mode = "comment";
+        emit("<!--");
+        index += 4;
+        continue;
+      }
+      if (text.startsWith("<![CDATA[", index)) {
+        mode = "cdata";
+        emit("<![CDATA[");
+        index += 9;
+        continue;
+      }
+      if (char === "<") {
+        mode = "tag";
+        if (!elementText) {
+          emit(char);
+          index += 1;
+          continue;
+        }
+        tagName = "";
+        selfClosing = false;
+        readingName = false;
+        if (text.startsWith("</", index)) {
+          tagKind = "end";
+          readingName = true;
+          emit("</");
+          index += 2;
+          continue;
+        }
+        if (text.startsWith("<?", index) || text.startsWith("<!", index))
+          tagKind = "other";
+        else {
+          tagKind = "start";
+          readingName = true;
+        }
+        emit(char);
+        index += 1;
+        continue;
+      }
+      // Exec reads its Command attribute and ignores element text.
+      const open = stack[stack.length - 1];
+      if (elementText && open !== undefined && open !== "Exec") {
+        const reference = xmlCharacterReference(text, index, "");
+        if (reference !== null) {
+          emit(reference.value, reference.length);
+          index += reference.length;
+          continue;
+        }
+      }
+      emit(char);
+      index += 1;
+      continue;
+    }
+    if (mode === "comment") {
+      if (text.startsWith("-->", index)) {
+        mode = "text";
+        emit("-->");
+        index += 3;
+        continue;
+      }
+      emit(char);
+      index += 1;
+      continue;
+    }
+    if (mode === "cdata") {
+      if (text.startsWith("]]>", index)) {
+        mode = "text";
+        emit("]]>");
+        index += 3;
+        continue;
+      }
+      emit(char);
+      index += 1;
+      continue;
+    }
+    if (mode === "value") {
+      if (char === quote) {
+        mode = "tag";
+        emit(char);
+        index += 1;
+        continue;
+      }
+      const reference = xmlCharacterReference(text, index, quote);
+      if (reference !== null) {
+        emit(reference.value, reference.length);
+        index += reference.length;
+        continue;
+      }
+      emit(char === "\r" || char === "\n" ? " " : char);
+      index += 1;
+      continue;
+    }
+    if (char === ">") {
+      if (elementText) {
+        const colon = tagName.lastIndexOf(":");
+        const local = colon < 0 ? tagName : tagName.slice(colon + 1);
+        if (tagKind === "start" && !selfClosing && local !== "")
+          stack.push(local);
+        else if (tagKind === "end" && local !== "") {
+          const at = stack.lastIndexOf(local);
+          if (at >= 0) stack.length = at;
+        }
+      }
+      mode = "text";
+      readingName = false;
+      emit(char);
+      index += 1;
+      continue;
+    }
+    if (readingName && !/[\s/>]/u.test(char)) {
+      tagName += char;
+      emit(char);
+      index += 1;
+      continue;
+    }
+    readingName = false;
+    if (elementText && char === "/") selfClosing = true;
+    if (char === '"' || char === "'") {
+      let previous = index - 1;
+      while (previous >= 0 && /[ \t\r\n]/u.test(text[previous] ?? ""))
+        previous -= 1;
+      if (text[previous] === "=") {
+        mode = "value";
+        quote = char;
+      }
+    }
+    emit(char);
+    index += 1;
+  }
+  const origin =
+    breaks.length === 1
+      ? (decodedIndex: number) => decodedIndex
+      : (decodedIndex: number) => {
+          let lo = 0;
+          let hi = breaks.length - 1;
+          while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if ((breaks[mid] ?? 0) <= decodedIndex) lo = mid;
+            else hi = mid - 1;
+          }
+          return decodedIndex + (deltas[lo] ?? 0);
+        };
+  return { text: result, origin };
+}
+
 function checkText(
   path: string,
   text: string,
   surfaces: ScanSurface[],
+  evidenceText = text,
+  origin?: (index: number) => number,
 ): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const rule of RULES) {
@@ -417,11 +736,12 @@ function checkText(
       continue;
     const match = rule.pattern.exec(text);
     if (match === null) continue;
+    const at = origin?.(match.index) ?? match.index;
     findings.push({
       severity: rule.severity,
       category: rule.threat,
       summary: rule.summary,
-      evidence: `${path}:${lineOf(text, match.index)}`.slice(0, 300),
+      evidence: `${path}:${lineOf(evidenceText, at)}`.slice(0, 300),
       path,
     });
   }
@@ -429,13 +749,27 @@ function checkText(
 }
 
 function installHookCommands(path: string, text: string): string[] {
-  if (basename(path) !== "package.json") return [];
+  const name = basename(path);
+  const hooks =
+    name === "package.json"
+      ? INSTALL_HOOKS
+      : name === "composer.json"
+        ? COMPOSER_INSTALL_HOOKS
+        : null;
+  if (hooks === null) return [];
   try {
     const scripts = (JSON.parse(text) as { scripts?: Record<string, unknown> })
       .scripts;
-    return INSTALL_HOOKS.flatMap((hook) =>
-      typeof scripts?.[hook] === "string" ? [scripts[hook] as string] : [],
-    );
+    // Composer accepts one command or an ordered list of commands per event.
+    return hooks.flatMap((hook) => {
+      const value = scripts?.[hook];
+      if (typeof value === "string") return [value];
+      return Array.isArray(value)
+        ? value.filter(
+            (command): command is string => typeof command === "string",
+          )
+        : [];
+    });
   } catch {
     return [];
   }
@@ -576,11 +910,598 @@ export type RepositoryInspection = {
 };
 
 /**
+ * One Python literal the includes reader understood, or a value it refused.
+ * A tuple keeps its members so a nested `('evil.txt',)` still yields paths.
+ * A list is only an includes value; a list used as one entry is not a path.
+ */
+type GypLiteral =
+  | { kind: "string"; value: string }
+  | { kind: "list"; items: GypLiteral[] }
+  | { kind: "tuple"; items: GypLiteral[] }
+  | { kind: "unresolved" };
+
+/**
+ * Quoted paths inside every GYP `includes` list or tuple.
+ *
+ * gyp evaluates the file as a Python literal and iterates `includes`,
+ * including an `includes` key nested under `conditions` or
+ * `target_conditions`. A `#` outside a string is a comment, so it cannot
+ * hide an entry or end the list, and a `#` inside a quoted path stays part
+ * of that path. Adjacent quoted fragments are one path. Parentheses that
+ * only group a value are that value, so `('evil.txt')` is the string
+ * `evil.txt`. A tuple is read like a list. `+`, names, calls and any other
+ * form that is not a plain string literal are not evaluated: each is an
+ * unresolved include, and install-script coverage stays partial.
+ * Prose that merely says "includes" is not an include list. A bare name
+ * such as `{includes: [...]}` is a variable lookup under gyp's empty-builtin
+ * eval, not the string key, so it is not treated as an include list.
+ */
+function gypIncludeSpecifiers(text: string): {
+  paths: string[];
+  unresolved: boolean;
+} {
+  const paths: string[] = [];
+  let unresolved = false;
+  const n = text.length;
+  let i = 0;
+
+  const isQuote = (char: string | undefined): char is "'" | '"' =>
+    char === "'" || char === '"';
+
+  const skipSpaceAndComments = () => {
+    while (i < n) {
+      const c = text[i];
+      if (
+        c === " " ||
+        c === "\t" ||
+        c === "\n" ||
+        c === "\r" ||
+        c === "\f" ||
+        c === "\v"
+      ) {
+        i += 1;
+        continue;
+      }
+      // A backslash-newline outside a string is a line continuation.
+      if (c === "\\" && (text[i + 1] === "\n" || text[i + 1] === "\r")) {
+        i += 2;
+        if (text[i - 1] === "\r" && text[i] === "\n") i += 1;
+        continue;
+      }
+      if (c === "#") {
+        while (i < n && text[i] !== "\n" && text[i] !== "\r") i += 1;
+        continue;
+      }
+      return;
+    }
+  };
+
+  /** True when the quote at `at` opens a raw string (`r`, `fr`, `rb`, …). */
+  const rawPrefix = (at: number) => {
+    let start = at;
+    while (start > 0 && /[rRuUbBfF]/u.test(text[start - 1] ?? "")) start -= 1;
+    if (start === at) return false;
+    if (start > 0 && /[A-Za-z0-9_]/u.test(text[start - 1] ?? "")) return false;
+    return /r/iu.test(text.slice(start, at));
+  };
+
+  /** Python string escape. `i` points just after the backslash. */
+  const decodeEscape = (raw: boolean) => {
+    if (i >= n) return "\\";
+    const next = text[i] ?? "";
+    i += 1;
+    if (raw) {
+      if (next === "\r" && text[i] === "\n") {
+        i += 1;
+        return "\\\r\n";
+      }
+      return `\\${next}`;
+    }
+    if (next === "\n") return "";
+    if (next === "\r") {
+      if (text[i] === "\n") i += 1;
+      return "";
+    }
+    if (next === "n") return "\n";
+    if (next === "r") return "\r";
+    if (next === "t") return "\t";
+    if (next === "a") return "\u0007";
+    if (next === "b") return "\b";
+    if (next === "f") return "\f";
+    if (next === "v") return "\v";
+    if (next === "\\" || next === "'" || next === '"') return next;
+    if (next === "x" || next === "u" || next === "U") {
+      const width = next === "x" ? 2 : next === "u" ? 4 : 8;
+      const digits = text.slice(i, i + width);
+      if (digits.length === width && /^[0-9a-fA-F]+$/u.test(digits)) {
+        const code = Number.parseInt(digits, 16);
+        if (code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)) {
+          i += width;
+          return String.fromCodePoint(code);
+        }
+      }
+      return `\\${next}`;
+    }
+    if (next >= "0" && next <= "7") {
+      let digits = next;
+      while (
+        digits.length < 3 &&
+        i < n &&
+        (text[i] ?? "") >= "0" &&
+        (text[i] ?? "") <= "7"
+      ) {
+        digits += text[i];
+        i += 1;
+      }
+      return String.fromCharCode(Number.parseInt(digits, 8));
+    }
+    return `\\${next}`;
+  };
+
+  /** One Python string starting at a quote. Null when the literal is unclosed. */
+  const readString = (): string | null => {
+    if (!isQuote(text[i])) return null;
+    const quote = text[i];
+    const raw = rawPrefix(i);
+    const triple = text.startsWith(quote.repeat(3), i);
+    const delimiter = triple ? quote.repeat(3) : quote;
+    i += delimiter.length;
+    let value = "";
+    while (i < n) {
+      const c = text[i] ?? "";
+      if (c === "\\") {
+        i += 1;
+        value += decodeEscape(raw);
+        continue;
+      }
+      if (text.startsWith(delimiter, i)) {
+        i += delimiter.length;
+        return value;
+      }
+      // A raw newline ends a non-triple string. Stop so the rest of the file
+      // is not swallowed as string content.
+      if (!triple && (c === "\n" || c === "\r")) return null;
+      value += c;
+      i += 1;
+    }
+    return null;
+  };
+
+  /** Adjacent string literals, joined the way Python joins them. */
+  const readConcatenatedString = (): string | null => {
+    const first = readString();
+    if (first === null) return null;
+    let value = first;
+    while (i < n) {
+      const mark = i;
+      skipSpaceAndComments();
+      if (!isQuote(text[i])) {
+        i = mark;
+        return value;
+      }
+      const next = readString();
+      if (next === null) return value;
+      value += next;
+    }
+    return value;
+  };
+
+  /** A `{...}` value. Strings and comments inside it stay intact. */
+  const skipOneValue = (): boolean => {
+    skipSpaceAndComments();
+    if (i >= n) return false;
+    const start = text[i];
+    if (start === "," || start === "]" || start === "}" || start === ")")
+      return false;
+    if (isQuote(start)) {
+      readConcatenatedString();
+      return true;
+    }
+    if (start === "[" || start === "{" || start === "(") {
+      const closing = start === "[" ? "]" : start === "{" ? "}" : ")";
+      i += 1;
+      while (i < n) {
+        skipSpaceAndComments();
+        if (i >= n) return false;
+        if (text[i] === closing) {
+          i += 1;
+          return true;
+        }
+        if (text[i] === ",") {
+          i += 1;
+          continue;
+        }
+        if (!skipOneValue()) return false;
+      }
+      return false;
+    }
+    if (/[A-Za-z0-9_]/u.test(start ?? "")) {
+      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      return true;
+    }
+    i += 1;
+    return true;
+  };
+
+  const isOperatorChar = (char: string | undefined): boolean =>
+    char !== undefined && "+-*/%|&^<>=!~@".includes(char);
+
+  /** Quote index of a string that may carry an `r`/`u`/`b`/`f` prefix. */
+  const stringAt = (at: number): number | null => {
+    let j = at;
+    if (j > 0 && /[A-Za-z0-9_]/u.test(text[j - 1] ?? "")) return null;
+    while (j < n && /[rRuUbBfF]/u.test(text[j] ?? "")) j += 1;
+    return isQuote(text[j]) ? j : null;
+  };
+
+  const startsAtom = (char: string | undefined): boolean =>
+    char === "(" ||
+    char === "[" ||
+    char === "{" ||
+    isQuote(char) ||
+    (char !== undefined && /[A-Za-z0-9_]/u.test(char));
+
+  const readOneString = (): GypLiteral => {
+    const quote = stringAt(i);
+    if (quote === null) return { kind: "unresolved" };
+    i = quote;
+    const value = readString();
+    return value === null ? { kind: "unresolved" } : { kind: "string", value };
+  };
+
+  const consumeOperator = () => {
+    while (i < n && isOperatorChar(text[i])) i += 1;
+  };
+
+  /**
+   * Calls, subscripts and attributes that follow a name. The literal under
+   * them is not a path, but the source still has to be consumed.
+   */
+  const consumeTrailers = () => {
+    while (i < n) {
+      const mark = i;
+      skipSpaceAndComments();
+      if (text[i] === "(") {
+        readParen();
+        continue;
+      }
+      if (text[i] === "[") {
+        readBracket();
+        continue;
+      }
+      if (text[i] === ".") {
+        i += 1;
+        skipSpaceAndComments();
+        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+        continue;
+      }
+      i = mark;
+      return;
+    }
+  };
+
+  const readAtom = (): GypLiteral => {
+    skipSpaceAndComments();
+    if (i >= n) return { kind: "unresolved" };
+    if (stringAt(i) !== null) return readOneString();
+    if (text[i] === "(") return readParen();
+    if (text[i] === "[") return readBracket();
+    if (text[i] === "{") {
+      skipOneValue();
+      return { kind: "unresolved" };
+    }
+    if (/[A-Za-z_]/u.test(text[i] ?? "")) {
+      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      consumeTrailers();
+      return { kind: "unresolved" };
+    }
+    if (/[0-9]/u.test(text[i] ?? "")) {
+      while (i < n && /[0-9A-Za-z_.]/u.test(text[i] ?? "")) i += 1;
+      consumeTrailers();
+      return { kind: "unresolved" };
+    }
+    if (isOperatorChar(text[i])) {
+      consumeOperator();
+      readAtom();
+      return { kind: "unresolved" };
+    }
+    i += 1;
+    return { kind: "unresolved" };
+  };
+
+  /**
+   * One expression. Stops before a comma or a closing bracket so a later
+   * entry is still read. Adjacent strings stay one value. Any operator,
+   * keyword, call or other trailer makes the whole expression unresolved
+   * and is consumed, so `'ev' + 'il.txt'` is not two paths.
+   */
+  const readExpr = (): GypLiteral => {
+    skipSpaceAndComments();
+    const start = i;
+    let value = readAtom();
+    if (i === start && i < n) i += 1;
+    while (i < n) {
+      const before = i;
+      skipSpaceAndComments();
+      if (i >= n) return value;
+      if (value.kind === "string" && stringAt(i) !== null) {
+        const next = readOneString();
+        if (next.kind === "string" && value.kind === "string") {
+          value = { kind: "string", value: value.value + next.value };
+        } else value = { kind: "unresolved" };
+        continue;
+      }
+      const char = text[i];
+      if (char === "(" || char === "[" || char === ".") {
+        value = { kind: "unresolved" };
+        if (char === "(") readParen();
+        else if (char === "[") readBracket();
+        else i += 1;
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (isOperatorChar(char)) {
+        value = { kind: "unresolved" };
+        consumeOperator();
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (value.kind !== "string" && startsAtom(char)) {
+        value = { kind: "unresolved" };
+        readAtom();
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (char !== undefined && /[A-Za-z_]/u.test(char)) {
+        value = { kind: "unresolved" };
+        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      i = before;
+      return value;
+    }
+    return value;
+  };
+
+  const readDelimited = (
+    closing: ")" | "]",
+    kind: "tuple" | "list",
+  ): GypLiteral => {
+    i += 1;
+    const items: GypLiteral[] = [];
+    let comma = false;
+    while (i < n) {
+      skipSpaceAndComments();
+      if (i >= n) return { kind: "unresolved" };
+      if (text[i] === closing) {
+        i += 1;
+        // No comma: Python grouping, so `('evil.txt')` is the string.
+        if (kind === "tuple" && !comma && items.length === 1)
+          return items[0] ?? { kind: "unresolved" };
+        if (kind === "tuple" && !comma && items.length === 0)
+          return { kind: "tuple", items: [] };
+        if (comma && items.length === 0) return { kind: "unresolved" };
+        return { kind, items };
+      }
+      if (text[i] === ",") {
+        comma = true;
+        i += 1;
+        continue;
+      }
+      const before = i;
+      items.push(readExpr());
+      if (i === before) i += 1;
+    }
+    return { kind: "unresolved" };
+  };
+
+  const readParen = (): GypLiteral => readDelimited(")", "tuple");
+  const readBracket = (): GypLiteral => readDelimited("]", "list");
+
+  const markUnresolved = () => {
+    unresolved = true;
+  };
+
+  const collectEntry = (item: GypLiteral) => {
+    if (item.kind === "string") {
+      if (item.value) paths.push(item.value);
+      return;
+    }
+    // A tuple contributes its string members, including through nested tuples.
+    if (item.kind === "tuple") {
+      if (item.items.length === 0) {
+        markUnresolved();
+        return;
+      }
+      for (const member of item.items) collectEntry(member);
+      return;
+    }
+    markUnresolved();
+  };
+
+  const collectValue = (item: GypLiteral) => {
+    if (item.kind === "list" || item.kind === "tuple") {
+      for (const entry of item.items) collectEntry(entry);
+      return;
+    }
+    // A resolved string is one include path. gyp iterates a string value by
+    // character; recording the whole string still reviews that path, and an
+    // unreadable value stays unresolved below.
+    if (item.kind === "string") {
+      if (item.value) paths.push(item.value);
+      else markUnresolved();
+      return;
+    }
+    markUnresolved();
+  };
+
+  while (i < n) {
+    skipSpaceAndComments();
+    if (i >= n) break;
+    if (!isQuote(text[i])) {
+      i += 1;
+      continue;
+    }
+    const key = readConcatenatedString();
+    if (key !== "includes") continue;
+    const afterKey = i;
+    skipSpaceAndComments();
+    if (text[i] !== ":") {
+      i = afterKey;
+      continue;
+    }
+    i += 1;
+    collectValue(readExpr());
+  }
+  return { paths, unresolved };
+}
+
+/**
+ * A build include is relative to the file that names it. Absolute paths, URLs
+ * and paths that leave the repository are not acquired files.
+ */
+function resolveBuildInclude(
+  fromFile: string,
+  specifier: string,
+): string | null {
+  const include = specifier.replaceAll("\\", "/").trim();
+  if (
+    include === "" ||
+    include.startsWith("/") ||
+    include.includes(":") ||
+    include.includes("\0") ||
+    /[<>|?*]/u.test(include)
+  )
+    return null;
+  const directory = fromFile.includes("/")
+    ? fromFile.slice(0, fromFile.lastIndexOf("/") + 1)
+    : "";
+  const normalized: string[] = [];
+  for (const part of `${directory}${include}`.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (normalized.length === 0) return null;
+      normalized.pop();
+      continue;
+    }
+    normalized.push(part);
+  }
+  return normalized.length === 0 ? null : normalized.join("/");
+}
+
+/**
+ * Files a `.gyp` or `.gypi` loads through `includes`, including nested
+ * includes. node-gyp runs command expansions in those files at install even
+ * when the name is not itself a GYP source. A specifier that does not resolve
+ * inside the acquired tree, and an includes value the reader cannot reduce to
+ * a string literal, are visibility gaps. Install-script coverage is partial.
+ */
+function gypIncludedPaths(files: ScanInputFile[]): {
+  included: Set<string>;
+  unacquired: string[];
+} {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const included = new Set<string>();
+  const unacquired = new Set<string>();
+  const seen = new Set<string>();
+  const queue = files
+    .filter((file) => GYP_SOURCE.test(file.path))
+    .map((file) => file.path);
+  while (queue.length > 0) {
+    const path = queue.pop();
+    if (path === undefined || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    const includes = gypIncludeSpecifiers(text);
+    if (includes.unresolved)
+      unacquired.add("GYP include not acquired: unresolved");
+    for (const specifier of includes.paths) {
+      const resolved = resolveBuildInclude(path, specifier);
+      // `resolveBuildInclude` returns null for an empty, absolute, URL-like or
+      // out-of-repository path. A resolved path missing from the acquired
+      // tree was not fetched or is generated at install. A file already
+      // queued was acquired; repeating it is not a gap.
+      if (resolved !== null && byPath.has(resolved)) {
+        if (seen.has(resolved)) continue;
+        included.add(resolved);
+        queue.push(resolved);
+        continue;
+      }
+      unacquired.add(`GYP include not acquired: ${specifier.slice(0, 500)}`);
+    }
+  }
+  return { included, unacquired: [...unacquired].sort() };
+}
+
+/**
  * Inspects one revision's acquired files. Pure and deterministic: the same
  * bytes, surface classifications and rules produce the same inventory digest, so an
  * unchanged executable inventory reuses its clean result and any change to
  * executable content is scanned again.
  */
+/**
+ * A CMake list file: `CMakeLists.txt` or any `.cmake` module. Both are
+ * already install surfaces by name; this is the set whose `include()` calls
+ * are followed.
+ */
+const CMAKE_SOURCE = /(?:^|\/)cmakelists\.txt$|\.cmake$/iu;
+
+/**
+ * Literal `include(<path>)` arguments. CMake resolves a relative path
+ * against the list file that names it, so only a path with no variable
+ * expansion and no absolute form can be followed here. A bare module name
+ * resolves to `<name>.cmake` through `CMAKE_MODULE_PATH`, which is covered by
+ * the extension, so it needs no entry.
+ */
+function cmakeIncludeSpecifiers(text: string): string[] {
+  const specifiers: string[] = [];
+  for (const line of text.split(/\r?\n/u)) {
+    const code = line.replace(/#.*$/u, "");
+    for (const match of code.matchAll(/\binclude\s*\(/giu)) {
+      const rest = code.slice((match.index ?? 0) + match[0].length);
+      const argument = /^\s*(?:"([^"]*)"|([^\s")]+))/u.exec(rest);
+      const value = argument?.[1] ?? argument?.[2];
+      if (value !== undefined && value !== "") specifiers.push(value);
+    }
+  }
+  return specifiers;
+}
+
+/**
+ * Files a CMake list file pulls in with `include()`, including nested ones.
+ * CMake evaluates the included file during configure, so its commands run
+ * even when its name carries no recipe extension.
+ */
+function cmakeIncludedPaths(files: ScanInputFile[]): Set<string> {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const included = new Set<string>();
+  const seen = new Set<string>();
+  const queue = files
+    .filter((file) => CMAKE_SOURCE.test(file.path))
+    .map((file) => file.path);
+  while (queue.length > 0) {
+    const path = queue.pop();
+    if (path === undefined || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    for (const specifier of cmakeIncludeSpecifiers(text)) {
+      const resolved = resolveBuildInclude(path, specifier);
+      if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
+        continue;
+      included.add(resolved);
+      queue.push(resolved);
+    }
+  }
+  return included;
+}
+
 export function inspectRepository(input: {
   files: ScanInputFile[];
   /** Source the acquisition could not read; each keeps the scan incomplete. */
@@ -609,12 +1530,24 @@ export function inspectRepository(input: {
   const candidates: Candidate[] = [];
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
   const downloads = new Set<string>();
+  const gyp = gypIncludedPaths(files);
+  const gypIncludes = gyp.included;
+  if (gyp.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...gyp.unacquired);
+  }
+  const cmakeIncludes = cmakeIncludedPaths(files);
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
+    // Both build systems execute included files during configuration.
+    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+      if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
+      if (!surfaces.includes("source")) surfaces.push("source");
+    }
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
@@ -661,7 +1594,23 @@ export function inspectRepository(input: {
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
-    const found = checkText(file.path, text, surfaces);
+    // MSBuild and Ant build.xml execute attribute values after XML
+    // normalization. MSBuild also executes property element text after
+    // character references are decoded. Shell text, and every other file,
+    // is left as written.
+    const msbuild = MSBUILD_RECIPE.test(file.path);
+    const attributes =
+      msbuild || ANT_BUILD_XML.test(file.path)
+        ? xmlAttributeRuleText(text, msbuild)
+        : undefined;
+    const ruleText = attributes?.text ?? text;
+    const found = checkText(
+      file.path,
+      ruleText,
+      surfaces,
+      text,
+      attributes?.origin,
+    );
     findings.push(...found);
     const hooks = installHookCommands(file.path, text);
     if (hooks.length > 0) {
@@ -672,7 +1621,7 @@ export function inspectRepository(input: {
         );
     }
     if (surfaces.includes("installScripts") || hooks.length > 0)
-      for (const match of [text, ...hooks].join("\n").matchAll(DOWNLOAD))
+      for (const match of [ruleText, ...hooks].join("\n").matchAll(DOWNLOAD))
         downloads.add((match[1] ?? match[2]).slice(0, 500));
     candidates.push({
       path: file.path,
