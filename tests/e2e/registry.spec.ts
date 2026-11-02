@@ -1721,6 +1721,13 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
       hasText: `The security scan of ${project.id} did not clear.`,
     }),
   ).toHaveCount(1);
+  const locationNotice = page.locator(".inbox-item", {
+    hasText: `The security scan of ${project.id} did not clear.`,
+  });
+  await page.screenshot({ path: test.info().outputPath("inbox-location-status.png"), fullPage: true });
+  await expect(locationNotice).toContainText(
+    "Findings in the project repository block clearance.",
+  );
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("scan-inbox.png"),
