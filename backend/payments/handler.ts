@@ -365,7 +365,14 @@ export async function handlePaymentsApi(
           new Response(
             JSON.stringify({
               projectId: vaultRoute[1],
-              snapshots: await projectVaultSnapshots(deps.db, vaultRoute[1]),
+              // Production excludes testnet networks, mirroring the /totals
+              // deployment-tier rule (#1738). Staging keeps testnet snapshots
+              // because it pays in testnet stablecoins.
+              snapshots: (
+                await projectVaultSnapshots(deps.db, vaultRoute[1])
+              ).filter(
+                (s) => deps.tier === "staging" || !isTestnetNetwork(s.network),
+              ),
               staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
               servedAt: now,
             }),
