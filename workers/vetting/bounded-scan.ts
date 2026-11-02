@@ -296,6 +296,10 @@ function commandToken(name: string): string {
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
+/** Interpreters that read a program from a pipe like a shell does. */
+const DECODE_PIPE_TARGET = commandToken(
+  String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
+);
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -397,6 +401,22 @@ const RULES: Rule[] = [
     pattern: /[​-‏‪-‮⁦-⁩]/u,
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A decoder between the download and the executor changes nothing
+    // about what runs: the shell or interpreter still receives the
+    // downloaded bytes, decoded. The pipe rules above require the
+    // executor immediately after the first pipe, so
+    // `curl … | base64 -d | sh` matched nothing. Only a decode stage
+    // qualifies: encoding, checksumming or saving a download keeps no
+    // finding, and decoding local content has no download to run.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:(?:[^\s|;&<>()'"]*/)?base64\b[^\n|]*?--?(?:[dD]\b|decode\b)|(?:[^\s|;&<>()'"]*/)?openssl\s+(?:enc|base64)\b[^\n|]*?--?(?:[dD]\b|decode\b))[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${DECODE_PIPE_TARGET})(?:\s+-[a-zA-Z]+)*(?:\s+-)?(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a decoded remote download in a shell or interpreter",
   },
 ];
 
