@@ -37,8 +37,14 @@ MSBuild project and import files, and Ant `build.xml`, match a quoted
 attribute value after XML attribute normalization. A literal carriage
 return or line feed inside the quotes becomes a space. A numeric character
 reference, or one of the five predefined entities, becomes the character it
-names; a reference to a newline stays a newline. A newline in a shell
-script still ends the command. Other files are not rewritten.
+names; a reference to a newline stays a newline. In an MSBuild file, element
+text decodes those same character references, so a property such as
+`PreBuildEvent`, or any property later expanded into `Exec`, is matched as
+the command MSBuild runs. A literal carriage return or line feed in that
+element text stays a line break. Comments, `CDATA`, and the element text of
+`Exec` are not decoded: `Exec` ignores its element text and reads
+`Command`. A newline in a shell script still ends the command. Other files
+are not rewritten.
 
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and

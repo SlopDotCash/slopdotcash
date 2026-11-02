@@ -371,12 +371,14 @@ const RULES: Rule[] = [
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
 // so identical source bytes cannot reuse a result from a different rule set.
-// Attribute normalization is part of that semantics: it changes which bytes match.
+// XML normalization is part of that semantics: it changes which bytes match.
 const RULE_POLICY_SHA256 = sha256(
   JSON.stringify({
     schemaVersion: "slop-deterministic-rules-v1",
     xmlAttributeWhitespace: "msbuild-and-ant-build-xml-literal-cr-lf-to-space",
     xmlAttributeCharacterReferences: "decimal-hex-and-predefined-entities",
+    xmlElementCharacterReferences:
+      "msbuild-element-text-except-exec-comments-and-cdata",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -439,9 +441,10 @@ function xmlScalar(code: number): boolean {
 }
 
 /**
- * One numeric character reference or predefined entity at `index`, inside an
- * attribute value delimited by `quote`. The scan stops at that delimiter, so
- * a semicolon later in the file cannot finish a reference the quote ended.
+ * One numeric character reference or predefined entity at `index`. `quote`
+ * is the attribute delimiter, or empty in element text. The scan stops at
+ * that delimiter, so a semicolon later in the file cannot finish a reference
+ * the quote ended. Element text has no quote; `<` still ends the scan.
  */
 function xmlCharacterReference(
   text: string,
@@ -490,12 +493,20 @@ function xmlCharacterReference(
  * (`&#124;`, `&#x7C;`) or predefined entity (`&amp;`, `&lt;`, `&gt;`,
  * `&quot;`, `&apos;`) becomes that character, so `&amp;&amp;` is `&&`.
  * A reference to CR or LF stays that character: XML does not turn it into
- * a space, and it still ends a shell command. Only quoted attribute values
- * are rewritten, and only in MSBuild project/import files and Ant
- * `build.xml`. `origin` maps each index of the rewritten text back to the
- * original text, so a finding's line is the line of the source bytes.
+ * a space, and it still ends a shell command. MSBuild also runs property
+ * element text after the XML reader decodes those same references there
+ * (`PreBuildEvent`, and any property expanded into `Exec`). Element text in
+ * an MSBuild file is decoded the same way, except comments, CDATA, and the
+ * text of an `Exec` element: the task ignores that text and reads
+ * `Command`. Literal CR or LF in element text stays a line break. Ant
+ * `build.xml` rewrites quoted attributes only. `origin` maps each index of
+ * the rewritten text back to the original text, so a finding's line is the
+ * line of the source bytes.
  */
-function xmlAttributeRuleText(text: string): {
+function xmlAttributeRuleText(
+  text: string,
+  elementText = false,
+): {
   text: string;
   origin: (index: number) => number;
 } {
@@ -506,6 +517,11 @@ function xmlAttributeRuleText(text: string): {
   let delta = 0;
   const breaks = [0];
   const deltas = [0];
+  const stack: string[] = [];
+  let tagKind: "start" | "end" | "other" = "start";
+  let tagName = "";
+  let readingName = false;
+  let selfClosing = false;
   const emit = (value: string, sourceLength = value.length) => {
     result += value;
     const growth = sourceLength - value.length;
@@ -529,7 +545,43 @@ function xmlAttributeRuleText(text: string): {
         index += 9;
         continue;
       }
-      if (char === "<") mode = "tag";
+      if (char === "<") {
+        mode = "tag";
+        if (!elementText) {
+          emit(char);
+          index += 1;
+          continue;
+        }
+        tagName = "";
+        selfClosing = false;
+        readingName = false;
+        if (text.startsWith("</", index)) {
+          tagKind = "end";
+          readingName = true;
+          emit("</");
+          index += 2;
+          continue;
+        }
+        if (text.startsWith("<?", index) || text.startsWith("<!", index))
+          tagKind = "other";
+        else {
+          tagKind = "start";
+          readingName = true;
+        }
+        emit(char);
+        index += 1;
+        continue;
+      }
+      // Exec reads its Command attribute and ignores element text.
+      const open = stack[stack.length - 1];
+      if (elementText && open !== undefined && open !== "Exec") {
+        const reference = xmlCharacterReference(text, index, "");
+        if (reference !== null) {
+          emit(reference.value, reference.length);
+          index += reference.length;
+          continue;
+        }
+      }
       emit(char);
       index += 1;
       continue;
@@ -574,11 +626,30 @@ function xmlAttributeRuleText(text: string): {
       continue;
     }
     if (char === ">") {
+      if (elementText) {
+        const colon = tagName.lastIndexOf(":");
+        const local = colon < 0 ? tagName : tagName.slice(colon + 1);
+        if (tagKind === "start" && !selfClosing && local !== "")
+          stack.push(local);
+        else if (tagKind === "end" && local !== "") {
+          const at = stack.lastIndexOf(local);
+          if (at >= 0) stack.length = at;
+        }
+      }
       mode = "text";
+      readingName = false;
       emit(char);
       index += 1;
       continue;
     }
+    if (readingName && !/[\s/>]/u.test(char)) {
+      tagName += char;
+      emit(char);
+      index += 1;
+      continue;
+    }
+    readingName = false;
+    if (elementText && char === "/") selfClosing = true;
     if (char === '"' || char === "'") {
       let previous = index - 1;
       while (previous >= 0 && /[ \t\r\n]/u.test(text[previous] ?? ""))
@@ -866,10 +937,13 @@ export function inspectRepository(input: {
     }
     // Every deterministic check reads the whole file, whatever its size.
     // MSBuild and Ant build.xml execute attribute values after XML
-    // normalization. Shell text, and every other file, is left as written.
+    // normalization. MSBuild also executes property element text after
+    // character references are decoded. Shell text, and every other file,
+    // is left as written.
+    const msbuild = MSBUILD_RECIPE.test(file.path);
     const attributes =
-      MSBUILD_RECIPE.test(file.path) || ANT_BUILD_XML.test(file.path)
-        ? xmlAttributeRuleText(text)
+      msbuild || ANT_BUILD_XML.test(file.path)
+        ? xmlAttributeRuleText(text, msbuild)
         : undefined;
     const ruleText = attributes?.text ?? text;
     const found = checkText(
