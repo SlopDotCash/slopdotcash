@@ -41,6 +41,13 @@ class TestStatement {
   async first<T>(): Promise<T | null> {
     return (this.db.sqlite.query(this.sql).get(...this.values) as T) ?? null;
   }
+
+  async all<T>(): Promise<{ success: boolean; results: T[] }> {
+    return {
+      success: true,
+      results: this.db.sqlite.query(this.sql).all(...this.values) as T[],
+    };
+  }
 }
 
 class TestDatabase {
@@ -349,6 +356,9 @@ for (const action of ["suspend", "deleted"] as const) {
     const manifest = JSON.stringify({
       id: "notice-project",
       status: "active",
+      repositories: [
+        { id: "acme/repo", githubUrl: "https://github.com/acme/repo" },
+      ],
       steward: { github: { actorId: "910000002" } },
     });
     db.sqlite
@@ -445,6 +455,9 @@ function registerProject(
   const manifest = JSON.stringify({
     id,
     status: "active",
+    repositories: [
+      { id: repositoryKey, githubUrl: `https://github.com/${repositoryKey}` },
+    ],
     steward: { github: { actorId: steward } },
   });
   const at = "2026-10-23T10:00:00.000Z";

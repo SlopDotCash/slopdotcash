@@ -18,6 +18,11 @@
 type Preparer<S> = {
   prepare(query: string): { bind(...values: unknown[]): S };
 };
+type Reader = {
+  prepare(query: string): {
+    all<T>(): Promise<{ results?: T[] }>;
+  };
+};
 
 const INSERT = `INSERT INTO notifications (
   event_key, recipient_github_id, kind, subject, detail, action_path,
@@ -152,14 +157,63 @@ export function notifyProjectScanFailed<S>(
 }
 
 /**
- * Slopbot's GitHub installation was suspended or removed at `at`. Each
- * project with a registered repository under that account reaches its
- * owners once, because reviews stop until Slopbot is installed again.
+ * Projects with a manifest repository whose current GitHub path is under
+ * `accountLogin`: the account whose Slopbot installation serves them. The
+ * current path is the parsed `githubUrl` pathname, read exactly as the
+ * project validator and `currentRepositoryPath` in `backend/projects/setup.ts`
+ * read it, so every URL spelling the validator accepts resolves here the same
+ * way. A former path that the registry keeps as an alias after a rename or
+ * transfer does not count: Slopbot reviews only the current path.
+ */
+export async function projectsServedByInstallation(
+  db: Reader,
+  accountLogin: string,
+): Promise<string[]> {
+  const login = accountLogin.toLowerCase();
+  const rows = (
+    await db.prepare("SELECT id, manifest FROM projects ORDER BY id").all<{
+      id: string;
+      manifest: string;
+    }>()
+  ).results;
+  return (rows ?? [])
+    .filter(({ manifest }) => {
+      let repositories: unknown;
+      try {
+        repositories = JSON.parse(manifest)?.repositories;
+      } catch {
+        return false;
+      }
+      return (
+        Array.isArray(repositories) &&
+        repositories.some((repository) => {
+          const url = (repository as { githubUrl?: unknown })?.githubUrl;
+          if (typeof url !== "string") return false;
+          let path: string;
+          try {
+            path = new URL(url).pathname.replace(/^\/|\/$/gu, "");
+          } catch {
+            return false;
+          }
+          return path.toLowerCase().startsWith(`${login}/`);
+        })
+      );
+    })
+    .map(({ id }) => id);
+}
+
+/**
+ * Slopbot's GitHub installation was suspended or removed at `at`. Each of
+ * the `projects` it served (`projectsServedByInstallation`) reaches its
+ * owners once, because reviews stop until Slopbot is installed again. The
+ * ids travel as one JSON parameter, so the list length is not bounded by
+ * D1's parameter limit.
  */
 export function notifySlopbotInstallationLost<S>(
   db: Preparer<S>,
   installationId: number,
   at: string,
+  projects: readonly string[],
 ): S {
   return db
     .prepare(
@@ -168,12 +222,7 @@ export function notifySlopbotInstallationLost<S>(
               owners.recipient, 'project_installation_lost', p.id, NULL,
               '/projects/' || p.id, ?2, ?2
          FROM slopbot_installations i
-         JOIN projects p ON EXISTS (
-           SELECT 1 FROM project_repositories r
-            WHERE r.project_id = p.id
-              AND substr(r.repository_key, 1, length(i.account_login) + 1) =
-                  lower(i.account_login) || '/'
-         )
+         JOIN projects p ON p.id IN (SELECT value FROM json_each(?3))
          JOIN (
            SELECT p2.id AS project_id, a.applicant_github_id AS recipient
              FROM projects p2
@@ -194,7 +243,7 @@ export function notifySlopbotInstallationLost<S>(
           AND ${GITHUB_ID("owners.recipient")}
        ${ONCE}`,
     )
-    .bind(installationId, at);
+    .bind(installationId, at, JSON.stringify(projects));
 }
 
 /** A finalized reservation: an award is now set aside for the contributor. */

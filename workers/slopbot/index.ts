@@ -42,7 +42,7 @@ import { workUnitHistory } from "./value-work-unit-journal";
 
 type Queue = { send(body: Job): Promise<void> };
 type Env = Omit<ValueConsumerEnv, "SLOPBOT_DB"> & {
-  SLOPBOT_DB: store.D1TransactionalDatabase;
+  SLOPBOT_DB: store.D1TransactionalDatabase<store.D1QueryStatement>;
   SLOPBOT_WEBHOOK_SECRET: string;
   SLOPBOT_QUEUE: Queue;
   SLOP_NOTIFY?: { fetch(request: Request): Promise<Response> };
