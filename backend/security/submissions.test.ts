@@ -2826,3 +2826,21 @@ describe("optional GitHub forwarding of a saved report", () => {
     });
   });
 });
+
+test("an unfinished legacy draft passes the same screen before its first forward", async () => {
+  const t = setup({ durable: false });
+  // Every screening decision refuses the draft, whatever its text.
+  t.analyzer.screen = async () => ({
+    decision: "spam",
+    reason: "Insufficient evidence to reproduce the reported behavior.",
+  });
+  const submission = await t.ready();
+  const sent = await t.send(submission.id, submission.revision);
+  // The screen must gate the first forward (README "Durable Slop-first
+  // intake": "Unfinished legacy drafts pass the same screen before their
+  // first forward"), so the send is refused and nothing reaches GitHub.
+  expect(sent.status).toBe(409);
+  expect(sent.body.error).toBe("screening_required");
+  expect(t.row(submission.id).state).toBe("draft");
+  expect(t.github.advisories).toHaveLength(0);
+});
