@@ -32,18 +32,19 @@ export async function publishMonthlyAuthorizations(deps: {
   for (const request of JSON.parse(
     candidates?.items ?? "[]",
   ) as MonthlyAttestationRequest[]) {
-    if (
-      !deps.networks.includes(request.network) ||
-      !(await automaticMonthlyPayment(deps.db, request.projectId))
-    )
-      continue;
-    const cutoff = monthlyCutoff(deps.schedule, request.period);
-    const closes = monthlyCutoff(
-      deps.schedule,
-      periodEnd(request.period).toISOString().slice(0, 7),
-    );
-    if (!cutoff || !closes || deps.now < cutoff || deps.now >= closes) continue;
     try {
+      if (
+        !deps.networks.includes(request.network) ||
+        !(await automaticMonthlyPayment(deps.db, request.projectId))
+      )
+        continue;
+      const cutoff = monthlyCutoff(deps.schedule, request.period);
+      const closes = monthlyCutoff(
+        deps.schedule,
+        periodEnd(request.period).toISOString().slice(0, 7),
+      );
+      if (!cutoff || !closes || deps.now < cutoff || deps.now >= closes)
+        continue;
       const signed = await deps.authorize(request);
       const authorization: MonthlyAuthorization = {
         plan: signed.plan,
