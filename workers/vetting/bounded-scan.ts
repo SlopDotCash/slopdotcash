@@ -507,8 +507,12 @@ const RULE_POLICY_SHA256 = sha256(
   }),
 );
 
+// certutil counts only in its `-urlcache` download form and bitsadmin
+// only in a `/transfer` job: their other invocations read local files.
+// Upload-only BITS jobs do not retrieve an artifact. aria2c and axel
+// name downloads by their command alone, like curl and wget.
 const DOWNLOAD =
-  /\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
+  /(?:\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm|aria2c|axel)\b|\bStart-BitsTransfer\b(?![^\n]*-TransferType\s+["']?Upload\b)|\bcertutil(?:\.exe)?\b[^\n]*?-urlcache\b|\bbitsadmin\b(?![^\n]*\/upload\b)[^\n]*?\/transfer\b)[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
 
 function decode(bytes: Uint8Array): string | null {
   // NUL bytes mean binary content, not text to read.
