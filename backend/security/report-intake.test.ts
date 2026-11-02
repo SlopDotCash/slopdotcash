@@ -1016,6 +1016,80 @@ describe("durable private report controls", () => {
     expect(t.analyzed).toHaveLength(2);
   });
 
+  test("an earlier unavailable report still screens after a later digest hold", async () => {
+    const t = fixture();
+    t.failScreening(true);
+    const earlier = required(
+      (await t.create("digest-retry-first00")).body.submission,
+    );
+    expect(earlier.intake.state).toBe("unavailable");
+    expect(t.screeningCalls()).toBe(1);
+    t.advance(1000);
+    const duplicate = await t.call(OTHER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      idempotencyKey: "digest-retry-second0",
+      origin: "slop",
+      report: REPORT,
+    });
+    expect(duplicate.status).toBe(201);
+    const held = required(duplicate.body.submission);
+    expect(held.intake.state).toBe("needs-information");
+    expect(held.intake.reason).toMatch(/evidence digest/i);
+    expect(t.screeningCalls()).toBe(1);
+    t.failScreening(false);
+    const retried = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${earlier.id}/screen`,
+      { expectedRevision: earlier.intake.revision },
+    );
+    expect(retried.status).toBe(200);
+    const recovered = required(retried.body.submission);
+    expect(recovered.intake.state).toBe("legitimate");
+    expect(recovered.intake.reason).not.toMatch(/evidence digest/i);
+    expect(t.screeningCalls()).toBe(2);
+    const stillHeld = await t.call(
+      OTHER,
+      "GET",
+      `security-submissions/${held.id}`,
+    );
+    expect(required(stillHeld.body.submission).intake.state).toBe(
+      "needs-information",
+    );
+  });
+
+  test("a failed submission digest does not hold a later identical report", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("digest-failed-first00")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    expect(t.screeningCalls()).toBe(1);
+    t.sqlite
+      .query(
+        "UPDATE security_submissions SET state='failed',failure_code='invalid',revision=revision+1,updated_at=? WHERE id=? AND state='draft'",
+      )
+      .run(t.deps.now().toISOString(), first.id);
+    expect(
+      t.sqlite
+        .query("SELECT state FROM security_submissions WHERE id=?")
+        .get(first.id),
+    ).toEqual({ state: "failed" });
+    t.advance(1000);
+    const later = await t.call(OTHER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      idempotencyKey: "digest-failed-second0",
+      origin: "slop",
+      report: REPORT,
+    });
+    expect(later.status).toBe(201);
+    const submission = required(later.body.submission);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(submission.intake.reason).not.toMatch(/evidence digest/i);
+    expect(t.screeningCalls()).toBe(2);
+    expect(t.analyzed).toHaveLength(2);
+  });
+
   test("a first unique report still routes as legitimate when screening agrees", async () => {
     const t = fixture();
     const accepted = await t.create("unique-first-report0");

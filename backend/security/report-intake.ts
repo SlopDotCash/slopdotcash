@@ -111,40 +111,77 @@ async function loadPriorCases(
   }));
 }
 
-/** Same-project evidence digest already on another case or intake report. */
+/**
+ * Same-project evidence digest already on an earlier live case or intake report.
+ * Later held duplicates and failed/abandoned/draft submissions must not block
+ * an earlier report's screening retry or a later valid identical report.
+ */
 async function matchingEvidenceDigest(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
   digest: string,
-  exclude: { caseId?: string | null; submissionId?: string | null },
+  exclude: {
+    caseId?: string | null;
+    submissionId?: string | null;
+    /** Current row created_at; only strictly earlier peers participate. */
+    createdAt?: string | null;
+  },
 ): Promise<boolean> {
+  const beforeAt = exclude.createdAt ?? null;
+  const caseValues: unknown[] = [projectId, digest, digest];
+  let caseEarlier = "";
+  if (beforeAt && exclude.caseId) {
+    caseEarlier =
+      " AND (created_at, rowid) < (?, (SELECT rowid FROM security_cases WHERE id = ?))";
+    caseValues.push(beforeAt, exclude.caseId);
+  } else if (beforeAt) {
+    caseEarlier = " AND created_at < ?";
+    caseValues.push(beforeAt);
+  }
+  if (exclude.caseId) {
+    caseEarlier += " AND id <> ?";
+    caseValues.push(exclude.caseId);
+  }
   const caseMatch = await deps.db
     .prepare(
       `SELECT 1 AS matched FROM security_cases
-        WHERE project_id = ? AND (receipt_evidence_digest = ? OR evidence_digest = ?)${
-          exclude.caseId ? " AND id <> ?" : ""
-        } LIMIT 1`,
+        WHERE project_id = ?
+          AND (receipt_evidence_digest = ? OR evidence_digest = ?)
+          AND submission_state <> 'link-rejected'
+          AND NOT EXISTS (
+            SELECT 1 FROM security_submissions s
+             WHERE s.case_id = security_cases.id
+               AND s.state IN ('failed', 'abandoned')
+          )${caseEarlier}
+        LIMIT 1`,
     )
-    .bind(
-      ...(exclude.caseId
-        ? [projectId, digest, digest, exclude.caseId]
-        : [projectId, digest, digest]),
-    )
+    .bind(...caseValues)
     .first();
   if (caseMatch) return true;
+  const reportValues: unknown[] = [projectId, digest];
+  let reportEarlier = "";
+  if (beforeAt && exclude.submissionId) {
+    reportEarlier =
+      " AND (s.created_at, s.rowid) < (?, (SELECT rowid FROM security_submissions WHERE id = ?))";
+    reportValues.push(beforeAt, exclude.submissionId);
+  } else if (beforeAt) {
+    reportEarlier = " AND s.created_at < ?";
+    reportValues.push(beforeAt);
+  }
+  if (exclude.submissionId) {
+    reportEarlier += " AND s.id <> ?";
+    reportValues.push(exclude.submissionId);
+  }
   const reportMatch = await deps.db
     .prepare(
       `SELECT 1 AS matched FROM security_intake_reports r
          JOIN security_submissions s ON s.id = r.submission_id
-        WHERE s.project_id = ? AND r.content_sha256 = ?${
-          exclude.submissionId ? " AND s.id <> ?" : ""
-        } LIMIT 1`,
+        WHERE s.project_id = ?
+          AND r.content_sha256 = ?
+          AND s.state NOT IN ('failed', 'abandoned', 'draft')${reportEarlier}
+        LIMIT 1`,
     )
-    .bind(
-      ...(exclude.submissionId
-        ? [projectId, digest, exclude.submissionId]
-        : [projectId, digest]),
-    )
+    .bind(...reportValues)
     .first();
   return Boolean(reportMatch);
 }
@@ -596,6 +633,7 @@ export async function screenStoredReport(
       (await matchingEvidenceDigest(deps, submission.project_id, digest, {
         caseId: row.case_id,
         submissionId: id,
+        createdAt: submission.created_at,
       }))
     ) {
       // Identical evidence is held privately without a model call (PRD §8).
@@ -697,6 +735,7 @@ export async function screenLegacyReport(
     await matchingEvidenceDigest(deps, projectId, digest, {
       caseId: null,
       submissionId: null,
+      createdAt: null,
     })
   )
     fail(
