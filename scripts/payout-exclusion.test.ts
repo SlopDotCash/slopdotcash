@@ -221,9 +221,7 @@ test("an exclusion written with the owner's other GitHub node ID format still ex
     penaltyScoreInput([], AFTER_NOVEMBER),
   );
   // GitHub user 43 in the current node ID format; the ledger has the legacy one.
-  const project = vaultProject([
-    { ...OWNER_EXCLUSION, nodeId: "U_kgDOAAAAKw" },
-  ]);
+  const project = vaultProject([{ ...OWNER_EXCLUSION, nodeId: "U_kgAr" }]);
   const policyBytes = new TextEncoder().encode(JSON.stringify(project));
   const base = buildMonthlyBase(
     { projectId: "asi", period: "2026-11", generatedAt: AFTER_NOVEMBER },
