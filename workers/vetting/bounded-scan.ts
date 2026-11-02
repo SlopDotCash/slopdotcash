@@ -393,6 +393,21 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // Process substitution hands a remote download to a shell without a
+    // pipe: `bash <(curl ...)`, `sh <(curl ...)`, `source <(curl ...)`
+    // and `. <(curl ...)` are the same act. Shell flags can select stdin
+    // or syntax-only mode, so this rule covers a direct script argument.
+    // Only curl/wget inside the substitution count; `bash <(cat local.sh)` stays clean.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()'"])(?:(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+|source\s+|\.\s+)<\(\s*(?:curl|wget)\b`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a shell via process substitution",
+  },
+
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     pattern:
       /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
     summary: "Executes decoded or obfuscated code",
