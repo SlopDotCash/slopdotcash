@@ -36,11 +36,23 @@ export async function requestMonthlyRelease(
       timeoutMs: 120_000,
     },
   );
-  const value = (await readBoundedJson(
+  const parsed = await readBoundedJson(
     response,
     4 * 1024 * 1024,
     "Monthly reserve release",
-  )) as MonthlyReleaseResult & { message?: string };
+  );
+  // A null (or otherwise non-object) JSON body must not crash the error
+  // path: reading .message off null threw a TypeError that hid the HTTP
+  // error, the same shape merged #2012 fixed in project-api.ts. The
+  // sibling commitment helpers already guard this way before reading
+  // .message.
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error(
+      !response.ok
+        ? "The reserve could not be verified. Retry the check."
+        : "The release status could not be verified.",
+    );
+  const value = parsed as MonthlyReleaseResult & { message?: string };
   if (!response.ok)
     throw new Error(
       value.message ?? "The reserve could not be verified. Retry the check.",
