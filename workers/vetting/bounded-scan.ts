@@ -153,6 +153,7 @@ const INSTALL_FILES = new Set([
   ".envrc",
   "tasks.json",
   "tox.ini",
+  "tox.toml",
   "devcontainer.json",
   "gnumakefile",
   "dockerfile",
