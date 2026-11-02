@@ -370,6 +370,17 @@ const RULES: Rule[] = [
   },
   {
     threat: "unsafe-execution",
+    severity: "high",
+    // The decoded-code rule above covers a payload hidden in the file.
+    // This covers the same act with the payload fetched instead: an
+    // eval/exec whose argument expression reads from the network on the
+    // same line. Fetching data without executing it keeps no finding.
+    pattern:
+      /\b(?:eval|exec)\s*\([^\n]{0,160}?\b(?:urlopen|urllib|requests\.|fetch\s*\(|https?\.(?:get|request)|XMLHttpRequest|axios\.)|new\s+Function\s*\([^\n]{0,160}?\bfetch\s*\(/iu,
+    summary: "Executes code fetched from the network",
+  },
+  {
+    threat: "unsafe-execution",
     severity: "medium",
     pattern: /\b(?:child_process|subprocess|os\.system|spawnSync|execSync)\b/u,
     summary: "An install-time script starts processes",
