@@ -214,3 +214,34 @@ test("an excluded owner keeps the score, receives nothing, and the other share i
     sqlite.close();
   }
 });
+
+test("an exclusion written with the owner's other GitHub node ID format still excludes the owner", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const snapshot = createLeaderboardSnapshot(
+    penaltyScoreInput([], AFTER_NOVEMBER),
+  );
+  // GitHub user 43 in the current node ID format; the ledger has the legacy one.
+  const project = vaultProject([
+    { ...OWNER_EXCLUSION, nodeId: "U_kgDOAAAAKw" },
+  ]);
+  const policyBytes = new TextEncoder().encode(JSON.stringify(project));
+  const base = buildMonthlyBase(
+    { projectId: "asi", period: "2026-11", generatedAt: AFTER_NOVEMBER },
+    new TextEncoder().encode(JSON.stringify(snapshot)),
+    policyBytes,
+    project,
+  );
+  // The payment backend excludes user 43 by numeric ID, so the proposal must too.
+  expect(
+    Object.fromEntries(base.rows.map((row) => [row.login, row.grossBase])),
+  ).toEqual({ author: "1000000000", "project-owner": "0" });
+  expect(
+    createProjectView(
+      snapshot,
+      "asi",
+      "2026-11",
+      undefined,
+      project,
+    ).leaders.find((leader) => leader.actor.id === PROJECT_OWNER.id),
+  ).toMatchObject({ adjustedWeight: 0, payoutExclusion: "owner" });
+});
