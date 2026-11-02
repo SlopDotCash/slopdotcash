@@ -427,7 +427,7 @@ const RULES: Rule[] = [
     // the pipe: bare, with `-`, or with Python's unbuffered option. Arbitrary
     // flags can instead print a version or select a different program.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${INTERPRETER_PIPE_TARGET}(?:(?<=\s-)(?:\s+[^\s|;&<>()]+)+)?(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a remote download in an interpreter",
