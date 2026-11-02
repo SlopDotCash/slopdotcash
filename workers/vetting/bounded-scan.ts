@@ -398,6 +398,20 @@ const RULES: Rule[] = [
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // `deno run` fetches and executes a script straight from a URL —
+    // remote modules are Deno's documented idiom — and `mshta`
+    // executes a remote HTA the same way. No pipe, no downloaded file
+    // and no download record ever appears, so the pipe rules and the
+    // download inventory both miss them. A local path names reviewed
+    // content, and a registry specifier (npm:, jsr:) is dependency
+    // content; both keep no finding.
+    pattern:
+      /\bdeno\s+run\b[^\n]*?\bhttps?:\/\/|\bmshta(?:\.exe)?\b[^\n]*?\bhttps?:\/\//iu,
+    summary: "Runs a remote script URL directly",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
