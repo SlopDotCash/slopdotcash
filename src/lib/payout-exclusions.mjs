@@ -91,11 +91,16 @@ export function validatePayoutExclusions(value, field) {
   return value;
 }
 
-/** The relationship that excludes an actor node ID from a cycle, or null. */
+/**
+ * The relationship that excludes an actor node ID from a cycle, or null.
+ * GitHub has a legacy and a current node ID format for one account, so match
+ * the numeric user ID, as the payment backend does.
+ */
 export function payoutExclusionFor(project, cycleId, actorNodeId) {
+  const actorId = githubUserIdFromNodeId(actorNodeId);
   return (
     (project.reward.payoutExclusions ?? []).find(
-      (entry) => entry.nodeId === actorNodeId && covers(entry, cycleId),
+      (entry) => entry.actorId === actorId && covers(entry, cycleId),
     )?.relationship ?? null
   );
 }
