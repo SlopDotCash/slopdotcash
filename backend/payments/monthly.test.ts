@@ -27,11 +27,15 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
+import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
-import { runMonthlyCommitments } from "../../workers/payments/index";
+import {
+  runMonthlyCommitments,
+  runMonthlyCoordinator,
+} from "../../workers/payments/index";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
@@ -137,16 +141,391 @@ const coordinate = (now: Date, configured = schedule) =>
     schedule: configured,
     now,
   });
-const owner = () =>
+const owner = (verifyAuthority = async () => {}) =>
   monthlyOwnerService({
     db,
     ...projects(),
     networks: () => ["base-sepolia"],
-    verifyAuthority: async () => {},
+    verifyAuthority,
     schedule: () => schedule,
     now: () => clock,
   });
 const actor = { githubId: OWNER, githubLogin: "owner" };
+for (const worker of [false, true]) {
+  test(`${worker ? "worker" : "coordinator"} reports an isolated payment database without a project registry as a failure`, async () => {
+    // The configured isolated test stack has real registry and payment DBs.
+    // Copy only the proposed payment inputs; do not remove protected registry
+    // rows or disable any migration trigger to manufacture this topology.
+    const isolated = sqliteD1(MIGRATIONS);
+    try {
+      for (const table of [
+        "monthly_reward_bases",
+        "monthly_reward_base_rows",
+      ]) {
+        const rows = sqlite.query(`SELECT * FROM ${table}`).all() as Record<
+          string,
+          string | number | null
+        >[];
+        for (const row of rows)
+          isolated.sqlite
+            .query(
+              `INSERT INTO ${table}(${Object.keys(row).join(",")}) VALUES(${Object.keys(
+                row,
+              )
+                .map(() => "?")
+                .join(",")})`,
+            )
+            .run(...Object.values(row));
+      }
+      expect(await projects().getProject(project.id)).not.toBeNull();
+      expect(
+        isolated.sqlite.query("SELECT COUNT(*) n FROM projects").get(),
+      ).toEqual({ n: 0 });
+      if (worker)
+        await expect(
+          runMonthlyCoordinator(
+            {
+              PAYMENTS_DB: isolated.db,
+              REGISTRY_DB: db,
+              PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
+              PAYMENT_RPC_URLS: "{}",
+              MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
+            },
+            clock,
+          ),
+        ).rejects.toThrow("Monthly coordinator failures");
+      else {
+        const report = await coordinateMonthlyPayments({
+          db: isolated.db,
+          projects: projects(),
+          networks: ["base-sepolia"],
+          schedule,
+          now: clock,
+        });
+        expect(report.frozen).toEqual([]);
+        expect(report.waiting).toEqual([]);
+        expect(report.failures).toHaveLength(1);
+        expect(report.failures[0]).toMatchObject({
+          status: 503,
+          code: "payment_registry_unavailable",
+        });
+      }
+      expect(
+        isolated.sqlite
+          .query("SELECT COUNT(*) n FROM monthly_payment_runs")
+          .get(),
+      ).toEqual({ n: 0 });
+      expect(
+        isolated.sqlite
+          .query("SELECT COUNT(*) n FROM monthly_payment_obligations")
+          .get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      isolated.sqlite.close();
+    }
+  });
+}
+for (const boundary of ["session", "body"] as const) {
+  test(`the HTTP ${boundary} boundary preserves a later monthly opt-out`, async () => {
+    await owner().setAutomatic(project.id, actor, false);
+    const token = "o".repeat(43);
+    sqlite
+      .query(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('fixture-owner',?,'owner',?,0)",
+      )
+      .run(OWNER, clock.toISOString());
+    sqlite
+      .query("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(await sha256Hex(token), "fixture-owner", "2027-01-01T00:00:00.000Z");
+    let enter = () => {};
+    let resume = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    let armed = true;
+    let sessionRead = false;
+    let bodyWaiting = false;
+    const prepare = db.prepare.bind(db);
+    db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (
+        !sql.startsWith(
+          "SELECT m.github_id,m.login FROM points_members m JOIN points_sessions",
+        )
+      )
+        return statement;
+      return new Proxy(statement, {
+        get(target, key) {
+          if (key === "bind")
+            return (...args: unknown[]) => {
+              const bound = target.bind(...args);
+              return new Proxy(bound, {
+                get(inner, method) {
+                  if (method === "first")
+                    return async () => {
+                      if (boundary === "session" && armed) {
+                        armed = false;
+                        enter();
+                        await released;
+                      }
+                      const result = await inner.first();
+                      sessionRead = true;
+                      if (boundary === "body" && bodyWaiting) enter();
+                      return result;
+                    };
+                  const value = Reflect.get(inner, method);
+                  return typeof value === "function"
+                    ? value.bind(inner)
+                    : value;
+                },
+              });
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+    const headers = {
+      origin: "https://slop.cash",
+      "content-type": "application/json",
+      cookie: `__Host-slop_points=${token}`,
+      "x-slop-expected-github-id": OWNER,
+    };
+    const body =
+      boundary === "body"
+        ? new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('{"automatic":true}'),
+              );
+            },
+            async pull(controller) {
+              bodyWaiting = true;
+              if (sessionRead) enter();
+              await released;
+              controller.close();
+            },
+          })
+        : JSON.stringify({ automatic: true });
+    const url = `https://slop.cash/api/v1/payments/projects/${project.id}/monthly-settings`;
+    const deps = { db, monthly: owner(), now: () => clock };
+    const pending = handlePaymentsApi(
+      new Request(url, { method: "POST", headers, body }),
+      deps,
+    );
+    try {
+      await entered;
+      const off = await handlePaymentsApi(
+        new Request(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ automatic: false }),
+        }),
+        deps,
+      );
+      expect(off.status).toBe(200);
+      expect(await off.json()).toEqual({ automatic: false });
+      resume();
+      const stale = await pending;
+      expect(stale.status).toBe(409);
+      expect((await stale.json()).error).toBe("setting_changed");
+    } finally {
+      resume();
+      db.prepare = prepare;
+    }
+    expect((await owner().view(project.id, "2026-11", actor)).automatic).toBe(
+      false,
+    );
+    expect((await coordinate(clock)).frozen).toEqual([]);
+    expect(count("monthly_payment_runs")).toBe(0);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    const fresh = await handlePaymentsApi(
+      new Request(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ automatic: true }),
+      }),
+      deps,
+    );
+    expect(fresh.status).toBe(200);
+    expect(await fresh.json()).toEqual({ automatic: true });
+    expect((await coordinate(clock)).frozen).toEqual([`${project.id}/2026-11`]);
+  });
+}
+for (const [boundary, initiallyOff] of [
+  ["authority", false],
+  ["write", true],
+] as const) {
+  test(`a later opt-out survives a delayed enable at the ${boundary} boundary`, async () => {
+    if (initiallyOff) await owner().setAutomatic(project.id, actor, false);
+    const prepare = db.prepare.bind(db);
+    let armed = true;
+    const optOut = async () => {
+      if (!armed) return;
+      armed = false;
+      expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+        automatic: false,
+      });
+    };
+    if (boundary === "write")
+      db.prepare = (sql) => {
+        const statement = prepare(sql);
+        if (!sql.startsWith("INSERT INTO monthly_payment_settings("))
+          return statement;
+        return new Proxy(statement, {
+          get(target, key) {
+            if (key === "bind")
+              return (...args: unknown[]) => {
+                const bound = target.bind(...args);
+                return new Proxy(bound, {
+                  get(inner, method) {
+                    if (method === "run")
+                      return async () => {
+                        await optOut();
+                        return inner.run();
+                      };
+                    const value = Reflect.get(inner, method);
+                    return typeof value === "function"
+                      ? value.bind(inner)
+                      : value;
+                  },
+                });
+              };
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      };
+    try {
+      await rejects(
+        (boundary === "authority" ? owner(optOut) : owner()).setAutomatic(
+          project.id,
+          actor,
+          true,
+        ),
+        "setting_changed",
+      );
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(armed).toBe(false);
+    expect((await owner().view(project.id, "2026-11", actor)).automatic).toBe(
+      false,
+    );
+    const waiting = await coordinate(clock);
+    expect(waiting.frozen).toEqual([]);
+    expect(waiting.waiting).toContainEqual({
+      key: `${project.id}/2026-11`,
+      reason: "automatic-off",
+    });
+    expect(count("monthly_payment_runs")).toBe(0);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    expect(await owner().setAutomatic(project.id, actor, true)).toEqual({
+      automatic: true,
+    });
+    expect((await coordinate(clock)).frozen).toEqual([`${project.id}/2026-11`]);
+  });
+}
+for (const automatic of [false, true]) {
+  test(`${automatic ? "automatic" : "owner"} finalization preserves a project pause committed before the freeze write`, async () => {
+    clock = automatic ? afterCutoff : beforeCutoff;
+    const persistence = new CloudflareProjectPersistence(db);
+    const revise = async (status: "active" | "paused") => {
+      const current = await persistence.getProject(project.id);
+      if (!current) throw new Error("Missing fixture project");
+      const manifest = { ...current.manifest, status };
+      const text = JSON.stringify(manifest);
+      expect(
+        await persistence.appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: current.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Owner changes project status during monthly finalization",
+            actor,
+            at: clock.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+    };
+    const prepare = db.prepare.bind(db);
+    let armed = true;
+    db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (!sql.startsWith("INSERT INTO monthly_payment_runs("))
+        return statement;
+      return new Proxy(statement, {
+        get(target, key) {
+          if (key === "bind")
+            return (...args: unknown[]) => {
+              const bound = target.bind(...args);
+              return new Proxy(bound, {
+                get(inner, method) {
+                  if (method === "run")
+                    return async () => {
+                      if (armed) {
+                        armed = false;
+                        await revise("paused");
+                      }
+                      return inner.run();
+                    };
+                  const value = Reflect.get(inner, method);
+                  return typeof value === "function"
+                    ? value.bind(inner)
+                    : value;
+                },
+              });
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+    try {
+      if (automatic) {
+        const report = await coordinate(clock);
+        expect(report.frozen).toEqual([]);
+        expect(report.failures).toEqual([]);
+        expect(report.waiting).toContainEqual({
+          key: `${project.id}/2026-11`,
+          reason: "project-changed",
+        });
+      } else
+        await rejects(
+          owner().finalize(project.id, "2026-11", actor, 0),
+          "project_changed",
+        );
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(armed).toBe(false);
+    expect((await persistence.getProject(project.id))?.manifest.status).toBe(
+      "paused",
+    );
+    expect(count("monthly_payment_runs")).toBe(0);
+    expect(count("monthly_payment_obligations")).toBe(0);
+    await revise("active");
+    if (automatic)
+      expect((await coordinate(clock)).frozen).toEqual([
+        `${project.id}/2026-11`,
+      ]);
+    else {
+      await owner().changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: "300",
+        expectedSequence: 0,
+      });
+      await owner().finalize(project.id, "2026-11", actor, 1);
+    }
+    expect(count("monthly_payment_runs")).toBe(1);
+  });
+}
 function vault(
   free: string,
   observedAt = afterCutoff.toISOString(),
@@ -184,6 +563,135 @@ async function rejects(promise: Promise<unknown>, code: string) {
 }
 
 describe("monthly coordinator", () => {
+  for (const after of [false, true]) {
+    test(`enabling automatic payment before an allocation write ${after ? "after" : "before"} the cutoff honors the current setting`, async () => {
+      clock = after ? afterCutoff : beforeCutoff;
+      const service = owner();
+      await service.setAutomatic(project.id, actor, false);
+      const prepare = db.prepare.bind(db);
+      let enabled = false;
+      db.prepare = (query) => {
+        const statement = prepare(query);
+        if (!query.startsWith("INSERT INTO monthly_allocation_changes("))
+          return statement;
+        return {
+          ...statement,
+          bind(...values: unknown[]) {
+            const bound = statement.bind(...values);
+            return {
+              ...bound,
+              async run() {
+                db.prepare = prepare;
+                expect(
+                  await service.setAutomatic(project.id, actor, true),
+                ).toEqual({ automatic: true });
+                enabled = true;
+                return bound.run();
+              },
+            };
+          },
+        };
+      };
+      try {
+        const change = service.changeAllocation(project.id, "2026-11", actor, {
+          githubUserId: B,
+          grossBase: "300",
+          expectedSequence: 0,
+        });
+        if (after) await rejects(change, "cutoff_passed");
+        else expect((await change).proposal?.allocationSequence).toBe(1);
+      } finally {
+        db.prepare = prepare;
+      }
+      expect(enabled).toBe(true);
+      expect(count("monthly_allocation_changes")).toBe(after ? 0 : 1);
+      vault("1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.failures).toEqual([]);
+      const frozen = await service.view(project.id, "2026-11", actor);
+      expect(frozen.automatic).toBe(true);
+      expect(frozen.run?.funded).toBe(true);
+      expect(frozen.run?.awards.map((award) => award.grossBase)).toEqual([
+        "600",
+        after ? "400" : "300",
+      ]);
+    });
+  }
+
+  for (const boundary of ["restriction check", "freeze write"] as const) {
+    test(`an owner opt-out completed during the ${boundary} leaves the month editable`, async () => {
+      const turnOff = async () => {
+        expect(count("monthly_payment_runs")).toBe(0);
+        expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+          automatic: false,
+        });
+      };
+      const prepare = db.prepare.bind(db);
+      if (boundary === "freeze write") {
+        db.prepare = (query) => {
+          const statement = prepare(query);
+          if (!query.startsWith("INSERT INTO monthly_payment_runs"))
+            return statement;
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async run() {
+                  await turnOff();
+                  return bound.run();
+                },
+              };
+            },
+          };
+        };
+      }
+      try {
+        const report = await coordinateMonthlyPayments({
+          db,
+          projects: {
+            ...projects(),
+            restricted: async () => {
+              if (boundary === "restriction check") await turnOff();
+              return false;
+            },
+          },
+          networks: ["base-sepolia"],
+          schedule,
+          now: afterCutoff,
+        });
+        db.prepare = prepare;
+        expect(report.failures).toEqual([]);
+        expect(report.frozen).toEqual([]);
+        expect(report.waiting).toEqual([
+          { key: `${project.id}/2026-11`, reason: "automatic-off" },
+        ]);
+        expect(count("monthly_payment_runs")).toBe(0);
+        expect(count("monthly_payment_obligations")).toBe(0);
+        const changed = await owner().changeAllocation(
+          project.id,
+          "2026-11",
+          actor,
+          { githubUserId: B, grossBase: "300", expectedSequence: 0 },
+        );
+        expect(changed.proposal?.allocationSequence).toBe(1);
+        expect(
+          changed.proposal?.allocations.map((row) => row.grossBase),
+        ).toEqual(["600", "300"]);
+        const finalized = await owner().finalize(
+          project.id,
+          "2026-11",
+          actor,
+          1,
+        );
+        expect(finalized.run?.trigger).toBe("owner");
+      } finally {
+        db.prepare = prepare;
+      }
+    });
+  }
+
   test("Solana refuses a monthly cap above its token range before storing an allocation", async () => {
     sqlite.close();
     await setupFixture(solanaDeployment, 10n ** 18n);
