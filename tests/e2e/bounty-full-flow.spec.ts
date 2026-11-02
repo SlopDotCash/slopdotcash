@@ -443,6 +443,9 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
   const walletSends: { transaction: Transaction; hash: string }[] = [];
   let loseFirstWalletResponse = true;
   let finalizeWalletSends = true;
+  let occupiedPaymentNonce = false;
+  let consumedCancellation: "before" | "after-estimate" | null = null;
+  let cancellationEstimated = false;
   const walletRequest = async (input: {
     method: string;
     params?: unknown[];
@@ -450,7 +453,26 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     if (["eth_requestAccounts", "eth_accounts"].includes(input.method))
       return [chain.payer];
     if (input.method === "wallet_switchEthereumChain") return null;
-    const result = await chain.request(input.method, input.params ?? []);
+    const transaction = input.params?.[0] as Transaction | undefined;
+    const params =
+      input.method === "eth_sendTransaction" &&
+      transaction?.to.toLowerCase() === chain.payer.toLowerCase() &&
+      transaction.value === "0x0" &&
+      transaction.data === "0x"
+        ? [{ ...transaction, gasPrice: "0x77359400" }]
+        : (input.params ?? []);
+    const result = await chain.request(input.method, params);
+    if (
+      input.method === "eth_getTransactionCount" &&
+      ((input.params?.[1] === "pending" && occupiedPaymentNonce) ||
+        (input.params?.[1] === "latest" &&
+          (consumedCancellation === "before" ||
+            (consumedCancellation === "after-estimate" &&
+              cancellationEstimated))))
+    )
+      return `0x${(BigInt(result as string) + 1n).toString(16)}`;
+    if (input.method === "eth_estimateGas" && consumedCancellation)
+      cancellationEstimated = true;
     if (input.method === "eth_sendTransaction") {
       walletSends.push({
         transaction: input.params?.[0] as Transaction,
@@ -870,6 +892,15 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await payerControls
       .getByRole("button", { name: "Connect MetaMask", exact: true })
       .click();
+    occupiedPaymentNonce = true;
+    await payerControls
+      .getByRole("button", { name: "Pay remaining transfers", exact: true })
+      .click();
+    await expect(payerControls.getByRole("alert")).toContainText(
+      "This nonce is pending or used.",
+    );
+    expect(walletSends).toHaveLength(0);
+    occupiedPaymentNonce = false;
     await payerControls
       .getByRole("button", { name: "Pay remaining transfers", exact: true })
       .click();
@@ -965,6 +996,39 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect((await readCase("security")).settlement?.recovery?.mode).toBe(
       "cancellation-required",
     );
+    await chain.request("evm_setAutomine", [false]);
+    const pendingResearcher = await chain.request<string>(
+      "eth_sendTransaction",
+      [
+        {
+          ...copied.transactions[1 - feeIndex],
+          gasPrice: "0x3b9aca00",
+        },
+      ],
+    );
+    const cancellationRequest = (await readCase("security")).settlement
+      ?.recovery?.cancellationRequest;
+    if (!cancellationRequest?.nonce)
+      throw new Error("Missing nonce-bound cancellation request");
+    expect(
+      BigInt(
+        await chain.request<string>("eth_getTransactionCount", [
+          chain.payer,
+          "pending",
+        ]),
+      ),
+    ).toBe(BigInt(cancellationRequest.nonce) + 1n);
+    expect(
+      BigInt(
+        await chain.request<string>("eth_getTransactionCount", [
+          chain.payer,
+          "latest",
+        ]),
+      ),
+    ).toBe(BigInt(cancellationRequest.nonce));
+    expect(
+      await chain.request("eth_getTransactionReceipt", [pendingResearcher]),
+    ).toBeNull();
     const cancellation = maintainer.getByRole("region", {
       name: "Cancel superseded transfer",
       exact: true,
@@ -973,9 +1037,38 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .getByRole("button", { name: "Connect MetaMask", exact: true })
       .click();
     finalizeWalletSends = false;
-    await cancellation
-      .getByRole("button", { name: "Cancel old transfer", exact: true })
-      .click();
+    for (const consumed of ["before", "after-estimate"] as const) {
+      consumedCancellation = consumed;
+      cancellationEstimated = false;
+      await cancellation
+        .getByRole("button", { name: "Cancel old transfer", exact: true })
+        .click();
+      await expect(cancellation.getByRole("alert")).toContainText(
+        "This nonce is pending or used.",
+      );
+      expect(cancellationEstimated).toBe(consumed === "after-estimate");
+      expect(walletSends).toHaveLength(1);
+      await expect(
+        cancellation.getByRole("button", {
+          name: "Verify cancellation",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+    consumedCancellation = null;
+    await expectAccessible(maintainer);
+    await maintainer.evaluate(() => {
+      document.documentElement.style.zoom = "2";
+    });
+    const cancelButton = cancellation.getByRole("button", {
+      name: "Cancel old transfer",
+      exact: true,
+    });
+    await cancelButton.focus();
+    await maintainer.keyboard.press("Enter");
+    await maintainer.evaluate(() => {
+      document.documentElement.style.zoom = "1";
+    });
     await expect(
       cancellation.getByRole("button", {
         name: "Verify cancellation",
@@ -992,7 +1085,11 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .click();
     expect((await premature).status()).toBe(409);
     await chain.mine();
+    await chain.request("evm_setAutomine", [true]);
     finalizeWalletSends = true;
+    expect(
+      await chain.request("eth_getTransactionReceipt", [pendingResearcher]),
+    ).toBeNull();
     const recovered = maintainer.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -1246,6 +1343,9 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .click();
     await expect.poll(() => walletSends.length).toBe(5);
     const secondResearcher = walletSends[4].hash;
+    await expect(payerControls.getByRole("textbox")).toHaveValue(
+      secondResearcher,
+    );
     rotateVerifiedBountyWallet(process.env.SLOP_E2E_PERSIST_TO as string, {
       githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
       githubLogin: "e2e-reporter-a",

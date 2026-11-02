@@ -152,17 +152,18 @@ export function DirectBountyPayment({
       throw new Error(
         "The wallet account or network changed. Reconnect before continuing.",
       );
-    const pendingNonce = await request("eth_getTransactionCount", [
+    // A cancellation replaces a pending nonce, but must not reuse a mined one.
+    const nonce = await request("eth_getTransactionCount", [
       payer,
-      "pending",
+      cancellation ? "latest" : "pending",
     ]);
-    if (typeof pendingNonce !== "string")
+    if (typeof nonce !== "string")
       throw new Error("The wallet nonce could not be checked. Retry.");
-    if (BigInt(pendingNonce) < BigInt(transaction.nonce))
+    if (BigInt(nonce) < BigInt(transaction.nonce))
       throw new Error(
         "Complete earlier wallet transactions before this queued payment.",
       );
-    if (BigInt(pendingNonce) > BigInt(transaction.nonce))
+    if (BigInt(nonce) > BigInt(transaction.nonce))
       throw new Error(
         "This nonce is pending or used. Refresh the case to verify or recover it.",
       );
