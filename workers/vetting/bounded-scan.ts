@@ -383,7 +383,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
@@ -471,9 +471,11 @@ const RULES: Rule[] = [
     // executor immediately after the first pipe, so
     // `curl … | base64 -d | sh` matched nothing. Only a decode stage
     // qualifies: encoding, checksumming or saving a download keeps no
-    // finding, and decoding local content has no download to run.
+    // finding, and decoding local content has no download to run. Limit each
+    // decoder to known stream arguments: extra operands can read local files
+    // and help/version flags do not decode the download.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode)|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a decoded remote download in a shell or interpreter",
@@ -487,6 +489,18 @@ const RULES: Rule[] = [
     pattern:
       /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
     summary: "Runs a remote script URL directly",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // These direct calls pass the downloaded text to eval/exec. Ruby's
+    // URI.open and Net::HTTP.get_response return objects, so require the
+    // read/body access rather than reporting those objects as executed.
+    // Keep the argument boundary: a later fetch after a local eval is not
+    // remote execution, and arbitrary transformations need source review.
+    pattern:
+      /(?<![\w.$])(?:eval|exec)\s*\(\s*(?:Net::HTTP\.get\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)|Net::HTTP\.get_response\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)\s*\.body\b|URI\.open\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\.read\b(?:\s*\(\s*\))?|(?:file_get_contents|get)\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\))\s*\)|(?<![\w.$])(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//u,
+    summary: "Executes code fetched from the network",
   },
   {
     threat: "unsafe-execution",
@@ -532,8 +546,12 @@ const RULE_POLICY_SHA256 = sha256(
   }),
 );
 
+// certutil counts only in its `-urlcache` download form and bitsadmin
+// only in a `/transfer` job: their other invocations read local files.
+// Upload-only BITS jobs do not retrieve an artifact. aria2c and axel
+// name downloads by their command alone, like curl and wget.
 const DOWNLOAD =
-  /\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
+  /(?:\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm|aria2c|axel)\b|\bStart-BitsTransfer\b(?![^\n]*-TransferType\s+["']?Upload\b)|\bcertutil(?:\.exe)?\b[^\n]*?-urlcache\b|\bbitsadmin\b(?![^\n]*\/upload\b)[^\n]*?\/transfer\b)[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
 
 function decode(bytes: Uint8Array): string | null {
   // NUL bytes mean binary content, not text to read.
