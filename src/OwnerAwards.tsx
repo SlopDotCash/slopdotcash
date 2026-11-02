@@ -185,6 +185,11 @@ export default function OwnerAwards({
         timeoutMs: 120_000,
         signal,
       });
+      if (
+        !signal?.aborted &&
+        (response.status === 401 || response.status === 403)
+      )
+        setDrafts({});
       const body = (await readBoundedJson(
         response,
         8 * 1024 * 1024,
