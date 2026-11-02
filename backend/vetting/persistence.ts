@@ -42,6 +42,7 @@ import {
   isScanResult,
   type RecordedVettingResult,
   resultReviewers,
+  TEMPLATE_PREFIX,
 } from "./scan-result";
 
 export type {
@@ -155,8 +156,6 @@ function admissionRepository(manifest: object): string | null {
   });
 }
 
-export const TEMPLATE_PREFIX = "slop-skill-template";
-
 function extractPathFromEvidence(evidence: string): string | null {
   if (!evidence || typeof evidence !== "string") return null;
   const trimmed = evidence.trim();
@@ -178,18 +177,20 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
   const artifacts: VettingArtifact[] = assessment.result?.artifacts ?? [];
   const held = artifacts.filter((artifact) => artifact.state !== "released");
   const result = assessment.result;
-  let findingsLocation: "repository" | "template" | "both" | undefined;
+  let findingsLocation: AssessmentSummary["findingsLocation"];
   if (result) {
     let hasTemplate = held.some((a) => isTemplatePath(a.path));
     let hasRepo = held.some((a) => !isTemplatePath(a.path));
+    let hasUnknown = false;
     const findings = "findings" in result ? result.findings : [];
     for (const f of findings) {
       const extractedPath = extractPathFromEvidence(f.evidence);
-      const inTemplate = extractedPath ? isTemplatePath(extractedPath) : false;
-      if (inTemplate) hasTemplate = true;
+      if (extractedPath === null) hasUnknown = true;
+      else if (isTemplatePath(extractedPath)) hasTemplate = true;
       else hasRepo = true;
     }
-    if (hasTemplate && hasRepo) findingsLocation = "both";
+    if (hasUnknown) findingsLocation = "unknown";
+    else if (hasTemplate && hasRepo) findingsLocation = "both";
     else if (hasTemplate) findingsLocation = "template";
     else if (hasRepo) findingsLocation = "repository";
   }

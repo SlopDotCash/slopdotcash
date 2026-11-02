@@ -263,16 +263,14 @@ function scanCheck(
             "The last scan could not finish, so it did not clear the project.",
         };
       }
-      let message = "The last scan finished, but findings block clearance.";
+      let message = "Findings block clearance.";
       if (loc === "template") {
-        message =
-          "The last scan finished, but findings in Slop's skill template block clearance.";
+        message = "Findings in Slop's skill template block clearance.";
       } else if (loc === "repository") {
-        message =
-          "The last scan finished, but findings in the project repository block clearance.";
+        message = "Findings in the project repository block clearance.";
       } else if (loc === "both") {
         message =
-          "The last scan finished, but findings in both the repository and skill template block clearance.";
+          "Findings in both the repository and skill template block clearance.";
       }
       return {
         state: "quarantined",
@@ -389,7 +387,9 @@ export function projectSetupStatus(input: {
     const guidance =
       loc === "template"
         ? "Check for an updated skill template before requesting a new scan."
-        : "Fix the cause if you know it, then request a new scan.";
+        : loc === "unknown"
+          ? "Review the scan result before requesting a new scan."
+          : "Fix the cause if you know it, then request a new scan.";
     nextAction = action("request_scan", `${scan.message} ${guidance}`);
   } else {
     state = "retry";
