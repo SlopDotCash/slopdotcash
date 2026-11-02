@@ -127,6 +127,52 @@ test("drops a digest encoding misread and keeps limitations", () => {
   expect(output.summary).not.toContain(D);
 });
 
+test("keeps an undeclared variable that shares a sentence with a 0x misread", () => {
+  const kept =
+    "Also reads the undeclared variable `retryBudget` before assignment, which raises NameError on the same path.";
+  const input = verdict({
+    summary: `The tool slices with an undefined name, \`0xF4\`, and also reads the undeclared variable \`retryBudget\` before assignment, which raises NameError on the same path.`,
+    evidence: ["packet[0xF4]"],
+    limitations: ["The NameError was inferred from the diff, not observed."],
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe(kept);
+  expect(output.evidence).toEqual([]);
+  expect(output.limitations).toEqual(input.limitations);
+  expect(output.summary).not.toContain("0xF4");
+});
+
+test("keeps the same defect when the model says undefined variable", () => {
+  const input = verdict({
+    summary:
+      "The tool slices with an undefined name, `0xF4`, and also reads the undefined variable `retryBudget` before assignment, which raises NameError on the same path.",
+    evidence: ["packet[0xF4]"],
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe(
+    "Also reads the undefined variable `retryBudget` before assignment, which raises NameError on the same path.",
+  );
+  expect(output.evidence).toEqual([]);
+  expect(output.limitations).toEqual(input.limitations);
+});
+
+test("keeps a placeholder-constant failure when the misread is only in evidence", () => {
+  const summary =
+    "The retry loop never runs because the placeholder constant is never replaced at build time, so every scheduled job is silently skipped.";
+  const input = verdict({
+    summary,
+    evidence: ["The slice uses an undefined name, `0xF4`."],
+    limitations: ["The scheduler was not executed."],
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe(summary);
+  expect(output.evidence).toEqual([]);
+  expect(output.limitations).toEqual(input.limitations);
+});
+
 test("drops a 0x token only when that token is the undefined name", () => {
   const input = verdict({
     summary:

@@ -3,10 +3,10 @@
 // literal is not an undefined name. Those claims are encoding facts.
 //
 // Remove only the contradicted claim and the evidence line that states it.
-// A nearby digest or literal does not prove any other claim false. Courtesy
-// and follow-on sentences fall away only after a direct misread is present,
-// and only when they do not name a different defect. Limitations stay.
-// Category becomes none only when no claim remains.
+// A nearby digest or literal does not prove any other claim false. "undeclared"
+// names the same defect as "undefined". A follow-on sentence falls away only
+// when it does not name another identifier and does not state a failure of its
+// own subject. Limitations stay. Category becomes none only when no claim remains.
 
 import type { Verdict } from "./contracts";
 
@@ -73,15 +73,16 @@ const COURTESY =
 const NO_FINDING_SUMMARY =
   "No finding is published. A deterministic check contradicted the encoding or hex-literal claim, and no other claim remained.";
 
+const UNDECLARED = "undefined|undeclared";
 const EXPLICIT_NAME_SOURCES = [
-  String.raw`\bundefined\s+name\s*[,:]?\s*${QUOTED_NAME}`,
-  String.raw`\bundefined\s+(?:global|variable|identifier|symbol)\s+${QUOTED_NAME}`,
+  String.raw`\b(?:${UNDECLARED})\s+name\s*[,:]?\s*${QUOTED_NAME}`,
+  String.raw`\b(?:${UNDECLARED})\s+(?:global|variable|identifier|symbol)\s+${QUOTED_NAME}`,
   String.raw`\bNameError:\s*name\s+${QUOTED_NAME}`,
-  String.raw`\bname\s+${QUOTED_NAME}\s+is\s+not\s+defined\b`,
-  String.raw`\b${QUOTED_NAME}\s+is\s+(?:an\s+)?undefined(?:\s+name)?\b`,
-  String.raw`\bleaves\s+${QUOTED_NAME}\s+undefined\b`,
-  String.raw`\b${QUOTED_NAME}\s+was\s+called\s+an\s+undefined\s+name\b`,
-  String.raw`\b(?:calls?|treats?|treating|using|uses)\s+${QUOTED_NAME}\s+as\s+an\s+undefined\s+name\b`,
+  String.raw`\bname\s+${QUOTED_NAME}\s+is\s+not\s+(?:defined|declared)\b`,
+  String.raw`\b${QUOTED_NAME}\s+is\s+(?:an\s+)?(?:undefined|undeclared)(?:\s+name)?\b`,
+  String.raw`\bleaves\s+${QUOTED_NAME}\s+(?:undefined|undeclared)\b`,
+  String.raw`\b${QUOTED_NAME}\s+was\s+called\s+an\s+(?:undefined|undeclared)\s+name\b`,
+  String.raw`\b(?:calls?|treats?|treating|using|uses)\s+${QUOTED_NAME}\s+as\s+an\s+(?:undefined|undeclared)\s+name\b`,
 ];
 
 type DigestShape = "one" | "other" | "absent";
@@ -105,15 +106,34 @@ function namedUndefined(text: string): string[] {
   if (explicit.length > 0) return explicit;
   if (
     new RegExp(
-      String.raw`\bundefined\s+name\s*[,:]?\s*${QUOTED_NAME}`,
+      String.raw`\b(?:${UNDECLARED})\s+name\s*[,:]?\s*${QUOTED_NAME}`,
       "iu",
     ).test(source)
   )
     return [];
   return captures(
     source,
-    String.raw`\bassigns?\s+${QUOTED_NAME}\s+to\s+an\s+undefined\s+name\b`,
+    String.raw`\bassigns?\s+${QUOTED_NAME}\s+to\s+an\s+(?:undefined|undeclared)\s+name\b`,
   );
+}
+
+/**
+ * The piece states a failure of its own subject. A NameError follow-on about
+ * the contradicted token does not. "raises NameError" alone stays a
+ * continuation; "never runs" or "before assignment" does not.
+ */
+function predicatesOwnSubjectFailure(piece: string): boolean {
+  return /\b(?:never\s+(?:runs?|ran|replaced|reaches)|silently skipped|before assignment)\b/iu.test(
+    piece,
+  );
+}
+
+function isMisreadContinuation(piece: string): boolean {
+  if (!CONTINUATION.test(piece)) return false;
+  if (namedUndefined(piece).some((name) => !HEX_LITERAL.test(name)))
+    return false;
+  if (predicatesOwnSubjectFailure(piece)) return false;
+  return true;
 }
 
 function digestShape(text: string): DigestShape {
@@ -208,25 +228,23 @@ function claimPieces(sentence: string, corpus: string): string[] {
 function sentenceIsCourtesy(sentence: string): boolean {
   return (
     COURTESY.test(sentence) &&
-    !/\b(?:undefined|NameError|bypass|duplicate|crash|sha-?256)\b/iu.test(
+    !/\b(?:undefined|undeclared|NameError|bypass|duplicate|crash|sha-?256)\b/iu.test(
       sentence,
     )
   );
 }
 
 function sentenceIsContinuation(sentence: string, corpus: string): boolean {
-  if (namedUndefined(sentence).some((name) => !HEX_LITERAL.test(name)))
-    return false;
+  if (!isMisreadContinuation(sentence)) return false;
   const pieces = claimPieces(sentence, corpus);
   const hasOtherClaim = pieces.some(
     (piece) =>
       !directMisread(piece, corpus) &&
-      !CONTINUATION.test(piece) &&
+      !isMisreadContinuation(piece) &&
       !sentenceIsCourtesy(piece) &&
       !isSupportQuote(piece),
   );
-  if (hasOtherClaim) return false;
-  return CONTINUATION.test(sentence);
+  return !hasOtherClaim;
 }
 
 function asSentence(clause: string): string {
@@ -256,8 +274,7 @@ function reduceSentence(
     }
     if (
       hasMisread &&
-      (sentenceIsCourtesy(piece) || CONTINUATION.test(piece)) &&
-      !namedUndefined(piece).some((name) => !HEX_LITERAL.test(name))
+      (sentenceIsCourtesy(piece) || isMisreadContinuation(piece))
     ) {
       removed = true;
       continue;
