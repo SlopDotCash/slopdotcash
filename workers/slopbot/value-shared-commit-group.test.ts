@@ -26,7 +26,20 @@ async function sharedCommitGroup(
     | "truncated-search" = "merged",
   paginate = false,
   startAt = Date.parse("2026-09-01T00:00:00Z"),
+  renamed = false,
 ) {
+  // An approved rename keeps the former path as the registry id and records
+  // the current one as an alias and the owner/name GitHub now answers to.
+  const target = renamed
+    ? {
+        ...repository,
+        owner: "renamed-owner",
+        name: "binary-proof-renamed",
+        aliases: ["renamed-owner/binary-proof-renamed"],
+        githubUrl: "https://github.com/renamed-owner/binary-proof-renamed",
+      }
+    : repository;
+  const current = `${target.owner}/${target.name}`;
   const original = fixture({ direct: true, textOnly: true });
   const carrier = fixture({ direct: true, textOnly: true });
   const secondOriginal = fixture({ direct: true, textOnly: true });
@@ -70,20 +83,21 @@ async function sharedCommitGroup(
     async get<T>(path: string): Promise<T | null> {
       calls.push(path);
       if (/\/commits\/[a-f0-9]{40}\/pulls\?/.test(path)) {
+        if (renamed) expect(path.startsWith(`/repos/${current}/`)).toBe(true);
         if (association === "missing") return null;
         if (path.includes(`/${"d".repeat(40)}/pulls?`))
           return [
             {
               node_id: secondOriginal.pull.node_id,
               number: 3,
-              html_url: secondOriginal.pull.html_url,
+              html_url: `https://github.com/${current}/pull/${secondOriginal.pull.number}`,
               state: "closed",
               merged_at: secondOriginal.pull.merged_at,
               base: {
                 repo: {
                   id: 42,
                   node_id: repository.expectedNodeId,
-                  full_name: repository.id,
+                  full_name: current,
                   private: false,
                 },
               },
@@ -99,7 +113,7 @@ async function sharedCommitGroup(
           {
             node_id: carrier.pull.node_id,
             number: carrier.pull.number,
-            html_url: carrier.pull.html_url,
+            html_url: `https://github.com/${current}/pull/${carrier.pull.number}`,
             state: association === "open" ? "open" : "closed",
             merged_at:
               association === "unmerged" || association === "open"
@@ -109,7 +123,7 @@ async function sharedCommitGroup(
               repo: {
                 id: association === "wrong-repository" ? 99 : 42,
                 node_id: repository.expectedNodeId,
-                full_name: repository.id,
+                full_name: current,
                 private: false,
               },
             },
@@ -135,8 +149,17 @@ async function sharedCommitGroup(
       variables: Record<string, unknown>,
     ): Promise<T> {
       if (query.includes("search(query:")) {
+        // Search does not follow a rename: the former path finds nothing.
+        if (renamed && String(variables.q).startsWith(`repo:${repository.id} `))
+          return {
+            search: {
+              issueCount: 0,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [],
+            },
+          } as T;
         expect(String(variables.q)).toStartWith(
-          `repo:${repository.id} is:pr is:merged merged:`,
+          `repo:${current} is:pr is:merged merged:`,
         );
         const sources = [original];
         if (!["open", "unmerged"].includes(association)) sources.push(carrier);
@@ -164,12 +187,12 @@ async function sharedCommitGroup(
             nodes: page.map(({ pull }) => ({
               id: pull.node_id,
               number: pull.number,
-              url: pull.html_url,
+              url: `https://github.com/${current}/pull/${pull.number}`,
               mergedAt: pull.merged_at,
               repository: {
                 id: repository.expectedNodeId,
                 databaseId: 42,
-                nameWithOwner: repository.id,
+                nameWithOwner: current,
                 isPrivate: false,
               },
               mergeCommit: {
@@ -239,7 +262,7 @@ async function sharedCommitGroup(
     seed,
     async () => true,
     startAt,
-    [repository],
+    [target],
   );
   return { group, calls };
 }
@@ -261,6 +284,19 @@ test("collects other originals when commit/pulls returns only the introducing ca
     "PR_binary",
     "PR_carrier",
     "PR_second_original",
+  ]);
+});
+
+test("finds a renamed repository's merged PR and its shared-commit carrier in the census", async () => {
+  const { group } = await sharedCommitGroup(
+    "merged",
+    false,
+    Date.parse("2026-09-01T00:00:00Z"),
+    true,
+  );
+  expect(group?.map((source) => source.evidence.pull.node_id)).toEqual([
+    "PR_binary",
+    "PR_carrier",
   ]);
 });
 
