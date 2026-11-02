@@ -316,10 +316,11 @@ const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
 /**
  * The download tool a command substitution starts with. The shell runs
- * `command curl`, `/usr/bin/curl` and `\curl` exactly as it runs `curl`, so a
- * `$(` followed by any of them is the same download as `$(curl`.
+ * `command curl`, `command -p curl`, `command -- curl`, `/usr/bin/curl` and
+ * `\curl` exactly as it runs `curl`, so a `$(` followed by any of them is the
+ * same download as `$(curl`. `command -v` only prints a path and is not matched.
  */
-const DOWNLOAD_COMMAND = String.raw`(?:(?:command|builtin)\s+)?(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)\b`;
+const DOWNLOAD_COMMAND = String.raw`(?:command\s+(?:(?:--|-p)\s+)*)?(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)\b`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
