@@ -12,6 +12,11 @@ export interface ProjectCapabilityState {
   registered: boolean;
   status?: "active" | "paused";
   listingTier?: string;
+  /**
+   * The applied revision of the restriction in force retired the listing, not
+   * the owner. Omitted means an owner's retirement.
+   */
+  retiredByRestriction?: boolean;
   /** Latest enforcement state; omitted means unknown and fails closed. */
   restriction?: ProjectRestrictionState;
   /** Two-flag pause. Omitted means no flag pause is recorded. */
