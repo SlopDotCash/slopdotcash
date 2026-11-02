@@ -7,6 +7,7 @@
  */
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { handleNotificationsApi } from "../backend/notifications/handler";
 import { hasParticipationBan } from "../backend/projects/account-bans";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import type { RepositoryControl } from "../backend/projects/contracts";
@@ -258,7 +259,15 @@ test("creation requires the Slopbot installation, then queues the first scan and
 });
 
 test("setup activates a project only with installation write access and a clean scan", async () => {
-  const { persistence, call, create, state, deps } = registry();
+  const { db, persistence, call, create, state, deps } = registry();
+  const inbox = async () => {
+    const response = await handleNotificationsApi(
+      new Request("https://slop.cash/api/v1/notifications"),
+      { db, sessionActor: async () => ({ githubId: OWNER }), now: deps.now },
+    );
+    expect(response?.status).toBe(200);
+    return response?.json();
+  };
   await create("open-registry", "example/open-registry");
   const check = async (actor = OWNER) =>
     (await call("POST", "project-setup/open-registry/check", actor, {}))
@@ -309,6 +318,7 @@ test("setup activates a project only with installation write access and a clean 
     state: "retry",
     nextAction: { kind: "retry_scan" },
   });
+  expect(await inbox()).toMatchObject({ notifications: [], unread: 0 });
   // With every check passing, the project activates once, by status alone.
   state.clearance = CLEARED;
   // The scan completion hook has no owner session. It reloads the creator
@@ -326,11 +336,53 @@ test("setup activates a project only with installation write access and a clean 
   });
   const project = await persistence.getProject("open-registry");
   expect(project).toMatchObject({ status: "active", revision: 2 });
+  const completedInbox = await inbox();
+  expect(completedInbox).toMatchObject({
+    unread: 1,
+    notifications: [
+      {
+        eventKey: "project-revision:open-registry:2",
+        kind: "project_ready",
+        actionPath: "/projects/open-registry",
+      },
+    ],
+  });
+  await refreshProjectSetup(
+    new Request("https://slop.cash/api/v1/vetting/results"),
+    deps,
+    "open-registry",
+  );
   expect((await check()).setup).toMatchObject({
     state: "ready",
     activatedRevision: null,
   });
   expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
+  expect(await inbox()).toEqual(completedInbox);
+});
+
+test("an owner who activates a project with a setup check gets no notice about their own action", async () => {
+  const { db, sqlite, call, create, state, deps } = registry();
+  await create("owner-check", "example/owner-check");
+  state.clearance = CLEARED;
+  expect(
+    (await call("POST", "project-setup/owner-check/check", OWNER, {})).body,
+  ).toMatchObject({ setup: { state: "ready", activatedRevision: 2 } });
+  const response = await handleNotificationsApi(
+    new Request("https://slop.cash/api/v1/notifications"),
+    { db, sessionActor: async () => ({ githubId: OWNER }), now: deps.now },
+  );
+  expect(response?.status).toBe(200);
+  expect(await response?.json()).toMatchObject({
+    notifications: [],
+    unread: 0,
+  });
+  expect(
+    sqlite
+      .query(
+        "SELECT actor_github_id AS actor FROM project_revisions WHERE project_id='owner-check' AND revision=2",
+      )
+      .get(),
+  ).toEqual({ actor: OWNER });
 });
 
 test("an owner records and revokes explicit closure consent with current authority and immutable revisions", async () => {

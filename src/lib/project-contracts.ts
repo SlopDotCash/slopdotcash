@@ -62,6 +62,8 @@ export type ProjectRevisionInput = {
   manifestSha256: string;
   reason: string;
   actor: GithubActor;
+  /** A background setup check retains authority but has no human publisher. */
+  systemInitiated?: true;
   at: string;
 };
 

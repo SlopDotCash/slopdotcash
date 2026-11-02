@@ -1110,6 +1110,8 @@ async function runSetupCheck(
     requestScan?: boolean;
     /** Routine edits do not resume a project the owner deliberately paused. */
     allowActivation?: boolean;
+    /** Only the scan completion callback runs without a human publisher. */
+    systemInitiated?: true;
   } = {},
 ): Promise<ProjectSetupStatus> {
   let project = initial;
@@ -1174,8 +1176,9 @@ async function runSetupCheck(
       current: project,
       manifest: { ...project.manifest, status: "active" },
       ownerParticipation: true,
-      reason: `Activated automatically after setup checks for @${actor.githubLogin}: ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? ("exemption" in clearance ? `Owner-approved admission exemption ${clearance.exemption.id}` : "Grandfathered before security scans") : `Admission scan ${clearance.assessment.id}`}.`,
+      reason: `Activated automatically after setup checks for @${actor.githubLogin} (GitHub ID ${actor.githubId}): ${authority.message} Slopbot installation ${access.access.installationId}. ${clearance.assessment === null ? ("exemption" in clearance ? `Owner-approved admission exemption ${clearance.exemption.id}` : "Grandfathered before security scans") : `Admission scan ${clearance.assessment.id}`}.`,
       actor,
+      systemInitiated: options.systemInitiated,
     });
     activatedRevision = project.revision;
   }
@@ -1203,7 +1206,9 @@ export async function refreshProjectSetup(
   const project = await deps.persistence.getProject(projectId);
   const creator = await deps.persistence.projectCreator(projectId);
   if (project === null || creator === null) return null;
-  return runSetupCheck(request, deps, project, creator);
+  return runSetupCheck(request, deps, project, creator, {
+    systemInitiated: true,
+  });
 }
 
 /**
@@ -2013,6 +2018,7 @@ async function appendRevision(
     applicationId?: string;
     /** Recheck owner eligibility within the guarded enforcement snapshot. */
     ownerParticipation?: true;
+    systemInitiated?: true;
   },
 ): Promise<ProjectRecord> {
   const { current, actor } = input;
@@ -2102,6 +2108,7 @@ async function appendRevision(
       manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
       reason: input.reason.slice(0, 1000),
       actor,
+      systemInitiated: input.systemInitiated,
       at: deps.now().toISOString(),
     },
     enforcementGeneration,
