@@ -214,6 +214,14 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * webpack-cli loads `webpack.config.<ext>` by evaluating it as code on
+ * every build, in each of the JavaScript and TypeScript spellings it
+ * accepts, so the file is build-time code like a Makefile, never parsed
+ * configuration. Its data-format spellings (`.json5`, `.yaml`, `.toml`)
+ * are parsed as static data instead and stay out.
+ */
+const WEBPACK_CONFIG = /^webpack\.config\.[cm]?[jt]s$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +291,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    WEBPACK_CONFIG.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
