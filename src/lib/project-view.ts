@@ -538,17 +538,20 @@ export function createProjectView(
   const repositoryIds = new Set(
     project.repositories.map((repository) => repository.id),
   );
+  // Cache only this cycle's matching events for the sort below.
+  const occurredAtMs = new Map<ScoreEvent, number>();
   const ledger = snapshot.ledger
-    .filter(
-      (event) =>
-        repositoryIds.has(event.repository) &&
-        Date.parse(event.occurredAt) >= from &&
-        Date.parse(event.occurredAt) < to,
-    )
+    .filter((event) => {
+      if (!repositoryIds.has(event.repository)) return false;
+      const occurredAt = Date.parse(event.occurredAt);
+      if (!(occurredAt >= from && occurredAt < to)) return false;
+      occurredAtMs.set(event, occurredAt);
+      return true;
+    })
     .sort(
       (left, right) =>
-        Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
-        left.id.localeCompare(right.id),
+        (occurredAtMs.get(right) as number) -
+          (occurredAtMs.get(left) as number) || left.id.localeCompare(right.id),
     );
   const { conflicts, runs } = selectUniqueRuns(snapshot, project);
   const actors = new Map<string, GitHubActor>();
