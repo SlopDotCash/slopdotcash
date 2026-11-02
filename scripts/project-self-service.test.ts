@@ -2568,6 +2568,68 @@ test("only the steward or a repository admin can register the project vault", as
   ).toEqual([TEST_VAULT]);
 });
 
+// Wallets and explorers may show an EVM hash in upper or mixed case.
+test("an EVM vault creation hash registers in any letter case", async () => {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const target = await t.persistence.getProject("vault-target");
+  if (!target) throw new Error("Project required");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+        expectedRevision: target.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...target.manifest,
+          reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const verified: string[] = [];
+  t.deps.vaultSetup = {
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    // Like the chain verifier, the deployment records the hash it was given.
+    register: async (_project, _actor, _input, transactionId) => {
+      verified.push(transactionId);
+      return { ...TEST_VAULT, deploymentTransaction: transactionId };
+    },
+  };
+  const register = (transactionId: string) =>
+    t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId,
+    });
+  const accepted = await register(`0x${"AB".repeat(32)}`);
+  expect(accepted.status).toBe(200);
+  expect(accepted.body.status).toBe("registered");
+  expect(
+    (await t.persistence.getProject(target.id))?.manifest.escrow?.deployments,
+  ).toEqual([TEST_VAULT]);
+  // A retry in another case finds the same registration.
+  const retried = await register(`0x${"aB".repeat(32)}`);
+  expect(retried.status).toBe(200);
+  expect(retried.body.status).toBe("registered");
+  expect(retried.body.deployment).toEqual(TEST_VAULT);
+  expect(verified).toEqual([TEST_VAULT.deploymentTransaction]);
+});
+
 // A moderator decision on another project also applies during this activation.
 test("a ban issued during the authority check prevents automatic activation", async () => {
   const t = registry();
