@@ -19,13 +19,17 @@ export function encodeLeaderboardParts(bytes) {
   if (bytes.length <= MAX_LEADERBOARD_FILE_BYTES)
     return { root: bytes, parts: [] };
   const parts = [];
+  const partRecords = [];
   for (
     let offset = 0;
     offset < bytes.length;
     offset += MAX_LEADERBOARD_PART_BYTES
   ) {
     const part = bytes.slice(offset, offset + MAX_LEADERBOARD_PART_BYTES);
-    parts.push({ path: `/data/leaderboard/${hash(part)}.part`, bytes: part });
+    const sha256 = hash(part);
+    const path = `/data/leaderboard/${sha256}.part`;
+    parts.push({ path, bytes: part });
+    partRecords.push({ path, bytes: part.length, sha256 });
   }
   return {
     root: new TextEncoder().encode(
@@ -33,11 +37,7 @@ export function encodeLeaderboardParts(bytes) {
         format: FORMAT,
         bytes: bytes.length,
         sha256: hash(bytes),
-        parts: parts.map((part) => ({
-          path: part.path,
-          bytes: part.bytes.length,
-          sha256: hash(part.bytes),
-        })),
+        parts: partRecords,
       })}\n`,
     ),
     parts,
