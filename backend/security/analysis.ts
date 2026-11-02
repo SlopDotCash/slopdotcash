@@ -36,8 +36,8 @@ export const ANALYSIS_TIMEOUT_MS = 120_000;
  * the full `ANALYSIS_TIMEOUT_MS`.
  */
 export const BACKGROUND_ANALYSIS_TIMEOUT_MS = 25_000;
-/** How many earlier cases of the same project analysis and intake screening compare. */
-export const PRIOR_CASE_LIMIT = 25;
+/** How many earlier cases of the same project the analysis compares. */
+const PRIOR_CASE_LIMIT = 25;
 
 const SEVERITIES = [
   "critical",

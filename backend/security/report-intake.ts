@@ -10,7 +10,6 @@ import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
-  PRIOR_CASE_LIMIT,
   type SecurityAnalysisInput,
   type SecurityAnalysisReport,
   type SecurityScreeningProposal,
@@ -74,42 +73,6 @@ const encoder = new TextEncoder();
 
 const DUPLICATE_EVIDENCE_REASON =
   "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report.";
-
-type PriorCase = SecurityAnalysisInput["priorCases"][number];
-
-/**
- * Recent verified cases for the same project (ids only).
- * Intake screening reasons are visible to reporters, so root-cause keys and
- * summaries must not reach the screening model; case analysis still loads
- * both separately for the owner path.
- */
-async function loadPriorCases(
-  deps: Pick<SecurityApiDependencies, "db">,
-  projectId: string,
-  excludeCaseId: string | null,
-): Promise<PriorCase[]> {
-  const rows =
-    (
-      await deps.db
-        .prepare(
-          `SELECT c.id
-             FROM security_cases c
-            WHERE c.project_id = ? AND c.submission_state = 'verified'${
-              excludeCaseId ? " AND c.id <> ?" : ""
-            }
-            ORDER BY c.received_at DESC LIMIT ${PRIOR_CASE_LIMIT}`,
-        )
-        .bind(...(excludeCaseId ? [projectId, excludeCaseId] : [projectId]))
-        .all<{
-          id: string;
-        }>()
-    ).results ?? [];
-  return rows.map((entry) => ({
-    id: entry.id,
-    rootCauseKey: null,
-    summary: null,
-  }));
-}
 
 /**
  * Same-project evidence digest already on an earlier live case or intake report.
@@ -663,11 +626,7 @@ export async function screenStoredReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: await loadPriorCases(
-          deps,
-          submission.project_id,
-          row.case_id,
-        ),
+        priorCases: [],
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -755,7 +714,7 @@ export async function screenLegacyReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: await loadPriorCases(deps, projectId, null),
+        priorCases: [],
       },
       ANALYSIS_TIMEOUT_MS,
     );
