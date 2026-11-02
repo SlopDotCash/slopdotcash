@@ -542,7 +542,9 @@ function parseIsoTime(value: string): number {
 }
 
 function uniqueSorted(values: Iterable<string>): string[] {
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+  return [...new Set(values)].sort((left, right) =>
+    left.localeCompare(right, "en"),
+  );
 }
 
 function compareCodeUnits(left: string, right: string): number {
@@ -1737,9 +1739,26 @@ function participationBannedAt(
   );
 }
 
+/** Source identities already credited for each work unit and UTC month. */
+type MergedScoreSources = Map<string, Set<string>>;
+
+function appendScore(
+  ledger: ScoreEvent[],
+  mergedSources: MergedScoreSources,
+  event: ScoreEvent,
+): void {
+  ledger.push(event);
+  if (event.category !== "merged-pull-request") return;
+  const key = `${event.occurredAt.slice(0, 7)}\0${event.workUnitId}`;
+  const sources = mergedSources.get(key) ?? new Set<string>();
+  sources.add(event.source.id);
+  mergedSources.set(key, sources);
+}
+
 function addScore(
   entries: Map<string, MutableLeaderboardEntry>,
   ledger: ScoreEvent[],
+  mergedSources: MergedScoreSources,
   participationBans: ReadonlyMap<string, string>,
   event: ScoreEvent,
 ): boolean {
@@ -1803,15 +1822,13 @@ function addScore(
     const workUnitId = ledgerWorkUnitId(projectId, event);
     const globalWorkUnitKey = `${projectId}\0${event.occurredAt.slice(0, 7)}\0${workUnitId}`;
     if (entry.creditedWorkUnits.has(globalWorkUnitKey)) return false;
+    const sources = mergedSources.get(
+      `${event.occurredAt.slice(0, 7)}\0${workUnitId}`,
+    );
     if (
       event.category === "merged-pull-request" &&
-      ledger.some(
-        (existing) =>
-          existing.category === "merged-pull-request" &&
-          existing.source.id !== event.source.id &&
-          `${projectId}\0${existing.occurredAt.slice(0, 7)}\0${existing.workUnitId}` ===
-            globalWorkUnitKey,
-      )
+      sources &&
+      (sources.size > 1 || !sources.has(event.source.id))
     ) {
       return false;
     }
@@ -1844,7 +1861,7 @@ function addScore(
     }
     entry.creditedWorkUnits.add(globalWorkUnitKey);
     entry.projectCapUsage.set(capKey, capUsage);
-    ledger.push(scoredEvent);
+    appendScore(ledger, mergedSources, scoredEvent);
     return true;
   }
   const atCap =
@@ -1910,7 +1927,7 @@ function addScore(
     capUsage.acceptedOutcomes.evaluatedContributions += 1;
   }
   entry.projectCapUsage.set(capKey, capUsage);
-  ledger.push(scoredEvent);
+  appendScore(ledger, mergedSources, scoredEvent);
   return true;
 }
 
@@ -3025,6 +3042,7 @@ function createSnapshotWithReviewCutoff(
   );
   const entries = new Map<string, MutableLeaderboardEntry>();
   const ledger: ScoreEvent[] = [];
+  const mergedSources: MergedScoreSources = new Map();
   const reviewExclusions: ReviewExclusion[] = [];
   const excludeReview = (
     pullRequest: MergedPullRequestReviewRecord,
@@ -3509,52 +3527,58 @@ function createSnapshotWithReviewCutoff(
       if (ratification && scoreThirds === 0) continue;
       const contributionBonus =
         isAuthor && contributionRun?.traceUpload ? 1_500 : 0;
-      const scored = addScore(entries, ledger, participationBans, {
-        id: isAuthor
-          ? `${pullRequest.id}:merged`
-          : `${pullRequest.id}:merged:${actor.id}`,
-        actor,
-        category: "merged-pull-request",
-        points: v2 ? scoreThirds / 3 : totalThirds / 3,
-        ...(v2
-          ? {
-              scoreThirds,
-              evidenceBonusBasisPoints: contributionBonus as
-                | 0
-                | 1_000
-                | 1_500
-                | 2_500,
-              workUnitId:
-                ratification?.record.workUnitId ??
-                `wu_${repositoryId
-                  .toLowerCase()
-                  .replace(/[^a-z0-9_-]+/gu, "_")}_pr_${pullRequest.number}`,
-              scoreDecisionSourceId:
-                ratification?.source.id ??
-                (valueRecord
-                  ? `value:${valueDecision?.latestDigest}`
-                  : undefined),
-              scoreDecisionAt:
-                ratification?.source.createdAt ??
-                (valueRecord
-                  ? valueDecision?.history.at(-1)?.recorded_at
-                  : undefined),
-            }
-          : {}),
-        occurredAt: pullRequest.mergedAt,
-        repository: repositoryId,
-        source: {
-          id: pullRequest.id,
-          kind: "pull-request",
-          number: pullRequest.number,
-          title: pullRequest.title,
-          url: pullRequest.url,
+      const scored = addScore(
+        entries,
+        ledger,
+        mergedSources,
+        participationBans,
+        {
+          id: isAuthor
+            ? `${pullRequest.id}:merged`
+            : `${pullRequest.id}:merged:${actor.id}`,
+          actor,
+          category: "merged-pull-request",
+          points: v2 ? scoreThirds / 3 : totalThirds / 3,
+          ...(v2
+            ? {
+                scoreThirds,
+                evidenceBonusBasisPoints: contributionBonus as
+                  | 0
+                  | 1_000
+                  | 1_500
+                  | 2_500,
+                workUnitId:
+                  ratification?.record.workUnitId ??
+                  `wu_${repositoryId
+                    .toLowerCase()
+                    .replace(/[^a-z0-9_-]+/gu, "_")}_pr_${pullRequest.number}`,
+                scoreDecisionSourceId:
+                  ratification?.source.id ??
+                  (valueRecord
+                    ? `value:${valueDecision?.latestDigest}`
+                    : undefined),
+                scoreDecisionAt:
+                  ratification?.source.createdAt ??
+                  (valueRecord
+                    ? valueDecision?.history.at(-1)?.recorded_at
+                    : undefined),
+              }
+            : {}),
+          occurredAt: pullRequest.mergedAt,
+          repository: repositoryId,
+          source: {
+            id: pullRequest.id,
+            kind: "pull-request",
+            number: pullRequest.number,
+            title: pullRequest.title,
+            url: pullRequest.url,
+          },
+          reason:
+            actors.length === 1
+              ? baseReason
+              : `${baseReason} Shared equally among ${actors.length} commit authors.`,
         },
-        reason:
-          actors.length === 1
-            ? baseReason
-            : `${baseReason} Shared equally among ${actors.length} commit authors.`,
-      });
+      );
       if (scored && isAuthor) {
         recordScoredSources([pullRequestBodySource(pullRequest)]);
       }
@@ -3689,7 +3713,7 @@ function createSnapshotWithReviewCutoff(
       );
       for (const [index, actor] of actors.entries()) {
         const thirds = shares[index] as number;
-        addScore(entries, ledger, participationBans, {
+        addScore(entries, ledger, mergedSources, participationBans, {
           id: `${completion.pull.node_id}:joint:${unit.workUnitId}:merged:${actor.id}`,
           actor,
           category: "merged-pull-request",
@@ -3843,7 +3867,10 @@ function createSnapshotWithReviewCutoff(
       }
       evaluatedReviewReservations.add(reservationKey);
     }
-    if (addScore(entries, ledger, participationBans, event) && source) {
+    if (
+      addScore(entries, ledger, mergedSources, participationBans, event) &&
+      source
+    ) {
       recordScoredSources([source]);
     }
   }
@@ -4108,7 +4135,7 @@ function createSnapshotWithReviewCutoff(
         exclude(candidate.reviewId, "review-credit-outside-window");
         continue;
       }
-      addScore(entries, ledger, participationBans, {
+      addScore(entries, ledger, mergedSources, participationBans, {
         id: `${pullRequest.id}:value-review:${candidate.reviewId}`,
         actor: candidate.actor,
         category: "substantive-review",
@@ -4163,22 +4190,28 @@ function createSnapshotWithReviewCutoff(
         !explicitPrizeAcceptance &&
         hasMaterialTestChange(detailedPullRequest.files)
       ) {
-        const scored = addScore(entries, ledger, participationBans, {
-          id: `${detailedPullRequest.id}:tests`,
-          actor: detailedPullRequest.author,
-          category: "material-test-change",
-          points: 4,
-          occurredAt: pullRequest.mergedAt,
-          repository: repositoryIdFromUrl(detailedPullRequest.url),
-          source: {
-            id: detailedPullRequest.id,
-            kind: "pull-request",
-            number: detailedPullRequest.number,
-            title: detailedPullRequest.title,
-            url: detailedPullRequest.url,
+        const scored = addScore(
+          entries,
+          ledger,
+          mergedSources,
+          participationBans,
+          {
+            id: `${detailedPullRequest.id}:tests`,
+            actor: detailedPullRequest.author,
+            category: "material-test-change",
+            points: 4,
+            occurredAt: pullRequest.mergedAt,
+            repository: repositoryIdFromUrl(detailedPullRequest.url),
+            source: {
+              id: detailedPullRequest.id,
+              kind: "pull-request",
+              number: detailedPullRequest.number,
+              title: detailedPullRequest.title,
+              url: detailedPullRequest.url,
+            },
+            reason: `Recognized test files met the ${MATERIAL_TEST_ADDITIONS}-addition and ${MATERIAL_TEST_CHURN}-churn threshold.`,
           },
-          reason: `Recognized test files met the ${MATERIAL_TEST_ADDITIONS}-addition and ${MATERIAL_TEST_CHURN}-churn threshold.`,
-        });
+        );
         if (scored) {
           recordScoredSources([pullRequestBodySource(detailedPullRequest)]);
         }
@@ -4204,22 +4237,28 @@ function createSnapshotWithReviewCutoff(
         attributableEvidenceSources.map((source) => [source.id, source]),
       );
       for (const finding of evidence.findings) {
-        const scored = addScore(entries, ledger, participationBans, {
-          id: `${pullRequest.id}:evidence:${finding.category}`,
-          actor: detailedPullRequest.author,
-          category: "evidence",
-          points: finding.points,
-          occurredAt: pullRequest.mergedAt,
-          repository: repositoryIdFromUrl(pullRequest.url),
-          source: {
-            id: pullRequest.id,
-            kind: "pull-request",
-            number: pullRequest.number,
-            title: pullRequest.title,
-            url: pullRequest.url,
+        const scored = addScore(
+          entries,
+          ledger,
+          mergedSources,
+          participationBans,
+          {
+            id: `${pullRequest.id}:evidence:${finding.category}`,
+            actor: detailedPullRequest.author,
+            category: "evidence",
+            points: finding.points,
+            occurredAt: pullRequest.mergedAt,
+            repository: repositoryIdFromUrl(pullRequest.url),
+            source: {
+              id: pullRequest.id,
+              kind: "pull-request",
+              number: pullRequest.number,
+              title: pullRequest.title,
+              url: pullRequest.url,
+            },
+            reason: `Remote ${finding.category} evidence passed byte and structure verification.`,
           },
-          reason: `Remote ${finding.category} evidence passed byte and structure verification.`,
-        });
+        );
         if (scored) {
           recordScoredSources(
             finding.sourceIds.flatMap((sourceId) => {
@@ -4296,7 +4335,7 @@ function createSnapshotWithReviewCutoff(
         specialist: 24,
       }[record.reviewLoad];
       if (
-        addScore(entries, ledger, participationBans, {
+        addScore(entries, ledger, mergedSources, participationBans, {
           id: `${pullRequest.id}:automated-review:${source.id}`,
           actor: source.author,
           category: "substantive-review",
@@ -4346,25 +4385,31 @@ function createSnapshotWithReviewCutoff(
                 declaration.actor?.id === review.author?.id,
             )?.run
           : null;
-      const scored = addScore(entries, ledger, participationBans, {
-        id: `${pullRequest.id}:reviewer:${review.author.id}`,
-        actor: review.author,
-        category: "substantive-review",
-        ...(outcomeBound ? { points: 1 / 3, scoreThirds: 1 } : { points: 3 }),
-        ...(reviewReceipt?.traceUpload
-          ? { evidenceBonusBasisPoints: 1_500 as const }
-          : {}),
-        occurredAt: review.submittedAt,
-        repository: repositoryIdFromUrl(review.url),
-        source: {
-          id: review.id,
-          kind: "review",
-          number: pullRequest.number,
-          title: pullRequest.title,
-          url: review.url,
+      const scored = addScore(
+        entries,
+        ledger,
+        mergedSources,
+        participationBans,
+        {
+          id: `${pullRequest.id}:reviewer:${review.author.id}`,
+          actor: review.author,
+          category: "substantive-review",
+          ...(outcomeBound ? { points: 1 / 3, scoreThirds: 1 } : { points: 3 }),
+          ...(reviewReceipt?.traceUpload
+            ? { evidenceBonusBasisPoints: 1_500 as const }
+            : {}),
+          occurredAt: review.submittedAt,
+          repository: repositoryIdFromUrl(review.url),
+          source: {
+            id: review.id,
+            kind: "review",
+            number: pullRequest.number,
+            title: pullRequest.title,
+            url: review.url,
+          },
+          reason,
         },
-        reason,
-      });
+      );
       if (scored) {
         awardedReviewers.add(review.author.id);
         if (reviewSource) {
@@ -4540,7 +4585,7 @@ function createSnapshotWithReviewCutoff(
       !hasEvaluatedReviewReservation(ratification.source.author.id) &&
       !awardedReviewers.has(ratification.source.author.id)
     ) {
-      addScore(entries, ledger, participationBans, {
+      addScore(entries, ledger, mergedSources, participationBans, {
         id: `${pullRequest.id}:ratifier:${ratification.source.id}`,
         actor: ratification.source.author,
         category: "substantive-review",
@@ -4622,23 +4667,29 @@ function createSnapshotWithReviewCutoff(
           `Qualifying resolved issue ${issue.id} is missing its closed timestamp`,
         );
       }
-      const scored = addScore(entries, ledger, participationBans, {
-        id: `${issue.id}:resolved-by:${contributor.id}`,
-        actor: contributor.author,
-        category: "resolved-issue",
-        points: 4,
-        occurredAt: issue.closedAt,
-        repository: repositoryIdFromUrl(issue.url),
-        source: {
-          id: issue.id,
-          kind: "issue",
-          number: issue.number,
-          title: issue.title,
-          url: issue.url,
+      const scored = addScore(
+        entries,
+        ledger,
+        mergedSources,
+        participationBans,
+        {
+          id: `${issue.id}:resolved-by:${contributor.id}`,
+          actor: contributor.author,
+          category: "resolved-issue",
+          points: 4,
+          occurredAt: issue.closedAt,
+          repository: repositoryIdFromUrl(issue.url),
+          source: {
+            id: issue.id,
+            kind: "issue",
+            number: issue.number,
+            title: issue.title,
+            url: issue.url,
+          },
+          reason:
+            "Contributor authored the merged pull request that resolved this issue.",
         },
-        reason:
-          "Contributor authored the merged pull request that resolved this issue.",
-      });
+      );
       if (scored) {
         recordScoredSources([
           {
@@ -4716,7 +4767,7 @@ function createSnapshotWithReviewCutoff(
     // survives only when its attribution is independently present and replay
     // checked in the current snapshot.
     delete retained.evidenceBonusBasisPoints;
-    if (addScore(entries, ledger, participationBans, retained)) {
+    if (addScore(entries, ledger, mergedSources, participationBans, retained)) {
       currentLedgerIds.add(retained.id);
       currentScoreSources.add(`${retained.repository}\0${retained.source.id}`);
       const candidates = (input.retainedReviewAttributions ?? []).filter(
@@ -4995,11 +5046,7 @@ function createSnapshotWithReviewCutoff(
         left.source.number - right.source.number ||
         left.id.localeCompare(right.id),
     ),
-    reviewExclusions: reviewExclusions.sort(
-      (left, right) =>
-        left.pullRequestId.localeCompare(right.pullRequestId) ||
-        left.reviewId.localeCompare(right.reviewId),
-    ),
+    reviewExclusions: reviewExclusions.sort(compareReviewExclusions),
     penalties,
     ...(input.penaltyHistory ? { penaltyHistory: input.penaltyHistory } : {}),
     opportunities,
@@ -5192,8 +5239,22 @@ function assertStringArray(value: unknown, path: string): string[] {
   return strings;
 }
 
-function assertActorValue(value: unknown, path: string): void {
+function assertActorValue(
+  value: unknown,
+  path: string,
+  validatedActors?: Map<string, GitHubActor>,
+): void {
   const actor = assertObject(value, path);
+  const validated =
+    typeof actor.id === "string" ? validatedActors?.get(actor.id) : undefined;
+  if (
+    validated &&
+    validated.login === actor.login &&
+    validated.avatarUrl === actor.avatarUrl &&
+    validated.url === actor.url &&
+    validated.kind === actor.kind
+  )
+    return;
   assertString(actor.id, `${path}.id`);
   assertString(actor.login, `${path}.login`);
   if (/\s/.test(actor.login)) {
@@ -5221,14 +5282,22 @@ function assertActorValue(value: unknown, path: string): void {
     );
   }
   assertEnum(actor.kind, GITHUB_ACTOR_KINDS, `${path}.kind`);
+  validatedActors?.set(actor.id, {
+    id: actor.id,
+    login: actor.login,
+    avatarUrl: actor.avatarUrl,
+    url: actor.url,
+    kind: actor.kind,
+  } as GitHubActor);
 }
 
 function assertNullableActor(
   value: unknown,
   path: string,
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is GitHubActor | null {
   if (value !== null) {
-    assertActorValue(value, path);
+    assertActorValue(value, path, validatedActors);
   }
 }
 
@@ -5338,6 +5407,18 @@ function assertMethodologyValue(value: unknown, path: string): void {
   );
   assertString(methodology.provenancePolicy, `${path}.provenancePolicy`);
   assertString(methodology.collectionPolicy, `${path}.collectionPolicy`);
+}
+
+// Preserve the published English collation in both writers and readers.
+// GitHub node IDs are opaque: the machine's language must not reorder them.
+function compareReviewExclusions(
+  left: ReviewExclusion,
+  right: ReviewExclusion,
+) {
+  return (
+    left.pullRequestId.localeCompare(right.pullRequestId, "en") ||
+    left.reviewId.localeCompare(right.reviewId, "en")
+  );
 }
 
 function assertReviewExclusionValue(
@@ -5713,10 +5794,11 @@ function assertNonNegativeNumber(value: unknown, path: string): void {
 function assertLeaderValue(
   value: unknown,
   path: string,
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is LeaderboardEntry {
   const entry = assertObject(value, path);
   assertPositiveInteger(entry.rank, `${path}.rank`);
-  assertActorValue(entry.actor, `${path}.actor`);
+  assertActorValue(entry.actor, `${path}.actor`, validatedActors);
   assertNonNegativeInteger(entry.score, `${path}.score`);
   assertNonNegativeInteger(entry.scoreThirds, `${path}.scoreThirds`);
   if (Math.floor(Number(entry.scoreThirds) / 3) !== entry.score) {
@@ -6114,10 +6196,11 @@ function assertLedgerValue(
   value: unknown,
   path: string,
   repositoryIds: readonly string[],
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is ScoreEvent {
   const event = assertObject(value, path);
   assertString(event.id, `${path}.id`);
-  assertActorValue(event.actor, `${path}.actor`);
+  assertActorValue(event.actor, `${path}.actor`, validatedActors);
   assertEnum(event.category, SCORE_CATEGORIES, `${path}.category`);
   assertNonNegativeNumber(event.points, `${path}.points`);
   const eventPoints = Number(event.points);
@@ -6589,13 +6672,14 @@ export function replayRetainedReviewAttribution(
 function assertAttributionValue(
   value: unknown,
   path: string,
+  validatedActors?: Map<string, GitHubActor>,
 ): asserts value is ModelAttribution {
   const attribution = assertObject(value, path);
   assertString(attribution.id, `${path}.id`);
   assertString(attribution.sourceId, `${path}.sourceId`);
   assertRepositoryUrl(attribution.sourceUrl, `${path}.sourceUrl`);
   assertString(attribution.artifactId, `${path}.artifactId`);
-  assertNullableActor(attribution.actor, `${path}.actor`);
+  assertNullableActor(attribution.actor, `${path}.actor`, validatedActors);
   assertString(attribution.provider, `${path}.provider`);
   assertString(attribution.model, `${path}.model`);
   assertString(attribution.identifier, `${path}.identifier`);
@@ -6737,8 +6821,15 @@ export function assertLeaderboardSnapshot(
   if (!Array.isArray(snapshot.leaders)) {
     throw new Error("snapshot.leaders must be an array");
   }
+  // The parsed snapshot repeats the same actor facts on thousands of rows.
+  // Retain only successful checks in this validation, with copied field values.
+  const validatedActors = new Map<string, GitHubActor>();
   const validatedLeaders = snapshot.leaders.map((valueEntry, index) => {
-    assertLeaderValue(valueEntry, `snapshot.leaders[${index}]`);
+    assertLeaderValue(
+      valueEntry,
+      `snapshot.leaders[${index}]`,
+      validatedActors,
+    );
     return valueEntry;
   });
   if (
@@ -6754,7 +6845,12 @@ export function assertLeaderboardSnapshot(
     throw new Error("snapshot.ledger must be an array");
   }
   const validatedLedger = snapshot.ledger.map((event, index) => {
-    assertLedgerValue(event, `snapshot.ledger[${index}]`, repositoryIds);
+    assertLedgerValue(
+      event,
+      `snapshot.ledger[${index}]`,
+      repositoryIds,
+      validatedActors,
+    );
     return event;
   });
   if (
@@ -6817,11 +6913,7 @@ export function assertLeaderboardSnapshot(
     for (let index = 1; index < validatedReviewExclusions.length; index += 1) {
       const previous = validatedReviewExclusions[index - 1];
       const current = validatedReviewExclusions[index];
-      if (
-        previous.pullRequestId.localeCompare(current.pullRequestId) > 0 ||
-        (previous.pullRequestId === current.pullRequestId &&
-          previous.reviewId.localeCompare(current.reviewId) > 0)
-      ) {
+      if (compareReviewExclusions(previous, current) > 0) {
         throw new Error(
           "snapshot.reviewExclusions must be ordered by pull request and review ID",
         );
@@ -7108,7 +7200,11 @@ export function assertLeaderboardSnapshot(
   }
   const validatedAttributions = snapshot.attributions.map(
     (attribution, index) => {
-      assertAttributionValue(attribution, `snapshot.attributions[${index}]`);
+      assertAttributionValue(
+        attribution,
+        `snapshot.attributions[${index}]`,
+        validatedActors,
+      );
       return attribution;
     },
   );
