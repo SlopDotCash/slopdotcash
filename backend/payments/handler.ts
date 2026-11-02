@@ -43,6 +43,7 @@ import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
   MonthlyPaymentError,
+  monthlyPaymentSettingSequence,
 } from "./monthly";
 import { readMonthlyAuthorization } from "./monthly-publication";
 import {
@@ -139,6 +140,10 @@ export interface PaymentDeploymentIdentity {
 }
 /** The attester must still have this long to submit a binding authorization. */
 const BINDING_SUBMISSION_WINDOW_SECONDS = 600;
+/** bind-challenge only ever issues consents with this lifetime. */
+const BINDING_CONSENT_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
+/** Clock-skew allowance between challenge issuance and the authorize call. */
+const BINDING_EXPIRY_SLACK_SECONDS = 3600;
 function directTransferQuery(
   column: "project_id" | "github_user_id",
   separate = false,
@@ -173,6 +178,14 @@ export async function handlePaymentsApi(
   )
     return json(403, { error: "origin_forbidden" });
   try {
+    const monthlySettingsRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly-settings$/.exec(path);
+    // Capture before session resolution or body reads can wait behind an opt-out.
+    // This is server state, never an expected generation supplied by the client.
+    const monthlySettingSequence =
+      monthlySettingsRoute && request.method === "POST" && deps.monthly
+        ? await monthlyPaymentSettingSequence(deps.db, monthlySettingsRoute[1])
+        : undefined;
     const fundingRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-funding$/.exec(path);
     if (fundingRoute && request.method === "POST") {
@@ -288,20 +301,25 @@ export async function handlePaymentsApi(
       ).filter(
         (row) => deps.tier === "staging" || !isTestnetNetwork(row.network),
       );
-      const storedCursor = await deps.db
-        .prepare(
-          "SELECT network,position,synced_at FROM payment_chain_cursors WHERE project_id=?",
-        )
-        .bind(projectId)
-        .first<{ network: string; position: string; synced_at: string }>();
-      // A cursor on an excluded network is treated as absent, so the reported
-      // coverage stays consistent with the filtered amount rows under the same
-      // tier rule.
+      // A project keeps one cursor per scanned network. A cursor on an
+      // excluded network is treated as absent, so the reported coverage stays
+      // consistent with the filtered amount rows under the same tier rule; a
+      // testnet cursor must not hide a production cursor that sorts after it.
+      const storedCursors = JSON.parse(
+        (
+          await deps.db
+            .prepare(
+              "SELECT json_group_array(json_object('network',network,'position',position,'synced_at',synced_at)) items FROM (SELECT * FROM payment_chain_cursors WHERE project_id=? ORDER BY network)",
+            )
+            .bind(projectId)
+            .first<{ items: string }>()
+        )?.items ?? "[]",
+      ) as { network: string; position: string; synced_at: string }[];
       const cursor =
-        storedCursor &&
-        (deps.tier === "staging" || !isTestnetNetwork(storedCursor.network))
-          ? storedCursor
-          : null;
+        storedCursors.find(
+          (stored) =>
+            deps.tier === "staging" || !isTestnetNetwork(stored.network),
+        ) ?? null;
       if (!rows.length && !cursor)
         return json(503, { error: "project_payments_not_indexed" });
       const assets = new Map<
@@ -365,7 +383,14 @@ export async function handlePaymentsApi(
           new Response(
             JSON.stringify({
               projectId: vaultRoute[1],
-              snapshots: await projectVaultSnapshots(deps.db, vaultRoute[1]),
+              // Production excludes testnet networks, mirroring the /totals
+              // deployment-tier rule (#1738). Staging keeps testnet snapshots
+              // because it pays in testnet stablecoins.
+              snapshots: (
+                await projectVaultSnapshots(deps.db, vaultRoute[1])
+              ).filter(
+                (s) => deps.tier === "staging" || !isTestnetNetwork(s.network),
+              ),
               staleAfterMs: VAULT_SNAPSHOT_STALE_MS,
               servedAt: now,
             }),
@@ -485,6 +510,10 @@ export async function handlePaymentsApi(
                 : null,
             query.has("after") ? cursor("after") : 0,
             query.has("through") ? cursor("through") : null,
+            // Production excludes testnet networks, mirroring the /totals,
+            // /vault, and /received deployment-tier rules. Staging keeps them
+            // because it pays in testnet stablecoins.
+            deps.tier === "staging",
           ),
         );
       } catch (error) {
@@ -632,8 +661,6 @@ export async function handlePaymentsApi(
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))(?:\/(allocations|finalize|commitment|reserve-release))?$/.exec(
         path,
       );
-    const monthlySettingsRoute =
-      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly-settings$/.exec(path);
     if (monthlyRoute || monthlySettingsRoute) {
       if (!deps.monthly)
         return json(503, { error: "monthly_awards_unavailable" });
@@ -654,6 +681,7 @@ export async function handlePaymentsApi(
               monthlySettingsRoute[1],
               member,
               body.automatic,
+              monthlySettingSequence,
             ),
           );
         }
@@ -947,7 +975,7 @@ export async function handlePaymentsApi(
       const nowSeconds = Math.floor(Date.parse(now) / 1000);
       const expiresAt = authorize
         ? (body.expiresAt as string)
-        : String(nowSeconds + 90 * 24 * 60 * 60);
+        : String(nowSeconds + BINDING_CONSENT_LIFETIME_SECONDS);
       const binding = {
         githubUserId: member.githubId,
         destination: wallet.wallet_address,
@@ -966,6 +994,18 @@ export async function handlePaymentsApi(
         BigInt(nowSeconds + BINDING_SUBMISSION_WINDOW_SECONDS)
       )
         return json(400, { error: "authorization_expires_too_soon" });
+      // The challenge only ever issues a 90-day consent, so a signature
+      // over a later expiry is not one it issued; refuse to store an
+      // effectively non-expiring authorization.
+      if (
+        BigInt(expiresAt) >
+        BigInt(
+          nowSeconds +
+            BINDING_CONSENT_LIFETIME_SECONDS +
+            BINDING_EXPIRY_SLACK_SECONDS,
+        )
+      )
+        return json(400, { error: "authorization_expires_too_late" });
       // Store the encoding the vault accepts: a recovery byte of 0 or 1
       // becomes 27 or 28; a high-s signature is refused.
       const signature = canonicalEvmSignature(body.signature as string);
