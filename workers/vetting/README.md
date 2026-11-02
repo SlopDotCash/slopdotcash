@@ -31,13 +31,18 @@ mean the code is free of all malware.
 A build, install or provisioning recipe is recognized by its name, so the
 same bytes are classified the same way whether they sit in a `Makefile`, a
 `Dockerfile`, a `Containerfile` or a `Jenkinsfile`. tox runs `commands` from
-`tox.ini` and `tox.toml`, so both names are install surfaces. tox 4 also runs
-those commands from `pyproject.toml` when the file contains a `[tool.tox`
-table (`[tool.tox]`, `[tool.tox.env.*]`, `[tool.tox.env_run_base]`, or
-`legacy_tox_ini` under that table) and from `setup.cfg` when it contains
-`[tox:tox]`. The `[testenv]` and `[testenv:…]` commands in that `setup.cfg`
-are part of the same install surface. A `pyproject.toml` or `setup.cfg`
-without that table stays a manifest.
+`tox.ini` and `tox.toml`, so both names are install surfaces. tox 4 loads
+`pyproject.toml` with its TOML parser and runs those commands when `tool.tox`
+is a table: a `[tool.tox…]` header (`[tool.tox]`, `[tool.tox.env.*]`,
+`[tool.tox.env_run_base]`, quoted keys included), a dotted key or non-empty
+inline table under `[tool]` or at the document root (`tox.commands`,
+`tox = { … }`, `tool.tox…`, `tool = { tox = { … } }`), and `legacy_tox_ini`
+in that table. A string, array, or empty `tox` value is not a table. An array
+of tables (`[[tool.tox]]`, `[[tool.tox.env]]`) is not one either. `setup.cfg`
+is loaded only with a `[tox:tox]` section. INI has no dotted-key or
+inline-table form. The `[testenv]` and `[testenv:…]` commands in that
+`setup.cfg` are part of the same install surface. A `pyproject.toml` or
+`setup.cfg` without that table stays a manifest.
 
 CMake evaluates a file named by `include()` during configure, so that file is
 install content even when its name carries no recipe extension. Only a literal
