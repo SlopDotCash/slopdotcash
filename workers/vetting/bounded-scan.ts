@@ -143,7 +143,9 @@ const PACKAGE_MANAGER_CONFIGS = new Set([
 const INSTALL_FILES = new Set([
   "setup.py",
   "build.rs",
+  "extconf.rb",
   "makefile",
+  "makefile.pl",
   "justfile",
   "install.sh",
   "postinstall.js",
@@ -175,6 +177,7 @@ const INSTALL_FILES = new Set([
   "gnumakefile.in",
   "configure.ac",
   "build",
+  "build.pl",
   "build.sbt",
   "build.boot",
   "build.bazel",
@@ -311,6 +314,15 @@ function commandToken(name: string): string {
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
+/**
+ * Interpreters that read their program from standard input when no script
+ * file argument is given, so a download piped into one executes the
+ * download exactly as a pipe into a shell does.
+ */
+const INTERPRETER_COMMAND = commandToken(
+  String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
+);
+const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -325,7 +337,7 @@ const RULES: Rule[] = [
     // case. A closing quote is not required. A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`\/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
+      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
@@ -343,7 +355,7 @@ const RULES: Rule[] = [
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`\/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
@@ -363,10 +375,8 @@ const RULES: Rule[] = [
   {
     threat: "secret-exfiltration",
     severity: "high",
-    pattern: new RegExp(
-      String.raw`JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*/)?(?:curl|wget|ncat|netcat|nc)\b`,
-      "iu",
-    ),
+    pattern:
+      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b/iu,
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
@@ -381,9 +391,46 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // Process substitution hands a remote download to a shell without a
+    // pipe: `bash <(curl ...)`, `sh <(curl ...)`, `source <(curl ...)`
+    // and `. <(curl ...)` are the same act. Shell flags can select stdin
+    // or syntax-only mode, so this rule covers a direct script argument.
+    // Only curl/wget inside the substitution count; `bash <(cat local.sh)` stays clean.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()'"])(?:(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+|source\s+|\.\s+)<\(\s*(?:curl|wget)\b`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a shell via process substitution",
+  },
+
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     pattern:
       /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
     summary: "Executes decoded or obfuscated code",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // Reading a response object does not execute its body. Match the direct
+    // response-text forms; other data flow needs the model's source review.
+    pattern:
+      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.text\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
+    summary: "Executes code fetched from the network",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // The interpreter is the pipe target the shell rule above does not
+    // name. It matches only when the interpreter reads its program from
+    // the pipe: bare, with `-`, or with Python's unbuffered option. Arbitrary
+    // flags can instead print a version or select a different program.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a remote download in an interpreter",
   },
   {
     threat: "unsafe-execution",
@@ -414,6 +461,32 @@ const RULES: Rule[] = [
     pattern: /[​-‏‪-‮⁦-⁩]/u,
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A decoder between the download and the executor changes nothing
+    // about what runs: the shell or interpreter still receives the
+    // downloaded bytes, decoded. The pipe rules above require the
+    // executor immediately after the first pipe, so
+    // `curl … | base64 -d | sh` matched nothing. Only a decode stage
+    // qualifies: encoding, checksumming or saving a download keeps no
+    // finding, and decoding local content has no download to run.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode)|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a decoded remote download in a shell or interpreter",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A direct script argument can execute a URL without a separate download.
+    // Match a command line or a JSON task value, with only known no-value
+    // Deno permission flags. A URL after a local script is just script data.
+    pattern:
+      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
+    summary: "Runs a remote script URL directly",
   },
 ];
 
