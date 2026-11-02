@@ -1064,6 +1064,7 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
   );
   const recoveryEnvironment = {
     PAYMENTS_DB: db,
+    PAYMENT_NETWORKS: JSON.stringify([config.network]),
     SOLANA_PAYMENT_EXECUTOR: {
       async fetch(request) {
         assert.equal(new URL(request.url).pathname, "/v1/attempt-status");

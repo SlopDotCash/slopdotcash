@@ -49,6 +49,20 @@ export default defineConfig(({ command, isPreview }) => {
         },
       }
     : {};
+  const publicReadProxy: ProxyOptions = {
+    target: localReadOrigin,
+    changeOrigin: true,
+    rewrite: (path) =>
+      path.replace(/^\/data\/project-registry\.json/, "/api/v1/projects"),
+    bypass: (request) =>
+      request.method === "GET" || request.method === "HEAD" ? undefined : false,
+    configure: (proxy) => {
+      proxy.on("proxyReq", (request) => {
+        request.removeHeader("cookie");
+        request.removeHeader("authorization");
+      });
+    },
+  };
 
   return {
     plugins: [
@@ -248,7 +262,7 @@ export default defineConfig(({ command, isPreview }) => {
         ],
       },
       proxy: {
-        ...localBackendProxy,
+        // Public payment and wallet reads must win over the local API catch-all.
         "^/api/v1/wallet-claims/actors/[1-9][0-9]*/current(?:\\?.*)?$": {
           target: localApiOrigin,
           changeOrigin: true,
@@ -263,26 +277,12 @@ export default defineConfig(({ command, isPreview }) => {
             });
           },
         },
-        "^/(?:api/v1/projects|api/v1/payments/projects/[^/?]+/vault|api/v1/payments/[^?]+/direct-transfers|api/v1/payments/received|\\.well-known/slop/projects\\.json|data/project-registry\\.json)(?:\\?.*)?$":
-          {
-            target: localReadOrigin,
-            changeOrigin: true,
-            rewrite: (path) =>
-              path.replace(
-                /^\/data\/project-registry\.json/,
-                "/api/v1/projects",
-              ),
-            bypass: (request) =>
-              request.method === "GET" || request.method === "HEAD"
-                ? undefined
-                : false,
-            configure: (proxy) => {
-              proxy.on("proxyReq", (request) => {
-                request.removeHeader("cookie");
-                request.removeHeader("authorization");
-              });
-            },
-          },
+        "^/(?:api/v1/payments/projects/[^/?]+/vault|api/v1/payments/[^?]+/direct-transfers|api/v1/payments/received)(?:\\?.*)?$":
+          { ...publicReadProxy },
+        ...localBackendProxy,
+        // Project edits and reads stay local; read-only mode uses the registry.
+        "^/(?:api/v1/projects|\\.well-known/slop/projects\\.json|data/project-registry\\.json)(?:\\?.*)?$":
+          { ...publicReadProxy },
         // Published snapshots (leaderboard, points, cycles, profiles) are build
         // outputs. A local file from the generators wins; otherwise read the
         // published copy so the leaderboard loads without a live ingestion run.
