@@ -335,6 +335,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     });
   await expect(secondBreakdown).toContainText("1.96 TEST");
   await expect(secondBreakdown).toContainText("0.04 TEST");
+  await awards.getByLabel("Award for first-contributor").fill("1.8");
   await awards.getByLabel("Award for second-contributor").fill("1.5");
   await awards
     .getByRole("button", { name: "Save second-contributor", exact: true })
@@ -345,6 +346,49 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   expect(changes).toEqual([
     { githubUserId: "2", grossBase: "1500000000", expectedSequence: 0 },
   ]);
+  // Saving another row keeps this unchanged row's unsaved draft.
+  await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
+    "1.8",
+  );
+  // An ended session must not lend its local edits to a later signed-in owner.
+  for (const refusal of [401, 403]) {
+    status = refusal;
+    await load.click();
+    if (refusal === 401)
+      await expect(
+        awards.getByRole("link", { name: "Sign in with GitHub" }),
+      ).toBeVisible();
+    else
+      await expect(awards.getByRole("alert")).toContainText(
+        "maintainer authority",
+      );
+    status = 200;
+    await load.click();
+    await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
+      "1.23456789",
+    );
+    await expect(
+      awards.getByRole("button", {
+        name: "Save first-contributor",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await awards.getByLabel("Award for first-contributor").fill("1.8");
+  }
+  // Another maintainer changes the underlying value before this owner refreshes.
+  // The refreshed sequence must not authorize an old draft over that new value.
+  allocations[0].grossBase = "1600000000";
+  sequence += 1;
+  await load.click();
+  await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
+    "1.6",
+  );
+  await expect(
+    awards.getByRole("button", { name: "Save first-contributor", exact: true }),
+  ).toBeDisabled();
+  allocations[0].grossBase = "1234567890";
+  sequence += 1;
+  await load.click();
   // After the cutoff, with the automatic default on, allocations are fixed.
   cutoffAt = "2026-10-01T00:00:00.000Z";
   await load.click();
@@ -689,9 +733,9 @@ test("a monthly proposal with no public cycle is reachable", async ({
   ).toBeDisabled();
 });
 
-test("a stale public cycle does not lock the review month", async ({
+test("a stale public cycle does not lock the review month or discard its draft", async ({
   page,
-}) => {
+}, info) => {
   // The public index holds only a stale September cycle. The review must
   // open on the last closed month and walk calendar months in both
   // directions. The archived fixture supplies a valid published entry;
@@ -742,6 +786,7 @@ test("a stale public cycle does not lock the review month", async ({
     name: "Previous award month",
   });
   const next = page.getByRole("button", { name: "Next award month" });
+  await awards.getByLabel("Award for first-contributor").fill("1.8");
   await expect(next).toBeDisabled();
   await previous.click();
   await expect(navigation).toContainText("October 2026");
@@ -756,4 +801,14 @@ test("a stale public cycle does not lock the review month", async ({
   await next.click();
   await expect(navigation).toContainText("November 2026");
   await expect(awards).toContainText("first-contributor");
+  await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
+    "1.8",
+  );
+  await expect(
+    awards.getByRole("button", { name: "Save first-contributor", exact: true }),
+  ).toBeEnabled();
+  await page.screenshot({
+    path: info.outputPath("retained-month-draft.png"),
+    fullPage: true,
+  });
 });
