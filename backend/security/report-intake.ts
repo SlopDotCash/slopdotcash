@@ -532,6 +532,51 @@ async function routedNotice(
   ]);
 }
 
+const PRIOR_CASE_LIMIT = 25;
+
+/**
+ * Recent cases of the same project in the analyzer's input shape. Intake
+ * screening passed none, so the model could not compare a report with the cases
+ * a maintainer sees in analysis (#2010). Verification is not required: intake
+ * runs before a receipt is verified, and the duplicate pair in #2010 arrived 45
+ * seconds apart. Rejected links and spam-only cases stay out of the context.
+ */
+async function priorCaseRefs(
+  deps: Pick<SecurityApiDependencies, "db">,
+  projectId: string,
+  caseId: string,
+): Promise<SecurityAnalysisInput["priorCases"]> {
+  const rows =
+    (
+      await deps.db
+        .prepare(
+          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
+              LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+              WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
+                AND (i.case_id IS NULL OR i.review_decision='forward'
+                     OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+              ORDER BY a.attempt DESC LIMIT 1) AS summary
+             FROM security_cases c
+            WHERE c.project_id = ? AND c.id <> ?
+              AND c.submission_state <> 'link-rejected'
+              AND NOT EXISTS (SELECT 1 FROM security_submission_intake spam
+                              WHERE spam.case_id = c.id AND spam.screening_state = 'spam')
+            ORDER BY c.received_at DESC LIMIT ${PRIOR_CASE_LIMIT}`,
+        )
+        .bind(projectId, caseId)
+        .all<{
+          id: string;
+          root_cause_key: string | null;
+          summary: string | null;
+        }>()
+    ).results ?? [];
+  return rows.map((entry) => ({
+    id: entry.id,
+    rootCauseKey: entry.root_cause_key,
+    summary: entry.summary,
+  }));
+}
+
 /** Called only after persisted receipt; failures leave a visible, retryable state. */
 export async function screenStoredReport(
   deps: SecurityApiDependencies,
@@ -626,7 +671,11 @@ export async function screenStoredReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await priorCaseRefs(
+          deps,
+          submission.project_id,
+          row.case_id,
+        ),
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -714,7 +763,7 @@ export async function screenLegacyReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await priorCaseRefs(deps, projectId, ""),
       },
       ANALYSIS_TIMEOUT_MS,
     );

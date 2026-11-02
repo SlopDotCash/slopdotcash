@@ -1063,6 +1063,26 @@ describe("durable private report controls", () => {
     expect(t.analyzed).toHaveLength(1);
   });
 
+  test("intake screening carries the project's earlier cases", async () => {
+    const t = fixture();
+    const first = await t.create("prior-case-first0", REPORTER, {
+      ...REPORT,
+      summary: `${REPORT.summary} first`,
+    });
+    expect(first.status).toBe(201);
+    const earlier = required(first.body.submission);
+    const second = await t.create("prior-case-second0", OTHER, {
+      ...REPORT,
+      summary: `${REPORT.summary} second`,
+      description: `${REPORT.description} A second, unrelated reproduction.`,
+    });
+    expect(second.status).toBe(201);
+    const screened = required(t.screened.at(-1));
+    expect(screened.priorCases.map((entry) => entry.id)).toContain(
+      earlier.caseId,
+    );
+  });
+
   test.each(["needs-information", "spam"] as const)(
     "a %s report needs explicit human forwarding before assessment",
     async (decision) => {
