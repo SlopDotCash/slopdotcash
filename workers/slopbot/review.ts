@@ -48,6 +48,7 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
+import { guardHexMisread } from "./hex-misread";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -1345,6 +1346,10 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // A 64-character hex string is a SHA-256 digest. A 0x token is an integer
+  // literal, not a name. Drop a low_quality finding that says otherwise
+  // before it is published (#1930, PRD section 5).
+  verdict = guardHexMisread(verdict);
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).

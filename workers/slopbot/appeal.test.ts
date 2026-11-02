@@ -305,6 +305,59 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
       assert.equal(await response.text(), expected);
     }
     assert.equal(queued.length, 2);
+    const beforeLaterAppeals = queued.length;
+    for (const [delivery, body, commentId] of [
+      [
+        "appeal-middle",
+        "The digest is a valid SHA-256.\n/slopbot appeal\nThe assertion passes locally.",
+        21,
+      ],
+      [
+        "appeal-end",
+        "The pinned ELF hash is correct and the test passes.\n\n/slopbot appeal",
+        22,
+      ],
+    ] as const) {
+      const appealPayload = {
+        action: "created",
+        installation: { id: 1 },
+        repository: {
+          id: Number(project.authority.repositoryId),
+          name: repo,
+          private: false,
+          owner: { login: owner },
+        },
+        sender: { id: 42, type: "User" },
+        issue: { number: 1, pull_request: {} },
+        comment: { id: commentId, body },
+      };
+      const appealBody = JSON.stringify(appealPayload);
+      const appealResponse = await worker.fetch(
+        new Request("https://slopbot.example/github/webhook", {
+          method: "POST",
+          body: appealBody,
+          headers: {
+            "x-github-event": "issue_comment",
+            "x-github-delivery": delivery,
+            "x-hub-signature-256": `sha256=${createHmac("sha256", env.SLOPBOT_WEBHOOK_SECRET).update(appealBody).digest("hex")}`,
+          },
+        }),
+        env,
+      );
+      assert.equal(appealResponse.status, 202);
+      assert.equal(await appealResponse.text(), "queued");
+    }
+    assert.equal(queued.length, beforeLaterAppeals + 2);
+    assert.equal(queued.at(-2)?.kind, "appeal");
+    assert.equal(queued.at(-1)?.kind, "appeal");
+    assert.equal(
+      queued.at(-2)?.kind === "appeal" ? queued.at(-2)?.appealCommentId : null,
+      21,
+    );
+    assert.equal(
+      queued.at(-1)?.kind === "appeal" ? queued.at(-1)?.appealCommentId : null,
+      22,
+    );
   } finally {
     globalThis.fetch = nativeFetch;
     server.stop(true);
@@ -341,6 +394,22 @@ test("jobFor matches /slopbot appeal and /slopbot dispute on any line and with a
   );
   assert.equal(trailingAppeal?.kind, "appeal");
   assert.equal(trailingAppeal?.appealCommentId, 10);
+
+  // Command on its own line, with explanation before and after it.
+  const middleAppeal = jobFor(
+    "issue_comment",
+    "del-1b",
+    {
+      ...basePayload,
+      comment: {
+        id: 101,
+        body: "The digest is a valid SHA-256.\n/slopbot appeal\nThe assertion passes locally.",
+      },
+    },
+    "99",
+  );
+  assert.equal(middleAppeal?.kind, "appeal");
+  assert.equal(middleAppeal?.appealCommentId, 101);
 
   // Command with colon
   const colonAppeal = jobFor(
