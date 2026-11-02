@@ -108,7 +108,6 @@ test("recognized Python and shell source keeps its existing unsafe-execution che
   }
 });
 
-
 test("seed phrase or private key next to a wallet signing or broadcast method is detected", () => {
   // The wallet-drainer medium rule matches mnemonic/seed-phrase/private-key
   // within 120 chars of a network-send method. `sendTransaction` was already
