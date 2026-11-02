@@ -12,6 +12,7 @@ import {
   notifyProjectScanFailed,
   notifySecurityReportReceived,
   notifySlopbotInstallationLost,
+  projectsServedByInstallation,
 } from "./events";
 import { handleNotificationsApi } from "./handler";
 
@@ -39,13 +40,28 @@ function open() {
       detail: string | null;
       action_path: string;
     }[];
-  /** A listed project: legacy applicant plus GitHub steward. */
-  const project = (id: string, status: "active" | "paused", repo: string) => {
+  /** A listed project: legacy applicant plus GitHub steward. A transferred
+   * repository keeps its original id and records its current path as an
+   * alias; its GitHub URL names the current path, by default in the
+   * canonical `https://github.com/owner/name` spelling. */
+  const project = (
+    id: string,
+    status: "active" | "paused",
+    repo: string,
+    current = repo,
+    githubUrl = `https://github.com/${current}`,
+  ) => {
     const manifestWith = (state: string) =>
       JSON.stringify({
         id,
         status: state,
-        repositories: [{ id: repo }],
+        repositories: [
+          {
+            id: repo,
+            githubUrl,
+            ...(current === repo ? {} : { aliases: [current] }),
+          },
+        ],
         steward: { github: { actorId: STEWARD } },
       });
     const manifest = manifestWith(status);
@@ -59,6 +75,10 @@ function open() {
          VALUES ('${id}','${status}',1,'${manifest}','${"a".repeat(64)}','${T}','${T}','application-${id}');
        INSERT INTO project_repositories (repository_key,project_id) VALUES ('${repo.toLowerCase()}','${id}');`,
     );
+    if (current !== repo)
+      sqlite.exec(
+        `INSERT INTO project_repositories (repository_key,project_id) VALUES ('${current.toLowerCase()}','${id}');`,
+      );
   };
   return { db, sqlite, rows, project };
 }
@@ -192,7 +212,9 @@ describe("exception-only notification events", () => {
     const manifest = JSON.stringify({
       id: "gamma",
       status: "active",
-      repositories: [{ id: "example/gamma" }],
+      repositories: [
+        { id: "example/gamma", githubUrl: "https://github.com/example/gamma" },
+      ],
       steward: { github: { actorId: STEWARD } },
     });
     sqlite.exec(
@@ -209,10 +231,25 @@ describe("exception-only notification events", () => {
     );
     for (let replay = 0; replay < 2; replay++)
       await db.batch([
-        notifySlopbotInstallationLost(db, 55, R),
+        notifySlopbotInstallationLost(
+          db,
+          55,
+          R,
+          await projectsServedByInstallation(db, "Example"),
+        ),
         // A time that is not the recorded change writes nothing.
-        notifySlopbotInstallationLost(db, 56, R),
-        notifySlopbotInstallationLost(db, 55, T),
+        notifySlopbotInstallationLost(
+          db,
+          56,
+          R,
+          await projectsServedByInstallation(db, "elsewhere"),
+        ),
+        notifySlopbotInstallationLost(
+          db,
+          55,
+          T,
+          await projectsServedByInstallation(db, "Example"),
+        ),
       ] as never);
     const lost = [
       {
@@ -232,6 +269,119 @@ describe("exception-only notification events", () => {
     });
     expect(rows(APPLICANT)).toEqual(lost);
     expect(rows(STEWARD)).toEqual(lost);
+  });
+
+  test("losing an installation under a repository's former owner notifies no one", async () => {
+    const { db, sqlite, rows, project } = open();
+    // Transferred from `example` to `neworg`: Slopbot reviews only the current
+    // path, so the `example` installation no longer serves this project.
+    project("delta", "active", "example/delta", "neworg/delta");
+    sqlite.exec(
+      `INSERT INTO slopbot_installations (installation_id,account_id,account_login,account_type,created_at,removed_at)
+         VALUES (55,77,'Example','Organization','${T}','${R}'),
+                (57,79,'NewOrg','Organization','${T}','${R}');`,
+    );
+    await db.batch([
+      notifySlopbotInstallationLost(
+        db,
+        55,
+        R,
+        await projectsServedByInstallation(db, "Example"),
+      ),
+    ] as never);
+    expect(rows(STEWARD)).toEqual([]);
+    expect(rows(APPLICANT)).toEqual([]);
+    await db.batch([
+      notifySlopbotInstallationLost(
+        db,
+        57,
+        R,
+        await projectsServedByInstallation(db, "NewOrg"),
+      ),
+    ] as never);
+    const lost = [
+      {
+        event_key: `slopbot-installation:57:${R}:delta`,
+        kind: "project_installation_lost",
+        subject: "delta",
+        detail: null,
+        action_path: "/projects/delta",
+      },
+    ];
+    expect(rows(STEWARD)).toEqual(lost);
+    expect(rows(APPLICANT)).toEqual(lost);
+  });
+
+  test("a current URL in any accepted spelling still reaches the current owner", async () => {
+    const { db, sqlite, rows, project } = open();
+    // `project-schema.mjs` accepts any `https://github.com` origin URL whose
+    // pathname names a registered identity, so a manifest may spell the
+    // current path with a query string, an explicit default port, another
+    // letter case or a trailing slash. Each of these projects moved from
+    // `example` to `neworg`.
+    project(
+      "delta",
+      "active",
+      "example/delta",
+      "neworg/delta",
+      "https://github.com/neworg/delta?tab=readme-ov-file",
+    );
+    project(
+      "epsilon",
+      "active",
+      "example/epsilon",
+      "neworg/epsilon",
+      "https://GitHub.com:443/NewOrg/Epsilon/",
+    );
+    // WHATWG URL parsing resolves dot segments and backslashes before the
+    // validator reads the pathname, so these are accepted as well.
+    project(
+      "zeta",
+      "active",
+      "example/zeta",
+      "neworg/zeta",
+      "https://github.com/./NewOrg/x/../zeta",
+    );
+    project(
+      "eta",
+      "active",
+      "example/eta",
+      "neworg/eta",
+      "https://github.com\\NewOrg\\eta",
+    );
+    sqlite.exec(
+      `INSERT INTO slopbot_installations (installation_id,account_id,account_login,account_type,created_at,removed_at)
+         VALUES (55,77,'Example','Organization','${T}','${R}'),
+                (57,79,'NewOrg','Organization','${T}','${R}');`,
+    );
+    await db.batch([
+      notifySlopbotInstallationLost(
+        db,
+        55,
+        R,
+        await projectsServedByInstallation(db, "Example"),
+      ),
+    ] as never);
+    expect(rows(STEWARD)).toEqual([]);
+    expect(rows(APPLICANT)).toEqual([]);
+    for (let replay = 0; replay < 2; replay++)
+      await db.batch([
+        notifySlopbotInstallationLost(
+          db,
+          57,
+          R,
+          await projectsServedByInstallation(db, "NewOrg"),
+        ),
+      ] as never);
+    const lost = ["delta", "epsilon", "eta", "zeta"].map((id) => ({
+      event_key: `slopbot-installation:57:${R}:${id}`,
+      kind: "project_installation_lost",
+      subject: id,
+      detail: null,
+      action_path: `/projects/${id}`,
+    }));
+    expect(rows(STEWARD)).toEqual(lost);
+    expect(rows(APPLICANT)).toEqual(lost);
   });
 
   test("a verified report receipt reaches only its reporter, once, with no acknowledgment", async () => {

@@ -44,8 +44,8 @@ import {
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
 import {
-  projectRestriction,
   publicRestrictionOf,
+  retiredByRestriction,
 } from "../projects/enforcement";
 import type { RepositoryAccessReader } from "../projects/setup";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
@@ -393,45 +393,13 @@ async function restrictionRetired(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
 ): Promise<boolean> {
-  const persistence = new CloudflareProjectPersistence(deps.db);
-  const restriction = projectRestriction(
+  const retired = await retiredByRestriction(
+    new CloudflareProjectPersistence(deps.db),
     projectId,
-    await persistence.listEnforcements(),
   );
-  if (restriction.state === "clear") return false;
-  for (const record of [...restriction.records].reverse()) {
-    if (record.stateAfter === "clear") break;
-    if (
-      (record.action !== "quarantine" && record.action !== "ban") ||
-      record.result !== "revision_appended" ||
-      record.afterRevision === null
-    )
-      continue;
-    const [before, after] = await Promise.all([
-      persistence.getRevisionText(projectId, record.beforeRevision),
-      persistence.getRevisionText(projectId, record.afterRevision),
-    ]);
-    if (
-      before === null ||
-      after === null ||
-      before.manifestSha256 !== record.beforeManifestSha256 ||
-      after.manifestSha256 !== record.afterManifestSha256
-    )
-      fail(
-        500,
-        "internal_error",
-        "The restriction revision evidence is missing",
-      );
-    const previous = JSON.parse(before.manifestText) as ProjectDefinition;
-    const applied = JSON.parse(after.manifestText) as ProjectDefinition;
-    if (
-      previous.listingTier !== "retired" &&
-      applied.status === "paused" &&
-      applied.listingTier === "retired"
-    )
-      return true;
-  }
-  return false;
+  if (retired === null)
+    fail(500, "internal_error", "The restriction revision evidence is missing");
+  return retired;
 }
 
 /** Reporting needs a registered repository, not financial terms. */
@@ -1822,7 +1790,7 @@ async function recordPrivateReports(
             )
         : deps.db
             .prepare(
-              "UPDATE security_cases SET submission_state = 'verified', received_at = ?, received_at_source = 'github-verified', verified_at = ?, verified_by_github_id = ?, policy_revision = ?, terms = ?, award_state = ?, reporter_github_login = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND submission_state = 'claimed'",
+              "UPDATE security_cases SET submission_state = 'verified', received_at = ?, received_at_source = 'github-verified', verified_at = ?, verified_by_github_id = ?, policy_revision = ?, terms = ?, award_state = ?, reporter_github_login = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND submission_state = 'claimed' AND NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))",
             )
             .bind(
               ...values,
@@ -2381,6 +2349,12 @@ async function planChange(
           terms: frozen.terms ? JSON.stringify(frozen.terms) : null,
           award_state: frozen.terms ? "pending" : "not-applicable",
           owner_github_id: actor.githubId,
+        },
+        requireSql:
+          "NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))",
+        unmet: {
+          code: "advisory_already_recorded",
+          message: "This advisory already has a verified case",
         },
       };
     }
