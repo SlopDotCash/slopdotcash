@@ -236,14 +236,28 @@ export async function handlePointsApi(
           .bind(node, node, id),
         deps.db
           .prepare(
-            "INSERT INTO points_sessions(token_hash,actor_id,expires_at) SELECT ?,actor_id,? FROM points_members WHERE actor_id=? AND github_id=?",
+            "INSERT INTO points_sessions(token_hash,actor_id,expires_at) SELECT ?,actor_id,? FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NULL",
           )
           .bind(hash, expires, node, id),
         deps.db
           .prepare("DELETE FROM points_sessions WHERE expires_at <= ?")
           .bind(now),
       ]);
-      if (results.some((r) => !r.success) || results[2].meta?.changes !== 1)
+      if (results[2].meta?.changes !== 1) {
+        const closed = await deps.db
+          .prepare(
+            "SELECT closed_at FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NOT NULL",
+          )
+          .bind(node, id)
+          .first<{ closed_at: string }>();
+        if (closed)
+          return json(409, {
+            error: "account_closed",
+            closedAt: closed.closed_at,
+          });
+        throw new Error("Points transaction failed");
+      }
+      if (results.some((r) => !r.success))
         throw new Error("Points transaction failed");
       const member = await deps.db
         .prepare(

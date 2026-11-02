@@ -163,6 +163,64 @@ export default {async fetch(request,env){
     .prepare("SELECT COUNT(*) total FROM payment_attempts")
     .first();
   assert.equal(attempts.total, 2);
+  // A shared ledger can retain awards for networks this Worker does not serve.
+  // They must not consume its 50-row dispatch page or acquire its leases.
+  const servedId = `0x${"c".repeat(64)}`;
+  await db.batch(
+    Array.from({ length: 51 }, (_, index) => {
+      const served = index === 50;
+      const id = served
+        ? servedId
+        : `0x${(100 + index).toString(16).padStart(64, "0")}`;
+      return db
+        .prepare(
+          "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,?,'101',?,'base',?,?,6,'100','2',?,'reserved',?,NULL)",
+        )
+        .bind(
+          id,
+          served ? "clock" : "other",
+          served ? "base-sepolia" : "base-mainnet",
+          vault,
+          deployment.asset,
+          (100 + index).toString(16).padStart(64, "0"),
+          stamp,
+        );
+    }),
+  );
+  await db.batch(
+    Array.from({ length: 51 }, (_, index) => {
+      const id =
+        index === 50
+          ? servedId
+          : `0x${(100 + index).toString(16).padStart(64, "0")}`;
+      return db
+        .prepare("INSERT INTO payment_outbox VALUES(?,'ready',NULL,NULL,?)")
+        .bind(id, index === 50 ? stamp : "2026-10-28T00:00:00.000Z");
+    }),
+  );
+  const scoped = await runtime.dispatchFetch("https://slop.cash/dispatch");
+  assert.equal(scoped.status, 200, await scoped.text());
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT state FROM payment_outbox WHERE obligation_id=?")
+        .bind(servedId)
+        .first()
+    ).state,
+    "submitted",
+  );
+  const untouched = await db
+    .prepare(
+      "SELECT COUNT(*) total FROM payment_outbox b JOIN payment_obligations o ON o.id=b.obligation_id WHERE o.network='base-mainnet' AND b.state='ready' AND b.lease_token IS NULL",
+    )
+    .first();
+  assert.equal(untouched.total, 50);
+  const foreignAttempts = await db
+    .prepare(
+      "SELECT COUNT(*) total FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network='base-mainnet'",
+    )
+    .first();
+  assert.equal(foreignAttempts.total, 0);
   console.log(
     JSON.stringify({
       nativeD1: true,

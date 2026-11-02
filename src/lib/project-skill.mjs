@@ -8,13 +8,12 @@
 import {
   CONTRIBUTION_FIELDS,
   PROJECT_SKILL_TEMPLATES,
+  validIntegrationBranch,
 } from "./project-schema.mjs";
 
 const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const BRANCH = /^[A-Za-z0-9._/-]{1,255}$/u;
 const DIGEST = /^[0-9a-f]{64}$/u;
-const PLACEHOLDER = /\{\{SLOP_[A-Z_]+\}\}/u;
 const USAGE_ADAPTERS = Object.freeze({
   codex: "codex",
   "claude-code": "claude",
@@ -23,6 +22,13 @@ const USAGE_ADAPTERS = Object.freeze({
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
+
+function branchCode(value) {
+  const runs = value.match(/`+/gu) ?? [];
+  if (runs.length === 0) return `\`${value}\``;
+  const fence = "`".repeat(Math.max(...runs.map((run) => run.length)) + 1);
+  return `${fence} ${value} ${fence}`;
+}
 
 function bytes(value) {
   return typeof value === "string" ? encoder.encode(value) : value;
@@ -51,7 +57,7 @@ export function renderProjectSkill({
     skill?.sourcePath !== template ||
     !PROJECT_ID.test(manifest.id) ||
     !REPOSITORY.test(repository?.id ?? "") ||
-    !BRANCH.test(repository?.integrationBranch ?? "") ||
+    !validIntegrationBranch(repository?.integrationBranch) ||
     !contribution ||
     !Number.isSafeInteger(registry.revision) ||
     registry.revision < 1 ||
@@ -69,10 +75,17 @@ export function renderProjectSkill({
     "{{SLOP_INTEGRATION_BRANCH}}": repository.integrationBranch,
   };
   let skillText = decoder.decode(bytes(templateFiles["SKILL.md"]));
-  for (const [token, value] of Object.entries(values))
-    skillText = skillText.replaceAll(token, value);
-  if (PLACEHOLDER.test(skillText))
-    throw new TypeError(`${template} has an unknown placeholder`);
+  // A literal branch name is not another template. Substitute only once.
+  skillText = skillText.replace(
+    /`\{\{SLOP_INTEGRATION_BRANCH\}\}`|\{\{SLOP_[A-Z_]+\}\}/gu,
+    (token) => {
+      if (token === "`{{SLOP_INTEGRATION_BRANCH}}`")
+        return branchCode(repository.integrationBranch);
+      if (!Object.hasOwn(values, token))
+        throw new TypeError(`${template} has an unknown placeholder`);
+      return values[token];
+    },
+  );
   const project = {
     schemaVersion: "1",
     projectId: manifest.id,
