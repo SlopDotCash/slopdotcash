@@ -203,6 +203,35 @@ describe("exception-only notification events", () => {
     expect(rows(STEWARD)).toEqual(failed);
   });
 
+  test("a scan failure stores the owner-facing location detail once", async () => {
+    const { db, sqlite, rows, project } = open();
+    project("alpha", "paused", "example/alpha");
+    const id = "vet_incomplete_repo";
+    const result = JSON.stringify({
+      assessmentId: id,
+      disposition: "incomplete",
+      assessed: { commitSha: "c".repeat(40), templateSha256: "d".repeat(64) },
+    });
+    sqlite.exec(
+      `INSERT INTO vetting_assessments (id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state,policy_version,result,result_sha256,signing_key_sha256,completed_at)
+         VALUES ('${id}','alpha',1,'${"a".repeat(64)}','${"e".repeat(64)}','${"c".repeat(40)}','${"d".repeat(64)}','${APPLICANT}','applicant','${T}','Setup scan','incomplete','policy-1','${result}','${"f".repeat(64)}','${"0".repeat(64)}','${R}');`,
+    );
+    const detail = "Findings in the project repository block clearance.";
+    for (let replay = 0; replay < 2; replay++)
+      await db.batch([notifyProjectScanFailed(db, id, detail)] as never);
+    const failed = [
+      {
+        event_key: "project-scan:vet_incomplete_repo",
+        kind: "project_scan_failed",
+        subject: "alpha",
+        detail,
+        action_path: "/projects/alpha",
+      },
+    ];
+    expect(rows(APPLICANT)).toEqual(failed);
+    expect(rows(STEWARD)).toEqual(failed);
+  });
+
   test("losing the Slopbot installation reaches each affected project's owners once", async () => {
     const { db, sqlite, rows, project } = open();
     project("alpha", "active", "example/alpha");
