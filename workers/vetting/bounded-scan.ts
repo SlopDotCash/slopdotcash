@@ -235,6 +235,14 @@ const INSTALL_HOOKS = [
   "postinstall",
   "prepare",
   "prepublish",
+  // `npm install` and `npm ci` run these around `prepare`; so does
+  // `pnpm install`.
+  "preprepare",
+  "postprepare",
+  // npm runs this after any command that changes node_modules.
+  "dependencies",
+  // pnpm runs this before it installs any dependency.
+  "pnpm:devPreinstall",
 ];
 /**
  * Composer runs these `scripts` events itself on `install` and `update`. The
