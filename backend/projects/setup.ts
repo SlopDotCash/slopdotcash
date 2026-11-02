@@ -253,12 +253,32 @@ function scanCheck(
         message:
           "The repository or skill template changed since the last scan.",
       };
-    case "quarantined":
+    case "quarantined": {
+      const assessment = clearance.assessment;
+      if (assessment.completedAt === null) {
+        return {
+          state: "quarantined",
+          message:
+            "The last scan could not finish, so it did not clear the project.",
+        };
+      }
+      const loc = assessment.findingsLocation;
+      let message = "The last scan finished, but findings block clearance.";
+      if (loc === "template") {
+        message =
+          "The last scan finished, but findings in Slop's skill template block clearance.";
+      } else if (loc === "repository") {
+        message =
+          "The last scan finished, but findings in the project repository block clearance.";
+      } else if (loc === "both") {
+        message =
+          "The last scan finished, but findings in both the repository and skill template block clearance.";
+      }
       return {
         state: "quarantined",
-        message:
-          "The last scan could not finish, so it did not clear the project.",
+        message,
       };
+    }
     case "banned":
       return {
         state: "banned",
@@ -285,7 +305,7 @@ export function projectSetupStatus(input: {
   activatedRevision: number | null;
   checkedAt: string;
 }): ProjectSetupStatus {
-  const { project, restriction, authority, access } = input;
+  const { project, restriction, authority, access, clearance } = input;
   const manifest = project.manifest;
   const repository = manifest.repositories[0].id;
   const installation: ProjectSetupStatus["checks"]["installation"] =
@@ -362,10 +382,15 @@ export function projectSetupStatus(input: {
     nextAction = action("wait_for_scan", scan.message);
   } else if (scan.state === "quarantined") {
     state = "action_required";
-    nextAction = action(
-      "request_scan",
-      `${scan.message} Fix the cause if you know it, then request a new scan.`,
-    );
+    const loc =
+      clearance.state === "quarantined"
+        ? clearance.assessment.findingsLocation
+        : undefined;
+    const guidance =
+      loc === "template"
+        ? "This is being addressed in Slop's skill template; you may request a new scan once updated."
+        : "Fix the cause if you know it, then request a new scan.";
+    nextAction = action("request_scan", `${scan.message} ${guidance}`);
   } else {
     state = "retry";
     nextAction = action(
