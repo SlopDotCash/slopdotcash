@@ -251,7 +251,11 @@ export function assertFundingPreparation(value: unknown): FundingPreparation {
     throw new TypeError("Preparation counts do not reconcile");
   return value as FundingPreparation;
 }
-/** Same canonical actor tie break as project-view, using integer arithmetic only. */
+/**
+ * Same canonical actor tie break as project-view, using integer arithmetic
+ * only. English case folding and collation keep that order the same on every
+ * host, so a tied remainder lands on the same contributor.
+ */
 function allocateFundingReview(
   total: bigint,
   rows: FundingPreparationContributor[],
@@ -267,10 +271,10 @@ function allocateFundingReview(
     (a, b) =>
       (a.remainder === b.remainder ? 0 : a.remainder > b.remainder ? -1 : 1) ||
       a.r.actor.login
-        .toLowerCase()
-        .localeCompare(b.r.actor.login.toLowerCase()) ||
-      a.r.actor.login.localeCompare(b.r.actor.login) ||
-      a.r.actor.id.localeCompare(b.r.actor.id),
+        .toLocaleLowerCase("en")
+        .localeCompare(b.r.actor.login.toLocaleLowerCase("en"), "en") ||
+      a.r.actor.login.localeCompare(b.r.actor.login, "en") ||
+      a.r.actor.id.localeCompare(b.r.actor.id, "en"),
   );
   let remaining = sum ? total - ranked.reduce((s, r) => s + r.amount, 0n) : 0n;
   for (const r of ranked) {

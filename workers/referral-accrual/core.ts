@@ -173,11 +173,18 @@ export function pendingPeriods(
   return pending;
 }
 
-/** The window closes `months` calendar months after the first paid event. */
+/**
+ * The window closes `months` calendar months after the first paid event. A
+ * day that the target month does not have becomes that month's last day, so
+ * the window never runs into the month after it.
+ */
 export function windowEnd(firstPaidAt: string, months: number): string {
   const first = new Date(firstPaidAt);
+  const year = first.getUTCFullYear();
+  const month = first.getUTCMonth() + months;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const end = new Date(first.getTime());
-  end.setUTCMonth(end.getUTCMonth() + months);
+  end.setUTCFullYear(year, month, Math.min(first.getUTCDate(), lastDay));
   return end.toISOString();
 }
 

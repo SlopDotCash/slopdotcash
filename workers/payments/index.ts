@@ -225,8 +225,14 @@ export async function recoverUncertainAttempts(
           "UPDATE payment_attempts SET transaction_id=?,state='submitted' WHERE id=? AND transaction_id IS NULL AND state IN ('unknown','prepared')",
         ).bind(status.transactionId, attempt.idempotencyKey),
         env.PAYMENTS_DB.prepare(
-          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid'",
-        ).bind(new Date().toISOString(), attempt.obligationId),
+          // A delayed status response must not undo finalized-failure recovery.
+          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid' AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='submitted' AND transaction_id=?)",
+        ).bind(
+          new Date().toISOString(),
+          attempt.obligationId,
+          attempt.idempotencyKey,
+          status.transactionId,
+        ),
       ]);
     } catch (error) {
       failures.push(error);
@@ -275,9 +281,12 @@ export async function runPaymentDispatch(
   if (!env.EVM_PAYMENT_EXECUTOR && !env.SOLANA_PAYMENT_EXECUTOR)
     throw new Error("Payment execution service unavailable");
   const rows = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(obligation_id) ids FROM (SELECT obligation_id FROM payment_outbox WHERE state='ready' OR (state='processing' AND lease_until<?) ORDER BY updated_at LIMIT 50)",
+    "SELECT json_group_array(obligation_id) ids FROM (SELECT b.obligation_id FROM payment_outbox b JOIN payment_obligations o ON o.id=b.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND (b.state='ready' OR (b.state='processing' AND b.lease_until<?)) ORDER BY b.updated_at LIMIT 50)",
   )
-    .bind(now().toISOString())
+    .bind(
+      JSON.stringify(parsePaymentNetworks(env.PAYMENT_NETWORKS)),
+      now().toISOString(),
+    )
     .first<{ ids: string }>();
   const failures: unknown[] = [];
   for (const id of JSON.parse(rows?.ids ?? "[]") as string[]) {
