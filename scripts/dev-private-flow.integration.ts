@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { HISTORICAL_PROJECTS } from "../src/lib/projects.mjs";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
@@ -334,9 +334,9 @@ try {
     "/.slop-dev/slop.sqlite",
     `/@fs${directory}/slop.sqlite`,
     `/@fs${directory}/private-marker.txt`,
-    `/${alias.split("/").at(-1)}/private-marker.txt`,
-    `/${fixtureDirectory.split("/").at(-1)}/.dev.vars`,
-    `/${fixtureDirectory.split("/").at(-1)}/%2edev%2evars`,
+    `/${basename(alias)}/private-marker.txt`,
+    `/${basename(fixtureDirectory)}/.dev.vars`,
+    `/${basename(fixtureDirectory)}/%2edev%2evars`,
   ];
   for (const path of paths)
     assert.equal(

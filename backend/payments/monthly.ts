@@ -204,6 +204,20 @@ async function loadChanges(
   };
 }
 
+/** Bind an enable to the setting state before a request's asynchronous checks. */
+export async function monthlyPaymentSettingSequence(
+  db: D1Database,
+  projectId: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      "SELECT COALESCE(MAX(sequence),0) sequence FROM monthly_payment_settings WHERE project_id=?",
+    )
+    .bind(projectId)
+    .first<{ sequence: number }>();
+  return row?.sequence ?? 0;
+}
+
 /** Automatic monthly payment is the PRD default; only the owner turns it off. */
 export async function automaticMonthlyPayment(
   db: D1Database,
@@ -321,7 +335,7 @@ async function freezeMonthlyPeriod(
     expectedSequence?: number;
     now: Date;
   },
-): Promise<"frozen" | "already-frozen"> {
+): Promise<"frozen" | "already-frozen" | "automatic-off" | "project-changed"> {
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   const { project, deployment } = input;
   const period = assertPeriod(input.period);
@@ -393,7 +407,7 @@ async function freezeMonthlyPeriod(
   });
   const inserted = await db
     .prepare(
-      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
+      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=? AND status='active') AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
     )
     .bind(
       project.id,
@@ -410,12 +424,50 @@ async function freezeMonthlyPeriod(
       project.id,
       period,
       sequence,
+      input.trigger,
+      project.id,
+      project.id,
+      project.revision,
+      project.manifestSha256,
       input.actorId,
     )
     .run();
   if (inserted.meta?.changes === 1) return "frozen";
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   if (await loadRun(db, project.id, period)) return "already-frozen";
+  const current = await db
+    .prepare("SELECT revision,manifest_sha256,status FROM projects WHERE id=?")
+    .bind(project.id)
+    .first<{ revision: number; manifest_sha256: string; status: string }>();
+  // The registry is append-only: a registered project cannot disappear.
+  // Isolated payment DBs have an empty projects table. Fail this unsupported
+  // topology explicitly instead of reporting a policy wait forever; keep the
+  // atomic project/revision guard for the shared production/staging database.
+  if (!current)
+    throw new MonthlyPaymentError(
+      503,
+      "payment_registry_unavailable",
+      "Monthly finalization requires the current project registry in the payment database.",
+    );
+  if (
+    current.revision !== project.revision ||
+    current.manifest_sha256 !== project.manifestSha256 ||
+    current.status !== "active"
+  ) {
+    if (input.trigger === "automatic") return "project-changed";
+    throw new MonthlyPaymentError(
+      409,
+      "project_changed",
+      "The project changed. Reload its awards.",
+    );
+  }
+  // The owner may turn automatic payment off during the reads above. Only
+  // the atomic insert can decide whether this automatic freeze is allowed.
+  if (
+    input.trigger === "automatic" &&
+    !(await automaticMonthlyPayment(db, project.id))
+  )
+    return "automatic-off";
   throw new MonthlyPaymentError(
     409,
     "allocations_changed",
@@ -664,17 +716,17 @@ export async function coordinateMonthlyPayments(input: {
           report.waiting.push({ key, reason: "vault-not-served" });
           continue;
         }
-        if (
-          (await freezeMonthlyPeriod(db, {
-            project,
-            deployment,
-            period,
-            trigger: "automatic",
-            actorId: null,
-            now,
-          })) === "frozen"
-        )
-          report.frozen.push(key);
+        const frozen = await freezeMonthlyPeriod(db, {
+          project,
+          deployment,
+          period,
+          trigger: "automatic",
+          actorId: null,
+          now,
+        });
+        if (frozen === "frozen") report.frozen.push(key);
+        else if (frozen === "automatic-off" || frozen === "project-changed")
+          report.waiting.push({ key, reason: frozen });
       } catch (error) {
         report.failures.push(error);
       }
@@ -1017,21 +1069,16 @@ export function monthlyOwnerService(deps: {
       }
       // Proposal reads may cross the cutoff. Use the write's time, after
       // those reads, for both eligibility and the recorded change.
-      const automatic = cutoff
-        ? await automaticMonthlyPayment(deps.db, project.id)
-        : false;
       const changedAt = deps.now();
-      if (cutoff && automatic && changedAt.getTime() >= cutoff.getTime())
-        throw new MonthlyPaymentError(
-          409,
-          "cutoff_passed",
-          "The cutoff for this month has passed. The automatic process pays the current allocations.",
-        );
+      const cutoffPassed =
+        cutoff !== null && changedAt.getTime() >= cutoff.getTime();
       let changed: number | undefined;
       try {
+        // Enabling automatic payment in another tab must also take effect
+        // before this allocation write, not only at an earlier settings read.
         const inserted = await deps.db
           .prepare(
-            `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at) SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+            `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at) SELECT ?,?,?,?,?,?,? WHERE (?=0 OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=0) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
           )
           .bind(
             project.id,
@@ -1041,6 +1088,8 @@ export function monthlyOwnerService(deps: {
             change.grossBase,
             actor.githubId,
             changedAt.toISOString(),
+            Number(cutoffPassed),
+            project.id,
             actor.githubId,
           )
           .run();
@@ -1063,6 +1112,15 @@ export function monthlyOwnerService(deps: {
       }
       if (changed !== 1) {
         await assertMonthlyParticipation(deps.db, actor.githubId);
+        if (
+          cutoffPassed &&
+          (await automaticMonthlyPayment(deps.db, project.id))
+        )
+          throw new MonthlyPaymentError(
+            409,
+            "cutoff_passed",
+            "The cutoff for this month has passed. The automatic process pays the current allocations.",
+          );
         throw new MonthlyPaymentError(
           409,
           "allocations_changed",
@@ -1071,14 +1129,25 @@ export function monthlyOwnerService(deps: {
       }
       return view(project, period);
     },
-    async setAutomatic(projectId: string, actor: GithubActor, on: boolean) {
+    async setAutomatic(
+      projectId: string,
+      actor: GithubActor,
+      on: boolean,
+      requestSequence?: number,
+    ) {
+      // An enable may wait on authority checks while a later opt-out succeeds.
+      // Capture its generation first; even another saved off must invalidate it.
+      const expectedSequence = on
+        ? (requestSequence ??
+          (await monthlyPaymentSettingSequence(deps.db, projectId)))
+        : 0;
       const project = await authorized(projectId, actor);
       await assertMonthlyParticipation(deps.db, actor.githubId);
       let changed: number | undefined;
       try {
         const inserted = await deps.db
           .prepare(
-            `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+            `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND (?=0 OR COALESCE(MAX(sequence),0)=?)`,
           )
           .bind(
             project.id,
@@ -1087,6 +1156,8 @@ export function monthlyOwnerService(deps: {
             deps.now().toISOString(),
             project.id,
             actor.githubId,
+            Number(on),
+            expectedSequence,
           )
           .run();
         changed = inserted.meta?.changes;
