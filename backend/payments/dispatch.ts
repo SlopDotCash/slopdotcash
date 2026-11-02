@@ -82,31 +82,42 @@ export async function dispatchPayment(
     return "unavailable";
   }
   const id = previous?.id ?? crypto.randomUUID();
-  if (!previous)
-    await db
+  if (!previous) {
+    // A delayed read can outlive this lease while another dispatcher creates
+    // and submits the attempt. Fence creation at the write, before calling
+    // the executor with a second idempotency key for the same award.
+    const prepared = await db
       .prepare(
-        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES(?,?,?,?,'prepared')",
+        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) SELECT ?,?,?,?,'prepared' WHERE EXISTS(SELECT 1 FROM payment_outbox WHERE obligation_id=? AND state='processing' AND lease_token=?)",
       )
-      .bind(id, obligationId, payment.claimId, timestamp)
+      .bind(id, obligationId, payment.claimId, timestamp, obligationId, lease)
       .run();
+    if (prepared.meta?.changes !== 1) return "unavailable";
+  }
+  // A different id is a second payout. Hold that outbox under this lease,
+  // outside the submit catch, so the catch cannot return it to `ready`.
+  let result: { transactionId: string };
   try {
-    const result = await executor.submit({ ...payment, idempotencyKey: id });
+    result = await executor.submit({ ...payment, idempotencyKey: id });
     if (!result.transactionId) throw new Error("Missing submitted transaction");
     await db.batch([
       db
         .prepare(
           // A retirement that raced this completion leaves the row `failed`
           // without a transaction; the signature that landed keeps its receipt.
-          "UPDATE payment_attempts SET state='submitted',transaction_id=? WHERE id=? AND (state IN ('prepared','unknown','submitted') OR (state='failed' AND transaction_id IS NULL))",
+          // A recorded transaction id is never replaced. The lease can expire
+          // while this submit is still in flight, and the retry uses the same
+          // attempt. A different id is a second payout, so it must not erase
+          // the receipt already stored.
+          `UPDATE payment_attempts SET state='submitted',transaction_id=? WHERE id=? AND ((transaction_id IS NULL AND (state IN ('prepared','unknown','submitted') OR state='failed')) OR (transaction_id=? AND state IN ('prepared','unknown','submitted')))`,
         )
-        .bind(result.transactionId, id),
+        .bind(result.transactionId, id, result.transactionId),
       db
         .prepare(
-          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=?",
+          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=? AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='submitted' AND transaction_id=?)",
         )
-        .bind(timestamp, obligationId, lease),
+        .bind(timestamp, obligationId, lease, id, result.transactionId),
     ]);
-    return "submitted";
   } catch (error) {
     await db.batch([
       db
@@ -122,4 +133,25 @@ export async function dispatchPayment(
     ]);
     throw error;
   }
+  const recorded = await db
+    .prepare(
+      "SELECT transaction_id id FROM payment_attempts WHERE id=? AND state='submitted'",
+    )
+    .bind(id)
+    .first<{ id: string }>();
+  if (recorded?.id === result.transactionId) return "submitted";
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE payment_outbox SET state='held',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND lease_token=?",
+      )
+      .bind(timestamp, obligationId, lease),
+    ...(heldNotices
+      ? await heldNotices(obligationId, timestamp)
+      : [
+          notifyPayoutHeld(db, obligationId, timestamp),
+          notifyPayoutException(db, obligationId, timestamp),
+        ]),
+  ]);
+  throw new Error("Submitted transaction conflicts with the recorded attempt");
 }
