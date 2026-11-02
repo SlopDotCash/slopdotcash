@@ -1017,7 +1017,7 @@ async function sendSubmission(
       "intake_unavailable",
       "Private reporting could not be verified; your draft is kept",
     );
-  if (!storedReport && deps.reportStorage)
+  if (!storedReport)
     await screenLegacyReport(deps, row.project_id, report, actor.githubId);
   // The send is recorded before GitHub is called; a lost answer is uncertain.
   let sending: SubmissionRow | null;

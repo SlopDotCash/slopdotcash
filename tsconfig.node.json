@@ -92,6 +92,7 @@
     "src/lib/points-summary.ts",
     "src/lib/use-snapshot.ts",
     "src/lib/profile-activity.ts",
+    "src/lib/reward-amount.ts",
     "src/lib/reward-cycle.ts",
     "src/lib/reward-finalization.ts",
     "src/lib/rewards.ts",
