@@ -47,7 +47,7 @@ const SCAN: Record<ProjectSetupStatus["checks"]["scan"]["state"], string> = {
   queued: "Queued",
   unscanned: "Not scanned",
   stale: "Needs a new scan",
-  quarantined: "Did not finish",
+  quarantined: "Not cleared",
   banned: "Blocked",
   unverified: "Not verified",
   unavailable: "Unavailable",
