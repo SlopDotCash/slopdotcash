@@ -471,11 +471,13 @@ const RULES: Rule[] = [
     // executor immediately after the first pipe, so
     // `curl … | base64 -d | sh` matched nothing. Only a decode stage
     // qualifies: encoding, checksumming or saving a download keeps no
-    // finding, and decoding local content has no download to run. Limit each
+    // finding, and decoding local content has no download to run. A
+    // decompression stage is a decode stage in the same sense: the shell
+    // or interpreter receives the downloaded bytes, decompressed. Limit each
     // decoder to known stream arguments: extra operands can read local files
     // and help/version flags do not decode the download.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d))|${commandToken("gunzip")}(?:\s+(?:-c|-dc|-cd))?|${commandToken("gzip")}\s+(?:-d|-dc|-cd|--decompress)|${commandToken("zcat")}|${commandToken("bunzip2")}(?:\s+(?:-c|-dc|-cd))?|${commandToken("bzip2")}\s+(?:-d|-dc|-cd|--decompress)|${commandToken("bzcat")}|${commandToken("unxz")}(?:\s+(?:-c|-dc|-cd))?|${commandToken("xz")}\s+(?:-d|-dc|-cd|--decompress)|${commandToken("xzcat")}|${commandToken("unzstd")}|${commandToken("zstdcat")}|${commandToken("zstd")}\s+(?:-d|-dc|-cd|--decompress))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a decoded remote download in a shell or interpreter",
