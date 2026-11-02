@@ -368,6 +368,7 @@ export async function dispatchSecurityMail(
       | Awaited<ReturnType<typeof enrolledDestination>>
       | Destination
       | undefined;
+    let destinationNotYetInEffect = false;
     try {
       registered = deps.generalEmail
         ? await enrolledDestination(deps.db, row.recipient_github_id)
@@ -401,24 +402,32 @@ export async function dispatchSecurityMail(
         continue;
       }
       if (Date.parse(destination.verifiedAt) > now.getTime()) {
-        // A verified record not yet in effect made no provider call; retry it
-        // on the bounded schedule.
-        const state = await retryWithoutProviderCall(deps, row);
-        if (state === "exhausted") await escalate(deps, row);
-        continue;
+        // A verified record not yet in effect made no provider call. Its
+        // retry transition runs after this preparation guard, so an
+        // escalation failure cannot re-enter the catch and record the same
+        // attempt a second time.
+        destinationNotYetInEffect = true;
+      } else {
+        await deps.db
+          .prepare(
+            "UPDATE security_notification_outbox SET destination_digest = ? WHERE id = ?",
+          )
+          .bind(
+            registered?.destinationVersion ??
+              (await destinationDigest(destination)),
+            row.id,
+          )
+          .run();
       }
-      await deps.db
-        .prepare(
-          "UPDATE security_notification_outbox SET destination_digest = ? WHERE id = ?",
-        )
-        .bind(
-          registered?.destinationVersion ??
-            (await destinationDigest(destination)),
-          row.id,
-        )
-        .run();
     } catch {
       // Preparation failed before any provider call; retry within the existing bound.
+      const state = await retryWithoutProviderCall(deps, row);
+      if (state === "exhausted") await escalate(deps, row);
+      continue;
+    }
+    if (destinationNotYetInEffect) {
+      // A verified record not yet in effect made no provider call; retry it
+      // on the bounded schedule.
       const state = await retryWithoutProviderCall(deps, row);
       if (state === "exhausted") await escalate(deps, row);
       continue;
