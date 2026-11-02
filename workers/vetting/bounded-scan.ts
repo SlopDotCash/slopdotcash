@@ -314,6 +314,15 @@ function commandToken(name: string): string {
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
+/**
+ * Interpreters that read their program from standard input when no script
+ * file argument is given, so a download piped into one executes the
+ * download exactly as a pipe into a shell does.
+ */
+const INTERPRETER_COMMAND = commandToken(
+  String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
+);
+const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -328,7 +337,7 @@ const RULES: Rule[] = [
     // case. A closing quote is not required. A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`\/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
+      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
@@ -346,7 +355,7 @@ const RULES: Rule[] = [
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`\/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
@@ -387,6 +396,19 @@ const RULES: Rule[] = [
     pattern:
       /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
     summary: "Executes decoded or obfuscated code",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // The interpreter is the pipe target the shell rule above does not
+    // name. It matches only when the interpreter reads its program from
+    // the pipe: bare, with `-`, or with Python's unbuffered option. Arbitrary
+    // flags can instead print a version or select a different program.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a remote download in an interpreter",
   },
   {
     threat: "unsafe-execution",
