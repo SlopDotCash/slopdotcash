@@ -75,11 +75,14 @@ export const PRIMARY_REPOSITORY = TARGET_REPOSITORIES[0] ?? null;
 /** Historical lookup never authorizes collection of a paused repository. */
 export function findRegisteredRepositoryById(id) {
   if (typeof id !== "string") return null;
+  const normalizedId = id.toLowerCase();
   return (
-    REGISTERED_REPOSITORIES.find((repository) =>
-      [repository.id, ...repository.aliases].some(
-        (alias) => alias.toLowerCase() === id.toLowerCase(),
-      ),
+    REGISTERED_REPOSITORIES.find(
+      (repository) =>
+        repository.id.toLowerCase() === normalizedId ||
+        repository.aliases.some(
+          (alias) => alias.toLowerCase() === normalizedId,
+        ),
     ) ?? null
   );
 }
