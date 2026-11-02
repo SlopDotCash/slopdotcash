@@ -140,6 +140,22 @@ const PACKAGE_MANAGER_CONFIGS = new Set([
   ".pnpmfile.cjs",
   "bunfig.toml",
 ]);
+/**
+ * Gradle and Maven configuration read on every build. The wrapper properties
+ * choose the distribution and wrapper JAR that `gradlew` and `mvnw` download
+ * and run. `gradle.properties` and `.mvn/jvm.config` set build JVM options,
+ * including agents; `.mvn/maven.config` adds CLI options and
+ * `.mvn/extensions.xml` loads build extensions. Each is an install surface,
+ * never unreviewed content.
+ */
+const JVM_BUILD_CONFIGS = new Set([
+  "gradle-wrapper.properties",
+  "maven-wrapper.properties",
+  "gradle.properties",
+]);
+/** Maven reads these names only from a project's `.mvn` directory. */
+const MAVEN_PROJECT_CONFIG =
+  /(?:^|\/)\.mvn\/(?:jvm\.config|maven\.config|extensions\.xml)$/u;
 const INSTALL_FILES = new Set([
   "setup.py",
   "build.rs",
@@ -284,6 +300,8 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
+    JVM_BUILD_CONFIGS.has(name) ||
+    MAVEN_PROJECT_CONFIG.test(lower) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
