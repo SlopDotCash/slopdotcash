@@ -442,6 +442,195 @@ test("a GYP include that leaves the repository is a visibility gap", () => {
   expect(inspection.findings).toEqual([]);
 });
 
+function expectResolvedInclude(gyp: string, path: string) {
+  const inspection = scanGyp(gyp, [path]);
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path,
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 2,
+  });
+  expect(inspection.visibilityGaps).not.toContain(
+    "GYP include not acquired: unresolved",
+  );
+}
+
+function expectUnresolvedInclude(gyp: string, paths: string[]) {
+  const inspection = scanGyp(gyp, paths);
+  expect(inspection.findings).toEqual([]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "partial",
+    items: 1,
+  });
+  expect(inspection.visibilityGaps).toContain(
+    "GYP include not acquired: unresolved",
+  );
+  return inspection;
+}
+
+test("a tuple-valued GYP includes loads each string member", () => {
+  // gyp iterates `includes` whatever its type. A one-element tuple is not a
+  // list, and the trailing comma is what makes it a tuple rather than grouping.
+  expectResolvedInclude(
+    `{
+'includes': ('evil.txt',),
+}
+`,
+    "evil.txt",
+  );
+  // A tuple entry used to be skipped with no gap. Its string members are paths.
+  expectResolvedInclude(
+    `{
+'includes': [('evil.txt',)],
+}
+`,
+    "evil.txt",
+  );
+  const both = scanGyp(
+    `{
+'includes': ('evil.txt', 'also.txt'),
+}
+`,
+    ["evil.txt", "also.txt"],
+  );
+  expect(both.findings).toContainEqual(
+    expect.objectContaining({
+      path: "also.txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(both.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 3,
+  });
+});
+
+test("a parenthesized GYP includes entry is the string it groups", () => {
+  // `('evil.txt')` has no comma, so Python evaluates it as the string, both
+  // when it is the includes value and when it is one list entry.
+  expectResolvedInclude(
+    `{
+'includes': [('evil.txt')],
+}
+`,
+    "evil.txt",
+  );
+  expectResolvedInclude(
+    `{
+'includes': ('evil.txt'),
+}
+`,
+    "evil.txt",
+  );
+  expectResolvedInclude(
+    `{
+'includes': 'evil.txt',
+}
+`,
+    "evil.txt",
+  );
+});
+
+test("a concatenated GYP includes entry is a visibility gap", () => {
+  // `+` is real Python, but the reader does not evaluate it. Recording the
+  // fragments `ev` and `il.txt` would review the wrong files and still miss
+  // the path gyp loads. The fragments are present so a wrong read cannot pass
+  // by treating them as missing.
+  const inspection = expectUnresolvedInclude(
+    `{
+'includes': ['ev' + 'il.txt'],
+}
+`,
+    ["evil.txt", "ev", "il.txt"],
+  );
+  expect(inspection.visibilityGaps).not.toContain(
+    "GYP include not acquired: ev",
+  );
+  expect(inspection.visibilityGaps).not.toContain(
+    "GYP include not acquired: il.txt",
+  );
+  expect(inspection.visibilityGaps).not.toContain(
+    "GYP include not acquired: evil.txt",
+  );
+});
+
+test("a non-literal GYP includes value is a visibility gap", () => {
+  // A bare name is a variable lookup. Skipping it without a gap records the
+  // repository as fully reviewed. The named file is in the tree so adopting
+  // it, or treating the name as a path, cannot look like "no includes".
+  expectUnresolvedInclude(
+    `{
+'includes': included_files,
+}
+`,
+    ["evil.txt", "included_files"],
+  );
+  expectUnresolvedInclude(
+    `{
+'includes': [join('evil.txt')],
+}
+`,
+    ["evil.txt"],
+  );
+  const mixed = scanGyp(
+    `{
+'includes': ['evil.txt', included_files],
+}
+`,
+    ["evil.txt", "included_files"],
+  );
+  expect(mixed.findings).toContainEqual(
+    expect.objectContaining({
+      path: "evil.txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(mixed.findings.map((finding) => finding.path)).not.toContain(
+    "included_files",
+  );
+  expect(mixed.coverage.installScripts).toEqual({
+    state: "partial",
+    items: 2,
+  });
+  expect(mixed.visibilityGaps).toContain(
+    "GYP include not acquired: unresolved",
+  );
+});
+
+test("a GYP includes inside a conditions branch is scanned", () => {
+  // gyp loads includes from every nested dict, including both sides of a
+  // conditions or target_conditions entry, before the condition is evaluated.
+  expectResolvedInclude(
+    `{
+'conditions': [
+['OS=="linux"', {
+'includes': ['evil.txt'],
+}],
+],
+}
+`,
+    "evil.txt",
+  );
+  expectResolvedInclude(
+    `{
+'target_conditions': [
+['OS=="win"', {
+'includes': ('evil.txt',),
+}],
+],
+}
+`,
+    "evil.txt",
+  );
+});
+
 test("a nested GYP include the scan cannot acquire is a visibility gap", () => {
   const inspection = inspected([
     {
