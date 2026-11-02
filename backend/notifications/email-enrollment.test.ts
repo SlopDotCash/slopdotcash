@@ -19,8 +19,32 @@ const MEMBER = "810000001";
 const OTHER = "810000002";
 const KEY = "ab".repeat(32);
 
-async function setup() {
+async function setup(
+  afterRead?: (sql: string) => Promise<void>,
+  beforeBatch?: () => Promise<void>,
+) {
   const { db, sqlite } = sqliteD1();
+  const apiDb: typeof db = {
+    ...db,
+    async batch(statements) {
+      await beforeBatch?.();
+      return db.batch(statements);
+    },
+    prepare(sql) {
+      const wrap = (
+        statement: ReturnType<typeof db.prepare>,
+      ): ReturnType<typeof db.prepare> => ({
+        ...statement,
+        bind: (...values: unknown[]) => wrap(statement.bind(...values)),
+        async first<T>() {
+          const result = await statement.first<T>();
+          await afterRead?.(sql);
+          return result;
+        },
+      });
+      return wrap(db.prepare(sql));
+    },
+  };
   let now = new Date("2026-10-30T12:00:00.000Z");
   let ready = true;
   let failure: boolean | string = false;
@@ -67,7 +91,7 @@ async function setup() {
         ...(body ? { body: JSON.stringify(body) } : {}),
       }),
       {
-        db,
+        db: apiDb,
         now: () => now,
         mailService: service,
         sessionActor: async () => (actor ? { githubId: actor } : null),
@@ -280,6 +304,115 @@ test("self-verification enables future private notices without pilot records; un
     availability: "verified",
   });
   h.sqlite.close();
+});
+
+test("a repeated issued unsubscribe supersedes a pending opt-in at the same timestamp", async () => {
+  let pause = false;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(async (sql) => {
+    if (!pause || !sql.includes("FROM notification_email_destinations")) return;
+    entered();
+    await waiting;
+  });
+  try {
+    await h.enroll();
+    const verified = await h.verify();
+    h.activity("issue-unsubscribe-link");
+    await dispatchActivityMail(h.worker);
+    const unsubscribe = await emailUnsubscribeToken(
+      KEY,
+      verified.body.destinationVersion as string,
+    );
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(200);
+    pause = true;
+    const pending = h.call("", {
+      enabled: true,
+      securityEnabled: true,
+      destinationVersion: verified.body.destinationVersion,
+    });
+    await started;
+    h.ready(false);
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(200);
+    pause = false;
+    release();
+    expect((await pending).status).toBe(409);
+    expect((await h.call()).body).toMatchObject({
+      enabled: false,
+      securityEnabled: false,
+    });
+    h.activity("after-repeated-unsubscribe");
+    h.security("security-after-repeated-unsubscribe");
+    await dispatchActivityMail(h.worker);
+    await dispatchSecurityMail(h.worker);
+    expect(h.mail).toHaveLength(2);
+    h.ready(true);
+    expect(
+      (
+        await h.call("", {
+          enabled: true,
+          securityEnabled: true,
+          destinationVersion: verified.body.destinationVersion,
+        })
+      ).status,
+    ).toBe(200);
+    h.activity("fresh-consent-after-unsubscribe");
+    await dispatchActivityMail(h.worker);
+    expect(h.mail).toHaveLength(3);
+  } finally {
+    release();
+    h.sqlite.close();
+  }
+});
+
+test("a newer opt-out supersedes pending verification without consuming its link", async () => {
+  let pause = false;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(undefined, async () => {
+    if (!pause) return;
+    pause = false;
+    entered();
+    await waiting;
+  });
+  try {
+    await h.enroll();
+    pause = true;
+    const pending = h.verify();
+    await started;
+    expect(
+      (await h.call("", { enabled: false, securityEnabled: false })).status,
+    ).toBe(200);
+    release();
+    expect((await pending).status).toBe(409);
+    expect((await h.call()).body).toMatchObject({
+      enabled: false,
+      securityEnabled: false,
+    });
+    expect((await h.verify()).body).toMatchObject({
+      enabled: true,
+      securityEnabled: true,
+    });
+  } finally {
+    release();
+    h.sqlite.close();
+  }
 });
 
 test("verification resends are bounded and invalidate old links without changing the active destination", async () => {

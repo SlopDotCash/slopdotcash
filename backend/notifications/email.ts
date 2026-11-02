@@ -152,13 +152,14 @@ async function handleEmailPreferenceForActor(
     return json(400, { error: "invalid_request" });
   const prior = await deps.db
     .prepare(
-      "SELECT enabled,security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
+      "SELECT enabled,security_enabled,destination_version,revision FROM notification_email_preferences WHERE github_id=?",
     )
     .bind(githubId)
     .first<{
       enabled: number;
       security_enabled: number | null;
       destination_version: string | null;
+      revision: number;
     }>();
   const withdraws =
     (prior?.enabled === 1 && body.enabled === false) ||
@@ -188,16 +189,14 @@ async function handleEmailPreferenceForActor(
   if (enabled && !requiresVerification && prior) {
     const result = await deps.db
       .prepare(
-        "UPDATE notification_email_preferences SET enabled=?,security_enabled=COALESCE(?,security_enabled),updated_at=? WHERE github_id=? AND enabled=? AND security_enabled IS ? AND destination_version IS ?",
+        "UPDATE notification_email_preferences SET enabled=?,security_enabled=COALESCE(?,security_enabled),updated_at=? WHERE github_id=? AND revision=?",
       )
       .bind(
         body.enabled ? 1 : 0,
         securityPresent ? (body.securityEnabled ? 1 : 0) : null,
         deps.now().toISOString(),
         githubId,
-        prior.enabled,
-        prior.security_enabled,
-        prior.destination_version,
+        prior.revision,
       )
       .run();
     if ((result.meta?.changes ?? 0) === 0)
@@ -207,19 +206,27 @@ async function handleEmailPreferenceForActor(
       ...(securityPresent ? { securityEnabled: body.securityEnabled } : {}),
     });
   }
-  await deps.db
+  // A verified destination is not proof that the preference read before that
+  // check is still current. A repeated opt-out can leave values and timestamps
+  // unchanged, so compare the revision advanced by every preference writer.
+  const result = await deps.db
     .prepare(`INSERT INTO notification_email_preferences(github_id,enabled,destination_version,updated_at,security_enabled) VALUES (?,?,?,?,?)
     ON CONFLICT(github_id) DO UPDATE SET enabled=excluded.enabled,
       destination_version=CASE WHEN excluded.destination_version='' THEN notification_email_preferences.destination_version ELSE excluded.destination_version END,
-      security_enabled=COALESCE(excluded.security_enabled,notification_email_preferences.security_enabled),updated_at=excluded.updated_at`)
+      security_enabled=COALESCE(excluded.security_enabled,notification_email_preferences.security_enabled),updated_at=excluded.updated_at
+    WHERE ?=0 OR notification_email_preferences.revision IS ?`)
     .bind(
       githubId,
       body.enabled ? 1 : 0,
       version,
       deps.now().toISOString(),
       securityPresent ? (body.securityEnabled ? 1 : 0) : null,
+      Number(enabled),
+      prior?.revision ?? null,
     )
     .run();
+  if ((result.meta?.changes ?? 0) === 0)
+    return json(409, { error: "preference_changed" });
   return json(200, {
     enabled: body.enabled,
     ...(securityPresent ? { securityEnabled: body.securityEnabled } : {}),
@@ -447,14 +454,28 @@ async function verifyEmail(
     !EMAIL_TOKEN.test(body.token)
   )
     return json(400, { error: "invalid_request" });
+  const prior = await deps.db
+    .prepare(
+      "SELECT revision FROM notification_email_preferences WHERE github_id=?",
+    )
+    .bind(githubId)
+    .first<{ revision: number }>();
   const version = randomEmailToken();
   const at = deps.now().toISOString();
   const result = await emailBatch(deps, [
     deps.db
       .prepare(
-        "UPDATE notification_email_verifications SET consumed_at=?,destination_version=? WHERE token_hash=? AND github_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?",
+        "UPDATE notification_email_verifications SET consumed_at=?,destination_version=? WHERE token_hash=? AND github_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>? AND (SELECT revision FROM notification_email_preferences WHERE github_id=?) IS ?",
       )
-      .bind(at, version, await verificationTokenHash(body.token), githubId, at),
+      .bind(
+        at,
+        version,
+        await verificationTokenHash(body.token),
+        githubId,
+        at,
+        githubId,
+        prior?.revision ?? null,
+      ),
     deps.db
       .prepare(`INSERT INTO notification_email_destinations(github_id,email,destination_version,verified_at)
       SELECT github_id,email,destination_version,consumed_at FROM notification_email_verifications WHERE github_id=? AND destination_version=?
