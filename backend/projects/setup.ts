@@ -22,6 +22,7 @@ import {
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
+import { quarantinedScanMessage } from "../vetting/summary";
 import type { RepositoryControl } from "./contracts";
 import type { ProjectRestriction } from "./enforcement";
 import { type GithubFetch, githubJson } from "./github-lookup";
@@ -253,30 +254,11 @@ function scanCheck(
         message:
           "The repository or skill template changed since the last scan.",
       };
-    case "quarantined": {
-      const assessment = clearance.assessment;
-      const loc = assessment.findingsLocation;
-      if (assessment.completedAt === null || !loc) {
-        return {
-          state: "quarantined",
-          message:
-            "The last scan could not finish, so it did not clear the project.",
-        };
-      }
-      let message = "Findings block clearance.";
-      if (loc === "template") {
-        message = "Findings in Slop's skill template block clearance.";
-      } else if (loc === "repository") {
-        message = "Findings in the project repository block clearance.";
-      } else if (loc === "both") {
-        message =
-          "Findings in both the repository and skill template block clearance.";
-      }
+    case "quarantined":
       return {
         state: "quarantined",
-        message,
+        message: quarantinedScanMessage(clearance.assessment),
       };
-    }
     case "banned":
       return {
         state: "banned",
