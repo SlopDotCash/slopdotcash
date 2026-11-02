@@ -293,15 +293,20 @@ export async function dispatchActivityMail(
     const text = row.essential
       ? "Your Slop account has a security notice."
       : "Your Slop inbox has an activity update.";
-    const unsubscribeToken =
-      registered && deps.unsubscribeKey
-        ? await issueEmailUnsubscribeToken(
-            deps.db,
-            deps.unsubscribeKey,
-            registered.destinationVersion,
-            deps.now(),
-          )
-        : null;
+    let unsubscribeToken: string | null = null;
+    try {
+      if (registered && deps.unsubscribeKey)
+        unsubscribeToken = await issueEmailUnsubscribeToken(
+          deps.db,
+          deps.unsubscribeKey,
+          registered.destinationVersion,
+          deps.now(),
+        );
+    } catch {
+      // Preparation failed before any provider call; retry within the existing bound.
+      await retryWithoutProviderCall(deps, row, "activity");
+      continue;
+    }
     const mime = inboxNoticeMime({
       from: deps.fromAddress,
       to: destination.email,
