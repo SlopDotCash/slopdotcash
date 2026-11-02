@@ -7,7 +7,6 @@ for (const retryStatus of [200, 401, 403]) {
     page,
     diagnostics,
   }, info) => {
-    diagnostics.allowPreviewApiMisses();
     const project = PROJECTS.find((entry) => entry.id === "asi");
     if (!project) throw new Error("Missing fixture project");
     await serveProjectMaintainer(page, () => project);
@@ -45,6 +44,23 @@ for (const retryStatus of [200, 401, 403]) {
         records: [],
       },
     });
+    await page.route("**/api/v1/admin/vetting?**", (route) =>
+      route.fulfill({
+        json: {
+          service: { state: "available", queueRegistrationAvailable: true },
+          projects: [
+            {
+              id: project.id,
+              name: project.name,
+              status: project.status,
+              revision: afterSave ? 2 : 1,
+              clearance: { state: "cleared", assessment: null },
+            },
+          ],
+          assessments: [],
+        },
+      }),
+    );
     const denied = diagnostics.allowResponse(
       503,
       "GET",
@@ -87,6 +103,15 @@ for (const retryStatus of [200, 401, 403]) {
       .getByRole("textbox", { name: "Short description", exact: true })
       .fill("A saved description with a verified outcome");
     await page
+      .getByRole("textbox", {
+        name: "Reason for revision (public)",
+        exact: true,
+      })
+      .fill("Update the description to match the accepted project scope.");
+    await expect(
+      page.getByRole("button", { name: "Save revision 2", exact: true }),
+    ).toBeEnabled();
+    await page
       .getByRole("button", { name: "Save revision 2", exact: true })
       .click();
     await expect(page.getByRole("alert")).toContainText(
@@ -95,6 +120,11 @@ for (const retryStatus of [200, 401, 403]) {
     await expect(
       page.getByRole("heading", { name: project.name, exact: true }),
     ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
     await expect(
       page.getByRole("link", { name: "Settings", exact: true }),
     ).toBeVisible();
@@ -113,6 +143,12 @@ for (const retryStatus of [200, 401, 403]) {
         .getByRole("alert")
         .getByRole("button", { name: "Retry", exact: true }),
     ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath(`retained-${retryStatus}-200.png`),
       fullPage: true,
