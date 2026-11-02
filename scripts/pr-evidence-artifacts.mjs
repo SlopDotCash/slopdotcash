@@ -174,8 +174,7 @@ function pngMetadata(bytes, complete) {
     } else if (type === "IHDR") {
       return null;
     } else if (type === "IDAT") {
-      if (length === 0) return null;
-      hasIdat = true;
+      if (length > 0) hasIdat = true;
     } else if (type === "IEND") {
       if (length !== 0 || !hasIdat || chunkEnd !== bytes.length) return null;
       return { height, kind: "image", width };
