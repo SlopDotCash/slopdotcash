@@ -92,9 +92,17 @@ export async function lookupGitHubActor(
   token: string | undefined,
   login: string,
   apiOrigin = GITHUB_API,
+  githubId?: string,
 ): Promise<GithubActor | null> {
   if (!validGithubLogin(login)) return null;
-  const user = await githubJson(fetcher, token, `/users/${login}`, apiOrigin);
+  const user = await githubJson(
+    fetcher,
+    token,
+    githubId === undefined
+      ? `/users/${login}`
+      : `/user/${encodeURIComponent(githubId)}`,
+    apiOrigin,
+  );
   if (!user) return null;
   // An organization or bot account exists, but it is not a person's account.
   if (typeof user.type === "string" && user.type !== "User")
@@ -109,7 +117,9 @@ export async function lookupGitHubActor(
     Number(user.id) <= 0 ||
     typeof user.login !== "string" ||
     !validGithubLogin(user.login) ||
-    user.login.toLowerCase() !== login.toLowerCase()
+    (githubId === undefined
+      ? user.login.toLowerCase() !== login.toLowerCase()
+      : String(user.id) !== githubId)
   )
     throw new GithubLookupError(
       502,
