@@ -100,9 +100,14 @@ export function registryDeployments(env: PaymentsWorkerEnvironment) {
 export async function recoverUncertainAttempts(
   env: PaymentsWorkerEnvironment,
 ): Promise<void> {
+  // Only this Worker's relayer journal can say whether one of its attempts was
+  // signed; another network's attempt belongs to that network's Worker. The
+  // scheduled run has already checked PAYMENT_NETWORKS (registryDeployments).
   const row = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.state='reserved' AND ((a.state IN ('unknown','prepared') AND a.transaction_id IS NULL) OR (o.chain='solana' AND a.state='submitted'))",
-  ).first<{ items: string }>();
+    "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND o.state='reserved' AND ((a.state IN ('unknown','prepared') AND a.transaction_id IS NULL) OR (o.chain='solana' AND a.state='submitted'))",
+  )
+    .bind(env.PAYMENT_NETWORKS)
+    .first<{ items: string }>();
   const failures: unknown[] = [];
   for (const attempt of JSON.parse(row?.items ?? "[]") as {
     idempotencyKey: string;
