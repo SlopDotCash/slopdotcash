@@ -226,11 +226,12 @@ export function HowItWorksPage() {
   );
 }
 
-function sponsorPoolLabel(reward: ProjectDefinition["reward"]): string {
+function sponsorPoolLabel(project: ProjectDefinition): string {
+  const { reward } = project;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
     return `external prize share · ${reward.externalOpportunity.name}`;
   }
-  return monthlyPoolLabel(reward);
+  return monthlyPoolLabel(reward, project.rewardAsset);
 }
 
 function WhoBuildsOnSlop({
@@ -470,7 +471,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project.reward)}</p>
+                <p>{sponsorPoolLabel(project)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}
