@@ -1,5 +1,6 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
   EnforcementAction,
@@ -1406,11 +1407,19 @@ async function ownerVault(
   const deployments = bounty
     ? current.manifest.securityBounty?.settlement?.deployments
     : current.manifest.escrow?.deployments;
-  if (body.step === "register" && typeof body.transactionId === "string") {
+  // EVM hashes are case-insensitive, and the manifest stores them lowercase.
+  // Solana signatures are base58 and keep their case.
+  const transactionId =
+    typeof body.transactionId === "string" &&
+    Object.hasOwn(ESCROW_NETWORKS, input.network) &&
+    ESCROW_NETWORKS[input.network].family === "evm"
+      ? body.transactionId.toLowerCase()
+      : body.transactionId;
+  if (body.step === "register" && typeof transactionId === "string") {
     const existing = deployments?.find(
       (d) =>
         d.network === input.network &&
-        d.deploymentTransaction === body.transactionId,
+        d.deploymentTransaction === transactionId,
     );
     if (existing)
       return json(200, {
@@ -1441,8 +1450,8 @@ async function ownerVault(
       review: await deps.vaultSetup.review(current, actor, input),
     });
   if (
-    typeof body.transactionId !== "string" ||
-    !isVaultCreationId(input.network, body.transactionId)
+    typeof transactionId !== "string" ||
+    !isVaultCreationId(input.network, transactionId)
   )
     fail(400, "invalid_request", "Enter the vault creation transaction hash.");
   // A wallet send may outlive an owner edit. Verify its exact creation intent
@@ -1504,7 +1513,7 @@ async function ownerVault(
     creation,
     actor,
     input,
-    body.transactionId,
+    transactionId,
   );
   if (!deployment) return json(200, { status: "pending" });
   const updated = await appendRevision(request, deps, {
