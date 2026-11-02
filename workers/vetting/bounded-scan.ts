@@ -142,6 +142,7 @@ const PACKAGE_MANAGER_CONFIGS = new Set([
 ]);
 const INSTALL_FILES = new Set([
   "setup.py",
+  "conanfile.py",
   "build.rs",
   "extconf.rb",
   "makefile",
