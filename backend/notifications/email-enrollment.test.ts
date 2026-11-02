@@ -414,6 +414,53 @@ test("a newer opt-out supersedes pending verification without consuming its link
     h.sqlite.close();
   }
 });
+test.each(["activity", "security"] as const)(
+  "%s mail retries failed unsubscribe preparation before contacting the provider",
+  async (channel) => {
+    const h = await setup();
+    try {
+      await h.enroll();
+      await h.verify();
+      h[channel]("prepare-storage-outage");
+      h.sqlite.exec(`CREATE TRIGGER fixture_unsubscribe_outage
+        BEFORE INSERT ON notification_email_unsubscribe_tokens
+        BEGIN SELECT RAISE(ABORT, 'Fixture unsubscribe storage outage'); END`);
+      const dispatch = () =>
+        channel === "activity"
+          ? dispatchActivityMail(h.worker)
+          : dispatchSecurityMail(h.worker);
+      const row = () =>
+        h.sqlite
+          .query(
+            `SELECT id,state,attempts FROM ${channel}_notification_outbox WHERE event_key=? AND recipient_github_id=?`,
+          )
+          .get("prepare-storage-outage", MEMBER) as {
+          id: string;
+          state: string;
+          attempts: number;
+        };
+      await dispatch();
+      expect(row()).toMatchObject({ state: "retrying", attempts: 1 });
+      expect(h.mail).toHaveLength(1); // The enrollment verification only.
+      h.sqlite.exec("DROP TRIGGER fixture_unsubscribe_outage");
+      h.advance();
+      await dispatch();
+      expect(row()).toMatchObject({ state: "provider-accepted", attempts: 2 });
+      expect(h.mail).toHaveLength(2);
+      await dispatch();
+      expect(h.mail).toHaveLength(2);
+      expect(
+        h.sqlite
+          .query(
+            `SELECT state FROM ${channel}_notification_delivery_events WHERE delivery_id=? ORDER BY attempt`,
+          )
+          .all(row().id),
+      ).toEqual([{ state: "retrying" }, { state: "provider-accepted" }]);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
 
 test("verification resends are bounded and invalidate old links without changing the active destination", async () => {
   const h = await setup();
