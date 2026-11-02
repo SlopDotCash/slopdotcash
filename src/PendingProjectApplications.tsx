@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "./Link";
 import { errorMessage } from "./lib/errors";
 import {
   listProjectSetup,
@@ -58,9 +57,9 @@ function PendingApplication({
     >
       <div className="setup-pending-application-action">
         {publication.status === "published" ? (
-          <Link href={`/projects/${publication.result.project.id}/manage`}>
+          <a href={`/projects/${publication.result.project.id}/manage`}>
             {application.manifest.name}
-          </Link>
+          </a>
         ) : (
           <strong>{application.manifest.name}</strong>
         )}
