@@ -152,6 +152,7 @@ const INSTALL_FILES = new Set([
   ".pnpmfile.js",
   ".envrc",
   "tasks.json",
+  "tox.ini",
   "devcontainer.json",
   "gnumakefile",
   "dockerfile",
