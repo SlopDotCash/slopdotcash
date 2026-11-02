@@ -950,6 +950,13 @@ describe("durable private report controls", () => {
     expect(first.intake.state).toBe("legitimate");
     expect(t.screeningCalls()).toBe(1);
     expect(t.screened[0]?.priorCases).toEqual([]);
+    // Even if a verified case already has a descriptive root-cause key in DB,
+    // intake screening must only see the id (reporter-visible reasons).
+    t.sqlite
+      .query(
+        "UPDATE security_cases SET root_cause_key = ? WHERE id = ?",
+      )
+      .run("vault-withdraw-reentrancy", first.caseId);
     const distinct = {
       ...REPORT,
       description: `${REPORT.description} Distinct second reproduction path.`,
@@ -968,6 +975,11 @@ describe("durable private report controls", () => {
       rootCauseKey: null,
       summary: null,
     });
+    expect(
+      t.screened[1]?.priorCases.every(
+        (entry) => entry.rootCauseKey === null && entry.summary === null,
+      ),
+    ).toBe(true);
     expect(t.analyzed).toHaveLength(2);
   });
 
