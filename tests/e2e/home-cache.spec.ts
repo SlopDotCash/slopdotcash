@@ -68,6 +68,9 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
     await expectAccessible(page);
     // Project owner avatars are optional decoration: a blocked avatar falls
     // back to the bundled initial and never delays the project list.
+    // Offscreen lazy avatars do not exercise that failure until brought into view.
+    for (const card of await page.locator(".project-card").all())
+      await card.scrollIntoViewIfNeeded();
     const avatar = /^https:\/\/avatars\.githubusercontent\.com\//u;
     expect(
       requests.filter((url) => !avatar.test(url) && /github/.test(url)),
