@@ -196,6 +196,17 @@ const INSTALL_FILES = new Set([
   "tuprules.tup",
 ]);
 /**
+ * Cargo and Bazel configuration read on every build. Each can name a program
+ * for the build to run: `build.rustc-wrapper`, `target.*.runner` and
+ * `target.*.linker` in `.cargo/config.toml` or the legacy `.cargo/config`,
+ * `--workspace_status_command` and `--run_under` in `.bazelrc` and the
+ * bazelrc files it imports, and `BAZELISK_BASE_URL` in `.bazeliskrc`, which
+ * chooses where Bazelisk downloads the Bazel binary it runs. Each is an
+ * install surface, never unreviewed content.
+ */
+const CARGO_CONFIG = /(?:^|\/)\.cargo\/config(?:\.toml)?$/u;
+const BAZEL_CONFIG = /(?:^|\/)(?:[^/]*\.bazelrc|\.bazeliskrc)$/u;
+/**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
  * `app.dockerfile`, or by a build-system definition extension, such as
  * `Helper.cmake`, `plugins.sbt`, `defs.bzl` or `App.csproj`. They run
@@ -285,6 +296,8 @@ export function surfacesOf(path: string): ScanSurface[] {
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
+    CARGO_CONFIG.test(lower) ||
+    BAZEL_CONFIG.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
     lower.startsWith(".vscode/") ||

@@ -63,6 +63,12 @@ is absolute, a URL, or outside the repository, is a visibility gap
 string literal is a visibility gap `GYP include not acquired: unresolved`.
 Either gap makes install-script coverage partial.
 
+Cargo and Bazel build configuration is an `installScripts` surface:
+`.cargo/config.toml` and the legacy `.cargo/config`, `.bazelrc` and the
+`*.bazelrc` files it imports, and `.bazeliskrc`. Each can name a program for
+the build to run, for example `build.rustc-wrapper` or
+`--workspace_status_command`.
+
 Package-manager configuration that the package manager reads on every install
 or run (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`) is
 also an `installScripts` surface, at any depth. Each can make the package
