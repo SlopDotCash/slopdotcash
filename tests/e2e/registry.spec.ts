@@ -1724,10 +1724,30 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   const locationNotice = page.locator(".inbox-item", {
     hasText: `The security scan of ${project.id} did not clear.`,
   });
-  await page.screenshot({ path: test.info().outputPath("inbox-location-status.png"), fullPage: true });
+  await page.screenshot({
+    path: test.info().outputPath("inbox-location-status.png"),
+    fullPage: true,
+  });
   await expect(locationNotice).toContainText(
     "Findings in the project repository block clearance.",
   );
+  await locationNotice.locator(".inbox-title").focus();
+  await expect(locationNotice.locator(".inbox-title")).toBeFocused();
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "2";
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("inbox-location-200.png"),
+    fullPage: true,
+  });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "1";
+  });
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("scan-inbox.png"),
