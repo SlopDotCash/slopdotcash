@@ -77,7 +77,11 @@ const DUPLICATE_EVIDENCE_REASON =
 
 type PriorCase = SecurityAnalysisInput["priorCases"][number];
 
-/** Recent verified cases for the same project, matching analysis shape/limit. */
+/**
+ * Recent verified cases for the same project (ids and root-cause keys only).
+ * Intake screening reasons are visible to reporters, so summaries must not
+ * reach the screening model; case analysis still loads summaries separately.
+ */
 async function loadPriorCases(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
@@ -87,12 +91,7 @@ async function loadPriorCases(
     (
       await deps.db
         .prepare(
-          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
-              LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
-              WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
-                AND (i.case_id IS NULL OR i.review_decision='forward'
-                     OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
-              ORDER BY a.attempt DESC LIMIT 1) AS summary
+          `SELECT c.id, c.root_cause_key
              FROM security_cases c
             WHERE c.project_id = ? AND c.submission_state = 'verified'${
               excludeCaseId ? " AND c.id <> ?" : ""
@@ -103,13 +102,12 @@ async function loadPriorCases(
         .all<{
           id: string;
           root_cause_key: string | null;
-          summary: string | null;
         }>()
     ).results ?? [];
   return rows.map((entry) => ({
     id: entry.id,
     rootCauseKey: entry.root_cause_key,
-    summary: entry.summary,
+    summary: null,
   }));
 }
 

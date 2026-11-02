@@ -966,7 +966,7 @@ describe("durable private report controls", () => {
     expect(t.screened[1]?.priorCases).toContainEqual({
       id: first.caseId,
       rootCauseKey: null,
-      summary: `Assessment 1: ${REPORT.summary}`,
+      summary: null,
     });
     expect(t.analyzed).toHaveLength(2);
   });
