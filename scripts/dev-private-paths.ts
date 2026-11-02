@@ -54,10 +54,19 @@ export function privateDevRequest(
     )
   )
     return true;
-  const fsPath = decoded.slice("/@fs/".length);
-  const file = decoded.startsWith("/@fs/")
-    ? resolve(/^[A-Za-z]:\//u.test(fsPath) ? fsPath : `/${fsPath}`)
-    : resolve(root, `.${decoded}`);
+  // Vite strips the literal "/@fs" prefix, so on Windows an absolute drive
+  // path follows it without a separating slash ("/@fsC:/…" — backslashes are
+  // already forward here). Strip both served forms, or this guard resolves the
+  // drive form against the repository root and Vite serves private data.
+  const fsPath = decoded.startsWith("/@fs/")
+    ? decoded.slice("/@fs/".length)
+    : /^\/@fs[A-Za-z]:\//u.test(decoded)
+      ? decoded.slice("/@fs".length)
+      : null;
+  const file =
+    fsPath !== null
+      ? resolve(/^[A-Za-z]:\//u.test(fsPath) ? fsPath : `/${fsPath}`)
+      : resolve(root, `.${decoded}`);
   const physical = (path: string) => {
     try {
       return realpathSync.native(path);
