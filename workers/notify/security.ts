@@ -407,23 +407,26 @@ export async function dispatchSecurityMail(
         row.id,
       )
       .run();
+    let unsubscribeToken: string | undefined;
+    try {
+      if (registered && deps.unsubscribeKey)
+        unsubscribeToken = await issueEmailUnsubscribeToken(
+          deps.db,
+          deps.unsubscribeKey,
+          registered.destinationVersion,
+          deps.now(),
+        );
+    } catch {
+      // Preparation failed before any provider call; no reconciliation is needed.
+      const state = await retryWithoutProviderCall(deps, row);
+      if (state === "exhausted") await escalate(deps, row);
+      continue;
+    }
     try {
       await deps.sendEmail(
         deps.fromAddress,
         destination.email,
-        mime(
-          deps,
-          row,
-          destination.email,
-          registered && deps.unsubscribeKey
-            ? await issueEmailUnsubscribeToken(
-                deps.db,
-                deps.unsubscribeKey,
-                registered.destinationVersion,
-                deps.now(),
-              )
-            : undefined,
-        ),
+        mime(deps, row, destination.email, unsubscribeToken),
       );
     } catch (error) {
       if (retryableEmailRejection(error)) {
