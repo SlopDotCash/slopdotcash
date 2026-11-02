@@ -1703,6 +1703,11 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await expect(resumed.getByRole("status")).toContainText(
     "Findings in the project repository block clearance.",
   );
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("scan-findings.png"),
+    fullPage: true,
+  });
   await resumed.getByRole("button", { name: "Request a new scan" }).click();
   await expect(resumed.locator("h2")).toHaveText(
     "Setup status: Waiting for the security scan",
@@ -1716,6 +1721,10 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     }),
   ).toHaveCount(1);
   await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("scan-inbox.png"),
+    fullPage: true,
+  });
 
   // Owner edit: a text-only change publishes at once as revision 2.
   await page.goto(`/projects/${project.id}/manage`, {
