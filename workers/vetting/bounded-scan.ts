@@ -568,9 +568,13 @@ const RULES: Rule[] = [
     // and assign no opposite meaning to either spelling; full
     // parameter names are required, so abbreviated PowerShell
     // parameters, `start` switch flags, variable or glob paths and
-    // paths containing spaces stay out.
+    // paths containing spaces stay out. The download capture enforces
+    // the space exclusion: a quoted path must close its quote right
+    // after the token, and an unquoted capture refuses a following
+    // word carrying a path separator, so a spaced path can never
+    // match as its own first fragment.
     pattern: new RegExp(
-      String.raw`(?:^|[\n;|&])[ \t]*certutil(?:\.exe)?\b(?=[^\n;|&]*?-urlcache\b)[^\n;|&]*?https?://[^\s"'\x60]+[ \t]+["']?(${WIN_PATH})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${winExec(String.raw`\1`)}|(?:^|[\n;|&])[ \t]*bitsadmin(?:\.exe)?\b(?![^\n;|&]*?/upload\b)[^\n;|&]*?/transfer\b[^\n;|&]*?https?://[^\s"'\x60]+[ \t]+["']?(${WIN_PATH})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${winExec(String.raw`\2`)}|(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n;|&]*?-TransferType[ \t]+["']?Upload\b)[^\n;|&]*?-Source[ \t]+["']?https?://[^\s"'\x60]+["']?[^\n;|&]*?-Destination[ \t]+["']?(${WIN_PATH})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${winExec(String.raw`\3`)}|(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n;|&]*?-TransferType[ \t]+["']?Upload\b)[^\n;|&]*?-Destination[ \t]+["']?(${WIN_PATH})["']?(?=$|[\s;|&])[^\n;|&]*?-Source[ \t]+["']?https?://[^\s"'\x60]+[\s\S]{0,8192}?${winExec(String.raw`\4`)}|(?:^|[\n;|&])[ \t]*(?:Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b(?=[^\n;|&]*https?://)[^\n;|&]*?-OutFile[ \t]+["']?(${WIN_PATH})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${winExec(String.raw`\5`)}`,
+      String.raw`(?:^|[\n;|&])[ \t]*certutil(?:\.exe)?\b(?=[^\n;|&]*?-urlcache\b)[^\n;|&]*?https?://[^\s"'\x60]+[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\1`)}|(?:^|[\n;|&])[ \t]*bitsadmin(?:\.exe)?\b(?![^\n;|&]*?/upload\b)[^\n;|&]*?/transfer\b[^\n;|&]*?https?://[^\s"'\x60]+[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\2`)}|(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n;|&]*?-TransferType[ \t]+["']?Upload\b)[^\n;|&]*?-Source[ \t]+["']?https?://[^\s"'\x60]+["']?[^\n;|&]*?-Destination[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\3`)}|(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n;|&]*?-TransferType[ \t]+["']?Upload\b)[^\n;|&]*?-Destination[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[^\n;|&]*?-Source[ \t]+["']?https?://[^\s"'\x60]+[\s\S]{0,8192}?${winExec(String.raw`\4`)}|(?:^|[\n;|&])[ \t]*(?:Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b(?=[^\n;|&]*https?://)[^\n;|&]*?-OutFile[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\5`)}`,
       "imu",
     ),
     summary:

