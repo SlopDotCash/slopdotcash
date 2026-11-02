@@ -2,9 +2,11 @@
 
 import {
   Bell,
+  CircleAlert,
   CircleDollarSign,
   FolderGit2,
   Inbox,
+  RotateCcw,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
@@ -47,7 +49,7 @@ type InboxState =
   | { status: "loading" }
   | { status: "signed-out" }
   | { status: "error"; message: string }
-  | { status: "ready"; value: NotificationsResponse };
+  | { status: "ready"; value: NotificationsResponse; refreshError?: string };
 
 const UNAVAILABLE = "The inbox could not load. Retry.";
 
@@ -176,6 +178,12 @@ export default function InboxPage() {
     setRecipient(id);
     return changed;
   }, []);
+  // The last notification page that loaded, and the cursor it belongs to.
+  // A refresh of that same page retains it; a new page starts from loading.
+  const lastReady = useRef<{
+    cursor: string | null;
+    value: NotificationsResponse;
+  } | null>(null);
   const receive = useCallback(
     (next: InboxState) => {
       if (next.status === "ready" || next.status === "signed-out") {
@@ -187,6 +195,9 @@ export default function InboxPage() {
           return;
         }
       }
+      if (next.status === "ready")
+        lastReady.current = { cursor, value: next.value };
+      if (next.status === "signed-out") lastReady.current = null;
       setState(next);
     },
     [cursor, acceptRecipient],
@@ -194,7 +205,13 @@ export default function InboxPage() {
   const load = useCallback(() => {
     const current = ++generation.current;
     const controller = new AbortController();
-    setState({ status: "loading" });
+    // A refresh of the page already on screen (a window refocus, a Points
+    // review change) keeps that page mounted, as the action path below
+    // restores it after a failed action. Only a first load or a new page
+    // starts from the loading state.
+    const retained =
+      lastReady.current?.cursor === cursor ? lastReady.current.value : null;
+    if (retained === null) setState({ status: "loading" });
     loadInbox(controller.signal, cursor).then(
       (next) => {
         if (generation.current === current) receive(next);
@@ -206,7 +223,17 @@ export default function InboxPage() {
           const session = await currentProjectSession();
           if (generation.current !== current) return;
           if (session === null) receive({ status: "signed-out" });
-          else {
+          else if (
+            retained !== null &&
+            session.githubId === retained.recipientGithubId
+          ) {
+            acceptRecipient(session.githubId);
+            setState({
+              status: "ready",
+              value: retained,
+              refreshError: UNAVAILABLE,
+            });
+          } else {
             acceptRecipient(session.githubId);
             setState({ status: "error", message: UNAVAILABLE });
           }
@@ -365,6 +392,15 @@ export default function InboxPage() {
         </div>
       ) : null}
       <>
+        {state.status === "ready" && state.refreshError ? (
+          <p className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" /> {state.refreshError} Showing the
+            last loaded notifications.{" "}
+            <button className="text-button" onClick={load} type="button">
+              <RotateCcw aria-hidden="true" /> Retry
+            </button>
+          </p>
+        ) : null}
         {state.status === "ready" ? (
           <InboxList
             busy={busy}
