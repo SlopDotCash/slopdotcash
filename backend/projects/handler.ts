@@ -1,5 +1,6 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
   EnforcementAction,
@@ -1406,11 +1407,19 @@ async function ownerVault(
   const deployments = bounty
     ? current.manifest.securityBounty?.settlement?.deployments
     : current.manifest.escrow?.deployments;
-  if (body.step === "register" && typeof body.transactionId === "string") {
+  // EVM hashes are case-insensitive, and the manifest stores them lowercase.
+  // Solana signatures are base58 and keep their case.
+  const transactionId =
+    typeof body.transactionId === "string" &&
+    Object.hasOwn(ESCROW_NETWORKS, input.network) &&
+    ESCROW_NETWORKS[input.network].family === "evm"
+      ? body.transactionId.toLowerCase()
+      : body.transactionId;
+  if (body.step === "register" && typeof transactionId === "string") {
     const existing = deployments?.find(
       (d) =>
         d.network === input.network &&
-        d.deploymentTransaction === body.transactionId,
+        d.deploymentTransaction === transactionId,
     );
     if (existing)
       return json(200, {
@@ -1441,8 +1450,8 @@ async function ownerVault(
       review: await deps.vaultSetup.review(current, actor, input),
     });
   if (
-    typeof body.transactionId !== "string" ||
-    !isVaultCreationId(input.network, body.transactionId)
+    typeof transactionId !== "string" ||
+    !isVaultCreationId(input.network, transactionId)
   )
     fail(400, "invalid_request", "Enter the vault creation transaction hash.");
   // A wallet send may outlive an owner edit. Verify its exact creation intent
@@ -1504,7 +1513,7 @@ async function ownerVault(
     creation,
     actor,
     input,
-    body.transactionId,
+    transactionId,
   );
   if (!deployment) return json(200, { status: "pending" });
   const updated = await appendRevision(request, deps, {
@@ -1580,7 +1589,13 @@ async function publishOwnerRevision(
   const current = await deps.persistence.getProject(projectId);
   if (current === null) fail(404, "not_found", "Project not found");
   if (current.revision !== expectedRevision)
-    fail(409, "stale_revision", "The project changed since you loaded it");
+    fail(
+      409,
+      "stale_revision",
+      stored
+        ? "The project changed after this update was saved; make the change again in the project's settings"
+        : "The project changed since you loaded it",
+    );
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = publicRestrictionOf(current, enforcements);
@@ -1762,10 +1777,32 @@ async function listSetup(
       listingTier: project.manifest.listingTier,
       revision: project.revision,
     })),
-    applications: applications
-      .filter((application) => application.status === "pending")
+    applications: (
+      await Promise.all(
+        applications
+          .filter((application) => application.status === "pending")
+          .map(async (application) =>
+            (await isPublishable(deps, application)) ? [application] : [],
+          ),
+      )
+    )
+      .flat()
       .map(publicApplication),
   });
+}
+
+/**
+ * A stored update publishes only against its own base revision. Once another
+ * revision is published it can never succeed, so setup stops offering it;
+ * the owner makes the change again from the project's settings.
+ */
+async function isPublishable(
+  deps: ProjectApiDependencies,
+  application: ProjectApplication,
+): Promise<boolean> {
+  if (application.expectedRevision === undefined) return true;
+  const project = await deps.persistence.getProject(application.projectId);
+  return project?.revision === application.expectedRevision;
 }
 
 async function checkSetup(
@@ -2789,7 +2826,7 @@ async function githubLookup(
   const url = new URL(request.url);
   const cacheRequest = new Request(
     parts[1] === "owned-repositories"
-      ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubLogin.toLowerCase()}`
+      ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubId}`
       : `${url.origin}${url.pathname.toLowerCase()}`,
   );
   const build = async () => {
@@ -2800,10 +2837,23 @@ async function githubLookup(
           "invalid_request",
           "The signed-in GitHub login is not valid.",
         );
-      const repositories = await listOwnedRepositories(
+      const account = await lookupGitHubActor(
         deps.github.fetch,
         deps.github.token,
         session.githubLogin,
+        deps.github.apiOrigin,
+        session.githubId,
+      );
+      if (!account)
+        throw new GithubLookupError(
+          502,
+          "github_unavailable",
+          "GitHub account facts could not be read. Try again.",
+        );
+      const repositories = await listOwnedRepositories(
+        deps.github.fetch,
+        deps.github.token,
+        account.githubLogin,
         deps.github.apiOrigin,
       );
       return json(200, { repositories }, "public, max-age=0, s-maxage=300");

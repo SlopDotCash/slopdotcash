@@ -25,6 +25,7 @@ import type {
 } from "../../src/lib/project-contracts";
 import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import type { ProjectPersistence } from "./contracts";
 
 export const ENFORCEMENT_ACTIONS: readonly EnforcementAction[] = [
   "quarantine",
@@ -352,6 +353,51 @@ export function publicRestrictionOf(
 /** A restricted project must stay paused and out of every listing. */
 export function enforcedManifest(manifest: ProjectDefinition): boolean {
   return manifest.status === "paused" && manifest.listingTier === "retired";
+}
+
+/**
+ * A moderator quarantine or ban applies a paused, retired revision. The
+ * project stays registered, so what a restriction keeps (existing private
+ * cases, Slopbot's security-only review) still applies to it. New private
+ * reports stay closed (#1360). The retained before and after revisions must
+ * prove that enforcement caused retirement; an owner's earlier retirement or
+ * an unapplied restriction cannot. Null means the retained revision evidence
+ * is missing.
+ */
+export async function retiredByRestriction(
+  persistence: Pick<ProjectPersistence, "listEnforcements" | "getRevisionText">,
+  projectId: string,
+): Promise<boolean | null> {
+  const restriction = projectRestriction(
+    projectId,
+    await persistence.listEnforcements(),
+  );
+  if (restriction.state === "clear") return false;
+  for (const record of [...restriction.records].reverse()) {
+    if (record.stateAfter === "clear") break;
+    if (
+      (record.action !== "quarantine" && record.action !== "ban") ||
+      record.result !== "revision_appended" ||
+      record.afterRevision === null
+    )
+      continue;
+    const [before, after] = await Promise.all([
+      persistence.getRevisionText(projectId, record.beforeRevision),
+      persistence.getRevisionText(projectId, record.afterRevision),
+    ]);
+    if (
+      before === null ||
+      after === null ||
+      before.manifestSha256 !== record.beforeManifestSha256 ||
+      after.manifestSha256 !== record.afterManifestSha256
+    )
+      return null;
+    const previous = JSON.parse(before.manifestText) as ProjectDefinition;
+    const applied = JSON.parse(after.manifestText) as ProjectDefinition;
+    if (previous.listingTier !== "retired" && enforcedManifest(applied))
+      return true;
+  }
+  return false;
 }
 
 export type EnforcementPlan = {
