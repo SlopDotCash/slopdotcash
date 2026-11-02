@@ -152,6 +152,8 @@ const INSTALL_FILES = new Set([
   ".pnpmfile.js",
   ".envrc",
   "tasks.json",
+  "tox.ini",
+  "tox.toml",
   "devcontainer.json",
   "gnumakefile",
   "dockerfile",
@@ -234,6 +236,26 @@ const INSTALL_HOOKS = [
 
 function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+}
+
+/**
+ * tox 4 runs `commands` from a dedicated `tox.ini` or `tox.toml`, and from a
+ * shared manifest when that file holds a tox table. `[tool.tox` is the
+ * pyproject table (`[tool.tox]`, `[tool.tox.env.*]`, `[tool.tox.env_run_base]`,
+ * and `legacy_tox_ini` under it). Whitespace and quoted keys are the same
+ * table. setup.cfg is loaded only with `[tox:tox]`; its `[testenv]` and
+ * `[testenv:…]` commands sit in that same file. Without the header the file
+ * stays a manifest, so a `[testenv]` section alone is not install content.
+ */
+const TOX_PYPROJECT_TABLE =
+  /^\s*\[\s*(?:"tool"|'tool'|tool)\s*\.\s*(?:"tox"|'tox'|tox)(?=\s*(?:\]|\.))/mu;
+const TOX_SETUP_CFG_TABLE = /^\s*\[\s*tox:tox\s*\]/mu;
+
+function declaresToxCommands(path: string, text: string): boolean {
+  const name = basename(path);
+  if (name === "pyproject.toml") return TOX_PYPROJECT_TABLE.test(text);
+  if (name === "setup.cfg") return TOX_SETUP_CFG_TABLE.test(text);
+  return false;
 }
 
 /** The surfaces one path belongs to; empty for non-executable content. */
@@ -1517,6 +1539,18 @@ export function inspectRepository(input: {
       surfaces.push("installScripts", "source");
     // Both build systems execute included files during configuration.
     if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+      if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
+      if (!surfaces.includes("source")) surfaces.push("source");
+    }
+    // Recorded with the classification, before later content checks, so the
+    // reuse identity names this surface. Only these two manifests need a
+    // content gate; tox.ini and tox.toml are install files by name.
+    const toxText =
+      basename(file.path) === "pyproject.toml" ||
+      basename(file.path) === "setup.cfg"
+        ? decode(file.bytes)
+        : null;
+    if (toxText !== null && declaresToxCommands(file.path, toxText)) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }

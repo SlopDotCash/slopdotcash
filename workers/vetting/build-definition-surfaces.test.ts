@@ -53,6 +53,156 @@ test("a build definition of a recognized build system is an install surface", ()
   }
 });
 
+test("tox configuration commands are reviewed as an install surface", () => {
+  // PRD section 8, VET-01 and VET-07. tox executes these commands. tox.ini
+  // and tox.toml are install files by name. A shared manifest stays a
+  // manifest until it contains a tox table, and then its commands join the
+  // install surface, including download collection.
+  const dedicated = [
+    {
+      path: "tox.ini",
+      safe: "[testenv]\ncommands = python -m pytest\n",
+      unsafe: `[testenv]\ncommands = ${PAYLOAD}\n`,
+    },
+    {
+      path: "tox.toml",
+      safe: "[env.t]\ncommands = [['python', '-m', 'pytest']]\n",
+      unsafe: `[env.t]\ncommands = [['sh', '-c', '${PAYLOAD}']]\n`,
+    },
+    {
+      path: "pkg/tox.toml",
+      safe: "[env_run_base]\ncommands = [['python', '-m', 'pytest']]\n",
+      unsafe: `[env_run_base]\ncommands = [['sh', '-c', '${PAYLOAD}']]\n`,
+    },
+  ];
+  for (const definition of dedicated) {
+    const safe = inspected(definition.path, definition.safe);
+    const unsafe = inspected(definition.path, definition.unsafe);
+    expect({
+      path: definition.path,
+      surfaces: surfacesOf(definition.path),
+    }).toEqual({
+      path: definition.path,
+      surfaces: ["installScripts", "source"],
+    });
+    expect({
+      path: definition.path,
+      coverage: unsafe.coverage.installScripts,
+    }).toEqual({
+      path: definition.path,
+      coverage: { state: "complete", items: 1 },
+    });
+    expect(safe.findings).toEqual([]);
+    expect(safe.downloads).toEqual([]);
+    expect(unsafe.findings).toContainEqual(
+      expect.objectContaining({
+        path: definition.path,
+        category: "unsafe-execution",
+        severity: "high",
+      }),
+    );
+    expect(unsafe.downloads).toContain("https://evil.example/install.sh");
+    expect(unsafe.inventorySha256).not.toBe(safe.inventorySha256);
+  }
+
+  const shared = [
+    {
+      path: "pyproject.toml",
+      safe: "[tool.tox.env.t]\ncommands = [['python', '-m', 'pytest']]\n",
+      unsafe: `[tool.tox.env.t]\ncommands = [['sh', '-c', '${PAYLOAD}']]\n`,
+    },
+    {
+      path: "pyproject.toml",
+      safe: '[tool.tox]\nlegacy_tox_ini = """\n[testenv]\ncommands = python -m pytest\n"""\n',
+      unsafe: `[tool.tox]\nlegacy_tox_ini = """\n[testenv]\ncommands = ${PAYLOAD}\n"""\n`,
+    },
+    {
+      path: "pyproject.toml",
+      safe: '[ tool . "tox" . env_run_base ]\ncommands = [["python", "-m", "pytest"]]\n',
+      unsafe: `[ tool . "tox" . env_run_base ]\ncommands = [["sh", "-c", "${PAYLOAD}"]]\n`,
+    },
+    {
+      path: "setup.cfg",
+      safe: "[tox:tox]\nenvlist = t\n\n[testenv:t]\ncommands = python -m pytest\n",
+      unsafe: `[tox:tox]\nenvlist = t\n\n[testenv:t]\ncommands = ${PAYLOAD}\n`,
+    },
+    {
+      path: "setup.cfg",
+      safe: "[ tox:tox ]\nenvlist = t\n\n[testenv]\ncommands = python -m pytest\n",
+      unsafe: `[ tox:tox ]\nenvlist = t\n\n[testenv]\ncommands = ${PAYLOAD}\n`,
+    },
+  ];
+  for (const definition of shared) {
+    const safe = inspected(definition.path, definition.safe);
+    const unsafe = inspected(definition.path, definition.unsafe);
+    expect(surfacesOf(definition.path)).toEqual(["manifests", "source"]);
+    expect(safe.coverage.installScripts).toEqual({
+      state: "complete",
+      items: 1,
+    });
+    expect(safe.findings).toEqual([]);
+    expect(safe.downloads).toEqual([]);
+    expect(unsafe.coverage.installScripts).toEqual({
+      state: "complete",
+      items: 1,
+    });
+    expect(unsafe.coverage.manifests).toEqual({
+      state: "complete",
+      items: 1,
+    });
+    const classified = (
+      JSON.parse(new TextDecoder().decode(unsafe.inventory)) as {
+        classifications: { path: string; surfaces: string[] }[];
+      }
+    ).classifications;
+    expect(classified).toEqual([
+      {
+        path: definition.path,
+        surfaces: ["installScripts", "manifests", "source"],
+      },
+    ]);
+    expect(unsafe.findings).toContainEqual(
+      expect.objectContaining({
+        path: definition.path,
+        category: "unsafe-execution",
+        severity: "high",
+      }),
+    );
+    expect(unsafe.downloads).toContain("https://evil.example/install.sh");
+    expect(unsafe.inventorySha256).not.toBe(safe.inventorySha256);
+  }
+});
+
+test("a shared manifest without a tox table is not an install surface", () => {
+  for (const definition of [
+    {
+      path: "pyproject.toml",
+      text: `[project]\nname = "demo"\ndescription = "${PAYLOAD}"\n`,
+    },
+    {
+      path: "setup.cfg",
+      text: `[metadata]\nname = demo\n\n[testenv:t]\ncommands = ${PAYLOAD}\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[tool.toxin]\ncommands = "${PAYLOAD}"\n# [tool.tox]\n`,
+    },
+  ]) {
+    const inspection = inspected(definition.path, definition.text);
+    expect({
+      path: definition.path,
+      surfaces: surfacesOf(definition.path),
+      installScripts: inspection.coverage.installScripts,
+      downloads: inspection.downloads,
+    }).toEqual({
+      path: definition.path,
+      surfaces: ["manifests", "source"],
+      installScripts: { state: "complete", items: 0 },
+      downloads: [],
+    });
+  }
+});
+
 test("included Ninja and Tup commands are reviewed and invalidate reuse", () => {
   for (const definition of [
     {
