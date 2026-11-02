@@ -3,7 +3,6 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
-import { selectDetailedMergedPullRequestIds } from "./generate-leaderboard";
 import { snapshotFixture } from "../tests/fixtures";
 import {
   AFTER_NOVEMBER,
@@ -11,6 +10,7 @@ import {
   PROJECT_OWNER,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
+import { selectDetailedMergedPullRequestIds } from "./generate-leaderboard";
 
 afterEach(() => setSystemTime());
 
