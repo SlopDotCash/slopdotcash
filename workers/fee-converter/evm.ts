@@ -208,17 +208,26 @@ export interface EvmClientOptions {
   nativeGas?: NativeGasJournal;
 }
 
-/** Parses a non-negative decimal dollar string into integer micro-units. */
-export function usdMicro(value: unknown): bigint | null {
+/**
+ * Parses a non-negative decimal dollar string into integer micro-units.
+ * The default rounds up so a cap is never undercounted, as on Solana;
+ * "down" truncates instead, for a value a measured difference is taken
+ * against, where rounding up would undercount the cap.
+ */
+export function usdMicro(
+  value: unknown,
+  direction: "up" | "down" = "up",
+): bigint | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const text = String(value);
   const match = /^(\d+)(?:\.(\d+))?(?:e-(\d+))?$/u.exec(text);
   if (!match) return null;
   if (match[3]) return 0n; // exponent form only appears for tiny values
-  return (
-    BigInt(match[1]) * 1_000_000n +
-    BigInt((match[2] ?? "").padEnd(6, "0").slice(0, 6))
-  );
+  const fraction = (match[2] ?? "").padEnd(6, "0");
+  const whole = BigInt(match[1]) * 1_000_000n + BigInt(fraction.slice(0, 6));
+  const rest =
+    direction === "up" && /[1-9]/u.test((match[2] ?? "").slice(6)) ? 1n : 0n;
+  return whole + rest;
 }
 
 interface KyberRoute {
@@ -820,7 +829,9 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       const amountOut = BigInt(summary.amountOut);
       if (amountOut === 0n) return { noRoute: "KyberSwap quoted zero output" };
       const inUsd = usdMicro(summary.amountInUsd);
-      const outUsd = usdMicro(summary.amountOutUsd);
+      // The output rounds down: rounding it up would shrink the measured
+      // impact below the cap it is checked against.
+      const outUsd = usdMicro(summary.amountOutUsd, "down");
       // Rounded up so a cap is never undercounted, as on Solana.
       const priceImpactBps =
         inUsd !== null && outUsd !== null && inUsd > 0n
