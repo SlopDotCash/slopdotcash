@@ -3068,15 +3068,24 @@ function createSnapshotWithReviewCutoff(
       }
     }
   };
+  // The ledger only grows through appendScore, so index each new event once
+  // instead of scanning the whole ledger for every review.
+  const scoreBearingSources = new Set<string>();
+  let scoreBearingIndexed = 0;
   const isScoreBearingSource = (
     repository: RepositoryId,
     source: { id: string; url: string },
-  ): boolean =>
-    ledger.some(
-      (event) =>
-        event.repository === repository &&
-        (event.source.id === source.id || event.source.url === source.url),
+  ): boolean => {
+    for (; scoreBearingIndexed < ledger.length; scoreBearingIndexed++) {
+      const event = ledger[scoreBearingIndexed] as ScoreEvent;
+      scoreBearingSources.add(`${event.repository}\0id\0${event.source.id}`);
+      scoreBearingSources.add(`${event.repository}\0url\0${event.source.url}`);
+    }
+    return (
+      scoreBearingSources.has(`${repository}\0id\0${source.id}`) ||
+      scoreBearingSources.has(`${repository}\0url\0${source.url}`)
     );
+  };
   const outcomeIds = new Set(
     mergedPullRequestOutcomes.map((pullRequest) => pullRequest.id),
   );
@@ -3703,8 +3712,10 @@ function createSnapshotWithReviewCutoff(
               ? 1
               : compareCodeUnits(a.id, b.id),
         );
-      if (!actors.length)
-        throw new Error("Joint implementation has no eligible recipient");
+      // A bot pull request with no credit-eligible commit author has no
+      // implementation actor. Like the single pull request path, nobody is
+      // credited; the other units of the group still score.
+      if (!actors.length) continue;
       // An accepted unit assessed at zero keeps the minimum (owner decision D2).
       const shares = shareScoreThirds(
         Math.max(MIN_VALUE_MERGE_THIRDS, VALUE_TIERS[tier]),
@@ -3885,6 +3896,18 @@ function createSnapshotWithReviewCutoff(
       history: { recorded_at: string }[];
     };
   };
+  // The ledger only grows through appendScore, so index each new merge
+  // credit once instead of scanning the whole ledger for every review.
+  const mergeCredits = new Set<string>();
+  let mergeCreditsIndexed = 0;
+  const hasMergeCredit = (pullRequestId: string, actorId: string) => {
+    for (; mergeCreditsIndexed < ledger.length; mergeCreditsIndexed++) {
+      const event = ledger[mergeCreditsIndexed] as ScoreEvent;
+      if (event.category === "merged-pull-request")
+        mergeCredits.add(`${event.source.id}\0${event.actor.id}`);
+    }
+    return mergeCredits.has(`${pullRequestId}\0${actorId}`);
+  };
   // Returns the review's assessed value when it qualifies for review credit.
   // Integrity failures throw; unassessed or zero-valued reviews earn nothing.
   const valueReviewCandidate = (
@@ -3984,12 +4007,7 @@ function createSnapshotWithReviewCutoff(
     // credited on this pull request, reviews its own work.
     if (
       implementationActorNodeIds.includes(review.author.id) ||
-      ledger.some(
-        (event) =>
-          event.category === "merged-pull-request" &&
-          event.source.id === pullRequest.id &&
-          event.actor.id === review.author?.id,
-      )
+      hasMergeCredit(pullRequest.id, review.author.id)
     ) {
       excludeReview(pullRequest, review, "self-review");
       return null;
@@ -7557,6 +7575,27 @@ export function assertLeaderboardSnapshot(
         Number(counts.closedUnmergedPullRequests ?? 0)
     )
       throw new Error("Value coverage must retain every closed source");
+    // A row binds an event whose ID starts with `${pullRequestId}:`. Look up
+    // every such prefix of the event ID; the earliest row wins, as before.
+    const coverageRows = new Map(
+      snapshot.valueAssessmentCoverage.map((row, index) => [
+        row.pullRequestId,
+        { row, index },
+      ]),
+    );
+    const coverageFor = (eventId: string) => {
+      let match: ReturnType<typeof coverageRows.get>;
+      for (
+        let end = eventId.indexOf(":");
+        end !== -1;
+        end = eventId.indexOf(":", end + 1)
+      ) {
+        const candidate = coverageRows.get(eventId.slice(0, end));
+        if (candidate && (!match || candidate.index < match.index))
+          match = candidate;
+      }
+      return match?.row;
+    };
     for (const event of validatedLedger) {
       if (!event.scoreDecisionSourceId?.startsWith("value:")) continue;
       if (
@@ -7571,9 +7610,7 @@ export function assertLeaderboardSnapshot(
         parseIsoTime(event.occurredAt) >= parseIsoTime(window.to)
       )
         throw new Error("Value score event is outside the scoring window");
-      const row = snapshot.valueAssessmentCoverage.find((value) =>
-        event.id.startsWith(`${value.pullRequestId}:`),
-      );
+      const row = coverageFor(event.id);
       // A ratification corrects only the implementation score; the
       // ratified source's review value still binds its assessment digest.
       if (
