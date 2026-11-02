@@ -32,19 +32,22 @@ function insertCursor(
   sqlite: ReturnType<typeof sqliteD1>["sqlite"],
   project: string,
   network: string,
+  position = "12345",
 ) {
   sqlite
     .query(
       `INSERT INTO payment_chain_cursors (project_id,network,position,synced_at)
        VALUES(?,?,?,?)`,
     )
-    .run(project, network, "12345", when);
+    .run(project, network, position, when);
 }
 
 interface TotalsBody {
   assets?: { network: string }[];
   error?: string;
   network?: string | null;
+  coverage?: { kind: string; completeThrough: string | null };
+  syncedAt?: string | null;
 }
 
 async function totals(
@@ -105,4 +108,22 @@ test("project totals ignore a testnet chain cursor in production but keep it in 
   expect(staging.status).toBe(200);
   expect(staging.body.network).toBe("base-sepolia");
   expect(networks(staging.body)).toContain("base-sepolia");
+});
+
+test("project totals report a production cursor beside a testnet cursor that sorts first", async () => {
+  const { db, sqlite } = sqliteD1();
+  const database = db as unknown as D1TransactionalDatabase;
+  // A Solana project scanned on devnet before mainnet keeps both cursors;
+  // "solana-devnet" sorts before "solana-mainnet" in the cursor key.
+  insertCursor(sqlite, "project-solana", "solana-devnet", "111");
+  insertCursor(sqlite, "project-solana", "solana-mainnet", "222");
+
+  const production = await totals(database, "project-solana");
+  expect(production.status).toBe(200);
+  expect(production.body.network).toBe("solana-mainnet");
+  expect(production.body.coverage).toEqual({
+    kind: "finalized-payment-events",
+    completeThrough: "222",
+  });
+  expect(production.body.syncedAt).toBe(when);
 });
