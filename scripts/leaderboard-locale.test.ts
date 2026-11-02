@@ -199,7 +199,9 @@ test("Turkish generation keeps the published ledger order for tied merges", () =
       ids.some((id) => event.id === `${id}:merged`),
     );
     expect(tied.map((event) => event.points)).toEqual([1 / 3, 1 / 3]);
-    expect(tied.map((event) => event.id)).toEqual(ids.map((id) => `${id}:merged`));
+    expect(tied.map((event) => event.id)).toEqual(
+      ids.map((id) => `${id}:merged`),
+    );
     expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
   });
 });
