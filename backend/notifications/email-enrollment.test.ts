@@ -462,6 +462,62 @@ test.each(["activity", "security"] as const)(
   },
 );
 
+test("activity mail retries a failed preparation without stopping the drain", async () => {
+  const h = await setup();
+  try {
+    await h.enroll();
+    await h.verify();
+    h.activity("prepare-drain-outage");
+    h.advance(1000);
+    h.activity("prepare-drain-other");
+    const rows = () =>
+      h.sqlite
+        .query(
+          "SELECT event_key,state,attempts FROM activity_notification_outbox ORDER BY created_at,id",
+        )
+        .all() as { event_key: string; state: string; attempts: number }[];
+    h.sqlite.exec(`CREATE TRIGGER fixture_activity_prepare_outage
+      BEFORE UPDATE OF destination_digest ON activity_notification_outbox
+      WHEN OLD.event_key='prepare-drain-outage'
+      BEGIN SELECT RAISE(ABORT, 'Fixture preparation storage outage'); END`);
+    await dispatchActivityMail(h.worker);
+    expect(rows()).toEqual([
+      { event_key: "prepare-drain-outage", state: "retrying", attempts: 1 },
+      {
+        event_key: "prepare-drain-other",
+        state: "provider-accepted",
+        attempts: 1,
+      },
+    ]);
+    expect(h.mail).toHaveLength(2); // The enrollment verification and one notice.
+    h.sqlite.exec("DROP TRIGGER fixture_activity_prepare_outage");
+    h.advance(61_000);
+    await dispatchActivityMail(h.worker);
+    expect(rows()).toEqual([
+      {
+        event_key: "prepare-drain-outage",
+        state: "provider-accepted",
+        attempts: 2,
+      },
+      {
+        event_key: "prepare-drain-other",
+        state: "provider-accepted",
+        attempts: 1,
+      },
+    ]);
+    expect(h.mail).toHaveLength(3);
+    expect(
+      h.sqlite
+        .query(
+          `SELECT state FROM activity_notification_delivery_events WHERE delivery_id IN (SELECT id FROM activity_notification_outbox WHERE event_key='prepare-drain-outage') ORDER BY attempt`,
+        )
+        .all(),
+    ).toEqual([{ state: "retrying" }, { state: "provider-accepted" }]);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("verification resends are bounded and invalidate old links without changing the active destination", async () => {
   const h = await setup();
   const body = {
