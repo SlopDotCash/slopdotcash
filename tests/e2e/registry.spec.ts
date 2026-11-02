@@ -1701,7 +1701,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await resumed.getByRole("button", { name: "Check again" }).click();
   await expect(resumed.locator("h2")).toHaveText("Setup status: Action needed");
   await expect(resumed.getByRole("status")).toContainText(
-    "The last scan finished, but findings block clearance.",
+    "The last scan finished, but findings in the project repository block clearance.",
   );
   await resumed.getByRole("button", { name: "Request a new scan" }).click();
   await expect(resumed.locator("h2")).toHaveText(
