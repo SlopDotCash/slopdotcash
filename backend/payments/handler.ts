@@ -485,6 +485,10 @@ export async function handlePaymentsApi(
                 : null,
             query.has("after") ? cursor("after") : 0,
             query.has("through") ? cursor("through") : null,
+            // Production excludes testnet networks, mirroring the /totals,
+            // /vault, and /received deployment-tier rules. Staging keeps them
+            // because it pays in testnet stablecoins.
+            deps.tier === "staging",
           ),
         );
       } catch (error) {
