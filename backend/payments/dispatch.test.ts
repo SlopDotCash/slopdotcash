@@ -77,6 +77,22 @@ function fixture() {
       "INSERT INTO payment_outbox(obligation_id,state,updated_at) VALUES(?,'ready',?)",
     )
     .run(obligationId, at);
+  // The steward row lets the conflict path's payout-exception notice insert.
+  const manifest = JSON.stringify({
+    id: "project",
+    status: "active",
+    steward: { github: { actorId: "456" } },
+  });
+  sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)",
+    )
+    .run("project", manifest, digest, "Approved", at);
+  sqlite
+    .query(
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)",
+    )
+    .run("project", manifest, digest, at, at);
   return { database, sqlite };
 }
 
@@ -119,6 +135,19 @@ test("a late dispatch response cannot replace the recorded transaction", async (
     expect(keys[0]).toBe(keys[1]);
     firstResult.resolve({ transactionId: "tx-a" });
     expect(await first).toBe("submitted");
+    // A returns submitted while the outbox is still processing under B's
+    // lease. B's conflicting id is what settles the row.
+    expect(
+      sqlite
+        .query(
+          "SELECT state, lease_token IS NOT NULL AS leased, lease_until FROM payment_outbox",
+        )
+        .get(),
+    ).toEqual({
+      state: "processing",
+      leased: 1,
+      lease_until: "2026-10-30T00:02:01.000Z",
+    });
     secondResult.resolve({ transactionId: "tx-b" });
     await expect(second).rejects.toThrow(
       "Submitted transaction conflicts with the recorded attempt",
@@ -131,18 +160,120 @@ test("a late dispatch response cannot replace the recorded transaction", async (
         .get(),
     ).toEqual({ id: "tx-a", state: "submitted", n: 1 });
     expect(
-      await dispatchPayment(
-        database,
-        {
-          async submit(input) {
-            expect(input.idempotencyKey).toBe(keys[0]);
-            return { transactionId: "tx-a" };
+      sqlite
+        .query(
+          "SELECT state, lease_token, lease_until, updated_at FROM payment_outbox",
+        )
+        .get(),
+    ).toEqual({
+      state: "held",
+      lease_token: null,
+      lease_until: null,
+      updated_at: "2026-10-30T00:01:01.000Z",
+    });
+    expect(
+      sqlite
+        .query(
+          "SELECT event_key, recipient_github_id, kind, subject, action_path FROM notifications ORDER BY event_key",
+        )
+        .all(),
+    ).toEqual([
+      {
+        event_key: `payout-exception:${obligationId}:2026-10-30T00:01:01.000Z`,
+        recipient_github_id: "456",
+        kind: "payout_exception",
+        subject: "project",
+        action_path: "/projects/project",
+      },
+      {
+        event_key: `payout-held:${obligationId}:2026-10-30T00:01:01.000Z`,
+        recipient_github_id: actor,
+        kind: "payout_held",
+        subject: "project",
+        action_path: "/earnings",
+      },
+    ]);
+    let submits = 0;
+    for (const [index, transactionId] of [
+      "tx-c",
+      "tx-d",
+      "tx-e",
+      "tx-f",
+      "tx-g",
+    ].entries()) {
+      expect(
+        await dispatchPayment(
+          database,
+          {
+            async submit(input) {
+              submits += 1;
+              expect(input.idempotencyKey).toBe(keys[0]);
+              return { transactionId };
+            },
           },
+          obligationId,
+          new Date(`2026-10-30T00:0${index + 3}:00.000Z`),
+        ),
+      ).toBe("unavailable");
+    }
+    expect(submits).toBe(0);
+    expect(
+      sqlite
+        .query(
+          "SELECT state, lease_token, (SELECT transaction_id || ':' || state FROM payment_attempts) attempt FROM payment_outbox",
+        )
+        .get(),
+    ).toEqual({
+      state: "held",
+      lease_token: null,
+      attempt: "tx-a:submitted",
+    });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a retry that returns the recorded transaction id submits the outbox", async () => {
+  const { database, sqlite } = fixture();
+  try {
+    const firstResult = deferred<{ transactionId: string }>();
+    const firstStarted = deferred<void>();
+    const first = dispatchPayment(
+      database,
+      {
+        async submit() {
+          firstStarted.resolve();
+          return firstResult.promise;
         },
-        obligationId,
-        new Date("2026-10-30T00:03:00.000Z"),
-      ),
-    ).toBe("submitted");
+      },
+      obligationId,
+      new Date(at),
+    );
+    await firstStarted.promise;
+    const secondResult = deferred<{ transactionId: string }>();
+    const secondStarted = deferred<void>();
+    const second = dispatchPayment(
+      database,
+      {
+        async submit() {
+          secondStarted.resolve();
+          return secondResult.promise;
+        },
+      },
+      obligationId,
+      new Date("2026-10-30T00:01:01.000Z"),
+    );
+    await secondStarted.promise;
+    firstResult.resolve({ transactionId: "tx-a" });
+    expect(await first).toBe("submitted");
+    expect(
+      sqlite.query("SELECT state, lease_until FROM payment_outbox").get(),
+    ).toEqual({
+      state: "processing",
+      lease_until: "2026-10-30T00:02:01.000Z",
+    });
+    secondResult.resolve({ transactionId: "tx-a" });
+    expect(await second).toBe("submitted");
     expect(
       sqlite
         .query(
@@ -150,6 +281,14 @@ test("a late dispatch response cannot replace the recorded transaction", async (
         )
         .get(),
     ).toEqual({ id: "tx-a", state: "submitted", n: 1 });
+    expect(
+      sqlite
+        .query("SELECT state, lease_token, lease_until FROM payment_outbox")
+        .get(),
+    ).toEqual({ state: "submitted", lease_token: null, lease_until: null });
+    expect(sqlite.query("SELECT COUNT(*) n FROM notifications").get()).toEqual({
+      n: 0,
+    });
   } finally {
     sqlite.close();
   }
