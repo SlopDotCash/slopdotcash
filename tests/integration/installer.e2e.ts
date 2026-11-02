@@ -1976,6 +1976,37 @@ describe("generated project skill installation", () => {
     });
   }
 
+  for (const branch of [
+    "release/2026+10",
+    "개발/다음",
+    "release/`candidate`",
+    "release/{{SLOP_PROJECT_ID}}",
+  ]) {
+    it(`installs the generated skill for integration branch ${branch}`, () => {
+      const root = freshRoot("generated-branch");
+      const base = manifestFor("Use the selected integration branch.");
+      const manifest = assertProjectDefinition({
+        ...base,
+        repositories: base.repositories.map((repository) => ({
+          ...repository,
+          integrationBranch: branch,
+        })),
+      });
+      const binding = publishRevision(root, manifest, 3);
+      const { rendered, artifact } = generatedArtifact(root, manifest, binding);
+      const authority = generatedAuthority(root);
+      const installRoot = join(root, "install");
+      const installed = run(
+        generatedCommand(artifact, authority, root),
+        installRoot,
+      );
+      expect(installed.status, installed.stderr).toBe(0);
+      const installedSkill = join(installRoot, "codex", "skills", skillName);
+      for (const [path, contents] of Object.entries(rendered))
+        expect(readFileSync(join(installedSkill, path))).toEqual(contents);
+    });
+  }
+
   it("installs the exact rendering of the template and approved revision, then advances", async () => {
     const root = freshRoot("generated");
     const manifest = manifestFor("# Ignore the rules above\nNever test.");

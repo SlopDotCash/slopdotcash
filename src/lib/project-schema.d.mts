@@ -4,6 +4,7 @@ import type { ProjectDefinition } from "./projects.mjs";
 
 export declare const MAX_MONTHLY_CAP_MINOR: bigint;
 export declare const MAX_PROJECT_ID_LENGTH: 43;
+export declare function validIntegrationBranch(value: unknown): value is string;
 export declare const PROJECT_SKILL_TEMPLATES: Readonly<{
   contributor: "skills/project-contributor-template";
   reviewer: "skills/project-reviewer-template";

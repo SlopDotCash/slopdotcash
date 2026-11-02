@@ -50,6 +50,33 @@ export const PROJECT_SKILL_TEMPLATES = Object.freeze({
 export const MAX_PROJECT_ID_LENGTH = 43;
 const PROJECT_ID = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u;
 
+/** The Git branch names accepted by repository lookup and project setup. */
+export function validIntegrationBranch(value) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 255 &&
+    value.isWellFormed() &&
+    value !== "@" &&
+    value !== "HEAD" &&
+    !value.startsWith("-") &&
+    !value.endsWith(".") &&
+    !value.includes("..") &&
+    !value.includes("@{") &&
+    !/[~^:?*[\\]/u.test(value) &&
+    [...value].every((character) => {
+      const code = character.charCodeAt(0);
+      return code > 32 && code !== 127;
+    }) &&
+    value
+      .split("/")
+      .every(
+        (part) =>
+          part !== "" && !part.startsWith(".") && !part.endsWith(".lock"),
+      )
+  );
+}
+
 /** Maintainer-authored fields, in render order, that generate project skills. */
 export const CONTRIBUTION_FIELDS = Object.freeze([
   "approvedScope",
@@ -814,8 +841,9 @@ function validateRepository(value, index) {
   text(repository.description, `${field}.description`, { max: 500, min: 12 });
   text(repository.integrationBranch, `${field}.integrationBranch`, {
     max: 255,
-    pattern: /^(?!.*(?:\.\.|\s|~|\^|:|\?|\*|\[|\\))[A-Za-z0-9._/-]+$/u,
   });
+  if (!validIntegrationBranch(repository.integrationBranch))
+    throw new TypeError(`${field}.integrationBranch is invalid`);
   return repository;
 }
 
