@@ -3197,7 +3197,7 @@ function createSnapshotWithReviewCutoff(
       .sort(
         (left, right) =>
           parseIsoTime(left.createdAt) - parseIsoTime(right.createdAt) ||
-          left.id.localeCompare(right.id),
+          left.id.localeCompare(right.id, "en"),
       )) {
       // Only a maintainer can ratify. A fenced block in any other comment is
       // data, not a record: it must not fail snapshot generation for the
