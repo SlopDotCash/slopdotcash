@@ -89,6 +89,23 @@ export async function consumeValueRequest(
     const { monthly, maximum, start } = settings;
     const repository = findRepository(repositories, `${job.owner}/${job.repo}`);
     if (!repository) return await finish("authority");
+    // Sources carry the registered id, which keeps a renamed repository's
+    // original path. The live registry admits only the current name, so check
+    // each source under the current name its manifest records.
+    const registeredSource = async (source: {
+      repository: string;
+      repositoryDatabaseId: number;
+    }) => {
+      const target = findRepository(repositories, source.repository);
+      return (
+        target !== undefined &&
+        (await registeredRepository(db, {
+          owner: target.owner,
+          repo: target.name,
+          repositoryId: source.repositoryDatabaseId,
+        }))
+      );
+    };
     const github = await GitHubClient.forInstallation(
       env.SLOPBOT_APP_ID,
       env.SLOPBOT_APP_PRIVATE_KEY,
@@ -143,15 +160,7 @@ export async function consumeValueRequest(
       { evidence, policy },
       async (source) => {
         if (!(await ownsValueRequest(db, claim))) return false;
-        const [owner, repo] = source.repository.split("/");
-        if (
-          !(await registeredRepository(db, {
-            owner,
-            repo,
-            repositoryId: source.repositoryDatabaseId,
-          }))
-        )
-          return false;
+        if (!(await registeredSource(source))) return false;
         await assertValueInstallation(db, job.installationId);
         await assertValueInstallationRepositories(github, [source]);
         return true;
@@ -173,17 +182,8 @@ export async function consumeValueRequest(
         !(await ownsValueSources(db, claim, scopes))
       )
         return false;
-      for (const { evidence: source } of sources) {
-        const [owner, repo] = source.repository.split("/");
-        if (
-          !(await registeredRepository(db, {
-            owner,
-            repo,
-            repositoryId: source.repositoryDatabaseId,
-          }))
-        )
-          return false;
-      }
+      for (const { evidence: source } of sources)
+        if (!(await registeredSource(source))) return false;
       await assertValueInstallation(db, job.installationId);
       await assertValueInstallationRepositories(
         github,
