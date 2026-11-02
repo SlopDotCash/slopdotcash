@@ -538,16 +538,22 @@ export function createProjectView(
   const repositoryIds = new Set(
     project.repositories.map((repository) => repository.id),
   );
+  // Parse each event timestamp once: the filter and the sort comparator
+  // otherwise re-parse the same ISO strings several times per event.
+  const occurredAtMs = new Map(
+    snapshot.ledger.map((event) => [event, Date.parse(event.occurredAt)]),
+  );
   const ledger = snapshot.ledger
     .filter(
       (event) =>
         repositoryIds.has(event.repository) &&
-        Date.parse(event.occurredAt) >= from &&
-        Date.parse(event.occurredAt) < to,
+        (occurredAtMs.get(event) as number) >= from &&
+        (occurredAtMs.get(event) as number) < to,
     )
     .sort(
       (left, right) =>
-        Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
+        (occurredAtMs.get(right) as number) -
+          (occurredAtMs.get(left) as number) ||
         left.id.localeCompare(right.id),
     );
   const { conflicts, runs } = selectUniqueRuns(snapshot, project);
