@@ -79,13 +79,15 @@ export function boundedText(
 }
 
 export function slugify(value: string): string {
-  return value
+  const slug = value
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/gu, "-")
     .replace(/^-|-$/gu, "")
     .slice(0, MAX_PROJECT_ID_LENGTH)
     .replace(/-$/u, "");
+  // /projects/new opens setup rather than a project page.
+  return slug === "new" ? "new-project" : slug;
 }
 
 /** Validate with the same decimal parser as the API; new token precision is

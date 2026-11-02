@@ -1112,6 +1112,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
 });
 
 for (const [name, expectedId] of [
+  ["New", "new-project"],
   ["한글 프로젝트", "open-protein"],
   [
     `${"a".repeat(MAX_PROJECT_ID_LENGTH - 1)} b`,
@@ -1157,11 +1158,40 @@ for (const [name, expectedId] of [
       return {
         status: 201,
         json: {
-          project: { id: expectedId, revision: 1, referrer: null },
-          setup: { ...CREATED_SETUP, projectId: expectedId, slug: expectedId },
+          project: {
+            id: String(body.manifest.id),
+            revision: 1,
+            referrer: null,
+          },
+          setup: {
+            ...CREATED_SETUP,
+            projectId: String(body.manifest.id),
+            slug: String(body.manifest.id),
+          },
         },
       };
     });
+    if (name === "New") {
+      // A successful creation becomes visible after the completion link reloads
+      // the registry. Keep the actual submitted id, as the real API does.
+      await page.route(
+        "**/data/fixture-project-registry.json",
+        async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          const created = submitted
+            ? validate(submitted as Record<string, unknown>)
+            : null;
+          await route.fulfill({
+            response,
+            json: {
+              ...body,
+              projects: created ? [...body.projects, created] : body.projects,
+            },
+          });
+        },
+      );
+    }
     await page.goto("/projects/new", { waitUntil: "networkidle" });
     await enterRepository(page, "example/open-protein");
     await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
@@ -1176,6 +1206,27 @@ for (const [name, expectedId] of [
     await expect(
       page.getByRole("heading", { name: "Project created" }),
     ).toBeVisible();
+    if (name === "New") {
+      await expectAccessible(page);
+      const view = page.getByRole("link", {
+        name: "View project",
+        exact: true,
+      });
+      // Exercise the completion action with actual keyboard navigation.
+      for (
+        let step = 0;
+        step < 20 &&
+        !(await view.evaluate((el) => el === document.activeElement));
+        step += 1
+      )
+        await page.keyboard.press("Tab");
+      await expect(view).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByRole("heading", { name, exact: true, level: 1 }),
+      ).toBeVisible();
+      await expectAccessible(page);
+    }
     const manifest = submitted as Record<string, unknown>;
     expect(manifest).toMatchObject({
       id: expectedId,
