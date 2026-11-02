@@ -153,7 +153,7 @@ describe("quarantined scan status presentation", () => {
     });
     expect(result.state).toBe("action_required");
     expect(result.checks.scan.message).toBe(
-      "The last scan finished, but findings in the project repository block clearance.",
+      "Findings in the project repository block clearance.",
     );
     expect(result.nextAction.message).toContain(
       "Fix the cause if you know it, then request a new scan.",
@@ -170,7 +170,7 @@ describe("quarantined scan status presentation", () => {
     });
     expect(result.state).toBe("action_required");
     expect(result.checks.scan.message).toBe(
-      "The last scan finished, but findings in Slop's skill template block clearance.",
+      "Findings in Slop's skill template block clearance.",
     );
     expect(result.nextAction.message).toContain(
       "Check for an updated skill template before requesting a new scan.",
@@ -187,7 +187,7 @@ describe("quarantined scan status presentation", () => {
     });
     expect(result.state).toBe("action_required");
     expect(result.checks.scan.message).toBe(
-      "The last scan finished, but findings in both the repository and skill template block clearance.",
+      "Findings in both the repository and skill template block clearance.",
     );
     expect(result.nextAction.message).toContain(
       "Fix the cause if you know it, then request a new scan.",
@@ -215,61 +215,74 @@ describe("summarize findings location classification", () => {
     result: null,
   };
 
-  test("classifies template location for slop-skill-template paths", () => {
-    const summary = summarize({
-      ...dummyAssessment,
-      result: {
-        schemaVersion: "slop-vetting-result-v2",
-        assessmentId: dummyAssessment.id,
-        projectId: dummyAssessment.projectId,
-        revision: 1,
-        manifestSha256: dummyAssessment.manifestSha256,
-        disposition: "incomplete",
-        policyVersion: "1",
-        assessed: {
-          repository: "owner/repo",
-          commitSha: dummyAssessment.commitSha,
-          templateSha256: dummyAssessment.templateSha256,
-          inputManifestSha256: "i".repeat(64),
-          dependencyLocks: [],
-        },
-        scan: {
-          runId: "r1",
-          startedAt: at,
-          completedAt: at,
-          reportSha256: "r".repeat(64),
-        },
-        coverage: {} as unknown as VettingScanResult["coverage"],
-        checks: {} as unknown as VettingScanResult["checks"],
-        visibilityGaps: [],
-        execution: null,
-        reusedAssessmentId: null,
-        primaryReview: {
-          provider: "p",
-          model: "m",
-          promptPolicyRevision: "1",
-          inputManifestSha256: "i".repeat(64),
-          runId: "r",
-          status: "completed",
-          verdict: "findings",
-          risk: "high",
-          findingCount: 1,
-        },
-        specialistReview: null,
-        artifacts: [],
-        findings: [
-          {
-            severity: "high",
-            category: "unsafe-execution",
-            summary: "Command injection in skill template bootstrap",
-            evidence: "slop-skill-template/run.sh:14",
+  test.each([
+    ["slop-skill-template/skills/SKILL.md:10", "template"],
+    ["The reviewer found an unsafe command in the skill template.", "unknown"],
+  ] as const)(
+    "uses only path evidence for the finding location: %s",
+    (evidence, location) => {
+      const summary = summarize({
+        ...dummyAssessment,
+        result: {
+          schemaVersion: "slop-vetting-result-v2",
+          assessmentId: dummyAssessment.id,
+          projectId: dummyAssessment.projectId,
+          revision: 1,
+          manifestSha256: dummyAssessment.manifestSha256,
+          disposition: "incomplete",
+          policyVersion: "1",
+          assessed: {
+            repository: "owner/repo",
+            commitSha: dummyAssessment.commitSha,
+            templateSha256: dummyAssessment.templateSha256,
+            inputManifestSha256: "i".repeat(64),
+            dependencyLocks: [],
           },
-        ],
-        confirmation: null,
-      },
-    });
-    expect(summary.findingsLocation).toBe("template");
-  });
+          scan: {
+            runId: "r1",
+            startedAt: at,
+            completedAt: at,
+            reportSha256: "r".repeat(64),
+          },
+          coverage: {} as unknown as VettingScanResult["coverage"],
+          checks: {} as unknown as VettingScanResult["checks"],
+          visibilityGaps: [],
+          execution: null,
+          reusedAssessmentId: null,
+          primaryReview: {
+            provider: "p",
+            model: "m",
+            promptPolicyRevision: "1",
+            inputManifestSha256: "i".repeat(64),
+            runId: "r",
+            status: "completed",
+            verdict: "findings",
+            risk: "high",
+            findingCount: 1,
+          },
+          specialistReview: null,
+          artifacts: [],
+          findings: [
+            {
+              severity: "high",
+              category: "unsafe-execution",
+              summary: "Command injection in skill template bootstrap",
+              evidence,
+            },
+          ],
+          confirmation: null,
+        },
+      });
+      expect(summary.findingsLocation).toBe(location);
+      const result = status({ state: "quarantined", assessment: summary });
+      if (location === "unknown") {
+        expect(result.checks.scan.message).toBe("Findings block clearance.");
+        expect(result.nextAction.message).toBe(
+          "Findings block clearance. Review the scan result before requesting a new scan.",
+        );
+      }
+    },
+  );
 
   test("classifies repository location for repository findings", () => {
     const summary = summarize({

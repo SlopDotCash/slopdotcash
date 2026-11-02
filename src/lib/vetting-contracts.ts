@@ -49,7 +49,7 @@ export type AssessmentSummary = {
   modelRuns: { reviewer: string; provider: string; model: string }[];
   artifacts: number;
   heldArtifacts: number;
-  findingsLocation?: "repository" | "template" | "both";
+  findingsLocation?: "repository" | "template" | "both" | "unknown";
 };
 
 /**
