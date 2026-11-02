@@ -282,14 +282,16 @@ async function oauthCallback(
 ): Promise<Response> {
   const url = new URL(request.url);
   const state = url.searchParams.get("state");
-  const code = url.searchParams.get("code");
+  const code = url.searchParams.get("code") ?? "";
+  // GitHub can reject authorization before issuing a code. The bound flow
+  // must still become terminal so the original tab or terminal stops polling.
+  const authorizationFailed = url.searchParams.has("error");
   const cookieState = cookieValue(request, "__Host-slop_oauth_state");
   if (
     !validCapability(state) ||
     cookieState === null ||
     !constantTimeEqual(state, cookieState) ||
-    typeof code !== "string" ||
-    !/^[A-Za-z0-9_./-]{8,512}$/u.test(code)
+    (!authorizationFailed && !/^[A-Za-z0-9_./-]{8,512}$/u.test(code))
   ) {
     return html(
       400,
@@ -311,6 +313,15 @@ async function oauthCallback(
       410,
       "Sign-in expired",
       "Start sign-in again from Slop or your terminal.",
+      siteOf(deps),
+    );
+  }
+  if (authorizationFailed) {
+    await deps.persistence.failCallback(flow.id);
+    return html(
+      400,
+      "Sign-in failed",
+      "The sign-in response was invalid or expired.",
       siteOf(deps),
     );
   }
