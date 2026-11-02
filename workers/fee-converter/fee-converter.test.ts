@@ -25,7 +25,7 @@ import {
   runNetwork,
   type SendStatus,
 } from "./core";
-import { createEvmClient } from "./evm";
+import { createEvmClient, usdMicro } from "./evm";
 import worker, { runOnce } from "./index";
 import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient, parseTransaction } from "./solana";
@@ -452,6 +452,7 @@ describe("Kyber gas pricing in the conversion workflow", () => {
     ["base", { gasUsd: "0", l1FeeUsd: "0" }, "submitted"],
     ["ethereum", { gasUsd: 0, l1FeeUsd: undefined }, "submitted"],
     ["ethereum", { gasUsd: "2.000001", l1FeeUsd: undefined }, "pending"],
+    ["ethereum", { gasUsd: "2.0000009", l1FeeUsd: undefined }, "pending"],
     ["base", { gasUsd: "1", l1FeeUsd: "1.000001" }, "pending"],
   ] as const) {
     test(`${network} valid costs ${JSON.stringify(costs)} retain the 10x gate`, async () => {
@@ -493,6 +494,97 @@ describe("Kyber gas pricing in the conversion workflow", () => {
       } finally {
         h.sqlite.close();
       }
+    });
+  }
+
+  test("usdMicro rounds a nonzero sub-micro remainder up", () => {
+    // The fixture shape above: 4650.9426... micro counts as 4651.
+    expect(usdMicro("0.004650942632151648")).toBe(4_651n);
+    expect(usdMicro("2.0000009")).toBe(2_000_001n);
+    // Exact-micro values are unchanged, including a trailing zero.
+    expect(usdMicro("0.004650")).toBe(4_650n);
+    expect(usdMicro("2.000001")).toBe(2_000_001n);
+    expect(usdMicro("2.0000010")).toBe(2_000_001n);
+    expect(usdMicro("-1")).toBeNull();
+    expect(usdMicro("unpriced")).toBeNull();
+  });
+
+  test("usdMicro with direction down truncates the sub-micro remainder", () => {
+    expect(usdMicro("0.97999999", "down")).toBe(979_999n);
+    expect(usdMicro("0.004650942632151648", "down")).toBe(4_650n);
+    // Exact-micro values are unchanged in either direction.
+    expect(usdMicro("2.000001", "down")).toBe(2_000_001n);
+    expect(usdMicro("0.004650", "down")).toBe(4_650n);
+  });
+
+  test("a quote counts price impact from untruncated USD inputs", async () => {
+    const cfg = config();
+    const network = cfg.networks[0];
+    const client = createEvmClient({
+      config: network,
+      limits: cfg.limits,
+      kyberClientId: "test",
+      fetch: (async () =>
+        Response.json({
+          code: 0,
+          data: {
+            routerAddress: network.definition.router,
+            routeSummary: {
+              tokenIn: TOKEN,
+              tokenOut: network.definition.usdc,
+              amountIn: "20000000",
+              amountOut: "20000000",
+              amountInUsd: "0.0100019",
+              amountOutUsd: "0.0098",
+              gas: "330498",
+              gasUsd: "0",
+              l1FeeUsd: "0",
+            },
+          },
+        })) as unknown as typeof fetch,
+    });
+    const quote = await client.quote(TOKEN, 20_000_000n);
+    // In is exactly 10001.9 micro, rounded up to 10002; out is 9800.
+    // Impact is ceil((10002 - 9800) * 10000 / 10002) = 202, not 201.
+    expect("noRoute" in quote ? null : quote.priceImpactBps).toBe(202);
+    expect("noRoute" in quote ? null : quote.gasCostMicro).toBe(0n);
+  });
+
+  // The output must not round up: 1 -> 0.97999999 USD is exactly
+  // 200.0001 bps of impact, over the 200 bps cap. Ceiling the output to
+  // 980000 micro would shrink the difference and report 200.
+  for (const [amountOutUsd, bps] of [
+    ["0.97999999", 201],
+    ["0.98999999", 101],
+  ] as const) {
+    test(`a quote counts impact against a truncated output (${amountOutUsd} USD)`, async () => {
+      const cfg = config();
+      const network = cfg.networks[0];
+      const client = createEvmClient({
+        config: network,
+        limits: cfg.limits,
+        kyberClientId: "test",
+        fetch: (async () =>
+          Response.json({
+            code: 0,
+            data: {
+              routerAddress: network.definition.router,
+              routeSummary: {
+                tokenIn: TOKEN,
+                tokenOut: network.definition.usdc,
+                amountIn: "20000000",
+                amountOut: "20000000",
+                amountInUsd: "1",
+                amountOutUsd,
+                gas: "330498",
+                gasUsd: "0",
+                l1FeeUsd: "0",
+              },
+            },
+          })) as unknown as typeof fetch,
+      });
+      const quote = await client.quote(TOKEN, 20_000_000n);
+      expect("noRoute" in quote ? null : quote.priceImpactBps).toBe(bps);
     });
   }
 });
