@@ -37,6 +37,7 @@ import {
   projectRestriction,
   repositoryIdentity,
 } from "../projects/enforcement";
+import { quarantinedScanMessage } from "../projects/setup";
 import type { VettingArtifact } from "./result";
 import {
   isScanResult,
@@ -668,6 +669,32 @@ export class CloudflareVettingPersistence {
         input.livePin,
         input.at,
       );
+    // Private inbox detail mirrors setup copy (issue #1991). summarize()
+    // needs a VettingAssessment shell; only `result` and `completedAt` drive
+    // the owner-facing location message.
+    const scanFailedDetail =
+      result.disposition === "incomplete"
+        ? quarantinedScanMessage(
+            summarize({
+              id: result.assessmentId,
+              projectId: result.projectId,
+              revision: result.revision,
+              manifestSha256: result.manifestSha256,
+              contentSha256: "0".repeat(64),
+              commitSha: result.assessed.commitSha,
+              templateSha256: result.assessed.templateSha256,
+              requestedBy: { githubId: "0", githubLogin: "scan" },
+              requestedAt: input.at,
+              requestReason: "scan",
+              state: "incomplete",
+              policyVersion: result.policyVersion,
+              result,
+              resultSha256: input.resultSha256,
+              signingKeySha256: input.signingKeySha256,
+              completedAt: input.at,
+            }),
+          )
+        : null;
     try {
       await this.db.batch([
         this.db
@@ -700,7 +727,13 @@ export class CloudflareVettingPersistence {
           : []),
         // A scan that could not establish clearance tells the owners once.
         ...(result.disposition === "incomplete"
-          ? [notifyProjectScanFailed(this.db, result.assessmentId)]
+          ? [
+              notifyProjectScanFailed(
+                this.db,
+                result.assessmentId,
+                scanFailedDetail,
+              ),
+            ]
           : []),
         ...result.artifacts.map((artifact, ordinal) =>
           this.db
