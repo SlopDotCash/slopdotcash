@@ -310,7 +310,7 @@ const RULES: Rule[] = [
     // case. A closing quote is not required. A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`\/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
+      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
@@ -328,7 +328,7 @@ const RULES: Rule[] = [
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`\/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
@@ -373,10 +373,10 @@ const RULES: Rule[] = [
     severity: "high",
     // The decoded-code rule above covers a payload hidden in the file.
     // This covers the same act with the payload fetched instead: an
-    // eval/exec whose argument expression reads from the network on the
-    // same line. Fetching data without executing it keeps no finding.
+    // direct eval/exec/Function call whose argument starts with a network
+    // read. A later call on the same line is not part of that argument.
     pattern:
-      /\b(?:eval|exec)\s*\([^\n]{0,160}?\b(?:urlopen|urllib|requests\.|fetch\s*\(|https?\.(?:get|request)|XMLHttpRequest|axios\.)|new\s+Function\s*\([^\n]{0,160}?\bfetch\s*\(/iu,
+      /(?<![\w.])(?:eval|exec|new\s+Function)\s*\(\s*(?:await\s+|\(\s*)*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\(|requests\.[a-z]+\s*\(|fetch\s*\(|axios(?:\.[a-z]+)?\s*\()/iu,
     summary: "Executes code fetched from the network",
   },
   {
