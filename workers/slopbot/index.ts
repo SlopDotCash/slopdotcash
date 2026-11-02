@@ -149,7 +149,7 @@ export function jobFor(
         ...item,
         senderId: sender.id,
       };
-    if (text.startsWith("/slopbot appeal"))
+    if (/^\/slopbot appeal(?:\s|$)/mu.test(text))
       return {
         kind: "appeal",
         ...base,
@@ -159,12 +159,15 @@ export function jobFor(
       };
     const command = APPEAL_COMMANDS.find(
       (name) =>
-        text === `/slopbot ${name}` ||
-        text.startsWith(`/slopbot ${name}\n`) ||
-        text.startsWith(`/slopbot ${name} `),
+        new RegExp(`^/slopbot ${name}(?:\\s|$)`, "mu").test(text),
     );
     if (command === undefined) return null;
-    const target = text.slice(`/slopbot ${command}`.length).trim();
+    const target = text
+      .split("\n")
+      .find((line) => line.trim().startsWith(`/slopbot ${command}`))
+      ?.trim()
+      .slice(`/slopbot ${command}`.length)
+      .trim();
     if (
       /^(?:appeal|value-appeal):/u.test(target) &&
       !/^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u.test(target)

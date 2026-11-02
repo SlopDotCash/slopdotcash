@@ -305,6 +305,42 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
       assert.equal(await response.text(), expected);
     }
     assert.equal(queued.length, 2);
+    // The command need not be the first line of the comment: an author who
+    // explains the error first still queues an appeal.
+    const trailing = {
+      action: "created",
+      installation: { id: 1 },
+      repository: {
+        id: Number(project.authority.repositoryId),
+        name: repo,
+        private: false,
+        owner: { login: owner },
+      },
+      sender: { id: 42, type: "User" },
+      issue: { number: 1, pull_request: {} },
+      comment: {
+        id: 6,
+        body: "The digest is a valid sha256 and the test passes.\n\n/slopbot appeal",
+      },
+    };
+    const trailingBody = JSON.stringify(trailing);
+    for (const expected of ["queued", "duplicate delivery"]) {
+      const response = await worker.fetch(
+        new Request("https://slopbot.example/github/webhook", {
+          method: "POST",
+          body: trailingBody,
+          headers: {
+            "x-github-event": "issue_comment",
+            "x-github-delivery": "appeal-trailing",
+            "x-hub-signature-256": `sha256=${createHmac("sha256", env.SLOPBOT_WEBHOOK_SECRET).update(trailingBody).digest("hex")}`,
+          },
+        }),
+        env,
+      );
+      assert.equal(await response.text(), expected);
+    }
+    assert.equal(queued.length, 3);
+    assert.equal(queued[2]?.kind, "appeal");
   } finally {
     globalThis.fetch = nativeFetch;
     server.stop(true);
