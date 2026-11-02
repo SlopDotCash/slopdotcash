@@ -399,14 +399,19 @@ export async function verifyQualityEventIds(
   evidence: QualityEvidence,
   preparation: FundingPreparation,
 ) {
+  // Group the event ids by actor in one pass over the census. Filtering the
+  // full event list once per contributor made this quadratic in the census
+  // size; the grouped ids keep the original event order per actor, so each
+  // sorted payload — and therefore each hash — is unchanged.
+  const idsByActor = new Map<string, string[]>();
+  for (const event of evidence.events) {
+    const ids = idsByActor.get(event.actorId);
+    if (ids) ids.push(event.id);
+    else idsByActor.set(event.actorId, [event.id]);
+  }
   for (const actor of preparation.contributors) {
     const hash = await sha256Hex(
-      JSON.stringify(
-        evidence.events
-          .filter((event) => event.actorId === actor.actor.id)
-          .map((event) => event.id)
-          .sort(),
-      ),
+      JSON.stringify((idsByActor.get(actor.actor.id) ?? []).sort()),
     );
     requireValue(
       hash === actor.eventIdsSha256,
