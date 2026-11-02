@@ -768,14 +768,32 @@ async function writeVerifiedCase(
         github_created_at: facts.createdAt,
         evidence_digest: facts.evidenceDigest,
       },
+      guard: {
+        sql: "NOT EXISTS (SELECT 1 FROM security_cases WHERE project_id = ? AND advisory_ghsa = ? AND submission_state = 'verified' AND id <> ?)",
+        values: [row.project_id, facts.ghsa, durable.case_id],
+      },
       kind: "github-linked",
       detail: { caseId: durable.case_id, advisory: facts.ghsa },
       actorGithubId: row.reporter_github_id,
     });
-    return {
-      status: 200,
-      row: linked ?? ((await loadSubmission(deps, row.id)) as SubmissionRow),
-    };
+    if (linked !== null) return { status: 200, row: linked };
+    const current = (await loadSubmission(deps, row.id)) as SubmissionRow;
+    if (current.state === "receipt-verified")
+      return { status: 200, row: current };
+    if (current.revision !== row.revision || current.state !== row.state)
+      fail(409, "stale_revision", "The submission changed since you loaded it");
+    await transition(deps, current, {
+      state: "failed",
+      set: { failure_code: "already-recorded" },
+      kind: "verify-failed",
+      detail: { code: "already-recorded" },
+      actorGithubId: null,
+    });
+    fail(
+      409,
+      "advisory_already_recorded",
+      "This advisory already has a verified case",
+    );
   }
   const receivedAt = facts.createdAt;
   // Analysis runs in memory on the content GitHub returned; only enums leave.

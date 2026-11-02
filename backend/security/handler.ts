@@ -1822,7 +1822,7 @@ async function recordPrivateReports(
             )
         : deps.db
             .prepare(
-              "UPDATE security_cases SET submission_state = 'verified', received_at = ?, received_at_source = 'github-verified', verified_at = ?, verified_by_github_id = ?, policy_revision = ?, terms = ?, award_state = ?, reporter_github_login = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND submission_state = 'claimed'",
+              "UPDATE security_cases SET submission_state = 'verified', received_at = ?, received_at_source = 'github-verified', verified_at = ?, verified_by_github_id = ?, policy_revision = ?, terms = ?, award_state = ?, reporter_github_login = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND submission_state = 'claimed' AND NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))",
             )
             .bind(
               ...values,
@@ -2381,6 +2381,12 @@ async function planChange(
           terms: frozen.terms ? JSON.stringify(frozen.terms) : null,
           award_state: frozen.terms ? "pending" : "not-applicable",
           owner_github_id: actor.githubId,
+        },
+        requireSql:
+          "NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))",
+        unmet: {
+          code: "advisory_already_recorded",
+          message: "This advisory already has a verified case",
         },
       };
     }
