@@ -2980,7 +2980,7 @@ function createSnapshotWithReviewCutoff(
     (left, right) =>
       parseIsoTime(right.mergedAt) - parseIsoTime(left.mergedAt) ||
       right.number - left.number ||
-      left.id.localeCompare(right.id),
+      left.id.localeCompare(right.id, "en"),
   );
   const detailHydratedMergedPullRequests = dedupeByNodeId(
     input.mergedPullRequests,
