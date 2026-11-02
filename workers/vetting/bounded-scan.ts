@@ -375,10 +375,8 @@ const RULES: Rule[] = [
   {
     threat: "secret-exfiltration",
     severity: "high",
-    pattern: new RegExp(
-      String.raw`JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*/)?(?:curl|wget|ncat|netcat|nc)\b`,
-      "iu",
-    ),
+    pattern:
+      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b/iu,
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
@@ -393,9 +391,33 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // Process substitution hands a remote download to a shell without a
+    // pipe: `bash <(curl ...)`, `sh <(curl ...)`, `source <(curl ...)`
+    // and `. <(curl ...)` are the same act. Shell flags can select stdin
+    // or syntax-only mode, so this rule covers a direct script argument.
+    // Only curl/wget inside the substitution count; `bash <(cat local.sh)` stays clean.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()'"])(?:(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+|source\s+|\.\s+)<\(\s*(?:curl|wget)\b`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a shell via process substitution",
+  },
+
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     pattern:
       /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
     summary: "Executes decoded or obfuscated code",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // Reading a response object does not execute its body. Match the direct
+    // response-text forms; other data flow needs the model's source review.
+    pattern:
+      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.text\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
+    summary: "Executes code fetched from the network",
   },
   {
     threat: "unsafe-execution",
@@ -439,6 +461,22 @@ const RULES: Rule[] = [
     pattern: /[​-‏‪-‮⁦-⁩]/u,
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A decoder between the download and the executor changes nothing
+    // about what runs: the shell or interpreter still receives the
+    // downloaded bytes, decoded. The pipe rules above require the
+    // executor immediately after the first pipe, so
+    // `curl … | base64 -d | sh` matched nothing. Only a decode stage
+    // qualifies: encoding, checksumming or saving a download keeps no
+    // finding, and decoding local content has no download to run.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode)|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a decoded remote download in a shell or interpreter",
   },
   {
     threat: "unsafe-execution",
