@@ -340,8 +340,36 @@ contribution_fields = (
 )
 project_id_pattern = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?")
 repository_id_pattern = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
-branch_pattern = re.compile(r"[A-Za-z0-9._/-]{1,255}")
 max_manifest_bytes = 1_048_576
+
+
+def valid_integration_branch(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        length = len(value.encode("utf-16-le")) // 2
+    except UnicodeEncodeError:
+        return False
+    return (
+        0 < length <= 255
+        and value not in ("@", "HEAD")
+        and not value.startswith("-")
+        and not value.endswith(".")
+        and ".." not in value
+        and "@{" not in value
+        and not any(character in "~^:?*[" or character == chr(92) for character in value)
+        and all(ord(character) > 32 and ord(character) != 127 for character in value)
+        and all(part and not part.startswith(".") and not part.endswith(".lock") for part in value.split("/"))
+    )
+
+
+def branch_code(value):
+    tick = chr(96)
+    runs = re.findall(tick + "+", value)
+    if not runs:
+        return tick + value + tick
+    fence = tick * (max(map(len, runs)) + 1)
+    return f"{fence} {value} {fence}"
 
 
 def generated_skill_role():
@@ -414,23 +442,27 @@ def render_project_skill(role, template_files, manifest, binding):
         or not isinstance(repository_record, dict)
         or not isinstance(repository_record.get("id"), str)
         or not repository_id_pattern.fullmatch(repository_record["id"])
-        or not isinstance(repository_record.get("integrationBranch"), str)
-        or not branch_pattern.fullmatch(repository_record["integrationBranch"])
+        or not valid_integration_branch(repository_record.get("integrationBranch"))
         or not isinstance(contribution, dict)
     ):
         raise ValueError("project registry manifest cannot render this skill")
     if "SKILL.md" not in template_files or "project.json" in template_files:
         raise ValueError("canonical skill template has an invalid identity")
     text = template_files["SKILL.md"].decode("utf-8")
-    for token, value in (
-        ("{{SLOP_SKILL_NAME}}", skill["id"]),
-        ("{{SLOP_PROJECT_ID}}", project_id),
-        ("{{SLOP_REPOSITORY}}", repository_record["id"]),
-        ("{{SLOP_INTEGRATION_BRANCH}}", repository_record["integrationBranch"]),
-    ):
-        text = text.replace(token, value)
-    if "{{SLOP_" in text:
+    values = {
+        "{{SLOP_SKILL_NAME}}": skill["id"],
+        "{{SLOP_PROJECT_ID}}": project_id,
+        "{{SLOP_REPOSITORY}}": repository_record["id"],
+        "{{SLOP_INTEGRATION_BRANCH}}": repository_record["integrationBranch"],
+    }
+    checked = text
+    for token in values:
+        checked = checked.replace(token, "")
+    if "{{SLOP_" in checked:
         raise ValueError("canonical skill template has an unknown placeholder")
+    branch_token = chr(96) + "{{SLOP_INTEGRATION_BRANCH}}" + chr(96)
+    pattern = re.escape(branch_token) + "|" + re.escape("{{SLOP_") + "[A-Z_]+" + re.escape("}}")
+    text = re.sub(pattern, lambda match: branch_code(repository_record["integrationBranch"]) if match[0] == branch_token else values[match[0]], text)
     fields = {}
     for field in contribution_fields:
         value = contribution.get(field)

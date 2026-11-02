@@ -1,11 +1,22 @@
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
 import type { D1Database } from "./persistence";
+import {
+  type AcceptedCommitCensus,
+  collectAcceptedCommitCensus,
+} from "./value-accepted-commit-census";
 import { collectValueContext } from "./value-context";
-import { collectValueEvidence, namesRepository } from "./value-evidence";
+import {
+  collectValueEvidence,
+  namesRepository,
+  type ValueEvidence,
+} from "./value-evidence";
 import { latestValueRecord } from "./value-journal";
 import { noChangePromotionDeferralOnly } from "./value-no-change-promotion";
 import { loadValuePolicy, type ValueClient } from "./value-publication";
-import type { WorkUnitSource } from "./value-work-unit";
+import {
+  acceptedWorkUnitCommits,
+  type WorkUnitSource,
+} from "./value-work-unit";
 import {
   currentWorkUnitRecord,
   type WorkUnitRecord,
@@ -17,6 +28,80 @@ type Identity = {
   repositoryDatabaseId: number;
   repositoryNodeId: string;
 };
+
+/** GitHub's commit associations are discovery evidence, not acceptance or
+ * credit proof. Every discovered member still passes full source collection.
+ */
+async function acceptedCommitCarriers(
+  github: ValueClient,
+  evidence: ValueEvidence,
+  cache: Map<string, Selection[]>,
+): Promise<Selection[] | null> {
+  if (!evidence.pull.merged_at && !evidence.indirectAcceptance) return [];
+  const shas = new Set(
+    acceptedWorkUnitCommits(evidence).map((commit) => commit.sha),
+  );
+  if (evidence.pull.merged_at && evidence.mergeCommitEvidence)
+    shas.add(evidence.mergeCommitEvidence.sha);
+  const carriers = new Map<string, Selection>();
+  for (const sha of shas) {
+    const key = `${evidence.repositoryNodeId}:${sha}`;
+    let matches = cache.get(key);
+    if (!matches) {
+      matches = [];
+      for (let page = 1; ; page++) {
+        const pulls = await github.get<
+          {
+            node_id: string;
+            number: number;
+            html_url: string;
+            state: string;
+            merged_at: string | null;
+            base: {
+              repo: {
+                id: number;
+                node_id: string;
+                full_name: string;
+                private: boolean;
+              };
+            };
+          }[]
+        >(
+          `/repos/${evidence.repository}/commits/${sha}/pulls?per_page=100&page=${page}`,
+        );
+        if (!Array.isArray(pulls)) return null;
+        for (const pull of pulls) {
+          if (pull.state !== "closed" || pull.merged_at === null) continue;
+          const repo = pull.base?.repo;
+          if (
+            !pull.node_id ||
+            !Number.isSafeInteger(pull.number) ||
+            pull.number <= 0 ||
+            !Number.isFinite(Date.parse(pull.merged_at)) ||
+            !repo ||
+            repo.private !== false ||
+            repo.id !== evidence.repositoryDatabaseId ||
+            repo.node_id !== evidence.repositoryNodeId ||
+            repo.full_name.toLowerCase() !==
+              evidence.repository.toLowerCase() ||
+            pull.html_url !==
+              `https://github.com/${repo.full_name}/pull/${pull.number}`
+          )
+            return null;
+          matches.push({
+            repository: evidence.repository,
+            number: pull.number,
+            nodeId: pull.node_id,
+          });
+        }
+        if (pulls.length < 100) break;
+      }
+      cache.set(key, matches);
+    }
+    for (const match of matches) carriers.set(match.nodeId, match);
+  }
+  return [...carriers.values()];
+}
 
 /** Follow current references and retained joint membership. Bounds are a
  * collection limit, not a scoring cap: an unfinished group remains pending.
@@ -39,6 +124,8 @@ export async function collectValueGroup(
     },
   ];
   const sources = new Map<string, WorkUnitSource>();
+  const commitCarriers = new Map<string, Selection[]>();
+  const censuses = new Map<string, AcceptedCommitCensus>();
   for (let position = 0; position < queue.length; position++) {
     const selected = queue[position];
     const key = `${selected.repository.toLowerCase()}#${selected.number}`;
@@ -126,6 +213,35 @@ export async function collectValueGroup(
         ? seed.policy
         : await loadValuePolicy(github, owner, repo, evidence.pull.base.sha);
     sources.set(key, { evidence, policy });
+    const carriers = await acceptedCommitCarriers(
+      github,
+      evidence,
+      commitCarriers,
+    );
+    if (carriers === null) return null;
+    queue.push(...carriers);
+    if (evidence.pull.merged_at || evidence.indirectAcceptance) {
+      let census = censuses.get(evidence.repositoryNodeId);
+      if (!census) {
+        const collected = await collectAcceptedCommitCensus(
+          github,
+          evidence,
+          startAt,
+        );
+        if (collected === null) return null;
+        census = collected;
+        censuses.set(evidence.repositoryNodeId, census);
+      }
+      if (evidence.pull.merged_at && !census.ids.has(evidence.pull.node_id))
+        return null;
+      for (const commit of acceptedWorkUnitCommits(evidence)) {
+        queue.push(...(census.carriers.get(commit.sha) ?? []));
+      }
+      if (evidence.mergeCommitEvidence)
+        queue.push(
+          ...(census.carriers.get(evidence.mergeCommitEvidence.sha) ?? []),
+        );
+    }
     for (const related of evidence.relatedPullRequests)
       queue.push({
         repository: related.repository,
