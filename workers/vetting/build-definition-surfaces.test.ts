@@ -131,6 +131,31 @@ test("tox configuration commands are reviewed as an install surface", () => {
       safe: "[ tox:tox ]\nenvlist = t\n\n[testenv]\ncommands = python -m pytest\n",
       unsafe: `[ tox:tox ]\nenvlist = t\n\n[testenv]\ncommands = ${PAYLOAD}\n`,
     },
+    {
+      path: "pyproject.toml",
+      safe: '[project]\nname = "demo"\n\n[tool]\ntox.env.t.commands = [["python", "-m", "pytest"]]\n',
+      unsafe: `[project]\nname = "demo"\n\n[tool]\ntox.env.t.commands = [["sh", "-c", "${PAYLOAD}"]]\n`,
+    },
+    {
+      path: "pyproject.toml",
+      safe: '[tool]\ntox = { env_run_base = { commands = [["python", "-m", "pytest"]] } }\n',
+      unsafe: `[tool]\ntox = { env_run_base = { commands = [["sh", "-c", "${PAYLOAD}"]] } }\n`,
+    },
+    {
+      path: "pyproject.toml",
+      safe: 'tool.tox.legacy_tox_ini = """\n[testenv]\ncommands = python -m pytest\n"""\n',
+      unsafe: `tool.tox.legacy_tox_ini = """\n[testenv]\ncommands = ${PAYLOAD}\n"""\n`,
+    },
+    {
+      path: "pyproject.toml",
+      safe: 'tool = { tox = { commands = ["python", "-m", "pytest"] } }\n',
+      unsafe: `tool = { tox = { commands = ["${PAYLOAD}"] } }\n`,
+    },
+    {
+      path: "pyproject.toml",
+      safe: '[tool]\n"t\\u006fx".commands = ["python", "-m", "pytest"]\n',
+      unsafe: `[tool]\n"t\\u006fx".commands = ["${PAYLOAD}"]\n`,
+    },
   ];
   for (const definition of shared) {
     const safe = inspected(definition.path, definition.safe);
@@ -186,6 +211,42 @@ test("a shared manifest without a tox table is not an install surface", () => {
     {
       path: "pyproject.toml",
       text: `[tool.toxin]\ncommands = "${PAYLOAD}"\n# [tool.tox]\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[tool]\ntox = "${PAYLOAD}"\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[tool]\ntox = ["${PAYLOAD}"]\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[tool]\ntox = { }\ndescription = "${PAYLOAD}"\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[tool]\n# tox = { commands = "${PAYLOAD}" }\nname = "demo"\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[tool]\ntoxin = { commands = "${PAYLOAD}" }\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[tool.pytest.ini_options]\ntox = { commands = "${PAYLOAD}" }\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[project]\ndescription = """\n[tool.tox]\ncommands = ${PAYLOAD}\n"""\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[[tool.tox.env]]\ncommands = ["${PAYLOAD}"]\n`,
+    },
+    {
+      path: "pyproject.toml",
+      text: `[[tool.tox]]\ncommands = [["${PAYLOAD}"]]\n`,
     },
   ]) {
     const inspection = inspected(definition.path, definition.text);
