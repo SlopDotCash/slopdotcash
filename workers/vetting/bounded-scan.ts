@@ -8,8 +8,9 @@
  *
  * "Clean" means these defined checks passed on every defined surface. It is
  * not a guarantee that the code contains no malware. Unread, oversized or
- * undecodable content, an unretrieved install-time download and an
- * unanalyzed binary keep the result incomplete. Execution is never needed
+ * undecodable content, an unretrieved install-time download, a GYP include
+ * the scan cannot acquire or resolve, and an unanalyzed binary keep the result
+ * incomplete. Execution is never needed
  * for ordinary source; an operator runs an install hook or download in an
  * isolated runner only when its bytes cannot be judged statically, and that
  * runner never receives secrets.
@@ -179,8 +180,9 @@ const INSTALL_FILES = new Set([
  * never unreviewed content.
  */
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
+const GYP_EXTENSION = "gyp|gypi";
 const BUILD_RECIPE = new RegExp(
-  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS})$`,
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
   "u",
 );
 const MSBUILD_RECIPE = new RegExp(
@@ -189,6 +191,8 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/** node-gyp loads these directly; other names are install scripts only via `includes`. */
+const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -851,6 +855,531 @@ export type RepositoryInspection = {
 };
 
 /**
+ * One Python literal the includes reader understood, or a value it refused.
+ * A tuple keeps its members so a nested `('evil.txt',)` still yields paths.
+ * A list is only an includes value; a list used as one entry is not a path.
+ */
+type GypLiteral =
+  | { kind: "string"; value: string }
+  | { kind: "list"; items: GypLiteral[] }
+  | { kind: "tuple"; items: GypLiteral[] }
+  | { kind: "unresolved" };
+
+/**
+ * Quoted paths inside every GYP `includes` list or tuple.
+ *
+ * gyp evaluates the file as a Python literal and iterates `includes`,
+ * including an `includes` key nested under `conditions` or
+ * `target_conditions`. A `#` outside a string is a comment, so it cannot
+ * hide an entry or end the list, and a `#` inside a quoted path stays part
+ * of that path. Adjacent quoted fragments are one path. Parentheses that
+ * only group a value are that value, so `('evil.txt')` is the string
+ * `evil.txt`. A tuple is read like a list. `+`, names, calls and any other
+ * form that is not a plain string literal are not evaluated: each is an
+ * unresolved include, and install-script coverage stays partial.
+ * Prose that merely says "includes" is not an include list. A bare name
+ * such as `{includes: [...]}` is a variable lookup under gyp's empty-builtin
+ * eval, not the string key, so it is not treated as an include list.
+ */
+function gypIncludeSpecifiers(text: string): {
+  paths: string[];
+  unresolved: boolean;
+} {
+  const paths: string[] = [];
+  let unresolved = false;
+  const n = text.length;
+  let i = 0;
+
+  const isQuote = (char: string | undefined): char is "'" | '"' =>
+    char === "'" || char === '"';
+
+  const skipSpaceAndComments = () => {
+    while (i < n) {
+      const c = text[i];
+      if (
+        c === " " ||
+        c === "\t" ||
+        c === "\n" ||
+        c === "\r" ||
+        c === "\f" ||
+        c === "\v"
+      ) {
+        i += 1;
+        continue;
+      }
+      // A backslash-newline outside a string is a line continuation.
+      if (c === "\\" && (text[i + 1] === "\n" || text[i + 1] === "\r")) {
+        i += 2;
+        if (text[i - 1] === "\r" && text[i] === "\n") i += 1;
+        continue;
+      }
+      if (c === "#") {
+        while (i < n && text[i] !== "\n" && text[i] !== "\r") i += 1;
+        continue;
+      }
+      return;
+    }
+  };
+
+  /** True when the quote at `at` opens a raw string (`r`, `fr`, `rb`, …). */
+  const rawPrefix = (at: number) => {
+    let start = at;
+    while (start > 0 && /[rRuUbBfF]/u.test(text[start - 1] ?? "")) start -= 1;
+    if (start === at) return false;
+    if (start > 0 && /[A-Za-z0-9_]/u.test(text[start - 1] ?? "")) return false;
+    return /r/iu.test(text.slice(start, at));
+  };
+
+  /** Python string escape. `i` points just after the backslash. */
+  const decodeEscape = (raw: boolean) => {
+    if (i >= n) return "\\";
+    const next = text[i] ?? "";
+    i += 1;
+    if (raw) {
+      if (next === "\r" && text[i] === "\n") {
+        i += 1;
+        return "\\\r\n";
+      }
+      return `\\${next}`;
+    }
+    if (next === "\n") return "";
+    if (next === "\r") {
+      if (text[i] === "\n") i += 1;
+      return "";
+    }
+    if (next === "n") return "\n";
+    if (next === "r") return "\r";
+    if (next === "t") return "\t";
+    if (next === "a") return "\u0007";
+    if (next === "b") return "\b";
+    if (next === "f") return "\f";
+    if (next === "v") return "\v";
+    if (next === "\\" || next === "'" || next === '"') return next;
+    if (next === "x" || next === "u" || next === "U") {
+      const width = next === "x" ? 2 : next === "u" ? 4 : 8;
+      const digits = text.slice(i, i + width);
+      if (digits.length === width && /^[0-9a-fA-F]+$/u.test(digits)) {
+        const code = Number.parseInt(digits, 16);
+        if (code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)) {
+          i += width;
+          return String.fromCodePoint(code);
+        }
+      }
+      return `\\${next}`;
+    }
+    if (next >= "0" && next <= "7") {
+      let digits = next;
+      while (
+        digits.length < 3 &&
+        i < n &&
+        (text[i] ?? "") >= "0" &&
+        (text[i] ?? "") <= "7"
+      ) {
+        digits += text[i];
+        i += 1;
+      }
+      return String.fromCharCode(Number.parseInt(digits, 8));
+    }
+    return `\\${next}`;
+  };
+
+  /** One Python string starting at a quote. Null when the literal is unclosed. */
+  const readString = (): string | null => {
+    if (!isQuote(text[i])) return null;
+    const quote = text[i];
+    const raw = rawPrefix(i);
+    const triple = text.startsWith(quote.repeat(3), i);
+    const delimiter = triple ? quote.repeat(3) : quote;
+    i += delimiter.length;
+    let value = "";
+    while (i < n) {
+      const c = text[i] ?? "";
+      if (c === "\\") {
+        i += 1;
+        value += decodeEscape(raw);
+        continue;
+      }
+      if (text.startsWith(delimiter, i)) {
+        i += delimiter.length;
+        return value;
+      }
+      // A raw newline ends a non-triple string. Stop so the rest of the file
+      // is not swallowed as string content.
+      if (!triple && (c === "\n" || c === "\r")) return null;
+      value += c;
+      i += 1;
+    }
+    return null;
+  };
+
+  /** Adjacent string literals, joined the way Python joins them. */
+  const readConcatenatedString = (): string | null => {
+    const first = readString();
+    if (first === null) return null;
+    let value = first;
+    while (i < n) {
+      const mark = i;
+      skipSpaceAndComments();
+      if (!isQuote(text[i])) {
+        i = mark;
+        return value;
+      }
+      const next = readString();
+      if (next === null) return value;
+      value += next;
+    }
+    return value;
+  };
+
+  /** A `{...}` value. Strings and comments inside it stay intact. */
+  const skipOneValue = (): boolean => {
+    skipSpaceAndComments();
+    if (i >= n) return false;
+    const start = text[i];
+    if (start === "," || start === "]" || start === "}" || start === ")")
+      return false;
+    if (isQuote(start)) {
+      readConcatenatedString();
+      return true;
+    }
+    if (start === "[" || start === "{" || start === "(") {
+      const closing = start === "[" ? "]" : start === "{" ? "}" : ")";
+      i += 1;
+      while (i < n) {
+        skipSpaceAndComments();
+        if (i >= n) return false;
+        if (text[i] === closing) {
+          i += 1;
+          return true;
+        }
+        if (text[i] === ",") {
+          i += 1;
+          continue;
+        }
+        if (!skipOneValue()) return false;
+      }
+      return false;
+    }
+    if (/[A-Za-z0-9_]/u.test(start ?? "")) {
+      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      return true;
+    }
+    i += 1;
+    return true;
+  };
+
+  const isOperatorChar = (char: string | undefined): boolean =>
+    char !== undefined && "+-*/%|&^<>=!~@".includes(char);
+
+  /** Quote index of a string that may carry an `r`/`u`/`b`/`f` prefix. */
+  const stringAt = (at: number): number | null => {
+    let j = at;
+    if (j > 0 && /[A-Za-z0-9_]/u.test(text[j - 1] ?? "")) return null;
+    while (j < n && /[rRuUbBfF]/u.test(text[j] ?? "")) j += 1;
+    return isQuote(text[j]) ? j : null;
+  };
+
+  const startsAtom = (char: string | undefined): boolean =>
+    char === "(" ||
+    char === "[" ||
+    char === "{" ||
+    isQuote(char) ||
+    (char !== undefined && /[A-Za-z0-9_]/u.test(char));
+
+  const readOneString = (): GypLiteral => {
+    const quote = stringAt(i);
+    if (quote === null) return { kind: "unresolved" };
+    i = quote;
+    const value = readString();
+    return value === null ? { kind: "unresolved" } : { kind: "string", value };
+  };
+
+  const consumeOperator = () => {
+    while (i < n && isOperatorChar(text[i])) i += 1;
+  };
+
+  /**
+   * Calls, subscripts and attributes that follow a name. The literal under
+   * them is not a path, but the source still has to be consumed.
+   */
+  const consumeTrailers = () => {
+    while (i < n) {
+      const mark = i;
+      skipSpaceAndComments();
+      if (text[i] === "(") {
+        readParen();
+        continue;
+      }
+      if (text[i] === "[") {
+        readBracket();
+        continue;
+      }
+      if (text[i] === ".") {
+        i += 1;
+        skipSpaceAndComments();
+        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+        continue;
+      }
+      i = mark;
+      return;
+    }
+  };
+
+  const readAtom = (): GypLiteral => {
+    skipSpaceAndComments();
+    if (i >= n) return { kind: "unresolved" };
+    if (stringAt(i) !== null) return readOneString();
+    if (text[i] === "(") return readParen();
+    if (text[i] === "[") return readBracket();
+    if (text[i] === "{") {
+      skipOneValue();
+      return { kind: "unresolved" };
+    }
+    if (/[A-Za-z_]/u.test(text[i] ?? "")) {
+      while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+      consumeTrailers();
+      return { kind: "unresolved" };
+    }
+    if (/[0-9]/u.test(text[i] ?? "")) {
+      while (i < n && /[0-9A-Za-z_.]/u.test(text[i] ?? "")) i += 1;
+      consumeTrailers();
+      return { kind: "unresolved" };
+    }
+    if (isOperatorChar(text[i])) {
+      consumeOperator();
+      readAtom();
+      return { kind: "unresolved" };
+    }
+    i += 1;
+    return { kind: "unresolved" };
+  };
+
+  /**
+   * One expression. Stops before a comma or a closing bracket so a later
+   * entry is still read. Adjacent strings stay one value. Any operator,
+   * keyword, call or other trailer makes the whole expression unresolved
+   * and is consumed, so `'ev' + 'il.txt'` is not two paths.
+   */
+  const readExpr = (): GypLiteral => {
+    skipSpaceAndComments();
+    const start = i;
+    let value = readAtom();
+    if (i === start && i < n) i += 1;
+    while (i < n) {
+      const before = i;
+      skipSpaceAndComments();
+      if (i >= n) return value;
+      if (value.kind === "string" && stringAt(i) !== null) {
+        const next = readOneString();
+        if (next.kind === "string" && value.kind === "string") {
+          value = { kind: "string", value: value.value + next.value };
+        } else value = { kind: "unresolved" };
+        continue;
+      }
+      const char = text[i];
+      if (char === "(" || char === "[" || char === ".") {
+        value = { kind: "unresolved" };
+        if (char === "(") readParen();
+        else if (char === "[") readBracket();
+        else i += 1;
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (isOperatorChar(char)) {
+        value = { kind: "unresolved" };
+        consumeOperator();
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (value.kind !== "string" && startsAtom(char)) {
+        value = { kind: "unresolved" };
+        readAtom();
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      if (char !== undefined && /[A-Za-z_]/u.test(char)) {
+        value = { kind: "unresolved" };
+        while (i < n && /[A-Za-z0-9_]/u.test(text[i] ?? "")) i += 1;
+        if (i === before) return { kind: "unresolved" };
+        continue;
+      }
+      i = before;
+      return value;
+    }
+    return value;
+  };
+
+  const readDelimited = (
+    closing: ")" | "]",
+    kind: "tuple" | "list",
+  ): GypLiteral => {
+    i += 1;
+    const items: GypLiteral[] = [];
+    let comma = false;
+    while (i < n) {
+      skipSpaceAndComments();
+      if (i >= n) return { kind: "unresolved" };
+      if (text[i] === closing) {
+        i += 1;
+        // No comma: Python grouping, so `('evil.txt')` is the string.
+        if (kind === "tuple" && !comma && items.length === 1)
+          return items[0] ?? { kind: "unresolved" };
+        if (kind === "tuple" && !comma && items.length === 0)
+          return { kind: "tuple", items: [] };
+        if (comma && items.length === 0) return { kind: "unresolved" };
+        return { kind, items };
+      }
+      if (text[i] === ",") {
+        comma = true;
+        i += 1;
+        continue;
+      }
+      const before = i;
+      items.push(readExpr());
+      if (i === before) i += 1;
+    }
+    return { kind: "unresolved" };
+  };
+
+  const readParen = (): GypLiteral => readDelimited(")", "tuple");
+  const readBracket = (): GypLiteral => readDelimited("]", "list");
+
+  const markUnresolved = () => {
+    unresolved = true;
+  };
+
+  const collectEntry = (item: GypLiteral) => {
+    if (item.kind === "string") {
+      if (item.value) paths.push(item.value);
+      return;
+    }
+    // A tuple contributes its string members, including through nested tuples.
+    if (item.kind === "tuple") {
+      if (item.items.length === 0) {
+        markUnresolved();
+        return;
+      }
+      for (const member of item.items) collectEntry(member);
+      return;
+    }
+    markUnresolved();
+  };
+
+  const collectValue = (item: GypLiteral) => {
+    if (item.kind === "list" || item.kind === "tuple") {
+      for (const entry of item.items) collectEntry(entry);
+      return;
+    }
+    // A resolved string is one include path. gyp iterates a string value by
+    // character; recording the whole string still reviews that path, and an
+    // unreadable value stays unresolved below.
+    if (item.kind === "string") {
+      if (item.value) paths.push(item.value);
+      else markUnresolved();
+      return;
+    }
+    markUnresolved();
+  };
+
+  while (i < n) {
+    skipSpaceAndComments();
+    if (i >= n) break;
+    if (!isQuote(text[i])) {
+      i += 1;
+      continue;
+    }
+    const key = readConcatenatedString();
+    if (key !== "includes") continue;
+    const afterKey = i;
+    skipSpaceAndComments();
+    if (text[i] !== ":") {
+      i = afterKey;
+      continue;
+    }
+    i += 1;
+    collectValue(readExpr());
+  }
+  return { paths, unresolved };
+}
+
+/**
+ * A GYP include is relative to the file that names it. Absolute paths, URLs
+ * and paths that leave the repository are not acquired files.
+ */
+function resolveGypInclude(fromFile: string, specifier: string): string | null {
+  const include = specifier.replaceAll("\\", "/").trim();
+  if (
+    include === "" ||
+    include.startsWith("/") ||
+    include.includes(":") ||
+    include.includes("\0") ||
+    /[<>|?*]/u.test(include)
+  )
+    return null;
+  const directory = fromFile.includes("/")
+    ? fromFile.slice(0, fromFile.lastIndexOf("/") + 1)
+    : "";
+  const normalized: string[] = [];
+  for (const part of `${directory}${include}`.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (normalized.length === 0) return null;
+      normalized.pop();
+      continue;
+    }
+    normalized.push(part);
+  }
+  return normalized.length === 0 ? null : normalized.join("/");
+}
+
+/**
+ * Files a `.gyp` or `.gypi` loads through `includes`, including nested
+ * includes. node-gyp runs command expansions in those files at install even
+ * when the name is not itself a GYP source. A specifier that does not resolve
+ * inside the acquired tree, and an includes value the reader cannot reduce to
+ * a string literal, are visibility gaps. Install-script coverage is partial.
+ */
+function gypIncludedPaths(files: ScanInputFile[]): {
+  included: Set<string>;
+  unacquired: string[];
+} {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const included = new Set<string>();
+  const unacquired = new Set<string>();
+  const seen = new Set<string>();
+  const queue = files
+    .filter((file) => GYP_SOURCE.test(file.path))
+    .map((file) => file.path);
+  while (queue.length > 0) {
+    const path = queue.pop();
+    if (path === undefined || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    const includes = gypIncludeSpecifiers(text);
+    if (includes.unresolved)
+      unacquired.add("GYP include not acquired: unresolved");
+    for (const specifier of includes.paths) {
+      const resolved = resolveGypInclude(path, specifier);
+      // `resolveGypInclude` returns null for an empty, absolute, URL-like or
+      // out-of-repository path. A resolved path missing from the acquired
+      // tree was not fetched or is generated at install. A file already
+      // queued was acquired; repeating it is not a gap.
+      if (resolved !== null && byPath.has(resolved)) {
+        if (seen.has(resolved)) continue;
+        included.add(resolved);
+        queue.push(resolved);
+        continue;
+      }
+      unacquired.add(`GYP include not acquired: ${specifier.slice(0, 500)}`);
+    }
+  }
+  return { included, unacquired: [...unacquired].sort() };
+}
+
+/**
  * Inspects one revision's acquired files. Pure and deterministic: the same
  * bytes, surface classifications and rules produce the same inventory digest, so an
  * unchanged executable inventory reuses its clean result and any change to
@@ -884,12 +1413,24 @@ export function inspectRepository(input: {
   const candidates: Candidate[] = [];
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
   const downloads = new Set<string>();
+  const gyp = gypIncludedPaths(files);
+  const gypIncludes = gyp.included;
+  if (gyp.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...gyp.unacquired);
+  }
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
+    // Recorded before later content checks so the reuse identity names this
+    // surface. A GYP include keeps whatever other surfaces it already has.
+    if (gypIncludes.has(file.path)) {
+      if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
+      if (!surfaces.includes("source")) surfaces.push("source");
+    }
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
