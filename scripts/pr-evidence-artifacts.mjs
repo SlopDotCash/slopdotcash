@@ -333,6 +333,8 @@ function webpMetadata(bytes, complete) {
   let width = 0;
   let height = 0;
   let hasImagePayload = false;
+  let hasAnimationFlag = false;
+  let hasAnimationFrame = false;
   while (offset + 8 <= bytes.length) {
     const type = ascii(bytes, offset, offset + 4);
     const size = view.getUint32(offset + 4, true);
@@ -344,6 +346,7 @@ function webpMetadata(bytes, complete) {
       Math.min(dataEnd, bytes.length) - dataStart,
     );
     if (type === "VP8X" && availablePayload >= 10) {
+      hasAnimationFlag = (bytes[dataStart] & 0x02) !== 0;
       width =
         1 +
         bytes[dataStart + 4] +
@@ -354,6 +357,24 @@ function webpMetadata(bytes, complete) {
         bytes[dataStart + 7] +
         (bytes[dataStart + 8] << 8) +
         (bytes[dataStart + 9] << 16);
+    } else if (type === "ANMF" && availablePayload >= 16) {
+      // An animation frame carries its image in VP8 /VP8L sub-chunks after
+      // the 16-byte frame header; there is no top-level image chunk.
+      let subOffset = dataStart + 16;
+      const frameEnd = Math.min(dataEnd, bytes.length);
+      while (subOffset + 8 <= frameEnd) {
+        const subType = ascii(bytes, subOffset, subOffset + 4);
+        const subSize = view.getUint32(subOffset + 4, true);
+        const subDataStart = subOffset + 8;
+        const subAvailable = Math.max(
+          0,
+          Math.min(subDataStart + subSize, frameEnd) - subDataStart,
+        );
+        if ((subType === "VP8 " || subType === "VP8L") && subAvailable >= 256) {
+          hasAnimationFrame = true;
+        }
+        subOffset = subDataStart + subSize + (subSize % 2);
+      }
     } else if (
       type === "VP8L" &&
       availablePayload >= 5 &&
@@ -376,7 +397,7 @@ function webpMetadata(bytes, complete) {
     }
     if (paddedEnd > bytes.length) {
       return !complete &&
-        hasImagePayload &&
+        (hasImagePayload || (hasAnimationFlag && hasAnimationFrame)) &&
         usefulImageDimensions(width, height)
         ? { height, kind: "image", width }
         : null;
@@ -384,7 +405,7 @@ function webpMetadata(bytes, complete) {
     offset = paddedEnd;
   }
   return offset === bytes.length &&
-    hasImagePayload &&
+    (hasImagePayload || (hasAnimationFlag && hasAnimationFrame)) &&
     usefulImageDimensions(width, height)
     ? { height, kind: "image", width }
     : null;
