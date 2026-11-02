@@ -52,21 +52,21 @@ export function githubUserIdFromNodeId(nodeId: string): string | null {
   for (let i = 0; i < width; i++) id = (id << 8n) | BigInt(bytes[3 + i]);
   if (id <= 0n) return null;
   // The MessagePack layer has one canonical spelling too: GitHub encodes
-  // the ID as a uint32, or as a uint64 only when it exceeds the uint32
-  // range. A fixint, uint8, uint16, or oversized uint64 re-encoding of the
-  // same ID is a different byte string GitHub never emits, so it must not
-  // name the actor. Rebuild the canonical bytes and require equality.
-  const canonicalWidth = id <= 0xff_ff_ff_ffn ? 4 : 8;
-  const canonicalBytes = new Uint8Array(3 + canonicalWidth);
-  canonicalBytes[0] = 0x92;
-  canonicalBytes[1] = 0x00;
-  canonicalBytes[2] = canonicalWidth === 4 ? 0xce : 0xcf;
-  let rest = id;
-  for (let i = canonicalWidth - 1; i >= 0; i--) {
-    canonicalBytes[3 + i] = Number(rest & 0xffn);
-    rest >>= 8n;
-  }
-  if (!bytes.every((byte, i) => byte === canonicalBytes[i])) return null;
+  // the ID with the shortest integer form, a positive fixint up to 127,
+  // then uint8, uint16, uint32, or uint64 (user 1 is `U_kgAB`). A wider
+  // re-encoding of the same ID is a different byte string GitHub never
+  // emits, so it must not name the actor.
+  const canonicalWidth =
+    id <= 0x7fn
+      ? 0
+      : id <= 0xffn
+        ? 1
+        : id <= 0xffffn
+          ? 2
+          : id <= 0xff_ff_ff_ffn
+            ? 4
+            : 8;
+  if (width !== canonicalWidth) return null;
   return id.toString();
 }
 
