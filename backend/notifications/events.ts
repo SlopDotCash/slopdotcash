@@ -140,12 +140,13 @@ export function notifyProjectRevision<S>(
 export function notifyProjectScanFailed<S>(
   db: Preparer<S>,
   assessmentId: string,
+  detail: string | null = null,
 ): S {
   return db
     .prepare(
       `${INSERT}
        SELECT 'project-scan:' || v.id, owners.recipient, 'project_scan_failed',
-              v.project_id, NULL, '/projects/' || v.project_id,
+              v.project_id, ?2, '/projects/' || v.project_id,
               v.completed_at, v.completed_at
          FROM vetting_assessments v
          JOIN ${PROJECT_OWNERS("(SELECT project_id FROM vetting_assessments WHERE id = ?1)")} owners
@@ -153,7 +154,7 @@ export function notifyProjectScanFailed<S>(
           AND ${GITHUB_ID("owners.recipient")}
        ${ONCE}`,
     )
-    .bind(assessmentId);
+    .bind(assessmentId, detail);
 }
 
 /**
