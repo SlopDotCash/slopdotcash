@@ -106,6 +106,7 @@ export async function publicVaultPayments(
   scope: Scope,
   after: number,
   requestedThrough: number | null,
+  includeTestnets: boolean,
 ): Promise<PublicVaultPaymentPage> {
   const bound = await db
     .prepare("SELECT COALESCE(MAX(rowid),0) value FROM payment_events")
@@ -129,8 +130,19 @@ export async function publicVaultPayments(
   const values = scope
     ? ["projectId" in scope ? scope.projectId : scope.githubUserId]
     : [];
+  // Production excludes testnet networks, mirroring the /totals, /vault, and
+  // /received deployment-tier rules. Staging keeps them because it pays in
+  // testnet stablecoins.
+  const testnetFilter = includeTestnets
+    ? ""
+    : ` AND o.network NOT IN (${Object.entries(ESCROW_NETWORKS)
+        .filter(([, v]) => v.testnet)
+        .map(([k]) => `'${k.replace(/'/g, "''")}'`)
+        .join(",")})`;
   const count = await db
-    .prepare(`SELECT COUNT(*) value ${RECORDS}${filter} AND e.rowid<=?`)
+    .prepare(
+      `SELECT COUNT(*) value ${RECORDS}${filter}${testnetFilter} AND e.rowid<=?`,
+    )
     .bind(...values, through)
     .first<{ value: number }>();
   const result = await db
@@ -142,7 +154,7 @@ export async function publicVaultPayments(
         'transactionId',e.transaction_id,'eventIndex',e.event_index,
         'obligationId',o.id,'evidence',e.evidence_json,
         'contributionMonth',m.period,'indexedAt',e.observed_at) item
-      ${RECORDS}${filter} AND e.rowid>? AND e.rowid<=?
+      ${RECORDS}${filter}${testnetFilter} AND e.rowid>? AND e.rowid<=?
       ORDER BY e.rowid LIMIT ?)`)
     .bind(...values, after, through, PAGE_SIZE + 1)
     .first<{ items: string }>();
