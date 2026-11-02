@@ -497,6 +497,8 @@ const RULES: Rule[] = [
     // the link was invisible, so the execution must name the exact path
     // the download wrote (the backreference), after the download, in
     // command position or after a shell, interpreter or `source` verb.
+    // Bare filenames search PATH, so direct execution requires a path.
+    // Shell flags can select syntax-only or version output and are excluded.
     // The path is one literal token: quoted spellings count, but a
     // variable, a glob, a glued or clustered output flag and `curl -O`
     // (which is given no path) stay out. Reading, checksumming or
@@ -506,8 +508,8 @@ const RULES: Rule[] = [
     // two spellings: `curl -o` names the download, `wget -o` names a
     // log file, and only `wget -O` names the download.
     pattern: new RegExp(
-      String.raw`\bcurl\b(?=[^\n]*https?://)[^\n]*?(?:-o|--output)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?[\s\S]{0,8192}?(?:^|[\n;|&()'"]\s*)(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+(?:-[a-zA-Z]+\s+)?)?["']?(?:\./)?\1["']?(?=$|[\s|;&<>()'"])|\bwget\b(?=[^\n]*https?://)[^\n]*?(?:-O|--output-document)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?[\s\S]{0,8192}?(?:^|[\n;|&()'"]\s*)(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+(?:-[a-zA-Z]+\s+)?)?["']?(?:\./)?\2["']?(?=$|[\s|;&<>()'"])|\b(?:curl|wget)\b(?=[^\n]*https?://)[^\n]*?(?<![\d&])>\s*["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?[\s\S]{0,8192}?(?:^|[\n;|&()'"]\s*)(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+(?:-[a-zA-Z]+\s+)?)?["']?(?:\./)?\3["']?(?=$|[\s|;&<>()'"])`,
-      "u",
+      String.raw`(?:^|[\n;|&])[ \t]*curl\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:-o|--output)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\1["']?(?=$|[\s|;&<>()'"])|(?:^|[\n;|&])[ \t]*wget\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:-O|--output-document)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\2["']?(?=$|[\s|;&<>()'"])|(?:^|[\n;|&])[ \t]*(?:curl|wget)\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\d&])>\s*["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\3["']?(?=$|[\s|;&<>()'"])`,
+      "mu",
     ),
     summary: "Executes a file staged by an earlier download in the same file",
   },
