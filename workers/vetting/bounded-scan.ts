@@ -214,6 +214,14 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * Vue CLI loads `vue.config.<ext>` by evaluating it as code on every
+ * `vue-cli-service` command (serve, build), in each of the spellings its
+ * config loader looks up, so the file is build-time code like a Makefile,
+ * never parsed configuration. The `.ts` spelling stays out: the loader's
+ * lookup list has no TypeScript entry to evaluate.
+ */
+const VUE_CONFIG = /^vue\.config\.(?:js|cjs|mjs)$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +291,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    VUE_CONFIG.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
