@@ -398,6 +398,15 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // Reading a response object does not execute its body. Match the direct
+    // response-text forms; other data flow needs the model's source review.
+    pattern:
+      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.text\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
+    summary: "Executes code fetched from the network",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     // The interpreter is the pipe target the shell rule above does not
     // name. It matches only when the interpreter reads its program from
     // the pipe: bare, with `-`, or with Python's unbuffered option. Arbitrary

