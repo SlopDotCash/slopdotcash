@@ -710,6 +710,14 @@ export function applyPointsSnapshot(
       .map((a) => `${a.projectId}\0${a.sourceId}`),
   );
   const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
+  const coverageByPullRequest = new Map<
+    string,
+    NonNullable<LeaderboardSnapshot["valueAssessmentCoverage"]>[number]
+  >();
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    const key = `${row.repository}\0${row.pullRequestNumber}`;
+    if (!coverageByPullRequest.has(key)) coverageByPullRequest.set(key, row);
+  }
   // An adverse ruling can correct a review before the rolling window. A
   // policy or window omission does not revoke its previously earned credit.
   const excludedReviews = new Set<string>();
@@ -760,10 +768,8 @@ export function applyPointsSnapshot(
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
       );
-      const coverage = snapshot.valueAssessmentCoverage.find(
-        (row) =>
-          row.repository === repository?.id &&
-          row.pullRequestNumber === Number(match[3]),
+      const coverage = coverageByPullRequest.get(
+        `${repository?.id}\0${Number(match[3])}`,
       );
       // The exact completion source can invalidate its prior joint decision
       // even when it no longer has an eligible actor for a replacement award.
