@@ -455,9 +455,51 @@ test("scheduler preserves appeal progress when retry dispatch is unavailable", a
  * must use the joint route even when no other PR references it. Synthetic Git
  * objects only; the spent allowance stops the route before any provider call.
  */
-test("a lone indirectly accepted PR reaches joint assessment", async () => {
+/** An approved rename keeps the original path as the manifest id and appends
+ * the current path as the alias and githubUrl; webhooks name the current path.
+ */
+function recordRename(
+  sqlite: ReturnType<typeof liveRegistration>["sqlite"],
+  project: ReturnType<typeof liveRegistration>["project"],
+) {
+  const current = "fresh-registration/toolkit-renamed";
+  const renamed = JSON.stringify({
+    ...project,
+    repositories: [
+      {
+        ...project.repositories[0],
+        aliases: [...(project.repositories[0].aliases ?? []), current],
+        displayName: current,
+        githubUrl: `https://github.com/${current}`,
+      },
+    ],
+  });
+  const renamedDigest = createHash("sha256").update(renamed).digest("hex");
+  sqlite.run(
+    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,2,?,?,?,?)",
+    [project.id, renamed, renamedDigest, "Approved repository rename", at],
+  );
+  sqlite.run(
+    "UPDATE projects SET revision=2,manifest=?,manifest_sha256=?,updated_at=? WHERE id=?",
+    [renamed, renamedDigest, at, project.id],
+  );
+  sqlite.run(
+    "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
+    [current, project.id],
+  );
+  const renamedJob = {
+    ...job,
+    deliveryId: "renamed-delivery",
+    repo: "toolkit-renamed",
+  };
+  return { current, renamedJob };
+}
+
+async function indirectAcceptance(renamed: boolean) {
   setSystemTime(new Date("2026-11-04T00:00:00.000Z"));
-  const { db, sqlite } = liveRegistration();
+  const { db, sqlite, project } = liveRegistration();
+  const rename = renamed ? recordRename(sqlite, project) : null;
+  const valueJob = rename?.renamedJob ?? job;
   const [base, head, integration] = ["a", "b", "d"].map((c) => c.repeat(40));
   const root = `/repos/${repository}`;
   const sha1 = (...parts: (string | Uint8Array)[]) => {
@@ -596,7 +638,11 @@ test("a lone indirectly accepted PR reaches joint assessment", async () => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.origin !== "https://api.github.com")
       throw new Error("No provider call is authorized in this test");
-    const path = `${url.pathname}${url.search}`;
+    // GitHub also answers a renamed repository under its current name.
+    const pathname = rename
+      ? url.pathname.replace(`/repos/${rename.current}`, root)
+      : url.pathname;
+    const path = `${pathname}${url.search}`;
     requests.push(path);
     if (url.pathname === "/app/installations/1/access_tokens")
       return Response.json({ token: "local-installation" });
@@ -642,8 +688,8 @@ test("a lone indirectly accepted PR reaches joint assessment", async () => {
     [new Date().toISOString()],
   );
   try {
-    await recordDelivery(db, job.deliveryId, "pull_request");
-    await recordValueRequest(db, job);
+    await recordDelivery(db, valueJob.deliveryId, "pull_request");
+    await recordValueRequest(db, valueJob);
     const outcome = await consumeValueRequest(
       {
         SLOPBOT_DB: db,
@@ -656,7 +702,7 @@ test("a lone indirectly accepted PR reaches joint assessment", async () => {
         SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "1000000",
         SLOPBOT_VALUE_START_AT: "2026-11-01T00:00:00.000Z",
       },
-      job,
+      valueJob,
     );
     // The integration is proved from GitHub, not from the comment text.
     expect(requests).toContain(runs);
@@ -672,7 +718,18 @@ test("a lone indirectly accepted PR reaches joint assessment", async () => {
     setSystemTime();
     sqlite.close();
   }
-});
+}
+
+test("a lone indirectly accepted PR reaches joint assessment", () =>
+  indirectAcceptance(false));
+
+/** A recorded rename: the request and its policy read name the current path,
+ * while every grouped source keeps the registered id. Before the fix the
+ * consumer checked each source under that former path, which the live
+ * registry refuses, so the request waited as source-incomplete forever.
+ */
+test("a renamed repository's indirectly accepted PR reaches joint assessment", () =>
+  indirectAcceptance(true));
 
 /** PRD sections 4 and 5: an admin revision records a GitHub rename by keeping
  * the original path as the manifest id and appending the current path as the
@@ -683,36 +740,7 @@ test("a lone indirectly accepted PR reaches joint assessment", async () => {
  */
 test("a recorded repository rename still reaches the consumer", async () => {
   const { db, sqlite, project } = liveRegistration();
-  const current = "fresh-registration/toolkit-renamed";
-  const renamed = JSON.stringify({
-    ...project,
-    repositories: [
-      {
-        ...project.repositories[0],
-        aliases: [...(project.repositories[0].aliases ?? []), current],
-        displayName: current,
-        githubUrl: `https://github.com/${current}`,
-      },
-    ],
-  });
-  const renamedDigest = createHash("sha256").update(renamed).digest("hex");
-  sqlite.run(
-    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,2,?,?,?,?)",
-    [project.id, renamed, renamedDigest, "Approved repository rename", at],
-  );
-  sqlite.run(
-    "UPDATE projects SET revision=2,manifest=?,manifest_sha256=?,updated_at=? WHERE id=?",
-    [renamed, renamedDigest, at, project.id],
-  );
-  sqlite.run(
-    "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
-    [current, project.id],
-  );
-  const renamedJob = {
-    ...job,
-    deliveryId: "renamed-delivery",
-    repo: "toolkit-renamed",
-  };
+  const { current, renamedJob } = recordRename(sqlite, project);
   await recordDelivery(db, renamedJob.deliveryId, "pull_request");
   await recordValueRequest(db, renamedJob);
   const identity = {
