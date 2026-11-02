@@ -436,3 +436,31 @@ test("received totals read a large ledger in bounded pages under D1's value limi
     f.sqlite.close();
   }
 }, 60_000);
+
+test("production vault-payments exclude testnet networks while staging retains them", async () => {
+  const f = fixture();
+  try {
+    // One mainnet payment and one testnet payment.
+    f.payment(1, { network: "base-mainnet" });
+    f.payment(2, { network: "base-sepolia", project: "test-project" });
+
+    const production = await f.read("vault-payments", "production");
+    expect(production.status).toBe(200);
+    const prodPayments = production.body.payments as { network: string }[];
+    expect(prodPayments.length).toBe(1);
+    expect(prodPayments[0].network).toBe("base-mainnet");
+    expect(production.body.total).toBe(1);
+
+    const staging = await f.read("vault-payments", "staging");
+    expect(staging.status).toBe(200);
+    const stagingPayments = staging.body.payments as { network: string }[];
+    expect(stagingPayments.length).toBe(2);
+    expect(stagingPayments.map((p) => p.network).sort()).toEqual([
+      "base-mainnet",
+      "base-sepolia",
+    ]);
+    expect(staging.body.total).toBe(2);
+  } finally {
+    f.sqlite.close();
+  }
+});
