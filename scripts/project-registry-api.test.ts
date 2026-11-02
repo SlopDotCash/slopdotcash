@@ -60,6 +60,10 @@ import {
 } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { vettingResult } from "../tests/vetting-fixtures";
+import {
+  reversalOnlyRegistration,
+  reviewRegistration,
+} from "../workers/slopbot/registry";
 import { handleRepositoryRead } from "../workers/slopbot/repository-access";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 
@@ -84,6 +88,7 @@ class MemoryCache implements EdgeCache {
 
 let persistence: CloudflareProjectPersistence;
 let sqlite: Database;
+let db: ReturnType<typeof sqliteD1>["db"];
 
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
 
@@ -113,6 +118,7 @@ beforeEach(async () => {
       .sort(),
   );
   sqlite = database.sqlite;
+  db = database.db;
   persistence = new CloudflareProjectPersistence(database.db);
   retained = await localVettingEvidence(
     database.db,
@@ -185,6 +191,12 @@ beforeEach(async () => {
     github: {
       fetch: async (url) => {
         githubReads.push(url);
+        if (url === `https://api.github.com/user/${APPLICANT.githubId}`)
+          return Response.json({
+            id: Number(APPLICANT.githubId),
+            login: APPLICANT.githubLogin,
+            type: "User",
+          });
         if (
           url ===
           "https://api.github.com/repos/example/open-registry/branches?per_page=100&page=1"
@@ -1417,6 +1429,12 @@ describe("project registry API", () => {
           id: 1,
           error: { code: -32603, message: "Internal error" },
         }),
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32005, message: "Limit exceeded" },
+        }),
       async () => {
         throw new TypeError("fetch failed");
       },
@@ -1759,6 +1777,84 @@ describe("project registry API", () => {
     );
     expect(cachedOwned.headers.get("x-slop-cache")).toBe("hit");
     expect(githubReads).toHaveLength(ownedReads);
+  });
+
+  for (const reused of [false, true]) {
+    test(`the owned repository picker follows a renamed account when the old login is ${reused ? "reused" : "missing"}`, async () => {
+      const reads: string[] = [];
+      deps.github.fetch = async (url) => {
+        reads.push(url);
+        if (url === `https://api.github.com/user/${APPLICANT.githubId}`)
+          return Response.json({
+            id: Number(APPLICANT.githubId),
+            login: "renamed-applicant",
+            type: "User",
+          });
+        if (url.includes("/users/renamed-applicant/repos?"))
+          return Response.json([
+            {
+              full_name: "renamed-applicant/tool",
+              description: "The signed-in account's repository",
+              private: false,
+              archived: false,
+            },
+          ]);
+        if (reused)
+          return Response.json([
+            {
+              full_name: `${APPLICANT.githubLogin}/other-account-tool`,
+              description: "Another account's public repository",
+              private: false,
+              archived: false,
+            },
+          ]);
+        return Response.json({ message: "Not Found" }, { status: 404 });
+      };
+      const response = await call(
+        "GET",
+        "project-github/owned-repositories",
+        "applicant",
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        repositories: [
+          {
+            repository: "renamed-applicant/tool",
+            description: "The signed-in account's repository",
+          },
+        ],
+      });
+      expect(
+        reads.some((url) =>
+          url.includes(`/users/${APPLICANT.githubLogin}/repos?`),
+        ),
+      ).toBe(false);
+    });
+  }
+
+  test("an unavailable or mismatched account lookup never fills the owned repository picker", async () => {
+    for (const failure of ["missing", "outage", "mismatch"] as const) {
+      const reads: string[] = [];
+      deps.github.fetch = async (url) => {
+        reads.push(url);
+        if (failure === "missing") return new Response(null, { status: 404 });
+        if (failure === "outage") return new Response(null, { status: 500 });
+        return Response.json({
+          id: 1,
+          login: APPLICANT.githubLogin,
+          type: "User",
+        });
+      };
+      const response = await call(
+        "GET",
+        "project-github/owned-repositories",
+        "applicant",
+      );
+      expect(response.status).toBe(502);
+      expect(reads).toEqual([
+        `https://api.github.com/user/${APPLICANT.githubId}`,
+      ]);
+    }
   });
 
   test("returns every branch through the Slopbot repository read without losing pagination", async () => {
@@ -2113,6 +2209,97 @@ describe("project enforcement (ADM-06)", () => {
     const afterDenial = await enforce("moderator", "reinstate");
     expect(afterDenial.status).toBe(409);
     expect((await afterDenial.json()).error).toBe("no_open_appeal");
+  });
+
+  // Slopbot's live registry for the listed repository (the record's GitHub id).
+  const SLOPBOT_JOB = {
+    owner: "example",
+    repo: "open-registry",
+    repositoryId: 123456789,
+  };
+  const slopbotReview = () => reviewRegistration(db as never, SLOPBOT_JOB);
+
+  test("Slopbot keeps the security-only review after a quarantine or ban revision lands", async () => {
+    await listProject();
+    // A paused project keeps the security-only review (owner decision D12).
+    expect(await slopbotReview()).toEqual({
+      scope: "security",
+      projectId: "open-registry",
+    });
+    const quarantined = await enforce("admin", "quarantine");
+    expect((await quarantined.json()).record.result).toBe("revision_appended");
+    expect(
+      (await persistence.getProject("open-registry"))?.manifest.listingTier,
+    ).toBe("retired");
+    // The quarantine's own retirement is not the owner's retirement.
+    expect(await slopbotReview()).toEqual({
+      scope: "security",
+      projectId: "open-registry",
+    });
+    expect((await enforce("admin", "ban")).status).toBe(200);
+    expect(await slopbotReview()).toEqual({
+      scope: "security",
+      projectId: "open-registry",
+    });
+  });
+
+  test("an owner's retirement still ends Slopbot review when a quarantine follows", async () => {
+    await listProject();
+    const project = await persistence.getProject("open-registry");
+    if (project === null) throw new Error("open-registry is not listed");
+    const retired = await call(
+      "PUT",
+      "admin/projects/open-registry/manifest",
+      "admin",
+      {
+        manifest: {
+          ...project.manifest,
+          status: "paused",
+          listingTier: "retired",
+        },
+        expectedRevision: project.revision,
+        reason: "Retire the project",
+      },
+    );
+    expect(retired.status).toBe(200);
+    expect(await slopbotReview()).toBeNull();
+    const quarantined = await enforce("admin", "quarantine");
+    expect((await quarantined.json()).record.result).toBe("no_revision_needed");
+    expect(await slopbotReview()).toBeNull();
+  });
+
+  test("missing quarantine revision evidence leaves Slopbot only an appeal's penalty reversal", async () => {
+    await listProject();
+    const quarantined = await enforce("admin", "quarantine");
+    expect((await quarantined.json()).record.result).toBe("revision_appended");
+    // Revisions are permanent, so the read of the retained rows is hidden.
+    const withoutRevisions = {
+      ...db,
+      prepare: (sql: string) => {
+        const statement = db.prepare(sql);
+        if (
+          !sql.includes(
+            "SELECT manifest, manifest_sha256 FROM project_revisions",
+          )
+        )
+          return statement;
+        return {
+          ...statement,
+          bind: (...values: unknown[]) => ({
+            ...statement.bind(...values),
+            first: async () => null,
+          }),
+        };
+      },
+    };
+    // Unproved, the retirement counts as the owner's: no review, but an
+    // appeal or a maintainer reopen still reaches the penalty reversal.
+    expect(
+      await reviewRegistration(withoutRevisions as never, SLOPBOT_JOB),
+    ).toBeNull();
+    expect(
+      await reversalOnlyRegistration(withoutRevisions as never, SLOPBOT_JOB),
+    ).toEqual({ projectId: "open-registry" });
   });
 
   test("quarantines and bans while refusing an appeal with only historical clean metadata", async () => {
