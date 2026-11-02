@@ -110,20 +110,27 @@ test("project totals ignore a testnet chain cursor in production but keep it in 
   expect(networks(staging.body)).toContain("base-sepolia");
 });
 
-test("project totals report a production cursor beside a testnet cursor that sorts first", async () => {
-  const { db, sqlite } = sqliteD1();
-  const database = db as unknown as D1TransactionalDatabase;
-  // A Solana project scanned on devnet before mainnet keeps both cursors;
-  // "solana-devnet" sorts before "solana-mainnet" in the cursor key.
-  insertCursor(sqlite, "project-solana", "solana-devnet", "111");
-  insertCursor(sqlite, "project-solana", "solana-mainnet", "222");
+// Both insertion orders: the result must follow the network, never the row order.
+for (const order of [
+  ["solana-devnet", "solana-mainnet"],
+  ["solana-mainnet", "solana-devnet"],
+] as const) {
+  test(`project totals report a production cursor beside a testnet cursor that sorts first (${order.join(" then ")})`, async () => {
+    const { db, sqlite } = sqliteD1();
+    const database = db as unknown as D1TransactionalDatabase;
+    // A Solana project scanned on devnet and on mainnet keeps both cursors;
+    // "solana-devnet" sorts before "solana-mainnet" in the cursor key.
+    const blocks = { "solana-devnet": "111", "solana-mainnet": "222" } as const;
+    for (const network of order)
+      insertCursor(sqlite, "project-solana", network, blocks[network]);
 
-  const production = await totals(database, "project-solana");
-  expect(production.status).toBe(200);
-  expect(production.body.network).toBe("solana-mainnet");
-  expect(production.body.coverage).toEqual({
-    kind: "finalized-payment-events",
-    completeThrough: "222",
+    const production = await totals(database, "project-solana");
+    expect(production.status).toBe(200);
+    expect(production.body.network).toBe("solana-mainnet");
+    expect(production.body.coverage).toEqual({
+      kind: "finalized-payment-events",
+      completeThrough: "222",
+    });
+    expect(production.body.syncedAt).toBe(when);
   });
-  expect(production.body.syncedAt).toBe(when);
-});
+}
