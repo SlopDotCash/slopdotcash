@@ -59,6 +59,9 @@ const timestamp = now.toISOString();
 const expiresAt = "2026-10-14T00:15:00.000Z";
 const baseWallet = privateKeyToAccount(`0x${"1".padStart(64, "0")}`);
 const solanaSeed = new Uint8Array(32).fill(1);
+// Recovery reads only the networks the worker serves (PAYMENT_NETWORKS below).
+const network = (chain: string) =>
+  chain === "solana" ? "solana-devnet" : "base-sepolia";
 // The worker compares the lease against the real clock, not the fixture one.
 const leaseUntil = new Date(Date.now() + 60_000).toISOString();
 // Unsigned attempts a dispatcher still holds. The executor journal serializes
@@ -183,7 +186,7 @@ function leasedAttempt(
       obligation,
       `fixture-${suffix}`,
       actor,
-      `base-${suffix}`,
+      "base-sepolia",
       "base",
       `vault-${suffix}`,
       "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
@@ -261,7 +264,7 @@ try {
         `obligation-${chain}`,
         `fixture-${chain}`,
         actor,
-        `${chain}-local`,
+        network(chain),
         chain,
         `vault-${chain}`,
         chain === "solana"
@@ -402,7 +405,7 @@ try {
       assert.deepEqual(body, {
         idempotencyKey: `attempt-${chain}`,
         obligationId: `obligation-${chain}`,
-        network: `${chain}-local`,
+        network: network(chain),
         vault: `vault-${chain}`,
       });
       const status = chain === "base" && baseUnavailable ? 503 : 200;
@@ -555,7 +558,7 @@ try {
       "obligation-lease",
       "fixture-lease",
       "303",
-      "base-local",
+      "base-sepolia",
       "base",
       "vault-lease",
       "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
@@ -899,7 +902,7 @@ try {
       "obligation-solana-submitted",
       "fixture-solana-submitted",
       "707",
-      "solana-local",
+      "solana-devnet",
       "solana",
       "vault-solana-submitted",
       "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
