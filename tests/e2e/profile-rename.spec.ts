@@ -652,6 +652,106 @@ test("an unavailable identity directory hides historical records until retry suc
     .toEqual(["/api/v1/wallet-claims/actors/2/current"]);
 });
 
+test("a failed profile directory refresh keeps the last verified identity", async ({
+  diagnostics,
+  page,
+}, info) => {
+  diagnostics.allow(
+    /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )https:\/\/[^ ]+\/data\/profiles\.json$/u,
+  );
+  const site = await serveProfileSite(page);
+  const { profiles, current } = await profileRecords(page);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+    route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  );
+  let unavailable = false;
+  await page.route("**/data/profiles.json", (route) =>
+    unavailable
+      ? route.fulfill({ status: 503, body: "Unavailable" })
+      : route.fulfill({ json: profiles }),
+  );
+
+  await page.goto(`${site}/contributors/${current.login}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(page.locator("main.profile-page")).toBeVisible();
+  unavailable = true;
+  await page
+    .getByRole("banner")
+    .getByRole("link", { name: "Slop home", exact: true })
+    .click();
+  await page.goBack({ waitUntil: "networkidle" });
+
+  await expect(page.locator("main.profile-page")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: current.login, exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Profile records may be outdated." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Contributor records are unavailable.", { exact: true }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("profile-directory-last-good.png"),
+    fullPage: true,
+  });
+  unavailable = false;
+  const retryProfile = page.getByRole("button", {
+    name: "Retry profile",
+    exact: true,
+  });
+  await retryProfile.focus();
+  await expect(retryProfile).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Profile records may be outdated." }),
+  ).toHaveCount(0);
+  await expect(page.locator("main.profile-page")).toBeVisible();
+
+  unavailable = true;
+  await page
+    .getByRole("banner")
+    .getByRole("link", { name: "Slop home", exact: true })
+    .click();
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/points#people");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Contributor records may be outdated." }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: current.login, exact: true }),
+  ).toBeVisible();
+  unavailable = false;
+  const retryContributors = page.getByRole("button", {
+    name: "Retry contributors",
+    exact: true,
+  });
+  await retryContributors.focus();
+  await expect(retryContributors).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Contributor records may be outdated." }),
+  ).toHaveCount(0);
+});
+
 async function serveProfileSite(page: Page) {
   const { site } = deploymentOrigins(
     deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
