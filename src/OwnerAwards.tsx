@@ -101,9 +101,9 @@ export default function OwnerAwards({
     }
   }, [awardMonths, period]);
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>(
-    {},
-  );
+  const [drafts, setDrafts] = useState<
+    Record<string, Record<string, { value: string; base: string }>>
+  >({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
   const {
     busy: actionBusy,
@@ -136,6 +136,22 @@ export default function OwnerAwards({
       )
         throw new Error("The award response could not be verified.");
       setView(body);
+      setDrafts((previous) => {
+        const rows = new Map(
+          body.proposal?.allocations.map((row) => [
+            row.githubUserId,
+            row.grossBase,
+          ]),
+        );
+        return {
+          ...previous,
+          [month]: Object.fromEntries(
+            Object.entries(previous[month] ?? {}).filter(
+              ([actor, draft]) => rows.get(actor) === draft.base,
+            ),
+          ),
+        };
+      });
     },
     [project.id],
   );
@@ -226,7 +242,7 @@ export default function OwnerAwards({
         `/monthly/${view.period}/allocations`,
         {
           githubUserId,
-          grossBase: baseUnitsOf(draft, decimals),
+          grossBase: baseUnitsOf(draft.value, decimals),
           expectedSequence: view.proposal.allocationSequence,
         },
         "Monthly allocation",
@@ -523,7 +539,8 @@ export default function OwnerAwards({
                                 spellCheck={false}
                                 disabled={busy || cutoffPassed}
                                 value={
-                                  drafts[view.period]?.[row.githubUserId] ??
+                                  drafts[view.period]?.[row.githubUserId]
+                                    ?.value ??
                                   editableUnits(row.grossBase, decimals)
                                 }
                                 onChange={(event) =>
@@ -531,7 +548,10 @@ export default function OwnerAwards({
                                     ...drafts,
                                     [view.period]: {
                                       ...(drafts[view.period] ?? {}),
-                                      [row.githubUserId]: event.target.value,
+                                      [row.githubUserId]: {
+                                        value: event.target.value,
+                                        base: row.grossBase,
+                                      },
                                     },
                                   })
                                 }
