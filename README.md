@@ -339,7 +339,9 @@ Slop is experimental software. The repository is licensed under the
 publication in order. Development and production builds use this same entrypoint.
 Offline profile builds read `data/profiles/seed.json`. To use a captured census,
 set `SLOP_PROFILES_INPUT` to its path. Trusted CI sets that path to the live census
-it generated earlier. A missing declared input stops publication; leftover public
+it generated earlier. A selected census must cover the current targets; the
+historical seed used for offline and pull-request builds retains its own inventory.
+A missing declared input stops publication; leftover public
 files never select the source.
 
 `bun run verify:contracts` and `bun run verify:code` are shared by local verification
