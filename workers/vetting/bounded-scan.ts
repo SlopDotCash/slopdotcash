@@ -491,19 +491,13 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
-    // The fetched-code rule above names the fetch APIs of Python and
-    // JavaScript. The same act through the fetch idioms of the other
-    // languages the scan reviews matched nothing: an eval whose argument
-    // reads from the network through Ruby's `URI.open` or the open-uri
-    // `open`, Perl's LWP `get`, or PHP's `file_get_contents`, each with
-    // the URL written out, and a PHP include or require of a remote URL,
-    // which executes the fetched file with no eval at all. Fetching data
-    // without executing it, and an eval of local content, keep no
-    // finding. A method call such as `requests.get` stays with the rule
-    // above; Ruby's `Net::HTTP.get` and `get_response` over a `URI` are
-    // named here because that rule names no Ruby fetch API.
+    // These direct calls pass the downloaded text to eval/exec. Ruby's
+    // URI.open and Net::HTTP.get_response return objects, so require the
+    // read/body access rather than reporting those objects as executed.
+    // Keep the argument boundary: a later fetch after a local eval is not
+    // remote execution, and arbitrary transformations need source review.
     pattern:
-      /\b(?:eval|exec)\s*\([^\n]{0,160}?\b(?:Net::HTTP\.get(?:_response)?\s*\(\s*URI\s*\(\s*["']https?:\/\/|URI\.open\s*\(\s*["']https?:\/\/|open\s*\(\s*["']https?:\/\/|file_get_contents\s*\(\s*["']https?:\/\/|(?<![\w$.])get\s*\(\s*["']https?:\/\/)|\b(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//iu,
+      /(?<![\w.$])(?:eval|exec)\s*\(\s*(?:Net::HTTP\.get\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)|Net::HTTP\.get_response\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)\s*\.body\b|(?:URI\.)?open\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\.read\b(?:\s*\(\s*\))?|(?:file_get_contents|get)\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\))\s*\)|(?<![\w.$])(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//u,
     summary: "Executes code fetched from the network",
   },
 ];
