@@ -488,6 +488,29 @@ const RULES: Rule[] = [
       /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
     summary: "Runs a remote script URL directly",
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A download saved to a path and run later in the same file is the
+    // pipe act in two steps. Each step alone is already reviewed: the
+    // download is collected, and running a local file is ordinary. Only
+    // the link was invisible, so the execution must name the exact path
+    // the download wrote (the backreference), after the download, in
+    // command position or after a shell, interpreter or `source` verb.
+    // The path is one literal token: quoted spellings count, but a
+    // variable, a glob, a glued or clustered output flag and `curl -O`
+    // (which is given no path) stay out. Reading, checksumming or
+    // mentioning the downloaded file keeps no finding, and neither does
+    // running a file this file did not download. The rule is
+    // case-sensitive because the tools assign opposite meanings to the
+    // two spellings: `curl -o` names the download, `wget -o` names a
+    // log file, and only `wget -O` names the download.
+    pattern: new RegExp(
+      String.raw`\bcurl\b(?=[^\n]*https?://)[^\n]*?(?:-o|--output)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?[\s\S]{0,8192}?(?:^|[\n;|&()'"]\s*)(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+(?:-[a-zA-Z]+\s+)?)?["']?(?:\./)?\1["']?(?=$|[\s|;&<>()'"])|\bwget\b(?=[^\n]*https?://)[^\n]*?(?:-O|--output-document)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?[\s\S]{0,8192}?(?:^|[\n;|&()'"]\s*)(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+(?:-[a-zA-Z]+\s+)?)?["']?(?:\./)?\2["']?(?=$|[\s|;&<>()'"])|\b(?:curl|wget)\b(?=[^\n]*https?://)[^\n]*?(?<![\d&])>\s*["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?[\s\S]{0,8192}?(?:^|[\n;|&()'"]\s*)(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+(?:-[a-zA-Z]+\s+)?)?["']?(?:\./)?\3["']?(?=$|[\s|;&<>()'"])`,
+      "u",
+    ),
+    summary: "Executes a file staged by an earlier download in the same file",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
