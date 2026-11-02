@@ -35,13 +35,17 @@ export interface AcceptedCommitCensus {
 /** Search supplies the full current API-era census, not just the first PR
  * that GitHub's commit/pulls endpoint says introduced a shared commit.
  * An incomplete or moving census cannot authorize independent valuation.
+ * `current` is the repository's current owner/name. Evidence keeps the
+ * registered id, which after a rename is the former path; search does not
+ * follow a rename, so it finds no PR under that path.
  */
 export async function collectAcceptedCommitCensus(
   github: ValueClient,
   evidence: ValueEvidence,
   startAt: number,
+  current: string = evidence.repository,
 ): Promise<AcceptedCommitCensus | null> {
-  return collectRange(github, evidence, startAt);
+  return collectRange(github, evidence, startAt, current);
 }
 
 type MergeRange = { start: number; end: number };
@@ -50,14 +54,15 @@ async function collectRange(
   github: ValueClient,
   evidence: ValueEvidence,
   startAt: number,
+  current: string,
   range?: MergeRange,
 ): Promise<AcceptedCommitCensus | null> {
   if (!github.graphql || !Number.isFinite(startAt)) return null;
-  const [owner, name] = evidence.repository.split("/");
+  const [owner, name] = current.split("/");
   const period = range
     ? `merged:${new Date(range.start).toISOString().replace(".000Z", "Z")}..${new Date(range.end).toISOString().replace(".000Z", "Z")}`
     : `merged:>=${new Date(startAt).toISOString().slice(0, 10)}`;
-  const query = `repo:${evidence.repository} is:pr is:merged ${period}`;
+  const query = `repo:${current} is:pr is:merged ${period}`;
   const ids = new Set<string>();
   const carriers = new Map<string, Carrier[]>();
   const cursors = new Set<string>();
@@ -91,12 +96,12 @@ async function collectRange(
       const end = range?.end ?? Math.floor(Date.now() / 1000) * 1000;
       if (start >= end) return null;
       const middle = Math.floor((start + end) / 2000) * 1000;
-      const left = await collectRange(github, evidence, startAt, {
+      const left = await collectRange(github, evidence, startAt, current, {
         start,
         end: middle,
       });
       if (left === null) return null;
-      const right = await collectRange(github, evidence, startAt, {
+      const right = await collectRange(github, evidence, startAt, current, {
         start: middle + 1000,
         end,
       });
@@ -125,8 +130,7 @@ async function collectRange(
         repo.isPrivate !== false ||
         repo.id !== evidence.repositoryNodeId ||
         repo.databaseId !== evidence.repositoryDatabaseId ||
-        repo.nameWithOwner.toLowerCase() !==
-          evidence.repository.toLowerCase() ||
+        repo.nameWithOwner.toLowerCase() !== current.toLowerCase() ||
         pull.url !==
           `https://github.com/${repo.nameWithOwner}/pull/${pull.number}`
       )

