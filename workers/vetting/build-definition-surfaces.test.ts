@@ -53,34 +53,30 @@ test("a build definition of a recognized build system is an install surface", ()
   }
 });
 
-test("dedicated tox TOML commands are reviewed as an install surface", () => {
-  for (const path of ["tox.toml", "pkg/tox.toml"]) {
-    const safe = inspected(
+// biome-ignore format: Keep this regression consistent with the contributor instruction.
+test("tox test commands are reviewed as an install surface", () => {
+  const path = "tox.ini"
+  const safe = inspected(path, "[testenv]\ncommands = python -m pytest\n")
+  const unsafe = inspected(
+    path,
+    `[testenv]\ncommands = ${PAYLOAD}\n`,
+  )
+
+  expect(surfacesOf(path)).toEqual(["installScripts", "source"])
+  expect(unsafe.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  })
+  expect(unsafe.findings).toContainEqual(
+    expect.objectContaining({
       path,
-      "[env_run_base]\ncommands = [['python', '-m', 'pytest']]\n",
-    );
-    const unsafe = inspected(
-      path,
-      `[env_run_base]\ncommands = [['sh', '-c', '${PAYLOAD}']]\n`,
-    );
-    expect(surfacesOf(path)).toEqual(["installScripts", "source"]);
-    expect(safe.findings).toEqual([]);
-    expect(safe.downloads).toEqual([]);
-    expect(unsafe.coverage.installScripts).toEqual({
-      state: "complete",
-      items: 1,
-    });
-    expect(unsafe.findings).toContainEqual(
-      expect.objectContaining({
-        path,
-        category: "unsafe-execution",
-        severity: "high",
-      }),
-    );
-    expect(unsafe.downloads).toContain("https://evil.example/install.sh");
-    expect(unsafe.inventorySha256).not.toBe(safe.inventorySha256);
-  }
-});
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  )
+  expect(unsafe.downloads).toContain("https://evil.example/install.sh")
+  expect(unsafe.inventorySha256).not.toBe(safe.inventorySha256)
+})
 
 test("included Ninja and Tup commands are reviewed and invalidate reuse", () => {
   for (const definition of [
@@ -181,4 +177,33 @@ test("the executable surface stays bounded", () => {
   expect(surfacesOf("LICENSE")).toEqual([]);
   expect(surfacesOf("NOTICE")).toEqual([]);
   expect(inspected("NOTICE", PAYLOAD).findings).toEqual([]);
+});
+
+test("dedicated tox TOML commands are reviewed as an install surface", () => {
+  for (const path of ["tox.toml", "pkg/tox.toml"]) {
+    const safe = inspected(
+      path,
+      "[env_run_base]\ncommands = [['python', '-m', 'pytest']]\n",
+    );
+    const unsafe = inspected(
+      path,
+      `[env_run_base]\ncommands = [['sh', '-c', '${PAYLOAD}']]\n`,
+    );
+    expect(surfacesOf(path)).toEqual(["installScripts", "source"]);
+    expect(safe.findings).toEqual([]);
+    expect(safe.downloads).toEqual([]);
+    expect(unsafe.coverage.installScripts).toEqual({
+      state: "complete",
+      items: 1,
+    });
+    expect(unsafe.findings).toContainEqual(
+      expect.objectContaining({
+        path,
+        category: "unsafe-execution",
+        severity: "high",
+      }),
+    );
+    expect(unsafe.downloads).toContain("https://evil.example/install.sh");
+    expect(unsafe.inventorySha256).not.toBe(safe.inventorySha256);
+  }
 });
