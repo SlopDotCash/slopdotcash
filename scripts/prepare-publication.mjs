@@ -1,5 +1,6 @@
 /** Assemble one publication from explicit inputs before Vite serves or builds it. */
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,7 +10,8 @@ const profileInput =
 // PR and offline builds deliberately retain the historical seed. A selected
 // publication census must also satisfy the current browser inventory.
 const currentProfiles =
-  resolve(root, profileInput) !== resolve(root, "data/profiles/seed.json");
+  realpathSync(resolve(root, profileInput)) !==
+  realpathSync(resolve(root, "data/profiles/seed.json"));
 const stages = [
   [process.execPath, ["scripts/prepare-site.mjs"]],
   ["bun", ["scripts/generate-points.ts"]],
