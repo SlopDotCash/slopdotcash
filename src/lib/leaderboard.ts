@@ -415,7 +415,14 @@ function attributionDeclarationLineRecords(
     const fenceMatch = sourceLine.match(
       /^\s{0,3}(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/,
     );
-    if (fenceMatch) {
+    // CommonMark: a backtick fence info string cannot contain a backtick, so
+    // a line such as ```bun run verify``` is inline code and opens no fence.
+    const inlineCode =
+      fence === null &&
+      fenceMatch !== null &&
+      fenceMatch[1].startsWith("`") &&
+      fenceMatch[2].includes("`");
+    if (fenceMatch && !inlineCode) {
       const marker = fenceMatch[1];
       const character = marker[0] as "`" | "~";
       if (fence === null) {
