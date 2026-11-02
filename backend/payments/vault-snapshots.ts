@@ -59,8 +59,8 @@ function sameAddress(chain: PaymentChain, a: string, b: string) {
 
 /**
  * Stores one finalized read for a reviewed deployment. The read must name the
- * reviewed vault and asset. Cumulative counters and the block never go back:
- * a read that contradicts the stored row fails and the stored row stays.
+ * reviewed vault and asset. Cumulative counters and the block never go back.
+ * Within a block, a superseded observation leaves the stored row unchanged.
  */
 export async function storeVaultSnapshot(
   db: D1Database,
@@ -111,6 +111,9 @@ export async function storeVaultSnapshot(
   // records 0 and an update never changes the stored value.
   // Compare canonical decimal text exactly, including values above SQLite int64.
   // These write-time guards also cover refreshes that read the same prior row.
+  // Block order takes precedence over the refresh's start time. Only compare
+  // observation times within the same block, keeping balances with their own
+  // timestamp. julianday compares instants rather than ISO timezone spellings.
   const monotonicCounters = CUMULATIVE.map((key) => {
     const column = COLUMNS[key];
     return `(length(excluded.${column}) > length(vault_snapshots.${column}) OR (length(excluded.${column}) = length(vault_snapshots.${column}) AND excluded.${column} >= vault_snapshots.${column}))`;
@@ -123,7 +126,7 @@ export async function storeVaultSnapshot(
         .fill("?")
         .join(
           ",",
-        )}) ON CONFLICT(project_id,network,vault) DO UPDATE SET ${keys.map((k) => `${COLUMNS[k]}=excluded.${COLUMNS[k]}`).join(",")},block_number=excluded.block_number,block_time=excluded.block_time,observed_at=excluded.observed_at WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_snapshots.block_number AS INTEGER) AND excluded.asset_address=vault_snapshots.asset_address AND excluded.asset_decimals=vault_snapshots.asset_decimals AND excluded.chain=vault_snapshots.chain AND ${monotonicCounters}`,
+        )}) ON CONFLICT(project_id,network,vault) DO UPDATE SET ${keys.map((k) => `${COLUMNS[k]}=excluded.${COLUMNS[k]}`).join(",")},block_number=excluded.block_number,block_time=excluded.block_time,observed_at=excluded.observed_at WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_snapshots.block_number AS INTEGER) AND (CAST(excluded.block_number AS INTEGER)>CAST(vault_snapshots.block_number AS INTEGER) OR julianday(excluded.observed_at)>=julianday(vault_snapshots.observed_at)) AND excluded.asset_address=vault_snapshots.asset_address AND excluded.asset_decimals=vault_snapshots.asset_decimals AND excluded.chain=vault_snapshots.chain AND ${monotonicCounters}`,
     )
     .bind(
       deployment.projectId,
@@ -143,11 +146,16 @@ export async function storeVaultSnapshot(
   if (result.meta?.changes !== 1) {
     const latest = await db
       .prepare(
-        "SELECT block_number FROM vault_snapshots WHERE project_id=? AND network=? AND vault=?",
+        "SELECT block_number,observed_at FROM vault_snapshots WHERE project_id=? AND network=? AND vault=?",
       )
       .bind(deployment.projectId, deployment.network, deployment.vault)
-      .first<{ block_number: string }>();
-    if (latest && BigInt(totals.blockNumber) < BigInt(latest.block_number))
+      .first<{ block_number: string; observed_at: string }>();
+    if (
+      latest &&
+      (BigInt(totals.blockNumber) < BigInt(latest.block_number) ||
+        (BigInt(totals.blockNumber) === BigInt(latest.block_number) &&
+          Date.parse(observedAt) < Date.parse(latest.observed_at)))
+    )
       return "older";
     throw new Error("Vault snapshot conflicts with stored counters or asset");
   }

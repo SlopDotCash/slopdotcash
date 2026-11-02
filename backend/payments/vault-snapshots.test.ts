@@ -1,5 +1,8 @@
 // The vault totals cache: finalized reads stored in D1 and served from it.
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import { handlePaymentsApi } from "./handler";
@@ -39,6 +42,224 @@ const totals = (overrides: Partial<VaultTotals> = {}): VaultTotals => ({
   ...overrides,
 });
 const observed = "2026-10-18T10:05:00.000Z";
+
+test("chronological and duplicate observations preserve the complete finalized row", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    await storeVaultSnapshot(db, deployment, totals(), observed);
+    const initial = sqlite
+      .query("SELECT * FROM vault_snapshots")
+      .get() as Record<string, unknown>;
+    const next = "2026-10-18T10:05:00.001Z";
+    expect(await storeVaultSnapshot(db, deployment, totals(), next)).toBe(
+      "stored",
+    );
+    const updated = { ...initial, observed_at: next };
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(
+      updated,
+    );
+    expect(await storeVaultSnapshot(db, deployment, totals(), next)).toBe(
+      "stored",
+    );
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(
+      updated,
+    );
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a delayed refresh cannot make the public vault observation stale again", async () => {
+  const { db, sqlite } = sqliteD1();
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const newer = "2026-10-18T10:05:02.000Z";
+  const rpc = { "base-sepolia": "http://rpc.invalid" };
+  const delayed = refreshVaultSnapshots(
+    db,
+    [deployment],
+    rpc,
+    async () => {
+      await gate;
+      return totals();
+    },
+    new Date(observed),
+  );
+  try {
+    await refreshVaultSnapshots(
+      db,
+      [deployment],
+      rpc,
+      async () => totals(),
+      new Date(newer),
+    );
+    const before = sqlite.query("SELECT * FROM vault_snapshots").get();
+    release();
+    await delayed;
+    const response = await handlePaymentsApi(
+      new Request("https://slop.cash/api/v1/payments/projects/acme/vault"),
+      { db, now: () => new Date("2026-10-18T10:35:01.000Z") },
+    );
+    const body = (await response.json()) as {
+      snapshots: { observedAt: string }[];
+      staleAfterMs: number;
+    };
+    expect(response.status).toBe(200);
+    expect(body.snapshots[0].observedAt).toBe(newer);
+    expect(
+      Date.parse("2026-10-18T10:35:01.000Z") -
+        Date.parse(body.snapshots[0].observedAt),
+    ).toBeLessThan(body.staleAfterMs);
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(before);
+  } finally {
+    release();
+    await delayed.catch(() => {});
+    sqlite.close();
+  }
+});
+
+test("write-time ordering keeps newer finalized blocks and the latest observation within a block", async () => {
+  for (const advanceBlock of [false, true]) {
+    const directory = mkdtempSync(join(tmpdir(), "slop-vault-observation-"));
+    const file = join(directory, "vault.sqlite");
+    const first = sqliteD1(MIGRATIONS, file);
+    const second = sqliteD1([], file);
+    try {
+      first.sqlite.exec("PRAGMA journal_mode=WAL");
+      await storeVaultSnapshot(first.db, deployment, totals(), observed);
+      first.sqlite.exec("UPDATE vault_snapshots SET total_service_fees='17'");
+      first.sqlite.exec("BEGIN IMMEDIATE");
+      await storeVaultSnapshot(
+        first.db,
+        deployment,
+        totals(),
+        "2026-10-18T10:05:02.000Z",
+      );
+      const before = first.sqlite
+        .query("SELECT * FROM vault_snapshots")
+        .get() as Record<string, unknown>;
+      expect(
+        second.sqlite.query("SELECT observed_at FROM vault_snapshots").get(),
+      ).toEqual({ observed_at: observed });
+      const incoming = advanceBlock
+        ? totals({
+            blockNumber: "1001",
+            totalDeposited: "600000000",
+            freeBalance: "400000000",
+          })
+        : totals();
+      // The other connection reads the old committed row, then yields at SELECT.
+      // Commit before its INSERT resumes: the SQL must inspect the current row.
+      const delayed = storeVaultSnapshot(
+        second.db,
+        deployment,
+        incoming,
+        "2026-10-18T10:05:01.000Z",
+      );
+      first.sqlite.exec("COMMIT");
+      expect(await delayed).toBe(advanceBlock ? "stored" : "older");
+      expect(
+        second.sqlite.query("SELECT * FROM vault_snapshots").get(),
+      ).toEqual(
+        advanceBlock
+          ? {
+              ...before,
+              block_number: "1001",
+              total_deposited: "600000000",
+              free_balance: "400000000",
+              observed_at: "2026-10-18T10:05:01.000Z",
+            }
+          : before,
+      );
+    } finally {
+      if (first.sqlite.inTransaction) first.sqlite.exec("ROLLBACK");
+      second.sqlite.close();
+      first.sqlite.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("block order takes precedence over observation time without relabeling balances", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    await storeVaultSnapshot(db, deployment, totals(), observed);
+    const initial = sqlite.query("SELECT * FROM vault_snapshots").get();
+    // Same block: compare instants rather than the lexical order of offsets.
+    expect(
+      await storeVaultSnapshot(
+        db,
+        deployment,
+        totals(),
+        "2026-10-18T11:04:59+01:00",
+      ),
+    ).toBe("older");
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(
+      initial,
+    );
+    expect(
+      await storeVaultSnapshot(
+        db,
+        deployment,
+        totals(),
+        "2026-10-18T11:05:00+01:00",
+      ),
+    ).toBe("stored");
+    const advanced = totals({
+      blockNumber: "1001",
+      blockTime: "2026-10-18T10:00:02.000Z",
+      totalDeposited: "600000000",
+      freeBalance: "400000000",
+    });
+    // An earlier-started refresh can read a later finalized block. Store its
+    // actual observation time, not the time of the previous block's balances.
+    const earlier = "2026-10-18T10:04:59.999Z";
+    expect(await storeVaultSnapshot(db, deployment, advanced, earlier)).toBe(
+      "stored",
+    );
+    expect(
+      sqlite
+        .query(
+          "SELECT block_number,block_time,free_balance,observed_at,reserved,total_service_fees FROM vault_snapshots",
+        )
+        .get(),
+    ).toEqual({
+      block_number: "1001",
+      block_time: advanced.blockTime,
+      free_balance: "400000000",
+      observed_at: earlier,
+      reserved: null,
+      total_service_fees: "0",
+    });
+    const current = sqlite.query("SELECT * FROM vault_snapshots").get();
+    expect(
+      await storeVaultSnapshot(
+        db,
+        deployment,
+        totals(),
+        "2026-10-18T10:20:00.000Z",
+      ),
+    ).toBe("older");
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(
+      current,
+    );
+    expect(
+      await storeVaultSnapshot(
+        db,
+        deployment,
+        advanced,
+        "2026-10-18T10:05:00.000Z",
+      ),
+    ).toBe("stored");
+    expect(
+      sqlite.query("SELECT observed_at FROM vault_snapshots").get(),
+    ).toEqual({ observed_at: observed });
+  } finally {
+    sqlite.close();
+  }
+});
 
 test("refreshes both chain caches and preserves the last verified public totals after invalid reads", async () => {
   const db = open();
