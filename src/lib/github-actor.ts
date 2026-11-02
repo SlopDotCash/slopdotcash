@@ -70,16 +70,22 @@ export function githubUserIdFromNodeId(nodeId: string): string | null {
   return id.toString();
 }
 
-/** Preserve the login and immutable-ID tie order used by project and global standings. */
+/**
+ * Login and immutable-ID tie order for project and global standings and for
+ * the largest-remainder extra unit. English case folding and collation keep
+ * that order the same on every host. A default locale that case-folds "I"
+ * to "ı" would otherwise move a tied contributor and change the recipient
+ * of the leftover base unit.
+ */
 export function compareActors(
   left: Pick<GitHubActor, "id" | "login">,
   right: Pick<GitHubActor, "id" | "login">,
 ): number {
-  const leftLogin = left.login.toLowerCase();
-  const rightLogin = right.login.toLowerCase();
+  const leftLogin = left.login.toLocaleLowerCase("en");
+  const rightLogin = right.login.toLocaleLowerCase("en");
   return (
-    leftLogin.localeCompare(rightLogin) ||
-    left.login.localeCompare(right.login) ||
-    left.id.localeCompare(right.id)
+    leftLogin.localeCompare(rightLogin, "en") ||
+    left.login.localeCompare(right.login, "en") ||
+    left.id.localeCompare(right.id, "en")
   );
 }
