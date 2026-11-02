@@ -35,6 +35,7 @@ type Identity = {
 async function acceptedCommitCarriers(
   github: ValueClient,
   evidence: ValueEvidence,
+  current: string,
   cache: Map<string, Selection[]>,
 ): Promise<Selection[] | null> {
   if (!evidence.pull.merged_at && !evidence.indirectAcceptance) return [];
@@ -66,9 +67,7 @@ async function acceptedCommitCarriers(
               };
             };
           }[]
-        >(
-          `/repos/${evidence.repository}/commits/${sha}/pulls?per_page=100&page=${page}`,
-        );
+        >(`/repos/${current}/commits/${sha}/pulls?per_page=100&page=${page}`);
         if (!Array.isArray(pulls)) return null;
         for (const pull of pulls) {
           if (pull.state !== "closed" || pull.merged_at === null) continue;
@@ -82,8 +81,7 @@ async function acceptedCommitCarriers(
             repo.private !== false ||
             repo.id !== evidence.repositoryDatabaseId ||
             repo.node_id !== evidence.repositoryNodeId ||
-            repo.full_name.toLowerCase() !==
-              evidence.repository.toLowerCase() ||
+            repo.full_name.toLowerCase() !== current.toLowerCase() ||
             pull.html_url !==
               `https://github.com/${repo.full_name}/pull/${pull.number}`
           )
@@ -141,6 +139,7 @@ export async function collectValueGroup(
         namesRepository(r, selected.repository),
     );
     if (!repository) return null;
+    const current = `${repository.owner}/${repository.name}`;
     const identity = await github.get<{
       id: number;
       node_id: string;
@@ -216,6 +215,7 @@ export async function collectValueGroup(
     const carriers = await acceptedCommitCarriers(
       github,
       evidence,
+      current,
       commitCarriers,
     );
     if (carriers === null) return null;
@@ -227,6 +227,7 @@ export async function collectValueGroup(
           github,
           evidence,
           startAt,
+          current,
         );
         if (collected === null) return null;
         census = collected;
