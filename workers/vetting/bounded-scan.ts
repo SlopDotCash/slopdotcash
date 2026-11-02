@@ -296,6 +296,14 @@ function commandToken(name: string): string {
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
+/**
+ * Interpreters that read their program from standard input when no script
+ * file argument is given, so a download piped into one executes the
+ * download exactly as a pipe into a shell does.
+ */
+const INTERPRETER_COMMAND = commandToken(
+  String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
+);
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -367,6 +375,20 @@ const RULES: Rule[] = [
     pattern:
       /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
     summary: "Executes decoded or obfuscated code",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // The interpreter is the pipe target the shell rule above does not
+    // name. It matches only when the interpreter reads its program from
+    // the pipe: bare, after short flags, or with `-` as the program
+    // argument. A module run (`-m json.tool`), a literal `-c` program or
+    // a script file argument takes no program from standard input.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${INTERPRETER_COMMAND}(?:\s+-[a-zA-Z]+)*(?:\s+-)?(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a remote download in an interpreter",
   },
   {
     threat: "unsafe-execution",
