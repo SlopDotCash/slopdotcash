@@ -52,6 +52,71 @@ test("a registry run named in an install-surface script is unsafe execution", ()
   ).toEqual(["setup.js:unsafe-execution:high"]);
 });
 
+test("a registry runner after a shell keyword is in command position", () => {
+  for (const body of [
+    'if [ -n "$x" ]; then npx -y evil-pkg; fi',
+    "for i in 1 2; do npx -y evil-pkg; done",
+    "{ npx -y evil-pkg; }",
+    "time npx -y evil-pkg",
+    "command npx -y evil-pkg",
+  ]) {
+    expect({
+      body,
+      findings: findings("install.sh", `#!/bin/sh\n${body}`),
+    }).toEqual({
+      body,
+      findings: ["install.sh:unsafe-execution:high"],
+    });
+  }
+});
+
+test("a quoted package argument does not evade the registry rule", () => {
+  for (const body of [
+    'npx "evil-pkg"',
+    "npx 'evil-pkg'",
+    'npx -y "evil-pkg"',
+  ]) {
+    expect({
+      body,
+      findings: findings("install.sh", `#!/bin/sh\n${body}`),
+    }).toEqual({
+      body,
+      findings: ["install.sh:unsafe-execution:high"],
+    });
+  }
+});
+
+test("an absolute-path runner still fetches from the registry", () => {
+  for (const body of [
+    "/usr/local/bin/npx -y evil-pkg",
+    "sudo /usr/local/bin/npx -y evil-pkg",
+    "/usr/local/bin/pnpm dlx evil-pkg",
+  ]) {
+    expect({
+      body,
+      findings: findings("install.sh", `#!/bin/sh\n${body}`),
+    }).toEqual({
+      body,
+      findings: ["install.sh:unsafe-execution:high"],
+    });
+  }
+});
+
+test("a runner told not to install fetches nothing", () => {
+  for (const body of [
+    "npx --no-install tsc --noEmit",
+    "npx -y --no-install evil-pkg",
+  ]) {
+    expect({
+      body,
+      findings: findings("install.sh", `#!/bin/sh\n${body}`),
+    }).toEqual({
+      body,
+      findings: [],
+    });
+  }
+});
+
 test("package-manager commands that fetch nothing keep no finding", () => {
   for (const body of [
     // Local scripts and installs run through the manager are not a fetch.
