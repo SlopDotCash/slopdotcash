@@ -109,6 +109,7 @@ async function markRead(
   if (response.status === 401) return "signed-out";
   if (!response.ok)
     throw new Error("Could not mark the notification as read. Please retry.");
+  await readBoundedJson(response, 1_024, "notification read receipt");
   return "ok";
 }
 
@@ -133,6 +134,7 @@ async function acknowledgeSecurity(
   if (response.status === 401) return "signed-out";
   if (!response.ok)
     throw new Error("Could not acknowledge the security notice. Please retry.");
+  await readBoundedJson(response, 1_024, "security acknowledgement receipt");
   return "ok";
 }
 
@@ -143,6 +145,13 @@ export default function InboxPage() {
   const { busy, error: actionError, run } = useAction();
   const [message, setMessage] = useState("");
   const generation = useRef(0);
+  useEffect(
+    () => () => {
+      // Departed actions cannot clear drafts owned by a later private view.
+      generation.current += 1;
+    },
+    [],
+  );
   const [recipient, setRecipient] = useState<string | null>(null);
   const previousRecipient = useRef<string | null>(null);
   const acceptRecipient = useCallback((id: string | null) => {
