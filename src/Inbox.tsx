@@ -145,6 +145,13 @@ export default function InboxPage() {
   const { busy, error: actionError, run } = useAction();
   const [message, setMessage] = useState("");
   const generation = useRef(0);
+  useEffect(
+    () => () => {
+      // Departed actions cannot clear drafts owned by a later private view.
+      generation.current += 1;
+    },
+    [],
+  );
   const [recipient, setRecipient] = useState<string | null>(null);
   const previousRecipient = useRef<string | null>(null);
   const acceptRecipient = useCallback((id: string | null) => {
