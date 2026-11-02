@@ -716,6 +716,71 @@ test("a primary authority outage does not stop another failed notice's escalatio
   }
 });
 
+test("a preparation storage outage retries one security notice without stopping the drain", async () => {
+  const h = await setup();
+  try {
+    const ownerRow = h
+      .rows()
+      .find((row) => row.recipient_github_id === owner.githubId);
+    if (!ownerRow) throw new Error("Owner notice missing");
+    h.sqlite.exec(`CREATE TRIGGER fixture_security_prepare_outage
+      BEFORE UPDATE OF destination_digest ON security_notification_outbox
+      WHEN OLD.recipient_github_id='${owner.githubId}'
+      BEGIN SELECT RAISE(ABORT, 'Fixture preparation storage outage'); END`);
+    await dispatchSecurityMail(h.deps);
+    const afterOutage = Object.fromEntries(
+      h
+        .rows()
+        .map((row) => [
+          row.recipient_github_id,
+          { state: row.state, attempts: row.attempts },
+        ]),
+    );
+    expect(afterOutage[owner.githubId]).toEqual({
+      state: "retrying",
+      attempts: 1,
+    });
+    expect(afterOutage[backup.githubId]).toEqual({
+      state: "provider-accepted",
+      attempts: 1,
+    });
+    expect(h.sent.map((mail) => mail.to)).toEqual([
+      `${backup.githubLogin}@example.com`,
+    ]);
+    h.sqlite.exec("DROP TRIGGER fixture_security_prepare_outage");
+    h.advance(61_000);
+    await dispatchSecurityMail(h.deps);
+    const afterRecovery = Object.fromEntries(
+      h
+        .rows()
+        .map((row) => [
+          row.recipient_github_id,
+          { state: row.state, attempts: row.attempts },
+        ]),
+    );
+    expect(afterRecovery[owner.githubId]).toEqual({
+      state: "provider-accepted",
+      attempts: 2,
+    });
+    expect(h.sent.map((mail) => mail.to)).toEqual([
+      `${backup.githubLogin}@example.com`,
+      `${owner.githubLogin}@example.com`,
+    ]);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT state FROM security_notification_delivery_events WHERE delivery_id=? ORDER BY attempt",
+        )
+        .all(ownerRow.id),
+    ).toEqual([{ state: "retrying" }, { state: "provider-accepted" }]);
+    h.advance(6 * 60_000);
+    await dispatchSecurityMail(h.deps);
+    expect(h.rows().filter((row) => row.escalation_of)).toHaveLength(0);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("provider suppression evidence is a failed delivery that reaches the backup", async () => {
   const h = await setup();
   await dispatchSecurityMail(h.deps);
