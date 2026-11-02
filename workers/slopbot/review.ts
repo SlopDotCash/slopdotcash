@@ -1,10 +1,11 @@
-// Review pipeline for one issue or pull request revision (PRD BOT-04 to BOT-13).
+﻿// Review pipeline for one issue or pull request revision (PRD BOT-04 to BOT-13).
 // The model only classifies. Every GitHub action is decided here, in code,
 // after independent state checks.
 
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
 import { hasParticipationBan } from "../../backend/projects/account-bans";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { appealCommandLine, appealStatementText } from "./appeal-command";
 import { publishAppealComment } from "./appeal-publication";
 import {
   APPEAL_RESOLUTION_DAYS,
@@ -2621,16 +2622,14 @@ async function appealStatement(
       comment.user?.id !== appellantId ||
       comment.issue_url !==
         `https://api.github.com/repos/${job.owner}/${job.repo}/issues/${job.number}` ||
-      !/^\/slopbot (?:appeal|dispute)(?:\s|$)/u.test(comment.body ?? "")
+      appealCommandLine(comment.body) === null
     )
       throw new Error(
         "The original dispute comment is unavailable or changed source",
       );
     return (
-      (comment.body ?? "")
-        .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
-        .trim()
-        .slice(0, 4000) || "(no reason given)"
+      (appealStatementText(comment.body) ?? "").slice(0, 4000) ||
+      "(no reason given)"
     );
   }
   let statement = "(no appeal text; the author reopened the item)";
@@ -2643,17 +2642,9 @@ async function appealStatement(
     if (!Array.isArray(comments))
       throw new Error("the appeal comments are unreadable");
     for (const comment of comments) {
-      const body = (comment.body ?? "").trim();
-      if (
-        comment.user?.id === appellantId &&
-        (body.startsWith("/slopbot appeal") ||
-          body.startsWith("/slopbot dispute"))
-      )
-        statement =
-          body
-            .replace(/^\/slopbot (?:appeal|dispute)\b/u, "")
-            .trim()
-            .slice(0, 4000) || "(no reason given)";
+      const text = appealStatementText(comment.body);
+      if (comment.user?.id === appellantId && text !== null)
+        statement = text.slice(0, 4000) || "(no reason given)";
     }
     if (comments.length < 100) break;
   }

@@ -2,6 +2,7 @@
 // fetch: verify and deduplicate webhooks, then enqueue identifiers only.
 // queue: re-read GitHub state and run the review pipeline.
 import { readLimitedBody } from "../../backend/trace/validation";
+import { appealCommandLine } from "./appeal-command";
 import { dispatchDueAppeals } from "./appeals";
 import { resumeBudgetBlocks } from "./budget-blocks";
 import { APPEAL_COMMANDS, type Job } from "./contracts";
@@ -149,7 +150,9 @@ export function jobFor(
         ...item,
         senderId: sender.id,
       };
-    if (text.startsWith("/slopbot appeal"))
+    // The command may follow the explanation (#1930): match it on its own line
+    // instead of only at the start of the whole comment.
+    if (appealCommandLine(text) !== null)
       return {
         kind: "appeal",
         ...base,
