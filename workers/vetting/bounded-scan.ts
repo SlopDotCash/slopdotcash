@@ -1358,7 +1358,7 @@ function gypIncludeSpecifiers(text: string): {
 }
 
 /**
- * A GYP include is relative to the file that names it. Absolute paths, URLs
+ * A build include is relative to the file that names it. Absolute paths, URLs
  * and paths that leave the repository are not acquired files.
  */
 function resolveBuildInclude(
@@ -1421,7 +1421,7 @@ function gypIncludedPaths(files: ScanInputFile[]): {
       unacquired.add("GYP include not acquired: unresolved");
     for (const specifier of includes.paths) {
       const resolved = resolveBuildInclude(path, specifier);
-      // `resolveGypInclude` returns null for an empty, absolute, URL-like or
+      // `resolveBuildInclude` returns null for an empty, absolute, URL-like or
       // out-of-repository path. A resolved path missing from the acquired
       // tree was not fetched or is generated at install. A file already
       // queued was acquired; repeating it is not a gap.
@@ -1470,12 +1470,6 @@ function cmakeIncludeSpecifiers(text: string): string[] {
   }
   return specifiers;
 }
-
-/**
- * Resolves an include specifier against the naming file. Absolute paths,
- * variable expansions and paths that leave the repository are not acquired
- * files, so they resolve to null.
- */
 
 /**
  * Files a CMake list file pulls in with `include()`, including nested ones.
