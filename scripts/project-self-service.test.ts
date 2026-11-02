@@ -896,6 +896,57 @@ test("an application stored before self-service setup publishes once, by its app
   });
 });
 
+test("a stored update whose base revision moved on is not offered for publication", async () => {
+  const { persistence, sqlite, call, create, state } = registry();
+  await create("open-registry", "example/open-registry");
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+  };
+  state.clearance = CLEARED;
+  await call("POST", "project-setup/open-registry/check", OWNER, {});
+  const base = await persistence.getProject("open-registry");
+  if (!base) throw new Error("project was not listed");
+  const stored = JSON.stringify({
+    ...base.manifest,
+    status: "paused",
+    headline: "A stored headline.",
+  });
+  sqlite.exec(
+    `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at,expected_revision,change_reason)
+       VALUES ('app_storedupdate00001','open-registry','example/open-registry','${stored}','${"b".repeat(64)}','Merged pull requests','${OWNER}','owner','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z',${base.revision},'Clearer headline')`,
+  );
+  // While its base is current, the stored update is offered.
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [expect.objectContaining({ id: "app_storedupdate00001" })],
+  );
+  // Another revision is published from settings.
+  const moved = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: { ...base.manifest, headline: "A newer published headline." },
+    expectedRevision: base.revision,
+  });
+  expect(moved.status).toBe(200);
+  // The stale update is no longer offered as publishable...
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+  // ...and a direct publication explains that it must be made again.
+  const refused = await call(
+    "POST",
+    "project-applications/app_storedupdate00001/publish",
+    OWNER,
+    {},
+  );
+  expect(refused.status).toBe(409);
+  expect(refused.body.error).toBe("stale_revision");
+  expect(refused.body.message).toMatch(/settings/u);
+  expect(
+    (await persistence.getProject("open-registry"))?.manifest.headline,
+  ).toBe("A newer published headline.");
+});
+
 test("an explicit moderator ban blocks new contribution intake without blaming the original applicant", async () => {
   const t = registry();
   t.deps.moderatorGithubIds = new Set([ADMIN]);
@@ -2566,6 +2617,68 @@ test("only the steward or a repository admin can register the project vault", as
   expect(
     (await t.persistence.getProject(target.id))?.manifest.escrow?.deployments,
   ).toEqual([TEST_VAULT]);
+});
+
+// Wallets and explorers may show an EVM hash in upper or mixed case.
+test("an EVM vault creation hash registers in any letter case", async () => {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const target = await t.persistence.getProject("vault-target");
+  if (!target) throw new Error("Project required");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+        expectedRevision: target.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...target.manifest,
+          reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const verified: string[] = [];
+  t.deps.vaultSetup = {
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    // Like the chain verifier, the deployment records the hash it was given.
+    register: async (_project, _actor, _input, transactionId) => {
+      verified.push(transactionId);
+      return { ...TEST_VAULT, deploymentTransaction: transactionId };
+    },
+  };
+  const register = (transactionId: string) =>
+    t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId,
+    });
+  const accepted = await register(`0x${"AB".repeat(32)}`);
+  expect(accepted.status).toBe(200);
+  expect(accepted.body.status).toBe("registered");
+  expect(
+    (await t.persistence.getProject(target.id))?.manifest.escrow?.deployments,
+  ).toEqual([TEST_VAULT]);
+  // A retry in another case finds the same registration.
+  const retried = await register(`0x${"aB".repeat(32)}`);
+  expect(retried.status).toBe(200);
+  expect(retried.body.status).toBe("registered");
+  expect(retried.body.deployment).toEqual(TEST_VAULT);
+  expect(verified).toEqual([TEST_VAULT.deploymentTransaction]);
 });
 
 // A moderator decision on another project also applies during this activation.

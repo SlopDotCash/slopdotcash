@@ -29,6 +29,7 @@ import {
   parseRecordedVettingResult,
   recordedResultProblems,
   scanSourceInventory,
+  TEMPLATE_PREFIX,
   type VettingScanResult,
 } from "../../backend/vetting/scan-result";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
@@ -74,8 +75,9 @@ const COVERED_BY_BOUNDED_SCAN = new Set([
   "skill-template-inputs-not-acquired",
   "runtime-and-model-review-not-performed",
 ]);
+
 /** Template inputs are scanned under this prefix, apart from repository paths. */
-export const TEMPLATE_PREFIX = "slop-skill-template";
+export { TEMPLATE_PREFIX } from "../../backend/vetting/scan-result";
 
 /**
  * Fails closed unless the primary is the pinned Surplus `claude-opus-5.5`
