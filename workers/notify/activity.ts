@@ -150,146 +150,160 @@ export async function dispatchActivityMail(
     "activity",
     deps.now,
   )) {
-    if (
-      row.event_key.startsWith("slopbot-appeal:") ||
-      row.event_key.startsWith("slopbot-value-appeal:")
-    ) {
-      const appeal = await deps.db
-        .prepare(
-          "SELECT appellant_github_id, resolved_at FROM slopbot_appeals WHERE appeal_key = ? AND escalated_at IS NOT NULL",
-        )
-        .bind(row.event_key.slice("slopbot-".length))
-        .first<{ appellant_github_id: string; resolved_at: string | null }>();
+    // Preparation resolves the current audience, destination and consent
+    // before any provider call. A failure here has sent nothing, so the
+    // delivery retries within the existing bound instead of aborting the
+    // drain and stranding the claimed row as an ambiguous send.
+    let registered: Awaited<ReturnType<typeof enrolledDestination>>;
+    let destination:
+      | { available: false }
+      | { available: true; email: string; destinationVersion: string };
+    try {
       if (
-        !deps.moderatorGithubIds?.has(row.recipient_github_id) ||
-        !appeal ||
-        appeal.resolved_at !== null ||
-        appeal.appellant_github_id === row.recipient_github_id
+        row.event_key.startsWith("slopbot-appeal:") ||
+        row.event_key.startsWith("slopbot-value-appeal:")
+      ) {
+        const appeal = await deps.db
+          .prepare(
+            "SELECT appellant_github_id, resolved_at FROM slopbot_appeals WHERE appeal_key = ? AND escalated_at IS NOT NULL",
+          )
+          .bind(row.event_key.slice("slopbot-".length))
+          .first<{ appellant_github_id: string; resolved_at: string | null }>();
+        if (
+          !deps.moderatorGithubIds?.has(row.recipient_github_id) ||
+          !appeal ||
+          appeal.resolved_at !== null ||
+          appeal.appellant_github_id === row.recipient_github_id
+        ) {
+          await recordDelivery(deps, row, "suppressed", null, "activity");
+          continue;
+        }
+      }
+      if (row.event_key.startsWith("slopbot-points-dispute:")) {
+        const resolvedNotice = row.event_key.endsWith(":resolved");
+        const appealKey = resolvedNotice
+          ? row.event_key.slice("slopbot-".length, -":resolved".length)
+          : row.event_key.slice("slopbot-".length);
+        const dispute = await deps.db
+          .prepare(
+            "SELECT appellant_github_id, escalated_at, resolved_at FROM points_disputes WHERE appeal_key = ?",
+          )
+          .bind(appealKey)
+          .first<{
+            appellant_github_id: string;
+            escalated_at: string | null;
+            resolved_at: string | null;
+          }>();
+        const allowed =
+          dispute !== null &&
+          (resolvedNotice
+            ? dispute.resolved_at !== null &&
+              dispute.appellant_github_id === row.recipient_github_id
+            : dispute.appellant_github_id === row.recipient_github_id ||
+              (deps.moderatorGithubIds?.has(row.recipient_github_id) === true &&
+                dispute.escalated_at !== null &&
+                dispute.resolved_at === null));
+        if (!allowed) {
+          await recordDelivery(deps, row, "suppressed", null, "activity");
+          continue;
+        }
+      }
+      // A scam-closure account review (owner decision D4) mails only a current
+      // moderator, never the author, and only while its penalty stands.
+      if (row.event_key.startsWith("slopbot-scam-review:")) {
+        const penalty = await deps.db
+          .prepare(
+            "SELECT author_github_id, reversed_at FROM slopbot_penalties WHERE item_node_id = ? AND category = 'scam' AND moderator_review = 1",
+          )
+          .bind(row.event_key.slice("slopbot-scam-review:".length))
+          .first<{ author_github_id: string; reversed_at: string | null }>();
+        if (
+          !deps.moderatorGithubIds?.has(row.recipient_github_id) ||
+          !penalty ||
+          penalty.reversed_at !== null ||
+          penalty.author_github_id === row.recipient_github_id
+        ) {
+          await recordDelivery(deps, row, "suppressed", null, "activity");
+          continue;
+        }
+      }
+      // A reinstatement review (ELG-02) asks the moderators who may decide the
+      // request. A removed moderator no longer belongs to that audience.
+      if (
+        row.event_key.startsWith("reinstatement-review:") &&
+        !deps.moderatorGithubIds?.has(row.recipient_github_id)
       ) {
         await recordDelivery(deps, row, "suppressed", null, "activity");
         continue;
       }
-    }
-    if (row.event_key.startsWith("slopbot-points-dispute:")) {
-      const resolvedNotice = row.event_key.endsWith(":resolved");
-      const appealKey = resolvedNotice
-        ? row.event_key.slice("slopbot-".length, -":resolved".length)
-        : row.event_key.slice("slopbot-".length);
-      const dispute = await deps.db
+      if (
+        !(await stillProjectRecipient(
+          deps.db,
+          row,
+          deps.adminGithubIds?.has(row.recipient_github_id) === true ||
+            deps.moderatorGithubIds?.has(row.recipient_github_id) === true,
+        ))
+      ) {
+        await recordDelivery(deps, row, "suppressed", null, "activity");
+        continue;
+      }
+      registered = deps.generalEmail
+        ? await enrolledDestination(deps.db, row.recipient_github_id)
+        : null;
+      destination = registered
+        ? { available: true, ...registered }
+        : await activityMailEligibility(
+            deps.config,
+            row.recipient_github_id,
+            now,
+          );
+      const preference = await deps.db
         .prepare(
-          "SELECT appellant_github_id, escalated_at, resolved_at FROM points_disputes WHERE appeal_key = ?",
+          "SELECT enabled,security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
         )
-        .bind(appealKey)
+        .bind(row.recipient_github_id)
         .first<{
-          appellant_github_id: string;
-          escalated_at: string | null;
-          resolved_at: string | null;
+          enabled: number;
+          security_enabled: number | null;
+          destination_version: string | null;
         }>();
-      const allowed =
-        dispute !== null &&
-        (resolvedNotice
-          ? dispute.resolved_at !== null &&
-            dispute.appellant_github_id === row.recipient_github_id
-          : dispute.appellant_github_id === row.recipient_github_id ||
-            (deps.moderatorGithubIds?.has(row.recipient_github_id) === true &&
-              dispute.escalated_at !== null &&
-              dispute.resolved_at === null));
-      if (!allowed) {
-        await recordDelivery(deps, row, "suppressed", null, "activity");
+      // An essential notice whose operator-verified record is not yet in effect
+      // made no provider call: retry it on the bounded schedule. Optional mail
+      // never retries here, because its consent names one effective destination.
+      if (
+        !destination.available &&
+        row.essential &&
+        deps.config.recipients[row.recipient_github_id]
+      ) {
+        await retryWithoutProviderCall(deps, row, "activity");
         continue;
       }
-    }
-    // A scam-closure account review (owner decision D4) mails only a current
-    // moderator, never the author, and only while its penalty stands.
-    if (row.event_key.startsWith("slopbot-scam-review:")) {
-      const penalty = await deps.db
-        .prepare(
-          "SELECT author_github_id, reversed_at FROM slopbot_penalties WHERE item_node_id = ? AND category = 'scam' AND moderator_review = 1",
-        )
-        .bind(row.event_key.slice("slopbot-scam-review:".length))
-        .first<{ author_github_id: string; reversed_at: string | null }>();
       if (
-        !deps.moderatorGithubIds?.has(row.recipient_github_id) ||
-        !penalty ||
-        penalty.reversed_at !== null ||
-        penalty.author_github_id === row.recipient_github_id
+        !destination.available ||
+        (row.essential && preference?.security_enabled === 0) ||
+        (registered &&
+          (row.destination_version !== registered.destinationVersion ||
+            (row.essential && preference?.security_enabled !== 1))) ||
+        (!row.essential &&
+          (preference?.enabled !== 1 ||
+            preference.destination_version !== destination.destinationVersion ||
+            row.destination_version !== destination.destinationVersion))
       ) {
         await recordDelivery(deps, row, "suppressed", null, "activity");
         continue;
       }
-    }
-    // A reinstatement review (ELG-02) asks the moderators who may decide the
-    // request. A removed moderator no longer belongs to that audience.
-    if (
-      row.event_key.startsWith("reinstatement-review:") &&
-      !deps.moderatorGithubIds?.has(row.recipient_github_id)
-    ) {
-      await recordDelivery(deps, row, "suppressed", null, "activity");
-      continue;
-    }
-    if (
-      !(await stillProjectRecipient(
-        deps.db,
-        row,
-        deps.adminGithubIds?.has(row.recipient_github_id) === true ||
-          deps.moderatorGithubIds?.has(row.recipient_github_id) === true,
-      ))
-    ) {
-      await recordDelivery(deps, row, "suppressed", null, "activity");
-      continue;
-    }
-    const registered = deps.generalEmail
-      ? await enrolledDestination(deps.db, row.recipient_github_id)
-      : null;
-    const destination = registered
-      ? { available: true, ...registered }
-      : await activityMailEligibility(
-          deps.config,
-          row.recipient_github_id,
-          now,
-        );
-    const preference = await deps.db
-      .prepare(
-        "SELECT enabled,security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
-      )
-      .bind(row.recipient_github_id)
-      .first<{
-        enabled: number;
-        security_enabled: number | null;
-        destination_version: string | null;
-      }>();
-    // An essential notice whose operator-verified record is not yet in effect
-    // made no provider call: retry it on the bounded schedule. Optional mail
-    // never retries here, because its consent names one effective destination.
-    if (
-      !destination.available &&
-      row.essential &&
-      deps.config.recipients[row.recipient_github_id]
-    ) {
+      // Recipient and consent are resolved on the server immediately before this one-recipient send.
+      await deps.db
+        .prepare(
+          "UPDATE activity_notification_outbox SET destination_digest=? WHERE id=?",
+        )
+        .bind(destination.destinationVersion, row.id)
+        .run();
+    } catch {
+      // Preparation failed before any provider call; retry within the existing bound.
       await retryWithoutProviderCall(deps, row, "activity");
       continue;
     }
-    if (
-      !destination.available ||
-      (row.essential && preference?.security_enabled === 0) ||
-      (registered &&
-        (row.destination_version !== registered.destinationVersion ||
-          (row.essential && preference?.security_enabled !== 1))) ||
-      (!row.essential &&
-        (preference?.enabled !== 1 ||
-          preference.destination_version !== destination.destinationVersion ||
-          row.destination_version !== destination.destinationVersion))
-    ) {
-      await recordDelivery(deps, row, "suppressed", null, "activity");
-      continue;
-    }
-    // Recipient and consent are resolved on the server immediately before this one-recipient send.
-    await deps.db
-      .prepare(
-        "UPDATE activity_notification_outbox SET destination_digest=? WHERE id=?",
-      )
-      .bind(destination.destinationVersion, row.id)
-      .run();
     const text = row.essential
       ? "Your Slop account has a security notice."
       : "Your Slop inbox has an activity update.";
