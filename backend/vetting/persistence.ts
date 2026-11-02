@@ -42,8 +42,8 @@ import {
   isScanResult,
   type RecordedVettingResult,
   resultReviewers,
-  TEMPLATE_PREFIX,
 } from "./scan-result";
+import { findingsLocationOf, quarantinedScanMessage } from "./summary";
 
 export type {
   AssessmentState,
@@ -156,44 +156,11 @@ function admissionRepository(manifest: object): string | null {
   });
 }
 
-function extractPathFromEvidence(evidence: string): string | null {
-  if (!evidence || typeof evidence !== "string") return null;
-  const trimmed = evidence.trim();
-  const match = trimmed.match(
-    /^([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)(?::\d+(?::\d+)?)?$/,
-  );
-  return match ? match[1] : null;
-}
-
-function isTemplatePath(filePath: string): boolean {
-  const normalized = filePath.trim().replace(/^\.\//, "");
-  return (
-    normalized === TEMPLATE_PREFIX ||
-    normalized.startsWith(`${TEMPLATE_PREFIX}/`)
-  );
-}
-
 export function summarize(assessment: VettingAssessment): AssessmentSummary {
   const artifacts: VettingArtifact[] = assessment.result?.artifacts ?? [];
   const held = artifacts.filter((artifact) => artifact.state !== "released");
   const result = assessment.result;
-  let findingsLocation: AssessmentSummary["findingsLocation"];
-  if (result) {
-    let hasTemplate = held.some((a) => isTemplatePath(a.path));
-    let hasRepo = held.some((a) => !isTemplatePath(a.path));
-    let hasUnknown = false;
-    const findings = "findings" in result ? result.findings : [];
-    for (const f of findings) {
-      const extractedPath = extractPathFromEvidence(f.evidence);
-      if (extractedPath === null) hasUnknown = true;
-      else if (isTemplatePath(extractedPath)) hasTemplate = true;
-      else hasRepo = true;
-    }
-    if (hasUnknown) findingsLocation = "unknown";
-    else if (hasTemplate && hasRepo) findingsLocation = "both";
-    else if (hasTemplate) findingsLocation = "template";
-    else if (hasRepo) findingsLocation = "repository";
-  }
+  const findingsLocation = findingsLocationOf(result);
   return {
     id: assessment.id,
     revision: assessment.revision,
@@ -668,6 +635,13 @@ export class CloudflareVettingPersistence {
         input.livePin,
         input.at,
       );
+    const scanFailedDetail =
+      result.disposition === "incomplete"
+        ? quarantinedScanMessage({
+            completedAt: input.at,
+            findingsLocation: findingsLocationOf(result),
+          })
+        : null;
     try {
       await this.db.batch([
         this.db
@@ -700,7 +674,13 @@ export class CloudflareVettingPersistence {
           : []),
         // A scan that could not establish clearance tells the owners once.
         ...(result.disposition === "incomplete"
-          ? [notifyProjectScanFailed(this.db, result.assessmentId)]
+          ? [
+              notifyProjectScanFailed(
+                this.db,
+                result.assessmentId,
+                scanFailedDetail,
+              ),
+            ]
           : []),
         ...result.artifacts.map((artifact, ordinal) =>
           this.db

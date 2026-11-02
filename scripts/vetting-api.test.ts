@@ -417,11 +417,15 @@ describe("community security vetting", () => {
     expect(
       sqlite
         .query(
-          "SELECT DISTINCT kind, action_path AS path FROM notifications WHERE event_key = ?",
+          "SELECT DISTINCT kind, detail, action_path AS path FROM notifications WHERE event_key = ?",
         )
         .all(`project-scan:${id}`),
     ).toEqual([
-      { kind: "project_scan_failed", path: "/projects/open-registry" },
+      {
+        kind: "project_scan_failed",
+        detail: "Findings in the project repository block clearance.",
+        path: "/projects/open-registry",
+      },
     ]);
     // Exception evidence stays available until the policy owner closes its case.
     const close = (actor: string, origin = ORIGIN) =>
