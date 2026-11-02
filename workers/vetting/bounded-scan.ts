@@ -671,7 +671,11 @@ export function inspectRepository(input: {
           ...checkText(`${file.path}#scripts`, command, ["installScripts"]),
         );
     }
-    if (surfaces.includes("installScripts") || hooks.length > 0)
+    if (
+      surfaces.includes("installScripts") ||
+      surfaces.includes("agentInstructions") ||
+      hooks.length > 0
+    )
       for (const match of [text, ...hooks].join("\n").matchAll(DOWNLOAD))
         downloads.add((match[1] ?? match[2]).slice(0, 500));
     candidates.push({
