@@ -335,6 +335,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     });
   await expect(secondBreakdown).toContainText("1.96 TEST");
   await expect(secondBreakdown).toContainText("0.04 TEST");
+  await awards.getByLabel("Award for first-contributor").fill("1.8");
   await awards.getByLabel("Award for second-contributor").fill("1.5");
   await awards
     .getByRole("button", { name: "Save second-contributor", exact: true })
@@ -345,6 +346,24 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   expect(changes).toEqual([
     { githubUserId: "2", grossBase: "1500000000", expectedSequence: 0 },
   ]);
+  // Saving another row keeps this unchanged row's unsaved draft.
+  await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
+    "1.8",
+  );
+  // Another maintainer changes the underlying value before this owner refreshes.
+  // The refreshed sequence must not authorize an old draft over that new value.
+  allocations[0].grossBase = "1600000000";
+  sequence += 1;
+  await load.click();
+  await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
+    "1.6",
+  );
+  await expect(
+    awards.getByRole("button", { name: "Save first-contributor", exact: true }),
+  ).toBeDisabled();
+  allocations[0].grossBase = "1234567890";
+  sequence += 1;
+  await load.click();
   // After the cutoff, with the automatic default on, allocations are fixed.
   cutoffAt = "2026-10-01T00:00:00.000Z";
   await load.click();
