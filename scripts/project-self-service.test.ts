@@ -896,6 +896,57 @@ test("an application stored before self-service setup publishes once, by its app
   });
 });
 
+test("a stored update whose base revision moved on is not offered for publication", async () => {
+  const { persistence, sqlite, call, create, state } = registry();
+  await create("open-registry", "example/open-registry");
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+  };
+  state.clearance = CLEARED;
+  await call("POST", "project-setup/open-registry/check", OWNER, {});
+  const base = await persistence.getProject("open-registry");
+  if (!base) throw new Error("project was not listed");
+  const stored = JSON.stringify({
+    ...base.manifest,
+    status: "paused",
+    headline: "A stored headline.",
+  });
+  sqlite.exec(
+    `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at,expected_revision,change_reason)
+       VALUES ('app_storedupdate00001','open-registry','example/open-registry','${stored}','${"b".repeat(64)}','Merged pull requests','${OWNER}','owner','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z',${base.revision},'Clearer headline')`,
+  );
+  // While its base is current, the stored update is offered.
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [expect.objectContaining({ id: "app_storedupdate00001" })],
+  );
+  // Another revision is published from settings.
+  const moved = await call("PUT", "projects/open-registry", OWNER, {
+    manifest: { ...base.manifest, headline: "A newer published headline." },
+    expectedRevision: base.revision,
+  });
+  expect(moved.status).toBe(200);
+  // The stale update is no longer offered as publishable...
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+  // ...and a direct publication explains that it must be made again.
+  const refused = await call(
+    "POST",
+    "project-applications/app_storedupdate00001/publish",
+    OWNER,
+    {},
+  );
+  expect(refused.status).toBe(409);
+  expect(refused.body.error).toBe("stale_revision");
+  expect(refused.body.message).toMatch(/settings/u);
+  expect(
+    (await persistence.getProject("open-registry"))?.manifest.headline,
+  ).toBe("A newer published headline.");
+});
+
 test("an explicit moderator ban blocks new contribution intake without blaming the original applicant", async () => {
   const t = registry();
   t.deps.moderatorGithubIds = new Set([ADMIN]);
