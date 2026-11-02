@@ -3068,15 +3068,24 @@ function createSnapshotWithReviewCutoff(
       }
     }
   };
+  // The ledger only grows through appendScore, so index each new event once
+  // instead of scanning the whole ledger for every review.
+  const scoreBearingSources = new Set<string>();
+  let scoreBearingIndexed = 0;
   const isScoreBearingSource = (
     repository: RepositoryId,
     source: { id: string; url: string },
-  ): boolean =>
-    ledger.some(
-      (event) =>
-        event.repository === repository &&
-        (event.source.id === source.id || event.source.url === source.url),
+  ): boolean => {
+    for (; scoreBearingIndexed < ledger.length; scoreBearingIndexed++) {
+      const event = ledger[scoreBearingIndexed] as ScoreEvent;
+      scoreBearingSources.add(`${event.repository}\0id\0${event.source.id}`);
+      scoreBearingSources.add(`${event.repository}\0url\0${event.source.url}`);
+    }
+    return (
+      scoreBearingSources.has(`${repository}\0id\0${source.id}`) ||
+      scoreBearingSources.has(`${repository}\0url\0${source.url}`)
     );
+  };
   const outcomeIds = new Set(
     mergedPullRequestOutcomes.map((pullRequest) => pullRequest.id),
   );
