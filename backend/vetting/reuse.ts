@@ -14,7 +14,7 @@ export function reusableCleanScan(
   cached: VettingAssessment | null,
   result: VettingScanResult,
   restriction: ProjectRestriction,
-  coversActiveFlags = true,
+  coversActiveFlags = false,
 ): boolean {
   const latestRestriction =
     restriction.state === "clear"
@@ -34,6 +34,7 @@ export function reusableCleanScan(
     cached.id === result.reusedAssessmentId &&
     cached.projectId === result.projectId &&
     cached.state === "clean" &&
+    // Service bans record at the malicious scan's completedAt, which requires a strictly later request (0031_project_vetting_reinstatements.sql).
     (latestRestriction === undefined ||
       (latestRestriction.actorRole === "vetting-service"
         ? cached.requestedAt > latestRestriction.createdAt
