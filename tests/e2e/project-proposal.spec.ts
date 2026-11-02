@@ -88,6 +88,7 @@ async function routeGitHub(
     licensePath = "LICENSE",
     description = null as string | null,
     owned = undefined as GithubFixture | undefined,
+    integrationBranch = "trunk",
   } = {},
   beforeRepository?: () => Promise<void>,
 ) {
@@ -108,7 +109,7 @@ async function routeGitHub(
               full_name: "example/open-protein",
               description,
               private: false,
-              default_branch: "trunk",
+              default_branch: integrationBranch,
               owner: {
                 login: "example",
                 id: 987654321,
@@ -126,12 +127,15 @@ async function routeGitHub(
     }
     if (url.pathname === "/repos/example/open-protein/branches")
       return Response.json(
-        ["trunk", "main", "development"].map((name) => ({
+        [integrationBranch, "main", "development"].map((name) => ({
           name,
           commit: { sha: COMMIT },
         })),
       );
-    if (url.pathname === "/repos/example/open-protein/branches/trunk")
+    if (
+      url.pathname ===
+      `/repos/example/open-protein/branches/${encodeURIComponent(integrationBranch)}`
+    )
       return Response.json({ commit: { sha: COMMIT } });
     if (url.pathname === "/repos/example/open-protein/license") {
       expect(url.searchParams.get("ref")).toBe(COMMIT);
@@ -211,6 +215,56 @@ test.beforeEach(async ({ page }) => {
     }),
   );
 });
+
+for (const integrationBranch of ["release/2026+10", "개발/다음"]) {
+  test(`creates a project with selectable integration branch ${integrationBranch}`, async ({
+    page,
+  }) => {
+    await routeGitHub(page, { integrationBranch });
+    let submissions = 0;
+    await routeCreation(page, (body) => {
+      submissions++;
+      assertProjectDefinition(body.manifest);
+      expect(body.manifest.repositories).toMatchObject([{ integrationBranch }]);
+      return {
+        status: 201,
+        json: {
+          project: { id: "open-protein", revision: 1, referrer: null },
+          setup: CREATED_SETUP,
+        },
+      };
+    });
+    await page.goto("/projects/new", { waitUntil: "networkidle" });
+    // Text enlargement exercises the existing form at both viewport sizes.
+    // This is 200% text, not a claim of native browser zoom.
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    await enterRepository(page, "example/open-protein");
+    await expect(page.getByLabel("Integration branch")).toHaveValue(
+      integrationBranch,
+    );
+    await page.getByLabel("Project name").fill("Open Protein");
+    await page
+      .getByLabel("Short description")
+      .fill("Reproducible protein-folding benchmarks.");
+    await page.getByLabel("Goal").fill("Make protein research reproducible.");
+    await page.getByRole("button", { name: "Next: Rewards" }).click();
+    await expect(page.getByLabel("Points only")).toBeVisible();
+    await page.getByRole("button", { name: "Next: Review" }).click();
+    await expect(
+      page.getByRole("article", { name: "Listing preview" }),
+    ).toContainText(integrationBranch);
+    await expectAccessible(page);
+    const create = page.getByRole("button", { name: "Create project" });
+    await create.focus();
+    await create.press("Enter");
+    await expect(
+      page.getByRole("heading", { name: "Project created" }),
+    ).toBeVisible();
+    expect(submissions).toBe(1);
+  });
+}
 
 test("drafts a project through the setup steps and creates it without an admin", async ({
   diagnostics,
@@ -1112,6 +1166,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
 });
 
 for (const [name, expectedId] of [
+  ["New", "new-project"],
   ["한글 프로젝트", "open-protein"],
   [
     `${"a".repeat(MAX_PROJECT_ID_LENGTH - 1)} b`,
@@ -1157,11 +1212,40 @@ for (const [name, expectedId] of [
       return {
         status: 201,
         json: {
-          project: { id: expectedId, revision: 1, referrer: null },
-          setup: { ...CREATED_SETUP, projectId: expectedId, slug: expectedId },
+          project: {
+            id: String(body.manifest.id),
+            revision: 1,
+            referrer: null,
+          },
+          setup: {
+            ...CREATED_SETUP,
+            projectId: String(body.manifest.id),
+            slug: String(body.manifest.id),
+          },
         },
       };
     });
+    if (name === "New") {
+      // A successful creation becomes visible after the completion link reloads
+      // the registry. Keep the actual submitted id, as the real API does.
+      await page.route(
+        "**/data/fixture-project-registry.json",
+        async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          const created = submitted
+            ? validate(submitted as Record<string, unknown>)
+            : null;
+          await route.fulfill({
+            response,
+            json: {
+              ...body,
+              projects: created ? [...body.projects, created] : body.projects,
+            },
+          });
+        },
+      );
+    }
     await page.goto("/projects/new", { waitUntil: "networkidle" });
     await enterRepository(page, "example/open-protein");
     await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
@@ -1176,6 +1260,27 @@ for (const [name, expectedId] of [
     await expect(
       page.getByRole("heading", { name: "Project created" }),
     ).toBeVisible();
+    if (name === "New") {
+      await expectAccessible(page);
+      const view = page.getByRole("link", {
+        name: "View project",
+        exact: true,
+      });
+      // Exercise the completion action with actual keyboard navigation.
+      for (
+        let step = 0;
+        step < 20 &&
+        !(await view.evaluate((el) => el === document.activeElement));
+        step += 1
+      )
+        await page.keyboard.press("Tab");
+      await expect(view).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByRole("heading", { name, exact: true, level: 1 }),
+      ).toBeVisible();
+      await expectAccessible(page);
+    }
     const manifest = submitted as Record<string, unknown>;
     expect(manifest).toMatchObject({
       id: expectedId,
