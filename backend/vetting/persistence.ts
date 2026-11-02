@@ -155,15 +155,20 @@ function admissionRepository(manifest: object): string | null {
   });
 }
 
-function isTemplateLocation(target: string): boolean {
-  const lower = target.toLowerCase();
+function extractPathFromEvidence(evidence: string): string | null {
+  if (!evidence || typeof evidence !== "string") return null;
+  const trimmed = evidence.trim();
+  const match = trimmed.match(
+    /^([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)(?::\d+(?::\d+)?)?$/,
+  );
+  return match ? match[1] : null;
+}
+
+function isTemplatePath(filePath: string): boolean {
+  const normalized = filePath.trim().replace(/^\.\//, "");
   return (
-    lower.startsWith("slop-skill-template/") ||
-    lower.includes("slop-skill-template") ||
-    lower.startsWith("skills/") ||
-    lower.includes("skills/") ||
-    lower.includes("skill template") ||
-    lower.includes("contributor skill")
+    normalized.startsWith("slop-skill-template/") ||
+    normalized.startsWith("skills/")
   );
 }
 
@@ -173,12 +178,12 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
   const result = assessment.result;
   let findingsLocation: "repository" | "template" | "both" | undefined;
   if (result) {
-    let hasTemplate = held.some((a) => isTemplateLocation(a.path));
-    let hasRepo = held.some((a) => !isTemplateLocation(a.path));
+    let hasTemplate = held.some((a) => isTemplatePath(a.path));
+    let hasRepo = held.some((a) => !isTemplatePath(a.path));
     const findings = "findings" in result ? result.findings : [];
     for (const f of findings) {
-      const inTemplate =
-        isTemplateLocation(f.evidence) || isTemplateLocation(f.summary);
+      const extractedPath = extractPathFromEvidence(f.evidence);
+      const inTemplate = extractedPath ? isTemplatePath(extractedPath) : false;
       if (inTemplate) hasTemplate = true;
       else hasRepo = true;
     }
