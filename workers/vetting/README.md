@@ -68,6 +68,11 @@ or run (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`) is
 also an `installScripts` surface, at any depth. Each can make the package
 manager execute code, for example through `node-options` in `.npmrc`.
 
+Gradle and Maven build configuration is an `installScripts` surface too:
+`gradle-wrapper.properties` and `maven-wrapper.properties`, which choose what
+`gradlew` and `mvnw` download and run, `gradle.properties`, and
+`.mvn/jvm.config`, `.mvn/maven.config` and `.mvn/extensions.xml`.
+
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
 `prompt-injection`. The deterministic rules in `bounded-scan.ts` are
