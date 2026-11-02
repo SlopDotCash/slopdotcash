@@ -70,6 +70,26 @@ test("profiles preserve legacy coverage and a valid census", async ({
   await expect(profile.locator(".pr-legend")).toContainText(
     "2 PRs closed without merging",
   );
+  // github.com/pulls is the signed-in dashboard and redirects anonymous
+  // visitors to login. The counts must open the public pull search.
+  await expect(
+    profile.getByRole("link", { name: "3 PRs open" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Aopen&type=pullrequests",
+  );
+  await expect(
+    profile.getByRole("link", { name: "2 PRs closed without merging" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Aclosed%20is%3Aunmerged&type=pullrequests",
+  );
+  await expect(
+    profile.getByRole("link", { name: "0 PRs merged" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Amerged&type=pullrequests",
+  );
   await expect(
     page
       .getByText("total points", { exact: true })
