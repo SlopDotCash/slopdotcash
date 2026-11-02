@@ -225,8 +225,14 @@ export async function recoverUncertainAttempts(
           "UPDATE payment_attempts SET transaction_id=?,state='submitted' WHERE id=? AND transaction_id IS NULL AND state IN ('unknown','prepared')",
         ).bind(status.transactionId, attempt.idempotencyKey),
         env.PAYMENTS_DB.prepare(
-          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid'",
-        ).bind(new Date().toISOString(), attempt.obligationId),
+          // A delayed status response must not undo finalized-failure recovery.
+          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid' AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='submitted' AND transaction_id=?)",
+        ).bind(
+          new Date().toISOString(),
+          attempt.obligationId,
+          attempt.idempotencyKey,
+          status.transactionId,
+        ),
       ]);
     } catch (error) {
       failures.push(error);
