@@ -774,6 +774,55 @@ export function grounded(
   return { ok: true, why: "rule and evidence verified" };
 }
 
+/** Detect a low_quality claim that treats a real SHA-256 hex digest or a 0x
+ * integer literal in the reviewed item as invalid or undefined (issue #1930).
+ * The model only classifies; this check is deterministic code before publish.
+ */
+export function contradictedHexOrLiteralClaim(
+  verdict: Verdict,
+  itemText: string,
+): boolean {
+  if (verdict.category !== "low_quality" || verdict.objective_defect)
+    return false;
+  const claim = [verdict.summary, ...verdict.evidence, ...verdict.limitations]
+    .join("\n")
+    .toLowerCase();
+  const digestInvalid =
+    /\b(?:not\s+a\s+(?:valid\s+)?sha-?256(?:\s+hex(?:\s+value)?)?|invalid\s+(?:sha-?256|hex(?:adecimal)?|hash|digest)|not\s+(?:a\s+)?(?:valid\s+)?hex(?:adecimal)?(?:\s+(?:value|literal|string|digest|hash))?)/u.test(
+      claim,
+    );
+  const nameInvalid = /\b(?:undefined\s+name|nameerror)\b/u.test(claim);
+  if (!digestInvalid && !nameInvalid) return false;
+
+  if (digestInvalid) {
+    for (const match of claim.matchAll(/\b[0-9a-f]{64}\b/gu)) {
+      const digest = match[0];
+      // Prefer the item's exact casing; also accept the lowercase form used in claims.
+      if (
+        itemText.includes(digest) ||
+        [...itemText.matchAll(/\b[0-9a-fA-F]{64}\b/gu)].some(
+          (m) => m[0].toLowerCase() === digest,
+        )
+      )
+        return true;
+    }
+  }
+  if (nameInvalid) {
+    for (const match of [
+      ...verdict.summary.matchAll(/\b0x[0-9A-Fa-f]+\b/gu),
+      ...verdict.evidence.flatMap((e) => [
+        ...e.matchAll(/\b0x[0-9A-Fa-f]+\b/gu),
+      ]),
+      ...verdict.limitations.flatMap((e) => [
+        ...e.matchAll(/\b0x[0-9A-Fa-f]+\b/gu),
+      ]),
+    ]) {
+      if (itemText.includes(match[0])) return true;
+    }
+  }
+  return false;
+}
+
 async function closureState(
   env: ReviewEnv,
   job: Job,
@@ -1345,6 +1394,23 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // Drop a model low_quality finding that misreads a SHA-256 hex digest or a
+  // 0x integer literal in the item as invalid or undefined (#1930 items 1–2).
+  if (contradictedHexOrLiteralClaim(verdict, context.itemText)) {
+    verdict = {
+      category: "none",
+      confidence: verdict.confidence,
+      rule_refs: [],
+      evidence: [],
+      summary:
+        "No finding remains after a deterministic check of cited SHA-256 hex digests and 0x integer literals.",
+      limitations: [
+        ...verdict.limitations,
+        "Dropped a low_quality claim that treated a SHA-256 hex digest or 0x integer literal as invalid or undefined.",
+      ],
+      objective_defect: null,
+    };
+  }
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
