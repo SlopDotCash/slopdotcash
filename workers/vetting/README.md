@@ -30,7 +30,12 @@ mean the code is free of all malware.
 
 A build, install or provisioning recipe is recognized by its name, so the
 same bytes are classified the same way whether they sit in a `Makefile`, a
-`Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Each keeps its
+`Dockerfile`, a `Containerfile` or a `Jenkinsfile`.
+
+CMake evaluates a file named by `include()` during configure, so that file is
+install content even when its name carries no recipe extension. Only a literal
+path relative to the naming list file is followed; a variable expansion, an
+absolute path or a path leaving the repository is not acquired. Each keeps its
 `installScripts` coverage, its install-time download extraction and its place
 in the reviewed inventory, so changing a recipe invalidates clean-scan reuse.
 MSBuild project and import files, and Ant `build.xml`, match a quoted
@@ -55,6 +60,11 @@ is absolute, a URL, or outside the repository, is a visibility gap
 `GYP include not acquired: <specifier>`. A value or entry that is not a plain
 string literal is a visibility gap `GYP include not acquired: unresolved`.
 Either gap makes install-script coverage partial.
+
+Package-manager configuration that the package manager reads on every install
+or run (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`) is
+also an `installScripts` surface, at any depth. Each can make the package
+manager execute code, for example through `node-options` in `.npmrc`.
 
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
