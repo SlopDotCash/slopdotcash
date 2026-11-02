@@ -155,6 +155,18 @@ test("fetching data without executing it keeps no unsafe-execution finding", () 
     // Executing a local file's text is a different act; no fetch appears
     // in the expression.
     ["tools/run.py", "exec(open('tools/local_plugin.py').read())\n"],
+    [
+      "tools/run.py",
+      "exec(open('local.py').read()); data = requests.get('https://example.com/data').json()\n",
+    ],
+    [
+      "tools/run.js",
+      "eval(localCode); const data = await fetch('https://example.com/data');\n",
+    ],
+    [
+      "tools/run.js",
+      "matcher.exec(await fetch('https://example.com/data'));\n",
+    ],
   ] as const) {
     const inspection = inspectRepository({
       files: [{ path, bytes: new TextEncoder().encode(body) }],
