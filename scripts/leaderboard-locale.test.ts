@@ -168,3 +168,86 @@ test("Turkish generation keeps expand-review opportunity on English-first review
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
+
+// Same i/I divergence as `ids` above, in the production `U_kgDO…` user-ID
+// shape: English collation orders ...i2Yg before ...IwgQ, a Turkish default
+// collation reverses them.
+const claimActors = [
+  {
+    id: "U_kgDOB3i2Yg",
+    login: "first-author",
+    avatarUrl: "https://avatars.githubusercontent.com/u/501?v=4",
+    url: "https://github.com/first-author",
+    kind: "User" as const,
+  },
+  {
+    id: "U_kgDOB3IwgQ",
+    login: "second-author",
+    avatarUrl: "https://avatars.githubusercontent.com/u/502?v=4",
+    url: "https://github.com/second-author",
+    kind: "User" as const,
+  },
+];
+
+test("Turkish generation keeps the published issue claim actor order", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const issueId = "I_locale_claim";
+  input.openIssues = [
+    {
+      id: issueId,
+      number: 77,
+      title: "Open work claimed by two pull requests",
+      url: "https://github.com/SlopDotCash/asi/issues/77",
+      body: "Accepted work.",
+      createdAt: "2026-11-13T00:00:00.000Z",
+      updatedAt: "2026-11-15T12:00:00.000Z",
+      closedAt: null,
+      stateReason: null,
+      author: PROJECT_OWNER,
+      assignees: [],
+      labels: [],
+      comments: [],
+      closedByPullRequests: [],
+    },
+  ];
+  input.openPullRequests = claimActors.map((author, index) => ({
+    id: `PR_claim_${index}`,
+    number: 101 + index,
+    title: "Open change that closes the issue",
+    url: `https://github.com/SlopDotCash/asi/pull/${101 + index}`,
+    body: "Implements the accepted behavior.",
+    createdAt: "2026-11-14T00:00:00.000Z",
+    updatedAt: "2026-11-15T12:00:00.000Z",
+    lastEditedAt: null,
+    editor: null,
+    mergedAt: null,
+    closedAt: null,
+    headRefOid: "a".repeat(40),
+    isDraft: false,
+    reviewDecision: null,
+    activeReviewRequestCount: 0,
+    author,
+    assignees: [],
+    labels: [],
+    files: [{ path: "src/fix.py", additions: 4, deletions: 1 }],
+    comments: [],
+    reviews: [],
+    closingIssueIds: [issueId],
+    additions: 4,
+    deletions: 1,
+    changedFiles: 1,
+    commitCount: 1,
+  }));
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    const issue = snapshot.workQueue.issues.find(
+      (entry) => entry.id === issueId,
+    );
+    expect(issue?.claim.source).toBe("pull-request");
+    expect(issue?.claim.actors.map((entry) => entry.login)).toEqual([
+      "first-author",
+      "second-author",
+    ]);
+  });
+});
