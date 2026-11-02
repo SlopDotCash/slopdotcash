@@ -314,7 +314,7 @@ test("an unescaped line ending finishes a piped interpreter command", () => {
       findings: inspection.findings.map(
         (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
       ),
-    }).toEqual({ name, findings });
+    }).toEqual({ name, findings: [...findings] });
   }
 });
 
