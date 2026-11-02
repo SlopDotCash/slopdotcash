@@ -7566,6 +7566,27 @@ export function assertLeaderboardSnapshot(
         Number(counts.closedUnmergedPullRequests ?? 0)
     )
       throw new Error("Value coverage must retain every closed source");
+    // A row binds an event whose ID starts with `${pullRequestId}:`. Look up
+    // every such prefix of the event ID; the earliest row wins, as before.
+    const coverageRows = new Map(
+      snapshot.valueAssessmentCoverage.map((row, index) => [
+        row.pullRequestId,
+        { row, index },
+      ]),
+    );
+    const coverageFor = (eventId: string) => {
+      let match: ReturnType<typeof coverageRows.get>;
+      for (
+        let end = eventId.indexOf(":");
+        end !== -1;
+        end = eventId.indexOf(":", end + 1)
+      ) {
+        const candidate = coverageRows.get(eventId.slice(0, end));
+        if (candidate && (!match || candidate.index < match.index))
+          match = candidate;
+      }
+      return match?.row;
+    };
     for (const event of validatedLedger) {
       if (!event.scoreDecisionSourceId?.startsWith("value:")) continue;
       if (
@@ -7580,9 +7601,7 @@ export function assertLeaderboardSnapshot(
         parseIsoTime(event.occurredAt) >= parseIsoTime(window.to)
       )
         throw new Error("Value score event is outside the scoring window");
-      const row = snapshot.valueAssessmentCoverage.find((value) =>
-        event.id.startsWith(`${value.pullRequestId}:`),
-      );
+      const row = coverageFor(event.id);
       // A ratification corrects only the implementation score; the
       // ratified source's review value still binds its assessment digest.
       if (
