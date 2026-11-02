@@ -2712,6 +2712,111 @@ test("monthly signing never publishes when the signer fails or an opt-out arrive
   expect([...records.values()][0]).not.toHaveProperty("authorization");
 });
 
+test("monthly publication honors an opt-out saved after the attester's last check", async () => {
+  vault("1000");
+  await coordinate(afterCutoff);
+  if (!schedule) throw new Error("Fixture schedule missing");
+  const { digest } = sqlite
+    .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
+    .get() as { digest: string };
+  const request = {
+    projectId: project.id,
+    period: "2026-11",
+    network: "base-sepolia" as const,
+    snapshotSha256: digest,
+  };
+  const records = new Map<string, unknown>();
+  const journal: JournalStore = {
+    async get<T>(key: string) {
+      return records.get(key) as T | undefined;
+    },
+    async put<T>(key: string, value: T) {
+      records.set(key, structuredClone(value));
+    },
+    async transaction<T>(fn: (store: JournalStore) => Promise<T>) {
+      return fn(journal);
+    },
+  };
+  const deps = {
+    db,
+    ...projects(),
+    networks: ["base-sepolia"],
+    schedule,
+    now: () => afterCutoff,
+    journal,
+    verifyDeployment: async () => {},
+    reserve: async (plan: MonthlyAttestationPlan) => {
+      const tree = evmMonthlySumTree(plan.entries);
+      return {
+        entries: plan.entries,
+        reservation: {
+          version: 2 as const,
+          allocationDigest: `0x${digest}`,
+          allocationRoot: tree.hash,
+          wholeGross: plan.totalGrossBase,
+          remainingGross: tree.total.toString(),
+          count: plan.entries.length,
+          sourceSequence: "9",
+        },
+      };
+    },
+    sign: async (plan: MonthlyAttestationPlan) =>
+      (await testAttester.sign({ hash: `0x${plan.messageHex}` })).slice(2),
+  };
+  type Signed = Awaited<ReturnType<typeof signMonthlyAllocation>>;
+  const publish = (authorize: () => Promise<Signed>) =>
+    publishMonthlyAuthorizations({
+      db,
+      networks: ["base-sepolia"],
+      schedule,
+      now: afterCutoff,
+      authorize,
+    });
+  // The attester's own checks, including its re-check after signing, pass.
+  // The owner's opt-out commits while the signed response is on its way.
+  const optOutBeforeReturn = (signed: Signed) => async () => {
+    expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+      automatic: false,
+    });
+    return signed;
+  };
+  const route = () =>
+    handlePaymentsApi(
+      new Request(
+        `https://slop.cash/api/v1/payments/projects/${project.id}/monthly/2026-11/authorization/base-sepolia`,
+      ),
+      { db },
+    );
+
+  const legacy = await signMonthlyAllocation(
+    { ...deps, reserve: undefined },
+    request,
+  );
+  expect(await publish(optOutBeforeReturn(legacy))).toEqual({
+    published: [],
+    failures: [],
+  });
+  expect(count("monthly_payment_authorizations")).toBe(0);
+  expect((await route()).status).toBe(404);
+
+  // A V2 attempt for a month published before the opt-out is also refused.
+  expect(await owner().setAutomatic(project.id, actor, true)).toEqual({
+    automatic: true,
+  });
+  expect((await publish(async () => legacy)).published).toEqual([
+    `${project.id}/2026-11/base-sepolia`,
+  ]);
+  const attempt = await signMonthlyAllocation(deps, request);
+  expect(attempt.plan.evmReservation?.sourceSequence).toBe("9");
+  expect(await publish(optOutBeforeReturn(attempt))).toEqual({
+    published: [],
+    failures: [],
+  });
+  expect(count("monthly_payment_authorization_attempts")).toBe(0);
+  const served = (await (await route()).json()) as { authorization: Signed };
+  expect(served.authorization).toEqual(JSON.parse(JSON.stringify(legacy)));
+});
+
 test("monthly dispatcher resumes an older Solana reservation after opt-out and retires only finalized completion", async () => {
   vault("1000");
   await coordinate(afterCutoff);
