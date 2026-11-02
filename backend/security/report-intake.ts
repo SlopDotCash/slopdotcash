@@ -71,6 +71,84 @@ const MAX_REPORT_BYTES = 256 * 1024;
 const LOST_SCREEN_MS = 15 * 60 * 1000;
 const encoder = new TextEncoder();
 
+const DUPLICATE_EVIDENCE_REASON =
+  "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report.";
+
+/**
+ * Same-project evidence digest already on an earlier live case or intake report.
+ * Later held duplicates and failed/abandoned/draft submissions must not block
+ * an earlier report's screening retry or a later valid identical report.
+ */
+async function matchingEvidenceDigest(
+  deps: Pick<SecurityApiDependencies, "db">,
+  projectId: string,
+  digest: string,
+  exclude: {
+    caseId?: string | null;
+    submissionId?: string | null;
+    /** Current row created_at; only strictly earlier peers participate. */
+    createdAt?: string | null;
+  },
+): Promise<boolean> {
+  const beforeAt = exclude.createdAt ?? null;
+  const caseValues: unknown[] = [projectId, digest, digest];
+  let caseEarlier = "";
+  if (beforeAt && exclude.caseId) {
+    caseEarlier =
+      " AND (created_at, rowid) < (?, (SELECT rowid FROM security_cases WHERE id = ?))";
+    caseValues.push(beforeAt, exclude.caseId);
+  } else if (beforeAt) {
+    caseEarlier = " AND created_at < ?";
+    caseValues.push(beforeAt);
+  }
+  if (exclude.caseId) {
+    caseEarlier += " AND id <> ?";
+    caseValues.push(exclude.caseId);
+  }
+  const caseMatch = await deps.db
+    .prepare(
+      `SELECT 1 AS matched FROM security_cases
+        WHERE project_id = ?
+          AND (receipt_evidence_digest = ? OR evidence_digest = ?)
+          AND submission_state <> 'link-rejected'
+          AND NOT EXISTS (
+            SELECT 1 FROM security_submissions s
+             WHERE s.case_id = security_cases.id
+               AND s.state IN ('failed', 'abandoned')
+          )${caseEarlier}
+        LIMIT 1`,
+    )
+    .bind(...caseValues)
+    .first();
+  if (caseMatch) return true;
+  const reportValues: unknown[] = [projectId, digest];
+  let reportEarlier = "";
+  if (beforeAt && exclude.submissionId) {
+    reportEarlier =
+      " AND (s.created_at, s.rowid) < (?, (SELECT rowid FROM security_submissions WHERE id = ?))";
+    reportValues.push(beforeAt, exclude.submissionId);
+  } else if (beforeAt) {
+    reportEarlier = " AND s.created_at < ?";
+    reportValues.push(beforeAt);
+  }
+  if (exclude.submissionId) {
+    reportEarlier += " AND s.id <> ?";
+    reportValues.push(exclude.submissionId);
+  }
+  const reportMatch = await deps.db
+    .prepare(
+      `SELECT 1 AS matched FROM security_intake_reports r
+         JOIN security_submissions s ON s.id = r.submission_id
+        WHERE s.project_id = ?
+          AND r.content_sha256 = ?
+          AND s.state NOT IN ('failed', 'abandoned', 'draft')${reportEarlier}
+        LIMIT 1`,
+    )
+    .bind(...reportValues)
+    .first();
+  return Boolean(reportMatch);
+}
+
 /** Rolling admission precedes object writes and paid calls, including retries. */
 async function admitPublicWork(
   deps: SecurityApiDependencies,
@@ -500,9 +578,33 @@ export async function screenStoredReport(
   let reason =
     "Automatic screening is unavailable. Your report is saved for retry or private human review.";
   try {
-    if (deps.analyzer?.screen) {
-      const submission = (await loadSubmission(deps, id)) as SubmissionRow;
-      const record = await loadCase(deps, row.case_id);
+    const submission = (await loadSubmission(deps, id)) as SubmissionRow;
+    const record = await loadCase(deps, row.case_id);
+    const digestRow = await deps.db
+      .prepare(
+        "SELECT content_sha256 FROM security_intake_reports WHERE submission_id=? AND version=?",
+      )
+      .bind(id, row.report_version)
+      .first<{ content_sha256: string }>();
+    const digest =
+      digestRow?.content_sha256 ??
+      record?.receipt_evidence_digest ??
+      record?.evidence_digest ??
+      null;
+    if (
+      digest &&
+      (await matchingEvidenceDigest(deps, submission.project_id, digest, {
+        caseId: row.case_id,
+        submissionId: id,
+        createdAt: submission.created_at,
+      }))
+    ) {
+      // Identical evidence is held privately without a model call (PRD §8).
+      // needs-information stays recoverable for revise/owner override; never
+      // leak other reporters' private report bodies in the reason.
+      state = "needs-information";
+      reason = DUPLICATE_EVIDENCE_REASON;
+    } else if (deps.analyzer?.screen) {
       const manifest =
         record?.policy_revision === null
           ? null
@@ -587,6 +689,19 @@ export async function screenLegacyReport(
     ? JSON.parse(current.manifest).securityBounty?.scope
     : null;
   await admitPublicWork(deps, actorId);
+  const digest = await sha256Hex(encoder.encode(JSON.stringify(report)));
+  if (
+    await matchingEvidenceDigest(deps, projectId, digest, {
+      caseId: null,
+      submissionId: null,
+      createdAt: null,
+    })
+  )
+    fail(
+      409,
+      "screening_required",
+      "This draft needs more evidence or a private maintainer review before forwarding. Submit it through Slop to track that review.",
+    );
   let proposal: SecurityScreeningProposal;
   try {
     proposal = await deps.analyzer.screen(
