@@ -96,7 +96,12 @@ interface Membership {
 type State =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; journal: PointsJournal; members: PointsMember[] };
+  | {
+      status: "ready";
+      journal: PointsJournal;
+      members: PointsMember[];
+      stale?: boolean;
+    };
 type PointsContext = {
   state: State;
   me: Membership | null;
@@ -207,6 +212,7 @@ export function PointsProvider({
     attempt: number;
     completedAt: number;
   } | null>(null);
+  const verifiedJournal = useRef<PointsJournal | null>(null);
   const sessionRequest = useRef<AbortController | null>(null);
   const updateMembership = useCallback((value: Membership | null) => {
     // A successful account action supersedes any earlier session read.
@@ -227,15 +233,32 @@ export function PointsProvider({
     void loadPoints(controller.signal)
       .then((value) => {
         if (controller.signal.aborted) return;
+        const members = pointMembers(
+          value,
+          new Date().toISOString().slice(0, 7),
+        );
+        verifiedJournal.current = value;
         loadedAttempt.current = { attempt, completedAt: Date.now() };
         setState({
           status: "ready",
           journal: value,
-          members: pointMembers(value, new Date().toISOString().slice(0, 7)),
+          members,
         });
       })
       .catch(() => {
-        if (!controller.signal.aborted)
+        if (controller.signal.aborted) return;
+        const journal = verifiedJournal.current;
+        if (journal)
+          setState({
+            status: "ready",
+            journal,
+            members: pointMembers(
+              journal,
+              new Date().toISOString().slice(0, 7),
+            ),
+            stale: true,
+          });
+        else
           setState({
             status: "error",
             message: "Points could not load.",
@@ -478,10 +501,12 @@ export function PointsNav() {
 function Notice() {
   const { state, refresh } = usePoints();
   if (state.status === "loading") return <p role="status">Loading points…</p>;
-  if (state.status === "error")
+  if (state.status === "error" || state.stale)
     return (
       <div role="status">
-        <p>{state.message}</p>
+        <p>
+          {state.status === "error" ? state.message : "Points may be outdated."}
+        </p>
         <button type="button" onClick={refresh}>
           Retry points
         </button>
@@ -1162,14 +1187,11 @@ export function ContributorStandings({
     window.history.replaceState(window.history.state, "", url);
   }, [period, query, project, page, projectId, compact]);
   const { state } = usePoints();
+  const month = new Date().toISOString().slice(0, 7);
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
-    return pointMembers(
-      state.journal,
-      new Date().toISOString().slice(0, 7),
-      project || undefined,
-    );
-  }, [state, project]);
+    return pointMembers(state.journal, month, project || undefined);
+  }, [state, project, month]);
   const currentActors = new Map(
     scores.status === "ready"
       ? scores.snapshot.leaders.map(({ actor }) => [actor.id, actor] as const)
@@ -1481,6 +1503,13 @@ function People({ query }: { query: string }) {
       ) : census.state.status === "error" ? (
         <p role="status">
           Contributors unavailable.{" "}
+          <button type="button" onClick={census.retry}>
+            Retry contributors
+          </button>
+        </p>
+      ) : census.state.refreshError ? (
+        <p role="status">
+          Contributor records may be outdated.{" "}
           <button type="button" onClick={census.retry}>
             Retry contributors
           </button>
