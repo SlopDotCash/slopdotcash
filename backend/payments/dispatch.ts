@@ -82,13 +82,18 @@ export async function dispatchPayment(
     return "unavailable";
   }
   const id = previous?.id ?? crypto.randomUUID();
-  if (!previous)
-    await db
+  if (!previous) {
+    // A delayed read can outlive this lease while another dispatcher creates
+    // and submits the attempt. Fence creation at the write, before calling
+    // the executor with a second idempotency key for the same award.
+    const prepared = await db
       .prepare(
-        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES(?,?,?,?,'prepared')",
+        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) SELECT ?,?,?,?,'prepared' WHERE EXISTS(SELECT 1 FROM payment_outbox WHERE obligation_id=? AND state='processing' AND lease_token=?)",
       )
-      .bind(id, obligationId, payment.claimId, timestamp)
+      .bind(id, obligationId, payment.claimId, timestamp, obligationId, lease)
       .run();
+    if (prepared.meta?.changes !== 1) return "unavailable";
+  }
   // A different id is a second payout. Hold that outbox under this lease,
   // outside the submit catch, so the catch cannot return it to `ready`.
   let result: { transactionId: string };

@@ -145,7 +145,8 @@ export async function prepareMonthlyBases(options: {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   if (
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(generatedAt) ||
-    !Number.isFinite(Date.parse(generatedAt))
+    !Number.isFinite(Date.parse(generatedAt)) ||
+    new Date(generatedAt).toISOString() !== generatedAt
   )
     throw new TypeError("generatedAt must be an exact UTC timestamp");
   const period = options.period ?? previousUtcCycleId(new Date(generatedAt));
