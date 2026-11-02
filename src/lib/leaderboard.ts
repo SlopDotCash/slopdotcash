@@ -3712,8 +3712,10 @@ function createSnapshotWithReviewCutoff(
               ? 1
               : compareCodeUnits(a.id, b.id),
         );
-      if (!actors.length)
-        throw new Error("Joint implementation has no eligible recipient");
+      // A bot pull request with no credit-eligible commit author has no
+      // implementation actor. Like the single pull request path, nobody is
+      // credited; the other units of the group still score.
+      if (!actors.length) continue;
       // An accepted unit assessed at zero keeps the minimum (owner decision D2).
       const shares = shareScoreThirds(
         Math.max(MIN_VALUE_MERGE_THIRDS, VALUE_TIERS[tier]),
