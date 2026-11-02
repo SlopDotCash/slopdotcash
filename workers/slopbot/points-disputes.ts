@@ -6,6 +6,7 @@ import {
   POINTS_DISPUTE_URL,
   retainedPointRevision,
 } from "../../backend/points/disputes";
+import { currentRepositoryPath } from "../../backend/projects/setup";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import {
   appealByKey,
@@ -90,7 +91,9 @@ export async function processPointsDispute(env: Env, key: string) {
       return;
     }
     const project = assertProjectDefinition(JSON.parse(registered.manifest));
-    const [owner, repo] = project.repositories[0].id.split("/");
+    const [owner, repo] = currentRepositoryPath(project.repositories[0]).split(
+      "/",
+    );
     const repositoryId = Number(project.authority.repositoryId);
     const job = { owner, repo, repositoryId };
     const currentScope = async () =>
