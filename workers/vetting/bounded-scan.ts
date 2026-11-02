@@ -153,6 +153,8 @@ const INSTALL_FILES = new Set([
   ".pnpmfile.js",
   ".envrc",
   "tasks.json",
+  "tox.ini",
+  "tox.toml",
   "devcontainer.json",
   "gnumakefile",
   "dockerfile",
@@ -231,6 +233,19 @@ const INSTALL_HOOKS = [
   "postinstall",
   "prepare",
   "prepublish",
+];
+/**
+ * Composer runs these `scripts` events itself on `install` and `update`. The
+ * commands live in the same `scripts` field package.json uses, but the
+ * manifest is only reviewed as a manifest, so without this the command is
+ * never checked as install content and its download is not collected.
+ */
+const COMPOSER_INSTALL_HOOKS = [
+  "pre-install-cmd",
+  "post-install-cmd",
+  "pre-update-cmd",
+  "post-update-cmd",
+  "post-autoload-dump",
 ];
 
 function basename(path: string): string {
@@ -318,7 +333,7 @@ const RULES: Rule[] = [
     threat: "wallet-drainer",
     severity: "medium",
     pattern:
-      /\b(?:mnemonic|seed[ _-]?phrase|private[ _-]?key)\b[^\n]{0,120}\b(?:fetch|axios|https?:\/\/|XMLHttpRequest|sendTransaction|transfer)\b/iu,
+      /\b(?:mnemonic|seed[ _-]?phrase|private[ _-]?key)\b[^\n]{0,120}\b(?:fetch|axios|https?:\/\/|XMLHttpRequest|sendTransaction|sendSignedTransaction|signTransaction|sendRawTransaction|eth_sendRawTransaction|eth_sendTransaction|transfer)\b/iu,
     summary: "Handles a seed phrase or private key next to a network send",
   },
   {
@@ -349,15 +364,17 @@ const RULES: Rule[] = [
   {
     threat: "secret-exfiltration",
     severity: "high",
-    pattern:
-      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:curl|wget|nc)\b/iu,
+    pattern: new RegExp(
+      String.raw`JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*/)?(?:curl|wget|ncat|netcat|nc)\b`,
+      "iu",
+    ),
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|iex\s*\(\s*(?:New-Object\s+Net\.WebClient|iwr|Invoke-WebRequest)|powershell[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
@@ -419,7 +436,7 @@ const RULE_POLICY_SHA256 = sha256(
 );
 
 const DOWNLOAD =
-  /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
+  /\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
 
 function decode(bytes: Uint8Array): string | null {
   // NUL bytes mean binary content, not text to read.
@@ -736,13 +753,27 @@ function checkText(
 }
 
 function installHookCommands(path: string, text: string): string[] {
-  if (basename(path) !== "package.json") return [];
+  const name = basename(path);
+  const hooks =
+    name === "package.json"
+      ? INSTALL_HOOKS
+      : name === "composer.json"
+        ? COMPOSER_INSTALL_HOOKS
+        : null;
+  if (hooks === null) return [];
   try {
     const scripts = (JSON.parse(text) as { scripts?: Record<string, unknown> })
       .scripts;
-    return INSTALL_HOOKS.flatMap((hook) =>
-      typeof scripts?.[hook] === "string" ? [scripts[hook] as string] : [],
-    );
+    // Composer accepts one command or an ordered list of commands per event.
+    return hooks.flatMap((hook) => {
+      const value = scripts?.[hook];
+      if (typeof value === "string") return [value];
+      return Array.isArray(value)
+        ? value.filter(
+            (command): command is string => typeof command === "string",
+          )
+        : [];
+    });
   } catch {
     return [];
   }
