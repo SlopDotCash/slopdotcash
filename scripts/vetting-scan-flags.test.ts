@@ -49,6 +49,7 @@ const BYSTANDER = { githubId: "900000014", githubLogin: "bystander" };
 const COLLABORATOR = { githubId: "900000015", githubLogin: "collaborator" };
 const ACTORS: Record<string, { githubId: string; githubLogin: string }> = {
   admin: ADMIN,
+  moderator: MODERATOR,
   applicant: APPLICANT,
   alice: ALICE,
   bob: BOB,
@@ -1525,4 +1526,201 @@ test("a live-pin outage while a fresh clean scan lands defers the flag reinstate
         entry.projectId === "open-registry" && entry.action === "reinstate",
     ),
   ).toHaveLength(1);
+});
+
+test("a cached scan from before an active contributor flag is refused so it cannot resolve that flag without a fresh scan", async () => {
+  const initialAssessmentId = await activeProject();
+  clock = new Date(NOW.getTime() + 30_000);
+  const firstFlag = await flag("alice");
+  expect(firstFlag.status).toBe(201);
+  expect(await firstFlag.json()).toMatchObject({
+    paused: false,
+    restriction: "clear",
+  });
+
+  clock = new Date(NOW.getTime() + 60_000);
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing active project");
+  expect(
+    await queueAutomaticScan(
+      vettingDeps(),
+      project,
+      "Explicit security investigation while one contributor flag is active",
+    ),
+  ).toBe("queued");
+  const pending = (await vetting.pendingAssessments()).at(-1);
+  if (!pending) throw new Error("Missing queued scan");
+
+  const reused = await scanFixture(
+    pending.id,
+    "clean",
+    { runId: "scan-run-1", reusedAssessmentId: initialAssessmentId },
+    false,
+  );
+  const lookup = await vettingApi(
+    await signed(
+      "POST",
+      "vetting/reuse",
+      JSON.stringify({
+        assessmentId: pending.id,
+        inputManifestSha256: reused.assessed.inputManifestSha256,
+        policyVersion: reused.policyVersion,
+      }),
+    ),
+  );
+  expect(lookup.status).toBe(200);
+  expect(await lookup.json()).toEqual({
+    schemaVersion: "slop-vetting-reuse-v1",
+    result: null,
+  });
+
+  const response = await postResult(reused);
+  expect(response.status).toBe(422);
+  expect((await response.json()).error).toBe("reuse_mismatch");
+  expect(await flags.activeFlags(clock)).toHaveLength(1);
+
+  clock = new Date(NOW.getTime() + 90_000);
+  const secondFlag = await flag("bob");
+  expect(secondFlag.status).toBe(201);
+  expect(await secondFlag.json()).toMatchObject({
+    paused: true,
+    restriction: "quarantined",
+  });
+});
+
+test("a cached scan from before a ban escalation is refused and cannot reinstate the banned project", async () => {
+  await activeProject();
+  const moderation = {
+    adminGithubIds: new Set([ADMIN.githubId, MODERATOR.githubId]),
+    moderatorGithubIds: new Set([ADMIN.githubId, MODERATOR.githubId]),
+  };
+  clock = new Date(NOW.getTime() + 30_000);
+  const quarantined = await projectApi(
+    sessionRequest(
+      "POST",
+      "admin/projects/open-registry/enforcement",
+      "admin",
+      {
+        action: "quarantine",
+        reason: "Quarantine pending investigation of suspicious dependency.",
+        evidenceReference: "https://github.com/example/open-registry/issues/1",
+        expectedRevision: 2,
+        expectedSequence: 1,
+      },
+    ),
+    moderation,
+  );
+  expect(quarantined.status).toBe(200);
+
+  clock = new Date(NOW.getTime() + 60_000);
+  const restricted = await projects.getProject("open-registry");
+  if (!restricted) throw new Error("Missing quarantined project");
+  expect(
+    await queueAutomaticScan(
+      vettingDeps(),
+      restricted,
+      "Post-quarantine scan before ban escalation",
+    ),
+  ).toBe("queued");
+  const postQuarantine = (await vetting.pendingAssessments()).at(-1);
+  if (!postQuarantine) throw new Error("Missing post-quarantine scan");
+  expect(
+    (
+      await postResult(
+        await scanFixture(postQuarantine.id, "clean", {
+          runId: "scan-run-post-quarantine",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+
+  clock = new Date(NOW.getTime() + 120_000);
+  const banned = await projectApi(
+    sessionRequest(
+      "POST",
+      "admin/projects/open-registry/enforcement",
+      "admin",
+      {
+        action: "ban",
+        reason:
+          "Confirmed malicious exfiltration behavior in release workflow.",
+        evidenceReference: "https://github.com/example/open-registry/issues/2",
+        expectedRevision: restricted.revision,
+        expectedSequence: 2,
+      },
+    ),
+    moderation,
+  );
+  expect(banned.status).toBe(200);
+
+  clock = new Date(NOW.getTime() + 180_000);
+  const afterBan = await projects.getProject("open-registry");
+  if (!afterBan) throw new Error("Missing banned project");
+  expect(
+    await queueAutomaticScan(
+      vettingDeps(),
+      afterBan,
+      "Post-ban reinstatement scan request",
+    ),
+  ).toBe("queued");
+  const pending = (await vetting.pendingAssessments()).at(-1);
+  if (!pending) throw new Error("Missing post-ban scan");
+
+  const reused = await scanFixture(
+    pending.id,
+    "clean",
+    {
+      runId: "scan-run-post-quarantine",
+      reusedAssessmentId: postQuarantine.id,
+    },
+    false,
+  );
+  const lookup = await vettingApi(
+    await signed(
+      "POST",
+      "vetting/reuse",
+      JSON.stringify({
+        assessmentId: pending.id,
+        inputManifestSha256: reused.assessed.inputManifestSha256,
+        policyVersion: reused.policyVersion,
+      }),
+    ),
+  );
+  expect(lookup.status).toBe(200);
+  expect(await lookup.json()).toEqual({
+    schemaVersion: "slop-vetting-reuse-v1",
+    result: null,
+  });
+
+  const response = await postResult(reused);
+  expect(response.status).toBe(422);
+  expect((await response.json()).error).toBe("reuse_mismatch");
+
+  const appeal = await projectApi(
+    sessionRequest("POST", "project-appeals", "applicant", {
+      projectId: "open-registry",
+      reason: "Requesting reinstatement after resolving release workflow.",
+      evidenceReference: "https://github.com/example/open-registry/issues/3",
+    }),
+    moderation,
+  );
+  expect(appeal.status).toBe(200);
+
+  const prematureReinstate = await projectApi(
+    sessionRequest(
+      "POST",
+      "admin/projects/open-registry/enforcement",
+      "moderator",
+      {
+        action: "reinstate",
+        reason: "Attempted reinstatement without fresh post-ban scan.",
+        evidenceReference: "https://github.com/example/open-registry/issues/4",
+        expectedRevision: afterBan.revision,
+        expectedSequence: 4,
+      },
+    ),
+    moderation,
+  );
+  expect(prematureReinstate.status).toBe(409);
+  expect((await prematureReinstate.json()).error).toBe("vetting_required");
 });
