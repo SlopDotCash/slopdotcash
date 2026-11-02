@@ -440,6 +440,16 @@ const RULES: Rule[] = [
     summary: "Hidden or reordered text in instructions",
     surfaces: ["agentInstructions"],
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A direct script argument can execute a URL without a separate download.
+    // Match a command line or a JSON task value, with only known no-value
+    // Deno permission flags. A URL after a local script is just script data.
+    pattern:
+      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
+    summary: "Runs a remote script URL directly",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
