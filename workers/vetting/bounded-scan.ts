@@ -502,6 +502,31 @@ const RULES: Rule[] = [
       /(?<![\w.$])(?:eval|exec)\s*\(\s*(?:Net::HTTP\.get\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)|Net::HTTP\.get_response\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)\s*\.body\b|URI\.open\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\.read\b(?:\s*\(\s*\))?|(?:file_get_contents|get)\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\))\s*\)|(?<![\w.$])(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//u,
     summary: "Executes code fetched from the network",
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A download saved to a path and run later in the same file is the
+    // pipe act in two steps. Each step alone is already reviewed: the
+    // download is collected, and running a local file is ordinary. Only
+    // the link was invisible, so the execution must name the exact path
+    // the download wrote (the backreference), after the download, in
+    // command position or after a shell, interpreter or `source` verb.
+    // Bare filenames search PATH, so direct execution requires a path.
+    // Shell flags can select syntax-only or version output and are excluded.
+    // The path is one literal token: quoted spellings count, but a
+    // variable, a glob, a glued or clustered output flag and `curl -O`
+    // (which is given no path) stay out. Reading, checksumming or
+    // mentioning the downloaded file keeps no finding, and neither does
+    // running a file this file did not download. The rule is
+    // case-sensitive because the tools assign opposite meanings to the
+    // two spellings: `curl -o` names the download, `wget -o` names a
+    // log file, and only `wget -O` names the download.
+    pattern: new RegExp(
+      String.raw`(?:^|[\n;|&])[ \t]*curl\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:-o|--output)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\1["']?(?=$|[\s|;&<>()'"])|(?:^|[\n;|&])[ \t]*wget\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:-O|--output-document)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\2["']?(?=$|[\s|;&<>()'"])|(?:^|[\n;|&])[ \t]*(?:curl|wget)\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\d&])>\s*["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\3["']?(?=$|[\s|;&<>()'"])`,
+      "mu",
+    ),
+    summary: "Executes a file staged by an earlier download in the same file",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
