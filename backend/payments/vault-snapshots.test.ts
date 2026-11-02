@@ -99,7 +99,7 @@ test("a delayed refresh cannot make the public vault observation stale again", a
     release();
     await delayed;
     const response = await handlePaymentsApi(
-      new Request("https://slop.cash/api/v1/payments/projects/acme/vault"),
+      new Request("https://staging.slop.cash/api/v1/payments/projects/acme/vault"),
       { db, tier: "staging", now: () => new Date("2026-10-18T10:35:01.000Z") },
     );
     const body = (await response.json()) as {
