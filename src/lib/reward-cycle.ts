@@ -119,7 +119,7 @@ export function allocateReviewBudgetMinor(
     [...allocations.values()].reduce((total, amount) => total + amount, 0n);
   remainders.sort((left, right) =>
     left.remainder === right.remainder
-      ? left.actorId.localeCompare(right.actorId)
+      ? left.actorId.localeCompare(right.actorId, "en")
       : left.remainder > right.remainder
         ? -1
         : 1,
