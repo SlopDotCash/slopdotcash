@@ -492,7 +492,9 @@ export function pointsSummary(
 ): PointsSummary {
   const ranked = members
     .filter((member) => member.total > 0)
-    .sort((a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id));
+    .sort(
+      (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id, "en"),
+    );
   return {
     schemaVersion: "1",
     ruleVersion: journal.ruleVersion,
