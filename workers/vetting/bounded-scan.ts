@@ -214,6 +214,16 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * Nuxt loads `nuxt.config.<ext>` by evaluating it as code on every
+ * dev and build run: its loader, c12 (reached through `@nuxt/kit`),
+ * imports the file with jiti in each of the spellings it looks up,
+ * so the file is build-time code like a Makefile, never parsed
+ * configuration. The data spellings c12 also resolves (`.json`,
+ * `.jsonc`, `.json5`, `.yaml`, `.yml`, `.toml`) stay out: c12 parses
+ * those with data parsers instead of importing them.
+ */
+const NUXT_CONFIG = /^nuxt\.config\.[cm]?[jt]s$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +293,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    NUXT_CONFIG.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
