@@ -82,13 +82,18 @@ export async function dispatchPayment(
     return "unavailable";
   }
   const id = previous?.id ?? crypto.randomUUID();
-  if (!previous)
-    await db
+  if (!previous) {
+    // A delayed read can outlive this lease while another dispatcher creates
+    // and submits the attempt. Fence creation at the write, before calling
+    // the executor with a second idempotency key for the same award.
+    const prepared = await db
       .prepare(
-        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES(?,?,?,?,'prepared')",
+        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) SELECT ?,?,?,?,'prepared' WHERE EXISTS(SELECT 1 FROM payment_outbox WHERE obligation_id=? AND state='processing' AND lease_token=?)",
       )
-      .bind(id, obligationId, payment.claimId, timestamp)
+      .bind(id, obligationId, payment.claimId, timestamp, obligationId, lease)
       .run();
+    if (prepared.meta?.changes !== 1) return "unavailable";
+  }
   try {
     const result = await executor.submit({ ...payment, idempotencyKey: id });
     if (!result.transactionId) throw new Error("Missing submitted transaction");
