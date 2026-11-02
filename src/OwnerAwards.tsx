@@ -8,6 +8,7 @@ import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
+import { PRD_MONTHLY_SCHEDULE } from "./lib/payments/monthly-allocation";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -28,6 +29,13 @@ import {
 function previousMonth() {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+    .toISOString()
+    .slice(0, 7);
+}
+/** The calendar month `delta` months from a YYYY-MM period. */
+function shiftMonth(period: string, delta: number) {
+  const [year, month] = period.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1 + delta, 1))
     .toISOString()
     .slice(0, 7);
 }
@@ -76,6 +84,19 @@ export default function OwnerAwards({
   awardMonths: readonly string[];
 }) {
   const months = [...new Set(awardMonths)].sort();
+  // Monthly proposals are private records, and a new proposal never enters
+  // the public cycle index, so that index cannot list the months an owner
+  // may review. A monthly-pool project always offers the review entry, and
+  // month navigation walks calendar months from the first monthly period
+  // (or the earliest public cycle, when one is older) to the last closed
+  // month. The server still authorizes every month read.
+  const monthlyProject = project.reward.kind === "monthly-pool";
+  const lastClosedMonth = previousMonth();
+  const firstMonth =
+    months.length && months[0] < PRD_MONTHLY_SCHEDULE.firstPeriod
+      ? months[0]
+      : PRD_MONTHLY_SCHEDULE.firstPeriod;
+  const latestPublicMonth = months.at(-1);
   const [recovery] = useState(() => {
     try {
       return { pending: recoverOwnerCommitments(project.id), error: "" };
@@ -90,18 +111,17 @@ export default function OwnerAwards({
   // unless this browser has a submitted release to reconcile.
   const [opened, setOpened] = useState(() => hasSubmittedRelease(project.id));
   const [monthRequest, setMonthRequest] = useState(() => ({
-    period: months.at(-1) ?? previousMonth(),
+    period:
+      latestPublicMonth && latestPublicMonth > lastClosedMonth
+        ? latestPublicMonth
+        : lastClosedMonth,
     revision: 0,
   }));
   const { period } = monthRequest;
-  useEffect(() => {
-    const latest = [...awardMonths].sort().at(-1);
-    if (latest && !awardMonths.includes(period)) {
-      setMonthRequest((current) => ({ ...current, period: latest }));
-    }
-  }, [awardMonths, period]);
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<
+    Record<string, Record<string, { value: string; base: string }>>
+  >({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
   const {
     busy: actionBusy,
@@ -134,7 +154,22 @@ export default function OwnerAwards({
       )
         throw new Error("The award response could not be verified.");
       setView(body);
-      setDrafts({});
+      setDrafts((previous) => {
+        const rows = new Map(
+          body.proposal?.allocations.map((row) => [
+            row.githubUserId,
+            row.grossBase,
+          ]),
+        );
+        return {
+          ...previous,
+          [month]: Object.fromEntries(
+            Object.entries(previous[month] ?? {}).filter(
+              ([actor, draft]) => rows.get(actor) === draft.base,
+            ),
+          ),
+        };
+      });
     },
     [project.id],
   );
@@ -150,6 +185,11 @@ export default function OwnerAwards({
         timeoutMs: 120_000,
         signal,
       });
+      if (
+        !signal?.aborted &&
+        (response.status === 401 || response.status === 403)
+      )
+        setDrafts({});
       const body = (await readBoundedJson(
         response,
         8 * 1024 * 1024,
@@ -219,19 +259,26 @@ export default function OwnerAwards({
   const save = (githubUserId: string) =>
     run(async () => {
       if (!view?.proposal) return;
-      const draft = drafts[githubUserId];
+      const draft = drafts[view.period]?.[githubUserId];
       if (draft === undefined) return;
       const body = await call(
         `/monthly/${view.period}/allocations`,
         {
           githubUserId,
-          grossBase: baseUnitsOf(draft, decimals),
+          grossBase: baseUnitsOf(draft.value, decimals),
           expectedSequence: view.proposal.allocationSequence,
         },
         "Monthly allocation",
       );
       if (body) {
         accept(body as unknown as MonthlyOwnerView, view.period);
+        setDrafts((previous) => {
+          const next = { ...previous };
+          const month = { ...(next[view.period] ?? {}) };
+          delete month[githubUserId];
+          next[view.period] = month;
+          return next;
+        });
         setNotice("Allocation saved privately.");
       }
     });
@@ -245,6 +292,11 @@ export default function OwnerAwards({
       );
       if (body) {
         accept(body as unknown as MonthlyOwnerView, view.period);
+        setDrafts((previous) => {
+          const next = { ...previous };
+          delete next[view.period];
+          return next;
+        });
         setNotice("This month's awards are final.");
       }
     });
@@ -279,13 +331,13 @@ export default function OwnerAwards({
       )
     : null;
   if (
+    !monthlyProject &&
     months.length === 0 &&
     recovery.pending.length === 0 &&
     !recovery.error &&
     !opened
   )
     return null;
-  const monthIndex = months.indexOf(period);
   const selectMonth = (month: string) => {
     setMonthRequest((current) => ({
       period: month,
@@ -333,8 +385,8 @@ export default function OwnerAwards({
                 type="button"
                 className="button secondary-button icon-button"
                 aria-label="Previous award month"
-                disabled={busy || monthIndex <= 0}
-                onClick={() => selectMonth(months[monthIndex - 1])}
+                disabled={busy || period <= firstMonth}
+                onClick={() => selectMonth(shiftMonth(period, -1))}
               >
                 <ChevronLeft aria-hidden="true" />
               </button>
@@ -343,10 +395,8 @@ export default function OwnerAwards({
                 type="button"
                 className="button secondary-button icon-button"
                 aria-label="Next award month"
-                disabled={
-                  busy || monthIndex < 0 || monthIndex >= months.length - 1
-                }
-                onClick={() => selectMonth(months[monthIndex + 1])}
+                disabled={busy || period >= lastClosedMonth}
+                onClick={() => selectMonth(shiftMonth(period, 1))}
               >
                 <ChevronRight aria-hidden="true" />
               </button>
@@ -494,7 +544,8 @@ export default function OwnerAwards({
                             <div className="owner-award-edit">
                               <label htmlFor={id}>
                                 <span aria-hidden="true">
-                                  {drafts[row.githubUserId] === undefined
+                                  {drafts[view.period]?.[row.githubUserId] ===
+                                  undefined
                                     ? "Edit gross"
                                     : "Unsaved gross"}
                                 </span>
@@ -509,13 +560,20 @@ export default function OwnerAwards({
                                 spellCheck={false}
                                 disabled={busy || cutoffPassed}
                                 value={
-                                  drafts[row.githubUserId] ??
+                                  drafts[view.period]?.[row.githubUserId]
+                                    ?.value ??
                                   editableUnits(row.grossBase, decimals)
                                 }
                                 onChange={(event) =>
                                   setDrafts({
                                     ...drafts,
-                                    [row.githubUserId]: event.target.value,
+                                    [view.period]: {
+                                      ...(drafts[view.period] ?? {}),
+                                      [row.githubUserId]: {
+                                        value: event.target.value,
+                                        base: row.grossBase,
+                                      },
+                                    },
                                   })
                                 }
                               />
@@ -525,7 +583,8 @@ export default function OwnerAwards({
                                 disabled={
                                   busy ||
                                   cutoffPassed ||
-                                  drafts[row.githubUserId] === undefined
+                                  drafts[view.period]?.[row.githubUserId] ===
+                                    undefined
                                 }
                                 aria-label={`Save ${row.login}`}
                                 onClick={() => void save(row.githubUserId)}

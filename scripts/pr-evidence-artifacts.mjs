@@ -285,7 +285,8 @@ function gifMetadata(bytes, complete) {
     const width = bytes[offset + 5] | (bytes[offset + 6] << 8);
     const height = bytes[offset + 7] | (bytes[offset + 8] << 8);
     if (
-      !usefulImageDimensions(width, height) ||
+      width === 0 ||
+      height === 0 ||
       left + width > canvasWidth ||
       top + height > canvasHeight
     ) {
@@ -299,7 +300,8 @@ function gifMetadata(bytes, complete) {
       return null;
     }
     const imageData = readGifSubBlocks(bytes, lzwCodeSizeOffset + 1);
-    hasImagePayload = imageData.payloadBytes >= 256;
+    if (imageData.payloadBytes === 0) return null;
+    hasImagePayload ||= imageData.payloadBytes >= 256;
     if (!imageData.complete) {
       return !complete && hasImagePayload
         ? { height: canvasHeight, kind: "image", width: canvasWidth }
