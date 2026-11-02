@@ -490,6 +490,18 @@ const RULES: Rule[] = [
       /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
     summary: "Runs a remote script URL directly",
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // These direct calls pass the downloaded text to eval/exec. Ruby's
+    // URI.open and Net::HTTP.get_response return objects, so require the
+    // read/body access rather than reporting those objects as executed.
+    // Keep the argument boundary: a later fetch after a local eval is not
+    // remote execution, and arbitrary transformations need source review.
+    pattern:
+      /(?<![\w.$])(?:eval|exec)\s*\(\s*(?:Net::HTTP\.get\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)|Net::HTTP\.get_response\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)\s*\.body\b|URI\.open\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\.read\b(?:\s*\(\s*\))?|(?:file_get_contents|get)\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\))\s*\)|(?<![\w.$])(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//u,
+    summary: "Executes code fetched from the network",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
