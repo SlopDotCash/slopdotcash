@@ -113,8 +113,10 @@ export async function appealByKey(
     .first<Appeal>();
 }
 
-/** The newest appeal for an item, which commands act on. A resolved appeal
- * is returned too, so that a retry can finish its recorded writes.
+/** The newest finding appeal for an item, which keyless commands act on. A
+ * value dispute is selected only by its exact key, as its reply prints. A
+ * resolved appeal is returned too, so that a retry can finish its recorded
+ * writes.
  */
 export async function latestAppealFor(
   db: D1Database,
@@ -123,6 +125,7 @@ export async function latestAppealFor(
   return db
     .prepare(
       `SELECT ${COLUMNS} FROM slopbot_appeals WHERE item_node_id = ?
+         AND appeal_key NOT LIKE 'value-appeal:%'
        ORDER BY opened_at DESC, appeal_key DESC LIMIT 1`,
     )
     .bind(itemNodeId)
