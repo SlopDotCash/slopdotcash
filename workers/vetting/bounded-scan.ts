@@ -180,6 +180,13 @@ const INSTALL_FILES = new Set([
  */
 const BUILD_RECIPE =
   /(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja)$/u;
+/**
+ * Terraform configurations run commands at apply time through provisioners
+ * and external data sources, so they are install surfaces like a build
+ * recipe, never unreviewed content. Variable-value files (`.tfvars`) hold
+ * data only and are not matched.
+ */
+const TERRAFORM_CONFIG = /\.tf$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -235,6 +242,7 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (
     INSTALL_FILES.has(name) ||
     BUILD_RECIPE.test(lower) ||
+    TERRAFORM_CONFIG.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
     lower.startsWith(".vscode/") ||
