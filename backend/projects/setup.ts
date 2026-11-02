@@ -388,7 +388,7 @@ export function projectSetupStatus(input: {
         : undefined;
     const guidance =
       loc === "template"
-        ? "This is being addressed in Slop's skill template; you may request a new scan once updated."
+        ? "Check for an updated skill template before requesting a new scan."
         : "Fix the cause if you know it, then request a new scan.";
     nextAction = action("request_scan", `${scan.message} ${guidance}`);
   } else {

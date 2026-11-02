@@ -155,21 +155,30 @@ function admissionRepository(manifest: object): string | null {
   });
 }
 
+function isTemplateLocation(target: string): boolean {
+  const lower = target.toLowerCase();
+  return (
+    lower.startsWith("slop-skill-template/") ||
+    lower.includes("slop-skill-template") ||
+    lower.startsWith("skills/") ||
+    lower.includes("skills/") ||
+    lower.includes("skill template") ||
+    lower.includes("contributor skill")
+  );
+}
+
 export function summarize(assessment: VettingAssessment): AssessmentSummary {
   const artifacts: VettingArtifact[] = assessment.result?.artifacts ?? [];
   const held = artifacts.filter((artifact) => artifact.state !== "released");
   const result = assessment.result;
   let findingsLocation: "repository" | "template" | "both" | undefined;
   if (result) {
-    let hasTemplate = held.some((a) => a.path.startsWith("skills/"));
-    let hasRepo = held.some((a) => !a.path.startsWith("skills/"));
+    let hasTemplate = held.some((a) => isTemplateLocation(a.path));
+    let hasRepo = held.some((a) => !isTemplateLocation(a.path));
     const findings = "findings" in result ? result.findings : [];
     for (const f of findings) {
       const inTemplate =
-        f.summary.includes("skills/") ||
-        f.evidence.includes("skills/") ||
-        f.summary.toLowerCase().includes("skill template") ||
-        f.evidence.toLowerCase().includes("skill template");
+        isTemplateLocation(f.evidence) || isTemplateLocation(f.summary);
       if (inTemplate) hasTemplate = true;
       else hasRepo = true;
     }
