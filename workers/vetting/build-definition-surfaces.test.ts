@@ -53,6 +53,31 @@ test("a build definition of a recognized build system is an install surface", ()
   }
 });
 
+// biome-ignore format: Keep this regression consistent with the contributor instruction.
+test("tox test commands are reviewed as an install surface", () => {
+  const path = "tox.ini"
+  const safe = inspected(path, "[testenv]\ncommands = python -m pytest\n")
+  const unsafe = inspected(
+    path,
+    `[testenv]\ncommands = ${PAYLOAD}\n`,
+  )
+
+  expect(surfacesOf(path)).toEqual(["installScripts", "source"])
+  expect(unsafe.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  })
+  expect(unsafe.findings).toContainEqual(
+    expect.objectContaining({
+      path,
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  )
+  expect(unsafe.downloads).toContain("https://evil.example/install.sh")
+  expect(unsafe.inventorySha256).not.toBe(safe.inventorySha256)
+})
+
 test("included Ninja and Tup commands are reviewed and invalidate reuse", () => {
   for (const definition of [
     {

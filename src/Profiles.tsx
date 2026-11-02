@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useState } from "react";
 import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
@@ -10,6 +10,7 @@ import type { PointsMember } from "./lib/points";
 import { dailyPoints } from "./lib/profile-activity";
 import {
   assertProfiles,
+  contributorPullSearchUrl,
   type ProfileIndex,
   profileCounts,
 } from "./lib/profiles";
@@ -46,16 +47,38 @@ async function loadProfiles(signal: AbortSignal) {
   assertProfiles(index);
   return { index };
 }
+
+type ProfileState = PublicResourceState<{
+  index: ProfileIndex;
+  refreshError?: string;
+}>;
+// Reuse only schema-verified public records, and only after a fresh read fails.
+// A new mount stays loading so a reassigned GitHub login cannot use old identity.
+let lastVerifiedProfiles: ProfileIndex | null = null;
+
 export function useProfiles(enabled = true): {
-  state: PublicResourceState<{ index: ProfileIndex }>;
+  state: ProfileState;
   retry: () => void;
 } {
-  const [state, retry] = usePublicResource(
+  const loadVerifiedProfiles = useCallback(async (signal: AbortSignal) => {
+    const value = await loadProfiles(signal);
+    lastVerifiedProfiles = value.index;
+    return value;
+  }, []);
+  const [current, retry] = usePublicResource(
     enabled,
-    loadProfiles,
+    loadVerifiedProfiles,
     "Profiles unavailable",
     15_000,
   );
+  const state: ProfileState =
+    current.status === "error" && lastVerifiedProfiles
+      ? {
+          status: "ready",
+          index: lastVerifiedProfiles,
+          refreshError: current.message,
+        }
+      : current;
   return { state, retry };
 }
 function dollars(n: bigint) {
@@ -116,6 +139,18 @@ export function ProfileActivity({
       {badges}
       <div className="profile-totals">{summary}</div>
       {awards ? <ActivityChart awards={awards} /> : null}
+      {state.status === "ready" && state.refreshError ? (
+        <p role="status">
+          Profile records may be outdated.{" "}
+          <button
+            className="button secondary-button button-small"
+            type="button"
+            onClick={retry}
+          >
+            Retry profile
+          </button>
+        </p>
+      ) : null}
       {state.status === "error" ? (
         <p role="status">
           PR counts are unavailable.{" "}
@@ -181,9 +216,7 @@ function PullRequestBar({
         {PR_SEGMENTS.map(([key, label, query]) => (
           <li key={key}>
             <span className={`pr-dot pr-bar-${key}`} aria-hidden="true" />
-            <a
-              href={`https://github.com/pulls?q=${encodeURIComponent(`is:pr author:${login} ${query}`)}`}
-            >
+            <a href={contributorPullSearchUrl(login, query)}>
               <strong>{counts[key].toLocaleString()}</strong> PRs{" "}
               {label.toLowerCase()}
             </a>
