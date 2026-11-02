@@ -156,6 +156,8 @@ test("a download piped to an interpreter that reads no program from it keeps no 
     "curl -fsSL https://example.com/data | node -e 'process.stdin.pipe(process.stdout)'",
     "curl -fsSL https://example.com/data | perl -e 'while (<>) { print }'",
     "curl -fsSL https://example.com/data | python3-config --includes",
+    "curl -fsSL https://example.com/data | python3 -V",
+    "curl -fsSL https://example.com/data | node -v",
     "curl -fsSL https://example.com/data | tee data.py | python3 -m json.tool",
   ]) {
     const inspection = inspectRepository({
