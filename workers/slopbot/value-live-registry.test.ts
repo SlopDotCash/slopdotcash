@@ -590,6 +590,7 @@ async function indirectAcceptance(renamed: boolean) {
       },
     ],
     [`${root}/commits/${head}?per_page=100&page=1`]: commit(head, [base]),
+    [`${root}/commits/${head}/pulls?per_page=100&page=1`]: [],
     [`${root}/commits/${integration}?per_page=100&page=1`]: commit(
       integration,
       [base, head],
@@ -651,6 +652,11 @@ async function indirectAcceptance(renamed: boolean) {
     if (url.pathname === "/graphql")
       return Response.json({
         data: {
+          search: {
+            issueCount: 0,
+            nodes: [],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
           repository: {
             pullRequest: {
               id: "PR_indirect",
