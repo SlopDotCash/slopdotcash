@@ -2,6 +2,7 @@ import { afterEach, expect, setSystemTime, spyOn, test } from "bun:test";
 import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
+  selectUniqueVerifiedEvidence,
 } from "../src/lib/leaderboard";
 import { snapshotFixture } from "../tests/fixtures";
 import {
@@ -166,5 +167,48 @@ test("Turkish generation keeps expand-review opportunity on English-first review
       (entry) => entry.kind === "expand-review",
     );
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
+  });
+});
+
+test("Turkish generation keeps the English verified-evidence dedup survivor", () => {
+  const digest = "f".repeat(64);
+  const pullRequest = (id: string) =>
+    ({
+      id,
+      number: 42,
+      mergedAt: "2026-11-05T12:00:00.000Z",
+      updatedAt: "2026-11-05T12:00:00.000Z",
+    }) as never;
+  const artifact = (pullRequestId: string, artifactIdentity: string) =>
+    ({
+      pullRequestId,
+      category: "screenshot",
+      artifactIdentity,
+      contentSha256: digest,
+    }) as never;
+  withTurkishLocale(() => {
+    // Cross-PR: two PRs tied on mergedAt and number, one artifact each
+    // sharing one digest — the pull request ID tie-break decides which PR's
+    // artifact claims the digest first.
+    const crossPull = selectUniqueVerifiedEvidence(
+      [
+        artifact(ids[0], "https://evidence.example/a"),
+        artifact(ids[1], "https://evidence.example/b"),
+      ],
+      ids.map(pullRequest),
+    );
+    expect(crossPull.map((entry) => entry.pullRequestId)).toEqual([ids[0]]);
+    // Same-PR: two artifacts with the same category and digest — the
+    // artifact identity tie-break decides which identity survives.
+    const samePull = selectUniqueVerifiedEvidence(
+      [
+        artifact(ids[0], "https://evidence.example/files/G3i2Yg"),
+        artifact(ids[0], "https://evidence.example/files/G3IwgQ"),
+      ],
+      [pullRequest(ids[0])],
+    );
+    expect(samePull.map((entry) => entry.artifactIdentity)).toEqual([
+      "https://evidence.example/files/G3i2Yg",
+    ]);
   });
 });
