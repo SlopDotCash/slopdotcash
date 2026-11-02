@@ -243,6 +243,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   let screeningFails = false;
   let beforeScreenResult: (() => Promise<void>) | null = null;
   const screenedDescriptions: string[] = [];
+  const screened: SecurityAnalysisInput[] = [];
   const analyzed: SecurityAnalysisInput[] = [];
   const analysisTimeouts: number[] = [];
   let beforeAnalysisResult: (() => Promise<void>) | null = null;
@@ -264,6 +265,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
     },
     async screen(input) {
       screeningCalls++;
+      screened.push(input);
       screenedDescriptions.push(input.report.description);
       if (beforeScreenResult) await beforeScreenResult();
       if (screeningFails) throw new Error("PRIVATE-PROVIDER-ERROR-SENTINEL");
@@ -312,12 +314,16 @@ function fixture(overrides: Record<string, unknown> = {}) {
       body: (await handled.json()) as Body,
     };
   };
-  const create = (key = `intake-key-${++sequence}`, as: Actor = REPORTER) =>
+  const create = (
+    key = `intake-key-${++sequence}`,
+    as: Actor = REPORTER,
+    report: typeof REPORT = REPORT,
+  ) =>
     call(as, "POST", "security-submissions", {
       projectId: PROJECT,
       idempotencyKey: key.padEnd(20, "0"),
       origin: "slop",
-      report: REPORT,
+      report,
     });
   const caseAction = async (
     caseId: string,
@@ -343,6 +349,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
     caseAction,
     notices,
     screenedDescriptions,
+    screened,
     analyzed,
     analysisTimeouts,
     screeningCalls: () => screeningCalls,
@@ -935,6 +942,127 @@ describe("durable private report controls", () => {
     }
   });
 
+  test("identical evidence digest holds screening without a model call", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("digest-dup-first000")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    expect(t.screeningCalls()).toBe(1);
+    const duplicate = await t.call(OTHER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      idempotencyKey: "digest-dup-second00",
+      origin: "slop",
+      report: REPORT,
+    });
+    expect(duplicate.status).toBe(201);
+    const held = required(duplicate.body.submission);
+    expect(held.intake.state).toBe("needs-information");
+    expect(held.intake.canForward).toBe(false);
+    expect(held.intake.reason).toMatch(/evidence digest/i);
+    expect(held.intake.reason).not.toContain("PRIVATE-REPORT-SENTINEL");
+    expect(t.screeningCalls()).toBe(1);
+    expect(t.analyzed).toHaveLength(1);
+    const forwarded = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${held.id}/review`,
+      {
+        expectedRevision: held.intake.revision,
+        decision: "forward",
+        reason: "Owner reviewed the held duplicate digest match.",
+      },
+    );
+    expect(forwarded.status).toBe(200);
+    expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("an earlier unavailable report still screens after a later digest hold", async () => {
+    const t = fixture();
+    t.failScreening(true);
+    const earlier = required(
+      (await t.create("digest-retry-first00")).body.submission,
+    );
+    expect(earlier.intake.state).toBe("unavailable");
+    expect(t.screeningCalls()).toBe(1);
+    t.advance(1000);
+    const duplicate = await t.call(OTHER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      idempotencyKey: "digest-retry-second0",
+      origin: "slop",
+      report: REPORT,
+    });
+    expect(duplicate.status).toBe(201);
+    const held = required(duplicate.body.submission);
+    expect(held.intake.state).toBe("needs-information");
+    expect(held.intake.reason).toMatch(/evidence digest/i);
+    expect(t.screeningCalls()).toBe(1);
+    t.failScreening(false);
+    const retried = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${earlier.id}/screen`,
+      { expectedRevision: earlier.intake.revision },
+    );
+    expect(retried.status).toBe(200);
+    const recovered = required(retried.body.submission);
+    expect(recovered.intake.state).toBe("legitimate");
+    expect(recovered.intake.reason).not.toMatch(/evidence digest/i);
+    expect(t.screeningCalls()).toBe(2);
+    const stillHeld = await t.call(
+      OTHER,
+      "GET",
+      `security-submissions/${held.id}`,
+    );
+    expect(required(stillHeld.body.submission).intake.state).toBe(
+      "needs-information",
+    );
+  });
+
+  test("a failed submission digest does not hold a later identical report", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("digest-failed-first00")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    expect(t.screeningCalls()).toBe(1);
+    t.sqlite
+      .query(
+        "UPDATE security_submissions SET state='failed',failure_code='invalid',revision=revision+1,updated_at=? WHERE id=? AND state='draft'",
+      )
+      .run(t.deps.now().toISOString(), first.id);
+    expect(
+      t.sqlite
+        .query("SELECT state FROM security_submissions WHERE id=?")
+        .get(first.id),
+    ).toEqual({ state: "failed" });
+    t.advance(1000);
+    const later = await t.call(OTHER, "POST", "security-submissions", {
+      projectId: PROJECT,
+      idempotencyKey: "digest-failed-second0",
+      origin: "slop",
+      report: REPORT,
+    });
+    expect(later.status).toBe(201);
+    const submission = required(later.body.submission);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(submission.intake.reason).not.toMatch(/evidence digest/i);
+    expect(t.screeningCalls()).toBe(2);
+    expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("a first unique report still routes as legitimate when screening agrees", async () => {
+    const t = fixture();
+    const accepted = await t.create("unique-first-report0");
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(submission.intake.canForward).toBe(true);
+    expect(t.screeningCalls()).toBe(1);
+    expect(t.screened[0]?.priorCases).toEqual([]);
+    expect(t.analyzed).toHaveLength(1);
+  });
+
   test.each(["needs-information", "spam"] as const)(
     "a %s report needs explicit human forwarding before assessment",
     async (decision) => {
@@ -1015,7 +1143,10 @@ describe("durable private report controls", () => {
       const view = required((await read()).body.case);
       expect(view.analysis).toBeNull();
       expect(view.allowedActions).not.toContain("analyze");
-      const comparison = await t.create("comparison-during-revision", OTHER);
+      const comparison = await t.create("comparison-during-revision", OTHER, {
+        ...REPORT,
+        description: `${REPORT.description} Comparison during revision.`,
+      });
       expect(comparison.status).toBe(201);
       expect(t.analyzed.at(-1)?.priorCases).toContainEqual({
         id: submission.caseId,
@@ -1670,7 +1801,14 @@ describe("durable private report controls", () => {
     const t = fixture();
     const results = await Promise.all(
       Array.from({ length: 12 }, (_, index) =>
-        t.create(`concurrent-budget-${String(index).padStart(2, "0")}`),
+        t.create(
+          `concurrent-budget-${String(index).padStart(2, "0")}`,
+          REPORTER,
+          {
+            ...REPORT,
+            description: `${REPORT.description} Concurrent ${index}.`,
+          },
+        ),
       ),
     );
     expect(results.filter((row) => row.status === 201)).toHaveLength(10);
@@ -1681,14 +1819,34 @@ describe("durable private report controls", () => {
 
   test("rolling admission prevents orphan writes across a window boundary", async () => {
     const t = fixture();
-    expect((await t.create("first-boundary")).status).toBe(201);
+    expect(
+      (
+        await t.create("first-boundary", REPORTER, {
+          ...REPORT,
+          description: `${REPORT.description} Boundary first.`,
+        })
+      ).status,
+    ).toBe(201);
     t.advance(3_599_000);
     for (let index = 0; index < 9; index++)
-      expect((await t.create(`late-boundary-${index}`)).status).toBe(201);
+      expect(
+        (
+          await t.create(`late-boundary-${index}`, REPORTER, {
+            ...REPORT,
+            description: `${REPORT.description} Boundary late ${index}.`,
+          })
+        ).status,
+      ).toBe(201);
     t.advance(2_000);
     const results = await Promise.all([
-      t.create("new-boundary-A"),
-      t.create("new-boundary-B"),
+      t.create("new-boundary-A", REPORTER, {
+        ...REPORT,
+        description: `${REPORT.description} Boundary A.`,
+      }),
+      t.create("new-boundary-B", REPORTER, {
+        ...REPORT,
+        description: `${REPORT.description} Boundary B.`,
+      }),
     ]);
     expect(results.map((row) => row.status).sort()).toEqual([201, 429]);
     expect(t.objects.size).toBe(11);
