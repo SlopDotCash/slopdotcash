@@ -105,6 +105,29 @@ export function openMonthScores(
   };
 }
 
+/**
+ * Applied thirds per published penalty, as a contributor profile lists them.
+ * A closed cycle record already nets its month's debit from the same retained
+ * events, so archived months are applied here as well as open ones. Debits
+ * apply per project and month, so each month's amount is independent.
+ */
+export function appliedPenaltyThirds(
+  snapshot: LeaderboardSnapshot,
+): Map<string, number> {
+  const rewarded = (repository: string, occurredAt: string) =>
+    Date.parse(occurredAt) >=
+    Date.parse(projectOf(repository).reward.rewardStartAt);
+  return penaltyDeductions(
+    snapshot.ledger.filter((event) =>
+      rewarded(event.repository, event.occurredAt),
+    ),
+    (snapshot.penalties ?? []).filter((penalty) =>
+      rewarded(penalty.repository, penalty.occurredAt),
+    ),
+    (repository) => projectOf(repository).id,
+  ).byPenalty;
+}
+
 export function createGlobalLeaders(
   snapshot: LeaderboardSnapshot,
   views: readonly ProjectView[],
