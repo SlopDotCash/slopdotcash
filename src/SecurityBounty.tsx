@@ -1106,7 +1106,7 @@ type Loaded<T> =
   | { status: "loading" }
   | { status: "signed-out" }
   | { status: "error"; message: string }
-  | { status: "ready"; value: T };
+  | { status: "ready"; value: T; refreshError?: string };
 
 const PrivateRequestContext =
   createContext<typeof projectApiRequest>(projectApiRequest);
@@ -1135,10 +1135,18 @@ function useSecurityData<T>(
       },
       (error: unknown) => {
         if (generation.current !== current) return;
-        setState(
-          error instanceof ProjectApiError && error.status === 401
-            ? { status: "signed-out" }
-            : { status: "error", message: errorMessage(error) },
+        if (error instanceof ProjectApiError && error.status === 401) {
+          setState({ status: "signed-out" });
+          return;
+        }
+        const message = errorMessage(error);
+        // A failed refresh keeps the loaded view, as the refresh start
+        // above does; the failure rides on the view instead of replacing
+        // it. Only a load with nothing on screen becomes an error.
+        setState((previous) =>
+          previous.status === "ready"
+            ? { ...previous, refreshError: message }
+            : { status: "error", message },
         );
       },
     );
@@ -1586,6 +1594,15 @@ function PrivateReportDetail({
         <p role="status">Loading private report…</p>
       ) : detail.status === "ready" ? (
         <>
+          {detail.refreshError ? (
+            <p className="form-error" role="alert">
+              <CircleAlert aria-hidden="true" /> {detail.refreshError} Showing
+              the last loaded report.{" "}
+              <button className="text-button" onClick={reload} type="button">
+                <RotateCcw aria-hidden="true" /> Retry
+              </button>
+            </p>
+          ) : null}
           <h4>{detail.value.report.summary}</h4>
           <pre className="security-report-text">
             {detail.value.report.description}
@@ -3413,6 +3430,15 @@ function CaseDetail({
           {note}
         </p>
       ) : null}
+      {state.refreshError ? (
+        <p className="form-error" role="alert">
+          <CircleAlert aria-hidden="true" /> {state.refreshError} Showing the
+          last loaded case.{" "}
+          <button className="text-button" onClick={reload} type="button">
+            <RotateCcw aria-hidden="true" /> Retry
+          </button>
+        </p>
+      ) : null}
       <p className="security-next-step">
         <ArrowRight aria-hidden="true" />
         <span>
@@ -4286,6 +4312,15 @@ function SecurityInboxContent({
     body = (
       <>
         {note ? <p role="status">{note}</p> : null}
+        {list.refreshError ? (
+          <p className="form-error" role="alert">
+            <CircleAlert aria-hidden="true" /> {list.refreshError} Showing the
+            last loaded cases.{" "}
+            <button className="text-button" onClick={reload} type="button">
+              <RotateCcw aria-hidden="true" /> Retry
+            </button>
+          </p>
+        ) : null}
         {maintained.size > 0 ? (
           <label>
             Show reports
