@@ -10,6 +10,7 @@ import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  PRIOR_CASE_LIMIT,
   type SecurityAnalysisInput,
   type SecurityAnalysisReport,
   type SecurityScreeningProposal,
@@ -70,6 +71,85 @@ export type StoredIntake = {
 const MAX_REPORT_BYTES = 256 * 1024;
 const LOST_SCREEN_MS = 15 * 60 * 1000;
 const encoder = new TextEncoder();
+
+const DUPLICATE_EVIDENCE_REASON =
+  "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report.";
+
+type PriorCase = SecurityAnalysisInput["priorCases"][number];
+
+/** Recent verified cases for the same project, matching analysis shape/limit. */
+async function loadPriorCases(
+  deps: Pick<SecurityApiDependencies, "db">,
+  projectId: string,
+  excludeCaseId: string | null,
+): Promise<PriorCase[]> {
+  const rows =
+    (
+      await deps.db
+        .prepare(
+          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
+              LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+              WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
+                AND (i.case_id IS NULL OR i.review_decision='forward'
+                     OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+              ORDER BY a.attempt DESC LIMIT 1) AS summary
+             FROM security_cases c
+            WHERE c.project_id = ? AND c.submission_state = 'verified'${
+              excludeCaseId ? " AND c.id <> ?" : ""
+            }
+            ORDER BY c.received_at DESC LIMIT ${PRIOR_CASE_LIMIT}`,
+        )
+        .bind(...(excludeCaseId ? [projectId, excludeCaseId] : [projectId]))
+        .all<{
+          id: string;
+          root_cause_key: string | null;
+          summary: string | null;
+        }>()
+    ).results ?? [];
+  return rows.map((entry) => ({
+    id: entry.id,
+    rootCauseKey: entry.root_cause_key,
+    summary: entry.summary,
+  }));
+}
+
+/** Same-project evidence digest already on another case or intake report. */
+async function matchingEvidenceDigest(
+  deps: Pick<SecurityApiDependencies, "db">,
+  projectId: string,
+  digest: string,
+  exclude: { caseId?: string | null; submissionId?: string | null },
+): Promise<boolean> {
+  const caseMatch = await deps.db
+    .prepare(
+      `SELECT 1 AS matched FROM security_cases
+        WHERE project_id = ? AND (receipt_evidence_digest = ? OR evidence_digest = ?)${
+          exclude.caseId ? " AND id <> ?" : ""
+        } LIMIT 1`,
+    )
+    .bind(
+      ...(exclude.caseId
+        ? [projectId, digest, digest, exclude.caseId]
+        : [projectId, digest, digest]),
+    )
+    .first();
+  if (caseMatch) return true;
+  const reportMatch = await deps.db
+    .prepare(
+      `SELECT 1 AS matched FROM security_intake_reports r
+         JOIN security_submissions s ON s.id = r.submission_id
+        WHERE s.project_id = ? AND r.content_sha256 = ?${
+          exclude.submissionId ? " AND s.id <> ?" : ""
+        } LIMIT 1`,
+    )
+    .bind(
+      ...(exclude.submissionId
+        ? [projectId, digest, exclude.submissionId]
+        : [projectId, digest]),
+    )
+    .first();
+  return Boolean(reportMatch);
+}
 
 /** Rolling admission precedes object writes and paid calls, including retries. */
 async function admitPublicWork(
@@ -500,9 +580,32 @@ export async function screenStoredReport(
   let reason =
     "Automatic screening is unavailable. Your report is saved for retry or private human review.";
   try {
-    if (deps.analyzer?.screen) {
-      const submission = (await loadSubmission(deps, id)) as SubmissionRow;
-      const record = await loadCase(deps, row.case_id);
+    const submission = (await loadSubmission(deps, id)) as SubmissionRow;
+    const record = await loadCase(deps, row.case_id);
+    const digestRow = await deps.db
+      .prepare(
+        "SELECT content_sha256 FROM security_intake_reports WHERE submission_id=? AND version=?",
+      )
+      .bind(id, row.report_version)
+      .first<{ content_sha256: string }>();
+    const digest =
+      digestRow?.content_sha256 ??
+      record?.receipt_evidence_digest ??
+      record?.evidence_digest ??
+      null;
+    if (
+      digest &&
+      (await matchingEvidenceDigest(deps, submission.project_id, digest, {
+        caseId: row.case_id,
+        submissionId: id,
+      }))
+    ) {
+      // Identical evidence is held privately without a model call (PRD §8).
+      // needs-information stays recoverable for revise/owner override; never
+      // leak other reporters' private report bodies in the reason.
+      state = "needs-information";
+      reason = DUPLICATE_EVIDENCE_REASON;
+    } else if (deps.analyzer?.screen) {
       const manifest =
         record?.policy_revision === null
           ? null
@@ -524,7 +627,11 @@ export async function screenStoredReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await loadPriorCases(
+          deps,
+          submission.project_id,
+          row.case_id,
+        ),
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -587,6 +694,18 @@ export async function screenLegacyReport(
     ? JSON.parse(current.manifest).securityBounty?.scope
     : null;
   await admitPublicWork(deps, actorId);
+  const digest = await sha256Hex(encoder.encode(JSON.stringify(report)));
+  if (
+    await matchingEvidenceDigest(deps, projectId, digest, {
+      caseId: null,
+      submissionId: null,
+    })
+  )
+    fail(
+      409,
+      "screening_required",
+      "This draft needs more evidence or a private maintainer review before forwarding. Submit it through Slop to track that review.",
+    );
   let proposal: SecurityScreeningProposal;
   try {
     proposal = await deps.analyzer.screen(
@@ -599,7 +718,7 @@ export async function screenLegacyReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await loadPriorCases(deps, projectId, null),
       },
       ANALYSIS_TIMEOUT_MS,
     );
