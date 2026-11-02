@@ -816,12 +816,20 @@ function ProjectsSection({
   section: ProjectSection;
 }) {
   const [query, setQuery] = useState("");
+  // A save reloads this list while it is on screen; a transient failure
+  // keeps the loaded projects visible, but an authorization failure
+  // (401/403) still replaces them with the full error, so private data
+  // and the admin controls leave the screen together.
   const [state, reload] = usePublicResource(
     true,
     loadAdminProjects,
     "Projects could not load.",
+    undefined,
+    { retainOnTransientFailure: true },
   );
   const [note, setNote] = useState<string | null>(null);
+  const refreshError =
+    state.status === "ready" ? state.refreshError : undefined;
   const matchingProjects =
     state.status === "ready"
       ? [...state.projects]
@@ -900,6 +908,13 @@ function ProjectsSection({
         <p className="admin-status" role="status">
           <CircleCheck aria-hidden="true" /> {note}
         </p>
+      ) : null}
+      {refreshError ? (
+        <LoadNotice
+          label="projects"
+          retry={reload}
+          state={{ status: "error", message: refreshError }}
+        />
       ) : null}
       {state.status !== "ready" ? (
         <LoadNotice label="projects" retry={reload} state={state} />
