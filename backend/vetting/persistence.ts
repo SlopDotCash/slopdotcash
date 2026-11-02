@@ -157,6 +157,26 @@ function admissionRepository(manifest: object): string | null {
 
 export function summarize(assessment: VettingAssessment): AssessmentSummary {
   const artifacts: VettingArtifact[] = assessment.result?.artifacts ?? [];
+  const held = artifacts.filter((artifact) => artifact.state !== "released");
+  const result = assessment.result;
+  let findingsLocation: "repository" | "template" | "both" | undefined;
+  if (result) {
+    let hasTemplate = held.some((a) => a.path.startsWith("skills/"));
+    let hasRepo = held.some((a) => !a.path.startsWith("skills/"));
+    const findings = "findings" in result ? result.findings : [];
+    for (const f of findings) {
+      const inTemplate =
+        f.summary.includes("skills/") ||
+        f.evidence.includes("skills/") ||
+        f.summary.toLowerCase().includes("skill template") ||
+        f.evidence.toLowerCase().includes("skill template");
+      if (inTemplate) hasTemplate = true;
+      else hasRepo = true;
+    }
+    if (hasTemplate && hasRepo) findingsLocation = "both";
+    else if (hasTemplate) findingsLocation = "template";
+    else if (hasRepo) findingsLocation = "repository";
+  }
   return {
     id: assessment.id,
     revision: assessment.revision,
@@ -166,10 +186,10 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
     policyVersion: assessment.policyVersion,
     requestedAt: assessment.requestedAt,
     completedAt: assessment.completedAt,
-    modelRuns: assessment.result ? resultReviewers(assessment.result) : [],
+    modelRuns: result ? resultReviewers(result) : [],
     artifacts: artifacts.length,
-    heldArtifacts: artifacts.filter((artifact) => artifact.state !== "released")
-      .length,
+    heldArtifacts: held.length,
+    ...(findingsLocation !== undefined ? { findingsLocation } : {}),
   };
 }
 

@@ -92,3 +92,84 @@ describe("owner-approved admission exemption presentation", () => {
     expect(result.nextAction.kind).toBe("install_slopbot");
   });
 });
+
+describe("quarantined scan status presentation", () => {
+  const baseAssessment = {
+    id: "vet_fixture_quarantine",
+    revision: 1,
+    state: "incomplete" as const,
+    commitSha: "c".repeat(40),
+    templateSha256: "t".repeat(64),
+    policyVersion: "1",
+    requestedAt: at,
+    completedAt: at,
+    modelRuns: [],
+    artifacts: 0,
+    heldArtifacts: 0,
+  };
+
+  test("scan that could not finish explains that it did not clear the project", () => {
+    const result = status({
+      state: "quarantined",
+      assessment: { ...baseAssessment, completedAt: null },
+    });
+    expect(result.state).toBe("action_required");
+    expect(result.checks.scan.message).toBe(
+      "The last scan could not finish, so it did not clear the project.",
+    );
+    expect(result.nextAction.message).toContain(
+      "The last scan could not finish, so it did not clear the project. Fix the cause if you know it, then request a new scan.",
+    );
+  });
+
+  test("scan that finished with repository findings mentions the repository", () => {
+    const result = status({
+      state: "quarantined",
+      assessment: {
+        ...baseAssessment,
+        findingsLocation: "repository",
+      },
+    });
+    expect(result.state).toBe("action_required");
+    expect(result.checks.scan.message).toBe(
+      "The last scan finished, but findings in the project repository block clearance.",
+    );
+    expect(result.nextAction.message).toContain(
+      "Fix the cause if you know it, then request a new scan.",
+    );
+  });
+
+  test("scan that finished with skill template findings clarifies that Slop template blocks clearance", () => {
+    const result = status({
+      state: "quarantined",
+      assessment: {
+        ...baseAssessment,
+        findingsLocation: "template",
+      },
+    });
+    expect(result.state).toBe("action_required");
+    expect(result.checks.scan.message).toBe(
+      "The last scan finished, but findings in Slop's skill template block clearance.",
+    );
+    expect(result.nextAction.message).toContain(
+      "This is being addressed in Slop's skill template; you may request a new scan once updated.",
+    );
+  });
+
+  test("scan that finished with findings in both clarifies both locations", () => {
+    const result = status({
+      state: "quarantined",
+      assessment: {
+        ...baseAssessment,
+        findingsLocation: "both",
+      },
+    });
+    expect(result.state).toBe("action_required");
+    expect(result.checks.scan.message).toBe(
+      "The last scan finished, but findings in both the repository and skill template block clearance.",
+    );
+    expect(result.nextAction.message).toContain(
+      "Fix the cause if you know it, then request a new scan.",
+    );
+  });
+});
