@@ -113,7 +113,9 @@ export async function projectApiRequest<T>(
     );
   }
   if (!response.ok) {
-    const error = parsed as { error?: unknown; message?: unknown };
+    const error = (
+      typeof parsed === "object" && parsed !== null ? parsed : {}
+    ) as { error?: unknown; message?: unknown };
     throw new ProjectApiError(
       response.status,
       typeof error.error === "string" ? error.error : "request_failed",
