@@ -78,8 +78,8 @@ export function compareActors(
   const leftLogin = left.login.toLowerCase();
   const rightLogin = right.login.toLowerCase();
   return (
-    leftLogin.localeCompare(rightLogin) ||
-    left.login.localeCompare(right.login) ||
-    left.id.localeCompare(right.id)
+    leftLogin.localeCompare(rightLogin, "en") ||
+    left.login.localeCompare(right.login, "en") ||
+    left.id.localeCompare(right.id, "en")
   );
 }
