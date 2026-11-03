@@ -3763,8 +3763,8 @@ export async function verifyPullRequestEvidence(
       Number(left.pullRequest.mergedAt === null) -
         Number(right.pullRequest.mergedAt === null) ||
       left.artifactCount - right.artifactCount ||
-      left.pullRequest.id.localeCompare(right.pullRequest.id) ||
-      left.source.id.localeCompare(right.source.id),
+      left.pullRequest.id.localeCompare(right.pullRequest.id, "en") ||
+      left.source.id.localeCompare(right.source.id, "en"),
   );
   for (const candidate of candidatesByTrust) {
     if (
