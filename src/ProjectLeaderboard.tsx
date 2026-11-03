@@ -1,4 +1,5 @@
 import { Link } from "./Link";
+import { compareActors } from "./lib/github-actor";
 import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
 import {
   type ProjectContributor,
@@ -45,7 +46,7 @@ export function CycleAllocation({
   );
   const leaders = [...view.leaders].sort(
     (left, right) =>
-      left.rank - right.rank || left.actor.id.localeCompare(right.actor.id),
+      left.rank - right.rank || compareActors(left.actor, right.actor),
   );
   return (
     <section className="section project-leader-section">

@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { compareActors } from "../../src/lib/github-actor";
 import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
@@ -607,6 +608,24 @@ test("shows agent setup and keeps contribution records available", async ({
       rows.map((row) => row.querySelectorAll("td")[3]?.textContent ?? ""),
     );
   expect(shareCells).toHaveLength(view.leaders.length);
+  // The allocation table renders tied ranks in the documented actor order,
+  // not in host-locale id order: the base comparator re-sorts these rows
+  // whenever login order differs from id order.
+  const renderedLogins = await page
+    .locator(".project-leader-row")
+    .evaluateAll((rows) =>
+      rows.map(
+        (row) =>
+          row.querySelector(".person-cell strong")?.textContent?.trim() ?? "",
+      ),
+    );
+  const expectedLogins = [...view.leaders]
+    .sort(
+      (left, right) =>
+        left.rank - right.rank || compareActors(left.actor, right.actor),
+    )
+    .map((leader) => leader.actor.login);
+  expect(renderedLogins).toEqual(expectedLogins);
   // No committed funds: every row is a share of payment weight, never dollars.
   for (const cell of shareCells) {
     expect(cell).toMatch(/^\d+\.\d{2}% of payment weight$/u);
