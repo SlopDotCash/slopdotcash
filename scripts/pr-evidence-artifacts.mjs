@@ -472,7 +472,7 @@ function hasIsoVideoTrack(bytes, moov) {
     const width = view.getUint16(samplePayloadStart + 24);
     const height = view.getUint16(samplePayloadStart + 26);
     if (
-      new Set(["av01", "avc1", "hev1", "hvc1", "vp09"]).has(codec) &&
+      new Set(["av01", "avc1", "avc3", "hev1", "hvc1", "vp09"]).has(codec) &&
       usefulImageDimensions(width, height)
     ) {
       return true;
