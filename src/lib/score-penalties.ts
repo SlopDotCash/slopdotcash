@@ -108,7 +108,7 @@ export function penaltyDeductions(
   for (const penalty of [...penalties].sort(
     (left, right) =>
       left.occurredAt.localeCompare(right.occurredAt) ||
-      left.id.localeCompare(right.id),
+      left.id.localeCompare(right.id, "en"),
   )) {
     const bucket = key(
       penalty.actor.id,
