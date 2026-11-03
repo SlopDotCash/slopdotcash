@@ -53,6 +53,45 @@ interface ReviewRecordContext {
   headSha: string;
 }
 
+type ReviewProject = NonNullable<ReturnType<typeof findProject>>;
+
+interface ReviewArtifactIdentity {
+  repositoryId: string;
+  suffix: string;
+}
+
+/**
+ * Resolves a review artifact through the repository names retained by the
+ * project registry. Repository ids and aliases identify the same GitHub
+ * repository across a rename or transfer; the remainder of the URL stays
+ * exact so a different pull request or fragment cannot join accidentally.
+ */
+function reviewArtifactIdentity(
+  project: ReviewProject,
+  artifact: URL,
+): ReviewArtifactIdentity | null {
+  if (
+    artifact.origin !== "https://github.com" ||
+    artifact.username ||
+    artifact.password
+  ) {
+    return null;
+  }
+  const path = /^\/([^/]+)\/([^/]+)(\/.*)$/u.exec(artifact.pathname);
+  if (!path) return null;
+  const repositoryName = `${path[1]}/${path[2]}`.toLowerCase();
+  const repository = project.repositories.find(({ id, aliases }) =>
+    [id, ...(aliases ?? [])].some(
+      (registeredName) => registeredName.toLowerCase() === repositoryName,
+    ),
+  );
+  if (!repository) return null;
+  return {
+    repositoryId: repository.id.toLowerCase(),
+    suffix: `${path[3]}${artifact.search}${artifact.hash}`,
+  };
+}
+
 function boundedStrings(value: unknown, field: string): string[] {
   if (
     !Array.isArray(value) ||
@@ -135,13 +174,7 @@ export function assertReviewRecord(value: unknown): ReviewRecord {
   } catch {
     throw new TypeError("review record artifactUrl is invalid");
   }
-  if (
-    artifact.protocol !== "https:" ||
-    artifact.hostname !== "github.com" ||
-    !project.repositories.some(({ githubUrl }) =>
-      artifact.href.startsWith(`${githubUrl}/`),
-    )
-  ) {
+  if (reviewArtifactIdentity(project, artifact) === null) {
     throw new TypeError("review record artifactUrl is outside the project");
   }
   if (
@@ -378,9 +411,23 @@ export function assertReviewRecordReceiptJoin(
   if (context === null) {
     throw new TypeError("slop-review record lacks immutable artifact context");
   }
-  const artifactUrl = new URL(context.artifactUrl).href;
+  const project = findProject(record.projectId);
+  let artifactIdentity: ReviewArtifactIdentity | null = null;
+  try {
+    artifactIdentity = project
+      ? reviewArtifactIdentity(project, new URL(context.artifactUrl))
+      : null;
+  } catch {
+    // The immutable context must be a registered GitHub artifact too.
+  }
+  const recordIdentity = project
+    ? reviewArtifactIdentity(project, new URL(record.artifactUrl))
+    : null;
   if (
-    record.artifactUrl !== artifactUrl ||
+    recordIdentity === null ||
+    artifactIdentity === null ||
+    recordIdentity.repositoryId !== artifactIdentity.repositoryId ||
+    recordIdentity.suffix !== artifactIdentity.suffix ||
     record.headSha !== context.headSha.toLowerCase()
   ) {
     throw new TypeError("slop-review record does not match its artifact head");
