@@ -383,7 +383,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression|\[(?:System\.Management\.Automation\.)?ScriptBlock\]::Create|\.InvokeCommand\.InvokeScript)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
