@@ -1,3 +1,4 @@
+import { PENALTY_ROWS } from "./lib/penalty-guide";
 import { SCORE_TIERS } from "./lib/score-records";
 import { formatPointsFromThirds } from "./Presentation";
 
@@ -42,30 +43,11 @@ export function ContributionPointTiers() {
   );
 }
 
-const PENALTY_ROWS = [
-  { category: "Spam", action: "Close", debitThirds: 3 },
-  {
-    category: "Scam or malicious",
-    action: "Close; moderator reviews the account",
-    debitThirds: 24,
-  },
-  {
-    category: "Clear violation of a quoted project rule",
-    action: "Close",
-    debitThirds: 1,
-  },
-  {
-    category: "Low quality",
-    action: "Close (closure-eligible authors only)",
-    debitThirds: 0,
-  },
-  { category: "Duplicate", action: "Close", debitThirds: 0 },
-  { category: "Out of scope", action: "Label", debitThirds: 0 },
-] as const;
-
 /**
- * The one published penalty table (PRD section 7), mirroring PENALTY_TABLE in
- * workers/slopbot/penalties.ts. Debits are Slop Score thirds, shown in points.
+ * The one published penalty table (PRD section 7). Its rows come from
+ * src/lib/penalty-guide.ts, which derives them from PENALTY_TABLE in
+ * workers/slopbot/penalties.ts. Debits are Slop Score thirds, shown in
+ * points.
  */
 export function PenaltyPointTable() {
   return (
