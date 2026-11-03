@@ -6,7 +6,10 @@
  * for one actor and overlapping entries for different actors stay valid.
  */
 import { expect, test } from "bun:test";
-import { validatePayoutExclusions } from "../src/lib/payout-exclusions.mjs";
+import {
+  assertPayoutExclusionTransition,
+  validatePayoutExclusions,
+} from "../src/lib/payout-exclusions.mjs";
 
 // GitHub user 43 in both node ID formats (the pair the monthly payout
 // exclusion test already uses through the payment path).
@@ -57,6 +60,46 @@ test("overlapping exclusions for one actor refuse under either node ID spelling"
     expect(() =>
       validatePayoutExclusions(list, "reward.payoutExclusions"),
     ).toThrow("overlaps another exclusion of the actor");
+});
+
+test("a node ID respelling alone is not a transition change", () => {
+  // The same actor, same relationship, same cycle range — only the node ID
+  // spelling changes (legacy -> current). The transition guard keys on the
+  // numeric actor identity, so this revision must not refuse.
+  const previous = {
+    reward: {
+      payoutExclusions: [entry(LEGACY_NODE_ID, "43", "owner", "2026-10", null)],
+    },
+  };
+  const next = {
+    reward: {
+      payoutExclusions: [
+        entry(CURRENT_NODE_ID, "43", "owner", "2026-10", null),
+      ],
+    },
+  };
+  expect(() =>
+    assertPayoutExclusionTransition(
+      previous,
+      next,
+      new Date("2026-11-04T00:00:00.000Z"),
+    ),
+  ).not.toThrow();
+  // A real change (different relationship) in the same month still refuses.
+  const changed = {
+    reward: {
+      payoutExclusions: [
+        entry(CURRENT_NODE_ID, "43", "related-party", "2026-10", null),
+      ],
+    },
+  };
+  expect(() =>
+    assertPayoutExclusionTransition(
+      previous,
+      changed,
+      new Date("2026-11-04T00:00:00.000Z"),
+    ),
+  ).toThrow("payout exclusions apply prospectively; 2026-10 cannot change");
 });
 
 test("disjoint entries for one actor and overlaps across actors stay valid", () => {

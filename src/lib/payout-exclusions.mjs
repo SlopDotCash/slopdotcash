@@ -118,7 +118,7 @@ export function payoutExcludedGithubUserIds(project, cycleId) {
 function excludedSet(exclusions, cycleId) {
   return exclusions
     .filter((entry) => covers(entry, cycleId))
-    .map((entry) => `${entry.nodeId}\0${entry.actorId}\0${entry.relationship}`)
+    .map((entry) => `${entry.actorId}\0${entry.relationship}`)
     .sort()
     .join("\n");
 }
