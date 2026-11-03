@@ -4,6 +4,7 @@ import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { isPointsSummary, type PointsSummary } from "./lib/points-summary";
 import { usePublicResource } from "./lib/use-public-resource";
+import { formatDateTime, stale } from "./Presentation";
 
 const HOME_ROWS = 10;
 
@@ -56,6 +57,12 @@ export function HomeStandings() {
           <button type="button" onClick={retryPoints}>
             Retry
           </button>
+        </p>
+      ) : null}
+      {points.status === "ready" && stale(points.summary) ? (
+        <p className="data-notice data-stale" role="status">
+          Points may be outdated · updated{" "}
+          {formatDateTime(points.summary.generatedAt)}
         </p>
       ) : null}
       {points.status === "ready" ? (
