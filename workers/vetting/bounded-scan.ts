@@ -205,7 +205,7 @@ const INSTALL_FILES = new Set([
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
 const GYP_EXTENSION = "gyp|gypi";
 const BUILD_RECIPE = new RegExp(
-  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|bb|bbappend|bbclass|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
   "u",
 );
 const MSBUILD_RECIPE = new RegExp(
