@@ -573,7 +573,10 @@ export async function screenStoredReport(
     intakeEvent(deps, row, "screen-start", null, at),
   ]);
   if (claimed[0].meta?.changes !== 1) return;
-  row = (await storedIntake(deps, id)) as StoredIntake;
+  const claimedRevision = row.revision + 1;
+  row = await storedIntake(deps, id);
+  // A revision or replacement attempt may have advanced while the claim returned.
+  if (row?.revision !== claimedRevision) return;
   let state: IntakeState = "unavailable";
   let reason =
     "Automatic screening is unavailable. Your report is saved for retry or private human review.";

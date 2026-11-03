@@ -133,6 +133,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   const { db, sqlite } = sqliteD1();
   const statementSql = new WeakMap<object, string>();
   let routeFails = false;
+  let afterScreenClaim: (() => Promise<void>) | null = null;
   const tracked = (
     statement: D1QueryStatement,
     sql: string,
@@ -159,7 +160,21 @@ function fixture(overrides: Record<string, unknown> = {}) {
         })
       )
         throw new Error("Fixture owner-route outage");
-      return db.batch(statements);
+      const results = await db.batch(statements);
+      if (
+        afterScreenClaim &&
+        results[0]?.meta?.changes === 1 &&
+        statements.some((statement) =>
+          statementSql
+            .get(statement)
+            ?.includes("SET screening_state='running',screening_started_at="),
+        )
+      ) {
+        const callback = afterScreenClaim;
+        afterScreenClaim = null;
+        await callback();
+      }
+      return results;
     },
   };
   const base = applicationManifest(PROJECT, REPOSITORY, {
@@ -364,6 +379,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
     },
     beforeScreen: (callback: (() => Promise<void>) | null) => {
       beforeScreenResult = callback;
+    },
+    afterScreenClaim: (callback: () => Promise<void>) => {
+      afterScreenClaim = callback;
     },
     beforeAnalysis: (callback: (() => Promise<void>) | null) => {
       beforeAnalysisResult = callback;
@@ -1359,6 +1377,99 @@ describe("durable private report controls", () => {
       attempt: 2,
     });
     expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("a delayed screening claim cannot adopt a revised report's running attempt", async () => {
+    const t = fixture();
+    const claimed = Promise.withResolvers<void>();
+    const releaseOld = Promise.withResolvers<void>();
+    const currentScreen = Promise.withResolvers<void>();
+    const releaseCurrent = Promise.withResolvers<void>();
+    const background: Promise<unknown>[] = [];
+    t.deps.waitUntil = (work) => background.push(work);
+    t.afterScreenClaim(async () => {
+      claimed.resolve();
+      await releaseOld.promise;
+    });
+    const analyzer = required(t.deps.analyzer);
+    const screen = required(analyzer.screen);
+    let calls = 0;
+    analyzer.screen = async (input, timeoutMs) => {
+      calls++;
+      if (calls > 1) throw new Error("PRIVATE-STALE-SCREEN-ERROR");
+      currentScreen.resolve();
+      await releaseCurrent.promise;
+      return screen(input, timeoutMs);
+    };
+    try {
+      const initial = await t.create("delayed-screen-claim");
+      expect(initial.status).toBe(201);
+      await claimed.promise;
+      const submission = required(initial.body.submission);
+      const receipt = await t.call(
+        OWNER,
+        "GET",
+        `security-submissions/${submission.id}?view=receipt`,
+      );
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${submission.id}/review`,
+        {
+          expectedRevision: required(receipt.body.submission).intake.revision,
+          decision: "request-information",
+          reason: "Please include the affected revision.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      const revised = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/report`,
+        {
+          expectedRevision: required(reviewed.body.submission).intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Revision def.`,
+          },
+        },
+      );
+      expect(revised.status).toBe(200);
+      await currentScreen.promise;
+      // The original database write succeeded, but its caller resumes only
+      // after the replacement report has claimed its own screening attempt.
+      releaseOld.resolve();
+      await background[0];
+      releaseCurrent.resolve();
+      for (let n = 0; n < background.length; n++) await background[n];
+      const final = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${submission.id}?view=receipt`,
+      );
+      expect(required(final.body.submission).intake).toMatchObject({
+        reportVersion: 2,
+        state: "legitimate",
+        routingState: "routed",
+        canRetryScreening: false,
+      });
+      expect(calls).toBe(1);
+      expect(t.analyzed).toHaveLength(1);
+      expect(t.analyzed[0].report.description).toEndWith("Revision def.");
+      expect(JSON.stringify(final.body)).not.toContain(
+        "PRIVATE-STALE-SCREEN-ERROR",
+      );
+      expect(t.objects.size).toBe(2);
+      expect(
+        (await t.call(OTHER, "GET", `security-submissions/${submission.id}`))
+          .status,
+      ).toBe(404);
+    } finally {
+      releaseOld.resolve();
+      releaseCurrent.resolve();
+      for (let n = 0; n < background.length; n++) await background[n];
+      t.sqlite.close();
+    }
   });
 
   test("reporter screening retries cannot repeat a failed assessment, but the owner can retry", async () => {
