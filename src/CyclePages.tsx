@@ -4,6 +4,7 @@ import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
+import { compareActors } from "./lib/github-actor";
 import {
   monthlyCutoff,
   PRD_MONTHLY_SCHEDULE,
@@ -323,6 +324,18 @@ function CycleAmountHistory({
 }
 
 function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
+  // The frozen record lists contributors in allocation order — payment
+  // weight, which includes receipt-evidence bonus points the site never
+  // displays (PRD section 7). This table presents the closed month's final
+  // standings, so render a copy in the order every other standings surface
+  // uses: exact score descending, compareActors for ties. The record
+  // itself is never reordered; frozen payment intent IDs embed its order.
+  const standings = [...cycle.contributors].sort(
+    (left, right) =>
+      (right.scoreThirds ?? right.score * 3) -
+        (left.scoreThirds ?? left.score * 3) ||
+      compareActors(left.actor, right.actor),
+  );
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
@@ -353,7 +366,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
               </tr>
             </thead>
             <tbody>
-              {cycle.contributors.map((contributor) => {
+              {standings.map((contributor) => {
                 const phase =
                   contributor.state === "paid"
                     ? 2
