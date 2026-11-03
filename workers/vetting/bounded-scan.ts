@@ -312,8 +312,20 @@ function commandToken(name: string): string {
   return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
 }
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
-const ENV_COMMAND = commandToken("env");
-const SUDO_COMMAND = commandToken("sudo");
+const OPERAND = String.raw`[^\s|;&<>()'"-][^\s|;&<>()'"]*`;
+/**
+ * `env` with assignments, `-i` or `-u NAME` still runs the command that
+ * follows, so `| env FOO=1 bash` is the same act as `| bash`.
+ */
+const ENV_COMMAND = String.raw`${commandToken("env")}(?:\s+(?:-i|--ignore-environment|-u\s+${OPERAND}|--unset=${OPERAND}|[A-Za-z_]\w*=(?:"[^"\n]*"|'[^'\n]*'|[^\s|;&<>()'"]*)))*`;
+/**
+ * `sudo` with options that still run the named command as given: `-E`, `-H`,
+ * `-n`, `-P`, `-k` (alone or clustered), `--preserve-env`, `--set-home`,
+ * `--non-interactive`, `--preserve-groups`, `--reset-timestamp`,
+ * `-u`/`-g` and their long forms, and `--`. `-s`, `-i`, `-l`, `-v` and `-e`
+ * select a different mode and are not matched.
+ */
+const SUDO_COMMAND = String.raw`${commandToken("sudo")}(?:\s+(?:-[EHnPk]+|--preserve-env(?:=${OPERAND})?|--set-home|--non-interactive|--preserve-groups|--reset-timestamp|-[ug]\s*${OPERAND}|--(?:user|group)(?:=|\s+)${OPERAND}|--))*`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
