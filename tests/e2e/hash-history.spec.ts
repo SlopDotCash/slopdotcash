@@ -38,8 +38,13 @@ async function scrollPage(page: Page, deltaY: number) {
   await afterPaint(page);
 }
 
-for (const pendingDestination of [false, true]) {
-  test(`Back and Forward restore fragment reading after ${pendingDestination ? "a loading page" : "immediate navigation"}`, async ({
+for (const [pendingDestination, repeatAnchor] of [
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+] as const) {
+  test(`Back and Forward restore fragment reading after ${pendingDestination ? "a loading page" : "immediate navigation"}${repeatAnchor ? " after repeating the current fragment" : ""}`, async ({
     page,
     diagnostics,
   }, info) => {
@@ -59,6 +64,21 @@ for (const pendingDestination of [false, true]) {
           .evaluate((element) => Math.abs(element.getBoundingClientRect().top)),
       )
       .toBeLessThan(1);
+    if (repeatAnchor) {
+      // A second activation keeps the same URL and native history entry.
+      await page
+        .getByRole("link", { name: "Payment stages and timing", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          page
+            .locator("#payments")
+            .evaluate((element) =>
+              Math.abs(element.getBoundingClientRect().top),
+            ),
+        )
+        .toBeLessThan(1);
+    }
 
     const distanceFromBottom = () =>
       page.evaluate(() =>

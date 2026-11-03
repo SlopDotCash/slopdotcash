@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 // Content can render or grow after a direct load (snapshot data, web fonts),
 // so the hash target is re-aligned until it settles or the reader takes over.
@@ -39,6 +39,7 @@ function scrollToTarget(targetId: string): boolean {
  * client navigation. Reuse the bounded observer for each destination.
  */
 export function useHashScroll(href: string): void {
+  const [navigationVersion, setNavigationVersion] = useState(0);
   const positions = useRef(new Map<string, { left: number; top: number }>());
   const active = useRef<{ key: string; href: string } | null>(null);
   const restoring = useRef<{ left: number; top: number } | undefined>(
@@ -52,6 +53,8 @@ export function useHashScroll(href: string): void {
           ? positions.current.get(entry.key)
           : undefined;
       active.current = null;
+      // Repeating a native fragment can leave href unchanged.
+      setNavigationVersion((value) => value + 1);
     };
     window.addEventListener("popstate", onPopState);
     return () => {
@@ -118,7 +121,7 @@ export function useHashScroll(href: string): void {
       stop();
       window.removeEventListener("scroll", remember);
     };
-  }, [href]);
+  }, [href, navigationVersion]);
 }
 
 export function Link({
