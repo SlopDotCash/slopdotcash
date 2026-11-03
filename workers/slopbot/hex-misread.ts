@@ -3,10 +3,11 @@
 // literal is not an undefined name. Those claims are encoding facts.
 //
 // Remove only the contradicted claim and the evidence line that states it.
-// A nearby digest or literal does not prove any other claim false. "undeclared"
-// names the same defect as "undefined". A follow-on sentence falls away only
-// when it does not name another identifier and does not state a failure of its
-// own subject. Limitations stay. Category becomes none only when no claim remains.
+// A nearby digest or literal does not prove any other claim false. A piece
+// stays when it names a non-hex identifier or says its own subject never
+// does something. An unrelated digest is not the token a concrete name cites.
+// Evidence is removed only when it quotes a token from a removed claim.
+// Limitations stay. Category becomes none only when no claim remains.
 
 import type { Verdict } from "./contracts";
 
@@ -39,8 +40,12 @@ const NAME_STOPWORDS = new Set([
   "the",
   "this",
   "to",
+  "global",
+  "identifier",
+  "symbol",
   "undefined",
   "value",
+  "variable",
   "was",
   "where",
   "which",
@@ -75,8 +80,10 @@ const NO_FINDING_SUMMARY =
 
 const UNDECLARED = "undefined|undeclared";
 const EXPLICIT_NAME_SOURCES = [
-  String.raw`\b(?:${UNDECLARED})\s+name\s*[,:]?\s*${QUOTED_NAME}`,
-  String.raw`\b(?:${UNDECLARED})\s+(?:global|variable|identifier|symbol)\s+${QUOTED_NAME}`,
+  // "undefined name, TOKEN" and "undeclared TOKEN", either noun order.
+  String.raw`\b(?:${UNDECLARED})(?:\s+(?:global|variable|identifier|symbol|name))?\s*[,:]?\s*${QUOTED_NAME}`,
+  // "TOKEN, an undeclared variable" — the name comes first.
+  String.raw`\b${QUOTED_NAME}\s*,\s*(?:an?\s+)?(?:${UNDECLARED})(?:\s+(?:variable|name|global|identifier|symbol))?\b`,
   String.raw`\bNameError:\s*name\s+${QUOTED_NAME}`,
   String.raw`\bname\s+${QUOTED_NAME}\s+is\s+not\s+(?:defined|declared)\b`,
   String.raw`\b${QUOTED_NAME}\s+is\s+(?:an\s+)?(?:undefined|undeclared)(?:\s+name)?\b`,
@@ -117,21 +124,50 @@ function namedUndefined(text: string): string[] {
   );
 }
 
+const NOT_DEFECT_IDENTIFIERS = new Set([
+  "hexadecimal",
+  "nameerror",
+  "placeholder",
+  "sha256",
+  "undefined",
+  "undeclared",
+]);
+
+/** A code name in this piece: camelCase, snake_case, or a backtick ident. Paths do not count. */
+function hasOwnCodeIdentifier(text: string): boolean {
+  const withoutPaths = text
+    .replace(/\b[\w.-]*\/[\w./-]+/gu, " ")
+    .replace(/\b[\w.-]+\.(?:py|ts|js|mjs|cjs|json|md|sh|yml|yaml)\b/giu, " ");
+  const accept = (token: string) => {
+    if (HEX_LITERAL.test(token)) return false;
+    const lower = token.toLowerCase();
+    return !NAME_STOPWORDS.has(lower) && !NOT_DEFECT_IDENTIFIERS.has(lower);
+  };
+  for (const match of text.matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/gu)) {
+    if (accept(match[1] ?? "")) return true;
+  }
+  for (const match of withoutPaths.matchAll(
+    /\b([a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+)\b/gu,
+  )) {
+    if (accept(match[1] ?? "")) return true;
+  }
+  return false;
+}
+
 /**
- * The piece states a failure of its own subject. A NameError follow-on about
- * the contradicted token does not. "raises NameError" alone stays a
- * continuation; "never runs" or "before assignment" does not.
+ * The piece predicates a failure of its own subject. Any "never <verb>"
+ * counts; the verb is not a fixed list. A NameError follow-on about the
+ * contradicted token has no "never <verb>" of its own.
  */
 function predicatesOwnSubjectFailure(piece: string): boolean {
-  return /\b(?:never\s+(?:runs?|ran|replaced|reaches)|silently skipped|before assignment)\b/iu.test(
-    piece,
-  );
+  return /\bnever\s+[A-Za-z][A-Za-z'-]*/iu.test(piece);
 }
 
 function isMisreadContinuation(piece: string): boolean {
   if (!CONTINUATION.test(piece)) return false;
   if (namedUndefined(piece).some((name) => !HEX_LITERAL.test(name)))
     return false;
+  if (hasOwnCodeIdentifier(piece)) return false;
   if (predicatesOwnSubjectFailure(piece)) return false;
   return true;
 }
@@ -149,12 +185,26 @@ function digestShape(text: string): DigestShape {
   return "absent";
 }
 
+/** A cited token that is not itself a digest or 0x literal. */
+function citesConcreteNonDigest(text: string): boolean {
+  for (const match of text.matchAll(/`([^`]+)`/gu)) {
+    const token = match[1]?.trim() ?? "";
+    if (token.length === 0) continue;
+    if (/^[0-9A-Fa-f]{64}$/u.test(token) || HEX_LITERAL.test(token)) continue;
+    return true;
+  }
+  return /\b[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9-]+\b/u.test(text);
+}
+
 function encodingMisread(text: string, corpus: string): boolean {
   if (!ENCODING_ASSERTION.test(text) || MISMATCH_QUALIFIER.test(text))
     return false;
   const local = digestShape(text);
   if (local === "one") return true;
   if (local === "other") return false;
+  // An unrelated digest elsewhere is not the token this piece cites.
+  if (citesConcreteNonDigest(text)) return false;
+  if (!/\b(?:digest|checksum|hash)\b/iu.test(text)) return false;
   return digestShape(corpus) === "one";
 }
 
@@ -208,19 +258,46 @@ function splitSentences(text: string): string[] {
  * another clause. An ordinary "and" stays intact so a real finding is not
  * chopped into fragments that look like separate claims.
  */
+function isSeparateClaim(part: string): boolean {
+  if (isSupportQuote(part)) return false;
+  if (part.trim().split(/\s+/u).length < 4) return false;
+  return /\b(?:can|could|should|is|are|was|were|raises?|reads?|uses?|bypassed|rejects?|fails?|crashes?|skipped|runs?)\b/iu.test(
+    part,
+  );
+}
+
+/** Split on commas only when one side is a misread and the other is its own claim. */
+function commaClauses(segment: string, corpus: string): string[] {
+  const parts = segment
+    .split(/,\s+(?=[A-Za-z`])/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length < 2)
+    return [segment.trim()].filter((part) => part.length > 0);
+  const misread = parts.map((part) => directMisread(part, corpus));
+  const separate = parts.map(
+    (part) => !directMisread(part, corpus) && isSeparateClaim(part),
+  );
+  if (misread.some(Boolean) && separate.some(Boolean)) return parts;
+  return [segment.trim()].filter((part) => part.length > 0);
+}
+
 function claimPieces(sentence: string, corpus: string): string[] {
   const segments = sentence.split(/\s+but\s+|;\s+/iu);
   const pieces: string[] = [];
   for (const segment of segments) {
-    const andParts = segment.split(/\s+and\s+/iu).map((part) => part.trim());
+    const andParts = segment
+      .split(/\s+and\s+/iu)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
     const misread = andParts.map((part) => directMisread(part, corpus));
-    if (
+    const units =
       andParts.length > 1 &&
       misread.some(Boolean) &&
       misread.some((part) => !part)
-    ) {
-      pieces.push(...andParts.filter((part) => part.length > 0));
-    } else if (segment.trim().length > 0) pieces.push(segment.trim());
+        ? andParts
+        : [segment.trim()].filter((part) => part.length > 0);
+    for (const unit of units) pieces.push(...commaClauses(unit, corpus));
   }
   return pieces;
 }
@@ -254,10 +331,37 @@ function asSentence(clause: string): string {
   return /[.!?]$/u.test(headed) ? headed : `${headed}.`;
 }
 
+function mentionsToken(text: string, tokens: ReadonlySet<string>): boolean {
+  const lower = text.toLowerCase();
+  for (const token of tokens) if (lower.includes(token)) return true;
+  return false;
+}
+
+function contradictedTokens(texts: string[], corpus: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const text of texts) {
+    for (const sentence of splitSentences(text)) {
+      for (const piece of claimPieces(sentence, corpus)) {
+        if (!directMisread(piece, corpus)) continue;
+        for (const name of namedUndefined(piece)) {
+          if (HEX_LITERAL.test(name)) tokens.add(name.toLowerCase());
+        }
+        for (const match of piece.matchAll(
+          /(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])/gu,
+        )) {
+          tokens.add(match[0].toLowerCase());
+        }
+      }
+    }
+  }
+  return tokens;
+}
+
 function reduceSentence(
   sentence: string,
   corpus: string,
   hasMisread: boolean,
+  contradicted: ReadonlySet<string>,
 ): string | null {
   if (
     hasMisread &&
@@ -268,7 +372,8 @@ function reduceSentence(
   const kept: string[] = [];
   let removed = false;
   for (const piece of pieces) {
-    if (directMisread(piece, corpus) || isSupportQuote(piece)) {
+    const support = isSupportQuote(piece) && mentionsToken(piece, contradicted);
+    if (directMisread(piece, corpus) || support) {
       removed = true;
       continue;
     }
@@ -293,9 +398,12 @@ function reduceText(
   text: string,
   corpus: string,
   hasMisread: boolean,
+  contradicted: ReadonlySet<string>,
 ): string | null {
   const kept = splitSentences(text)
-    .map((sentence) => reduceSentence(sentence, corpus, hasMisread))
+    .map((sentence) =>
+      reduceSentence(sentence, corpus, hasMisread, contradicted),
+    )
     .filter(
       (sentence): sentence is string =>
         sentence !== null && sentence.length > 0,
@@ -328,9 +436,13 @@ export function suppressHexMisreads(verdict: Verdict): Verdict {
     verdict.evidence.some((line) => textHasMisread(line, corpus));
   if (!hasMisread) return verdict;
 
-  const summary = reduceText(verdict.summary, corpus, true);
+  const contradicted = contradictedTokens(
+    [verdict.summary, ...verdict.evidence],
+    corpus,
+  );
+  const summary = reduceText(verdict.summary, corpus, true, contradicted);
   const evidence = verdict.evidence
-    .map((line) => reduceText(line, corpus, true))
+    .map((line) => reduceText(line, corpus, true, contradicted))
     .filter((line): line is string => line !== null);
   if (summary === null && evidence.length === 0) {
     return {

@@ -236,6 +236,91 @@ test("keeps a hex mismatch that names the artifact and a second digest", () => {
   expect(suppressHexMisreads(input)).toEqual(input);
 });
 
+test("keeps a non-hex name beside a 0x misread without a fixed frame", () => {
+  const cases = [
+    "The tool slices with an undefined name, `0xF4`, and also reads `retryBudget`, an undeclared variable, which raises NameError on the same path.",
+    "The tool slices with an undefined name, `0xF4`, and also reads `retryBudget`, an undefined variable, which raises NameError on the same path.",
+    "The tool slices with an undefined name, `0xF4`, and also reads the undeclared `retryBudget` on the same path, which raises NameError.",
+  ];
+  for (const summary of cases) {
+    const input = verdict({
+      summary,
+      evidence: ["packet[0xF4]"],
+      limitations: ["The NameError was inferred from the diff, not observed."],
+    });
+    const output = suppressHexMisreads(input);
+    expect(output.category).toBe("low_quality");
+    expect(output.summary).toContain("retryBudget");
+    expect(output.summary).not.toContain("0xF4");
+    expect(output.evidence).toEqual([]);
+    expect(output.limitations).toEqual(input.limitations);
+  }
+});
+
+test("keeps a subject failure whose verb is not on a fixed list", () => {
+  const summary =
+    "The retry loop never runs because the placeholder constant is never substituted at build time, so every scheduled job is silently skipped.";
+  const input = verdict({
+    summary,
+    evidence: ["The slice uses an undefined name, `0xF4`."],
+    limitations: ["The scheduler was not executed."],
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe(summary);
+  expect(output.evidence).toEqual([]);
+  expect(output.limitations).toEqual(input.limitations);
+});
+
+test("keeps a NameError about a non-hex identifier after a digest misread", () => {
+  const input = verdict({
+    summary: `The digest ${D} is not a valid sha256 hex value. The tool reads retryBudget, which raises NameError.`,
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe(
+    "The tool reads retryBudget, which raises NameError.",
+  );
+  expect(output.evidence).toEqual([]);
+  expect(output.limitations).toEqual(input.limitations);
+});
+
+test("keeps an auth bypass joined to a digest misread by a comma", () => {
+  const input = verdict({
+    summary: `The digest ${D} is not a valid hex value, the auth check can be bypassed with an empty token.`,
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe(
+    "The auth check can be bypassed with an empty token.",
+  );
+  expect(output.limitations).toEqual(input.limitations);
+});
+
+test("does not treat an unrelated digest as the token a concrete name cites", () => {
+  const input = verdict({
+    summary:
+      "The pinned token `zz-top` is not hexadecimal, so the parser rejects every request.",
+    evidence: [D],
+  });
+  expect(suppressHexMisreads(input)).toEqual(input);
+});
+
+test("keeps evidence for a remaining claim that is not the contradicted token", () => {
+  const config =
+    "The code assigns 0xF4 to undefined global config without declaring it.";
+  const input = verdict({
+    summary: `The digest ${D} is not a valid sha256 hex value. ${config}`,
+    evidence: ["config = 0xF4"],
+    limitations: ["Import-time failure was not executed."],
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe(config);
+  expect(output.evidence).toEqual(["config = 0xF4"]);
+  expect(output.limitations).toEqual(input.limitations);
+});
+
 test("leaves other categories and verified defects unchanged", () => {
   const scam = verdict({
     category: "scam",
