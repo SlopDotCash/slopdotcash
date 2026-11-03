@@ -483,6 +483,25 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // A pass-through filter between the download and the executor changes
+    // nothing about what runs: the shell or interpreter still receives the
+    // downloaded bytes. The pipe rules above require the executor
+    // immediately after the first pipe, so `curl … | tr -d '\r' | bash`
+    // (the common CRLF-stripping idiom) and `curl … | tee x.sh | sh`
+    // matched nothing. Only `tr` and `tee` qualify: both always copy stdin
+    // to stdout regardless of their operands, so the download is what
+    // reaches the executor. Filters with a local-file-operand mode (sed,
+    // grep, cat) can read a different source than the stream and are a
+    // separate shape. A chain of these filters is still one act.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:(?:${commandToken("tr")}|${commandToken("tee")})(?:[^\n|])*\|\s*)+(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a remote download through a pass-through filter in a shell",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     // A direct script argument can execute a URL without a separate download.
     // Match a command line or a JSON task value, with only known no-value
     // Deno permission flags. A URL after a local script is just script data.
