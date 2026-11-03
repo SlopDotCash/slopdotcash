@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
-import { ContributionPointTiers } from "./PointsRules";
+import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
@@ -129,6 +129,19 @@ export function HowItWorksPage() {
           </p>
         </div>
         <ContributionPointTiers />
+      </section>
+      <section className="worked-example score-contract" id="penalties">
+        <div>
+          <h2>Penalties</h2>
+          <p>
+            Slopbot applies this one published penalty table. A debit reduces
+            only that UTC month's accepted-work points and never takes it below
+            zero. A debit never changes an approved, scheduled, or paid award.
+            Maintainers and authors outside the closure scope receive no
+            penalty.
+          </p>
+        </div>
+        <PenaltyPointTable />
       </section>
       <section className="worked-example">
         <div>

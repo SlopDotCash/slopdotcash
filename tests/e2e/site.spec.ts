@@ -1959,14 +1959,16 @@ test("lands direct and lazy cross-route hash links on their section", async ({
       page.getByText("Loading page…", { exact: true }),
     ).toBeVisible();
     releaseChunk();
-    await expect(page.locator("#points")).toBeInViewport();
+    await expect(page.locator("#penalties")).toBeInViewport();
     await expect
       .poll(() =>
         page
-          .locator("#points")
+          .locator("#penalties")
           .evaluate((element) => Math.abs(element.getBoundingClientRect().top)),
       )
       .toBeLessThan(1);
+    await expect(page.locator("#penalties")).toContainText("Scam or malicious");
+    await expect(page.locator("#penalties")).toContainText("240");
     await page.screenshot({
       path: info.outputPath("lazy-fragment-target.png"),
     });
