@@ -1025,10 +1025,15 @@ async function currentAuthority(
         : undefined,
     );
   } catch {
-    const message = "GitHub could not be checked. Try again.";
+    // Only the repository facts are unavailable. Keep the installation that
+    // was read, so the setup status reports a retry of the GitHub check, not
+    // an unavailable Slopbot.
     return {
-      authority: { state: "retry", message },
-      access: { state: "retry", message },
+      authority: {
+        state: "retry",
+        message: "GitHub could not be checked. Try again.",
+      },
+      access,
     };
   }
   if (control.state === "mismatch")
