@@ -44,6 +44,7 @@ for (const inputKind of [
       for (const path of [
         "scripts/prepare-site.mjs",
         "scripts/generate-points.ts",
+        "scripts/generate-standings.ts",
         "scripts/prepare-leaderboard-transport.mjs",
       ])
         writeFileSync(join(root, path), "// unrelated publication stage\n");

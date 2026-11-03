@@ -14,7 +14,7 @@ import type {
 } from "../../src/lib/leaderboard-types";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { valueScoringPolicy } from "../../src/lib/scoring-policy";
-import { cycleIndexFixture } from "../fixtures";
+import { cycleIndexFixture, publishedStandings } from "../fixtures";
 import {
   GENERATED_AT,
   PENALIZED_AUTHOR,
@@ -30,8 +30,8 @@ async function prepareProfile(
   directory: GitHubActor[] = [],
 ) {
   await page.clock.setFixedTime(VIEWED_AT);
-  await page.route("**/data/leaderboard.json?**", (route) =>
-    route.fulfill({ json: snapshot }),
+  await page.route("**/data/standings.json?**", (route) =>
+    route.fulfill({ json: publishedStandings(snapshot) }),
   );
   await page.route("**/data/cycles/index.json*", (route) =>
     route.fulfill({ json: cycleIndexFixture() }),

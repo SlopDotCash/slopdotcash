@@ -7,10 +7,9 @@ import {
 import { readBoundedJson } from "./lib/browser-json";
 import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
-import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
 import { findProject } from "./lib/projects.mjs";
-import type { DataState } from "./lib/use-snapshot";
+import type { StandingsState } from "./lib/use-standings";
 import { ProfilePoints, useProfileMembership } from "./Points";
 import {
   ContributorIdentity,
@@ -36,7 +35,7 @@ export function ProfilePage({
   retry,
 }: {
   login: string;
-  state: DataState;
+  state: StandingsState;
   retry: () => void;
 }) {
   const profiles = useProfiles();
@@ -94,19 +93,13 @@ export function ProfilePage({
       </main>
     );
   }
-  const globalLeaders = createGlobalLeaders(
-    state.snapshot,
-    state.views,
-    state.cycleIndex,
-  );
-  const globalLeader = globalLeaders.find(
-    (leader) => leader.actor.id === actor.id,
-  );
-  const matches = state.views.flatMap((view) =>
-    view.leaders
-      .filter((leader) => leader.actor.id === actor.id)
-      .map((leader) => ({ leader, view })),
-  );
+  const standings = state.snapshot;
+  const globalLeader = standings.globalLeaderIds.includes(actor.id);
+  const matches = standings.projects.flatMap((standing) => {
+    const project = findProject(standing.projectId);
+    const leader = standing.leaders.find((entry) => entry.actorId === actor.id);
+    return project && leader ? [{ leader, standing, project }] : [];
+  });
   const history = state.cycleIndex.cycles
     .flatMap((cycle) =>
       cycle.contributors
@@ -133,12 +126,9 @@ export function ProfilePage({
       </main>
     );
   }
-  const penalties = (state.snapshot.penalties ?? []).filter(
+  const penalties = standings.penalties.filter(
     (penalty) => penalty.actor.id === actor.id,
   );
-  // The same open-month deductions as the accepted-work credits.
-  const appliedPenalties = openMonthScores(state.snapshot, state.cycleIndex)
-    .deductions.byPenalty;
   const historicalWallet = history.find(({ contributor }) => contributor.wallet)
     ?.contributor.wallet;
   const wallet =
@@ -171,24 +161,24 @@ export function ProfilePage({
           <section className="profile-card" aria-label="Projects">
             <div className="profile-card-heading">
               <h2>Projects</h2>
-              <span>{formatCycleMonth(matches[0].view.cycle.id)}</span>
+              <span>{formatCycleMonth(matches[0].standing.cycleId)}</span>
             </div>
             <ul className="project-bars">
               {matches
                 .slice()
                 .sort((left, right) => right.leader.score - left.leader.score)
-                .map(({ leader, view }) => {
-                  const totalWeight = view.leaders.reduce(
+                .map(({ leader, standing, project }) => {
+                  const totalWeight = standing.leaders.reduce(
                     (total, entry) => total + entry.adjustedWeight,
                     0,
                   );
                   const share =
                     totalWeight > 0 ? leader.adjustedWeight / totalWeight : 0;
                   return (
-                    <li key={view.project.id}>
-                      <Link href={`/projects/${view.project.slug}`}>
+                    <li key={project.id}>
+                      <Link href={`/projects/${project.slug}`}>
                         <span className="project-bar-label">
-                          <strong>{view.project.name}</strong>
+                          <strong>{project.name}</strong>
                           <small title="Accepted-work points">
                             {formatPointsFromThirds(leader.scoreThirds)} points
                           </small>
@@ -225,10 +215,7 @@ export function ProfilePage({
                     penalty.category}{" "}
                   · {formatCycleMonth(penalty.occurredAt.slice(0, 7))} · −
                   {formatPointsFromThirds(penalty.debitThirds)} point debit ·{" "}
-                  {formatPointsFromThirds(
-                    appliedPenalties.get(penalty.id) ?? 0,
-                  )}{" "}
-                  applied
+                  {formatPointsFromThirds(penalty.appliedThirds)} applied
                 </span>
               </li>
             ))}
@@ -264,7 +251,7 @@ function UnknownContributor({ login }: { login: string }) {
 }
 
 function currentProfileActor(
-  state: DataState,
+  state: StandingsState,
   login: string,
   profiles: ReturnType<typeof useProfiles>["state"],
   membership: ReturnType<typeof useProfileMembership>,
@@ -286,16 +273,13 @@ function currentProfileActor(
     url: `https://github.com/${encodeURIComponent(actor.login)}`,
     kind: "User",
   });
+  // The published record keeps the snapshot's own source order: current
+  // leaders, review-exclusion reviewers, then each project's leaders and
+  // opportunity actors.
   const actors: Array<{ id: string; login: string; avatarUrl?: string }> = [
     ...(membership.signedInActor ? [membership.signedInActor] : []),
     ...state.snapshot.leaders.map((leader) => leader.actor),
-    ...(state.snapshot.reviewExclusions ?? []).flatMap((exclusion) =>
-      exclusion.reviewer?.kind === "User" ? [exclusion.reviewer] : [],
-    ),
-    ...state.views.flatMap((view) => [
-      ...view.leaders.map((leader) => leader.actor),
-      ...view.opportunities.map((opportunity) => opportunity.actor),
-    ]),
+    ...state.snapshot.actors,
   ];
   const conflictsWith = (candidate: { id: string }) =>
     actors.some((actor) =>

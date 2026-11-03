@@ -7,8 +7,10 @@ import { expect, test } from "./fixtures";
 for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
   const broken = mode === "corrupted";
   const stalled = mode === "stalled";
-  const profile = mode === "slow" || stalled;
-  test(`${profile ? "profile" : "ranking"} ${stalled ? "times out stalled" : broken ? "refuses corrupted" : "loads complete"} multi-part snapshot${mode === "slow" ? " across individual request deadlines" : ""}`, async ({
+  // The contributor profile reads only the published standings record, so
+  // every transport case runs on the ranking, which reads the complete
+  // snapshot and shows its loading, error and stale states.
+  test(`ranking ${stalled ? "times out stalled" : broken ? "refuses corrupted" : "loads complete"} multi-part snapshot${mode === "slow" ? " across individual request deadlines" : ""}`, async ({
     page,
     diagnostics,
   }) => {
@@ -66,7 +68,7 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
         contentType: "application/json",
       });
     });
-    await page.goto(profile ? "/contributors/lalalune" : "/points");
+    await page.goto("/points");
     if (broken || stalled) {
       await expect(page.getByRole("alert")).toContainText(
         "Data could not load",
@@ -81,8 +83,14 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
       await expect
         .poll(() => partReads, { timeout: 35_000 })
         .toBeGreaterThan(1);
+      // The frozen fixture is older than eight hours, so the loaded snapshot
+      // shows its stale label once every part has arrived.
       await expect(
-        profile ? page.locator("main.profile-page") : page.getByRole("table"),
+        mode === "slow"
+          ? page
+              .getByRole("status")
+              .filter({ hasText: "Points may be outdated" })
+          : page.getByRole("table"),
       ).toBeVisible({
         timeout: mode === "slow" ? 35_000 : 10_000,
       });

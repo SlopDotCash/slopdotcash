@@ -228,11 +228,21 @@ export function MetricTile({
   );
 }
 
+/** The read states every published public record shares with the snapshot. */
+export type NoticeState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | {
+      status: "ready";
+      snapshot: Pick<LeaderboardSnapshot, "generatedAt">;
+      refreshError?: string;
+    };
+
 export function DataNotice({
   state,
   retry,
 }: {
-  state: DataState;
+  state: NoticeState;
   retry: () => void;
 }) {
   if (state.status === "loading") {
