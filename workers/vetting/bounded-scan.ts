@@ -412,9 +412,14 @@ const RULES: Rule[] = [
     // command substitution of a download qualifies: a literal here-string
     // (`bash <<< "echo hi"`), a non-download substitution (`$(date)`), a
     // here-document (`<<EOF`), and a non-executing target (`cat`, `grep`)
-    // stay out.
+    // stay out. Flags that keep stdin as the program are covered: the shell's
+    // `-s` (read commands from stdin, remaining words are positional
+    // parameters) and the interpreter's `-`/`-u` forms, including options
+    // after them. A file argument (`sh tools/check.sh <<<`, `python3 x.py
+    // <<<`), a module (`python3 -m json.tool`), and a syntax-only check
+    // (`bash -n`) run or inspect something other than the here-string.
     pattern: new RegExp(
-      String.raw`(?:^|[\s;|&()'"])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND})\s*<<<\s*["']?(?:\$\(|\x60)\s*(?:curl|wget)\b`,
+      String.raw`(?:^|[\s;|&()'"])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-s(?:\s+[^\s|;&<>()]+)*)?|${INTERPRETER_PIPE_TARGET}(?:(?<=\s-)(?:\s+[^\s|;&<>()]+)+)?)\s*<<<\s*["']?(?:\$\(|\x60)\s*(?:curl|wget)\b`,
       "iu",
     ),
     summary: "Runs a remote download in a shell via a here-string",
