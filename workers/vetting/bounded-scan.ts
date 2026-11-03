@@ -213,6 +213,15 @@ const MSBUILD_RECIPE = new RegExp(
   String.raw`\.(?:${MSBUILD_EXTENSIONS})$`,
   "iu",
 );
+/**
+ * Arch Linux pacman install scriptlets (`<pkgname>.install`) are shell
+ * function libraries sourced by pacman as root on install, upgrade and
+ * removal; they carry no `#!` shebang, so the interpreter check never
+ * sees them. The `.install` suffix alone marks them as install
+ * content, whether or not a PKGBUILD in the same package names them
+ * via `install=`.
+ */
+const ARCH_INSTALL_SCRIPTLET = /\.install$/u;
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
@@ -285,6 +294,7 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
+    ARCH_INSTALL_SCRIPTLET.test(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
