@@ -319,8 +319,9 @@ const SUDO_COMMAND = commandToken("sudo");
  * `command curl`, `command -p curl`, `command -- curl`, `/usr/bin/curl` and
  * `\curl` exactly as it runs `curl`, so a `$(` followed by any of them is the
  * same download as `$(curl`. `command -v` only prints a path and is not matched.
+ * The name must end there: `curl-config` and `wget-wrapper.sh` are other tools.
  */
-const DOWNLOAD_COMMAND = String.raw`(?:command\s+(?:(?:--|-p)\s+)*)?(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)\b`;
+const DOWNLOAD_COMMAND = String.raw`(?:command\s+(?:(?:--|-p)\s+)*)?(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)(?:\.exe)?(?![\w./-])`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
