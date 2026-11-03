@@ -1469,7 +1469,7 @@ function ProjectPage({
           project={project}
           state={state}
         />
-        {view && state.status === "ready" && view.leaders.length > 0 ? (
+        {view && state.status === "ready" ? (
           <div id="contributors">
             <ContributorStandings
               projectId={project.id}
