@@ -214,6 +214,18 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * Gatsby loads `gatsby-config` by evaluating it as code in the
+ * initialize service of every build and develop run, in exactly
+ * these spellings: its resolver looks up `.js` and `.mjs` and the
+ * file is imported directly, while `.ts` is compiled into the
+ * compiled cache directory first and the compiled output imported,
+ * so all three are build-time code like a Makefile, never parsed
+ * configuration. The other spellings stay out: the resolver never
+ * looks up `.cjs`, `.cts` or `.mts`, and a `.tsx` file is reported
+ * as misnamed instead of being loaded.
+ */
+const GATSBY_CONFIG = /^gatsby-config\.(?:js|mjs|ts)$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +295,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    GATSBY_CONFIG.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
