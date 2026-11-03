@@ -72,19 +72,25 @@ export const REGISTERED_REPOSITORIES = Object.freeze(
 /** Null while no project is active; the registry may legitimately be empty. */
 export const PRIMARY_REPOSITORY = TARGET_REPOSITORIES[0] ?? null;
 
+/**
+ * Lookup index over the frozen registry, built once at module load.
+ * The first registration wins for each key, matching the array scan's
+ * first-match order exactly.
+ */
+const REGISTERED_REPOSITORIES_BY_ID = new Map();
+for (const repository of REGISTERED_REPOSITORIES) {
+  for (const id of [repository.id, ...repository.aliases]) {
+    const key = id.toLowerCase();
+    if (!REGISTERED_REPOSITORIES_BY_ID.has(key)) {
+      REGISTERED_REPOSITORIES_BY_ID.set(key, repository);
+    }
+  }
+}
+
 /** Historical lookup never authorizes collection of a paused repository. */
 export function findRegisteredRepositoryById(id) {
   if (typeof id !== "string") return null;
-  const normalizedId = id.toLowerCase();
-  return (
-    REGISTERED_REPOSITORIES.find(
-      (repository) =>
-        repository.id.toLowerCase() === normalizedId ||
-        repository.aliases.some(
-          (alias) => alias.toLowerCase() === normalizedId,
-        ),
-    ) ?? null
-  );
+  return REGISTERED_REPOSITORIES_BY_ID.get(id.toLowerCase()) ?? null;
 }
 
 export function findRegisteredRepository(owner, name) {
