@@ -1204,7 +1204,7 @@ export function ContributorStandings({
     }))
     .filter((member) => member.points > 0)
     .sort((a, b) => {
-      return b.points - a.points || a.actor.id.localeCompare(b.actor.id);
+      return b.points - a.points || a.actor.id.localeCompare(b.actor.id, "en");
     });
   const ranks = new Map<string, number>();
   let previous: number | null = null;

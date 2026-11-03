@@ -31,7 +31,7 @@ export function HomeStandings() {
   const ranked = useMemo(() => {
     if (points.status !== "ready") return [];
     return [...points.summary.contributors].sort(
-      (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
+      (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id, "en"),
     );
   }, [points]);
   const ranks = new Map<string, number>();
