@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { PointAward, PointRevision } from "./lib/points";
-import { currentProjectSession } from "./lib/project-api";
+import { currentProjectSession, ProjectApiError } from "./lib/project-api";
 import { formatDateTime } from "./Presentation";
 
 type Dispute = {
@@ -48,7 +48,7 @@ export default function PointsDisputes({
   } | null>(null);
   const [reason, setReason] = useState("");
   const [decision, setDecision] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<Error | null>(null);
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState(0);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -78,11 +78,14 @@ export default function PointsDisputes({
         : { method: "POST", body: JSON.stringify(body) }),
     });
     const value = await readBoundedJson(response, 512 * 1024, "Points review");
-    if (!response.ok)
-      throw new Error(
-        (value as { message?: string }).message ??
-          "Points review unavailable. Retry.",
+    if (!response.ok) {
+      const problem = value as { error?: string; message?: string } | null;
+      throw new ProjectApiError(
+        response.status,
+        problem?.error ?? "request_failed",
+        problem?.message ?? "Points review unavailable. Retry.",
       );
+    }
     if ((await currentProjectSession())?.githubId !== actorId)
       throw new Error("The account changed. Reload Inbox.");
     return value;
@@ -91,7 +94,7 @@ export default function PointsDisputes({
   // biome-ignore lint/correctness/useExhaustiveDependencies: request is bound to this actor; retry reloads the current page.
   useEffect(() => {
     const controller = new AbortController();
-    setError("");
+    setError(null);
     setBusy(true);
     setDetail(null);
     request(
@@ -110,8 +113,8 @@ export default function PointsDisputes({
         if (!controller.signal.aborted)
           setError(
             failure instanceof Error
-              ? failure.message
-              : "Points review unavailable. Retry.",
+              ? failure
+              : new Error("Points review unavailable. Retry."),
           );
       })
       .finally(() => {
@@ -121,7 +124,7 @@ export default function PointsDisputes({
   }, [actorId, selected, cursor, retry]);
   const act = async (body: unknown, path = "") => {
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const result = (await request(path, undefined, body)) as Dispute;
       if (!mounted.current) return;
@@ -139,8 +142,8 @@ export default function PointsDisputes({
       if (mounted.current)
         setError(
           failure instanceof Error
-            ? failure.message
-            : "Points review unavailable. Retry.",
+            ? failure
+            : new Error("Points review unavailable. Retry."),
         );
     } finally {
       if (mounted.current) setBusy(false);
@@ -151,11 +154,22 @@ export default function PointsDisputes({
       <h2>Review Points</h2>
       {error ? (
         <p role="alert">
-          {error}{" "}
+          {error.message}{" "}
           <button
             type="button"
             className="text-button"
-            onClick={() => setRetry((value) => value + 1)}
+            onClick={() => {
+              if (
+                error instanceof ProjectApiError &&
+                error.status === 409 &&
+                error.code === "superseded"
+              ) {
+                setAward(null);
+                setPage(null);
+                setCursor(null);
+              }
+              setRetry((value) => value + 1);
+            }}
           >
             Retry
           </button>
