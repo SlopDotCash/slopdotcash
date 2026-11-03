@@ -165,7 +165,16 @@ export function ProfileActivity({
       ) : state.status === "loading" ? (
         <p role="status">Loading PR history…</p>
       ) : counts ? (
-        <PullRequestBar counts={counts} login={p?.login ?? login} />
+        <PullRequestBar
+          counts={counts}
+          login={p?.login ?? login}
+          repositories={
+            p?.repositories.map((row) => row.repository) ??
+            (state.status === "ready"
+              ? state.index.repositories.map((row) => row.repository)
+              : [])
+          }
+        />
       ) : null}
       {children}
       {id ? <ProfilePaymentHistory actorId={id} cycles={cycles} /> : null}
@@ -182,9 +191,11 @@ const PR_SEGMENTS = [
 function PullRequestBar({
   counts,
   login,
+  repositories,
 }: {
   counts: { merged: number; open: number; closed: number };
   login: string;
+  repositories: string[];
 }) {
   const total = counts.merged + counts.open + counts.closed;
   const decided = counts.merged + counts.closed;
@@ -216,7 +227,7 @@ function PullRequestBar({
         {PR_SEGMENTS.map(([key, label, query]) => (
           <li key={key}>
             <span className={`pr-dot pr-bar-${key}`} aria-hidden="true" />
-            <a href={contributorPullSearchUrl(login, query)}>
+            <a href={contributorPullSearchUrl(login, query, repositories)}>
               <strong>{counts[key].toLocaleString()}</strong> PRs{" "}
               {label.toLowerCase()}
             </a>

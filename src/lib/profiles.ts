@@ -287,12 +287,20 @@ export function profileCounts(p: ProfileRecord) {
  * Public search for one contributor's pull requests.
  * `github.com/pulls` is the signed-in dashboard and sends anonymous visitors
  * to the login page, so the profile counts cannot use it.
+ * The counts sum only the repositories recorded on the profile, so the
+ * search is scoped to those repositories: without a `repo:` qualifier the
+ * result lists pull requests the count never included. A profile with no
+ * recorded repositories keeps the unscoped search.
  */
 export function contributorPullSearchUrl(
   login: string,
   qualifier: string,
+  repositories: readonly string[] = [],
 ): string {
-  const query = `is:pr author:${login} ${qualifier}`;
+  const scoped = [...new Set(repositories)]
+    .map((repository) => ` repo:${repository}`)
+    .join("");
+  const query = `is:pr author:${login} ${qualifier}${scoped}`;
   return `https://github.com/search?q=${encodeURIComponent(query)}&type=pullrequests`;
 }
 
