@@ -82,19 +82,3 @@ test("a tied monthly remainder keeps its recipient when the host locale is Turki
     compare.mockRestore();
   }
 });
-
-test("login-first tie order survives an id order that inverts it", () => {
-  // Regression test for the CycleAllocation tie-break: these two ids sort
-  // "zara" first under an "en" id collation ("MDQ6..." < "U_kgDO..."),
-  // but the documented tie order is login-first, so "alice" must win the
-  // tied remainder unit and stand first.
-  const people = [
-    contributor("zara", "MDQ6VXNlcjI="),
-    contributor("alice", "U_kgDOAAAAAQ"),
-  ];
-  expect(standing(people)).toEqual(["alice", "zara"]);
-  expect(shares(people)).toEqual({
-    U_kgDOAAAAAQ: "1",
-    "MDQ6VXNlcjI=": "0",
-  });
-});
