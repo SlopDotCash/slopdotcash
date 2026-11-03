@@ -118,3 +118,95 @@ test("prose that mentions hex or a literal without rejecting a value is not refu
   ])
     expect(refutedLiteralClaim(summary)).toBeNull();
 });
+
+// #2201 review (nh0cksh0ck02, finding 1): models quote Python runtime errors
+// in the traceback's own quoting style, not in Markdown backticks, so the
+// undefined-name check has to read single quotes, double quotes and prose.
+test("a Python NameError with single-quoted name is refuted", () => {
+  const refuted = refutedLiteralClaim(
+    "Fails with NameError: name '0xF4' is not defined.",
+  );
+  expect(refuted?.kind).toBe("literal");
+  expect(refuted?.value).toBe("0xF4");
+});
+
+test("a Python NameError with double-quoted name is refuted", () => {
+  const refuted = refutedLiteralClaim(
+    'Fails with NameError: name "0xF4" is not defined.',
+  );
+  expect(refuted?.kind).toBe("literal");
+  expect(refuted?.value).toBe("0xF4");
+});
+
+test("an unquoted prose undefined-name claim about a 0x literal is refuted", () => {
+  const refuted = refutedLiteralClaim(
+    "The module raises NameError because 0xF4 is not defined.",
+  );
+  expect(refuted?.kind).toBe("literal");
+  expect(refuted?.value).toBe("0xF4");
+});
+
+// #2201 review (remarbical, finding 1): the rejection must be about the
+// well-formed digest, not merely mention one.
+test("a malformed value rejected next to a correct digest is not refuted", () => {
+  expect(
+    refutedLiteralClaim(
+      `The pinned value 0xDEAD is not a sha256 hex value; use ${DIGEST} instead.`,
+    ),
+  ).toBeNull();
+});
+
+test("a rejected 63-character digest does not borrow a correct pin's form", () => {
+  expect(
+    refutedLiteralClaim(
+      `The pin ${DIGEST.slice(0, 63)} is not a valid sha256 digest; the correct pin is ${DIGEST}.`,
+    ),
+  ).toBeNull();
+});
+
+// #2201 review (remarbical, finding 2): the undefined-name claim is about the
+// quoted name, and the 0x literal is the suggested fix.
+test("an undefined name claim about another token does not refute the fix's literal", () => {
+  expect(
+    refutedLiteralClaim(
+      "The module assigns the mask to an undefined name `TOKEN_SIDE`, raising NameError; the intended fix is `SLOT_TOKEN_SIDE=0xF4`.",
+    ),
+  ).toBeNull();
+});
+
+// #2201 review (nh0cksh0ck02, finding 3): a token that survives only on a
+// removed diff line is genuinely absent from the result.
+const DIFF = [
+  "--- evidence/dependencies/spl_token/DIGEST.md (modified)",
+  "@@ -1,2 +1,2 @@",
+  `-pinned sha256 ${DIGEST}`,
+  "+pinned sha256 deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+].join("\n");
+
+test("an absence claim about a token only on a removed diff line is not refuted", () => {
+  expect(
+    refutedLiteralClaim(
+      `The digest \`${DIGEST}\` does not appear in the diff.`,
+      DIFF,
+    ),
+  ).toBeNull();
+});
+
+test("an absence claim about a token on an added diff line is still refuted", () => {
+  const refuted = refutedLiteralClaim(
+    `The digest \`${DIGEST}\` does not appear in the diff.`,
+    `--- a/x (modified)\n@@ -1 +1 @@\n+sha256 ${DIGEST}\n`,
+  );
+  expect(refuted?.kind).toBe("sha256");
+  expect(refuted?.value).toBe(DIGEST);
+});
+
+test("an absence claim about an ordinary name the diff happens to contain is not refuted", () => {
+  // The claim is that the check is missing, not that `admin` is absent.
+  expect(
+    refutedLiteralClaim(
+      "The authorization check for `admin` is missing from the handler.",
+      "+const admin = true\n+function handler() {}\n",
+    ),
+  ).toBeNull();
+});

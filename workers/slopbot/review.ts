@@ -48,7 +48,10 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
-import { refutedLiteralClaim } from "./literal-claims";
+import {
+  type RefutedLiteralClaim,
+  refutedLiteralClaim,
+} from "./literal-claims";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -1353,10 +1356,18 @@ async function runReview(
   // wrong rejection harms a real contributor (PRD section 5). Weak work is
   // label-only, so withdrawing the finding publishes an advisory no-finding
   // comment instead of a label.
-  const refuted =
-    verdict.category === "low_quality"
-      ? refutedLiteralClaim(verdict.summary, context.itemText)
-      : null;
+  //
+  // The claim can sit in any part of the verdict, and a misread is a misread
+  // whatever category the model picked, so every category that carries a
+  // finding is checked across the summary and each evidence line (#2201
+  // review). The check itself fails open: it only returns a claim when the
+  // verdict rejects the very value it quotes.
+  let refuted: RefutedLiteralClaim | null = null;
+  if (verdict.category !== "none")
+    for (const text of [verdict.summary, ...verdict.evidence]) {
+      refuted = refutedLiteralClaim(text, context.itemText);
+      if (refuted) break;
+    }
   if (refuted) {
     verdict = {
       ...verdict,

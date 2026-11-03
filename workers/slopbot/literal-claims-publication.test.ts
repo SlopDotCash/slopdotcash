@@ -25,7 +25,10 @@ const RULE =
   "Keep descriptions specific to the actual diff; tests and line counts alone";
 const DIFF_LINE = `+pinned sha256 ${DIGEST}`;
 
-async function reviewFinding(summary: string) {
+async function reviewFinding(
+  summary: string,
+  overrides: { category?: string; evidence?: string[] } = {},
+) {
   const { db, sqlite } = sqliteD1(
     readdirSync(new URL("../../migrations/", import.meta.url))
       .filter((p) => p.endsWith(".sql"))
@@ -77,10 +80,10 @@ async function reviewFinding(summary: string) {
             {
               type: "text",
               text: JSON.stringify({
-                category: "low_quality",
+                category: overrides.category ?? "low_quality",
                 confidence: 0.9,
                 rule_refs: [{ source: "CONTRIBUTING.md", quote: RULE }],
-                evidence: [DIFF_LINE],
+                evidence: overrides.evidence ?? [DIFF_LINE],
                 summary,
                 limitations: [],
                 objective_defect: null,
@@ -237,5 +240,42 @@ test("a finding that makes no literal claim still publishes for the maintainer",
   expect(result.review).toEqual({ status: "completed", action: "label" });
   expect(result.comments[0]).toContain("`low_quality`");
   expect(result.comments[0]).toContain("undefined name `TOKEN_SIDE`");
+  expect(result.comments[0]).not.toContain("no finding");
+});
+
+// #2201 review (nh0cksh0ck02, finding 2): the refutation can sit in the
+// evidence rather than the summary, so the gate has to read both.
+test("a refuted digest claim placed in evidence is not published", async () => {
+  const result = await reviewFinding(
+    "Invalid hash provided for the pinned digest.",
+    {
+      evidence: [`The digest ${DIGEST} is not a sha256 hex value.`],
+    },
+  );
+  expect(result.review).toEqual({ status: "completed", action: "comment" });
+  expect(result.comments[0]).toContain("no finding");
+  expect(result.comments[0]).not.toContain("low_quality");
+});
+
+// #2201 review (nh0cksh0ck02, finding 2): a misread is a misread whatever
+// category the model picked, so the gate is not limited to low_quality.
+test("a refuted literal claim under another category is not published", async () => {
+  const result = await reviewFinding(
+    "The diff introduces an undefined name `0xF4`, so the module cannot import.",
+    { category: "missing_evidence" },
+  );
+  expect(result.review).toEqual({ status: "completed", action: "comment" });
+  expect(result.comments[0]).toContain("no finding");
+  expect(result.comments[0]).not.toContain("missing_evidence");
+});
+
+// #2201 review (remarbical, finding 2): the undefined-name claim is about a
+// different token, so the legitimate finding must still publish.
+test("an undefined name claim about another token still publishes", async () => {
+  const result = await reviewFinding(
+    "The module assigns the mask to an undefined name `TOKEN_SIDE`, raising NameError; the intended fix is `SLOT_TOKEN_SIDE=0xF4`.",
+  );
+  expect(result.review).toEqual({ status: "completed", action: "label" });
+  expect(result.comments[0]).toContain("`low_quality`");
   expect(result.comments[0]).not.toContain("no finding");
 });
