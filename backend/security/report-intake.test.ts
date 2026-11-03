@@ -12,12 +12,17 @@ import { applicationManifest } from "../../tests/project-application-manifest";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1QueryStatement } from "../d1";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
-import type {
-  CaseAnalysisView,
-  SecurityAnalysisInput,
-  SecurityAnalyzer,
-  SecurityAppealInput,
-  SecurityScreeningProposal,
+import {
+  ANALYSIS_TIMEOUT_MS,
+  BACKGROUND_ANALYSIS_RESERVE_MS,
+  BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  backgroundScreeningBudget,
+  type CaseAnalysisView,
+  parseScreeningProposal,
+  type SecurityAnalysisInput,
+  type SecurityAnalyzer,
+  type SecurityAppealInput,
+  type SecurityScreeningProposal,
 } from "./analysis";
 import {
   handleSecurityApi,
@@ -240,10 +245,13 @@ function fixture(overrides: Record<string, unknown> = {}) {
   let sequence = 0;
   let screeningCalls = 0;
   let decision: SecurityScreeningProposal["decision"] = "legitimate";
+  let missingEvidence = false;
+  let screeningReason: string | null = null;
   let screeningFails = false;
   let beforeScreenResult: (() => Promise<void>) | null = null;
   const screenedDescriptions: string[] = [];
   const screened: SecurityAnalysisInput[] = [];
+  const screenTimeouts: number[] = [];
   const analyzed: SecurityAnalysisInput[] = [];
   const analysisTimeouts: number[] = [];
   let beforeAnalysisResult: (() => Promise<void>) | null = null;
@@ -263,18 +271,21 @@ function fixture(overrides: Record<string, unknown> = {}) {
         remediation: "Review the isolated reproduction privately.",
       };
     },
-    async screen(input) {
+    async screen(input, timeoutMs) {
       screeningCalls++;
+      screenTimeouts.push(timeoutMs);
       screened.push(input);
       screenedDescriptions.push(input.report.description);
       if (beforeScreenResult) await beforeScreenResult();
       if (screeningFails) throw new Error("PRIVATE-PROVIDER-ERROR-SENTINEL");
       return {
         decision,
+        missingEvidence,
         reason:
-          decision === "legitimate"
+          screeningReason ??
+          (decision === "legitimate"
             ? "Concrete isolated reproduction merits human review."
-            : "Provide a concrete affected function and isolated reproduction.",
+            : "Provide a concrete affected function and isolated reproduction."),
       };
     },
   };
@@ -350,11 +361,18 @@ function fixture(overrides: Record<string, unknown> = {}) {
     notices,
     screenedDescriptions,
     screened,
+    screenTimeouts,
     analyzed,
     analysisTimeouts,
     screeningCalls: () => screeningCalls,
     decision: (value: SecurityScreeningProposal["decision"]) => {
       decision = value;
+    },
+    missingEvidence: (value: boolean) => {
+      missingEvidence = value;
+    },
+    screeningReason: (value: string) => {
+      screeningReason = value;
     },
     failScreening: (value: boolean) => {
       screeningFails = value;
@@ -1061,6 +1079,110 @@ describe("durable private report controls", () => {
     expect(t.screeningCalls()).toBe(1);
     expect(t.screened[0]?.priorCases).toEqual([]);
     expect(t.analyzed).toHaveLength(1);
+    expect(t.screenTimeouts).toEqual([ANALYSIS_TIMEOUT_MS]);
+  });
+
+  test("a legitimate label with missing evidence is held and not routed", async () => {
+    const t = fixture();
+    t.missingEvidence(true);
+    t.screeningReason("No reproduction is attached.");
+    const accepted = await t.create("missing-evidence-hold");
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("needs-information");
+    expect(submission.intake.canForward).toBe(false);
+    expect(submission.intake.reason).toBe("No reproduction is attached.");
+    expect(t.analyzed).toHaveLength(0);
+    expect(t.notices(OWNER)).toHaveLength(0);
+    expect(t.notices(REPORTER)).toHaveLength(1);
+    const forwarded = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${submission.id}/review`,
+      {
+        expectedRevision: submission.intake.revision,
+        decision: "forward",
+        reason: "The private evidence supports technical review.",
+      },
+    );
+    expect(forwarded.status).toBe(200);
+    expect(required(forwarded.body.submission).intake.canForward).toBe(true);
+    expect(t.analyzed).toHaveLength(1);
+  });
+
+  test("spam stays spam when the model also sets missing evidence", async () => {
+    const t = fixture();
+    t.decision("spam");
+    t.missingEvidence(true);
+    const submission = required((await t.create()).body.submission);
+    expect(submission.intake.state).toBe("spam");
+    expect(submission.intake.canForward).toBe(false);
+    expect(t.analyzed).toHaveLength(0);
+    expect(t.notices(OWNER)).toHaveLength(0);
+  });
+
+  test("background screening keeps a reserved budget for analysis", async () => {
+    const t = fixture();
+    const pending: Promise<unknown>[] = [];
+    t.deps.waitUntil = (task) => {
+      pending.push(task);
+    };
+    const accepted = await t.create("background-budget-ok00");
+    expect(accepted.status).toBe(201);
+    for (let waited = 0; waited < pending.length; ) {
+      const end = pending.length;
+      await Promise.all(pending.slice(waited));
+      waited = end;
+    }
+    const screenBudget = backgroundScreeningBudget(
+      BACKGROUND_ANALYSIS_TIMEOUT_MS,
+    );
+    expect(screenBudget).toBe(
+      BACKGROUND_ANALYSIS_TIMEOUT_MS - BACKGROUND_ANALYSIS_RESERVE_MS,
+    );
+    expect(t.screenTimeouts).toEqual([screenBudget]);
+    expect(t.analysisTimeouts).toHaveLength(1);
+    expect(t.analysisTimeouts[0]).toBeGreaterThan(screenBudget);
+    expect(t.analysisTimeouts[0]).toBeLessThan(BACKGROUND_ANALYSIS_TIMEOUT_MS);
+    const submission = required(
+      (
+        await t.call(
+          REPORTER,
+          "GET",
+          `security-submissions/${required(accepted.body.submission).id}`,
+        )
+      ).body.submission,
+    );
+    expect(submission.intake.state).toBe("legitimate");
+    expect(t.notices(OWNER)).toHaveLength(1);
+  });
+
+  test("a background screening failure stays unavailable and does not analyze", async () => {
+    const t = fixture();
+    const pending: Promise<unknown>[] = [];
+    t.deps.waitUntil = (task) => {
+      pending.push(task);
+    };
+    t.failScreening(true);
+    const accepted = await t.create("background-budget-fail");
+    expect(accepted.status).toBe(201);
+    await Promise.all(pending);
+    const submission = required(
+      (
+        await t.call(
+          REPORTER,
+          "GET",
+          `security-submissions/${required(accepted.body.submission).id}`,
+        )
+      ).body.submission,
+    );
+    expect(submission.intake.state).toBe("unavailable");
+    expect(submission.intake.reason).toMatch(/unavailable/i);
+    expect(t.screenTimeouts).toEqual([
+      backgroundScreeningBudget(BACKGROUND_ANALYSIS_TIMEOUT_MS),
+    ]);
+    expect(t.analyzed).toHaveLength(0);
+    expect(t.notices(OWNER)).toHaveLength(0);
   });
 
   test.each(["needs-information", "spam"] as const)(
@@ -2286,6 +2408,28 @@ describe("durable private report controls", () => {
       ).toHaveLength(0);
     },
   );
+});
+
+test("screening output accepts a missing-evidence flag and rejects a non-boolean", () => {
+  expect(
+    parseScreeningProposal(
+      '{"decision":"legitimate","reason":"Component, impact, and reproduction are included.","missingEvidence":false}',
+    ),
+  ).toEqual({
+    decision: "legitimate",
+    reason: "Component, impact, and reproduction are included.",
+    missingEvidence: false,
+  });
+  expect(
+    parseScreeningProposal(
+      '{"decision":"needs-information","reason":"Name the affected function."}',
+    ).missingEvidence,
+  ).toBe(false);
+  expect(() =>
+    parseScreeningProposal(
+      '{"decision":"legitimate","reason":"Gap noted.","missingEvidence":"yes"}',
+    ),
+  ).toThrow("Invalid screening output");
 });
 
 test("durable-intake migration preserves funded historical receipts and immutable guards", () => {

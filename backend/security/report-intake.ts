@@ -10,6 +10,7 @@ import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  backgroundScreeningBudget,
   type SecurityAnalysisInput,
   type SecurityAnalysisReport,
   type SecurityScreeningProposal,
@@ -540,8 +541,9 @@ export async function screenStoredReport(
 ): Promise<void> {
   const started = performance.now();
   const assess = async (qualified: StoredIntake) => {
-    // Screening and assessment share one waitUntil lifetime. Keep time for
-    // persisting a timeout rather than starting a second full-length call.
+    // Screening and assessment share one waitUntil lifetime. The screen call
+    // is capped so this remainder can still run the duplicate comparison,
+    // with a short pause reserved for persisting a timeout.
     const remaining = deps.waitUntil
       ? Math.max(1, Math.floor(timeoutMs - (performance.now() - started) - 500))
       : undefined;
@@ -628,7 +630,10 @@ export async function screenStoredReport(
           : null,
         priorCases: [],
       };
-      const proposal = await deps.analyzer.screen(input, timeoutMs);
+      const screenTimeout = deps.waitUntil
+        ? backgroundScreeningBudget(timeoutMs)
+        : timeoutMs;
+      const proposal = await deps.analyzer.screen(input, screenTimeout);
       if (
         !["legitimate", "needs-information", "spam"].includes(
           proposal.decision,
@@ -637,8 +642,9 @@ export async function screenStoredReport(
         !proposal.reason.trim()
       )
         throw new Error("Invalid screening result");
-      state = proposal.decision;
-      reason = proposal.reason.trim().slice(0, 2000);
+      const applied = applyScreeningDecision(proposal);
+      state = applied.decision;
+      reason = applied.reason;
     }
   } catch {
     /* Do not expose provider errors or private evidence. */
@@ -725,12 +731,27 @@ export async function screenLegacyReport(
       "Automatic screening is unavailable. Your draft is kept.",
     );
   }
-  if (proposal.decision !== "legitimate")
+  if (applyScreeningDecision(proposal).decision !== "legitimate")
     fail(
       409,
       "screening_required",
       "This draft needs more evidence or a private maintainer review before forwarding. Submit it through Slop to track that review.",
     );
+}
+
+/**
+ * A legitimate label that also says evidence is missing is held. The model's
+ * reason stays, so the reporter still sees the gap. Spam and an explicit
+ * needs-information decision are unchanged.
+ */
+function applyScreeningDecision(proposal: SecurityScreeningProposal): {
+  decision: "legitimate" | "needs-information" | "spam";
+  reason: string;
+} {
+  const reason = proposal.reason.trim().slice(0, 2000);
+  if (proposal.decision === "legitimate" && proposal.missingEvidence === true)
+    return { decision: "needs-information", reason };
+  return { decision: proposal.decision, reason };
 }
 
 export async function acceptStoredReport(

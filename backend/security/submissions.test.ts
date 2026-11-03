@@ -2952,6 +2952,22 @@ describe("optional GitHub forwarding of a saved report", () => {
   });
 });
 
+test("a legacy draft labeled legitimate with missing evidence is not forwarded", async () => {
+  const t = setup({ durable: false });
+  t.analyzer.screen = async () => ({
+    decision: "legitimate",
+    missingEvidence: true,
+    reason: "No reproduction is attached.",
+  });
+  const submission = await t.ready();
+  const sent = await t.send(submission.id, submission.revision);
+  expect(sent.status).toBe(409);
+  expect(sent.body.error).toBe("screening_required");
+  expect(sent.body.message).not.toContain("No reproduction is attached.");
+  expect(t.row(submission.id).state).toBe("draft");
+  expect(t.github.advisories).toHaveLength(0);
+});
+
 test("an unfinished legacy draft passes the same screen before its first forward", async () => {
   const t = setup({ durable: false });
   // Every screening decision refuses the draft, whatever its text.
