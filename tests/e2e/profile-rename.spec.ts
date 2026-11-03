@@ -5,7 +5,8 @@ import { deriveAllocationFundingBasis } from "../../src/lib/allocation-funding";
 import { assertCycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
-import { assertProfiles } from "../../src/lib/profiles";
+import { githubUserIdFromNodeId } from "../../src/lib/github-actor";
+import { assertProfiles, type ProfileIndex } from "../../src/lib/profiles";
 import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
@@ -33,7 +34,7 @@ async function profileRecords(
   if (!options.reusedHandle && !options.directoryOnly && !options.unverified)
     archived.id = current.id;
   const now = new Date().toISOString();
-  const profiles = {
+  const profiles: ProfileIndex = {
     schemaVersion: "1",
     startedAt: now,
     generatedAt: now,
@@ -1496,3 +1497,96 @@ test("profile history previews retain every payment and cycle behind keyboard co
   await expect(history.getByRole("listitem")).toHaveCount(5);
   await expect(total).toHaveText("$14");
 });
+
+for (const mode of ["same", "member", "different"] as const) {
+  const sameUser = mode !== "different";
+  test(`${mode} GitHub user node-ID spellings keep the profile ${sameUser ? "available" : "separate"}`, async ({
+    page,
+  }, info) => {
+    const site = await serveProfileSite(page);
+    const { profiles, current, walletRequests } = await profileRecords(page);
+    const numericId = sameUser ? 1 : 2;
+    const modern = `U_${Buffer.from([0x92, 0, 0xce, 0, 0, 0, numericId]).toString("base64url")}`;
+    expect(githubUserIdFromNodeId(current.id)).toBe("1");
+    expect(githubUserIdFromNodeId(modern)).toBe(String(numericId));
+    profiles.people[0].id = modern;
+    profiles.people[0].repositories = [
+      { repository: TARGET_REPOSITORIES[0].id, merged: 2, open: 3, closed: 1 },
+    ];
+    profiles.repositories[0].count = 6;
+    assertProfiles(profiles);
+    await page.route(`${site}/api/v1/points/**`, (route) =>
+      route.fulfill({
+        json:
+          mode === "member" &&
+          new URL(route.request().url()).pathname.endsWith("/member")
+            ? {
+                actor: { id: modern, login: current.login },
+                joinedAt: "2026-10-25T00:00:00.000Z",
+                public: true,
+                welcome: 0,
+              }
+            : null,
+      }),
+    );
+    await page.route(`${site}/api/v1/project-session`, (route) =>
+      route.fulfill({ json: { session: null } }),
+    );
+    await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+      route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+    );
+    await page.goto(`${site}/contributors/${current.login}`, {
+      waitUntil: "networkidle",
+    });
+    if (sameUser) {
+      await expect(
+        page.getByRole("heading", { name: current.login, exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      ).toBeVisible();
+      const profile = page.getByRole("region", {
+        name: "Contributor profile",
+        exact: true,
+      });
+      await expect(profile.locator(".pr-legend")).toBeVisible();
+      await expect(profile.locator(".pr-legend")).toContainText("2 PRs merged");
+      await expect(profile.locator(".pr-legend")).toContainText("3 PRs open");
+      await expect(profile.locator(".pr-legend")).toContainText(
+        "1 PRs closed without merging",
+      );
+      await expect(
+        page.getByRole("heading", {
+          name: "No Slop contributor with this login",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      expect(walletRequests.length).toBeGreaterThan(0);
+      expect(
+        walletRequests.every(
+          (path) => path === "/api/v1/wallet-claims/actors/1/current",
+        ),
+      ).toBe(true);
+    } else {
+      await expect(
+        page.getByRole("heading", {
+          name: "No Slop contributor with this login",
+          exact: true,
+        }),
+      ).toBeVisible();
+      expect(walletRequests).toEqual([]);
+    }
+    await expectAccessible(page, { everyRule: true });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: info.outputPath(
+        `node-id-${sameUser ? "same" : "different"}-user.png`,
+      ),
+      fullPage: true,
+    });
+  });
+}

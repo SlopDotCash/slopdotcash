@@ -4,7 +4,7 @@ import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
-import { githubUserIdFromNodeId } from "./lib/github-actor";
+import { githubUserIdFromNodeId, sameGithubUser } from "./lib/github-actor";
 import { transactionUrl } from "./lib/payments/contracts";
 import type { PointsMember } from "./lib/points";
 import { dailyPoints } from "./lib/profile-activity";
@@ -111,7 +111,7 @@ export function ProfileActivity({
     state.status === "ready"
       ? state.index.people.filter((p) =>
           actorId
-            ? p.id === actorId
+            ? sameGithubUser(p.id, actorId)
             : p.login.toLowerCase() === login.toLowerCase(),
         )
       : [];
@@ -271,7 +271,7 @@ function ProfilePaymentHistory({
   const [vaultState, retryVault] = useVaultPayments(scope);
   const history = (cycles?.cycles ?? []).flatMap((cycle) =>
     cycle.contributors
-      .filter((contributor) => contributor.actor.id === actorId)
+      .filter((contributor) => sameGithubUser(contributor.actor.id, actorId))
       .map((contributor) => ({ contributor, cycle })),
   );
   const direct = directState.status === "ready" ? directState.transfers : [];

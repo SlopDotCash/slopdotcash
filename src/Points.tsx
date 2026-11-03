@@ -33,6 +33,7 @@ import {
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
+import { sameGithubUser } from "./lib/github-actor";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
@@ -605,7 +606,7 @@ export function ProfilePoints({
     census.state.status === "ready"
       ? census.state.index.people.filter((p) =>
           actorId
-            ? p.id === actorId
+            ? sameGithubUser(p.id, actorId)
             : p.login.toLowerCase() === login.toLowerCase(),
         )
       : [];
@@ -622,12 +623,14 @@ export function ProfilePoints({
     own ??
     (joined?.actor.login.toLowerCase() === login.toLowerCase() ? joined : null);
   const identity =
-    !actorId || membership?.actor.id === actorId ? membership : null;
+    !actorId || (membership && sameGithubUser(membership.actor.id, actorId))
+      ? membership
+      : null;
   const resolvedActorId = actorId ?? identity?.actor.id ?? recorded?.id;
   const m =
     state.status === "ready"
       ? resolvedActorId
-        ? state.members.find((m) => m.actor.id === resolvedActorId)
+        ? state.members.find((m) => sameGithubUser(m.actor.id, resolvedActorId))
         : named.length === 1
           ? named[0]
           : undefined
