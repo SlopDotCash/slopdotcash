@@ -642,6 +642,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         }
         return Response.json({ id: 900 + comments.length }, { status: 201 });
       }
+      if (path.endsWith("/issues/comments/78") && request.method === "GET")
+        return Response.json({
+          body: "The review missed important evidence.\n\n/slopbot appeal",
+          user: { id: AUTHOR },
+          issue_url: `https://api.github.com/repos/${owner}/${repo}/issues/5`,
+        });
       if (path.endsWith("/issues/comments/77") && request.method === "GET")
         return Response.json({
           body: "/slopbot dispute Exact dispute from comment 77",
@@ -1446,6 +1452,21 @@ test("the same actor can independently dispute two PRs in one joint assessment",
   });
 });
 
+test("a trailing appeal command preserves the reason without the command", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    await run.deliver(
+      run.job("appeal", {
+        senderId: AUTHOR,
+        subject: "value",
+        appealCommentId: 78,
+      }),
+    );
+    expect(run.modelInputs).toHaveLength(1);
+    expect(run.modelInputs[0].item).toContain("The review missed important evidence.");
+    expect(run.modelInputs[0].item).not.toContain("/slopbot appeal");
+  });
+});
 test("a value dispute reads the opening comment rather than a newer unrelated appeal", async () => {
   await closedItem(async (run) => {
     run.seedValue();
