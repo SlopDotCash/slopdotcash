@@ -788,7 +788,7 @@ export function selectUniqueVerifiedEvidence(
             right.mergedAt ?? right.updatedAt,
           ) ||
           left.number - right.number ||
-          left.id.localeCompare(right.id),
+          left.id.localeCompare(right.id, "en"),
       )
       .map((pullRequest, index) => [pullRequest.id, index]),
   );
@@ -802,7 +802,7 @@ export function selectUniqueVerifiedEvidence(
             Number.MAX_SAFE_INTEGER) ||
         (categoryOrder.get(left.category) ?? Number.MAX_SAFE_INTEGER) -
           (categoryOrder.get(right.category) ?? Number.MAX_SAFE_INTEGER) ||
-        left.artifactIdentity.localeCompare(right.artifactIdentity),
+        left.artifactIdentity.localeCompare(right.artifactIdentity, "en"),
     )
     .filter((artifact) => {
       if (
