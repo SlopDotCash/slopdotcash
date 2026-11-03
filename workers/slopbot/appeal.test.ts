@@ -409,6 +409,18 @@ test("jobFor matches /slopbot appeal and /slopbot dispute on any line and with a
     "99",
   );
   assert.equal(pluralWord, null);
+  for (const invalidCommand of ["/slopbot appealing", "/slopbot appealXYZ"]) {
+    const invalidAppeal = jobFor(
+      "issue_comment",
+      `invalid-${invalidCommand}`,
+      {
+        ...basePayload,
+        comment: { id: 17, body: invalidCommand },
+      },
+      "99",
+    );
+    assert.equal(invalidAppeal, null);
+  }
 
   for (const command of ["accept", "reject", "uphold", "deny"] as const) {
     for (const separator of [" ", "\n"]) {
