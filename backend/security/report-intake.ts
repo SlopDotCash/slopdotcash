@@ -9,6 +9,7 @@ import { notifySecurityReportReceived } from "../notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
+  applyScreeningDecision,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
   backgroundScreeningBudget,
   type SecurityAnalysisInput,
@@ -642,7 +643,7 @@ export async function screenStoredReport(
         !proposal.reason.trim()
       )
         throw new Error("Invalid screening result");
-      const applied = applyScreeningDecision(proposal);
+      const applied = applyScreeningDecision(proposal, input.report);
       state = applied.decision;
       reason = applied.reason;
     }
@@ -731,27 +732,12 @@ export async function screenLegacyReport(
       "Automatic screening is unavailable. Your draft is kept.",
     );
   }
-  if (applyScreeningDecision(proposal).decision !== "legitimate")
+  if (applyScreeningDecision(proposal, report).decision !== "legitimate")
     fail(
       409,
       "screening_required",
       "This draft needs more evidence or a private maintainer review before forwarding. Submit it through Slop to track that review.",
     );
-}
-
-/**
- * A legitimate label that also says evidence is missing is held. The model's
- * reason stays, so the reporter still sees the gap. Spam and an explicit
- * needs-information decision are unchanged.
- */
-function applyScreeningDecision(proposal: SecurityScreeningProposal): {
-  decision: "legitimate" | "needs-information" | "spam";
-  reason: string;
-} {
-  const reason = proposal.reason.trim().slice(0, 2000);
-  if (proposal.decision === "legitimate" && proposal.missingEvidence === true)
-    return { decision: "needs-information", reason };
-  return { decision: proposal.decision, reason };
 }
 
 export async function acceptStoredReport(

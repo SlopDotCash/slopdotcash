@@ -14,11 +14,15 @@ import type { D1QueryStatement } from "../d1";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
 import {
   ANALYSIS_TIMEOUT_MS,
+  applyScreeningDecision,
   BACKGROUND_ANALYSIS_RESERVE_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
   backgroundScreeningBudget,
   type CaseAnalysisView,
   parseScreeningProposal,
+  SCREENING_DESCRIPTION_MINIMUM,
+  SCREENING_EVIDENCE_HOLD_REASON,
+  SCREENING_OUTPUT_SCHEMA,
   type SecurityAnalysisInput,
   type SecurityAnalyzer,
   type SecurityAppealInput,
@@ -245,7 +249,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   let sequence = 0;
   let screeningCalls = 0;
   let decision: SecurityScreeningProposal["decision"] = "legitimate";
-  let missingEvidence = false;
+  let missingEvidence: boolean | "omit" = false;
   let screeningReason: string | null = null;
   let screeningFails = false;
   let beforeScreenResult: (() => Promise<void>) | null = null;
@@ -280,7 +284,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
       if (screeningFails) throw new Error("PRIVATE-PROVIDER-ERROR-SENTINEL");
       return {
         decision,
-        missingEvidence,
+        ...(missingEvidence === "omit" ? {} : { missingEvidence }),
         reason:
           screeningReason ??
           (decision === "legitimate"
@@ -368,7 +372,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
     decision: (value: SecurityScreeningProposal["decision"]) => {
       decision = value;
     },
-    missingEvidence: (value: boolean) => {
+    missingEvidence: (value: boolean | "omit") => {
       missingEvidence = value;
     },
     screeningReason: (value: string) => {
@@ -1115,6 +1119,137 @@ describe("durable private report controls", () => {
     t.decision("spam");
     t.missingEvidence(true);
     const submission = required((await t.create()).body.submission);
+    expect(submission.intake.state).toBe("spam");
+    expect(submission.intake.canForward).toBe(false);
+    expect(t.analyzed).toHaveLength(0);
+    expect(t.notices(OWNER)).toHaveLength(0);
+  });
+
+  test("a legitimate label that omits missingEvidence is held and not routed", async () => {
+    const t = fixture();
+    t.missingEvidence("omit");
+    t.screeningReason("Looks like a real issue with clear prose.");
+    const accepted = await t.create("omitted-evidence-flag0");
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("needs-information");
+    expect(submission.intake.canForward).toBe(false);
+    expect(submission.intake.reason).toBe(SCREENING_EVIDENCE_HOLD_REASON);
+    expect(t.analyzed).toHaveLength(0);
+    expect(t.notices(OWNER)).toHaveLength(0);
+    expect(t.notices(REPORTER)).toHaveLength(1);
+  });
+
+  test("a legitimate reason that admits missing reproduction is held", async () => {
+    const t = fixture();
+    t.missingEvidence(false);
+    t.screeningReason("Missing a concrete reproduction.");
+    const accepted = await t.create("reason-admits-gap000");
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("needs-information");
+    expect(submission.intake.canForward).toBe(false);
+    expect(submission.intake.reason).toBe("Missing a concrete reproduction.");
+    expect(t.analyzed).toHaveLength(0);
+    expect(t.notices(OWNER)).toHaveLength(0);
+  });
+
+  test("a short description labeled legitimate is held", async () => {
+    const t = fixture();
+    t.missingEvidence(false);
+    t.screeningReason("Concrete isolated reproduction merits human review.");
+    const description = "Too short to show it.";
+    expect(description.length).toBeGreaterThanOrEqual(20);
+    expect(description.length).toBeLessThan(SCREENING_DESCRIPTION_MINIMUM);
+    const accepted = await t.create("short-description-h0", REPORTER, {
+      summary: "Short title",
+      description,
+    });
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("needs-information");
+    expect(submission.intake.canForward).toBe(false);
+    expect(submission.intake.reason).toBe(
+      "The report needs an affected component, an impact, and safe reproduction before it can be routed.",
+    );
+    expect(t.analyzed).toHaveLength(0);
+    expect(t.notices(OWNER)).toHaveLength(0);
+  });
+
+  test("empty labeled component, impact, and reproduction sections are held", async () => {
+    const t = fixture();
+    t.missingEvidence(false);
+    t.screeningReason("Concrete isolated reproduction merits human review.");
+    const description = [
+      "Affected component and revision:",
+      "",
+      "Impact:",
+      "",
+      "Safe reproduction steps:",
+      "1.",
+      "2.",
+      "",
+      "Expected and actual results:",
+      "",
+      "Supporting evidence:",
+    ].join("\n");
+    expect(description.length).toBeGreaterThanOrEqual(
+      SCREENING_DESCRIPTION_MINIMUM,
+    );
+    const accepted = await t.create("empty-labeled-sections", REPORTER, {
+      summary: "Withdrawal needs a real report",
+      description,
+    });
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("needs-information");
+    expect(submission.intake.canForward).toBe(false);
+    expect(submission.intake.reason).toBe(
+      "The report needs an affected component, an impact, and safe reproduction before it can be routed.",
+    );
+    expect(t.notices(OWNER)).toHaveLength(0);
+  });
+
+  test("a filled component, impact, and reproduction still routes as legitimate", async () => {
+    const t = fixture();
+    t.missingEvidence(false);
+    t.screeningReason(
+      "Component, impact, and reproduction are included. Outside paid bounty scope.",
+    );
+    const accepted = await t.create("filled-labeled-sections", REPORTER, {
+      summary: "withdraw() pays the caller from another account",
+      description: [
+        "Affected component and revision:",
+        "Vault.sol withdraw(address account) at commit abcdef1.",
+        "",
+        "Impact:",
+        "Any caller can move another account's synthetic balance to themselves.",
+        "",
+        "Safe reproduction steps:",
+        "1. Deploy Vault locally and deposit 100 synthetic units as Alice.",
+        "2. Bob calls withdraw(Alice). Bob's balance increases by 100.",
+      ].join("\n"),
+    });
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(submission.intake.canForward).toBe(true);
+    expect(submission.intake.reason).toBe(
+      "Component, impact, and reproduction are included. Outside paid bounty scope.",
+    );
+    expect(t.notices(OWNER)).toHaveLength(1);
+  });
+
+  test("spam stays spam when the flag is omitted and the description is short", async () => {
+    const t = fixture();
+    t.decision("spam");
+    t.missingEvidence("omit");
+    const accepted = await t.create("spam-short-omitted00", REPORTER, {
+      summary: "Short title",
+      description: "Too short to show it.",
+    });
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
     expect(submission.intake.state).toBe("spam");
     expect(submission.intake.canForward).toBe(false);
     expect(t.analyzed).toHaveLength(0);
@@ -2410,26 +2545,116 @@ describe("durable private report controls", () => {
   );
 });
 
-test("screening output accepts a missing-evidence flag and rejects a non-boolean", () => {
+const COMPLETE_REPORT = {
+  summary: "withdraw() pays the caller from another account",
+  description:
+    "Vault.sol withdraw(address) at commit abcdef debits another account and pays msg.sender. " +
+    "A local test deposits 100 synthetic units as Alice and calls withdraw as Bob. " +
+    "Bob's balance increases by 100 and Alice's balance is 0.",
+};
+
+test("screening output keeps an omitted missingEvidence flag omitted", () => {
   expect(
     parseScreeningProposal(
-      '{"decision":"legitimate","reason":"Component, impact, and reproduction are included.","missingEvidence":false}',
+      `{"schemaVersion":"${SCREENING_OUTPUT_SCHEMA}","decision":"legitimate","reason":"Component, impact, and reproduction are included.","missingEvidence":false}`,
     ),
   ).toEqual({
     decision: "legitimate",
     reason: "Component, impact, and reproduction are included.",
     missingEvidence: false,
   });
+  const omitted = parseScreeningProposal(
+    '{"decision":"legitimate","reason":"Looks like a real issue with clear prose."}',
+  );
+  expect(omitted.missingEvidence).toBeUndefined();
+  expect(applyScreeningDecision(omitted, COMPLETE_REPORT)).toEqual({
+    decision: "needs-information",
+    reason: SCREENING_EVIDENCE_HOLD_REASON,
+  });
   expect(
     parseScreeningProposal(
       '{"decision":"needs-information","reason":"Name the affected function."}',
     ).missingEvidence,
-  ).toBe(false);
+  ).toBeUndefined();
   expect(() =>
     parseScreeningProposal(
       '{"decision":"legitimate","reason":"Gap noted.","missingEvidence":"yes"}',
     ),
   ).toThrow("Invalid screening output");
+  expect(() =>
+    parseScreeningProposal(
+      '{"schemaVersion":"slop-security-screening-1","decision":"legitimate","reason":"Gap noted.","missingEvidence":false}',
+    ),
+  ).toThrow("Invalid screening output");
+});
+
+test("legitimate routing holds missing evidence without trusting the flag alone", () => {
+  const hold = (reason: string) =>
+    applyScreeningDecision(
+      { decision: "legitimate", missingEvidence: false, reason },
+      COMPLETE_REPORT,
+    );
+  for (const reason of [
+    "Missing a concrete reproduction.",
+    "No reproduction is attached.",
+    "The test is not attached.",
+    "Name the affected function.",
+    "Provide a concrete affected function and isolated reproduction.",
+    "The impact is not described.",
+    "Reproduction steps are missing.",
+    "The report does not include a reproduction.",
+  ])
+    expect(hold(reason)).toEqual({ decision: "needs-information", reason });
+  for (const reason of [
+    "Concrete isolated reproduction merits human review.",
+    "Component, impact, and reproduction are included.",
+    "No impact on covered funds. The local reproduction is concrete.",
+    "Outside paid bounty scope; the affected function and reproduction are concrete.",
+    "The report does provide a concrete reproduction.",
+    "A missing bounds check in the component allows an extra withdrawal. Reproduction is attached.",
+    "Needs a privileged role. The reproduction is a local test.",
+  ])
+    expect(hold(reason)).toEqual({ decision: "legitimate", reason });
+  expect(
+    applyScreeningDecision(
+      {
+        decision: "spam",
+        reason: "Missing a concrete reproduction.",
+      },
+      { summary: "Short title", description: "Too short to show it." },
+    ),
+  ).toEqual({
+    decision: "spam",
+    reason: "Missing a concrete reproduction.",
+  });
+  const emptyImpact = [
+    "Affected component and revision:",
+    "Vault.sol withdraw(address account) at commit abcdef1.",
+    "",
+    "Impact:",
+    "",
+    "Safe reproduction steps:",
+    "1. Deploy Vault locally, deposit 100 synthetic units as Alice, and call withdraw as Bob.",
+  ].join("\n");
+  expect(emptyImpact.length).toBeGreaterThanOrEqual(
+    SCREENING_DESCRIPTION_MINIMUM,
+  );
+  expect(
+    applyScreeningDecision(
+      {
+        decision: "legitimate",
+        missingEvidence: false,
+        reason: "Concrete isolated reproduction merits human review.",
+      },
+      {
+        summary: "withdraw() pays the wrong account",
+        description: emptyImpact,
+      },
+    ),
+  ).toEqual({
+    decision: "needs-information",
+    reason: "The report needs an impact before it can be routed.",
+  });
 });
 
 test("durable-intake migration preserves funded historical receipts and immutable guards", () => {
