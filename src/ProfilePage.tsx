@@ -7,7 +7,11 @@ import {
 import { readBoundedJson } from "./lib/browser-json";
 import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
-import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
+import {
+  closedMonthPenaltyDeductions,
+  createGlobalLeaders,
+  openMonthScores,
+} from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
 import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
@@ -136,9 +140,18 @@ export function ProfilePage({
   const penalties = (state.snapshot.penalties ?? []).filter(
     (penalty) => penalty.actor.id === actor.id,
   );
-  // The same open-month deductions as the accepted-work credits.
-  const appliedPenalties = openMonthScores(state.snapshot, state.cycleIndex)
-    .deductions.byPenalty;
+  // The same open-month deductions as the accepted-work credits, plus the
+  // amount each closed month deducted before its cycle record closed, so a
+  // closed-month penalty does not read as never applied.
+  const appliedPenalties = new Map(
+    openMonthScores(state.snapshot, state.cycleIndex).deductions.byPenalty,
+  );
+  for (const [penaltyId, applied] of closedMonthPenaltyDeductions(
+    state.snapshot,
+    state.cycleIndex,
+  ).byPenalty) {
+    appliedPenalties.set(penaltyId, applied);
+  }
   const historicalWallet = history.find(({ contributor }) => contributor.wallet)
     ?.contributor.wallet;
   const wallet =

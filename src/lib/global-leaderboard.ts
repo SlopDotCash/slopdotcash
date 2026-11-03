@@ -105,6 +105,39 @@ export function openMonthScores(
   };
 }
 
+/**
+ * Debits of months a closed cycle record already carries, recomputed over
+ * each closed month's own events with the shared deduction caps. Standings
+ * never read this — the closed record itself is their source for those
+ * months — but the profile penalty history lists every published debit, so
+ * it needs the amount each closed month actually deducted. Months before a
+ * project's reward start stay excluded, exactly as in openMonthScores.
+ */
+export function closedMonthPenaltyDeductions(
+  snapshot: LeaderboardSnapshot,
+  cycleIndex: CycleIndex,
+): PenaltyDeductions {
+  const archived = new Set(
+    cycleIndex.cycles.map((cycle) => cycleKey(cycle.projectId, cycle.cycleId)),
+  );
+  const closed = (repository: string, occurredAt: string) => {
+    const project = projectOf(repository);
+    return (
+      Date.parse(occurredAt) >= Date.parse(project.reward.rewardStartAt) &&
+      archived.has(cycleKey(project.id, occurredAt.slice(0, 7)))
+    );
+  };
+  return penaltyDeductions(
+    snapshot.ledger.filter((event) =>
+      closed(event.repository, event.occurredAt),
+    ),
+    (snapshot.penalties ?? []).filter((penalty) =>
+      closed(penalty.repository, penalty.occurredAt),
+    ),
+    (repository) => projectOf(repository).id,
+  );
+}
+
 export function createGlobalLeaders(
   snapshot: LeaderboardSnapshot,
   views: readonly ProjectView[],
