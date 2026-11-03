@@ -2175,7 +2175,7 @@ function latestClaimComment(
     .sort(
       (left, right) =>
         parseIsoTime(right.createdAt) - parseIsoTime(left.createdAt) ||
-        left.id.localeCompare(right.id),
+        left.id.localeCompare(right.id, "en"),
     );
   return matches[0] ?? null;
 }
