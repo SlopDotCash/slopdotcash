@@ -93,10 +93,20 @@ export function validatePayoutExclusions(value, field) {
 
 /** The relationship that excludes an actor node ID from a cycle, or null. */
 export function payoutExclusionFor(project, cycleId, actorNodeId) {
+  // Match by decoded numeric GitHub user id so legacy MDQ6… and current
+  // U_kgDO… spellings of the same actor both hit the exclusion list.
+  // payoutExcludedGithubUserIds already keys on actorId; keep this path aligned.
+  const actorId = githubUserIdFromNodeId(actorNodeId);
   return (
-    (project.reward.payoutExclusions ?? []).find(
-      (entry) => entry.nodeId === actorNodeId && covers(entry, cycleId),
-    )?.relationship ?? null
+    (project.reward.payoutExclusions ?? []).find((entry) => {
+      if (!covers(entry, cycleId)) return false;
+      if (entry.nodeId === actorNodeId) return true;
+      if (actorId === null) return false;
+      return (
+        entry.actorId === actorId ||
+        githubUserIdFromNodeId(entry.nodeId) === actorId
+      );
+    })?.relationship ?? null
   );
 }
 
