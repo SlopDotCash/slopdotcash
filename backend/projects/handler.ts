@@ -1002,12 +1002,15 @@ async function resolveReferrer(
  * The account's current authority over the manifest's repository, read
  * through the Slopbot installation (owner decision D11). A manifest that
  * contradicts GitHub's repository facts is refused; an unavailable GitHub or
- * Slopbot answer means retry, never an admin task.
+ * Slopbot answer means retry, never an admin task. The setup check passes
+ * `mismatch: "deny"` to show the contradiction as a denial with its reason,
+ * beside the installation that was actually read.
  */
 async function currentAuthority(
   deps: ProjectApiDependencies,
   manifest: ProjectDefinition,
   actor: GithubActor,
+  mismatch: "refuse" | "deny" = "refuse",
 ): Promise<{ authority: SetupAuthority; access: AccessCheck }> {
   const access = await readRepositoryAccess(
     deps.repositoryAccess,
@@ -1031,8 +1034,14 @@ async function currentAuthority(
       access: { state: "retry", message },
     };
   }
-  if (control.state === "mismatch")
+  if (control.state === "mismatch") {
+    if (mismatch === "deny")
+      return {
+        authority: { state: "denied", message: control.reason },
+        access,
+      };
     fail(422, "invalid_manifest", control.reason);
+  }
   return { authority, access };
 }
 
@@ -1117,24 +1126,11 @@ async function runSetupCheck(
     project,
     await deps.persistence.listEnforcements(),
   );
-  let checked = options.authority;
-  if (checked === undefined) {
-    try {
-      checked = await currentAuthority(deps, project.manifest, actor);
-    } catch (error) {
-      // A repository that no longer matches its manifest is a denial here,
-      // shown with its reason, not a failed status read.
-      const message =
-        typeof error === "object" && error !== null && "message" in error
-          ? String(error.message)
-          : "GitHub repository facts do not match this project";
-      checked = {
-        authority: { state: "denied", message },
-        access: { state: "retry", message },
-      };
-    }
-  }
-  const { authority, access } = checked;
+  // A repository that no longer matches its manifest is a denial here, shown
+  // with its reason, not a failed status read or an unavailable installation.
+  const { authority, access } =
+    options.authority ??
+    (await currentAuthority(deps, project.manifest, actor, "deny"));
   const clearance = await deps.vettingClearance(
     project.id,
     project.manifest,
