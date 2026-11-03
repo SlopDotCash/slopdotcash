@@ -73,6 +73,9 @@ type Case = {
   terms: { grossMinor: string; researcherMinor: string; slopMinor: string };
   awardState: string;
   award: { grossMinor: string; researcherMinor: string; slopMinor: string };
+  nextStep: string;
+  nextStepDueAt: string | null;
+  intake: { state: string } | null;
 };
 type Body = {
   recipientGithubId?: string;
@@ -1098,6 +1101,64 @@ describe("durable private report controls", () => {
       expect(retry.status).toBe(200);
       expect(t.analyzed).toHaveLength(1);
       expect(t.screeningCalls()).toBe(1);
+    },
+  );
+
+  test.each(["screening", "owner-request"] as const)(
+    "a report held for more evidence by %s gives the reporter the next step",
+    async (hold) => {
+      const t = fixture();
+      if (hold === "screening") t.decision("needs-information");
+      let submission = required((await t.create()).body.submission);
+      if (hold === "owner-request") {
+        const requested = await t.call(
+          OWNER,
+          "POST",
+          `security-submissions/${submission.id}/review`,
+          {
+            expectedRevision: submission.intake.revision,
+            decision: "request-information",
+            reason: "Attach the isolated reproduction.",
+          },
+        );
+        expect(requested.status).toBe(200);
+        submission = required(requested.body.submission);
+      }
+      const read = async (actor: typeof OWNER) => {
+        const single = required(
+          (await t.call(actor, "GET", `security-cases/${submission.caseId}`))
+            .body.case,
+        );
+        const listed = required(
+          (await t.call(actor, "GET", "security-cases")).body.cases,
+        ).find((entry) => entry.id === submission.caseId);
+        return [single, required(listed)];
+      };
+      for (const view of await read(REPORTER)) {
+        expect(view.intake?.state).toBe("needs-information");
+        expect(view.nextStep).toBe(
+          "Add the requested evidence to your saved report in Inbox.",
+        );
+        expect(view.nextStepDueAt).toBeNull();
+      }
+      for (const view of await read(OWNER))
+        expect(view.nextStep).toBe(
+          "Waiting for the reporter's answer; decide when ready.",
+        );
+      // A maintainer may still forward the held report for technical review.
+      const forwarded = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${submission.id}/review`,
+        {
+          expectedRevision: submission.intake.revision,
+          decision: "forward",
+          reason: "The private evidence supports technical review.",
+        },
+      );
+      expect(forwarded.status).toBe(200);
+      for (const view of await read(REPORTER))
+        expect(view.nextStep).toBe("Waiting for the project owner's response.");
     },
   );
 
