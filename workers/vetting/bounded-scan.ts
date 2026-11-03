@@ -487,7 +487,7 @@ const RULES: Rule[] = [
     // Match a command line or a JSON task value, with only known no-value
     // Deno permission flags. A URL after a local script is just script data.
     pattern:
-      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
+      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+|rundll32(?:\.exe)?[ \t]+url(?:\.dll)?,OpenURL[ \t]+)["']?https?:\/\//imu,
     summary: "Runs a remote script URL directly",
   },
   {
