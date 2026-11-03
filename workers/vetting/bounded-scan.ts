@@ -402,6 +402,23 @@ const RULES: Rule[] = [
     ),
     summary: "Runs a remote download in a shell via process substitution",
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A here-string feeds its text to the command as standard input, and a
+    // shell or an interpreter with no script argument runs that input as its
+    // program: `bash <<< "$(curl ...)"` and `python3 <<< "$(curl ...)"` run
+    // the downloaded bytes, the same act as a pipe without the pipe. Only a
+    // command substitution of a download qualifies: a literal here-string
+    // (`bash <<< "echo hi"`), a non-download substitution (`$(date)`), a
+    // here-document (`<<EOF`), and a non-executing target (`cat`, `grep`)
+    // stay out.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()'"])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND})\s*<<<\s*["']?(?:\$\(|\x60)\s*(?:curl|wget)\b`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a shell via a here-string",
+  },
 
   {
     threat: "unsafe-execution",
