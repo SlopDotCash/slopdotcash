@@ -168,3 +168,33 @@ test("Turkish generation keeps expand-review opportunity on English-first review
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
+
+test("Turkish generation keeps the published invalid attribution marker order", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  // Each merged PR body carries the attribution marker twice, so each body
+  // source yields one invalid marker; the two source IDs are the i/I pair,
+  // so only the sourceId comparison can order the published field.
+  const marker =
+    "<!-- slop-contribution-attribution:v1 provider: OpenAI model: GPT-5 -->";
+  [1, 2].forEach((index, offset) => {
+    const pull = input.mergedPullRequests[index];
+    pull.id = ids[offset];
+    pull.body = `Fixes a defect.\n${marker}\n${marker}\n`;
+    input.mergedPullRequestOutcomes[index].id = pull.id;
+    input.mergedPullRequestOutcomes[index].body = pull.body;
+    input.detailEligibleMergedPullRequestIds[index] = pull.id;
+  });
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    expect(
+      snapshot.invalidAttributionMarkers.map((entry) => entry.sourceId),
+    ).toEqual(ids.map((id) => `${id}:body`));
+    expect(
+      snapshot.invalidAttributionMarkers.map((entry) => entry.reason),
+    ).toEqual([
+      "source must contain at most one attribution marker",
+      "source must contain at most one attribution marker",
+    ]);
+  });
+});

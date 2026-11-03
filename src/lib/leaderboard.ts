@@ -5079,7 +5079,7 @@ function createSnapshotWithReviewCutoff(
     attributions,
     invalidAttributionMarkers: overallAttribution.invalidMarkers.sort(
       (left, right) =>
-        left.sourceId.localeCompare(right.sourceId) ||
+        left.sourceId.localeCompare(right.sourceId, "en") ||
         left.reason.localeCompare(right.reason),
     ),
     attributionCoverage,
