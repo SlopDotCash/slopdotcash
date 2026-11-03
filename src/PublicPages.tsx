@@ -202,9 +202,9 @@ export function HowItWorksPage() {
             <h3>GitHub flagged my account. What happens to my work?</h3>
             <div>
               <p>
-                A flag is GitHub&apos;s own automated restriction. Slop does not
-                report accounts and cannot lift a flag. Appeal to GitHub through
-                its{" "}
+                A flag is GitHub&apos;s restriction, not Slop&apos;s. Slop does
+                not report accounts and cannot lift a flag. Appeal to GitHub
+                through its{" "}
                 <ExternalLinkAnchor href="https://support.github.com/contact/flagged">
                   flagged account form
                 </ExternalLinkAnchor>{" "}
@@ -212,11 +212,12 @@ export function HowItWorksPage() {
               </p>
               <p>
                 Keep the same account. Sign-in and wallet registration are tied
-                to it, and a new account inherits nothing. Sign-in fails while
-                the flag is in place; your wallet registrations are unchanged.
-                GitHub hides your pull requests while the account is flagged, so
-                merged work may be missing from the site until GitHub restores
-                the account. It returns at the next site update after that.
+                to it, and a new account inherits nothing. If GitHub prevents
+                Slop from verifying your account, Slop sign-in will fail. Your
+                wallet registrations are unchanged. If GitHub hides your pull
+                requests, merged work may be missing from the site. Once GitHub
+                restores access, eligible work can appear again after a
+                successful Slop collection and site update.
               </p>
             </div>
           </article>
