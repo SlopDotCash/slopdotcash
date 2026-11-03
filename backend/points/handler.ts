@@ -196,26 +196,30 @@ export async function handlePointsApi(
       );
       if (identity === "expired")
         return json(401, { error: "identity_expired" });
-      const node = identity === "invalid" ? null : identity.githubNodeId;
+      const assertedNode =
+        identity === "invalid" ? null : identity.githubNodeId;
       if (
         identity === "invalid" ||
-        typeof node !== "string" ||
-        !/^[A-Za-z0-9_=-]{4,256}$/.test(node)
+        typeof assertedNode !== "string" ||
+        !/^[A-Za-z0-9_=-]{4,256}$/.test(assertedNode)
       )
         return json(401, { error: "invalid_identity" });
       const { githubId: id, githubLogin: login } = identity;
+      // GitHub can return a new global node ID for the same numeric account.
+      // Keep its stored actor ID and all immutable membership references.
+      const existing = await deps.db
+        .prepare(
+          "SELECT actor_id,closed_at FROM points_members WHERE github_id=?",
+        )
+        .bind(id)
+        .first<{ actor_id: string; closed_at: string | null }>();
+      const node = existing?.actor_id ?? assertedNode;
       // A closed account opens again only when this sign-in asks to reopen
       // it, so closing is never undone by an ordinary sign-in.
-      const closed = await deps.db
-        .prepare(
-          "SELECT closed_at FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NOT NULL",
-        )
-        .bind(node, id)
-        .first<{ closed_at: string }>();
-      if (closed && value.reopen !== true)
+      if (existing?.closed_at && value.reopen !== true)
         return json(409, {
           error: "account_closed",
-          closedAt: closed.closed_at,
+          closedAt: existing.closed_at,
         });
       const token = randomToken(32);
       const hash = await sha256Hex(token);
