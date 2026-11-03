@@ -408,9 +408,12 @@ function reporterFlag(flag: ProjectFlag | null) {
 
 function readEvidence(value: unknown): string {
   const evidence = typeof value === "string" ? value.trim() : "";
+  // Count characters as the stored CHECK (`length(evidence)`) does, not UTF-16
+  // code units, so evidence the database refuses is refused here first.
+  const characters = [...evidence].length;
   if (
-    evidence.length < MIN_EVIDENCE ||
-    evidence.length > MAX_EVIDENCE ||
+    characters < MIN_EVIDENCE ||
+    characters > MAX_EVIDENCE ||
     // Allow line breaks and tabs; refuse other control characters.
     /\p{Cc}/u.test(evidence.replace(/[\n\r\t]/gu, ""))
   )
