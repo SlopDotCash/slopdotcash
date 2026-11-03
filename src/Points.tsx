@@ -1198,16 +1198,23 @@ export function ContributorStandings({
   }, [state, project, month]);
   const currentActors = new Map(
     scores.status === "ready"
-      ? scores.snapshot.leaders.map(
-          ({ actor }) => [githubUserIdentityKey(actor.id), actor] as const,
-        )
+      ? scores.snapshot.leaders.map(({ actor }) => [actor.id, actor] as const)
       : [],
+  );
+  const currentAliases = new Map(
+    [...currentActors.values()].map(
+      (actor) => [githubUserIdentityKey(actor.id), actor] as const,
+    ),
   );
   const ranked = members
     .map((member) => ({
-      actor:
-        currentActors.get(githubUserIdentityKey(member.actor.id)) ??
-        member.actor,
+      actor: {
+        ...member.actor,
+        login:
+          currentActors.get(member.actor.id)?.login ??
+          currentAliases.get(githubUserIdentityKey(member.actor.id))?.login ??
+          member.actor.login,
+      },
       points: period === "month" ? member.monthly : member.total,
     }))
     .filter((member) => member.points > 0)

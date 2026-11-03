@@ -11,6 +11,7 @@ import {
   appendPointAwards,
   assemblePoints,
   emptyPointsJournal,
+  type PointAward,
   type PointsIndex,
   pointKey,
 } from "../../src/lib/points";
@@ -1600,54 +1601,82 @@ for (const mode of ["same", "member", "different"] as const) {
 }
 
 // Read-only public journal and membership doubles, using both canonical IDs.
-async function canonicalPointsRecords(page: Page) {
+async function canonicalPointsRecords(page: Page, mixedAliases = false) {
   const site = await serveProfileSite(page);
   const { current } = await profileRecords(page);
   const modern = "U_kgDOAAAAAQ";
   current.id = modern;
   const legacy = "MDQ6VXNlcjE=";
   const at = new Date().toISOString();
-  const journal = appendPointAwards(
-    emptyPointsJournal(at),
-    [
-      {
-        key: pointKey(
-          "eliza",
-          legacy,
-          "merged-pull-request",
-          "PR_canonical_join_fixture",
-        ),
-        actor: { id: legacy, login: "previous-login" },
+  const awards: PointAward[] = [
+    {
+      key: pointKey(
+        "eliza",
+        legacy,
+        "merged-pull-request",
+        "PR_canonical_join_fixture",
+      ),
+      actor: { id: legacy, login: "previous-login" },
+      projectId: "eliza",
+      category: "merged-pull-request",
+      amount: 10,
+      occurredAt: at,
+      sourceId: "PR_canonical_join_fixture",
+      sourceUrl: "https://github.com/elizaOS/eliza/pull/1",
+      workUnitId: "history_PR_canonical_join_fixture",
+      provisional: true,
+    },
+  ];
+  if (mixedAliases) {
+    const now = new Date(at);
+    const beforeMonth = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15),
+    ).toISOString();
+    for (let i = 0; i < 5; i++) {
+      const actor =
+        i < 2
+          ? { id: modern, login: current.login }
+          : { id: "MDQ6VXNlcjI=", login: "other-member" };
+      const sourceId = `PR_canonical_join_fixture_${i}`;
+      awards.push({
+        key: pointKey("eliza", actor.id, "merged-pull-request", sourceId),
+        actor,
         projectId: "eliza",
         category: "merged-pull-request",
         amount: 10,
-        occurredAt: at,
-        sourceId: "PR_canonical_join_fixture",
-        sourceUrl: "https://github.com/elizaOS/eliza/pull/1",
-        workUnitId: "history_PR_canonical_join_fixture",
+        occurredAt: i < 2 ? at : beforeMonth,
+        sourceId,
+        sourceUrl: `https://github.com/elizaOS/eliza/pull/${i + 2}`,
+        workUnitId: `history_${sourceId}`,
         provisional: true,
-      },
-    ],
+      });
+    }
+  }
+  const journal = appendPointAwards(
+    emptyPointsJournal(at),
+    awards,
     "a".repeat(64),
     "github-merged-history-v1",
     at,
   );
-  const bucket = Number.parseInt(journal.revisions[0].award.key[0], 16);
-  const parts = Array.from({ length: 16 }, (_, i) =>
-    JSON.stringify(
-      i === bucket ? [{ sequence: 0, revision: journal.revisions[0] }] : [],
+  const shards = Array.from({ length: 16 }, (_, i) =>
+    journal.revisions.flatMap((revision, sequence) =>
+      Number.parseInt(revision.award.key[0], 16) === i
+        ? [{ sequence, revision }]
+        : [],
     ),
   );
+  const parts = shards.map((part) => JSON.stringify(part));
   const index: PointsIndex = {
     schemaVersion: journal.schemaVersion,
     ruleVersion: journal.ruleVersion,
     generatedAt: at,
     coverage: journal.coverage,
-    revisionCount: 1,
+    revisionCount: journal.revisions.length,
     shards: parts.map((part, i) => ({
       path: `/data/points/${i.toString(16)}.json`,
       sha256: createHash("sha256").update(part).digest("hex"),
-      count: i === bucket ? 1 : 0,
+      count: shards[i].length,
     })),
   };
   assemblePoints(index, parts);
@@ -1782,6 +1811,31 @@ test("canonical archived aliases retain both payment records", async ({
   await expectAccessible(page);
   await page.screenshot({
     path: info.outputPath("canonical-archived.png"),
+    fullPage: true,
+  });
+});
+
+test("canonical standings preserve journal row identities across periods", async ({
+  page,
+}, info) => {
+  const { site } = await canonicalPointsRecords(page, true);
+  await page.goto(`${site}/points`);
+  const rows = page
+    .getByRole("region", { name: "Contributor standings table" })
+    .locator("tbody tr");
+  await page.getByRole("button", { name: "All time", exact: true }).click();
+  await expect(rows).toHaveCount(3);
+  const month = page.getByRole("button", { name: "This month", exact: true });
+  await month.focus();
+  await page.keyboard.press("Enter");
+  await expect(rows).toHaveCount(2);
+  await expect(month).toBeFocused();
+  await page.getByRole("button", { name: "All time", exact: true }).click();
+  await expect(rows).toHaveCount(3);
+  await expect(rows.locator("td:first-child")).toHaveText(["1", "2", "3"]);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-row-identities.png"),
     fullPage: true,
   });
 });
