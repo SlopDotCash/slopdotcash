@@ -323,6 +323,21 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+/**
+ * Zero or more run-wrappers in front of a command, each optionally path
+ * prefixed and followed by its flag or numeric arguments: the privilege and
+ * environment wrappers the secret-exfiltration rule already recognizes
+ * (`sudo`, `doas`, `busybox`, `env`) plus the common run-wrappers `command`,
+ * `nice`, `timeout`, and `stdbuf`. `busybox tr` and `sudo tee` are the same
+ * act as the bare command.
+ */
+const RUN_WRAPPERS = String.raw`(?:(?:[^\s|;&<>()'"]*/)?(?:sudo|doas|busybox|env|command|nice|timeout|stdbuf)(?:\s+(?:-\S+|\d+\S*))*\s+)*`;
+/**
+ * A pipe between stages, allowing whole-line comments after it: install
+ * scripts keep a `|` at the end of a line and comment the next stage, and the
+ * shell runs the pipeline across those comment lines.
+ */
+const PIPE_THEN_COMMENTS = String.raw`\|\s*(?:#[^\n]*\r?\n\s*)*`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -492,13 +507,15 @@ const RULES: Rule[] = [
     // version output, both copy stdin to stdout whatever their operands, so
     // the download is what reaches the executor. Filters with a
     // local-file-operand mode (sed, grep, cat) can read a different source
-    // than the stream and are a separate shape. A chain of these filters,
-    // and a line continuation inside one, are still one act. The trailing
+    // than the stream and are a separate shape. A chain of these filters, a
+    // run-wrapper before one (`busybox tr`, `sudo tee`), a line continuation
+    // inside one, and a comment line between stages are still one act. The
+    // trailing
     // lookahead belongs to the interpreter arm only: a shell runs its own
     // stdin so installer flags (`| sh -s -- -y`) follow it, while an
     // interpreter given a file argument (`python3 tool.py`) runs the file.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:(?:${commandToken("tr")}|${commandToken("tee")})(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*)+(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()])))`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*${PIPE_THEN_COMMENTS}(?:${RUN_WRAPPERS}(?:${commandToken("tr")}|${commandToken("tee")})(?:[^\n|]|\\[ \t]*\r?\n)*${PIPE_THEN_COMMENTS})+(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()])))`,
       "iu",
     ),
     summary: "Runs a remote download through a pass-through filter in a shell",

