@@ -149,7 +149,10 @@ export function jobFor(
         ...item,
         senderId: sender.id,
       };
-    if (text.startsWith("/slopbot appeal"))
+    if (
+      text.startsWith("/slopbot appeal") ||
+      /(?:^|\s)\/slopbot appeal\s*$/u.test(text)
+    )
       return {
         kind: "appeal",
         ...base,

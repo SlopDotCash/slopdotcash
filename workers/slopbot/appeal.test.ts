@@ -305,6 +305,44 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
       assert.equal(await response.text(), expected);
     }
     assert.equal(queued.length, 2);
+    assert.equal(queued[1]?.kind, "appeal");
+    if (queued[1]?.kind === "appeal")
+      assert.equal(queued[1].appealCommentId, 5);
+
+    // Regression: an appeal command at the end of a comment must be queued.
+    // Unrelated text mentioning the command must not trigger an appeal.
+    for (const [commentId, commentBody, expectedQueued] of [
+      [6, "The review missed my evidence.\n\n/slopbot appeal", true],
+      [7, "The review missed my evidence. /slopbot appeal   ", true],
+      [8, "The documentation says /slopbot appeal is available.", false],
+      [9, "The command /slopbot appealing is not valid.", false],
+    ] as const) {
+      const before = queued.length;
+      const nextBody = JSON.stringify({
+        ...payload,
+        comment: { id: commentId, body: commentBody },
+      });
+      const response = await worker.fetch(
+        new Request("https://slopbot.example/github/webhook", {
+          method: "POST",
+          body: nextBody,
+          headers: {
+            "x-github-event": "issue_comment",
+            "x-github-delivery": `appeal-comment-${commentId}`,
+            "x-hub-signature-256": `sha256=${createHmac("sha256", env.SLOPBOT_WEBHOOK_SECRET).update(nextBody).digest("hex")}`,
+          },
+        }),
+        env,
+      );
+      assert.equal(response.status, 202);
+      assert.equal(queued.length, before + (expectedQueued ? 1 : 0));
+      if (expectedQueued) {
+        const job = queued.at(-1);
+        assert.equal(job?.kind, "appeal");
+        if (job?.kind === "appeal")
+          assert.equal(job.appealCommentId, commentId);
+      }
+    }
   } finally {
     globalThis.fetch = nativeFetch;
     server.stop(true);
