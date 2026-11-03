@@ -268,9 +268,9 @@ function allocateFundingReview(
       (a.remainder === b.remainder ? 0 : a.remainder > b.remainder ? -1 : 1) ||
       a.r.actor.login
         .toLowerCase()
-        .localeCompare(b.r.actor.login.toLowerCase()) ||
-      a.r.actor.login.localeCompare(b.r.actor.login) ||
-      a.r.actor.id.localeCompare(b.r.actor.id),
+        .localeCompare(b.r.actor.login.toLowerCase(), "en") ||
+      a.r.actor.login.localeCompare(b.r.actor.login, "en") ||
+      a.r.actor.id.localeCompare(b.r.actor.id, "en"),
   );
   let remaining = sum ? total - ranked.reduce((s, r) => s + r.amount, 0n) : 0n;
   for (const r of ranked) {

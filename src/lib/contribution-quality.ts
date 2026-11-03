@@ -222,9 +222,9 @@ export function allocateQualityWeights(
     const left = actorLogins.get(a.id) ?? a.id,
       right = actorLogins.get(b.id) ?? b.id;
     return (
-      left.toLowerCase().localeCompare(right.toLowerCase()) ||
-      left.localeCompare(right) ||
-      a.id.localeCompare(b.id)
+      left.toLowerCase().localeCompare(right.toLowerCase(), "en") ||
+      left.localeCompare(right, "en") ||
+      a.id.localeCompare(b.id, "en")
     );
   });
   let remaining = total
