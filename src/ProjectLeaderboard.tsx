@@ -45,7 +45,8 @@ export function CycleAllocation({
   );
   const leaders = [...view.leaders].sort(
     (left, right) =>
-      left.rank - right.rank || left.actor.id.localeCompare(right.actor.id),
+      left.rank - right.rank ||
+      left.actor.id.localeCompare(right.actor.id, "en"),
   );
   return (
     <section className="section project-leader-section">
