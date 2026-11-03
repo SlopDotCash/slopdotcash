@@ -29,6 +29,7 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
+  formatPointsFromThirds,
   formatRewardMinor,
   NotFound,
   RoutePageHeader,
@@ -350,6 +351,11 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
           // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users can scroll the full historical evidence.
           tabIndex={0}
         >
+          <p>
+            Amounts follow the frozen payment weight — score plus
+            receipt-evidence bonus points — so a lower row can show a larger
+            amount than a row above it. Rows are ordered by displayed Points.
+          </p>
           <table className="plain-table cycle-contributors">
             <caption className="visually-hidden">
               Archived cycle contributors and current award amounts
@@ -390,9 +396,9 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                       </small>
                     </th>
                     <td>
-                      {(
-                        (contributor.scoreThirds ?? contributor.score * 3) * 10
-                      ).toLocaleString()}
+                      {formatPointsFromThirds(
+                        contributor.scoreThirds ?? contributor.score * 3,
+                      )}
                     </td>
                     <td>
                       {cycle.kind === "external-prize-share" ? (
