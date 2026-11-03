@@ -168,7 +168,12 @@ export function ProfileActivity({
         <PullRequestBar
           counts={counts}
           login={p?.login ?? login}
-          repositories={p?.repositories.map((row) => row.repository) ?? []}
+          repositories={
+            p?.repositories.map((row) => row.repository) ??
+            (state.status === "ready"
+              ? state.index.repositories.map((row) => row.repository)
+              : [])
+          }
         />
       ) : null}
       {children}
