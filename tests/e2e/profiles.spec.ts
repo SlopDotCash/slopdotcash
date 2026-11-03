@@ -71,25 +71,21 @@ test("profiles preserve legacy coverage and a valid census", async ({
     "2 PRs closed without merging",
   );
   // github.com/pulls is the signed-in dashboard and redirects anonymous
-  // visitors to login. The counts must open the public pull search.
+  // visitors to login. The counts must open the public pull search, scoped
+  // to the repositories the counts sum (the fixture profile records one).
+  const pullSearchHref = (qualifier: string) =>
+    `https://github.com/search?q=${encodeURIComponent(
+      `is:pr author:profile-only-contributor ${qualifier} repo:${TARGET_REPOSITORIES[0].id}`,
+    )}&type=pullrequests`;
   await expect(
     profile.getByRole("link", { name: "3 PRs open" }),
-  ).toHaveAttribute(
-    "href",
-    "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Aopen&type=pullrequests",
-  );
+  ).toHaveAttribute("href", pullSearchHref("is:open"));
   await expect(
     profile.getByRole("link", { name: "2 PRs closed without merging" }),
-  ).toHaveAttribute(
-    "href",
-    "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Aclosed%20is%3Aunmerged&type=pullrequests",
-  );
+  ).toHaveAttribute("href", pullSearchHref("is:closed is:unmerged"));
   await expect(
     profile.getByRole("link", { name: "0 PRs merged" }),
-  ).toHaveAttribute(
-    "href",
-    "https://github.com/search?q=is%3Apr%20author%3Aprofile-only-contributor%20is%3Amerged&type=pullrequests",
-  );
+  ).toHaveAttribute("href", pullSearchHref("is:merged"));
   await expect(
     page
       .getByText("total points", { exact: true })
