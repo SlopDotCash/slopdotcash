@@ -323,6 +323,16 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+/**
+ * A download command as it appears inside a command substitution, in the
+ * spellings a shell runs as curl/wget: an absolute or relative path, a
+ * backslash escape, and a `command [-p|--]` prefix. The `(?![\w./-])`
+ * boundary excludes a longer name that only begins with the word, such as
+ * `curl-config`, which downloads nothing. This mirrors the shared download
+ * token introduced by #2141; unify the two when that lands rather than
+ * keeping separate definitions.
+ */
+const DOWNLOAD_COMMAND = String.raw`(?:command\s+(?:(?:--|-p)\s+)*)?(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)(?:\.exe)?(?![\w./-])`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -417,9 +427,12 @@ const RULES: Rule[] = [
     // parameters) and the interpreter's `-`/`-u` forms, including options
     // after them. A file argument (`sh tools/check.sh <<<`, `python3 x.py
     // <<<`), a module (`python3 -m json.tool`), and a syntax-only check
-    // (`bash -n`) run or inspect something other than the here-string.
+    // (`bash -n`) run or inspect something other than the here-string. The
+    // download inside the substitution is matched through DOWNLOAD_COMMAND, so
+    // a path, a backslash escape or a `command` prefix does not evade it, and
+    // a longer name such as `curl-config` is not mistaken for a download.
     pattern: new RegExp(
-      String.raw`(?:^|[\s;|&()'"])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-s(?:\s+[^\s|;&<>()]+)*)?|${INTERPRETER_PIPE_TARGET}(?:(?<=\s-)(?:\s+[^\s|;&<>()]+)+)?)\s*<<<\s*["']?(?:\$\(|\x60)\s*(?:curl|wget)\b`,
+      String.raw`(?:^|[\s;|&()'"])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-s(?:\s+[^\s|;&<>()]+)*)?|${INTERPRETER_PIPE_TARGET}(?:(?<=\s-)(?:\s+[^\s|;&<>()]+)+)?)\s*<<<\s*["']?(?:\$\(|\x60)\s*${DOWNLOAD_COMMAND}`,
       "iu",
     ),
     summary: "Runs a remote download in a shell via a here-string",
