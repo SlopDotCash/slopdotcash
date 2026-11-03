@@ -39,7 +39,7 @@ function scrollToTarget(targetId: string): boolean {
  * client navigation. Reuse the bounded observer for each destination.
  */
 export function useHashScroll(href: string): void {
-  const [navigationVersion, setNavigationVersion] = useState(0);
+  const [navigation, setNavigation] = useState({ href });
   const positions = useRef(new Map<string, { left: number; top: number }>());
   const active = useRef<{ key: string; href: string } | null>(null);
   const restoring = useRef<{ left: number; top: number } | undefined>(
@@ -54,7 +54,7 @@ export function useHashScroll(href: string): void {
           : undefined;
       active.current = null;
       // Repeating a native fragment can leave href unchanged.
-      setNavigationVersion((value) => value + 1);
+      setNavigation({ href: window.location.href });
     };
     window.addEventListener("popstate", onPopState);
     return () => {
@@ -64,9 +64,10 @@ export function useHashScroll(href: string): void {
   useEffect(() => {
     const restore = restoring.current;
     restoring.current = undefined;
-    const targetId = hashTargetId(new URL(href).hash);
-    if (!targetId) return;
     const currentHref = window.location.href;
+    const targetHref = navigation.href === currentHref ? navigation.href : href;
+    const targetId = hashTargetId(new URL(targetHref).hash);
+    if (!targetId) return;
     const previous = window.history.state?.__slopHashScroll;
     const entry = {
       key: previous?.href === currentHref ? previous.key : crypto.randomUUID(),
@@ -121,7 +122,7 @@ export function useHashScroll(href: string): void {
       stop();
       window.removeEventListener("scroll", remember);
     };
-  }, [href, navigationVersion]);
+  }, [href, navigation]);
 }
 
 export function Link({
