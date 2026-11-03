@@ -56,6 +56,50 @@ test("an install-time download inside an APKBUILD is recorded as a download", ()
   ]);
 });
 
+test("an Alpine companion install hook is an install surface", () => {
+  // APKBUILD declares target-machine install/upgrade hooks via
+  // install="$pkgname.pre-install $pkgname.post-install ...", and apk
+  // executes those companion scripts at package install time. Before
+  // this classification a hook file carried no surface at all, so the
+  // payload below scanned clean even when the recipe declared it.
+  for (const suffix of [
+    "pre-install",
+    "post-install",
+    "pre-upgrade",
+    "post-upgrade",
+    "pre-deinstall",
+    "post-deinstall",
+  ]) {
+    for (const path of [`demo.${suffix}`, `main/demo.${suffix}`]) {
+      expect({ path, surfaces: surfacesOf(path) }).toEqual({
+        path,
+        surfaces: ["installScripts", "source"],
+      });
+    }
+  }
+  const inspection = inspectRepository({
+    files: [
+      {
+        path: "APKBUILD",
+        bytes: new TextEncoder().encode(
+          'pkgname=demo\ninstall="$pkgname.post-install"\nbuild() { :; }\n',
+        ),
+      },
+      {
+        path: "demo.post-install",
+        bytes: new TextEncoder().encode(
+          `# Alpine post-install script\n${PAYLOAD}\n`,
+        ),
+      },
+    ],
+  });
+  expect(
+    inspection.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["demo.post-install:unsafe-execution:high"]);
+});
+
 test("an ordinary APKBUILD keeps no finding", () => {
   const inspection = inspected(
     "APKBUILD",

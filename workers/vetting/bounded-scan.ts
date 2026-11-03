@@ -201,12 +201,15 @@ const INSTALL_FILES = new Set([
  * `app.dockerfile`, or by a build-system definition extension, such as
  * `Helper.cmake`, `plugins.sbt`, `defs.bzl` or `App.csproj`. They run
  * commands at build time, so they are install surfaces like a Makefile,
- * never unreviewed content.
+ * never unreviewed content. An Alpine package's companion install hooks
+ * (`<pkg>.pre-install`, `<pkg>.post-install`, `<pkg>.pre-upgrade`,
+ * `<pkg>.post-upgrade`, `<pkg>.pre-deinstall`, `<pkg>.post-deinstall`)
+ * run at package install time, so they are install surfaces too.
  */
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
 const GYP_EXTENSION = "gyp|gypi";
 const BUILD_RECIPE = new RegExp(
-  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$|\.(?:pre|post)-(?:install|upgrade|deinstall)$`,
   "u",
 );
 const MSBUILD_RECIPE = new RegExp(
