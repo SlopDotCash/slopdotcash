@@ -10,10 +10,13 @@
  */
 import { expect, spyOn, test } from "bun:test";
 import { allocateQualityWeights } from "../src/lib/contribution-quality";
+import {
+  createFundingReview,
+  type FundingPreparation,
+} from "../src/lib/funding-review-data";
 
 function withTurkishLocale<T>(run: () => T): T {
   const originalCompare = String.prototype.localeCompare;
-  const originalLower = String.prototype.toLowerCase;
   const originalLocaleLower = String.prototype.toLocaleLowerCase;
   const locale = spyOn(String.prototype, "localeCompare").mockImplementation(
     function (
@@ -33,10 +36,7 @@ function withTurkishLocale<T>(run: () => T): T {
   const localeLower = spyOn(
     String.prototype,
     "toLocaleLowerCase",
-  ).mockImplementation(function (
-    this: string,
-    locales?: Intl.LocalesArgument,
-  ) {
+  ).mockImplementation(function (this: string, locales?: Intl.LocalesArgument) {
     // Keep an explicit "en" pin; default / other locales fold as Turkish.
     if (locales === "en" || locales === "en-US") {
       return originalLocaleLower.call(this, "en");
@@ -52,6 +52,11 @@ function withTurkishLocale<T>(run: () => T): T {
   }
 }
 
+/** Ignore Biome wrapping so a pinned comparator still matches as source. */
+function compactSource(source: string): string {
+  return source.replace(/\s+/g, "");
+}
+
 // "I" vs "ii": English host folds "I"->"i" and sorts before "ii";
 // Turkish host folds "I"->"ı" which sorts after "i", flipping the remainder.
 const weights = new Map([
@@ -63,18 +68,85 @@ const logins = new Map([
   ["MDQ6VXNlcjEwMQ==", "ii"],
 ]);
 
-test("quality and funding-review remainder sorts pin case-fold and collation to English", async () => {
-  const q = await Bun.file("src/lib/contribution-quality.ts").text();
-  const f = await Bun.file("src/lib/funding-review-data.ts").text();
-  expect(q).toContain(
-    'left.toLocaleLowerCase("en").localeCompare(right.toLocaleLowerCase("en"), "en")',
+const HASH = "a".repeat(64);
+
+/**
+ * Three equal weights against slopdotcash's 1000000000 cap (1 mod 3) leave
+ * one micro. "z" sorts after both logins, so the micro is the I-vs-ii tie.
+ */
+function tieBreakPreparation(): FundingPreparation {
+  const contributor = (id: string, login: string) => ({
+    actor: { id, login },
+    scoreThirds: "1",
+    weight: "1",
+    eventCount: 1,
+    eventIdsSha256: HASH,
+    wallet: null,
+    lookupUnavailable: false,
+  });
+  return {
+    projectId: "slopdotcash",
+    cycleId: "2026-11",
+    sourceSnapshotSha256: HASH,
+    sourceAuditSha256: null,
+    observedAt: "2026-12-02T00:00:00.000Z",
+    provenance: {
+      ruleVersion: "slop-score-v1",
+      walletObservationsSha256: HASH,
+      snapshotFrom: "2026-10-11T00:00:00.000Z",
+      snapshotTo: "2026-12-02T00:00:00.000Z",
+      periodFrom: "2026-11-01T00:00:00.000Z",
+      periodTo: "2026-12-01T00:00:00.000Z",
+      snapshotLedgerCount: 3,
+      sourceMergedPullRequests: 3,
+      mergedCensus: null,
+      derivation: "snapshot-derived",
+      evidenceUrl: "https://github.com/SlopDotCash/slopdotcash/actions/runs/1",
+      evidenceArtifact: "funding-preparation-locale-tie",
+      scoredMerges: 3,
+    },
+    counts: {
+      contributors: 3,
+      events: 3,
+      scoreThirds: "3",
+      weight: "3",
+    },
+    contributors: [
+      contributor("MDQ6VXNlcjEwMA==", "I"),
+      contributor("MDQ6VXNlcjEwMQ==", "ii"),
+      contributor("MDQ6VXNlcjEwMg==", "z"),
+    ],
+  };
+}
+
+function simulatedByLogin(
+  preparation: FundingPreparation,
+): Map<string, string> {
+  const review = createFundingReview(preparation);
+  return new Map(
+    review.contributors.map((row) => [
+      row.actor.login,
+      row.simulatedMinor ?? "",
+    ]),
   );
-  expect(q).toContain('left.localeCompare(right, "en")');
+}
+
+test("quality and funding-review remainder sorts pin case-fold and collation to English", async () => {
+  const q = compactSource(
+    await Bun.file("src/lib/contribution-quality.ts").text(),
+  );
+  const f = compactSource(
+    await Bun.file("src/lib/funding-review-data.ts").text(),
+  );
+  expect(q).toContain(
+    'left.toLocaleLowerCase("en").localeCompare(right.toLocaleLowerCase("en"),"en")',
+  );
+  expect(q).toContain('left.localeCompare(right,"en")');
   expect(f).toContain('.toLocaleLowerCase("en")');
   expect(f).toContain(
-    'localeCompare(b.r.actor.login.toLocaleLowerCase("en"), "en")',
+    'localeCompare(b.r.actor.login.toLocaleLowerCase("en"),"en")',
   );
-  expect(f).toContain('localeCompare(b.r.actor.login, "en")');
+  expect(f).toContain('localeCompare(b.r.actor.login,"en")');
 });
 
 test("allocateQualityWeights leftover micro is stable under Turkish default locale", () => {
@@ -85,6 +157,21 @@ test("allocateQualityWeights leftover micro is stable under Turkish default loca
   );
   expect(tr.get("MDQ6VXNlcjEwMA==")).toBe(en.get("MDQ6VXNlcjEwMA=="));
   expect(tr.get("MDQ6VXNlcjEwMQ==")).toBe(en.get("MDQ6VXNlcjEwMQ=="));
+});
+
+test("createFundingReview leftover micro is stable under Turkish default locale", () => {
+  const en = simulatedByLogin(tieBreakPreparation());
+  const paid = [...en.values()].reduce(
+    (sum, amount) => sum + BigInt(amount),
+    0n,
+  );
+  expect(paid).toBe(1000000000n);
+  // English order awards the single leftover micro to "I", before "ii".
+  expect(BigInt(en.get("I") ?? "0")).toBe(BigInt(en.get("ii") ?? "0") + 1n);
+  const tr = withTurkishLocale(() => simulatedByLogin(tieBreakPreparation()));
+  expect(tr.get("I")).toBe(en.get("I"));
+  expect(tr.get("ii")).toBe(en.get("ii"));
+  expect(tr.get("z")).toBe(en.get("z"));
 });
 
 test("I vs ii fixture flips under Turkish case-fold without the en pin", () => {
