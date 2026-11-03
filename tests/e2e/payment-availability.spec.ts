@@ -46,7 +46,13 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     card.getByText("Payments not active", { exact: true }),
   ).toHaveCount(0);
-  await expect(card.locator(".project-money-state")).toHaveCount(0);
+  // A pledged monthly pool discloses its funding state in this slot
+  // ("Not funded yet") instead of leaving it empty; that disclosure is
+  // not a payment offer, so the slot must carry exactly the headline.
+  await expect(card.locator(".project-money-state")).toHaveCount(1);
+  await expect(card.locator(".project-money-state")).toContainText(
+    "Not funded yet",
+  );
   await page.screenshot({
     path: info.outputPath("home-payment-unavailable.png"),
     fullPage: true,
