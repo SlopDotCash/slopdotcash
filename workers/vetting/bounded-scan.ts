@@ -488,13 +488,17 @@ const RULES: Rule[] = [
     // downloaded bytes. The pipe rules above require the executor
     // immediately after the first pipe, so `curl … | tr -d '\r' | bash`
     // (the common CRLF-stripping idiom) and `curl … | tee x.sh | sh`
-    // matched nothing. Only `tr` and `tee` qualify: both always copy stdin
-    // to stdout regardless of their operands, so the download is what
-    // reaches the executor. Filters with a local-file-operand mode (sed,
-    // grep, cat) can read a different source than the stream and are a
-    // separate shape. A chain of these filters is still one act.
+    // matched nothing. Only `tr` and `tee` qualify: outside of help and
+    // version output, both copy stdin to stdout whatever their operands, so
+    // the download is what reaches the executor. Filters with a
+    // local-file-operand mode (sed, grep, cat) can read a different source
+    // than the stream and are a separate shape. A chain of these filters,
+    // and a line continuation inside one, are still one act. The trailing
+    // lookahead belongs to the interpreter arm only: a shell runs its own
+    // stdin so installer flags (`| sh -s -- -y`) follow it, while an
+    // interpreter given a file argument (`python3 tool.py`) runs the file.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:(?:${commandToken("tr")}|${commandToken("tee")})(?:[^\n|])*\|\s*)+(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:(?:${commandToken("tr")}|${commandToken("tee")})(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*)+(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}|${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()])))`,
       "iu",
     ),
     summary: "Runs a remote download through a pass-through filter in a shell",

