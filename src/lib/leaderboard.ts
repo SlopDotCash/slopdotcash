@@ -7106,7 +7106,7 @@ export function assertLeaderboardSnapshot(
         (left, right) =>
           right.occurredAt.localeCompare(left.occurredAt) ||
           right.source.number - left.source.number ||
-          left.id.localeCompare(right.id),
+          left.id.localeCompare(right.id, "en"),
       )
       .forEach((event, index) => {
         const expectedPoints = mergedPullRequestPoints(index + 1);

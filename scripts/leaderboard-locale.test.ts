@@ -2,6 +2,7 @@ import { afterEach, expect, setSystemTime, spyOn, test } from "bun:test";
 import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
+  type LeaderboardSnapshot,
 } from "../src/lib/leaderboard";
 import { snapshotFixture } from "../tests/fixtures";
 import {
@@ -166,5 +167,41 @@ test("Turkish generation keeps expand-review opportunity on English-first review
       (entry) => entry.kind === "expand-review",
     );
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
+  });
+});
+
+test("legacy merged-event ordinal validation is host-locale independent", () => {
+  const snapshot = snapshotFixture();
+  const [first, second] = snapshot.ledger.filter(
+    (event) => event.category === "merged-pull-request",
+  ) as LeaderboardSnapshot["ledger"];
+  // One actor, one project, one legacy month: two merges tied on
+  // occurredAt and pull request number (the same number in two
+  // repositories of the project), so the event ID alone assigns the
+  // ordinal — and with it the expected points (10 for ordinal 1,
+  // 8 for ordinal 2). Points below follow the English order.
+  first.id = `${ids[0]}:merged`;
+  first.source.id = ids[0];
+  second.id = `${ids[1]}:merged`;
+  second.source.id = ids[1];
+  second.repository = first.repository;
+  second.source.number = first.source.number;
+  second.source.url = first.source.url;
+  second.occurredAt = first.occurredAt;
+  second.points = 8;
+  const leader = snapshot.leaders[0];
+  leader.points.mergedPullRequests = 18;
+  leader.pointThirds.mergedPullRequests = 54;
+  leader.score = 32;
+  leader.scoreThirds = 96;
+  withTurkishLocale(() => {
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+    // Control: awarding ordinal 1's points to the other event is rejected
+    // under either locale.
+    second.points = 10;
+    first.points = 8;
+    expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+      "must award 10 points at ordinal 1",
+    );
   });
 });
