@@ -1063,6 +1063,33 @@ describe("durable private report controls", () => {
     expect(t.analyzed).toHaveLength(1);
   });
 
+  test("screening receives earlier project cases when priors exist", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("prior-first-report000")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    expect(t.screened[0]?.priorCases).toEqual([]);
+    expect(t.analyzed).toHaveLength(1);
+    t.advance(1000);
+    const second = await t.create("prior-second-report00", OTHER, {
+      ...REPORT,
+      description: `${REPORT.description} Distinct near-duplicate evidence.`,
+    });
+    expect(second.status).toBe(201);
+    const submission = required(second.body.submission);
+    // Distinct digest still calls the model; earlier case must be attached.
+    expect(t.screeningCalls()).toBe(2);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(t.screened[1]?.priorCases).toEqual([
+      {
+        id: first.caseId,
+        rootCauseKey: null,
+        summary: `Assessment 1: ${REPORT.summary}`,
+      },
+    ]);
+  });
+
   test.each(["needs-information", "spam"] as const)(
     "a %s report needs explicit human forwarding before assessment",
     async (decision) => {
