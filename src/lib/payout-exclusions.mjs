@@ -74,16 +74,17 @@ export function validatePayoutExclusions(value, field) {
       throw new TypeError(
         `${path} must cover at least one UTC month, from fromCycle until untilCycle`,
       );
-    const known = identities.get(entry.nodeId);
-    if (known && known.actorId !== entry.actorId)
-      throw new TypeError(`${path} disagrees about one GitHub identity`);
+    // One actor can be named by either GitHub node ID format, so the
+    // overlap bookkeeping keys on the numeric identity, not the spelling:
+    // two entries for one actor overlap even when their node IDs differ.
+    const known = identities.get(entry.actorId);
     for (const other of known?.entries ?? [])
       if (
         (other.untilCycle === null || entry.fromCycle < other.untilCycle) &&
         (entry.untilCycle === null || other.fromCycle < entry.untilCycle)
       )
         throw new TypeError(`${path} overlaps another exclusion of the actor`);
-    identities.set(entry.nodeId, {
+    identities.set(entry.actorId, {
       actorId: entry.actorId,
       entries: [...(known?.entries ?? []), entry],
     });
@@ -117,7 +118,7 @@ export function payoutExcludedGithubUserIds(project, cycleId) {
 function excludedSet(exclusions, cycleId) {
   return exclusions
     .filter((entry) => covers(entry, cycleId))
-    .map((entry) => `${entry.nodeId}\0${entry.actorId}\0${entry.relationship}`)
+    .map((entry) => `${entry.actorId}\0${entry.relationship}`)
     .sort()
     .join("\n");
 }
