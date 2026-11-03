@@ -401,17 +401,41 @@ function normalizeLabel(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/**
+ * Whether a line opens an HTML comment that nothing later on the same line
+ * closes. Comment markers inside a same-line code span are literal text, so
+ * paired single-backtick spans are removed before looking; a self-contained
+ * comment (the attribution marker line is one) opens nothing.
+ */
+function opensUnclosedHtmlComment(line: string): boolean {
+  const visible = line.replace(/`[^`]*`/g, "");
+  const open = visible.lastIndexOf("<!--");
+  return open !== -1 && !visible.includes("-->", open + 4);
+}
+
 function attributionDeclarationLineRecords(
   body: string,
 ): AttributionDeclarationLine[] {
   const records: AttributionDeclarationLine[] = [];
   let fence: { character: "`" | "~"; length: number } | null = null;
+  let comment = false;
   let offset = 0;
   while (offset <= body.length) {
     const newline = body.indexOf("\n", offset);
     const physicalEnd = newline === -1 ? body.length : newline;
     const raw = body.slice(offset, physicalEnd);
     const sourceLine = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (comment) {
+      // An HTML comment is not rendered, so its lines cannot carry a
+      // visible declaration, and a fence marker inside it toggles no
+      // fence. The comment runs until a line containing `-->`.
+      if (sourceLine.includes("-->")) {
+        comment = false;
+      }
+      if (newline === -1) break;
+      offset = newline + 1;
+      continue;
+    }
     const fenceMatch = sourceLine.match(
       /^\s{0,3}(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/,
     );
@@ -439,6 +463,9 @@ function attributionDeclarationLineRecords(
       if (newline === -1) break;
       offset = newline + 1;
       continue;
+    }
+    if (opensUnclosedHtmlComment(sourceLine)) {
+      comment = true;
     }
     const line = sourceLine
       .trim()
