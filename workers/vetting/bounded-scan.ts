@@ -130,15 +130,20 @@ const AGENT_INSTRUCTIONS = new Set([
  * Package-manager configuration read on every install or run. Each file can
  * make the package manager execute code (`node-options` and `script-shell` in
  * `.npmrc`, `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the
- * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`), so it is an
+ * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`) or redirect what
+ * the install downloads or where it uploads (the pip `index-url` in
+ * `pip.conf` and `pip.ini`, the `repository` in `.pypirc`), so it is an
  * install surface, never unreviewed content.
  */
 const PACKAGE_MANAGER_CONFIGS = new Set([
   ".npmrc",
+  ".pypirc",
   ".yarnrc",
   ".yarnrc.yml",
   ".pnpmfile.cjs",
   "bunfig.toml",
+  "pip.conf",
+  "pip.ini",
 ]);
 const INSTALL_FILES = new Set([
   "setup.py",
@@ -216,6 +221,12 @@ const MSBUILD_RECIPE = new RegExp(
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
+/**
+ * Cargo merges `.cargo/config.toml`, or the legacy `.cargo/config`, from every
+ * parent directory at build time. A `source` replacement redirects where
+ * crates download from and a `rustc-wrapper` runs a program on every compile.
+ */
+const CARGO_CONFIG = /(?:^|\/)\.cargo\/config(?:\.toml)?$/u;
 const SOURCE_EXTENSIONS =
   /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
@@ -285,6 +296,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
+    CARGO_CONFIG.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
     lower.startsWith(".vscode/") ||
