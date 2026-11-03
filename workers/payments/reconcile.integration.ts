@@ -112,6 +112,7 @@ const deployments = [
 ] as const;
 const rpcUrls = { "base-local": BASE_RPC, "solana-local": SOLANA_RPC };
 const genesisHashes = { "solana-local": GENESIS };
+const servedNetworks = ["base-local", "solana-local"] as const;
 
 function seedAttempt(
   sql: Database,
@@ -228,7 +229,14 @@ try {
       });
       baseRpcDown = true;
       const error = await captureError(() =>
-        reconcileFailedAttempts(db, deployments, rpcUrls, genesisHashes, now),
+        reconcileFailedAttempts(
+          db,
+          servedNetworks,
+          deployments,
+          rpcUrls,
+          genesisHashes,
+          now,
+        ),
       );
       assert.ok(
         error instanceof AggregateError,
@@ -255,15 +263,16 @@ try {
     console.log("phase 1 passed: RPC outage isolated to its own attempt");
   }
 
-  // Phase 2: the first attempt names a deployment outside the reviewed set.
-  // The later Base attempt must still be reconciled from its revert proof.
+  // Phase 2: the first attempt names a vault outside the reviewed set on a
+  // network this run does serve. The later Base attempt must still be
+  // reconciled from its revert proof.
   {
     const { directory, sql, db } = makeDatabase();
     try {
       seedAttempt(sql, {
         id: "attempt-ghost",
         actor: "303",
-        network: "ghost-net",
+        network: "base-local",
         chain: "base",
         vault: "vault-ghost",
         transactionId: `0x${"d".repeat(64)}`,
@@ -279,7 +288,14 @@ try {
         seed: "1",
       });
       const error = await captureError(() =>
-        reconcileFailedAttempts(db, deployments, rpcUrls, genesisHashes, now),
+        reconcileFailedAttempts(
+          db,
+          servedNetworks,
+          deployments,
+          rpcUrls,
+          genesisHashes,
+          now,
+        ),
       );
       assert.ok(
         error instanceof AggregateError,
@@ -321,7 +337,14 @@ try {
         seed: "1",
       });
       const error = await captureError(() =>
-        reconcileFailedAttempts(db, deployments, rpcUrls, genesisHashes, now),
+        reconcileFailedAttempts(
+          db,
+          servedNetworks,
+          deployments,
+          rpcUrls,
+          genesisHashes,
+          now,
+        ),
       );
       assert.equal(error, null);
       assert.deepEqual(attemptState(sql, "attempt-base"), {
@@ -334,6 +357,125 @@ try {
       rmSync(directory, { recursive: true, force: true });
     }
     console.log("phase 3 passed: healthy attempt reconciles cleanly");
+  }
+
+  // Phase 4: an attempt of a network this run does not serve belongs to that
+  // network's own run (the shared database holds every network's rows). It
+  // is neither reconciled nor reported as a failure; the served attempt
+  // still reconciles and the run reports no error.
+  {
+    const { directory, sql, db } = makeDatabase();
+    try {
+      seedAttempt(sql, {
+        id: "attempt-foreign",
+        actor: "404",
+        network: "ethereum-sepolia",
+        chain: "base",
+        vault: "vault-foreign",
+        transactionId: `0x${"e".repeat(64)}`,
+        seed: "4",
+      });
+      seedAttempt(sql, {
+        id: "attempt-base",
+        actor: "101",
+        network: "base-local",
+        chain: "base",
+        vault: "vault-base",
+        transactionId: BASE_TX,
+        seed: "1",
+      });
+      const error = await captureError(() =>
+        reconcileFailedAttempts(
+          db,
+          servedNetworks,
+          deployments,
+          rpcUrls,
+          genesisHashes,
+          now,
+        ),
+      );
+      assert.equal(error, null);
+      assert.deepEqual(attemptState(sql, "attempt-base"), {
+        attemptState: "failed",
+        outboxState: "ready",
+        failureCount: 1,
+      });
+      assert.deepEqual(attemptState(sql, "attempt-foreign"), {
+        attemptState: "submitted",
+        outboxState: "held",
+        failureCount: 0,
+      });
+    } finally {
+      sql.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+    console.log("phase 4 passed: foreign network attempt left to its own run");
+  }
+
+  // Phase 5: a network this run serves can have no reviewed deployment at
+  // all (its project's manifest was skipped, so the deployment list omits
+  // the network). Its attempts are still selected under the served scope,
+  // so the deployment match reports the attempt instead of the run silently
+  // skipping a network no other run can judge. The healthy Base attempt
+  // still reconciles.
+  {
+    const { directory, sql, db } = makeDatabase();
+    try {
+      seedAttempt(sql, {
+        id: "attempt-orphan",
+        actor: "505",
+        network: "deploymentless-net",
+        chain: "base",
+        vault: "vault-orphan",
+        transactionId: `0x${"f".repeat(64)}`,
+        seed: "5",
+      });
+      seedAttempt(sql, {
+        id: "attempt-base",
+        actor: "101",
+        network: "base-local",
+        chain: "base",
+        vault: "vault-base",
+        transactionId: BASE_TX,
+        seed: "1",
+      });
+      const error = await captureError(() =>
+        reconcileFailedAttempts(
+          db,
+          [...servedNetworks, "deploymentless-net"],
+          deployments,
+          rpcUrls,
+          genesisHashes,
+          now,
+        ),
+      );
+      assert.ok(
+        error instanceof AggregateError,
+        `expected an AggregateError, got ${String(error)}`,
+      );
+      assert.equal(error.errors.length, 1);
+      assert.match(
+        String(error.errors[0]),
+        /Reviewed deployment missing for reconciliation/,
+      );
+      assert.deepEqual(attemptState(sql, "attempt-base"), {
+        attemptState: "failed",
+        outboxState: "ready",
+        failureCount: 1,
+      });
+      // The reported attempt stays submitted and reserved for a later run.
+      assert.deepEqual(attemptState(sql, "attempt-orphan"), {
+        attemptState: "submitted",
+        outboxState: "held",
+        failureCount: 0,
+      });
+    } finally {
+      sql.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+    console.log(
+      "phase 5 passed: deploymentless served network is reported, not skipped",
+    );
   }
 } finally {
   globalThis.fetch = originalFetch;

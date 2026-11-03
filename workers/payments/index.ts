@@ -701,6 +701,7 @@ export default {
       () =>
         reconcileFailedAttempts(
           env.PAYMENTS_DB,
+          parsePaymentNetworks(env.PAYMENT_NETWORKS),
           deployments,
           rpcUrls,
           JSON.parse(env.PAYMENT_SOLANA_GENESIS ?? "{}") as Record<

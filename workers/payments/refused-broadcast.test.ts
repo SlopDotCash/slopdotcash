@@ -586,6 +586,7 @@ test.each(["ready", "processing", "paid"] as const)(
       chain.reverted.add(transactionId);
       await reconcileFailedAttempts(
         env.PAYMENTS_DB,
+        ["base-sepolia"],
         [paymentDeploymentRecord("project-1", deployment)],
         { "base-sepolia": rpcUrl },
       );
