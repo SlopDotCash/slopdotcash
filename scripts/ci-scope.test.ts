@@ -218,3 +218,20 @@ test("a changed preview-only browser test keeps the preview and Pages lanes only
     }),
   ).toEqual(["preview-1", "preview-2", "pages"]);
 });
+
+// .github/workflows/escrow-tests.yml triggers on every `contracts/**` change and
+// docs/security/escrow-ai-review-2026-10-12.md records that the workflow runs
+// `forge fmt --check`, `forge build` and `forge test` for every pull request
+// that changes `contracts/`. A shared accounting file at the contracts root is
+// implemented by both adapters, so such a pull request must select an
+// accounting lane. Otherwise the required check completes with every job
+// skipped and reports success.
+for (const path of ["contracts/vault-totals.ts"]) {
+  test(`escrow accounting lanes follow ${path}`, () => {
+    const scope = scopeFor({ [path]: "export interface VaultTotals {}\n" });
+    expect({ solana: scope.solana, evm: scope.evm }).toEqual({
+      solana: "true",
+      evm: "true",
+    });
+  });
+}
