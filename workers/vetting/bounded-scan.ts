@@ -147,6 +147,7 @@ const INSTALL_FILES = new Set([
   "makefile",
   "makefile.pl",
   "justfile",
+  "snakefile",
   "install.sh",
   "postinstall.js",
   "preinstall.js",
