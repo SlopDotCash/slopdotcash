@@ -49,6 +49,9 @@ export async function activeBudgetBlock(db: D1Database, reviewKey: string) {
 
 /** Queue first, then checkpoint. Unknown send outcomes can duplicate a job;
  * the existing review lease and completed-revision check prevent duplicate work.
+ * One block's failed send or checkpoint does not stop the rest: every due
+ * block is attempted, the failures are reported together at the end, and a
+ * failed block keeps no dispatch record so a later run selects it again.
  */
 export async function resumeBudgetBlocks(
   db: D1Database,
@@ -73,15 +76,24 @@ export async function resumeBudgetBlocks(
     id: number;
     job: ReviewJob;
   }[];
+  const failures: unknown[] = [];
+  let resumed = 0;
   for (const item of pending) {
-    await queue.send(item.job);
-    // Another scheduler may have sent the same durable job concurrently.
-    await db
-      .prepare(
-        "INSERT INTO slopbot_budget_dispatches(block_id,queued_at) SELECT ?,? WHERE NOT EXISTS(SELECT 1 FROM slopbot_budget_dispatches WHERE block_id=?)",
-      )
-      .bind(item.id, at, item.id)
-      .run();
+    try {
+      await queue.send(item.job);
+      // Another scheduler may have sent the same durable job concurrently.
+      await db
+        .prepare(
+          "INSERT INTO slopbot_budget_dispatches(block_id,queued_at) SELECT ?,? WHERE NOT EXISTS(SELECT 1 FROM slopbot_budget_dispatches WHERE block_id=?)",
+        )
+        .bind(item.id, at, item.id)
+        .run();
+      resumed += 1;
+    } catch (error) {
+      failures.push(error);
+    }
   }
-  return pending.length;
+  if (failures.length)
+    throw new AggregateError(failures, "Budget block resume failures");
+  return resumed;
 }
