@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { compareActors } from "../../src/lib/github-actor";
 import { communityProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
@@ -774,6 +775,48 @@ test("renders contributor and cycle records from validated public data", {
         name: `Eliza · ${new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${view.cycle.id}-01T00:00:00Z`))}`,
       }),
     ).toBeVisible();
+  }
+
+  // The archived table presents the closed month's final standings, so its
+  // rows render in exact-score order with the documented actor tie order —
+  // never in the frozen record's allocation order, whose evidence-bonus
+  // weights the site does not display.
+  const september = cycles.cycles.find(
+    (cycle) => cycle.projectId === "eliza" && cycle.cycleId === "2026-09",
+  );
+  if (september && september.contributors.length > 1) {
+    await page.goto("/cycles/eliza/2026-09", { waitUntil: "networkidle" });
+    const table = page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    });
+    const rows = table.locator("tbody tr");
+    await expect(rows).toHaveCount(september.contributors.length);
+    const rendered = await rows.evaluateAll((trs) =>
+      trs.map((tr) => ({
+        login: tr.querySelector("a")?.textContent?.trim() ?? "",
+        points: Number(
+          (tr.querySelectorAll("td")[0]?.textContent ?? "").replace(
+            /[^0-9]/gu,
+            "",
+          ),
+        ),
+      })),
+    );
+    const expected = [...september.contributors].sort(
+      (left, right) =>
+        (right.scoreThirds ?? right.score * 3) -
+          (left.scoreThirds ?? left.score * 3) ||
+        compareActors(left.actor, right.actor),
+    );
+    expect(rendered.map((row) => row.login)).toEqual(
+      expected.map((contributor) => contributor.actor.login),
+    );
+    expect(rendered.map((row) => row.points)).toEqual(
+      expected.map(
+        (contributor) =>
+          (contributor.scoreThirds ?? contributor.score * 3) * 10,
+      ),
+    );
   }
 });
 

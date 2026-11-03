@@ -4,6 +4,7 @@ import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
+import { compareActors } from "./lib/github-actor";
 import {
   monthlyCutoff,
   PRD_MONTHLY_SCHEDULE,
@@ -28,6 +29,7 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
+  formatPointsFromThirds,
   formatRewardMinor,
   NotFound,
   RoutePageHeader,
@@ -323,6 +325,18 @@ function CycleAmountHistory({
 }
 
 function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
+  // The frozen record lists contributors in allocation order — payment
+  // weight, which includes receipt-evidence bonus points the site never
+  // displays (PRD section 7). This table presents the closed month's final
+  // standings, so render a copy in the order every other standings surface
+  // uses: exact score descending, compareActors for ties. The record
+  // itself is never reordered; frozen payment intent IDs embed its order.
+  const standings = [...cycle.contributors].sort(
+    (left, right) =>
+      (right.scoreThirds ?? right.score * 3) -
+        (left.scoreThirds ?? left.score * 3) ||
+      compareActors(left.actor, right.actor),
+  );
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
@@ -337,6 +351,11 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
           // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users can scroll the full historical evidence.
           tabIndex={0}
         >
+          <p>
+            Amounts follow the frozen payment weight — score plus
+            receipt-evidence bonus points — so a lower row can show a larger
+            amount than a row above it. Rows are ordered by displayed Points.
+          </p>
           <table className="plain-table cycle-contributors">
             <caption className="visually-hidden">
               Archived cycle contributors and current award amounts
@@ -353,7 +372,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
               </tr>
             </thead>
             <tbody>
-              {cycle.contributors.map((contributor) => {
+              {standings.map((contributor) => {
                 const phase =
                   contributor.state === "paid"
                     ? 2
@@ -377,9 +396,9 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                       </small>
                     </th>
                     <td>
-                      {(
-                        (contributor.scoreThirds ?? contributor.score * 3) * 10
-                      ).toLocaleString()}
+                      {formatPointsFromThirds(
+                        contributor.scoreThirds ?? contributor.score * 3,
+                      )}
                     </td>
                     <td>
                       {cycle.kind === "external-prize-share" ? (
