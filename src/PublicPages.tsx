@@ -199,6 +199,29 @@ export function HowItWorksPage() {
             </div>
           </article>
           <article className="faq-answer">
+            <h3>GitHub flagged my account. What happens to my work?</h3>
+            <div>
+              <p>
+                A flag is GitHub&apos;s restriction, not Slop&apos;s. Slop does
+                not report accounts and cannot lift a flag. Appeal to GitHub
+                through its{" "}
+                <ExternalLinkAnchor href="https://support.github.com/contact/flagged">
+                  flagged account form
+                </ExternalLinkAnchor>{" "}
+                from the account&apos;s primary email.
+              </p>
+              <p>
+                Keep the same account. Sign-in and wallet registration are tied
+                to it, and a new account inherits nothing. If GitHub prevents
+                Slop from verifying your account, Slop sign-in will fail. Your
+                wallet registrations are unchanged. If GitHub hides your pull
+                requests, merged work may be missing from the site. Once GitHub
+                restores access, eligible work can appear again after a
+                successful Slop collection and site update.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
             <h3>How do I receive an award?</h3>
             <div>
               <p>
