@@ -48,6 +48,7 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
+import { refutedLiteralClaim } from "./literal-claims";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -1345,6 +1346,26 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // Issue #1930: a finding that rejects a well-formed digest, or calls a `0x`
+  // integer literal an undefined name, is a deterministic misread of the
+  // reviewed text. The issue's suggested fix is to "drop or downgrade the
+  // finding when the check passes"; dropping is the safe direction, because a
+  // wrong rejection harms a real contributor (PRD section 5). Weak work is
+  // label-only, so withdrawing the finding publishes an advisory no-finding
+  // comment instead of a label.
+  const refuted =
+    verdict.category === "low_quality"
+      ? refutedLiteralClaim(verdict.summary, context.itemText)
+      : null;
+  if (refuted) {
+    verdict = {
+      ...verdict,
+      category: "none",
+      rule_refs: [],
+      evidence: [],
+      summary: `The review finding was withdrawn: ${refuted.reason}. No finding.`,
+    };
+  }
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
