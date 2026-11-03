@@ -119,7 +119,7 @@ export function allocateReviewBudgetMinor(
     [...allocations.values()].reduce((total, amount) => total + amount, 0n);
   remainders.sort((left, right) =>
     left.remainder === right.remainder
-      ? left.actorId.localeCompare(right.actorId)
+      ? left.actorId.localeCompare(right.actorId, "en")
       : left.remainder > right.remainder
         ? -1
         : 1,
@@ -283,7 +283,7 @@ export function createRewardCycleProposal(
   const leaderIds = new Set(view.leaders.map((leader) => leader.actor.id));
   const carriedOnly = [...(input.priorAccruedMinor ?? [])]
     .filter(([actorId, minor]) => !leaderIds.has(actorId) && BigInt(minor) > 0n)
-    .sort(([left], [right]) => left.localeCompare(right));
+    .sort(([left], [right]) => left.localeCompare(right, "en"));
   const carriedOnlyMinor = carriedOnly.reduce(
     (total, [, minor]) => total + BigInt(minor),
     0n,
