@@ -412,8 +412,13 @@ function attributionDeclarationLineRecords(
     const physicalEnd = newline === -1 ? body.length : newline;
     const raw = body.slice(offset, physicalEnd);
     const sourceLine = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    // The leading indent of a fence line is spaces only: a tab advances to
+    // the next multiple-of-four column, so a tab before the marker always
+    // puts it past the three-column fence allowance — the line is indented
+    // code (the same lines the skip below treats as code), and its marker
+    // neither opens nor closes a fence.
     const fenceMatch = sourceLine.match(
-      /^\s{0,3}(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/,
+      /^ {0,3}(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/,
     );
     if (fenceMatch) {
       const marker = fenceMatch[1];
