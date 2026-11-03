@@ -1307,8 +1307,9 @@ try {
   );
   // The fee falls, but the fee read fails: the latest verified bytes are still rebroadcast.
   await nextBaseFee(1n);
-  // The award's binding-time check reads the latest block first; the fee read is next.
-  latestBlockFailsAfter = 1;
+  // A journaled award sends its bytes before the payability check reads the
+  // latest block (#1717), so the fee read is this tick's first latest read.
+  latestBlockFailsAfter = 0;
   const unreadable = outcome(await tick(), cappedAward);
   assert.equal(latestBlockFailsAfter, -1, "exactly the fee read failed");
   assert.equal(unreadable.state, "waiting");
