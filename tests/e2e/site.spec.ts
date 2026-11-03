@@ -18,7 +18,7 @@ import {
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { archivedPaidCycleIndex } from "../fixtures";
+import { archivedPaidCycleIndex, publishedStandings } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -58,7 +58,9 @@ test("funding resolves to the consolidated project page", async ({ page }) => {
   const snapshotReads: string[] = [];
   page.on("request", (request) => {
     if (
-      /\/data\/(?:leaderboard\.json|cycles\/index\.json)/u.test(request.url())
+      /\/data\/(?:leaderboard\.json|leaderboard\/|standings\.json|cycles\/index\.json)/u.test(
+        request.url(),
+      )
     )
       snapshotReads.push(request.url());
   });
@@ -77,9 +79,15 @@ test("funding resolves to the consolidated project page", async ({ page }) => {
     body: JSON.stringify(snapshotReads),
     contentType: "application/json",
   });
-  expect(snapshotReads.some((url) => url.includes("leaderboard.json"))).toBe(
+  // The project page reads the published standings record and the cycle
+  // index, never the complete multi-part leaderboard snapshot.
+  expect(snapshotReads.some((url) => url.includes("standings.json"))).toBe(
     true,
   );
+  expect(snapshotReads.some((url) => url.includes("cycles/index.json"))).toBe(
+    true,
+  );
+  expect(snapshotReads.some((url) => url.includes("leaderboard"))).toBe(false);
   await expectAccessible(page);
 });
 
@@ -1933,8 +1941,9 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   snapshot.leaders.sort(compareRankedEntries);
   assignLeaderboardRanks(snapshot.leaders);
   assertLeaderboardSnapshot(snapshot);
-  await page.route("**/data/leaderboard.json?**", (route) =>
-    route.fulfill({ json: snapshot }),
+  const standings = publishedStandings(snapshot, await loadCycles(request));
+  await page.route("**/data/standings.json?**", (route) =>
+    route.fulfill({ json: standings }),
   );
   await page.route("**/api/v1/wallet-claims/actors/*/current", (route) =>
     route.fulfill({ json: null }),
