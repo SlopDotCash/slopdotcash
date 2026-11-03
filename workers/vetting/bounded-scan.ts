@@ -156,6 +156,8 @@ const INSTALL_FILES = new Set([
   "tasks.json",
   "tox.ini",
   "tox.toml",
+  "rebar.config",
+  "rebar.config.script",
   "devcontainer.json",
   "gnumakefile",
   "dockerfile",

