@@ -11,6 +11,7 @@ import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  loadPriorCases,
   runAppealTriage,
   runCaseAnalysis,
   type SecurityAnalysisInput,
@@ -621,7 +622,11 @@ async function screenStoredReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await loadPriorCases(
+          deps.db,
+          submission.project_id,
+          row.case_id,
+        ),
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -709,7 +714,7 @@ export async function screenLegacyReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await loadPriorCases(deps.db, projectId, null),
       },
       ANALYSIS_TIMEOUT_MS,
     );
