@@ -28,6 +28,11 @@ mean the code is free of all malware.
 | `downloads` | URLs that install-time content downloads, and committed binaries or archives |
 | `agentInstructions` | `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`, `CONTRIBUTING.md`, README, `SKILL.md`, `WARP.md`, `llms.txt`, Cursor, Claude, Copilot (`.github/instructions`, `.github/chatmodes`), Windsurf, JetBrains Junie (`.junie`), Project IDX (`.idx`), Goose, Continue, Zed `.rules` and similar rule files |
 
+Git hook manager configuration is an `installScripts` surface like `.husky`:
+`lefthook.yml`, `.lefthook.yml`, `lefthook-local.yml` and their `.yaml`
+forms, `.pre-commit-config.yaml`, and `simple-git-hooks.json` or
+`.simple-git-hooks.json`. Each tool installs these commands as Git hooks.
+
 A build, install or provisioning recipe is recognized by its name, so the
 same bytes are classified the same way whether they sit in a `Makefile`, a
 `Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Dedicated `tox.ini` and
