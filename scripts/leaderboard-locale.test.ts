@@ -168,3 +168,63 @@ test("Turkish generation keeps expand-review opportunity on English-first review
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
+
+// Two merged pull requests tied on mergedAt and number: the census-input
+// normalization orders their outcome records by node ID, and that order
+// decides both the published value-assessment coverage order and which of
+// the pair is credited with the merged score event. A Turkish default
+// collation reverses the i/I pair, so the same census would publish a
+// different coverage order and credit the other pull request.
+test("Turkish generation keeps census outcome order for tied merged pull requests", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const template = input.mergedPullRequests[1];
+  const tiedPulls = ids.map((id) => ({
+    ...structuredClone(template),
+    id,
+    number: 42,
+    url: "https://github.com/SlopDotCash/asi/pull/42",
+    createdAt: "2026-11-14T00:00:00.000Z",
+    updatedAt: "2026-11-15T12:00:00.000Z",
+    mergedAt: "2026-11-15T12:00:00.000Z",
+    closedAt: "2026-11-15T12:00:00.000Z",
+  }));
+  input.mergedPullRequests = [...input.mergedPullRequests, ...tiedPulls];
+  input.mergedPullRequestOutcomes = [
+    ...input.mergedPullRequestOutcomes,
+    ...tiedPulls.map((pull) => ({
+      id: pull.id,
+      number: pull.number,
+      title: pull.title,
+      url: pull.url,
+      body: pull.body,
+      createdAt: pull.createdAt,
+      updatedAt: pull.updatedAt,
+      mergedAt: pull.mergedAt as string,
+      headRefOid: pull.headRefOid,
+      author: pull.author,
+      additions: pull.additions,
+      deletions: pull.deletions,
+      baseRefName: "main",
+      commits: [{ oid: pull.headRefOid, author: pull.author }],
+    })),
+  ];
+  input.detailEligibleMergedPullRequestIds = [
+    ...input.detailEligibleMergedPullRequestIds,
+    ...ids,
+  ];
+  input.source.counts.mergedPullRequests = 5;
+  input.source.counts.detailedMergedPullRequests = 5;
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    expect(
+      snapshot.valueAssessmentCoverage
+        ?.slice(0, 2)
+        .map((row) => row.pullRequestId),
+    ).toEqual(ids);
+    const pairEvents = snapshot.ledger
+      .map((event) => event.id)
+      .filter((id) => ids.some((pullId) => id === `${pullId}:merged`));
+    expect(pairEvents).toEqual([`${ids[0]}:merged`]);
+  });
+});
