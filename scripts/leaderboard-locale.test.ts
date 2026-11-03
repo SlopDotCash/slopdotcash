@@ -168,3 +168,40 @@ test("Turkish generation keeps expand-review opportunity on English-first review
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
+
+test("Turkish generation keeps the published ledger order for tied merges", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  // Two November merges with equal points (the one-third minimum) and the
+  // same pull request number in different repositories (asi #42 and
+  // eliza #42): only the event ID tie-break can order them in the ledger.
+  const first = input.mergedPullRequests[1];
+  const second = input.mergedPullRequests[2];
+  first.id = ids[0];
+  first.number = 42;
+  first.url = "https://github.com/SlopDotCash/asi/pull/42";
+  second.id = ids[1];
+  second.number = 42;
+  second.url = "https://github.com/elizaOS/eliza/pull/42";
+  const firstOutcome = input.mergedPullRequestOutcomes[1];
+  const secondOutcome = input.mergedPullRequestOutcomes[2];
+  firstOutcome.id = first.id;
+  firstOutcome.number = 42;
+  firstOutcome.url = first.url;
+  secondOutcome.id = second.id;
+  secondOutcome.number = 42;
+  secondOutcome.url = second.url;
+  input.detailEligibleMergedPullRequestIds[1] = first.id;
+  input.detailEligibleMergedPullRequestIds[2] = second.id;
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    const tied = snapshot.ledger.filter((event) =>
+      ids.some((id) => event.id === `${id}:merged`),
+    );
+    expect(tied.map((event) => event.points)).toEqual([1 / 3, 1 / 3]);
+    expect(tied.map((event) => event.id)).toEqual(
+      ids.map((id) => `${id}:merged`),
+    );
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  });
+});

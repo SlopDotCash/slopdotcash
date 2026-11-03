@@ -5070,7 +5070,7 @@ function createSnapshotWithReviewCutoff(
       (left, right) =>
         right.points - left.points ||
         left.source.number - right.source.number ||
-        left.id.localeCompare(right.id),
+        left.id.localeCompare(right.id, "en"),
     ),
     reviewExclusions: reviewExclusions.sort(compareReviewExclusions),
     penalties,
@@ -7940,7 +7940,7 @@ export function paymentReviewSnapshot(
       (left, right) =>
         right.points - left.points ||
         left.source.number - right.source.number ||
-        left.id.localeCompare(right.id),
+        left.id.localeCompare(right.id, "en"),
     ),
     reviewExclusions: basis.reviewExclusions,
     attributions: basis.attributionOrder.map(
