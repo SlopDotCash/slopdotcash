@@ -1729,10 +1729,14 @@ function publishedPenalties(
       },
     });
   }
+  // Same-time penalties order by an ID that starts with the pull request's
+  // opaque node ID, so the tie-break pins English collation like
+  // compareReviews: a host-default localeCompare can reverse i/I pairs
+  // (Turkish) and reorder the published snapshot by the generating host.
   return penalties.sort(
     (left, right) =>
       left.occurredAt.localeCompare(right.occurredAt) ||
-      left.id.localeCompare(right.id),
+      left.id.localeCompare(right.id, "en"),
   );
 }
 
@@ -2522,6 +2526,13 @@ function compareWorkItems(left: WorkItem, right: WorkItem): number {
   );
 }
 
+/**
+ * Order opportunities by time, then pull request number, then ID. The IDs
+ * start with an opaque GitHub node ID; host-default localeCompare can
+ * reverse i/I pairs (Turkish), which would reorder the published snapshot
+ * by the generating host. Pin English collation like compareReviews so
+ * English hosts keep their published order.
+ */
 function compareOpportunities(
   left: ScoreOpportunity,
   right: ScoreOpportunity,
@@ -2529,7 +2540,7 @@ function compareOpportunities(
   return (
     parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
     left.source.number - right.source.number ||
-    left.id.localeCompare(right.id)
+    left.id.localeCompare(right.id, "en")
   );
 }
 

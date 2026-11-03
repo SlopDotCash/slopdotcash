@@ -3,6 +3,7 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import type { PullRequestRecord } from "../src/lib/leaderboard-types";
 import { snapshotFixture } from "../tests/fixtures";
 import {
   AFTER_NOVEMBER,
@@ -166,5 +167,137 @@ test("Turkish generation keeps expand-review opportunity on English-first review
       (entry) => entry.kind === "expand-review",
     );
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
+  });
+});
+
+// Same production i/I pair as `ids` above. Two penalties recorded at the
+// same time order by their `<pull id>:penalty` IDs, and two expand-review
+// opportunities at the same time on same-number pull requests in different
+// repositories order by their `<pull id>:opportunity:...` IDs; a Turkish
+// default collation reverses both published orders.
+const orderPairIds = ["PR_kwDOMT5cIs8AAAABG3i2Yg", "PR_kwDOMT5cIs8AAAABG3IwgQ"];
+
+test("Turkish generation keeps the published same-time penalty order", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const recordedAt = "2026-11-15T12:00:00.000Z";
+  const input = penaltyScoreInput(
+    orderPairIds.map((itemNodeId) => ({
+      itemNodeId,
+      authorGithubId: "42",
+      category: "spam",
+      tableVersion: "slopbot-penalties-v1",
+      debitThirds: 3,
+      period: "2026-11",
+      recordedAt,
+    })),
+    AFTER_NOVEMBER,
+  );
+  const closedPull = (id: string, number: number): PullRequestRecord => ({
+    id,
+    number,
+    title: "Followers",
+    url: `https://github.com/SlopDotCash/asi/pull/${number}`,
+    body: "Buy cheap followers today.",
+    createdAt: "2026-11-09T00:00:00.000Z",
+    updatedAt: "2026-11-10T00:00:00.000Z",
+    lastEditedAt: null,
+    editor: null,
+    mergedAt: null,
+    closedAt: "2026-11-10T00:00:00.000Z",
+    headRefOid: "5".repeat(40),
+    isDraft: false,
+    reviewDecision: null,
+    activeReviewRequestCount: 0,
+    author: PENALIZED_AUTHOR,
+    assignees: [],
+    labels: [],
+    files: [{ path: "src/fix.py", additions: 4, deletions: 1 }],
+    comments: [],
+    reviews: [],
+    closingIssueIds: [],
+    additions: 4,
+    deletions: 1,
+    changedFiles: 1,
+    commitCount: 1,
+  });
+  input.closedUnmergedPullRequests = orderPairIds.map((id, index) =>
+    closedPull(id, 500 + index),
+  );
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    expect(snapshot.penalties?.map((penalty) => penalty.id)).toEqual(
+      orderPairIds.map((id) => `${id}:penalty`),
+    );
+  });
+});
+
+test("Turkish generation keeps the published same-time opportunity order", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const submittedAt = "2026-11-15T12:00:00.000Z";
+  const openPull = (
+    id: string,
+    repositoryUrl: string,
+    reviewId: string,
+  ): PullRequestRecord => ({
+    id,
+    number: 42,
+    title: "Open change awaiting a fuller review",
+    url: `${repositoryUrl}/pull/42`,
+    body: "Implements the accepted behavior.",
+    createdAt: "2026-11-14T00:00:00.000Z",
+    updatedAt: submittedAt,
+    lastEditedAt: null,
+    editor: null,
+    mergedAt: null,
+    closedAt: null,
+    headRefOid: "a".repeat(40),
+    isDraft: false,
+    reviewDecision: "CHANGES_REQUESTED",
+    activeReviewRequestCount: 0,
+    author: PROJECT_OWNER,
+    assignees: [],
+    labels: [],
+    files: [{ path: "src/fix.py", additions: 4, deletions: 1 }],
+    comments: [],
+    reviews: [
+      {
+        id: reviewId,
+        body: "Looks fine.",
+        state: "CHANGES_REQUESTED",
+        submittedAt,
+        url: `${repositoryUrl}/pull/42#pullrequestreview-1`,
+        author: PENALIZED_AUTHOR,
+        inlineCommentCount: 0,
+      },
+    ],
+    closingIssueIds: [],
+    additions: 4,
+    deletions: 1,
+    changedFiles: 1,
+    commitCount: 1,
+  });
+  const input = penaltyScoreInput([]);
+  input.openPullRequests = [
+    openPull(
+      orderPairIds[0],
+      "https://github.com/SlopDotCash/asi",
+      "PRR_order_a",
+    ),
+    openPull(
+      orderPairIds[1],
+      "https://github.com/elizaOS/eliza",
+      "PRR_order_b",
+    ),
+  ];
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    const expand = snapshot.opportunities?.filter(
+      (entry) => entry.kind === "expand-review",
+    );
+    expect(expand?.map((entry) => entry.id)).toEqual(
+      orderPairIds.map(
+        (id) => `${id}:opportunity:expand-review:${PENALIZED_AUTHOR.id}`,
+      ),
+    );
   });
 });
