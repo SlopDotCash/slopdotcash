@@ -144,6 +144,7 @@ const INSTALL_FILES = new Set([
   "setup.py",
   "build.rs",
   "extconf.rb",
+  "podfile",
   "makefile",
   "makefile.pl",
   "justfile",
