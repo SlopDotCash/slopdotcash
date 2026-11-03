@@ -41,3 +41,59 @@ export function ContributionPointTiers() {
     </section>
   );
 }
+
+const PENALTY_ROWS = [
+  { category: "Spam", action: "Close", debitThirds: 3 },
+  {
+    category: "Scam or malicious",
+    action: "Close; moderator reviews the account",
+    debitThirds: 24,
+  },
+  {
+    category: "Clear violation of a quoted project rule",
+    action: "Close",
+    debitThirds: 1,
+  },
+  {
+    category: "Low quality",
+    action: "Close (closure-eligible authors only)",
+    debitThirds: 0,
+  },
+  { category: "Duplicate", action: "Close", debitThirds: 0 },
+  { category: "Out of scope", action: "Label", debitThirds: 0 },
+] as const;
+
+/**
+ * The one published penalty table (PRD section 7), mirroring PENALTY_TABLE in
+ * workers/slopbot/penalties.ts. Debits are Slop Score thirds, shown in points.
+ */
+export function PenaltyPointTable() {
+  return (
+    <section
+      className="plain-table-wrap score-tier-wrap"
+      aria-label="Penalty table"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
+      tabIndex={0}
+    >
+      <table className="plain-table score-tier-table">
+        <caption>Published penalty table</caption>
+        <thead>
+          <tr>
+            <th scope="col">Slopbot category</th>
+            <th scope="col">Action</th>
+            <th scope="col">Debit (points)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {PENALTY_ROWS.map((row) => (
+            <tr key={row.category}>
+              <th scope="row">{row.category}</th>
+              <td>{row.action}</td>
+              <td>{formatPointsFromThirds(row.debitThirds)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
