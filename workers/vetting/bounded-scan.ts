@@ -326,13 +326,18 @@ const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${
 /**
  * A download command as it appears inside a command substitution, in the
  * spellings a shell runs as curl/wget: an absolute or relative path, a
- * backslash escape, and a `command [-p|--]` prefix. The `(?![\w./-])`
- * boundary excludes a longer name that only begins with the word, such as
- * `curl-config`, which downloads nothing. This mirrors the shared download
- * token introduced by #2141; unify the two when that lands rather than
- * keeping separate definitions.
+ * backslash escape, a `command [-p|--]` prefix, and a `"curl"`/`'curl'`/
+ * `$'curl'` quoted name (the shell runs a quoted command name as the bare
+ * one, matching the file's commandToken). The `(?![\w./-])` boundary excludes
+ * a longer name that only begins with the word, such as `curl-config`, which
+ * downloads nothing. This mirrors the shared download token introduced by
+ * #2141; unify the two when that lands rather than keeping separate
+ * definitions. Residual, deferred to that shared token: an exec/run-wrapper
+ * prefix inside the substitution (`$(exec curl …)`, `$(nice curl …)`) and the
+ * sudo/env prefix owned by #2161 stay out here.
  */
-const DOWNLOAD_COMMAND = String.raw`(?:command\s+(?:(?:--|-p)\s+)*)?(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)(?:\.exe)?(?![\w./-])`;
+const DOWNLOAD_NAME = String.raw`(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)(?:\.exe)?(?![\w./-])`;
+const DOWNLOAD_COMMAND = String.raw`(?:command\s+(?:(?:--|-p)\s+)*)?(?:"${DOWNLOAD_NAME}"|'${DOWNLOAD_NAME}'|\$'${DOWNLOAD_NAME}'|${DOWNLOAD_NAME})`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
