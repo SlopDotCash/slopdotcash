@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  githubUserIdentityKey,
   githubUserIdFromNodeId,
   sameGithubUser,
 } from "../src/lib/github-actor";
@@ -27,4 +28,23 @@ test("profile identity joins only canonical spellings of the same immutable user
     expect(sameGithubUser(invalid, legacy)).toBe(false);
   }
   expect(sameGithubUser(legacy, legacy)).toBe(true);
+});
+
+test("read-side identity keys join canonical encodings without opaque collisions", () => {
+  expect(githubUserIdentityKey(legacy)).toBe(githubUserIdentityKey(modern));
+  expect(githubUserIdentityKey(legacy)).not.toBe(githubUserIdentityKey(other));
+  for (const opaque of [
+    "1",
+    "user:1",
+    "U_kgAB",
+    `${modern}=`,
+    legacy.replace(/=+$/u, ""),
+  ]) {
+    expect(githubUserIdentityKey(opaque)).not.toBe(
+      githubUserIdentityKey(legacy),
+    );
+  }
+  expect(githubUserIdentityKey("opaque-node")).toBe(
+    githubUserIdentityKey("opaque-node"),
+  );
 });

@@ -70,6 +70,12 @@ export function githubUserIdFromNodeId(nodeId: string): string | null {
   return id.toString();
 }
 
+/** A read-side join key; malformed and opaque node IDs retain exact identity. */
+export function githubUserIdentityKey(nodeId: string): string {
+  const id = githubUserIdFromNodeId(nodeId);
+  return id === null ? `node:${nodeId}` : `user:${id}`;
+}
+
 /** Same immutable user across the two canonical GitHub node-ID encodings. */
 export function sameGithubUser(left: string, right: string): boolean {
   if (left === right) return true;

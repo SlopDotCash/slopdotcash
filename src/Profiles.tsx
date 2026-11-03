@@ -308,7 +308,7 @@ function ProfilePaymentHistory({
       : null;
   const entries = [
     ...history.map(({ contributor, cycle }) => ({
-      id: `cycle:${cycle.projectId}:${cycle.cycleId}`,
+      id: `cycle:${cycle.projectId}:${cycle.cycleId}:${contributor.actor.id}`,
       sortAt: cycle.settledAt ?? cycle.approvedAt ?? cycle.generatedAt,
       content: (
         <PaymentRecord

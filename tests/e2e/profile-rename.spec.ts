@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 /** Public-record fixtures exercise profile identity, not OAuth or settlement. */
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -6,6 +7,13 @@ import { assertCycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { githubUserIdFromNodeId } from "../../src/lib/github-actor";
 import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
+import {
+  appendPointAwards,
+  assemblePoints,
+  emptyPointsJournal,
+  type PointsIndex,
+  pointKey,
+} from "../../src/lib/points";
 import { assertProfiles, type ProfileIndex } from "../../src/lib/profiles";
 import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
@@ -1590,3 +1598,190 @@ for (const mode of ["same", "member", "different"] as const) {
     });
   });
 }
+
+// Read-only public journal and membership doubles, using both canonical IDs.
+async function canonicalPointsRecords(page: Page) {
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  const modern = "U_kgDOAAAAAQ";
+  current.id = modern;
+  const legacy = "MDQ6VXNlcjE=";
+  const at = new Date().toISOString();
+  const journal = appendPointAwards(
+    emptyPointsJournal(at),
+    [
+      {
+        key: pointKey(
+          "eliza",
+          legacy,
+          "merged-pull-request",
+          "PR_canonical_join_fixture",
+        ),
+        actor: { id: legacy, login: "previous-login" },
+        projectId: "eliza",
+        category: "merged-pull-request",
+        amount: 10,
+        occurredAt: at,
+        sourceId: "PR_canonical_join_fixture",
+        sourceUrl: "https://github.com/elizaOS/eliza/pull/1",
+        workUnitId: "history_PR_canonical_join_fixture",
+        provisional: true,
+      },
+    ],
+    "a".repeat(64),
+    "github-merged-history-v1",
+    at,
+  );
+  const bucket = Number.parseInt(journal.revisions[0].award.key[0], 16);
+  const parts = Array.from({ length: 16 }, (_, i) =>
+    JSON.stringify(
+      i === bucket ? [{ sequence: 0, revision: journal.revisions[0] }] : [],
+    ),
+  );
+  const index: PointsIndex = {
+    schemaVersion: journal.schemaVersion,
+    ruleVersion: journal.ruleVersion,
+    generatedAt: at,
+    coverage: journal.coverage,
+    revisionCount: 1,
+    shards: parts.map((part, i) => ({
+      path: `/data/points/${i.toString(16)}.json`,
+      sha256: createHash("sha256").update(part).digest("hex"),
+      count: i === bucket ? 1 : 0,
+    })),
+  };
+  assemblePoints(index, parts);
+  await page.route("**/data/points.json", (route) =>
+    route.fulfill({ json: index }),
+  );
+  await page.route("**/data/points/*.json", (route) => {
+    const i = Number.parseInt(
+      new URL(route.request().url()).pathname.split("/").pop() ?? "",
+      16,
+    );
+    return route.fulfill({ contentType: "application/json", body: parts[i] });
+  });
+  const member = {
+    actor: { id: modern, login: current.login },
+    joinedAt: at,
+    public: true,
+    welcome: 5,
+    socialPoints: 0,
+  };
+  await page.route(`${site}/api/v1/points/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    return route.fulfill({
+      json: path.endsWith("/people")
+        ? { people: [member], next: null }
+        : path.endsWith("/sessions")
+          ? { sessions: [] }
+          : path.endsWith("/x/profile")
+            ? null
+            : member,
+    });
+  });
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  return { site, current };
+}
+
+test("canonical People identity keeps one public member with earned points", async ({
+  page,
+}, info) => {
+  const { site, current } = await canonicalPointsRecords(page);
+  await page.goto(`${site}/points?view=people`);
+  const people = page.getByRole("region", { name: "People", exact: true });
+  const row = people.locator("li").filter({
+    has: page.getByRole("link", { name: current.login, exact: true }),
+  });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("Public member");
+  await expect(row).toContainText("15 pts");
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-people.png"),
+    fullPage: true,
+  });
+});
+
+test("canonical account badge includes historical earned points", async ({
+  page,
+}, info) => {
+  const { site, current } = await canonicalPointsRecords(page);
+  await page.goto(`${site}/points`);
+  const account = page.getByRole("button", {
+    name: "Your account",
+    exact: true,
+  });
+  await expect(account).toContainText("15 pts");
+  await account.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("region", { name: "Your account details" }),
+  ).toContainText(`@${current.login}`);
+  await page.keyboard.press("Escape");
+  await expect(account).toBeFocused();
+  await expectAccessible(page);
+  await page.screenshot({ path: info.outputPath("canonical-account.png") });
+});
+
+test("canonical standings use the current snapshot login", async ({
+  page,
+}, info) => {
+  const { site, current } = await canonicalPointsRecords(page);
+  await page.goto(`${site}/points`);
+  const table = page.getByRole("region", {
+    name: "Contributor standings table",
+  });
+  await expect(
+    table.getByRole("link", { name: current.login, exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    table.getByRole("link", { name: "previous-login", exact: true }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-standings.png"),
+    fullPage: true,
+  });
+});
+
+test("canonical archived aliases retain both payment records", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { cycles, current } = await profileRecords(page);
+  const first = cycles.cycles[0].contributors[0];
+  first.score = 4;
+  first.suggestedMinor = first.approvedMinor = first.paidMinor = "500000";
+  cycles.cycles[0].contributors.push({
+    ...structuredClone(first),
+    actor: { ...first.actor, id: "U_kgDOAAAAAQ" },
+    score: 3,
+  });
+  assertCycleIndex(cycles);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route(`${site}/api/v1/payments/**/direct-transfers`, (route) =>
+    route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  );
+  await page.goto(`${site}/contributors/${current.login}`);
+  const history = page.getByRole("link", { name: /Eliza.*July 2026/ });
+  await expect(history).toHaveCount(2);
+  await expect(
+    page.getByText("Archived cycle · Paid · 120 points", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Archived cycle · Paid · 90 points", { exact: false }),
+  ).toBeVisible();
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-archived.png"),
+    fullPage: true,
+  });
+});
