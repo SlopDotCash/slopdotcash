@@ -54,6 +54,7 @@ import {
 } from "./Points";
 import {
   cycleLifecycleLabel,
+  DataNotice,
   EmptyState,
   ExternalLinkAnchor,
   formatCycleMonth,
@@ -1471,6 +1472,7 @@ function ProjectPage({
         />
         {view && state.status === "ready" && view.leaders.length > 0 ? (
           <div id="contributors">
+            <DataNotice state={state} retry={retry} />
             <ContributorStandings
               projectId={project.id}
               scoreState={state}
