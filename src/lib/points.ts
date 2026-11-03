@@ -1142,7 +1142,7 @@ export function pointMembers(
     ];
   }
   return [...members.values()].sort(
-    (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
+    (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id, "en"),
   );
 }
 export function emptyPointsJournal(at: string): PointsJournal {

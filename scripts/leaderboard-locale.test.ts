@@ -3,6 +3,7 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import { type PointsJournal, pointMembers } from "../src/lib/points";
 import { snapshotFixture } from "../tests/fixtures";
 import {
   AFTER_NOVEMBER,
@@ -10,6 +11,7 @@ import {
   PROJECT_OWNER,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
+import { pointsSummary } from "./generate-points";
 
 afterEach(() => setSystemTime());
 
@@ -166,5 +168,57 @@ test("Turkish generation keeps expand-review opportunity on English-first review
       (entry) => entry.kind === "expand-review",
     );
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
+  });
+});
+
+// Two contributors tied on points: the published home summary order falls to
+// the actor node IDs, and a Turkish default collation reverses the pair, so
+// the same journal publishes a different standings order. The actor IDs
+// carry the same i/I divergence as the production pair in `ids` above.
+const standingsIds = ["U_kgDOB3i2Yg", "U_kgDOB3IwgQ"];
+
+function standingsJournal(): PointsJournal {
+  return {
+    schemaVersion: "1",
+    ruleVersion: "slop-points-v1",
+    generatedAt: "2026-11-01T00:00:00.000Z",
+    coverage: [],
+    revisions: standingsIds.map((actorId, index) => ({
+      id: `${index + 1}`.padStart(64, "0"),
+      previous: null,
+      recordedAt: "2026-11-01T00:00:00.000Z",
+      sourceDigest: "a".repeat(64),
+      sourceRule: "github-merged-history-v1",
+      award: {
+        key: `${index + 101}`.padStart(64, "0"),
+        actor: {
+          id: actorId,
+          login: index === 0 ? "first-author" : "second-author",
+        },
+        projectId: "asi",
+        category: "merged-pull-request" as const,
+        amount: 30,
+        occurredAt: "2026-10-20T00:00:00.000Z",
+        sourceId: `PR_kwDOAAAAAc8AAAABG3${index === 0 ? "i2Yg" : "IwgQ"}`,
+        sourceUrl: `https://github.com/SlopDotCash/asi/pull/${34001 + index}`,
+        workUnitId: `history_PR_standings_${index}`,
+        provisional: true,
+      },
+    })),
+  };
+}
+
+test("Turkish generation keeps the published points standings order of tied contributors", () => {
+  const journal = standingsJournal();
+  withTurkishLocale(() => {
+    const summary = pointsSummary(
+      journal,
+      pointMembers(journal),
+      "a".repeat(64),
+    );
+    expect(summary.contributors.map((entry) => entry.actor.login)).toEqual([
+      "first-author",
+      "second-author",
+    ]);
   });
 });
