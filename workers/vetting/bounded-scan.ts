@@ -496,10 +496,14 @@ const RULES: Rule[] = [
     // These direct calls pass the downloaded text to eval/exec. Ruby's
     // URI.open and Net::HTTP.get_response return objects, so require the
     // read/body access rather than reporting those objects as executed.
+    // The Net::HTTP forms take the URI from either spelling of its
+    // constructor: the standard library documents these calls with
+    // URI.parse(...), so the URI(...) shorthand alone would leave the
+    // documented form unreported.
     // Keep the argument boundary: a later fetch after a local eval is not
     // remote execution, and arbitrary transformations need source review.
     pattern:
-      /(?<![\w.$])(?:eval|exec)\s*\(\s*(?:Net::HTTP\.get\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)|Net::HTTP\.get_response\s*\(\s*URI\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)\s*\.body\b|URI\.open\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\.read\b(?:\s*\(\s*\))?|(?:file_get_contents|get)\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\))\s*\)|(?<![\w.$])(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//u,
+      /(?<![\w.$])(?:eval|exec)\s*\(\s*(?:Net::HTTP\.get\s*\(\s*URI\s*(?:\.\s*parse)?\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)|Net::HTTP\.get_response\s*\(\s*URI\s*(?:\.\s*parse)?\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\)\s*\.body\b|URI\.open\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\)\s*\.read\b(?:\s*\(\s*\))?|(?:file_get_contents|get)\s*\(\s*["']https?:\/\/[^"'()\r\n]+["']\s*\))\s*\)|(?<![\w.$])(?:include|require)(?:_once)?\s*\(?\s*["']https?:\/\//u,
     summary: "Executes code fetched from the network",
   },
   {

