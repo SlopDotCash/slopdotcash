@@ -6,6 +6,18 @@ export const MAX_LEADERBOARD_PART_BYTES = 8 * 1024 * 1024;
 export const MAX_LEADERBOARD_FILE_BYTES = 25 * 1024 * 1024;
 const FORMAT = "slop-leaderboard-parts-v1";
 const hash = (bytes) => bytesToHex(sha256(bytes));
+/**
+ * The decode path is async and verifies tens of megabytes on every load, so
+ * it uses the platform's native SHA-256 where available. The digest is the
+ * same SHA-256 either way; the pure-JS hash remains the fallback and the
+ * encoder's implementation (it is synchronous).
+ */
+const hashAsync = async (bytes) =>
+  globalThis.crypto?.subtle
+    ? bytesToHex(
+        new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes)),
+      )
+    : hash(bytes);
 const exactKeys = (value, keys) =>
   value &&
   typeof value === "object" &&
@@ -84,13 +96,13 @@ export async function readLeaderboardBytes(root, readPart) {
     if (
       !(data instanceof Uint8Array) ||
       data.length !== part.bytes ||
-      hash(data) !== part.sha256
+      (await hashAsync(data)) !== part.sha256
     )
       throw new Error("Leaderboard part size or digest mismatch");
     bytes.set(data, offset);
     offset += data.length;
   }
-  if (hash(bytes) !== value.sha256)
+  if ((await hashAsync(bytes)) !== value.sha256)
     throw new Error("Leaderboard snapshot digest mismatch");
   return bytes;
 }
