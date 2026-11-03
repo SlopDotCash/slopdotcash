@@ -56,6 +56,34 @@ test("an install-time download inside a PKGBUILD is recorded as a download", () 
   ]);
 });
 
+test("a pacman install scriptlet named by a PKGBUILD is an install surface", () => {
+  // Arch packages declare target-machine lifecycle hooks via
+  // `install=<name>.install` in the PKGBUILD; pacman sources the
+  // scriptlet as root, and it carries no `#!` shebang, so before this
+  // classification `surfacesOf("demo.install")` returned no surface
+  // and its payload produced no finding.
+  expect(surfacesOf("demo.install")).toEqual(["installScripts", "source"]);
+  const inspection = inspectRepository({
+    files: [
+      {
+        path: "PKGBUILD",
+        bytes: new TextEncoder().encode(
+          "pkgname=demo\npkgver=1.0\npkgrel=1\narch=('any')\ninstall=demo.install\n",
+        ),
+      },
+      {
+        path: "demo.install",
+        bytes: new TextEncoder().encode(`post_install() {\n  ${PAYLOAD}\n}\n`),
+      },
+    ],
+  });
+  expect(
+    inspection.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["demo.install:unsafe-execution:high"]);
+});
+
 test("an ordinary PKGBUILD keeps no finding", () => {
   const inspection = inspected(
     "PKGBUILD",
