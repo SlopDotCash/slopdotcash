@@ -226,7 +226,15 @@ function declarationLineRecords(source) {
     const fenceMatch = sourceLine.match(
       /^\s{0,3}(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/,
     );
-    if (fenceMatch) {
+    // CommonMark: the info string of a backtick fence cannot contain a
+    // backtick, so a line like "```bun run verify``` passes." is an inline
+    // code span, not a fence opening. Tilde fences may contain backticks.
+    const inlineSpan =
+      fenceMatch !== null &&
+      fence === null &&
+      fenceMatch[1][0] === "`" &&
+      fenceMatch[2].includes("`");
+    if (fenceMatch && !inlineSpan) {
       const marker = fenceMatch[1];
       if (fence === null) {
         fence = { character: marker[0], length: marker.length };
