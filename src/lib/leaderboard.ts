@@ -2214,7 +2214,7 @@ function issueClaim(
         linkedPullRequests.flatMap((pullRequest) =>
           pullRequest.author ? [pullRequest.author] : [],
         ),
-      ).sort((left, right) => left.id.localeCompare(right.id)),
+      ).sort((left, right) => left.id.localeCompare(right.id, "en")),
       claimedAt: null,
     };
   }
