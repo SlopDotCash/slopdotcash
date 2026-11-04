@@ -20,6 +20,10 @@ import {
 } from "./value-branch-policy";
 import { githubLinkDestinations } from "./value-commit-hints";
 import {
+  type AcceptedDirectMerge,
+  collectAcceptedDirectMerge,
+} from "./value-direct-merge";
+import {
   needsAddedValueComparison,
   needsFullValueComparison,
   needsRemovedValueComparison,
@@ -45,10 +49,6 @@ import {
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
-import {
-  type AcceptedDirectMerge,
-  collectAcceptedDirectMerge,
-} from "./value-direct-merge";
 import {
   type AcceptedPatchReplay,
   collectAcceptedPatchReplay,
