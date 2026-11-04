@@ -137,33 +137,48 @@ for (const retryStatus of [200, 401, 403]) {
     });
     // 200% zoom on the 320 CSS px mobile viewport is a 160 px layout, below
     // the site's supported minimum, so the mobile project keeps its own size
-    // (home-cache.spec.ts applies the same rule). The width check polls,
-    // because the zoom relayout lands after the style change.
-    if ((page.viewportSize()?.width ?? 0) >= 640) {
+    // (home-cache.spec.ts applies the same rule).
+    const zoom = (page.viewportSize()?.width ?? 0) >= 640 ? 200 : 100;
+    const heading = page.getByRole("heading", {
+      name: project.name,
+      exact: true,
+    });
+    const unzoomed = (await heading.boundingBox())?.height ?? 0;
+    expect(unzoomed).toBeGreaterThan(0);
+    if (zoom === 200) {
       await page.evaluate(() => {
         document.documentElement.style.zoom = "2";
       });
+      // The zoomed layout is observed only once the heading box is twice as
+      // tall, so the width check below reads zoomed geometry, never the
+      // layout before the zoom (which also fits the viewport).
+      await expect
+        .poll(async () => (await heading.boundingBox())?.height ?? 0)
+        .toBeGreaterThanOrEqual(unzoomed * 1.9);
     }
     await expect(
       page
         .getByRole("alert")
         .getByRole("button", { name: "Retry", exact: true }),
     ).toBeVisible();
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth + 1,
-        ),
-      )
-      .toBe(true);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
     await expectAccessible(page);
     await page.screenshot({
-      path: info.outputPath(`retained-${retryStatus}-200.png`),
+      path: info.outputPath(`retained-${retryStatus}-${zoom}.png`),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "1";
-    });
+    if (zoom === 200) {
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = "1";
+      });
+      await expect
+        .poll(async () => (await heading.boundingBox())?.height ?? 0)
+        .toBeLessThan(unzoomed * 1.5);
+    }
     retried = true;
     const retry = page
       .getByRole("alert")
