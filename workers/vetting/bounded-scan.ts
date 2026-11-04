@@ -306,10 +306,10 @@ type Rule = {
   surfaces?: ScanSurface[];
 };
 
-/** A command token cannot continue into another command or a filename suffix. */
+/** A command token cannot continue into another command or a filename suffix. A backtick ends the token too: inline code and command substitution quote the name without hiding it. */
 function commandToken(name: string): string {
   const word = String.raw`(?:[^\s|;&<>()'"]*/)?${name}`;
-  return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
+  return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"\x60])`;
 }
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
