@@ -323,6 +323,24 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+/**
+ * Zero or more run-wrappers in front of a command, each optionally path
+ * prefixed and followed by its flag, numeric or KEY=VALUE arguments: the
+ * privilege and environment wrappers the secret-exfiltration rule already
+ * recognizes (`sudo`, `doas`, `busybox`, `env`) plus the common run-wrappers
+ * `command`, `nice`, `timeout`, and `stdbuf`. A bare inline `KEY=VALUE`
+ * assignment also counts, so `busybox tr`, `sudo tee`, `env LC_ALL=C tr` and
+ * `LC_ALL=C tr` (the BSD/macOS CRLF-strip form) are the same act as the bare
+ * command. An option that takes a separate word (`sudo -u root`) is not
+ * consumed and stays out.
+ */
+const RUN_WRAPPERS = String.raw`(?:(?:[A-Za-z_]\w*=\S*|(?:[^\s|;&<>()'"]*/)?(?:sudo|doas|busybox|env|command|nice|timeout|stdbuf)(?:\s+(?:-\S+|\d+\S*|[A-Za-z_]\w*=\S*))*)\s+)*`;
+/**
+ * A pipe between stages, allowing whole-line comments after it: install
+ * scripts keep a `|` at the end of a line and comment the next stage, and the
+ * shell runs the pipeline across those comment lines.
+ */
+const PIPE_THEN_COMMENTS = String.raw`\|\s*(?:#[^\n]*\r?\n\s*)*`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -479,6 +497,35 @@ const RULES: Rule[] = [
       "iu",
     ),
     summary: "Runs a decoded remote download in a shell or interpreter",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A pass-through filter between the download and the executor changes
+    // nothing about what runs: the shell or interpreter still receives the
+    // downloaded bytes. The pipe rules above require the executor
+    // immediately after the first pipe, so `curl … | tr -d '\r' | bash`
+    // (the common CRLF-stripping idiom) and `curl … | tee x.sh | sh`
+    // matched nothing. Only `tr` and `tee` qualify: outside of help and
+    // version output, both copy stdin to stdout whatever their operands, so
+    // the download is what reaches the executor. Filters with a
+    // local-file-operand mode (sed, grep, cat) can read a different source
+    // than the stream and are a separate shape. A chain of these filters, a
+    // run-wrapper before one (`busybox tr`, `sudo tee`, `LC_ALL=C tr`), a line
+    // continuation inside one, and a comment line between stages are still one
+    // act, and a run-wrapper before the executor (`busybox sh`, `doas sh`)
+    // does not hide it. The executor must keep stdin as its program: a bare
+    // shell, a shell with `-s` and its installer flags (`| sh -s -- -y`), or
+    // an interpreter reading stdin (`-`/`-u`, with any options after it). A
+    // shell given a local script file (`sh tool.sh`) or a syntax-only check
+    // (`bash -n`), and an interpreter given a file (`python3 tool.py`), run or
+    // inspect something other than the download, so the end-of-stage guard
+    // keeps them out.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*${PIPE_THEN_COMMENTS}(?:${RUN_WRAPPERS}(?:${commandToken("tr")}|${commandToken("tee")})(?:[^\n|]|\\[ \t]*\r?\n)*${PIPE_THEN_COMMENTS})+${RUN_WRAPPERS}(?:${SHELL_COMMAND}(?:\s+-s(?:\s+[^\s|;&<>()]+)*)?|${INTERPRETER_PIPE_TARGET}(?:(?<=\s-)(?:\s+[^\s|;&<>()]+)+)?)(?=\s*(?:$|[|;&<>()]))`,
+      "iu",
+    ),
+    summary: "Runs a remote download through a pass-through filter in a shell",
   },
   {
     threat: "unsafe-execution",
