@@ -3253,7 +3253,7 @@ export function selectDetailedMergedPullRequestIds(
     (left, right) =>
       right.outcome.mergedAt.localeCompare(left.outcome.mergedAt) ||
       right.outcome.number - left.outcome.number ||
-      left.outcome.id.localeCompare(right.outcome.id),
+      left.outcome.id.localeCompare(right.outcome.id, "en"),
   )) {
     const { outcome, projectId } = candidate;
     if (

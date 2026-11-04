@@ -10,6 +10,7 @@ import {
   PROJECT_OWNER,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
+import { selectDetailedMergedPullRequestIds } from "./generate-leaderboard";
 
 afterEach(() => setSystemTime());
 
@@ -166,5 +167,61 @@ test("Turkish generation keeps expand-review opportunity on English-first review
       (entry) => entry.kind === "expand-review",
     );
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
+  });
+});
+
+test("Turkish generation keeps the last monthly detail slot on the English-first pull request", () => {
+  const author = {
+    id: "U_kgDODetailAuthor",
+    login: "detail-author",
+    avatarUrl: "https://avatars.githubusercontent.com/u/601?v=4",
+    url: "https://github.com/detail-author",
+    kind: "User" as const,
+  };
+  const outcome = (id: string, number: number, mergedAt: string) => ({
+    id,
+    number,
+    title: "Merged change",
+    url: `https://github.com/SlopDotCash/asi/pull/${number}`,
+    body: "Fixes a defect.",
+    createdAt: "2026-11-01T00:00:00.000Z",
+    updatedAt: mergedAt,
+    mergedAt,
+    headRefOid: "b".repeat(40),
+    author,
+    additions: 4,
+    deletions: 1,
+    baseRefName: "main",
+    commits: [{ oid: "b".repeat(40), author }],
+  });
+  // Four fillers merged later in November consume four of the five detail
+  // slots for (asi, author, 2026-11). The i/I pair in `ids` ties on mergedAt
+  // and number, so only the ID tie-break decides the last slot.
+  const candidates = [
+    ...[0, 1, 2, 3].map((index) => ({
+      outcome: outcome(
+        `PR_detail_filler_${index}`,
+        200 + index,
+        "2026-11-20T12:00:00.000Z",
+      ),
+      projectId: "asi",
+    })),
+    {
+      outcome: outcome(ids[0], 42, "2026-11-10T12:00:00.000Z"),
+      projectId: "asi",
+    },
+    {
+      outcome: outcome(ids[1], 42, "2026-11-10T12:00:00.000Z"),
+      projectId: "asi",
+    },
+  ];
+  withTurkishLocale(() => {
+    const selected = selectDetailedMergedPullRequestIds(
+      candidates,
+      new Date("2026-11-01T00:00:00.000Z"),
+    );
+    expect(selected.size).toBe(5);
+    expect(selected.has(ids[0])).toBe(true);
+    expect(selected.has(ids[1])).toBe(false);
   });
 });
