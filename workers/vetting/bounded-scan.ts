@@ -325,6 +325,29 @@ const INTERPRETER_COMMAND = commandToken(
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
 /**
+ * One literal Windows path token for the staged-download rule below: a
+ * drive, relative or environment-rooted spelling (`C:\…`, `.\x.exe`,
+ * `%TEMP%\x.exe`, `$env:TEMP\x.ps1`, `${env:TEMP}\x.ps1`). A bare
+ * variable (`$file`), a glob, and a path containing spaces stay out.
+ */
+const WIN_PATH = String.raw`(?:(?:\$env:|\$\{env:)[A-Za-z_][A-Za-z0-9_]*\}?|%[A-Za-z_][A-Za-z0-9_]*%)[A-Za-z0-9._~%$+=@:\\/{}-]*|[A-Za-z0-9._~%][A-Za-z0-9._~%$+=@:\\/{}-]*`;
+
+/**
+ * The execution side of the Windows staged-download rule: the staged
+ * path (the `REF` backreference) after an execution verb (`start`,
+ * `cmd /c`, `powershell -File`, a script host, `call`, the PowerShell
+ * `&` operator), or in command position itself. Command position alone
+ * requires a path spelling — a `.\` prefix or a separator inside the
+ * token — because a bare filename searches PATH; after a verb the
+ * verb itself carries the execution intent.
+ */
+const winExec = (ref: string): string =>
+  String.raw`(?:^|[\n;|&])[ \t]*(?:(?:start[ \t]+(?:""[ \t]+)?|cmd(?:\.exe)?[ \t]+/c[ \t]+|(?:powershell|pwsh)(?:\.exe)?\b[^\n;|&]*?-File[ \t]+|wscript(?:\.exe)?[ \t]+|cscript(?:\.exe)?[ \t]+|call[ \t]+|&[ \t]*)["']?(?:(?=[^\s;|&"']*[\\/])REF|(?:\.\\|\./)?REF)["']?|["']?(?:(?=[^\s;|&"']*[\\/])REF|(?:\.\\|\./)REF)["']?)(?=$|[\s|;&<>()'"])`.replaceAll(
+    "REF",
+    ref,
+  );
+
+/**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
  */
@@ -526,6 +549,36 @@ const RULES: Rule[] = [
       "mu",
     ),
     summary: "Executes a file staged by an earlier download in the same file",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // The Windows half of the staged act above. The download inventory
+    // already records certutil -urlcache, bitsadmin /transfer,
+    // Start-BitsTransfer and -OutFile downloads, but the staged rule
+    // cannot link them to a later run: its path alphabet has no
+    // backslash, drive colon or environment root, so a Windows path
+    // never matches. The link here is the same backreference — the
+    // execution must name the exact literal path the download wrote,
+    // after the download, within 8,192 characters, in command position
+    // or after an execution verb. Reading, checksumming or mentioning
+    // the staged file keeps no finding, and neither does running a
+    // file this file did not download. The rule is case-insensitive,
+    // unlike its sibling, because these tools and shells fold case
+    // and assign no opposite meaning to either spelling; full
+    // parameter names are required, so abbreviated PowerShell
+    // parameters, `start` switch flags, variable or glob paths and
+    // paths containing spaces stay out. The download capture enforces
+    // the space exclusion: a quoted path must close its quote right
+    // after the token, and an unquoted capture refuses a following
+    // word carrying a path separator, so a spaced path can never
+    // match as its own first fragment.
+    pattern: new RegExp(
+      String.raw`(?:^|[\n;|&])[ \t]*certutil(?:\.exe)?\b(?=[^\n;|&]*?-urlcache\b)[^\n;|&]*?https?://[^\s"'\x60]+[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\1`)}|(?:^|[\n;|&])[ \t]*bitsadmin(?:\.exe)?\b(?![^\n;|&]*?/upload\b)[^\n;|&]*?/transfer\b[^\n;|&]*?https?://[^\s"'\x60]+[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\2`)}|(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n;|&]*?-TransferType[ \t]+["']?Upload\b)[^\n;|&]*?-Source[ \t]+["']?https?://[^\s"'\x60]+["']?[^\n;|&]*?-Destination[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\3`)}|(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n;|&]*?-TransferType[ \t]+["']?Upload\b)[^\n;|&]*?-Destination[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[^\n;|&]*?-Source[ \t]+["']?https?://[^\s"'\x60]+[\s\S]{0,8192}?${winExec(String.raw`\4`)}|(?:^|[\n;|&])[ \t]*(?:Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b(?=[^\n;|&]*https?://)[^\n;|&]*?-OutFile[ \t]+["']?(${WIN_PATH})(?:["'](?=$|[\s;|&])|(?=$|[\s;|&])(?![ \t]+[^\s;|&"']*[\\/]))[\s\S]{0,8192}?${winExec(String.raw`\5`)}`,
+      "imu",
+    ),
+    summary:
+      "Executes a file staged by an earlier Windows download in the same file",
   },
 ];
 
