@@ -92,6 +92,39 @@ test("every actor vanished leaves nothing to resolve", async () => {
   expect(batches).toEqual([[VANISHED]]);
 });
 
+test("an account GitHub did not resolve is not queried again in the same run", async () => {
+  const { graphql, batches } = graphqlWithVanished([VANISHED]);
+  const actors = new Map<string, GitHubActor>();
+  const known = new Set<string>();
+  expect(
+    await hydrateValueActors(
+      graphql,
+      new Set([VANISHED, PROJECT_OWNER.id]),
+      actors,
+      known,
+    ),
+  ).toEqual([VANISHED]);
+  expect(
+    await hydrateValueActors(
+      graphql,
+      new Set([PENALIZED_AUTHOR.id, VANISHED]),
+      actors,
+      known,
+    ),
+  ).toEqual([VANISHED]);
+  expect(
+    await hydrateValueActors(graphql, new Set([VANISHED]), actors, known),
+  ).toEqual([VANISHED]);
+  expect(batches).toEqual([
+    [VANISHED, PROJECT_OWNER.id],
+    [PROJECT_OWNER.id],
+    [PENALIZED_AUTHOR.id],
+  ]);
+  expect([...actors.keys()].sort()).toEqual(
+    [PENALIZED_AUTHOR.id, PROJECT_OWNER.id].sort(),
+  );
+});
+
 test("an unavailable node the batch did not request still fails closed", async () => {
   const graphql = async () => {
     throw new SourceNodeUnavailableError([
