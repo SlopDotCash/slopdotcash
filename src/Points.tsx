@@ -100,6 +100,8 @@ type State =
       status: "ready";
       journal: PointsJournal;
       members: PointsMember[];
+      /** The UTC month `members` was computed for; reuse is month-exact. */
+      membersMonth: string;
       stale?: boolean;
     };
 type PointsContext = {
@@ -233,32 +235,30 @@ export function PointsProvider({
     void loadPoints(controller.signal)
       .then((value) => {
         if (controller.signal.aborted) return;
-        const members = pointMembers(
-          value,
-          new Date().toISOString().slice(0, 7),
-        );
+        const month = new Date().toISOString().slice(0, 7);
+        const members = pointMembers(value, month);
         verifiedJournal.current = value;
         loadedAttempt.current = { attempt, completedAt: Date.now() };
         setState({
           status: "ready",
           journal: value,
           members,
+          membersMonth: month,
         });
       })
       .catch(() => {
         if (controller.signal.aborted) return;
         const journal = verifiedJournal.current;
-        if (journal)
+        if (journal) {
+          const month = new Date().toISOString().slice(0, 7);
           setState({
             status: "ready",
             journal,
-            members: pointMembers(
-              journal,
-              new Date().toISOString().slice(0, 7),
-            ),
+            members: pointMembers(journal, month),
+            membersMonth: month,
             stale: true,
           });
-        else
+        } else
           setState({
             status: "error",
             message: "Points could not load.",
@@ -1190,6 +1190,11 @@ export function ContributorStandings({
   const month = new Date().toISOString().slice(0, 7);
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
+    // The provider already computed this exact aggregation for the current
+    // UTC month; recomputing it here walks the whole journal a second time.
+    // Reuse only the identical call: no project filter and the same month,
+    // so a tab left open across a month boundary still recomputes.
+    if (!project && month === state.membersMonth) return state.members;
     return pointMembers(state.journal, month, project || undefined);
   }, [state, project, month]);
   const currentActors = new Map(
