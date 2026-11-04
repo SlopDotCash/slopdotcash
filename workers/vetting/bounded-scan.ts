@@ -315,6 +315,19 @@ const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
 /**
+ * A registry runner token: bare or quoted, with an optional path
+ * prefix. The prefix is restricted to absolute paths — commandToken
+ * accepts any path prefix, but a project-relative prefix such as
+ * `./node_modules/.bin/npx` names a local binary, while an absolute
+ * path still names the system runner.
+ */
+function registryRunnerToken(name: string): string {
+  const word = String.raw`(?:/[^\s|;&<>()'"]*/)?${name}`;
+  return `(?:"${word}"|'${word}'|${word})`;
+}
+const REGISTRY_RUNNER = registryRunnerToken("(?:npx|bunx)");
+const REGISTRY_RUNNER_PATH = String.raw`(?:/[^\s|;&<>()'"]*/)?`;
+/**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
  * download exactly as a pipe into a shell does.
@@ -526,6 +539,27 @@ const RULES: Rule[] = [
       "mu",
     ),
     summary: "Executes a file staged by an earlier download in the same file",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A registry runner fetches a package and runs it in one step.
+    // Nothing is written to a file the other rules can read, the
+    // download is not collected, and the run is the install itself —
+    // the same invisible act as running a script URL directly. Only
+    // command position on an install surface counts, and only with a
+    // package argument: a runner asked for its own version fetches
+    // nothing, a runner told `--no-install` fetches nothing, a
+    // project-relative path prefix names a local binary (an absolute
+    // path still names the system runner), and running a local script
+    // through the package manager (`npm run`, `bun run`,
+    // `yarn install`) is not a fetch.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()"']|\x60)\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${REGISTRY_RUNNER}|${REGISTRY_RUNNER_PATH}bun\s+x|${REGISTRY_RUNNER_PATH}npm\s+exec)(?!\s+(?:-\S+\s+)*--no-install(?:\s|$))\s+(?:-\S+\s+)*["']?[A-Za-z0-9@]|${REGISTRY_RUNNER_PATH}(?:pnpm|yarn)\s+dlx\s+(?:-\S+\s+)*["']?[A-Za-z0-9@])`,
+      "iu",
+    ),
+    summary: "Runs a package fetched from a registry at install time",
+    surfaces: ["installScripts"],
   },
 ];
 
