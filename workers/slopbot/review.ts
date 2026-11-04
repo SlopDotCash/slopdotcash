@@ -5,6 +5,7 @@
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
 import { hasParticipationBan } from "../../backend/projects/account-bans";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { POINTS_PER_THIRD } from "../../src/lib/points";
 import { publishAppealComment } from "./appeal-publication";
 import {
   APPEAL_RESOLUTION_DAYS,
@@ -917,7 +918,7 @@ export function commentBody(input: {
           ? ""
           : `_This item was not closed: ${input.blockedClose}._`,
     penalty
-      ? `_Under the published penalty table, this close removes ${penalty.debit_thirds} thirds of a point from the author's ${penalty.period} Slop Score. A month never goes below zero, and approved, scheduled or paid awards do not change.${penalty.moderator_review === 1 ? " A Slop moderator also reviews the account." : ""}_`
+      ? `_Under the published penalty table, this close removes ${penalty.debit_thirds * POINTS_PER_THIRD} points from the author's ${penalty.period} Slop Score. A month never goes below zero, and approved, scheduled or paid awards do not change.${penalty.moderator_review === 1 ? " A Slop moderator also reviews the account." : ""}_`
       : "",
     "",
     "<details><summary>Review details</summary>",
