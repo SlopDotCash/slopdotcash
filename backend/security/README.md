@@ -173,11 +173,27 @@ call remains recoverable within its existing bounded timeout.
 The existing Surplus analyzer screens the saved report before owner routing.
 States are `queued`, `running`, `legitimate`, `needs-information`, `spam` and
 `unavailable`. Screening judges plausibility and concrete evidence; it is not
-an award, rejection or disclosure decision. A complete legitimate screen
-queues the existing generic private-case email and Inbox link. Held reports
-stay readable to their reporter and current case authorities. They are not
-automatically rejected or awarded. Failed delivery preserves the receipt;
-retrying `/screen` on a legitimate report retries only idempotent routing.
+an award, rejection or disclosure decision. Legitimate requires a concrete
+component, impact, and safe reproduction. Intake holds the report as
+`needs-information` and does not route it when any of these is true: the
+description is shorter than the evidence minimum, or a labeled component,
+impact, or reproduction section is empty or too short; a `legitimate` result
+sets `missingEvidence` true; a `legitimate` result omits `missingEvidence`
+(the flag is not treated as false); or a `legitimate` reason says the
+component, impact, or reproduction is missing. Screening output schema
+`slop-security-screening-2` requires the boolean. `missingEvidence: false` on
+a complete report whose reason does not admit that gap stays `legitimate`.
+The model's reason is kept when it describes the gap. Otherwise the stored
+reason names the unconfirmed evidence. A report that meets the legitimate bar
+may still be outside paid bounty scope; it stays `legitimate` and the reason
+can say so. `spam` is unchanged. A complete legitimate screen queues the
+existing generic private-case email and Inbox link. Held reports stay
+readable to their reporter and current case authorities. They are not
+automatically rejected or awarded. Background screening and the automatic
+analysis share one time limit; the screen call is capped so the analysis that
+compares earlier reports is not started with an empty timeout. Failed
+delivery preserves the receipt; retrying `/screen` on a legitimate report
+retries only idempotent routing.
 
 - `POST /:id/screen` retries an unavailable or lost screen, or pending routing.
 - `POST /:id/review` lets a current technical maintainer record `forward` or

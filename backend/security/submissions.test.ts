@@ -414,6 +414,7 @@ function setup(
     model: "fixture-model",
     screen: async () => ({
       decision: "legitimate",
+      missingEvidence: false,
       reason: "Concrete private reproduction for human review.",
     }),
     analyze: async (input) => {
@@ -2436,7 +2437,11 @@ describe("optional GitHub forwarding of a saved report", () => {
     let unapprovedCalls = 0;
     noGrant.analyzer.screen = async () => {
       unapprovedCalls++;
-      return { decision: "legitimate", reason: "Synthetic screening." };
+      return {
+        decision: "legitimate",
+        missingEvidence: false,
+        reason: "Synthetic screening.",
+      };
     };
     const missing = await noGrant.send(
       unapproved.body.submission.id,
@@ -2950,6 +2955,69 @@ describe("optional GitHub forwarding of a saved report", () => {
       (viewedSaved.body.case as { advisory: unknown }).advisory,
     ).toBeNull();
   });
+});
+
+test("a legacy draft labeled legitimate with missing evidence is not forwarded", async () => {
+  const t = setup({ durable: false });
+  t.analyzer.screen = async () => ({
+    decision: "legitimate",
+    missingEvidence: true,
+    reason: "No reproduction is attached.",
+  });
+  const submission = await t.ready();
+  const sent = await t.send(submission.id, submission.revision);
+  expect(sent.status).toBe(409);
+  expect(sent.body.error).toBe("screening_required");
+  expect(sent.body.message).not.toContain("No reproduction is attached.");
+  expect(t.row(submission.id).state).toBe("draft");
+  expect(t.github.advisories).toHaveLength(0);
+});
+
+test("a legacy draft labeled legitimate without missingEvidence is not forwarded", async () => {
+  const t = setup({ durable: false });
+  t.analyzer.screen = async () => ({
+    decision: "legitimate",
+    reason: "Looks like a real issue with clear prose.",
+  });
+  const submission = await t.ready();
+  const sent = await t.send(submission.id, submission.revision);
+  expect(sent.status).toBe(409);
+  expect(sent.body.error).toBe("screening_required");
+  expect(t.row(submission.id).state).toBe("draft");
+  expect(t.github.advisories).toHaveLength(0);
+});
+
+test("a legacy draft whose legitimate reason admits missing reproduction is not forwarded", async () => {
+  const t = setup({ durable: false });
+  t.analyzer.screen = async () => ({
+    decision: "legitimate",
+    missingEvidence: false,
+    reason: "Missing a concrete reproduction.",
+  });
+  const submission = await t.ready();
+  const sent = await t.send(submission.id, submission.revision);
+  expect(sent.status).toBe(409);
+  expect(sent.body.error).toBe("screening_required");
+  expect(sent.body.message).not.toContain("Missing a concrete reproduction.");
+  expect(t.github.advisories).toHaveLength(0);
+});
+
+test("a legacy draft with a short description is not forwarded", async () => {
+  const t = setup({ durable: false });
+  t.analyzer.screen = async () => ({
+    decision: "legitimate",
+    missingEvidence: false,
+    reason: "Concrete private reproduction for human review.",
+  });
+  const submission = await t.ready();
+  const sent = await t.send(submission.id, submission.revision, {
+    summary: "Short title",
+    description: "Too short to show it.",
+  });
+  expect(sent.status).toBe(409);
+  expect(sent.body.error).toBe("screening_required");
+  expect(t.row(submission.id).state).toBe("draft");
+  expect(t.github.advisories).toHaveLength(0);
 });
 
 test("an unfinished legacy draft passes the same screen before its first forward", async () => {
