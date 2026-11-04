@@ -259,6 +259,64 @@ export async function retryOpenReferenceListing<T>(
 
 class GraphqlResponseBoundaryError extends Error {}
 
+/** GitHub gateway answers that the bounded retry treats as transient. */
+const GATEWAY_FAILURE_STATUSES: readonly number[] = [502, 503, 504];
+
+/**
+ * GitHub's gateway failed a request on every bounded attempt (502, 503 or
+ * 504 with a non-JSON body). For a `nodes(ids:)` batch the usual cause is the
+ * batch itself: twenty-five open pull requests that each carry over a thousand
+ * changed files exceed what one GraphQL request can assemble, so batch callers
+ * split the ids instead of failing the run (`executeNodeBatch`).
+ */
+export class GraphqlUpstreamError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "GraphqlUpstreamError";
+    this.status = status;
+  }
+}
+
+/**
+ * Runs one `nodes(ids:)` query. When the gateway fails the whole batch, the
+ * two halves are requested separately and reassembled in request order, down
+ * to single ids, which still fail closed.
+ */
+export async function executeNodeBatch(
+  client: Pick<GraphqlExecutor, "execute">,
+  document: string,
+  ids: readonly string[],
+  variables: GraphqlVariables = {},
+): Promise<JsonRecord> {
+  try {
+    return await client.execute(document, { ...variables, ids });
+  } catch (error) {
+    if (!(error instanceof GraphqlUpstreamError) || ids.length < 2) throw error;
+    const middle = Math.ceil(ids.length / 2);
+    const head = await executeNodeBatch(
+      client,
+      document,
+      ids.slice(0, middle),
+      variables,
+    );
+    const tail = await executeNodeBatch(
+      client,
+      document,
+      ids.slice(middle),
+      variables,
+    );
+    return {
+      ...tail,
+      nodes: [
+        ...asArray(head.nodes, "data.nodes"),
+        ...asArray(tail.nodes, "data.nodes"),
+      ],
+    };
+  }
+}
+
 export interface RateLimitSnapshot {
   cost: number;
   consumedDuringRun: number;
@@ -1801,7 +1859,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         clearTimeout(timeout);
       }
       const retryableStatus =
-        [502, 503, 504].includes(response.status) ||
+        GATEWAY_FAILURE_STATUSES.includes(response.status) ||
         (restPath !== undefined &&
           comparisonBuildTimedOut(response.status, responseBody));
       if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
@@ -1839,12 +1897,18 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         }
         // error-policy:J2 Retain the HTTP boundary context for malformed or
         // non-JSON API failures; exhausted malformed-JSON retries fail closed.
-        throw new Error(
-          retryableMalformedJson
-            ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"})`
-            : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`,
-          { cause },
-        );
+        // An exhausted gateway failure keeps its status so a node batch
+        // caller can split the batch instead of failing the run.
+        const message = retryableMalformedJson
+          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"})`
+          : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`;
+        if (
+          !retryableMalformedJson &&
+          GATEWAY_FAILURE_STATUSES.includes(response.status)
+        ) {
+          throw new GraphqlUpstreamError(message, response.status, { cause });
+        }
+        throw new Error(message, { cause });
       }
     }
     if (!response || !parsedResponse) {
@@ -2101,9 +2165,11 @@ export async function collectPullRequestReviewCounts(
   }
   const reviewCounts = new Map<string, ReviewCensusEntry>();
   for (const batch of batches) {
-    const data = await client.execute(REVIEWED_PULL_REQUEST_REFERENCES_QUERY, {
-      ids: batch.map((reference) => reference.id),
-    });
+    const data = await executeNodeBatch(
+      client,
+      REVIEWED_PULL_REQUEST_REFERENCES_QUERY,
+      batch.map((reference) => reference.id),
+    );
     const nodes = asArray(data.nodes, "data.nodes");
     if (nodes.length !== batch.length) {
       throw new Error(
@@ -2983,7 +3049,11 @@ async function finalizePullRequests(
   const commentCounts = new Map<string, number>();
   for (const batch of chunks(bindings, REVIEW_DETAIL_BATCH_SIZE)) {
     const ids = batch.map((binding) => binding.review.id);
-    const data = await client.execute(REVIEW_INLINE_COMMENTS_QUERY, { ids });
+    const data = await executeNodeBatch(
+      client,
+      REVIEW_INLINE_COMMENTS_QUERY,
+      ids,
+    );
     const nodes = asArray(data.nodes, "data.nodes");
     if (nodes.length !== batch.length) {
       throw new Error(
@@ -3065,7 +3135,11 @@ async function hydratePullRequests(
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
     const hydratedBatch = await retryOpenBatch(expectedState, async () => {
       const ids = batch.map((reference) => reference.id);
-      const data = await client.execute(PULL_REQUEST_DETAILS_QUERY, { ids });
+      const data = await executeNodeBatch(
+        client,
+        PULL_REQUEST_DETAILS_QUERY,
+        ids,
+      );
       if (expectedState === "merged") {
         const nodes = asArray(data.nodes, "data.nodes");
         for (const [index, value] of nodes.entries()) {
@@ -3130,10 +3204,12 @@ async function hydrateReviewedMergedPullRequests(
   const pending: PendingMergedPullRequestReviewRecord[] = [];
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
     const ids = batch.map((reference) => reference.id);
-    const data = await client.execute(MERGED_PULL_REQUEST_REVIEWS_QUERY, {
+    const data = await executeNodeBatch(
+      client,
+      MERGED_PULL_REQUEST_REVIEWS_QUERY,
       ids,
-      reviewStates: allReviews ? null : ["APPROVED", "CHANGES_REQUESTED"],
-    });
+      { reviewStates: allReviews ? null : ["APPROVED", "CHANGES_REQUESTED"] },
+    );
     const parsed = parseDetailBatch(
       data,
       ids,
@@ -3178,8 +3254,7 @@ async function hydrateIssues(
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
     const hydratedBatch = await retryOpenBatch(expectedState, async () => {
       const ids = batch.map((reference) => reference.id);
-      const data = await client.execute(ISSUE_DETAILS_QUERY, {
-        ids,
+      const data = await executeNodeBatch(client, ISSUE_DETAILS_QUERY, ids, {
         includeReferences: expectedState === "open",
       });
       const parsed = parseDetailBatch(data, ids, "Issue", parseIssue);
