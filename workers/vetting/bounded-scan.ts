@@ -414,9 +414,10 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     // Reading a response object does not execute its body. Match the direct
-    // response-text forms; other data flow needs the model's source review.
+    // response-text and response-content forms (Python exec and eval accept
+    // both string and raw bytes); other data flow needs the model's source review.
     pattern:
-      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.text\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
+      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.(?:text|content)\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
     summary: "Executes code fetched from the network",
   },
   {
