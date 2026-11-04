@@ -434,6 +434,21 @@ const RULES: Rule[] = [
   },
   {
     threat: "unsafe-execution",
+    severity: "high",
+    // The shell `-c` arm above names only shells. An interpreter runs a
+    // command substitution of a download the same way through its own inline
+    // eval flag: `python3 -c "$(curl …)"`, `node -e "$(curl …)"`,
+    // `ruby -e`, `perl -e`/`-E`, `php -r`, `lua -e`. Each flag is the one that
+    // interpreter evaluates its argument with, so a non-eval flag (`-m`), a
+    // script file argument, or a non-download substitution stay out.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()'"])(?:${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-c|${commandToken(String.raw`node(?:js)?`)}\s+(?:-e|--eval|-p|--print)|${commandToken("ruby")}\s+-e|${commandToken("perl")}\s+-[eE]|${commandToken("php")}\s+-r|${commandToken("lua")}\s+-e)\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b`,
+      "iu",
+    ),
+    summary: "Runs a remote download in an interpreter's inline eval",
+  },
+  {
+    threat: "unsafe-execution",
     severity: "medium",
     pattern: /\b(?:child_process|subprocess|os\.system|spawnSync|execSync)\b/u,
     summary: "An install-time script starts processes",
