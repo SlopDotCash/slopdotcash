@@ -43,6 +43,7 @@ import {
   type OwnedRepository,
   type ProjectSetupStatus,
   SLOPBOT_INSTALL_URL,
+  slopbotInstallScopeNote,
   validRepositoryPath,
 } from "./lib/project-contracts";
 import {
@@ -62,6 +63,7 @@ import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
   monthlyAmountDisplay,
   PROJECT_SKILL_TEMPLATES,
+  validIntegrationBranch,
 } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
@@ -222,12 +224,7 @@ function proposalErrors(p: Proposal): FieldErrors {
     !NODE_ID.test(p.stewardNodeId)
   )
     errors.repository ??= "Wait for the repository to load.";
-  if (
-    p.integrationBranch.length > 255 ||
-    !/^(?!.*(?:\.\.|\s|~|\^|:|\?|\*|\[|\\))[A-Za-z0-9._/-]+$/u.test(
-      p.integrationBranch,
-    )
-  )
+  if (!validIntegrationBranch(p.integrationBranch))
     errors.integrationBranch = "Enter a valid Git branch name.";
   const licenseEntered =
     p.licenseSpdx !== "" || p.licenseCommit !== "" || p.licenseDigest !== "";
@@ -1742,7 +1739,8 @@ export default function ProjectProposalPage() {
                 <div>
                   <dt>Before you create</dt>
                   <dd>
-                    Install Slopbot on {p.repository || "the repository"}.
+                    Install Slopbot on {p.repository || "the repository"}.{" "}
+                    {slopbotInstallScopeNote(p.repository || "that repository")}
                   </dd>
                 </div>
                 {p.fundingMode === "bounty" ? null : (

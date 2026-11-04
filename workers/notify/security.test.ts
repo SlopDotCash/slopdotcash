@@ -642,6 +642,210 @@ test("a backup authority outage does not stop another recipient's queued receipt
   }
 });
 
+test("a primary authority outage does not stop another failed notice's escalation", async () => {
+  const h = await setup(false, true);
+  try {
+    for (const actor of [owner, backup])
+      h.sqlite
+        .query(
+          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES (?,?,?,?,1)",
+        )
+        .run(`U_${actor.githubId}`, actor.githubId, actor.githubLogin, at);
+    h.sqlite
+      .query(
+        "UPDATE security_cases SET submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=? WHERE id=?",
+      )
+      .run(at, at, owner.githubId, h.caseId);
+    await h.db.batch([notifySecurityReportReceived(h.db, h.caseId)]);
+    await dispatchSecurityMail(h.deps);
+    const primary = h
+      .rows()
+      .find((row) => row.recipient_github_id === owner.githubId);
+    const receipt = h
+      .rows()
+      .find((row) => row.recipient_github_id === reporter.githubId);
+    if (!primary || !receipt) throw new Error("Original notices missing");
+    // Both sends failed after provider acceptance. Check the owner first,
+    // then escalate the reporter's independent notice to an available backup.
+    h.sqlite
+      .query(
+        "UPDATE security_notification_outbox SET state='bounced',escalation_checked_at=? WHERE id=?",
+      )
+      .run(at, primary.id);
+    h.sqlite
+      .query(
+        "UPDATE security_notification_outbox SET state='bounced',escalation_checked_at=? WHERE id=?",
+      )
+      .run("2026-10-19T12:00:01.000Z", receipt.id);
+    h.deps.config.recipients[reporter.githubId].backupGithubId =
+      backup.githubId;
+    let unavailable = true;
+    h.deps.repositoryAccess = async (_repository, actor) => {
+      if (unavailable && actor.githubId === owner.githubId)
+        throw new Error("Fixture GitHub authority outage");
+      return h.repositoryAccess();
+    };
+    h.advance(2000);
+    await dispatchSecurityMail(h.deps);
+    expect(
+      h
+        .rows()
+        .filter((row) => row.escalation_of)
+        .map((row) => [row.escalation_of, row.recipient_github_id]),
+    ).toEqual([[receipt.id, backup.githubId]]);
+    expect(h.rows().find((row) => row.id === primary.id)?.state).toBe(
+      "bounced",
+    );
+    unavailable = false;
+    await dispatchSecurityMail(h.deps);
+    await dispatchSecurityMail(h.deps);
+    expect(
+      h.rows().filter((row) => row.escalation_of === primary.id),
+    ).toHaveLength(1);
+    expect(
+      h.rows().filter((row) => row.escalation_of === receipt.id),
+    ).toHaveLength(1);
+    expect(
+      h
+        .rows()
+        .filter((row) => row.escalation_of === null)
+        .map((row) => row.attempts),
+    ).toEqual([1, 1]);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a preparation storage outage retries one security notice without stopping the drain", async () => {
+  const h = await setup();
+  try {
+    const ownerRow = h
+      .rows()
+      .find((row) => row.recipient_github_id === owner.githubId);
+    if (!ownerRow) throw new Error("Owner notice missing");
+    h.sqlite.exec(`CREATE TRIGGER fixture_security_prepare_outage
+      BEFORE UPDATE OF destination_digest ON security_notification_outbox
+      WHEN OLD.recipient_github_id='${owner.githubId}'
+      BEGIN SELECT RAISE(ABORT, 'Fixture preparation storage outage'); END`);
+    await dispatchSecurityMail(h.deps);
+    const afterOutage = Object.fromEntries(
+      h
+        .rows()
+        .map((row) => [
+          row.recipient_github_id,
+          { state: row.state, attempts: row.attempts },
+        ]),
+    );
+    expect(afterOutage[owner.githubId]).toEqual({
+      state: "retrying",
+      attempts: 1,
+    });
+    expect(afterOutage[backup.githubId]).toEqual({
+      state: "provider-accepted",
+      attempts: 1,
+    });
+    expect(h.sent.map((mail) => mail.to)).toEqual([
+      `${backup.githubLogin}@example.com`,
+    ]);
+    h.sqlite.exec("DROP TRIGGER fixture_security_prepare_outage");
+    h.advance(61_000);
+    await dispatchSecurityMail(h.deps);
+    const afterRecovery = Object.fromEntries(
+      h
+        .rows()
+        .map((row) => [
+          row.recipient_github_id,
+          { state: row.state, attempts: row.attempts },
+        ]),
+    );
+    expect(afterRecovery[owner.githubId]).toEqual({
+      state: "provider-accepted",
+      attempts: 2,
+    });
+    expect(h.sent.map((mail) => mail.to)).toEqual([
+      `${backup.githubLogin}@example.com`,
+      `${owner.githubLogin}@example.com`,
+    ]);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT state FROM security_notification_delivery_events WHERE delivery_id=? ORDER BY attempt",
+        )
+        .all(ownerRow.id),
+    ).toEqual([{ state: "retrying" }, { state: "provider-accepted" }]);
+    h.advance(6 * 60_000);
+    await dispatchSecurityMail(h.deps);
+    expect(h.rows().filter((row) => row.escalation_of)).toHaveLength(0);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("an escalation failure on the final future-destination retry records one exhausted event", async () => {
+  const h = await setup();
+  try {
+    const ownerRow = h
+      .rows()
+      .find((row) => row.recipient_github_id === owner.githubId);
+    if (!ownerRow) throw new Error("Owner notice missing");
+    // The owner's notice is on its last bounded attempt and its verified
+    // destination is not yet in effect, so the drain takes the
+    // future-destination retry transition into escalation.
+    h.sqlite
+      .query(
+        "UPDATE security_notification_outbox SET attempts = 4 WHERE id = ?",
+      )
+      .run(ownerRow.id);
+    h.deps.config.recipients[owner.githubId].verifiedAt =
+      "2027-01-01T00:00:00.000Z";
+    h.sqlite.exec(`CREATE TRIGGER fixture_escalation_insert_failure
+      BEFORE INSERT ON notifications
+      WHEN NEW.event_key='security-escalation:${ownerRow.id}'
+      BEGIN SELECT RAISE(ABORT, 'Fixture escalation storage failure'); END`);
+    await expect(dispatchSecurityMail(h.deps)).rejects.toThrow(
+      "Fixture escalation storage failure",
+    );
+    const ownerAfter = h
+      .rows()
+      .find((row) => row.recipient_github_id === owner.githubId);
+    expect(ownerAfter).toMatchObject({ state: "exhausted", attempts: 5 });
+    // The escalation fault must not re-enter the retry transition: attempt 5
+    // has exactly one exhausted delivery event, not two.
+    expect(
+      h.sqlite
+        .query(
+          "SELECT state, attempt FROM security_notification_delivery_events WHERE delivery_id=? ORDER BY attempt",
+        )
+        .all(ownerRow.id),
+    ).toEqual([{ state: "exhausted", attempt: 5 }]);
+    // No provider call was made for the owner's notice.
+    expect(h.sent.map((mail) => mail.to)).not.toContain(
+      `${owner.githubLogin}@example.com`,
+    );
+    // Once the fault clears, the existing escalation scan still escalates
+    // the exhausted notice exactly once.
+    h.sqlite.exec("DROP TRIGGER fixture_escalation_insert_failure");
+    h.advance(6 * 60_000);
+    await dispatchSecurityMail(h.deps);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT count(*) AS n FROM notifications WHERE event_key=? AND recipient_github_id=?",
+        )
+        .get(`security-escalation:${ownerRow.id}`, backup.githubId),
+    ).toEqual({ n: 1 });
+    expect(
+      h.sqlite
+        .query(
+          "SELECT count(*) AS n FROM security_notification_delivery_events WHERE delivery_id=? AND state='exhausted'",
+        )
+        .get(ownerRow.id),
+    ).toEqual({ n: 1 });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("provider suppression evidence is a failed delivery that reaches the backup", async () => {
   const h = await setup();
   await dispatchSecurityMail(h.deps);

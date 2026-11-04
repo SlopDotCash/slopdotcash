@@ -359,71 +359,99 @@ export async function dispatchSecurityMail(
       await recordDelivery(deps, row, "suppressed");
       continue;
     }
-    const registered = deps.generalEmail
-      ? await enrolledDestination(deps.db, row.recipient_github_id)
-      : null;
-    const destination =
-      registered ?? deps.config.recipients[row.recipient_github_id];
-    const preference = await deps.db
-      .prepare(
-        "SELECT security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
-      )
-      .bind(row.recipient_github_id)
-      .first<{
-        security_enabled: number | null;
-        destination_version: string | null;
-      }>();
-    if (
-      preference?.security_enabled === 0 ||
-      (registered &&
-        (preference?.security_enabled !== 1 ||
-          preference.destination_version !== registered.destinationVersion ||
-          row.destination_version !== registered.destinationVersion))
-    ) {
-      await recordDelivery(deps, row, "suppressed");
+    // Preparation resolves the destination, consent and digest before any
+    // provider call. A failure here has sent nothing, so the delivery
+    // retries within the existing bound instead of aborting the drain and
+    // stranding the claimed row as an ambiguous send.
+    let registered: Awaited<ReturnType<typeof enrolledDestination>>;
+    let destination:
+      | Awaited<ReturnType<typeof enrolledDestination>>
+      | Destination
+      | undefined;
+    let destinationNotYetInEffect = false;
+    try {
+      registered = deps.generalEmail
+        ? await enrolledDestination(deps.db, row.recipient_github_id)
+        : null;
+      destination =
+        registered ?? deps.config.recipients[row.recipient_github_id];
+      const preference = await deps.db
+        .prepare(
+          "SELECT security_enabled,destination_version FROM notification_email_preferences WHERE github_id=?",
+        )
+        .bind(row.recipient_github_id)
+        .first<{
+          security_enabled: number | null;
+          destination_version: string | null;
+        }>();
+      if (
+        preference?.security_enabled === 0 ||
+        (registered &&
+          (preference?.security_enabled !== 1 ||
+            preference.destination_version !== registered.destinationVersion ||
+            row.destination_version !== registered.destinationVersion))
+      ) {
+        await recordDelivery(deps, row, "suppressed");
+        continue;
+      }
+      if (!destination) {
+        // No operator-verified destination exists for this recipient. Nothing
+        // can be sent and none will appear within the retry schedule, so the
+        // notice is suppressed: the inbox row stays and shows no email state.
+        await recordDelivery(deps, row, "suppressed");
+        continue;
+      }
+      if (Date.parse(destination.verifiedAt) > now.getTime()) {
+        // A verified record not yet in effect made no provider call. Its
+        // retry transition runs after this preparation guard, so an
+        // escalation failure cannot re-enter the catch and record the same
+        // attempt a second time.
+        destinationNotYetInEffect = true;
+      } else {
+        await deps.db
+          .prepare(
+            "UPDATE security_notification_outbox SET destination_digest = ? WHERE id = ?",
+          )
+          .bind(
+            registered?.destinationVersion ??
+              (await destinationDigest(destination)),
+            row.id,
+          )
+          .run();
+      }
+    } catch {
+      // Preparation failed before any provider call; retry within the existing bound.
+      const state = await retryWithoutProviderCall(deps, row);
+      if (state === "exhausted") await escalate(deps, row);
       continue;
     }
-    if (!destination) {
-      // No operator-verified destination exists for this recipient. Nothing
-      // can be sent and none will appear within the retry schedule, so the
-      // notice is suppressed: the inbox row stays and shows no email state.
-      await recordDelivery(deps, row, "suppressed");
-      continue;
-    }
-    if (Date.parse(destination.verifiedAt) > now.getTime()) {
+    if (destinationNotYetInEffect) {
       // A verified record not yet in effect made no provider call; retry it
       // on the bounded schedule.
       const state = await retryWithoutProviderCall(deps, row);
       if (state === "exhausted") await escalate(deps, row);
       continue;
     }
-    await deps.db
-      .prepare(
-        "UPDATE security_notification_outbox SET destination_digest = ? WHERE id = ?",
-      )
-      .bind(
-        registered?.destinationVersion ??
-          (await destinationDigest(destination)),
-        row.id,
-      )
-      .run();
+    let unsubscribeToken: string | undefined;
+    try {
+      if (registered && deps.unsubscribeKey)
+        unsubscribeToken = await issueEmailUnsubscribeToken(
+          deps.db,
+          deps.unsubscribeKey,
+          registered.destinationVersion,
+          deps.now(),
+        );
+    } catch {
+      // Preparation failed before any provider call; no reconciliation is needed.
+      const state = await retryWithoutProviderCall(deps, row);
+      if (state === "exhausted") await escalate(deps, row);
+      continue;
+    }
     try {
       await deps.sendEmail(
         deps.fromAddress,
         destination.email,
-        mime(
-          deps,
-          row,
-          destination.email,
-          registered && deps.unsubscribeKey
-            ? await issueEmailUnsubscribeToken(
-                deps.db,
-                deps.unsubscribeKey,
-                registered.destinationVersion,
-                deps.now(),
-              )
-            : undefined,
-        ),
+        mime(deps, row, destination.email, unsubscribeToken),
       );
     } catch (error) {
       if (retryableEmailRejection(error)) {
@@ -455,13 +483,21 @@ export async function dispatchSecurityMail(
       )
       .bind(at, row.id)
       .run();
-    const access = await securityNotificationAccess(
-      deps.db,
-      row.case_id,
-      row.recipient_github_id,
-      deps.moderatorGithubIds,
-      deps.repositoryAccess,
-    );
+    let access: Awaited<ReturnType<typeof securityNotificationAccess>>;
+    try {
+      access = await securityNotificationAccess(
+        deps.db,
+        row.case_id,
+        row.recipient_github_id,
+        deps.moderatorGithubIds,
+        deps.repositoryAccess,
+      );
+    } catch (error) {
+      if (!reportingAuthorityUnavailable(error)) throw error;
+      // Keep this notice for a later authority check without blocking the
+      // other failed or overdue notices in this scan.
+      continue;
+    }
     if (!access.allowed) continue;
     const overdue =
       row.template_version !== RECEIPT_TEMPLATE &&

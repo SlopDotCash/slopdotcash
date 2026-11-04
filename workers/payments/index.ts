@@ -100,9 +100,14 @@ export function registryDeployments(env: PaymentsWorkerEnvironment) {
 export async function recoverUncertainAttempts(
   env: PaymentsWorkerEnvironment,
 ): Promise<void> {
+  // Only this Worker's relayer journal can say whether one of its attempts was
+  // signed; another network's attempt belongs to that network's Worker. The
+  // scheduled run has already checked PAYMENT_NETWORKS (registryDeployments).
   const row = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.state='reserved' AND ((a.state IN ('unknown','prepared') AND a.transaction_id IS NULL) OR (o.chain='solana' AND a.state='submitted'))",
-  ).first<{ items: string }>();
+    "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND o.state='reserved' AND ((a.state IN ('unknown','prepared') AND a.transaction_id IS NULL) OR (o.chain='solana' AND a.state='submitted'))",
+  )
+    .bind(env.PAYMENT_NETWORKS)
+    .first<{ items: string }>();
   const failures: unknown[] = [];
   for (const attempt of JSON.parse(row?.items ?? "[]") as {
     idempotencyKey: string;
@@ -225,8 +230,14 @@ export async function recoverUncertainAttempts(
           "UPDATE payment_attempts SET transaction_id=?,state='submitted' WHERE id=? AND transaction_id IS NULL AND state IN ('unknown','prepared')",
         ).bind(status.transactionId, attempt.idempotencyKey),
         env.PAYMENTS_DB.prepare(
-          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid'",
-        ).bind(new Date().toISOString(), attempt.obligationId),
+          // A delayed status response must not undo finalized-failure recovery.
+          "UPDATE payment_outbox SET state='submitted',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid' AND EXISTS(SELECT 1 FROM payment_attempts WHERE id=? AND state='submitted' AND transaction_id=?)",
+        ).bind(
+          new Date().toISOString(),
+          attempt.obligationId,
+          attempt.idempotencyKey,
+          status.transactionId,
+        ),
       ]);
     } catch (error) {
       failures.push(error);
@@ -275,9 +286,12 @@ export async function runPaymentDispatch(
   if (!env.EVM_PAYMENT_EXECUTOR && !env.SOLANA_PAYMENT_EXECUTOR)
     throw new Error("Payment execution service unavailable");
   const rows = await env.PAYMENTS_DB.prepare(
-    "SELECT json_group_array(obligation_id) ids FROM (SELECT obligation_id FROM payment_outbox WHERE state='ready' OR (state='processing' AND lease_until<?) ORDER BY updated_at LIMIT 50)",
+    "SELECT json_group_array(obligation_id) ids FROM (SELECT b.obligation_id FROM payment_outbox b JOIN payment_obligations o ON o.id=b.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND (b.state='ready' OR (b.state='processing' AND b.lease_until<?)) ORDER BY b.updated_at LIMIT 50)",
   )
-    .bind(now().toISOString())
+    .bind(
+      JSON.stringify(parsePaymentNetworks(env.PAYMENT_NETWORKS)),
+      now().toISOString(),
+    )
     .first<{ ids: string }>();
   const failures: unknown[] = [];
   for (const id of JSON.parse(rows?.ids ?? "[]") as string[]) {

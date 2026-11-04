@@ -19,8 +19,32 @@ const MEMBER = "810000001";
 const OTHER = "810000002";
 const KEY = "ab".repeat(32);
 
-async function setup() {
+async function setup(
+  afterRead?: (sql: string) => Promise<void>,
+  beforeBatch?: () => Promise<void>,
+) {
   const { db, sqlite } = sqliteD1();
+  const apiDb: typeof db = {
+    ...db,
+    async batch(statements) {
+      await beforeBatch?.();
+      return db.batch(statements);
+    },
+    prepare(sql) {
+      const wrap = (
+        statement: ReturnType<typeof db.prepare>,
+      ): ReturnType<typeof db.prepare> => ({
+        ...statement,
+        bind: (...values: unknown[]) => wrap(statement.bind(...values)),
+        async first<T>() {
+          const result = await statement.first<T>();
+          await afterRead?.(sql);
+          return result;
+        },
+      });
+      return wrap(db.prepare(sql));
+    },
+  };
   let now = new Date("2026-10-30T12:00:00.000Z");
   let ready = true;
   let failure: boolean | string = false;
@@ -67,7 +91,7 @@ async function setup() {
         ...(body ? { body: JSON.stringify(body) } : {}),
       }),
       {
-        db,
+        db: apiDb,
         now: () => now,
         mailService: service,
         sessionActor: async () => (actor ? { githubId: actor } : null),
@@ -282,6 +306,218 @@ test("self-verification enables future private notices without pilot records; un
   h.sqlite.close();
 });
 
+test("a repeated issued unsubscribe supersedes a pending opt-in at the same timestamp", async () => {
+  let pause = false;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(async (sql) => {
+    if (!pause || !sql.includes("FROM notification_email_destinations")) return;
+    entered();
+    await waiting;
+  });
+  try {
+    await h.enroll();
+    const verified = await h.verify();
+    h.activity("issue-unsubscribe-link");
+    await dispatchActivityMail(h.worker);
+    const unsubscribe = await emailUnsubscribeToken(
+      KEY,
+      verified.body.destinationVersion as string,
+    );
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(200);
+    pause = true;
+    const pending = h.call("", {
+      enabled: true,
+      securityEnabled: true,
+      destinationVersion: verified.body.destinationVersion,
+    });
+    await started;
+    h.ready(false);
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(200);
+    pause = false;
+    release();
+    expect((await pending).status).toBe(409);
+    expect((await h.call()).body).toMatchObject({
+      enabled: false,
+      securityEnabled: false,
+    });
+    h.activity("after-repeated-unsubscribe");
+    h.security("security-after-repeated-unsubscribe");
+    await dispatchActivityMail(h.worker);
+    await dispatchSecurityMail(h.worker);
+    expect(h.mail).toHaveLength(2);
+    h.ready(true);
+    expect(
+      (
+        await h.call("", {
+          enabled: true,
+          securityEnabled: true,
+          destinationVersion: verified.body.destinationVersion,
+        })
+      ).status,
+    ).toBe(200);
+    h.activity("fresh-consent-after-unsubscribe");
+    await dispatchActivityMail(h.worker);
+    expect(h.mail).toHaveLength(3);
+  } finally {
+    release();
+    h.sqlite.close();
+  }
+});
+
+test("a newer opt-out supersedes pending verification without consuming its link", async () => {
+  let pause = false;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(undefined, async () => {
+    if (!pause) return;
+    pause = false;
+    entered();
+    await waiting;
+  });
+  try {
+    await h.enroll();
+    pause = true;
+    const pending = h.verify();
+    await started;
+    expect(
+      (await h.call("", { enabled: false, securityEnabled: false })).status,
+    ).toBe(200);
+    release();
+    expect((await pending).status).toBe(409);
+    expect((await h.call()).body).toMatchObject({
+      enabled: false,
+      securityEnabled: false,
+    });
+    expect((await h.verify()).body).toMatchObject({
+      enabled: true,
+      securityEnabled: true,
+    });
+  } finally {
+    release();
+    h.sqlite.close();
+  }
+});
+test.each(["activity", "security"] as const)(
+  "%s mail retries failed unsubscribe preparation before contacting the provider",
+  async (channel) => {
+    const h = await setup();
+    try {
+      await h.enroll();
+      await h.verify();
+      h[channel]("prepare-storage-outage");
+      h.sqlite.exec(`CREATE TRIGGER fixture_unsubscribe_outage
+        BEFORE INSERT ON notification_email_unsubscribe_tokens
+        BEGIN SELECT RAISE(ABORT, 'Fixture unsubscribe storage outage'); END`);
+      const dispatch = () =>
+        channel === "activity"
+          ? dispatchActivityMail(h.worker)
+          : dispatchSecurityMail(h.worker);
+      const row = () =>
+        h.sqlite
+          .query(
+            `SELECT id,state,attempts FROM ${channel}_notification_outbox WHERE event_key=? AND recipient_github_id=?`,
+          )
+          .get("prepare-storage-outage", MEMBER) as {
+          id: string;
+          state: string;
+          attempts: number;
+        };
+      await dispatch();
+      expect(row()).toMatchObject({ state: "retrying", attempts: 1 });
+      expect(h.mail).toHaveLength(1); // The enrollment verification only.
+      h.sqlite.exec("DROP TRIGGER fixture_unsubscribe_outage");
+      h.advance();
+      await dispatch();
+      expect(row()).toMatchObject({ state: "provider-accepted", attempts: 2 });
+      expect(h.mail).toHaveLength(2);
+      await dispatch();
+      expect(h.mail).toHaveLength(2);
+      expect(
+        h.sqlite
+          .query(
+            `SELECT state FROM ${channel}_notification_delivery_events WHERE delivery_id=? ORDER BY attempt`,
+          )
+          .all(row().id),
+      ).toEqual([{ state: "retrying" }, { state: "provider-accepted" }]);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
+test("activity mail retries a failed preparation without stopping the drain", async () => {
+  const h = await setup();
+  try {
+    await h.enroll();
+    await h.verify();
+    h.activity("prepare-drain-outage");
+    h.advance(1000);
+    h.activity("prepare-drain-other");
+    const rows = () =>
+      h.sqlite
+        .query(
+          "SELECT event_key,state,attempts FROM activity_notification_outbox ORDER BY created_at,id",
+        )
+        .all() as { event_key: string; state: string; attempts: number }[];
+    h.sqlite.exec(`CREATE TRIGGER fixture_activity_prepare_outage
+      BEFORE UPDATE OF destination_digest ON activity_notification_outbox
+      WHEN OLD.event_key='prepare-drain-outage'
+      BEGIN SELECT RAISE(ABORT, 'Fixture preparation storage outage'); END`);
+    await dispatchActivityMail(h.worker);
+    expect(rows()).toEqual([
+      { event_key: "prepare-drain-outage", state: "retrying", attempts: 1 },
+      {
+        event_key: "prepare-drain-other",
+        state: "provider-accepted",
+        attempts: 1,
+      },
+    ]);
+    expect(h.mail).toHaveLength(2); // The enrollment verification and one notice.
+    h.sqlite.exec("DROP TRIGGER fixture_activity_prepare_outage");
+    h.advance(61_000);
+    await dispatchActivityMail(h.worker);
+    expect(rows()).toEqual([
+      {
+        event_key: "prepare-drain-outage",
+        state: "provider-accepted",
+        attempts: 2,
+      },
+      {
+        event_key: "prepare-drain-other",
+        state: "provider-accepted",
+        attempts: 1,
+      },
+    ]);
+    expect(h.mail).toHaveLength(3);
+    expect(
+      h.sqlite
+        .query(
+          `SELECT state FROM activity_notification_delivery_events WHERE delivery_id IN (SELECT id FROM activity_notification_outbox WHERE event_key='prepare-drain-outage') ORDER BY attempt`,
+        )
+        .all(),
+    ).toEqual([{ state: "retrying" }, { state: "provider-accepted" }]);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("verification resends are bounded and invalidate old links without changing the active destination", async () => {
   const h = await setup();
   const body = {
@@ -427,6 +663,81 @@ test("address changes bind new consent, cancel stale deliveries and reject old u
   h.sqlite.close();
 });
 
+test.each(["/verification", "/verify"])(
+  "email %s returns a client error for malformed JSON",
+  async (path) => {
+    const h = await setup();
+    try {
+      const response = await handleEmailPreferences(
+        new Request(`${ORIGIN}/api/v1/notifications/email${path}`, {
+          method: "POST",
+          headers: { origin: ORIGIN, "content-type": "application/json" },
+          body: "{",
+        }),
+        {
+          db: h.db,
+          now: h.worker.now,
+          sessionActor: async () => ({ githubId: MEMBER }),
+          eligibility: async () => ({ available: false }),
+          mailService: h.service,
+        },
+      );
+      expect(response?.status).toBe(400);
+      expect(await response?.json()).toEqual({ error: "invalid_request" });
+      expect(h.mail).toHaveLength(0);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
+test.each(["/verification", "/verify"])(
+  "email %s returns a storage error and permits the same request to recover",
+  async (path) => {
+    const h = await setup();
+    try {
+      if (path === "/verify") await h.enroll();
+      const body =
+        path === "/verify"
+          ? { token: h.token() }
+          : {
+              email: "member@example.com",
+              idempotencyKey: "retry-storage-failure",
+              enabled: true,
+              securityEnabled: true,
+            };
+      const batch = h.db.batch.bind(h.db);
+      h.db.batch = async () => {
+        throw new Error("Fixture private storage failure");
+      };
+      expect(await h.call(path, body)).toEqual({
+        status: 500,
+        body: { error: "internal_error" },
+      });
+      expect(
+        h.sqlite
+          .query("SELECT github_id FROM notification_email_destinations")
+          .all(),
+      ).toEqual([]);
+      h.db.batch = batch;
+      expect((await h.call(path, body)).status).toBe(
+        path === "/verify" ? 200 : 202,
+      );
+      expect(h.mail).toHaveLength(1);
+      if (path === "/verify") {
+        expect((await h.call(path, body)).status).toBe(409);
+        expect((await h.call()).body.availability).toBe("verified");
+      } else {
+        expect((await h.call(path, body)).status).toBe(202);
+        expect((await h.verify()).status).toBe(200);
+      }
+      expect(h.mail).toHaveLength(1);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
 test("the private sending route rejects fabricated challenge tokens and public GET never consumes a link", async () => {
   const h = await setup();
   await h.enroll();
@@ -541,4 +852,58 @@ test("issued unsubscribe links survive signing-key rotation and sender pause but
     409,
   );
   h.sqlite.close();
+});
+
+test("a saved enrollment remains replayable while the sender is paused", async () => {
+  const h = await setup();
+  try {
+    expect((await h.enroll()).status).toBe(202);
+    h.ready(false);
+    const body = {
+      email: "member@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "enrollment-request-1",
+    };
+    expect((await h.call("/verification", body)).status).toBe(202);
+    expect(
+      (
+        await h.call("/verification", {
+          ...body,
+          email: "different@example.com",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await h.enroll("new@example.com")).status).toBe(503);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("a competing enrollment with the same key returns conflict after the initial read", async () => {
+  const h = await setup();
+  try {
+    const body = {
+      email: "first@example.com",
+      enabled: true,
+      securityEnabled: true,
+      idempotencyKey: "competing-enrollment-key",
+    };
+    const batch = h.db.batch.bind(h.db);
+    h.db.batch = async (statements) => {
+      h.db.batch = batch;
+      expect((await h.call("/verification", body)).status).toBe(202);
+      return batch(statements);
+    };
+    expect(
+      (await h.call("/verification", { ...body, email: "second@example.com" }))
+        .status,
+    ).toBe(409);
+    expect(h.mail).toHaveLength(1);
+    expect((await h.verify()).status).toBe(200);
+  } finally {
+    h.sqlite.close();
+  }
 });

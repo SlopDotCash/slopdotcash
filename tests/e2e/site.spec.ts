@@ -1959,14 +1959,24 @@ test("lands direct and lazy cross-route hash links on their section", async ({
       page.getByText("Loading page…", { exact: true }),
     ).toBeVisible();
     releaseChunk();
-    await expect(page.locator("#points")).toBeInViewport();
+    await expect(page.locator("#penalties")).toBeInViewport();
+    // The fragment target must land below the sticky header, not at the
+    // viewport top where the header hides its heading and caption.
     await expect
       .poll(() =>
-        page
-          .locator("#points")
-          .evaluate((element) => Math.abs(element.getBoundingClientRect().top)),
+        page.evaluate(() => {
+          const target = document.querySelector("#penalties");
+          const header = document.querySelector(".site-header");
+          if (!target || !header) return -1;
+          return (
+            target.getBoundingClientRect().top -
+            header.getBoundingClientRect().bottom
+          );
+        }),
       )
-      .toBeLessThan(1);
+      .toBeGreaterThanOrEqual(-1);
+    await expect(page.locator("#penalties")).toContainText("Scam or malicious");
+    await expect(page.locator("#penalties")).toContainText("240");
     await page.screenshot({
       path: info.outputPath("lazy-fragment-target.png"),
     });

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
-import { ContributionPointTiers } from "./PointsRules";
+import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
@@ -130,6 +130,19 @@ export function HowItWorksPage() {
         </div>
         <ContributionPointTiers />
       </section>
+      <section className="worked-example score-contract" id="penalties">
+        <div>
+          <h2>Penalties</h2>
+          <p>
+            Slopbot applies this one published penalty table. A debit reduces
+            only that UTC month's accepted-work points and never takes it below
+            zero. A debit never changes an approved, scheduled, or paid award.
+            Maintainers and authors outside the closure scope receive no
+            penalty.
+          </p>
+        </div>
+        <PenaltyPointTable />
+      </section>
       <section className="worked-example">
         <div>
           <h2>Example allocation</h2>
@@ -199,6 +212,29 @@ export function HowItWorksPage() {
             </div>
           </article>
           <article className="faq-answer">
+            <h3>GitHub flagged my account. What happens to my work?</h3>
+            <div>
+              <p>
+                A flag is GitHub&apos;s restriction, not Slop&apos;s. Slop does
+                not report accounts and cannot lift a flag. Appeal to GitHub
+                through its{" "}
+                <ExternalLinkAnchor href="https://support.github.com/contact/flagged">
+                  flagged account form
+                </ExternalLinkAnchor>{" "}
+                from the account&apos;s primary email.
+              </p>
+              <p>
+                Keep the same account. Sign-in and wallet registration are tied
+                to it, and a new account inherits nothing. If GitHub prevents
+                Slop from verifying your account, Slop sign-in will fail. Your
+                wallet registrations are unchanged. If GitHub hides your pull
+                requests, merged work may be missing from the site. Once GitHub
+                restores access, eligible work can appear again after a
+                successful Slop collection and site update.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
             <h3>How do I receive an award?</h3>
             <div>
               <p>
@@ -226,11 +262,12 @@ export function HowItWorksPage() {
   );
 }
 
-function sponsorPoolLabel(reward: ProjectDefinition["reward"]): string {
+function sponsorPoolLabel(project: ProjectDefinition): string {
+  const { reward } = project;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
     return `external prize share · ${reward.externalOpportunity.name}`;
   }
-  return monthlyPoolLabel(reward);
+  return monthlyPoolLabel(reward, project.rewardAsset);
 }
 
 function WhoBuildsOnSlop({
@@ -470,7 +507,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project.reward)}</p>
+                <p>{sponsorPoolLabel(project)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}

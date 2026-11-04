@@ -1701,8 +1701,14 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await resumed.getByRole("button", { name: "Check again" }).click();
   await expect(resumed.locator("h2")).toHaveText("Setup status: Action needed");
   await expect(resumed.getByRole("status")).toContainText(
-    "The last scan could not finish, so it did not clear the project.",
+    "Findings in the project repository block clearance.",
   );
+  await expect(resumed.getByText("Not cleared", { exact: true })).toBeVisible();
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("scan-findings.png"),
+    fullPage: true,
+  });
   await resumed.getByRole("button", { name: "Request a new scan" }).click();
   await expect(resumed.locator("h2")).toHaveText(
     "Setup status: Waiting for the security scan",
@@ -1712,10 +1718,41 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await page.goto("/inbox");
   await expect(
     page.locator(".inbox-item", {
-      hasText: `The security scan of ${project.id} could not finish.`,
+      hasText: `The security scan of ${project.id} did not clear.`,
     }),
   ).toHaveCount(1);
+  const locationNotice = page.locator(".inbox-item", {
+    hasText: `The security scan of ${project.id} did not clear.`,
+  });
+  await page.screenshot({
+    path: test.info().outputPath("inbox-location-status.png"),
+    fullPage: true,
+  });
+  await expect(locationNotice).toContainText(
+    "Findings in the project repository block clearance.",
+  );
+  await locationNotice.locator(".inbox-title").focus();
+  await expect(locationNotice.locator(".inbox-title")).toBeFocused();
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "2";
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("inbox-location-200.png"),
+    fullPage: true,
+  });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "1";
+  });
   await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("scan-inbox.png"),
+    fullPage: true,
+  });
 
   // Owner edit: a text-only change publishes at once as revision 2.
   await page.goto(`/projects/${project.id}/manage`, {
@@ -2277,6 +2314,31 @@ test("an applicant publishes an application stored before self-service setup wit
     ),
   ).toMatchObject([{ revision: 1 }]);
   expect(diagnostics.count(refusedPublish)).toBe(1);
+
+  // Follow the published application's real link before any manual reload.
+  // The new project was absent from the registry when this page loaded.
+  await enlargeText(entry);
+  await expectAccessible(page, { include: ".setup-pending-applications" });
+  const manageProject = entry.getByRole("link", {
+    name: project.name,
+    exact: true,
+  });
+  await manageProject.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(manageProject).toBeFocused();
+  await expect(manageProject).toBeInViewport();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".project-setup-status h2")).toHaveText(
+    "Setup status: Waiting for the security scan",
+  );
+  await expect(page.locator("main")).toContainText(project.name);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("pending-application-manage.png"),
+    fullPage: true,
+  });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
 
   // The application is published once. It leaves the list, and a second
   // publish is refused, so no duplicate row can appear.

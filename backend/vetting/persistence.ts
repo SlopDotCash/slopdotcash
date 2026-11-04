@@ -43,6 +43,7 @@ import {
   type RecordedVettingResult,
   resultReviewers,
 } from "./scan-result";
+import { findingsLocationOf, quarantinedScanMessage } from "./summary";
 
 export type {
   AssessmentState,
@@ -157,6 +158,9 @@ function admissionRepository(manifest: object): string | null {
 
 export function summarize(assessment: VettingAssessment): AssessmentSummary {
   const artifacts: VettingArtifact[] = assessment.result?.artifacts ?? [];
+  const held = artifacts.filter((artifact) => artifact.state !== "released");
+  const result = assessment.result;
+  const findingsLocation = findingsLocationOf(result);
   return {
     id: assessment.id,
     revision: assessment.revision,
@@ -166,10 +170,10 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
     policyVersion: assessment.policyVersion,
     requestedAt: assessment.requestedAt,
     completedAt: assessment.completedAt,
-    modelRuns: assessment.result ? resultReviewers(assessment.result) : [],
+    modelRuns: result ? resultReviewers(result) : [],
     artifacts: artifacts.length,
-    heldArtifacts: artifacts.filter((artifact) => artifact.state !== "released")
-      .length,
+    heldArtifacts: held.length,
+    ...(findingsLocation !== undefined ? { findingsLocation } : {}),
   };
 }
 
@@ -631,6 +635,13 @@ export class CloudflareVettingPersistence {
         input.livePin,
         input.at,
       );
+    const scanFailedDetail =
+      result.disposition === "incomplete"
+        ? quarantinedScanMessage({
+            completedAt: input.at,
+            findingsLocation: findingsLocationOf(result),
+          })
+        : null;
     try {
       await this.db.batch([
         this.db
@@ -663,7 +674,13 @@ export class CloudflareVettingPersistence {
           : []),
         // A scan that could not establish clearance tells the owners once.
         ...(result.disposition === "incomplete"
-          ? [notifyProjectScanFailed(this.db, result.assessmentId)]
+          ? [
+              notifyProjectScanFailed(
+                this.db,
+                result.assessmentId,
+                scanFailedDetail,
+              ),
+            ]
           : []),
         ...result.artifacts.map((artifact, ordinal) =>
           this.db
