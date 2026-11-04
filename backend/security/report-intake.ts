@@ -647,7 +647,7 @@ export async function screenStoredReport(
     /* Do not expose provider errors or private evidence. */
   }
   const finished = deps.now().toISOString();
-  await deps.db.batch([
+  const completed = await deps.db.batch([
     deps.db
       .prepare(
         "UPDATE security_submission_intake SET screening_state=?,screening_reason=?,screening_finished_at=?,revision=revision+1 WHERE submission_id=? AND revision=? AND screening_state='running'",
@@ -655,6 +655,8 @@ export async function screenStoredReport(
       .bind(state, reason, finished, id, row.revision),
     intakeEvent(deps, row, "screen-finish", null, finished),
   ]);
+  // A replaced screen does not own the current report's assessment or retry.
+  if (completed[0].meta?.changes !== 1) return;
   const updated = await storedIntake(deps, id);
   if (updated && intakeQualified(updated)) {
     await assess(updated);

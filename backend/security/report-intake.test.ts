@@ -1472,6 +1472,86 @@ describe("durable private report controls", () => {
     }
   });
 
+  test.each([false, true])(
+    "a stale screen cannot retry the replacement assessment (failed=%s)",
+    async (failed) => {
+      const t = fixture();
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const pending: Promise<unknown>[] = [];
+      t.deps.waitUntil = (task) => pending.push(task);
+      t.beforeScreen(async () => {
+        t.beforeScreen(null);
+        started.resolve();
+        await release.promise;
+      });
+      if (failed)
+        t.beforeAnalysis(async () => {
+          throw new Error("Fixture assessment outage");
+        });
+      try {
+        const submission = required((await t.create()).body.submission);
+        await started.promise;
+        const current = required(
+          (
+            await t.call(
+              OWNER,
+              "GET",
+              `security-submissions/${submission.id}?view=receipt`,
+            )
+          ).body.submission,
+        );
+        const review = await t.call(
+          OWNER,
+          "POST",
+          `security-submissions/${submission.id}/review`,
+          {
+            expectedRevision: current.intake.revision,
+            decision: "request-information",
+            reason: "Clarify the affected revision.",
+          },
+        );
+        expect(review.status).toBe(200);
+        const from = pending.length;
+        const revised = await t.call(
+          REPORTER,
+          "POST",
+          `security-submissions/${submission.id}/report`,
+          {
+            expectedRevision: required(review.body.submission).intake.revision,
+            report: { ...REPORT, summary: "Replacement report" },
+          },
+        );
+        expect(revised.status).toBe(200);
+        for (let n = from; n < pending.length; n++) await pending[n];
+        const analyses = () =>
+          t.sqlite
+            .query(
+              "SELECT attempt,state,report_version FROM security_case_analyses WHERE case_id=? ORDER BY attempt",
+            )
+            .all(submission.caseId);
+        const before = analyses();
+        expect(before).toEqual([
+          {
+            attempt: 1,
+            state: failed ? "failed" : "complete",
+            report_version: 2,
+          },
+        ]);
+        release.resolve();
+        for (let n = 0; n < pending.length; n++) await pending[n];
+        // No owner analysis retry occurred. The old screen did not commit a result
+        // and must not spend another provider call on the replacement report.
+        expect(analyses()).toEqual(before);
+        expect(t.analyzed).toHaveLength(1);
+      } finally {
+        release.resolve();
+        for (let n = 0; n < pending.length; n++) await pending[n];
+        t.sqlite.close();
+      }
+    },
+  );
+
   test("reporter screening retries cannot repeat a failed assessment, but the owner can retry", async () => {
     const t = fixture();
     t.beforeAnalysis(async () => {
