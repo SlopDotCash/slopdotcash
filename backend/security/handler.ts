@@ -986,8 +986,18 @@ async function caseView(
   const railAvailable =
     directNetworks.length > 0 ||
     (current?.manifest.securityBounty?.settlement?.deployments.length ?? 0) > 0;
+  const intake = preloaded
+    ? preloaded.intake
+    : await storedIntakeViewForCase(deps, row.id, roles);
+  // A private report held for more evidence leaves the case receipt open. Its
+  // next step is the reporter's answer, not the owner's review. A held report
+  // that a maintainer forwarded is no longer held.
+  const held =
+    intake?.state === "needs-information" &&
+    !intake.canForward &&
+    (row.receipt_state === "received" || row.receipt_state === "triaging");
   const step = nextStep(
-    row,
+    held ? { ...row, receipt_state: "needs-information" } : row,
     roles,
     settlement?.state ?? null,
     current?.manifest.securityBounty?.responseTargets?.acknowledgeHours ?? null,
@@ -1131,9 +1141,7 @@ async function caseView(
             ghsa: row.advisory_ghsa,
             url: advisoryUrl(row),
           },
-    intake: preloaded
-      ? preloaded.intake
-      : await storedIntakeViewForCase(deps, row.id, roles),
+    intake,
     receiptState: row.receipt_state,
     remediationState: row.remediation_state,
     disclosureState: row.disclosure_state,
