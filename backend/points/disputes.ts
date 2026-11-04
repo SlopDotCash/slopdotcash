@@ -77,14 +77,32 @@ export async function handlePointsDisputes(
       !Number.isSafeInteger(Number(cursor))
     )
       fail(400, "invalid_cursor", "Invalid Points page.");
+    // Retained awards can use either canonical GitHub node ID spelling for
+    // the authenticated numeric user. Do not tie discovery to sign-in spelling.
+    const numericId = BigInt(actor.githubId);
+    const bytes = new Uint8Array(numericId <= 0xffff_ffffn ? 7 : 11);
+    bytes.set([0x92, 0, bytes.length === 7 ? 0xce : 0xcf]);
+    const view = new DataView(bytes.buffer);
+    if (bytes.length === 7) view.setUint32(3, Number(numericId));
+    else view.setBigUint64(3, numericId);
+    const currentNodeId = `U_${btoa(String.fromCharCode(...bytes))
+      .replace(/\+/gu, "-")
+      .replace(/\//gu, "_")
+      .replace(/=+$/u, "")}`;
     const rows = await deps.db
       .prepare(`SELECT json_group_array(json_object('cursor',cursor,'id',id,'payload',payload,'disputeId',disputeId)) AS rows FROM (SELECT r.rowid AS cursor,r.id,r.payload,d.appeal_key AS disputeId
-      FROM points_revisions r JOIN points_members m ON m.actor_id=json_extract(r.payload,'$.award.actor.id')
-      LEFT JOIN points_disputes d ON d.revision_id=r.id AND d.appellant_github_id=m.github_id
-      WHERE m.github_id=? AND (?=0 OR r.rowid<?)
+      FROM points_revisions r
+      LEFT JOIN points_disputes d ON d.revision_id=r.id AND d.appellant_github_id=?
+      WHERE json_extract(r.payload,'$.award.actor.id') IN (?,?) AND (?=0 OR r.rowid<?)
         AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)
       ORDER BY r.rowid DESC LIMIT 26)`)
-      .bind(actor.githubId, Number(cursor), Number(cursor))
+      .bind(
+        actor.githubId,
+        btoa(`04:User${actor.githubId}`),
+        currentNodeId,
+        Number(cursor),
+        Number(cursor),
+      )
       .first<{ rows: string }>();
     const records = JSON.parse(rows?.rows ?? "[]") as {
       cursor: number;

@@ -37,6 +37,11 @@ test("a manual Points award reaches private Inbox review and an independent mode
     .slice(0, 6);
   const githubId = String(910000000 + Number.parseInt(suffix, 16));
   const actorId = Buffer.from(`04:User${githubId}`).toString("base64");
+  // Retained work and sign-in can use different canonical IDs for one user.
+  const awardNode = Buffer.alloc(7);
+  awardNode.set([0x92, 0, 0xce]);
+  awardNode.writeUInt32BE(Number(githubId), 3);
+  const awardActorId = `U_${awardNode.toString("base64url")}`;
   const session = createHash("sha256").update(`points-${suffix}`).digest("hex");
   const now = new Date().toISOString();
   const record = {
@@ -46,7 +51,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
     sourceRule: "legacy-reviewed-award",
     award: {
       key: `manual:${suffix}`,
-      actor: { id: actorId, login: `points-${suffix}` },
+      actor: { id: awardActorId, login: `points-${suffix}` },
       projectId: "slopdotcash",
       category: "evaluated-contribution" as const,
       amount: 90,

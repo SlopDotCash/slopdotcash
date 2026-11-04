@@ -25,23 +25,25 @@ const databases: { close(): void }[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
 });
-async function fixture() {
+async function fixture(memberNode = owner.node, githubId = owner.githubId) {
   const { db, sqlite } = sqliteD1();
   databases.push(sqlite);
+  const recipient = { ...owner, githubId, node: btoa(`04:User${githubId}`) };
   for (const [actor, session] of [
-    [owner, token],
+    [recipient, token],
     [moderator, otherToken],
   ] as const) {
+    const node = actor === recipient ? memberNode : actor.node;
     sqlite
       .query(
         "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1)",
       )
-      .run(actor.node, actor.githubId, actor.githubLogin, NOW);
+      .run(node, actor.githubId, actor.githubLogin, NOW);
     sqlite
       .query(
         "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
       )
-      .run(await sha256Hex(session), actor.node, "2026-10-31T14:00:00.000Z");
+      .run(await sha256Hex(session), node, "2026-10-31T14:00:00.000Z");
   }
   const record: Omit<PointRevision, "id"> = {
     previous: null,
@@ -50,7 +52,7 @@ async function fixture() {
     sourceRule: "legacy-reviewed-award",
     award: {
       key: "alpha:manual:42",
-      actor: { id: owner.node, login: owner.githubLogin },
+      actor: { id: recipient.node, login: recipient.githubLogin },
       projectId: "alpha",
       category: "evaluated-contribution",
       amount: 90,
@@ -76,7 +78,7 @@ async function fixture() {
     rateLimitSecret: "s".repeat(64),
     identity: { fetch: async () => Response.json({}) },
     disputes: {
-      moderators: new Set([moderator.githubId, owner.githubId]),
+      moderators: new Set([moderator.githubId, recipient.githubId]),
       process: async (key: string) => {
         started.push(key);
       },
@@ -126,6 +128,84 @@ test("a manual award recipient can retain a private dispute and retry without du
   expect(
     h.sqlite.query("SELECT COUNT(*) AS n FROM payment_obligations").get(),
   ).toEqual({ n: 0 });
+});
+
+test.each([
+  [owner.node, "U_kgDOAAAAKg", owner.githubId],
+  ["U_kgDOAAAAKg", owner.node, owner.githubId],
+  [btoa("04:User4294967296"), "U_kgDPAAAAAQAAAAA", "4294967296"],
+])(
+  "the dispute picker retains an award across node ID spellings (%s)",
+  async (memberNode, awardNode, githubId) => {
+    const h = await fixture(memberNode, githubId);
+    const { id: _, ...record } = h.revision;
+    const changed = {
+      ...record,
+      previous: h.revision.id,
+      award: {
+        ...record.award,
+        actor: { ...record.award.actor, id: awardNode },
+      },
+    };
+    const current: PointRevision = { ...changed, id: pointRevisionId(changed) };
+    h.insert(current);
+    const listed = await (await h.call()).json();
+    expect(
+      listed.awards.map((award: { revisionId: string }) => award.revisionId),
+    ).toEqual([current.id]);
+    const created = await h.call("", {
+      revisionId: current.id,
+      reason: "The accepted work was credited to the wrong month.",
+    });
+    expect(created.status).toBe(201);
+    const dispute = await created.json();
+    const after = await (await h.call()).json();
+    expect(after.awards[0].disputeId).toBe(dispute.id);
+    expect(
+      (await (await h.call("", undefined, otherToken)).json()).awards,
+    ).toEqual([]);
+  },
+);
+
+test("mixed node ID spellings preserve dispute pagination and exclude another recipient", async () => {
+  const h = await fixture();
+  const expected = [h.revision.id];
+  const { id: _, ...original } = h.revision;
+  for (let i = 0; i < 26; i++) {
+    const record = {
+      ...original,
+      award: {
+        ...original.award,
+        key: `alpha:manual:page-${i}`,
+        actor: {
+          id: i % 2 ? owner.node : "U_kgDOAAAAKg",
+          login: owner.githubLogin,
+        },
+      },
+    };
+    const revision = { ...record, id: pointRevisionId(record) };
+    h.insert(revision);
+    expected.unshift(revision.id);
+  }
+  const foreign = {
+    ...original,
+    award: {
+      ...original.award,
+      key: "alpha:manual:other",
+      actor: { id: "U_kgDOAAAAKw", login: owner.githubLogin },
+    },
+  };
+  h.insert({ ...foreign, id: pointRevisionId(foreign) });
+  const first = await (await h.call()).json();
+  expect(
+    first.awards.map((award: { revisionId: string }) => award.revisionId),
+  ).toEqual(expected.slice(0, 25));
+  expect(first.next).not.toBeNull();
+  const second = await (await h.call(`?before=${first.next}`)).json();
+  expect(
+    second.awards.map((award: { revisionId: string }) => award.revisionId),
+  ).toEqual(expected.slice(25));
+  expect(second.next).toBeNull();
 });
 
 test("a superseded revision cannot open a dispute, but the current revision can", async () => {
