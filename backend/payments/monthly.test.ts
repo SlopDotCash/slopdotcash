@@ -2102,6 +2102,68 @@ describe("monthly attestation input", () => {
   });
 });
 
+test("monthly signing can recover an unsigned intent after an authority rotation", async () => {
+  vault("1000");
+  await coordinate(afterCutoff);
+  if (!schedule) throw new Error("Fixture schedule missing");
+  const { digest } = sqlite
+    .prepare("SELECT snapshot_sha256 digest FROM monthly_payment_runs")
+    .get() as { digest: string };
+  const records = new Map<string, unknown>();
+  const journal: JournalStore = {
+    async get<T>(key: string) {
+      return records.get(key) as T | undefined;
+    },
+    async put<T>(key: string, value: T) {
+      records.set(key, structuredClone(value));
+    },
+    async transaction<T>(fn: (store: JournalStore) => Promise<T>) {
+      return fn(journal);
+    },
+  };
+  let current = project;
+  const replacement = privateKeyToAccount(`0x${"02".repeat(32)}`);
+  let available = false;
+  const deps = {
+    db,
+    getProject: async () => current,
+    restricted: async () => false,
+    networks: ["base-sepolia"],
+    schedule,
+    now: () => afterCutoff,
+    journal,
+    verifyDeployment: async () => {},
+    sign: async (plan: { messageHex: string }) => {
+      if (!available) throw new Error("Signer unavailable");
+      return (await replacement.sign({ hash: `0x${plan.messageHex}` })).slice(
+        2,
+      );
+    },
+  };
+  const request = {
+    projectId: project.id,
+    period: "2026-11",
+    network: "base-sepolia" as const,
+    snapshotSha256: digest,
+  };
+  await expect(signMonthlyAllocation(deps, request)).rejects.toThrow(
+    "Signer unavailable",
+  );
+  current = structuredClone(project);
+  if (!current.manifest.escrow) throw new Error("Fixture escrow missing");
+  current.manifest.escrow.deployments[0].identityAuthority =
+    replacement.address.toLowerCase();
+  available = true;
+  const recovered = await signMonthlyAllocation(deps, request);
+  expect(recovered.plan.deployment.identityAuthority).toBe(
+    replacement.address.toLowerCase(),
+  );
+  current = project;
+  await expect(signMonthlyAllocation(deps, request)).rejects.toThrow(
+    "Monthly authorization already bound to another allocation or authority",
+  );
+});
+
 test("monthly signing preserves its first intent through retry and refuses a changed root", async () => {
   vault("1000");
   await coordinate(afterCutoff);

@@ -151,11 +151,18 @@ export async function signMonthlyAllocation(
       if (
         previous.snapshotSha256 !== expected.snapshotSha256 ||
         previous.messageHex !== expected.messageHex ||
-        previous.authority !== expected.authority
+        (previous.authority !== expected.authority && previous.authorization)
       )
         throw new Error(
           "Monthly authorization already bound to another allocation or authority",
         );
+      // A failed signer leaves only an intent. A reviewed authority rotation
+      // can retry the same allocation and message; published authorizations
+      // remain immutable and cannot be replaced through this path.
+      if (previous.authority !== expected.authority) {
+        await tx.put(key, expected);
+        return expected;
+      }
       return previous;
     }
     await tx.put(key, expected);
