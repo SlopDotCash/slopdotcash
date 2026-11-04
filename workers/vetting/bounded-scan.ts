@@ -331,6 +331,8 @@ const ENV_COMMAND = String.raw`${commandToken("env")}(?:\s+(?:(?-i:-(?:[iv]+|[iv
  */
 const SUDO_FLAG = "[ABbEHikNnPSs]";
 const SUDO_COMMAND = String.raw`${commandToken("sudo")}(?:\s+(?-i:-(?:${SUDO_FLAG}+|${SUDO_FLAG}*[aCcDghpRrTtu]\s*${OPERAND})|--(?:askpass|bell|background|preserve-env(?:=${OPERAND})?|set-home|login|reset-timestamp|no-update|non-interactive|preserve-groups|stdin|shell|(?:auth-type|login-class|close-from|chdir|group|host|prompt|chroot|role|type|command-timeout|user)(?:=|\s+)${OPERAND})?)(?=$|[\s|;&<>()])){0,16}`;
+/** `sudo -s` or `sudo -i` with no command starts a shell that reads standard input. */
+const SUDO_STDIN_SHELL = String.raw`(?=${commandToken("sudo")}(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|(?!\s--(?=$|\s))[^\n|;&<>()'"])*?\s(?-i:-${SUDO_FLAG}*[is]|--(?:shell|login)(?=$|[\s|;&<>()])))${SUDO_COMMAND}(?=\s*(?:$|[|;&<>()]|\d+[<>]))`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
