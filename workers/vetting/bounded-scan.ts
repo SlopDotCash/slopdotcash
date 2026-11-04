@@ -313,7 +313,14 @@ function commandToken(name: string): string {
 }
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
-const SUDO_COMMAND = commandToken("sudo");
+/**
+ * Privilege-escalation prefix: `sudo` or `doas`. Matches the command and
+ * any options preceding the shell/interpreter or staged script, such as
+ * `doas -u root`, `doas -n`, or `doas --`.
+ */
+const DOAS_OPERAND = String.raw`(?:"(?!-)[^"\n]{1,256}"|'(?!-)[^'\n]{1,256}'|[^\s|;&<>()'"-][^\s|;&<>()'"]*)`;
+const DOAS_COMMAND = String.raw`${commandToken("doas")}(?:\s+(?-i:-(?:n+|n*[au]\s*${DOAS_OPERAND})|--)(?=$|[\s|;&<>()])){0,8}`;
+const SUDO_COMMAND = String.raw`(?:${commandToken("sudo")}|${DOAS_COMMAND})`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
