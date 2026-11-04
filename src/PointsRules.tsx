@@ -52,7 +52,7 @@ export function ContributionPointTiers() {
 export function PenaltyPointTable() {
   return (
     <section
-      className="plain-table-wrap score-tier-wrap"
+      className="plain-table-wrap score-tier-wrap penalty-table-wrap"
       aria-label="Penalty table"
       // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard access is required to scroll this overflow region.
       tabIndex={0}
