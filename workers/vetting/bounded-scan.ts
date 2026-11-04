@@ -214,6 +214,17 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * Babel loads `babel.config.<ext>` (project root) and `.babelrc.<ext>`
+ * (file-relative) as code: @babel/core routes these extensions to
+ * require()/import() and even calls a function export with its config
+ * API, so the file is build-time code like a Makefile. Its `.json`
+ * spellings and the extensionless `.babelrc` are JSON5-parsed data and
+ * stay out, and the file-relative list never searches `.ts`/`.mts`,
+ * so those stay out too.
+ */
+const BABEL_CONFIG =
+  /^(?:babel\.config\.[cm]?[jt]s|\.babelrc\.(?:js|cjs|mjs|cts))$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +294,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    BABEL_CONFIG.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
