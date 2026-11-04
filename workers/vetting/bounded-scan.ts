@@ -410,6 +410,17 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // `sudo -s` or `sudo -i` with no command starts the target user's shell,
+    // and that shell reads the downloaded script from the pipe.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*${SUDO_STDIN_SHELL}`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a sudo shell",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     // Process substitution hands a remote download to a shell without a
     // pipe: `bash <(curl ...)`, `sh <(curl ...)`, `source <(curl ...)`
     // and `. <(curl ...)` are the same act. Shell flags can select stdin
