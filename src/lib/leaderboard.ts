@@ -541,6 +541,27 @@ function parseIsoTime(value: string): number {
   return parsed;
 }
 
+/**
+ * Orders records by a comparator that receives each record's ISO timestamp
+ * already parsed, so a sort parses every value once instead of re-parsing
+ * both sides of every comparison. The comparator's remaining keys and the
+ * stable sort keep the resulting order identical.
+ */
+function sortWithParsedTimes<T>(
+  records: readonly T[],
+  timeOf: (record: T) => string,
+  compare: (left: T, right: T, leftTime: number, rightTime: number) => number,
+): T[] {
+  const timed = records.map((record) => ({
+    record,
+    time: parseIsoTime(timeOf(record)),
+  }));
+  timed.sort((left, right) =>
+    compare(left.record, right.record, left.time, right.time),
+  );
+  return timed.map(({ record }) => record);
+}
+
 function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set(values)].sort((left, right) =>
     left.localeCompare(right, "en"),
@@ -2717,9 +2738,16 @@ function latestSourceUpdate(input: LeaderboardInput): string {
     ...input.openIssues.map((record) => record.updatedAt),
     ...input.openPullRequests.map((record) => record.updatedAt),
   ];
-  return timestamps.reduce((latest, current) =>
-    parseIsoTime(current) > parseIsoTime(latest) ? current : latest,
-  );
+  let latest = input.sourceUpdatedAt;
+  let latestTime = parseIsoTime(latest);
+  for (const current of timestamps) {
+    const currentTime = parseIsoTime(current);
+    if (currentTime > latestTime) {
+      latest = current;
+      latestTime = currentTime;
+    }
+  }
+  return latest;
 }
 
 /**
@@ -2732,10 +2760,11 @@ function commitCreditOwners(
   outcomes: readonly MergedPullRequestOutcome[],
 ): Map<string, string> {
   const owners = new Map<string, string>();
-  const ordered = [...outcomes].sort(
-    (left, right) =>
-      parseIsoTime(left.mergedAt) - parseIsoTime(right.mergedAt) ||
-      compareCodeUnits(left.id, right.id),
+  const ordered = sortWithParsedTimes(
+    outcomes,
+    (pullRequest) => pullRequest.mergedAt,
+    (left, right, leftTime, rightTime) =>
+      leftTime - rightTime || compareCodeUnits(left.id, right.id),
   );
   for (const pullRequest of ordered) {
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
@@ -2974,20 +3003,19 @@ function createSnapshotWithReviewCutoff(
         ? !underValuePolicy(acceptedAt)
         : false;
     });
-  const mergedPullRequestOutcomes = dedupeByNodeId(
-    input.mergedPullRequestOutcomes,
-  ).sort(
-    (left, right) =>
-      parseIsoTime(right.mergedAt) - parseIsoTime(left.mergedAt) ||
+  const mergedPullRequestOutcomes = sortWithParsedTimes(
+    dedupeByNodeId(input.mergedPullRequestOutcomes),
+    (pullRequest) => pullRequest.mergedAt,
+    (left, right, leftTime, rightTime) =>
+      rightTime - leftTime ||
       right.number - left.number ||
       left.id.localeCompare(right.id),
   );
-  const detailHydratedMergedPullRequests = dedupeByNodeId(
-    input.mergedPullRequests,
-  ).sort(
-    (left, right) =>
-      parseIsoTime(right.mergedAt ?? right.updatedAt) -
-        parseIsoTime(left.mergedAt ?? left.updatedAt) ||
+  const detailHydratedMergedPullRequests = sortWithParsedTimes(
+    dedupeByNodeId(input.mergedPullRequests),
+    (pullRequest) => pullRequest.mergedAt ?? pullRequest.updatedAt,
+    (left, right, leftTime, rightTime) =>
+      rightTime - leftTime ||
       right.number - left.number ||
       left.id.localeCompare(right.id),
   );
@@ -3005,16 +3033,15 @@ function createSnapshotWithReviewCutoff(
       `Merged pull request ${overlappingHydrationId} was supplied as both full-detail and review-only hydration`,
     );
   }
-  const mergedPullRequests: MergedPullRequestReviewRecord[] = [
-    ...detailHydratedMergedPullRequests,
-    ...reviewedMergedPullRequests,
-  ].sort(
-    (left, right) =>
-      parseIsoTime(right.mergedAt ?? right.updatedAt) -
-        parseIsoTime(left.mergedAt ?? left.updatedAt) ||
-      right.number - left.number ||
-      left.id.localeCompare(right.id),
-  );
+  const mergedPullRequests: MergedPullRequestReviewRecord[] =
+    sortWithParsedTimes(
+      [...detailHydratedMergedPullRequests, ...reviewedMergedPullRequests],
+      (pullRequest) => pullRequest.mergedAt ?? pullRequest.updatedAt,
+      (left, right, leftTime, rightTime) =>
+        rightTime - leftTime ||
+        right.number - left.number ||
+        left.id.localeCompare(right.id),
+    );
   const detailEligibleMergedPullRequestIds = new Set(
     input.detailEligibleMergedPullRequestIds,
   );
@@ -3033,15 +3060,14 @@ function createSnapshotWithReviewCutoff(
       pullRequest,
     ]),
   );
-  const resolvedIssues = dedupeByNodeId(input.resolvedIssues)
-    .filter(qualifiesResolvedIssue)
-    .sort(
-      (left, right) =>
-        parseIsoTime(right.closedAt ?? right.updatedAt) -
-          parseIsoTime(left.closedAt ?? left.updatedAt) ||
-        right.number - left.number ||
-        left.id.localeCompare(right.id),
-    );
+  const resolvedIssues = sortWithParsedTimes(
+    dedupeByNodeId(input.resolvedIssues).filter(qualifiesResolvedIssue),
+    (issue) => issue.closedAt ?? issue.updatedAt,
+    (left, right, leftTime, rightTime) =>
+      rightTime - leftTime ||
+      right.number - left.number ||
+      left.id.localeCompare(right.id),
+  );
   const openIssues = dedupeByNodeId(input.openIssues);
   const openPullRequests = dedupeByNodeId(input.openPullRequests);
   const verifiedEvidence = selectUniqueVerifiedEvidence(
