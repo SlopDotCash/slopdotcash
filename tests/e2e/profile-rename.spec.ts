@@ -1,11 +1,21 @@
+import { createHash } from "node:crypto";
 /** Public-record fixtures exercise profile identity, not OAuth or settlement. */
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { deriveAllocationFundingBasis } from "../../src/lib/allocation-funding";
 import { assertCycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { githubUserIdFromNodeId } from "../../src/lib/github-actor";
 import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
-import { assertProfiles } from "../../src/lib/profiles";
+import {
+  appendPointAwards,
+  assemblePoints,
+  emptyPointsJournal,
+  type PointAward,
+  type PointsIndex,
+  pointKey,
+} from "../../src/lib/points";
+import { assertProfiles, type ProfileIndex } from "../../src/lib/profiles";
 import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
@@ -33,7 +43,7 @@ async function profileRecords(
   if (!options.reusedHandle && !options.directoryOnly && !options.unverified)
     archived.id = current.id;
   const now = new Date().toISOString();
-  const profiles = {
+  const profiles: ProfileIndex = {
     schemaVersion: "1",
     startedAt: now,
     generatedAt: now,
@@ -1495,4 +1505,337 @@ test("profile history previews retain every payment and cycle behind keyboard co
   await page.keyboard.press("Space");
   await expect(history.getByRole("listitem")).toHaveCount(5);
   await expect(total).toHaveText("$14");
+});
+
+for (const mode of ["same", "member", "different"] as const) {
+  const sameUser = mode !== "different";
+  test(`${mode} GitHub user node-ID spellings keep the profile ${sameUser ? "available" : "separate"}`, async ({
+    page,
+  }, info) => {
+    const site = await serveProfileSite(page);
+    const { profiles, current, walletRequests } = await profileRecords(page);
+    const numericId = sameUser ? 1 : 2;
+    const modern = `U_${Buffer.from([0x92, 0, 0xce, 0, 0, 0, numericId]).toString("base64url")}`;
+    expect(githubUserIdFromNodeId(current.id)).toBe("1");
+    expect(githubUserIdFromNodeId(modern)).toBe(String(numericId));
+    profiles.people[0].id = modern;
+    profiles.people[0].repositories = [
+      { repository: TARGET_REPOSITORIES[0].id, merged: 2, open: 3, closed: 1 },
+    ];
+    profiles.repositories[0].count = 6;
+    assertProfiles(profiles);
+    await page.route(`${site}/api/v1/points/**`, (route) =>
+      route.fulfill({
+        json:
+          mode === "member" &&
+          new URL(route.request().url()).pathname.endsWith("/member")
+            ? {
+                actor: { id: modern, login: current.login },
+                joinedAt: "2026-10-25T00:00:00.000Z",
+                public: true,
+                welcome: 0,
+              }
+            : null,
+      }),
+    );
+    await page.route(`${site}/api/v1/project-session`, (route) =>
+      route.fulfill({ json: { session: null } }),
+    );
+    await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+      route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+    );
+    await page.goto(`${site}/contributors/${current.login}`, {
+      waitUntil: "networkidle",
+    });
+    if (sameUser) {
+      await expect(
+        page.getByRole("heading", { name: current.login, exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      ).toBeVisible();
+      const profile = page.getByRole("region", {
+        name: "Contributor profile",
+        exact: true,
+      });
+      await expect(profile.locator(".pr-legend")).toBeVisible();
+      await expect(profile.locator(".pr-legend")).toContainText("2 PRs merged");
+      await expect(profile.locator(".pr-legend")).toContainText("3 PRs open");
+      await expect(profile.locator(".pr-legend")).toContainText(
+        "1 PRs closed without merging",
+      );
+      await expect(
+        page.getByRole("heading", {
+          name: "No Slop contributor with this login",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      expect(walletRequests.length).toBeGreaterThan(0);
+      expect(
+        walletRequests.every(
+          (path) => path === "/api/v1/wallet-claims/actors/1/current",
+        ),
+      ).toBe(true);
+    } else {
+      await expect(
+        page.getByRole("heading", {
+          name: "No Slop contributor with this login",
+          exact: true,
+        }),
+      ).toBeVisible();
+      expect(walletRequests).toEqual([]);
+    }
+    await expectAccessible(page, { everyRule: true });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: info.outputPath(
+        `node-id-${sameUser ? "same" : "different"}-user.png`,
+      ),
+      fullPage: true,
+    });
+  });
+}
+
+// Read-only public journal and membership doubles, using both canonical IDs.
+async function canonicalPointsRecords(page: Page, mixedAliases = false) {
+  const site = await serveProfileSite(page);
+  const { current } = await profileRecords(page);
+  const modern = "U_kgDOAAAAAQ";
+  current.id = modern;
+  const legacy = "MDQ6VXNlcjE=";
+  const at = new Date().toISOString();
+  const awards: PointAward[] = [
+    {
+      key: pointKey(
+        "eliza",
+        legacy,
+        "merged-pull-request",
+        "PR_canonical_join_fixture",
+      ),
+      actor: { id: legacy, login: "previous-login" },
+      projectId: "eliza",
+      category: "merged-pull-request",
+      amount: 10,
+      occurredAt: at,
+      sourceId: "PR_canonical_join_fixture",
+      sourceUrl: "https://github.com/elizaOS/eliza/pull/1",
+      workUnitId: "history_PR_canonical_join_fixture",
+      provisional: true,
+    },
+  ];
+  if (mixedAliases) {
+    const now = new Date(at);
+    const beforeMonth = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15),
+    ).toISOString();
+    for (let i = 0; i < 5; i++) {
+      const actor =
+        i < 2
+          ? { id: modern, login: current.login }
+          : { id: "MDQ6VXNlcjI=", login: "other-member" };
+      const sourceId = `PR_canonical_join_fixture_${i}`;
+      awards.push({
+        key: pointKey("eliza", actor.id, "merged-pull-request", sourceId),
+        actor,
+        projectId: "eliza",
+        category: "merged-pull-request",
+        amount: 10,
+        occurredAt: i < 2 ? at : beforeMonth,
+        sourceId,
+        sourceUrl: `https://github.com/elizaOS/eliza/pull/${i + 2}`,
+        workUnitId: `history_${sourceId}`,
+        provisional: true,
+      });
+    }
+  }
+  const journal = appendPointAwards(
+    emptyPointsJournal(at),
+    awards,
+    "a".repeat(64),
+    "github-merged-history-v1",
+    at,
+  );
+  const shards = Array.from({ length: 16 }, (_, i) =>
+    journal.revisions.flatMap((revision, sequence) =>
+      Number.parseInt(revision.award.key[0], 16) === i
+        ? [{ sequence, revision }]
+        : [],
+    ),
+  );
+  const parts = shards.map((part) => JSON.stringify(part));
+  const index: PointsIndex = {
+    schemaVersion: journal.schemaVersion,
+    ruleVersion: journal.ruleVersion,
+    generatedAt: at,
+    coverage: journal.coverage,
+    revisionCount: journal.revisions.length,
+    shards: parts.map((part, i) => ({
+      path: `/data/points/${i.toString(16)}.json`,
+      sha256: createHash("sha256").update(part).digest("hex"),
+      count: shards[i].length,
+    })),
+  };
+  assemblePoints(index, parts);
+  await page.route("**/data/points.json", (route) =>
+    route.fulfill({ json: index }),
+  );
+  await page.route("**/data/points/*.json", (route) => {
+    const i = Number.parseInt(
+      new URL(route.request().url()).pathname.split("/").pop() ?? "",
+      16,
+    );
+    return route.fulfill({ contentType: "application/json", body: parts[i] });
+  });
+  const member = {
+    actor: { id: modern, login: current.login },
+    joinedAt: at,
+    public: true,
+    welcome: 5,
+    socialPoints: 0,
+  };
+  await page.route(`${site}/api/v1/points/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    return route.fulfill({
+      json: path.endsWith("/people")
+        ? { people: [member], next: null }
+        : path.endsWith("/sessions")
+          ? { sessions: [] }
+          : path.endsWith("/x/profile")
+            ? null
+            : member,
+    });
+  });
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  return { site, current };
+}
+
+test("canonical People identity keeps one public member with earned points", async ({
+  page,
+}, info) => {
+  const { site, current } = await canonicalPointsRecords(page);
+  await page.goto(`${site}/points?view=people`);
+  const people = page.getByRole("region", { name: "People", exact: true });
+  const row = people.locator("li").filter({
+    has: page.getByRole("link", { name: current.login, exact: true }),
+  });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("Public member");
+  await expect(row).toContainText("15 pts");
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-people.png"),
+    fullPage: true,
+  });
+});
+
+test("canonical account badge includes historical earned points", async ({
+  page,
+}, info) => {
+  const { site, current } = await canonicalPointsRecords(page);
+  await page.goto(`${site}/points`);
+  const account = page.getByRole("button", {
+    name: "Your account",
+    exact: true,
+  });
+  await expect(account).toContainText("15 pts");
+  await account.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("region", { name: "Your account details" }),
+  ).toContainText(`@${current.login}`);
+  await page.keyboard.press("Escape");
+  await expect(account).toBeFocused();
+  await expectAccessible(page);
+  await page.screenshot({ path: info.outputPath("canonical-account.png") });
+});
+
+test("canonical standings use the current snapshot login", async ({
+  page,
+}, info) => {
+  const { site, current } = await canonicalPointsRecords(page);
+  await page.goto(`${site}/points`);
+  const table = page.getByRole("region", {
+    name: "Contributor standings table",
+  });
+  await expect(
+    table.getByRole("link", { name: current.login, exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    table.getByRole("link", { name: "previous-login", exact: true }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-standings.png"),
+    fullPage: true,
+  });
+});
+
+test("canonical archived aliases retain both payment records", async ({
+  page,
+}, info) => {
+  const site = await serveProfileSite(page);
+  const { cycles, current } = await profileRecords(page);
+  const first = cycles.cycles[0].contributors[0];
+  first.score = 4;
+  first.suggestedMinor = first.approvedMinor = first.paidMinor = "500000";
+  cycles.cycles[0].contributors.push({
+    ...structuredClone(first),
+    actor: { ...first.actor, id: "U_kgDOAAAAAQ" },
+    score: 3,
+  });
+  assertCycleIndex(cycles);
+  await page.route(`${site}/api/v1/points/**`, (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(`${site}/api/v1/project-session`, (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route(`${site}/api/v1/payments/**/direct-transfers`, (route) =>
+    route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+  );
+  await page.goto(`${site}/contributors/${current.login}`);
+  const history = page.getByRole("link", { name: /Eliza.*July 2026/ });
+  await expect(history).toHaveCount(2);
+  await expect(
+    page.getByText("Archived cycle · Paid · 120 points", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Archived cycle · Paid · 90 points", { exact: false }),
+  ).toBeVisible();
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-archived.png"),
+    fullPage: true,
+  });
+});
+
+test("canonical standings preserve journal row identities across periods", async ({
+  page,
+}, info) => {
+  const { site } = await canonicalPointsRecords(page, true);
+  await page.goto(`${site}/points`);
+  const rows = page
+    .getByRole("region", { name: "Contributor standings table" })
+    .locator("tbody tr");
+  await page.getByRole("button", { name: "All time", exact: true }).click();
+  await expect(rows).toHaveCount(3);
+  const month = page.getByRole("button", { name: "This month", exact: true });
+  await month.focus();
+  await page.keyboard.press("Enter");
+  await expect(rows).toHaveCount(2);
+  await expect(month).toBeFocused();
+  await page.getByRole("button", { name: "All time", exact: true }).click();
+  await expect(rows).toHaveCount(3);
+  await expect(rows.locator("td:first-child")).toHaveText(["1", "2", "3"]);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("canonical-row-identities.png"),
+    fullPage: true,
+  });
 });

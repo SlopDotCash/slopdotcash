@@ -33,6 +33,7 @@ import {
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
+import { githubUserIdentityKey, sameGithubUser } from "./lib/github-actor";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
@@ -367,7 +368,8 @@ export function PointsNav() {
   }, [open]);
   const total =
     state.status === "ready" && me
-      ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
+      ? (state.members.find((m) => sameGithubUser(m.actor.id, me.actor.id))
+          ?.total ?? 0) +
         me.welcome +
         (me.socialPoints ?? 0)
       : null;
@@ -605,7 +607,7 @@ export function ProfilePoints({
     census.state.status === "ready"
       ? census.state.index.people.filter((p) =>
           actorId
-            ? p.id === actorId
+            ? sameGithubUser(p.id, actorId)
             : p.login.toLowerCase() === login.toLowerCase(),
         )
       : [];
@@ -622,12 +624,14 @@ export function ProfilePoints({
     own ??
     (joined?.actor.login.toLowerCase() === login.toLowerCase() ? joined : null);
   const identity =
-    !actorId || membership?.actor.id === actorId ? membership : null;
+    !actorId || (membership && sameGithubUser(membership.actor.id, actorId))
+      ? membership
+      : null;
   const resolvedActorId = actorId ?? identity?.actor.id ?? recorded?.id;
   const m =
     state.status === "ready"
       ? resolvedActorId
-        ? state.members.find((m) => m.actor.id === resolvedActorId)
+        ? state.members.find((m) => sameGithubUser(m.actor.id, resolvedActorId))
         : named.length === 1
           ? named[0]
           : undefined
@@ -1197,9 +1201,20 @@ export function ContributorStandings({
       ? scores.snapshot.leaders.map(({ actor }) => [actor.id, actor] as const)
       : [],
   );
+  const currentAliases = new Map(
+    [...currentActors.values()].map(
+      (actor) => [githubUserIdentityKey(actor.id), actor] as const,
+    ),
+  );
   const ranked = members
     .map((member) => ({
-      actor: currentActors.get(member.actor.id) ?? member.actor,
+      actor: {
+        ...member.actor,
+        login:
+          currentActors.get(member.actor.id)?.login ??
+          currentAliases.get(githubUserIdentityKey(member.actor.id))?.login ??
+          member.actor.login,
+      },
       points: period === "month" ? member.monthly : member.total,
     }))
     .filter((member) => member.points > 0)
@@ -1473,16 +1488,17 @@ function People({ query }: { query: string }) {
     >();
     if (census.state.status === "ready")
       for (const p of census.state.index.people)
-        byId.set(p.id, {
+        byId.set(githubUserIdentityKey(p.id), {
           id: p.id,
           login: p.login,
           merged: profileCounts(p).merged,
         });
     if (members.status === "ready")
       for (const p of members.people) {
-        const known = byId.get(p.actor.id);
-        byId.set(p.actor.id, {
-          id: p.actor.id,
+        const key = githubUserIdentityKey(p.actor.id);
+        const known = byId.get(key);
+        byId.set(key, {
+          id: known?.id ?? p.actor.id,
           login: known?.login ?? p.actor.login,
           merged: known?.merged ?? (census.state.status === "ready" ? 0 : null),
           member: p,
@@ -1545,13 +1561,14 @@ function People({ query }: { query: string }) {
               .map((p) => {
                 const earned =
                   state.status === "ready"
-                    ? (state.members.find((m) => m.actor.id === p.id)?.total ??
-                      0)
+                    ? (state.members.find((m) =>
+                        sameGithubUser(m.actor.id, p.id),
+                      )?.total ?? 0)
                     : null;
                 const steward = PROJECTS.filter(
                   (project) =>
                     project.authority.state === "verified" &&
-                    project.steward.github.nodeId === p.id,
+                    sameGithubUser(project.steward.github.nodeId, p.id),
                 );
                 const participation = p.member
                   ? p.member.welcome + p.member.socialPoints

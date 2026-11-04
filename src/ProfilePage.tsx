@@ -6,7 +6,7 @@ import {
 } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
 import { isFundingAddress } from "./lib/funding-address.mjs";
-import { githubUserIdFromNodeId } from "./lib/github-actor";
+import { githubUserIdFromNodeId, sameGithubUser } from "./lib/github-actor";
 import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
 import { findProject } from "./lib/projects.mjs";
@@ -99,18 +99,18 @@ export function ProfilePage({
     state.views,
     state.cycleIndex,
   );
-  const globalLeader = globalLeaders.find(
-    (leader) => leader.actor.id === actor.id,
+  const globalLeader = globalLeaders.find((leader) =>
+    sameGithubUser(leader.actor.id, actor.id),
   );
   const matches = state.views.flatMap((view) =>
     view.leaders
-      .filter((leader) => leader.actor.id === actor.id)
+      .filter((leader) => sameGithubUser(leader.actor.id, actor.id))
       .map((leader) => ({ leader, view })),
   );
   const history = state.cycleIndex.cycles
     .flatMap((cycle) =>
       cycle.contributors
-        .filter((contributor) => contributor.actor.id === actor.id)
+        .filter((contributor) => sameGithubUser(contributor.actor.id, actor.id))
         .map((contributor) => ({ contributor, cycle })),
     )
     .sort((left, right) =>
@@ -133,8 +133,8 @@ export function ProfilePage({
       </main>
     );
   }
-  const penalties = (state.snapshot.penalties ?? []).filter(
-    (penalty) => penalty.actor.id === actor.id,
+  const penalties = (state.snapshot.penalties ?? []).filter((penalty) =>
+    sameGithubUser(penalty.actor.id, actor.id),
   );
   // The same open-month deductions as the accepted-work credits.
   const appliedPenalties = openMonthScores(state.snapshot, state.cycleIndex)
@@ -299,7 +299,9 @@ function currentProfileActor(
   ];
   const conflictsWith = (candidate: { id: string }) =>
     actors.some((actor) =>
-      actor.id === candidate.id ? !matchesLogin(actor) : matchesLogin(actor),
+      sameGithubUser(actor.id, candidate.id)
+        ? !matchesLogin(actor)
+        : matchesLogin(actor),
     );
   // Every identity source can veto a stale login. Wait for the session,
   // membership and directory before selecting the actor for wallet/history reads.
@@ -311,7 +313,9 @@ function currentProfileActor(
     return;
   const directoryConflict = (candidate: { id: string }) =>
     profiles.index.people.some((person) =>
-      person.id === candidate.id ? !matchesLogin(person) : matchesLogin(person),
+      sameGithubUser(person.id, candidate.id)
+        ? !matchesLogin(person)
+        : matchesLogin(person),
     );
   const member = membership.own ?? membership.joined;
   if (member)
@@ -329,7 +333,9 @@ function currentProfileActor(
   const candidates = profiles.index.people.filter(
     (person) =>
       matchesLogin(person) &&
-      !actors.some((actor) => actor.id === person.id && !matchesLogin(actor)),
+      !actors.some(
+        (actor) => sameGithubUser(actor.id, person.id) && !matchesLogin(actor),
+      ),
   );
   if (candidates.length !== 1) return;
   return asActor(candidates[0]);
