@@ -163,7 +163,19 @@ export function ProjectSetupStatusPanel({
       ) : (
         <>
           {setup.state !== "ready" ? (
-            <p role="status">{setup.nextAction.message}</p>
+            <>
+              <p role="status">{setup.nextAction.message}</p>
+              {setup.checks.scan.reasons?.length ? (
+                <ul
+                  aria-label="Why the scan did not clear"
+                  className="setup-scan-reasons"
+                >
+                  {setup.checks.scan.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
           ) : showProjectLink ? (
             <Link href={`/projects/${setup.slug}`}>View project</Link>
           ) : null}
