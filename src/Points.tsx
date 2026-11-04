@@ -1200,7 +1200,14 @@ export function ContributorStandings({
   const ranked = members
     .map((member) => ({
       actor: currentActors.get(member.actor.id) ?? member.actor,
-      points: period === "month" ? member.monthly : member.total,
+      // The project-page panel is compact with no period toggle and no
+      // leaderboard link, so it always shows lifetime standings: a month
+      // filter the reader cannot change would hide lifetime-only
+      // contributors behind an empty panel.
+      points:
+        period === "month" && !(compact && projectId)
+          ? member.monthly
+          : member.total,
     }))
     .filter((member) => member.points > 0)
     .sort((a, b) => {
