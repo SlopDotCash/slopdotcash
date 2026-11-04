@@ -1981,17 +1981,22 @@ export async function bindingCandidates(
   }[];
   const candidates: BindingCandidate[] = [];
   for (const deployment of pinned) {
-    const row = await env.PAYMENTS_DB.prepare(
-      "SELECT json_group_array(json_object('obligationId',obligationId,'network',network,'vault',vault,'githubUserId',githubUserId,'claimId',claimId,'claimDigest',claimDigest,'destination',destination)) items FROM (SELECT MIN(o.id) obligationId,o.network network,o.vault vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id WHERE o.state='reserved' AND o.network=? AND lower(o.vault)=? AND w.source='d1_registry' AND EXISTS(SELECT 1 FROM payment_binding_authorizations b WHERE b.claim_id=w.id AND b.github_user_id=o.github_user_id AND b.network=o.network AND b.vault=lower(o.vault) AND CAST(b.expires_at AS INTEGER)>?) GROUP BY o.github_user_id,w.id ORDER BY MIN(o.created_at) LIMIT ?)",
-    )
-      .bind(
-        deployment.network,
-        deployment.vault.toLowerCase(),
-        Math.floor(now.getTime() / 1000) + 600,
-        limit,
+    for (let offset = 0; ; offset += limit) {
+      const row = await env.PAYMENTS_DB.prepare(
+        "SELECT json_group_array(json_object('obligationId',obligationId,'network',network,'vault',vault,'githubUserId',githubUserId,'claimId',claimId,'claimDigest',claimDigest,'destination',destination)) items FROM (SELECT MIN(o.id) obligationId,o.network network,o.vault vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id WHERE o.state='reserved' AND o.network=? AND lower(o.vault)=? AND w.source='d1_registry' AND EXISTS(SELECT 1 FROM payment_binding_authorizations b WHERE b.claim_id=w.id AND b.github_user_id=o.github_user_id AND b.network=o.network AND b.vault=lower(o.vault) AND CAST(b.expires_at AS INTEGER)>?) GROUP BY o.github_user_id,w.id ORDER BY MIN(o.created_at),o.github_user_id,w.id LIMIT ? OFFSET ?)",
       )
-      .first<{ items: string }>();
-    candidates.push(...(JSON.parse(row?.items ?? "[]") as BindingCandidate[]));
+        .bind(
+          deployment.network,
+          deployment.vault.toLowerCase(),
+          Math.floor(now.getTime() / 1000) + 600,
+          limit,
+          offset,
+        )
+        .first<{ items: string }>();
+      const page = JSON.parse(row?.items ?? "[]") as BindingCandidate[];
+      candidates.push(...page);
+      if (page.length < limit) break;
+    }
   }
   return candidates;
 }
