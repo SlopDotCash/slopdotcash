@@ -135,19 +135,27 @@ for (const retryStatus of [200, 401, 403]) {
       path: info.outputPath(`retained-${retryStatus}.png`),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    // 200% zoom on the 320 CSS px mobile viewport is a 160 px layout, below
+    // the site's supported minimum, so the mobile project keeps its own size
+    // (home-cache.spec.ts applies the same rule). The width check polls,
+    // because the zoom relayout lands after the style change.
+    if ((page.viewportSize()?.width ?? 0) >= 640) {
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = "2";
+      });
+    }
     await expect(
       page
         .getByRole("alert")
         .getByRole("button", { name: "Retry", exact: true }),
     ).toBeVisible();
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth + 1,
-      ),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth + 1,
+        ),
+      )
+      .toBe(true);
     await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath(`retained-${retryStatus}-200.png`),
