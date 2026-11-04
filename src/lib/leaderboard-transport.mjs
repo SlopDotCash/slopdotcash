@@ -1,11 +1,27 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { sha256Hex } from "./async-sha256.mjs";
 
 export const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
 export const MAX_LEADERBOARD_PART_BYTES = 8 * 1024 * 1024;
 export const MAX_LEADERBOARD_FILE_BYTES = 25 * 1024 * 1024;
 const FORMAT = "slop-leaderboard-parts-v1";
 const hash = (bytes) => bytesToHex(sha256(bytes));
+// WebCrypto's subtle API is unavailable in non-secure browser contexts
+// (crypto.subtle === undefined, e.g. plain HTTP on a LAN address), where
+// an unguarded sha256Hex call would throw and leave the leaderboard in
+// error state. The pure-JS hash is already imported for the encoder, so
+// falling back to it costs no extra bytes and yields the same digest.
+const digestHex = (bytes) =>
+  typeof globalThis.crypto?.subtle?.digest === "function"
+    ? sha256Hex(bytes)
+    : Promise.resolve(hash(bytes));
+/**
+ * The decode path is async and verifies tens of megabytes on every load, so
+ * it verifies digests with the shared native SHA-256 (`sha256Hex`). The
+ * digest is the same SHA-256 either way; the pure-JS hash remains the
+ * encoder's implementation (it is synchronous).
+ */
 const exactKeys = (value, keys) =>
   value &&
   typeof value === "object" &&
@@ -84,13 +100,13 @@ export async function readLeaderboardBytes(root, readPart) {
     if (
       !(data instanceof Uint8Array) ||
       data.length !== part.bytes ||
-      hash(data) !== part.sha256
+      (await digestHex(data)) !== part.sha256
     )
       throw new Error("Leaderboard part size or digest mismatch");
     bytes.set(data, offset);
     offset += data.length;
   }
-  if (hash(bytes) !== value.sha256)
+  if ((await digestHex(bytes)) !== value.sha256)
     throw new Error("Leaderboard snapshot digest mismatch");
   return bytes;
 }
