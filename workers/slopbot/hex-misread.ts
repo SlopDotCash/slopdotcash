@@ -261,8 +261,12 @@ function splitSentences(text: string): string[] {
 function isSeparateClaim(part: string): boolean {
   if (isSupportQuote(part)) return false;
   if (part.trim().split(/\s+/u).length < 4) return false;
-  return /\b(?:can|could|should|is|are|was|were|raises?|reads?|uses?|bypassed|rejects?|fails?|crashes?|skipped|runs?)\b/iu.test(
-    part,
+  // "never <verb>" is already a failure of this piece's own subject.
+  // The verb list above does not have to name that verb.
+  return (
+    /\b(?:can|could|should|is|are|was|were|raises?|reads?|uses?|bypassed|rejects?|fails?|crashes?|skipped|runs?)\b/iu.test(
+      part,
+    ) || predicatesOwnSubjectFailure(part)
   );
 }
 

@@ -285,6 +285,18 @@ test("keeps a NameError about a non-hex identifier after a digest misread", () =
   expect(output.limitations).toEqual(input.limitations);
 });
 
+test("keeps a never-validates claim joined to a digest misread by a comma", () => {
+  const input = verdict({
+    summary: `The digest ${D} is not a valid hex value, the pipeline never validates checksums.`,
+  });
+  const output = suppressHexMisreads(input);
+  expect(output.category).toBe("low_quality");
+  expect(output.summary).toBe("The pipeline never validates checksums.");
+  expect(output.summary).not.toContain(D);
+  expect(output.evidence).toEqual(input.evidence);
+  expect(output.limitations).toEqual(input.limitations);
+});
+
 test("keeps an auth bypass joined to a digest misread by a comma", () => {
   const input = verdict({
     summary: `The digest ${D} is not a valid hex value, the auth check can be bypassed with an empty token.`,
