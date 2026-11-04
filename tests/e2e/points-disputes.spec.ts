@@ -286,3 +286,210 @@ test("a manual Points award reaches private Inbox review and an independent mode
     await context.close();
   }
 });
+
+test("superseded Points Retry opens the current record @registry", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowCanceledBackgroundReads();
+  diagnostics.allowResponse(409, "POST", "/api/v1/points/disputes");
+  const persist = process.env.SLOP_E2E_PERSIST_TO;
+  if (!persist) throw new Error("Missing local registry fixture");
+  const q = (value: unknown) => `'${String(value).replaceAll("'", "''")}'`;
+  const sql = (command: string) =>
+    JSON.parse(
+      execFileSync(
+        "node",
+        [
+          "node_modules/wrangler/bin/wrangler.js",
+          "d1",
+          "execute",
+          "slop-private",
+          "--local",
+          "--persist-to",
+          persist,
+          "--command",
+          command,
+          "--json",
+        ],
+        { stdio: "pipe" },
+      ).toString("utf8"),
+    );
+  const suffix = createHash("sha256")
+    .update(`points-retry-${test.info().project.name}`)
+    .digest("hex")
+    .slice(0, 6);
+  const githubId = String(920000000 + Number.parseInt(suffix, 16));
+  const actorId = Buffer.from(`04:User${githubId}`).toString("base64");
+  const session = createHash("sha256").update(`retry-${suffix}`).digest("hex");
+  const now = new Date().toISOString();
+  const record = {
+    previous: null,
+    recordedAt: now,
+    sourceDigest: "a".repeat(64),
+    sourceRule: "legacy-reviewed-award",
+    award: {
+      key: `manual:retry-${suffix}`,
+      actor: { id: actorId, login: `points-retry-${suffix}` },
+      projectId: "slopdotcash",
+      category: "evaluated-contribution" as const,
+      amount: 90,
+      occurredAt: now,
+      sourceId: `manual-retry-${suffix}`,
+      sourceUrl: "https://example.com/accepted-work",
+      workUnitId: `manual-retry-${suffix}`,
+      provisional: false,
+    },
+  };
+  const revision = { ...record, id: pointRevisionId(record) };
+  sql(`INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(${q(actorId)},${q(githubId)},${q(record.award.actor.login)},${q(now)},1);
+    INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(${q(createHash("sha256").update(session).digest("hex"))},${q(actorId)},'2099-01-01T00:00:00.000Z');
+    INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(${q(revision.id)},${q(record.award.key)},NULL,${q(now)},${q(JSON.stringify(revision))});`);
+  // Put A on the older page. Its correction B will be newer than that cursor.
+  for (let index = 0; index < 25; index++) {
+    const other = {
+      ...record,
+      award: {
+        ...record.award,
+        key: `manual:retry-${suffix}-newer-${index}`,
+        sourceId: `manual-retry-${suffix}-newer-${index}`,
+        workUnitId: `manual-retry-${suffix}-newer-${index}`,
+        amount: 10,
+      },
+    };
+    const row = { ...other, id: pointRevisionId(other) };
+    sql(
+      `INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(${q(row.id)},${q(other.award.key)},NULL,${q(now)},${q(JSON.stringify(row))});`,
+    );
+  }
+  await page.goto("/how-it-works", { waitUntil: "load" });
+  await expect(
+    page.getByRole("heading", { name: "How Slop works", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  await page.evaluate((value) => {
+    // biome-ignore lint/suspicious/noDocumentCookie: Seed only the isolated local session.
+    document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
+  }, session);
+  await page.goto("/inbox?points", { waitUntil: "load" });
+  const review = page.getByRole("region", {
+    name: "Points review",
+    exact: true,
+  });
+  await review
+    .getByRole("button", { name: "Older records", exact: true })
+    .click();
+  await expect(review.getByText("90 points", { exact: true })).toBeVisible();
+  await review
+    .getByRole("listitem")
+    .filter({
+      has: page.getByText("90 points", { exact: true }),
+    })
+    .getByRole("button", { name: "Review", exact: true })
+    .click();
+  await expect(review.getByText("90 points", { exact: true })).toBeVisible();
+  await review
+    .getByLabel("Reason", { exact: true })
+    .fill("The accepted work was credited to the wrong month.");
+  const changed = {
+    ...record,
+    previous: revision.id,
+    recordedAt: new Date(Date.parse(now) + 1000).toISOString(),
+    award: { ...record.award, amount: 30 },
+  };
+  const successor = { ...changed, id: pointRevisionId(changed) };
+  sql(
+    `INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(${q(successor.id)},${q(record.award.key)},${q(revision.id)},${q(changed.recordedAt)},${q(JSON.stringify(successor))});`,
+  );
+  const refused = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/points/disputes",
+  );
+  await review
+    .getByRole("button", { name: "Request review", exact: true })
+    .click();
+  const response = await refused;
+  expect(response.status()).toBe(409);
+  expect((await response.json()).error).toBe("superseded");
+  expect(
+    sql(
+      `SELECT COUNT(*) AS n FROM points_disputes WHERE revision_id=${q(revision.id)}`,
+    )[0].results,
+  ).toEqual([{ n: 0 }]);
+  await expect(review.getByRole("alert")).toContainText("newer revision");
+  await page.screenshot({
+    path: test.info().outputPath("superseded-before-retry.png"),
+    fullPage: true,
+  });
+  const retry = review.getByRole("button", { name: "Retry", exact: true });
+  for (let tabs = 0; tabs < 50; tabs++) {
+    if (await retry.evaluate((button) => button === document.activeElement))
+      break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(retry).toBeFocused();
+  const freshList = page.waitForResponse(
+    (next) =>
+      next.request().method() === "GET" &&
+      new URL(next.url()).pathname === "/api/v1/points/disputes",
+  );
+  await page.keyboard.press("Enter");
+  const refreshed = await freshList;
+  const refreshedAwards = (await refreshed.json()).awards as {
+    revisionId: string;
+  }[];
+  expect(refreshedAwards.map((item) => item.revisionId)).toContain(
+    successor.id,
+  );
+  await expect(review.getByLabel("Reason", { exact: true })).toHaveCount(0);
+  await expect(review.getByText("30 points", { exact: true })).toBeVisible();
+  await review
+    .getByRole("listitem")
+    .filter({
+      has: page.getByText("30 points", { exact: true }),
+    })
+    .getByRole("button", { name: "Review", exact: true })
+    .click();
+  await expect(review.getByText("30 points", { exact: true })).toBeVisible();
+  await expect(review.getByLabel("Reason", { exact: true })).toHaveValue("");
+  // A temporary refusal must not retire a still-current form or its draft.
+  const draft = "Keep this explanation while the service is unavailable.";
+  await review.getByLabel("Reason", { exact: true }).fill(draft);
+  diagnostics.allowResponse(503, "POST", "/api/v1/points/disputes");
+  await page.route(
+    "**/api/v1/points/disputes",
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "unavailable",
+          message: "Points review temporarily unavailable.",
+        }),
+      }),
+    { times: 1 },
+  );
+  await review
+    .getByRole("button", { name: "Request review", exact: true })
+    .click();
+  await expect(review.getByRole("alert")).toContainText(
+    "temporarily unavailable",
+  );
+  const currentList = page.waitForResponse(
+    (next) =>
+      next.request().method() === "GET" &&
+      new URL(next.url()).pathname === "/api/v1/points/disputes",
+  );
+  await review.getByRole("button", { name: "Retry", exact: true }).click();
+  expect((await (await currentList).json()).awards[0].revisionId).toBe(
+    successor.id,
+  );
+  await expect(review.getByLabel("Reason", { exact: true })).toHaveValue(draft);
+  await expect(review.getByText("30 points", { exact: true })).toBeVisible();
+  await expectAccessible(page, { everyRule: true });
+  await page.screenshot({
+    path: test.info().outputPath("current-points-review.png"),
+    fullPage: true,
+  });
+});
