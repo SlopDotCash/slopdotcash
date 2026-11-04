@@ -414,9 +414,11 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     // Reading a response object does not execute its body. Match the direct
-    // response-text forms; other data flow needs the model's source review.
+    // response-text forms, called on the module or on a client it builds
+    // inline (httpx.Client(), httpx.AsyncClient(), requests.Session()); other
+    // data flow needs the model's source review.
     pattern:
-      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.text\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
+      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|(?:requests|httpx)(?:\.(?:Client|AsyncClient|Session)\s*\([^()\n]*\))?\.[a-z]+\s*\([^()\n]*\)\s*\.text\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
     summary: "Executes code fetched from the network",
   },
   {
