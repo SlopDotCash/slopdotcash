@@ -2389,6 +2389,77 @@ test("monthly outstanding blocks direct commits; a consumed leaf releases once a
   );
 });
 
+// The payment keeper resumes an admitted month once per scheduled run. Without its
+// per-run bound the executor settles one leaf per call, so every remaining leaf costs one
+// keeper run and the owner's direct commits stay blocked for that long.
+test("an admitted month settles all remaining leaves in one keeper run bounded by perRun", async () => {
+  const { stranger, period } = await monthlyPeriod();
+  await freshProject("monthly-keeper-bound", 200_000_000n);
+  // The executor reads only finalized accounts, including this newly created project.
+  await provider.connection.confirmTransaction(
+    await program.methods
+      .setMonthlyCommitment(bn(200_000_000), true)
+      .accountsStrict({ owner: payer.publicKey, project })
+      .rpc(),
+    "finalized",
+  );
+  const entries = entriesOf(
+    ["bound-a", "bound-b", "bound-c", "bound-d", "bound-e"],
+    701,
+  );
+  const frozenAt = String(await chainTime());
+  const { total, environment, authorization } = await monthlyExecutor(
+    stranger,
+    period,
+    entries,
+    frozenAt,
+    "monthly-keeper-bound",
+  );
+  const finalized = (signatures) =>
+    Promise.all(
+      signatures.map((signature) =>
+        provider.connection.confirmTransaction(signature, "finalized"),
+      ),
+    );
+  const admitted = await submitSolanaMonthly(environment, authorization);
+  await finalized([admitted.transactionId]);
+  const read = () => program.account.project.fetch(project);
+  assert.equal((await read()).monthlyOutstanding.toString(), total);
+  // The keeper's call without a bound: one leaf for this run.
+  const unbounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+  );
+  assert.equal(unbounded.transactionIds.length, 1);
+  await finalized(unbounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "100000000");
+  await assert.rejects(
+    commit("while-outstanding", 999, 1),
+    /MonthlyOutstanding/,
+  );
+  // The keeper's perRun bound: every remaining leaf in the next run.
+  const bounded = await submitSolanaMonthly(
+    environment,
+    authorization,
+    false,
+    10,
+  );
+  assert.equal(bounded.transactionIds.length, entries.length - 1);
+  await finalized(bounded.transactionIds);
+  assert.equal((await read()).monthlyOutstanding.toString(), "0");
+  assert.deepEqual(
+    await submitSolanaMonthly(environment, authorization, false, 10),
+    { transactionId: null, alreadyCommitted: true },
+  );
+  for (const entry of entries) {
+    const obligation = await program.account.obligation.fetch(awardAt(entry));
+    assert.equal(obligation.actorId.toString(), entry.githubUserId);
+    assert.equal(obligation.gross.toString(), entry.grossMicro);
+  }
+  await commit("after-keeper-month", 999, 1);
+});
+
 // The monthly gate tests share a funded payer that is neither owner nor attester, the one
 // recordable period, and entries whose source digests equal the ones `commit` derives.
 async function monthlyPeriod() {
