@@ -263,8 +263,16 @@ export function PointsProvider({
       age >= 0 &&
       age < 60_000 &&
       (loaded.source === read || loaded.source === "journal")
-    )
+    ) {
+      // A cancelled journal read left the page loading; the record read in
+      // the last minute still covers it.
+      const members = verifiedMembers.current;
+      if (members)
+        setState((previous) =>
+          previous.status === "ready" ? previous : { status: "ready", members },
+        );
       return;
+    }
     const controller = new AbortController();
     setState({ status: "loading" });
     void (read === "journal" ? loadPoints : loadPointsMembers)(
