@@ -199,7 +199,11 @@ export function assertQualityEvidence(
   }
   return value as QualityEvidence;
 }
-/** Stable largest remainder, including zero-weight contributors. */
+/**
+ * Stable largest remainder, including zero-weight contributors. Ties follow
+ * the canonical actor order with English case folding and collation, so the
+ * leftover units land on the same contributors on every host.
+ */
 export function allocateQualityWeights(
   weights: Map<string, bigint>,
   capMinor: string,
@@ -221,10 +225,12 @@ export function allocateQualityWeights(
     if (a.remainder !== b.remainder) return a.remainder > b.remainder ? -1 : 1;
     const left = actorLogins.get(a.id) ?? a.id,
       right = actorLogins.get(b.id) ?? b.id;
+    const leftLogin = left.toLocaleLowerCase("en"),
+      rightLogin = right.toLocaleLowerCase("en");
     return (
-      left.toLowerCase().localeCompare(right.toLowerCase()) ||
-      left.localeCompare(right) ||
-      a.id.localeCompare(b.id)
+      leftLogin.localeCompare(rightLogin, "en") ||
+      left.localeCompare(right, "en") ||
+      a.id.localeCompare(b.id, "en")
     );
   });
   let remaining = total
@@ -393,14 +399,19 @@ export async function verifyQualityEventIds(
   evidence: QualityEvidence,
   preparation: FundingPreparation,
 ) {
+  // Group the event ids by actor in one pass over the census. Filtering the
+  // full event list once per contributor made this quadratic in the census
+  // size; the grouped ids keep the original event order per actor, so each
+  // sorted payload — and therefore each hash — is unchanged.
+  const idsByActor = new Map<string, string[]>();
+  for (const event of evidence.events) {
+    const ids = idsByActor.get(event.actorId);
+    if (ids) ids.push(event.id);
+    else idsByActor.set(event.actorId, [event.id]);
+  }
   for (const actor of preparation.contributors) {
     const hash = await sha256Hex(
-      JSON.stringify(
-        evidence.events
-          .filter((event) => event.actorId === actor.actor.id)
-          .map((event) => event.id)
-          .sort(),
-      ),
+      JSON.stringify((idsByActor.get(actor.actor.id) ?? []).sort()),
     );
     requireValue(
       hash === actor.eventIdsSha256,

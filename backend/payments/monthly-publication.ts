@@ -32,18 +32,19 @@ export async function publishMonthlyAuthorizations(deps: {
   for (const request of JSON.parse(
     candidates?.items ?? "[]",
   ) as MonthlyAttestationRequest[]) {
-    if (
-      !deps.networks.includes(request.network) ||
-      !(await automaticMonthlyPayment(deps.db, request.projectId))
-    )
-      continue;
-    const cutoff = monthlyCutoff(deps.schedule, request.period);
-    const closes = monthlyCutoff(
-      deps.schedule,
-      periodEnd(request.period).toISOString().slice(0, 7),
-    );
-    if (!cutoff || !closes || deps.now < cutoff || deps.now >= closes) continue;
     try {
+      if (
+        !deps.networks.includes(request.network) ||
+        !(await automaticMonthlyPayment(deps.db, request.projectId))
+      )
+        continue;
+      const cutoff = monthlyCutoff(deps.schedule, request.period);
+      const closes = monthlyCutoff(
+        deps.schedule,
+        periodEnd(request.period).toISOString().slice(0, 7),
+      );
+      if (!cutoff || !closes || deps.now < cutoff || deps.now >= closes)
+        continue;
       const signed = await deps.authorize(request);
       const authorization: MonthlyAuthorization = {
         plan: signed.plan,
@@ -95,9 +96,11 @@ export async function publishMonthlyAuthorizations(deps: {
         request.network,
       );
       if (previous?.authorization === text) continue;
+      // The owner may turn automatic payment off after the attester's last
+      // check. Only the atomic inserts can decide whether this month publishes.
       await deps.db
         .prepare(
-          "INSERT INTO monthly_payment_authorizations(project_id,period,network,snapshot_sha256,authorization,published_at) SELECT project_id,period,network,snapshot_sha256,?,? FROM monthly_payment_runs WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND obligations_created_at IS NOT NULL ON CONFLICT DO NOTHING",
+          "INSERT INTO monthly_payment_authorizations(project_id,period,network,snapshot_sha256,authorization,published_at) SELECT project_id,period,network,snapshot_sha256,?,? FROM monthly_payment_runs WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND obligations_created_at IS NOT NULL AND COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1 ON CONFLICT DO NOTHING",
         )
         .bind(
           text,
@@ -106,12 +109,13 @@ export async function publishMonthlyAuthorizations(deps: {
           request.period,
           request.network,
           request.snapshotSha256,
+          request.projectId,
         )
         .run();
       if (attempt)
         await deps.db
           .prepare(
-            "INSERT INTO monthly_payment_authorization_attempts(project_id,period,network,source_sequence,authorization,published_at) SELECT project_id,period,network,?,?,? FROM monthly_payment_authorizations a WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND NOT EXISTS(SELECT 1 FROM monthly_payment_authorization_attempts n WHERE n.project_id=a.project_id AND n.period=a.period AND n.network=a.network AND (length(n.source_sequence)>length(?) OR (length(n.source_sequence)=length(?) AND n.source_sequence>?))) ON CONFLICT DO NOTHING",
+            "INSERT INTO monthly_payment_authorization_attempts(project_id,period,network,source_sequence,authorization,published_at) SELECT project_id,period,network,?,?,? FROM monthly_payment_authorizations a WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1 AND NOT EXISTS(SELECT 1 FROM monthly_payment_authorization_attempts n WHERE n.project_id=a.project_id AND n.period=a.period AND n.network=a.network AND (length(n.source_sequence)>length(?) OR (length(n.source_sequence)=length(?) AND n.source_sequence>?))) ON CONFLICT DO NOTHING",
           )
           .bind(
             attempt.sourceSequence,
@@ -121,6 +125,7 @@ export async function publishMonthlyAuthorizations(deps: {
             request.period,
             request.network,
             request.snapshotSha256,
+            request.projectId,
             attempt.sourceSequence,
             attempt.sourceSequence,
             attempt.sourceSequence,
@@ -132,8 +137,11 @@ export async function publishMonthlyAuthorizations(deps: {
         request.period,
         request.network,
       );
-      if (saved?.authorization !== text)
+      if (saved?.authorization !== text) {
+        if (!(await automaticMonthlyPayment(deps.db, request.projectId)))
+          continue;
         throw new Error("Monthly authorization publication conflict");
+      }
       published.push(
         `${request.projectId}/${request.period}/${request.network}`,
       );

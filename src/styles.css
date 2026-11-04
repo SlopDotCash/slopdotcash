@@ -260,6 +260,11 @@ textarea:focus-visible {
   line-height: 1.65;
 }
 
+/* Keep the profile penalty-link target below the 88px sticky header. */
+#penalties {
+  scroll-margin-top: calc(88px + 1rem);
+}
+
 .faq {
   scroll-margin-top: 64px;
 }
@@ -1426,6 +1431,13 @@ small {
 }
 
 .payment-history .plain-table :is(th, td) {
+  overflow-wrap: normal;
+}
+
+/* The page shell sets overflow-wrap: anywhere, which splits "points"
+   mid-word in the narrow penalty-table debit header on phones. Keep words
+   whole here; the wrap scrolls horizontally if the table needs it. */
+.penalty-table-wrap .plain-table :is(th, td) {
   overflow-wrap: normal;
 }
 

@@ -97,12 +97,7 @@ function exact(value: object, keys: string[]) {
 export function pointRevisionId(revision: Omit<PointRevision, "id">): string {
   return sha256Hex(JSON.stringify(revision));
 }
-export function assertPointsJournal(
-  value: unknown,
-): asserts value is PointsJournal {
-  if (!value || typeof value !== "object")
-    throw new Error("Invalid points journal");
-  const p = value as PointsJournal;
+function assertJournalHeader(p: PointsJournal): void {
   exact(p, [
     "schemaVersion",
     "ruleVersion",
@@ -119,9 +114,15 @@ export function assertPointsJournal(
     !Array.isArray(p.coverage)
   )
     throw new Error("Invalid points journal header");
-  const latest = new Map<string, PointRevision>();
-  const ids = new Set<string>();
-  for (const r of p.revisions) {
+}
+function assertRevisionChain(
+  p: PointsJournal,
+  start: number,
+  latest: Map<string, PointRevision>,
+  ids: Set<string>,
+): void {
+  for (let index = start; index < p.revisions.length; index++) {
+    const r = p.revisions[index];
     exact(r, [
       "id",
       "previous",
@@ -294,6 +295,8 @@ export function assertPointsJournal(
     latest.set(a.key, r);
     ids.add(id);
   }
+}
+function assertJournalCoverage(p: PointsJournal): void {
   for (const c of p.coverage) {
     exact(c, ["repository", "from", "to", "digest"]);
     if (
@@ -305,6 +308,39 @@ export function assertPointsJournal(
     )
       throw new Error("Invalid points coverage");
   }
+}
+export function assertPointsJournal(
+  value: unknown,
+): asserts value is PointsJournal {
+  if (!value || typeof value !== "object")
+    throw new Error("Invalid points journal");
+  const p = value as PointsJournal;
+  assertJournalHeader(p);
+  assertRevisionChain(p, 0, new Map(), new Set());
+  assertJournalCoverage(p);
+}
+/**
+ * Validate a journal whose first `prefix` revisions were already asserted
+ * in this call chain and carried over unmodified: the append paths assert
+ * their input journal, then only push new revisions onto a copy of its
+ * revision list. The carried prefix still seeds the chain state and is
+ * rechecked against the journal's (possibly newer) generatedAt, but only
+ * the appended suffix pays the full per-revision cost — content hashes,
+ * key sorts, timestamp and URL parsing — that the prefix already passed.
+ */
+function assertAppendedRevisions(journal: PointsJournal, prefix: number): void {
+  assertJournalHeader(journal);
+  const latest = new Map<string, PointRevision>();
+  const ids = new Set<string>();
+  for (let index = 0; index < prefix; index++) {
+    const r = journal.revisions[index];
+    if (r.recordedAt > journal.generatedAt)
+      throw new Error("Invalid point award");
+    latest.set(r.award.key, r);
+    ids.add(r.id);
+  }
+  assertRevisionChain(journal, prefix, latest, ids);
+  assertJournalCoverage(journal);
 }
 export function pointKey(
   project: string,
@@ -394,41 +430,64 @@ export function appendPointAwards(
   };
   const latest = latestPoints(journal);
   for (const award of [...awards].sort((a, b) => a.key.localeCompare(b.key))) {
-    const previous = latest.get(award.key);
-    const decision = decisions?.get(award.key);
-    const penalty = penalties?.get(award.key);
-    if (
-      previous &&
-      JSON.stringify(previous.award) === JSON.stringify(award) &&
-      JSON.stringify(previous.penalty) === JSON.stringify(penalty) &&
-      (!decision ||
-        (previous.decision?.sourceId === decision.sourceId &&
-          previous.decision.effectiveAt === decision.effectiveAt &&
-          previous.decision.reason === decision.reason))
-    )
-      continue;
-    const revision = {
-      previous: previous?.id ?? null,
-      recordedAt,
+    appendPointAward(
+      output,
+      latest,
+      award,
       sourceDigest,
       sourceRule,
-      award,
-      ...(penalty ? { penalty } : {}),
-      ...(decision
-        ? {
-            decision: {
-              ...decision,
-              delta: award.amount - (previous?.award.amount ?? 0),
-            },
-          }
-        : {}),
-    };
-    const next = { id: pointRevisionId(revision), ...revision };
-    output.revisions.push(next);
-    latest.set(award.key, next);
+      recordedAt,
+      decisions,
+      penalties,
+    );
   }
-  assertPointsJournal(output);
+  // The input journal was asserted above and its revisions are carried
+  // over unmodified; only the appended suffix needs full validation.
+  assertAppendedRevisions(output, journal.revisions.length);
   return output;
+}
+function appendPointAward(
+  output: PointsJournal,
+  latest: Map<string, PointRevision>,
+  award: PointAward,
+  sourceDigest: string,
+  sourceRule: string,
+  recordedAt: string,
+  decisions?: ReadonlyMap<string, PointDecision>,
+  penalties?: ReadonlyMap<string, NonNullable<PointRevision["penalty"]>>,
+) {
+  const previous = latest.get(award.key);
+  const decision = decisions?.get(award.key);
+  const penalty = penalties?.get(award.key);
+  if (
+    previous &&
+    JSON.stringify(previous.award) === JSON.stringify(award) &&
+    JSON.stringify(previous.penalty) === JSON.stringify(penalty) &&
+    (!decision ||
+      (previous.decision?.sourceId === decision.sourceId &&
+        previous.decision.effectiveAt === decision.effectiveAt &&
+        previous.decision.reason === decision.reason))
+  )
+    return;
+  const revision = {
+    previous: previous?.id ?? null,
+    recordedAt,
+    sourceDigest,
+    sourceRule,
+    award,
+    ...(penalty ? { penalty } : {}),
+    ...(decision
+      ? {
+          decision: {
+            ...decision,
+            delta: award.amount - (previous?.award.amount ?? 0),
+          },
+        }
+      : {}),
+  };
+  const next = { id: pointRevisionId(revision), ...revision };
+  output.revisions.push(next);
+  latest.set(award.key, next);
 }
 /**
  * Keys of positive retained-history awards (substantive reviews and
@@ -585,9 +644,18 @@ export function reconcilePointPenalties(
       JSON.stringify(prior.penalty) === JSON.stringify(evidence)
     )
       continue;
-    result = appendPointAwards(
+    if (result === journal) {
+      assertPointsJournal(journal);
+      result = {
+        ...journal,
+        generatedAt: recordedAt,
+        revisions: [...journal.revisions],
+      };
+    }
+    appendPointAward(
       result,
-      [award],
+      latest,
+      award,
       digest,
       candidate.sourceRule,
       recordedAt,
@@ -608,6 +676,8 @@ export function reconcilePointPenalties(
       new Map([[award.key, evidence]]),
     );
   }
+  if (result !== journal)
+    assertAppendedRevisions(result, journal.revisions.length);
   return result;
 }
 
@@ -710,6 +780,14 @@ export function applyPointsSnapshot(
       .map((a) => `${a.projectId}\0${a.sourceId}`),
   );
   const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
+  const coverageByPullRequest = new Map<
+    string,
+    NonNullable<LeaderboardSnapshot["valueAssessmentCoverage"]>[number]
+  >();
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    const key = `${row.repository}\0${row.pullRequestNumber}`;
+    if (!coverageByPullRequest.has(key)) coverageByPullRequest.set(key, row);
+  }
   // An adverse ruling can correct a review before the rolling window. A
   // policy or window omission does not revoke its previously earned credit.
   const excludedReviews = new Set<string>();
@@ -760,10 +838,8 @@ export function applyPointsSnapshot(
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
       );
-      const coverage = snapshot.valueAssessmentCoverage.find(
-        (row) =>
-          row.repository === repository?.id &&
-          row.pullRequestNumber === Number(match[3]),
+      const coverage = coverageByPullRequest.get(
+        `${repository?.id}\0${Number(match[3])}`,
       );
       // The exact completion source can invalidate its prior joint decision
       // even when it no longer has an eligible actor for a replacement award.
@@ -856,6 +932,11 @@ export function applyPointsSnapshot(
  * retaining the raw string: owner/repo casing variants, the explicit
  * default port (:443, dropped as default by the URL parser), an empty query
  * marker, and dot-segment paths (including percent-encoded dot-segments).
+ * The literal `pull` path segment is matched case-insensitively because the
+ * validator (githubUrl in src/lib/evaluator-awards.ts) compares the whole
+ * pathname case-folded; a case-sensitive match would return no identity for
+ * an uppercase `/PULL/` variant, evading the evaluated-review suppression
+ * (PRD section 14 anti-duplication rule).
  *
  * The owner/repo is resolved through the registered project repository
  * inventory (registry and removed projects via findHistoricalRepository), so a
@@ -887,7 +968,7 @@ export function canonicalReviewIdentity(url: string): string | undefined {
   // non-empty query is rejected by the validator and must yield no identity.
   if (parsed.port) return undefined;
   if (parsed.search) return undefined;
-  const path = /^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/.exec(parsed.pathname);
+  const path = /^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/i.exec(parsed.pathname);
   if (!path) return undefined;
   const fragment = parsed.hash.toLowerCase();
   if (!/^#(pullrequestreview-|discussion_r)\d+$/.test(fragment))

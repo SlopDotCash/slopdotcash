@@ -538,21 +538,38 @@ export function createProjectView(
   const repositoryIds = new Set(
     project.repositories.map((repository) => repository.id),
   );
+  // Cache only this cycle's matching events for the sort below.
+  const occurredAtMs = new Map<ScoreEvent, number>();
   const ledger = snapshot.ledger
-    .filter(
-      (event) =>
-        repositoryIds.has(event.repository) &&
-        Date.parse(event.occurredAt) >= from &&
-        Date.parse(event.occurredAt) < to,
-    )
+    .filter((event) => {
+      if (!repositoryIds.has(event.repository)) return false;
+      const occurredAt = Date.parse(event.occurredAt);
+      if (!(occurredAt >= from && occurredAt < to)) return false;
+      occurredAtMs.set(event, occurredAt);
+      return true;
+    })
     .sort(
       (left, right) =>
-        Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
-        left.id.localeCompare(right.id),
+        (occurredAtMs.get(right) as number) -
+          (occurredAtMs.get(left) as number) || left.id.localeCompare(right.id),
     );
   const { conflicts, runs } = selectUniqueRuns(snapshot, project);
   const actors = new Map<string, GitHubActor>();
-  for (const event of ledger) actors.set(event.actor.id, event.actor);
+  const eventsByActor = new Map<string, ScoreEvent[]>();
+  for (const event of ledger) {
+    actors.set(event.actor.id, event.actor);
+    const events = eventsByActor.get(event.actor.id) ?? [];
+    events.push(event);
+    eventsByActor.set(event.actor.id, events);
+  }
+  const runsByActor = new Map<string, UniqueRun[]>();
+  for (const run of runs) {
+    const actorId = run.attribution.actor?.id;
+    if (actorId === undefined) continue;
+    const actorRuns = runsByActor.get(actorId) ?? [];
+    actorRuns.push(run);
+    runsByActor.set(actorId, actorRuns);
+  }
   // Score and Points use the public ledger. Monetary previews must use the
   // same weights as the proposal, including payment-only reviewers at score 0.
   const paymentView =
@@ -582,8 +599,9 @@ export function createProjectView(
   ).byActor;
 
   const leaders = [...actors.values()].map<ProjectContributor>((actor) => {
-    const events = ledger.filter((event) => event.actor.id === actor.id);
-    const usage = usageForActor(actor.id, events, runs);
+    const events = eventsByActor.get(actor.id) ?? [];
+    const actorRuns = runsByActor.get(actor.id) ?? [];
+    const usage = usageForActor(actor.id, events, actorRuns);
     const earnedThirds = events.reduce(
       (total, event) => total + eventThirds(event),
       0,
@@ -636,9 +654,9 @@ export function createProjectView(
       evidenceEventIds: events.map((event) => event.id).sort(),
       reportedModels: [
         ...new Set(
-          runs
-            .filter((run) => run.attribution.actor?.id === actor.id)
-            .map((run) => `${run.receipt.provider}/${run.receipt.model}`),
+          actorRuns.map(
+            (run) => `${run.receipt.provider}/${run.receipt.model}`,
+          ),
         ),
       ].sort(),
       usage,
@@ -667,7 +685,7 @@ export function createProjectView(
     .map((opportunity) => {
       const usage = capUsageForEvents(
         cycleId,
-        ledger.filter((event) => event.actor.id === opportunity.actor.id),
+        eventsByActor.get(opportunity.actor.id) ?? [],
       );
       const potentialPoints = opportunityPointsWithinCap(opportunity, usage);
       if (potentialPoints === null) {

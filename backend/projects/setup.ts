@@ -19,9 +19,11 @@ import {
   parseRepositoryIdentity,
   type RepositoryIdentity,
   SLOPBOT_INSTALL_URL,
+  slopbotInstallScopeNote,
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
+import { quarantinedScanMessage } from "../vetting/summary";
 import type { RepositoryControl } from "./contracts";
 import type { ProjectRestriction } from "./enforcement";
 import { type GithubFetch, githubJson } from "./github-lookup";
@@ -153,7 +155,7 @@ export function setupAuthority(
   if (access.access.installation !== "installed")
     return {
       state: "denied",
-      message: `Install Slopbot on ${repository} to confirm your access.`,
+      message: `Install Slopbot on ${repository} to confirm your access. ${slopbotInstallScopeNote(repository)}`,
     };
   if (writes(access.access))
     return {
@@ -256,8 +258,7 @@ function scanCheck(
     case "quarantined":
       return {
         state: "quarantined",
-        message:
-          "The last scan could not finish, so it did not clear the project.",
+        message: quarantinedScanMessage(clearance.assessment),
       };
     case "banned":
       return {
@@ -285,7 +286,7 @@ export function projectSetupStatus(input: {
   activatedRevision: number | null;
   checkedAt: string;
 }): ProjectSetupStatus {
-  const { project, restriction, authority, access } = input;
+  const { project, restriction, authority, access, clearance } = input;
   const manifest = project.manifest;
   const repository = manifest.repositories[0].id;
   const installation: ProjectSetupStatus["checks"]["installation"] =
@@ -342,7 +343,7 @@ export function projectSetupStatus(input: {
     state = "action_required";
     nextAction = action(
       "install_slopbot",
-      `${installation.message} Install it to continue. It is free.`,
+      `${installation.message} Install it to continue. It is free. ${slopbotInstallScopeNote(repository)}`,
       SLOPBOT_INSTALL_URL,
     );
   } else if (authority.state === "retry") {
@@ -362,10 +363,17 @@ export function projectSetupStatus(input: {
     nextAction = action("wait_for_scan", scan.message);
   } else if (scan.state === "quarantined") {
     state = "action_required";
-    nextAction = action(
-      "request_scan",
-      `${scan.message} Fix the cause if you know it, then request a new scan.`,
-    );
+    const loc =
+      clearance.state === "quarantined"
+        ? clearance.assessment.findingsLocation
+        : undefined;
+    const guidance =
+      loc === "template"
+        ? "Check for an updated skill template before requesting a new scan."
+        : loc === "unknown"
+          ? "Review the scan result before requesting a new scan."
+          : "Fix the cause if you know it, then request a new scan.";
+    nextAction = action("request_scan", `${scan.message} ${guidance}`);
   } else {
     state = "retry";
     nextAction = action(

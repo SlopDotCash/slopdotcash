@@ -98,6 +98,8 @@ export function penaltyScoreInput(
   penalties: PenaltyFeedRecord[],
   generatedAt = GENERATED_AT,
 ): LeaderboardInput {
+  // Each caller can add reviews without changing another test's census.
+  const mergedPullRequests = structuredClone(merged);
   const windowFrom = new Date(
     Date.parse(generatedAt) - 35 * 24 * 60 * 60 * 1000,
   ).toISOString();
@@ -146,7 +148,7 @@ export function penaltyScoreInput(
         maxArtifacts: 64,
       },
     },
-    mergedPullRequestOutcomes: merged.map((pull) => ({
+    mergedPullRequestOutcomes: mergedPullRequests.map((pull) => ({
       id: pull.id,
       number: pull.number,
       title: pull.title,
@@ -162,10 +164,12 @@ export function penaltyScoreInput(
       baseRefName: "main",
       commits: [{ oid: pull.headRefOid, author: pull.author }],
     })),
-    mergedPullRequests: merged,
-    closedUnmergedPullRequests: [closed],
+    mergedPullRequests,
+    closedUnmergedPullRequests: [structuredClone(closed)],
     penalties,
-    detailEligibleMergedPullRequestIds: merged.map((pull) => pull.id),
+    detailEligibleMergedPullRequestIds: mergedPullRequests.map(
+      (pull) => pull.id,
+    ),
     closedIssueCount: 0,
     resolvedIssues: [],
     openIssues: [],
