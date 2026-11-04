@@ -290,7 +290,10 @@ export default function PointsDisputes({
               type="button"
               className="button secondary-button"
               disabled={busy}
-              onClick={() => setAward(null)}
+              onClick={() => {
+                setAward(null);
+                setError(null);
+              }}
             >
               Back
             </button>
@@ -328,6 +331,7 @@ export default function PointsDisputes({
                       onClick={() => {
                         setAward(item);
                         setReason("");
+                        setError(null);
                       }}
                     >
                       Review

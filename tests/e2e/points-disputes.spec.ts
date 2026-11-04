@@ -345,6 +345,26 @@ test("superseded Points Retry opens the current record @registry", async ({
   sql(`INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(${q(actorId)},${q(githubId)},${q(record.award.actor.login)},${q(now)},1);
     INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(${q(createHash("sha256").update(session).digest("hex"))},${q(actorId)},'2099-01-01T00:00:00.000Z');
     INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(${q(revision.id)},${q(record.award.key)},NULL,${q(now)},${q(JSON.stringify(revision))});`);
+  const unrelatedRecordedAt = new Date(Date.parse(now) - 1000).toISOString();
+  const unrelatedRecord = {
+    ...record,
+    recordedAt: unrelatedRecordedAt,
+    award: {
+      ...record.award,
+      occurredAt: unrelatedRecordedAt,
+      key: `manual:retry-${suffix}-unrelated`,
+      sourceId: `manual-retry-${suffix}-unrelated`,
+      workUnitId: `manual-retry-${suffix}-unrelated`,
+      amount: 60,
+    },
+  };
+  const unrelatedRevision = {
+    ...unrelatedRecord,
+    id: pointRevisionId(unrelatedRecord),
+  };
+  sql(
+    `INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(${q(unrelatedRevision.id)},${q(unrelatedRecord.award.key)},NULL,${q(unrelatedRecord.recordedAt)},${q(JSON.stringify(unrelatedRevision))});`,
+  );
   // Put A on the older page. Its correction B will be newer than that cursor.
   for (let index = 0; index < 25; index++) {
     const other = {
@@ -422,6 +442,48 @@ test("superseded Points Retry opens the current record @registry", async ({
     path: test.info().outputPath("superseded-before-retry.png"),
     fullPage: true,
   });
+  // Leaving the rejected form must retire its error before another award opens.
+  await review.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(review.getByRole("alert")).toHaveCount(0);
+  await review
+    .getByRole("listitem")
+    .filter({ has: page.getByText("60 points", { exact: true }) })
+    .getByRole("button", { name: "Review", exact: true })
+    .click();
+  const unrelatedDraft = "Keep this explanation for the other award.";
+  await review.getByLabel("Reason", { exact: true }).fill(unrelatedDraft);
+  await expect(review.getByRole("alert")).toHaveCount(0);
+  await expect(
+    review.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
+  await expect(review.getByLabel("Reason", { exact: true })).toHaveValue(
+    unrelatedDraft,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("unrelated-points-draft.png"),
+    fullPage: true,
+  });
+  await review.getByRole("button", { name: "Back", exact: true }).click();
+  await review
+    .getByRole("listitem")
+    .filter({ has: page.getByText("90 points", { exact: true }) })
+    .getByRole("button", { name: "Review", exact: true })
+    .click();
+  await review
+    .getByLabel("Reason", { exact: true })
+    .fill("The accepted work was credited to the wrong month.");
+  const refusedAgain = page.waitForResponse(
+    (next) =>
+      next.request().method() === "POST" &&
+      new URL(next.url()).pathname === "/api/v1/points/disputes",
+  );
+  await review
+    .getByRole("button", { name: "Request review", exact: true })
+    .click();
+  const repeatedResponse = await refusedAgain;
+  expect(repeatedResponse.status()).toBe(409);
+  expect((await repeatedResponse.json()).error).toBe("superseded");
+  await expect(review.getByRole("alert")).toContainText("newer revision");
   const retry = review.getByRole("button", { name: "Retry", exact: true });
   for (let tabs = 0; tabs < 50; tabs++) {
     if (await retry.evaluate((button) => button === document.activeElement))
