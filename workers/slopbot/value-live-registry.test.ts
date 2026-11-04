@@ -125,6 +125,17 @@ for (const change of [
       calls.push(url.pathname);
       if (url.origin !== "https://api.github.com")
         throw new Error("No provider call is authorized in this test");
+      if (url.pathname === "/app/installations/1")
+        return Response.json({
+          permissions: {
+            contents: "read",
+            issues: "write",
+            members: "read",
+            metadata: "read",
+            pull_requests: "write",
+            repository_advisories: "read",
+          },
+        });
       if (url.pathname === "/app/installations/1/access_tokens")
         return Response.json({ token: "local-installation" });
       const identity = {
@@ -295,6 +306,17 @@ test("old and failing requests cannot starve new valuation requests", async () =
       node_id: "R_example",
       private: false,
     };
+    if (url.pathname === "/app/installations/1")
+      return Response.json({
+        permissions: {
+          contents: "read",
+          issues: "write",
+          members: "read",
+          metadata: "read",
+          pull_requests: "write",
+          repository_advisories: "read",
+        },
+      });
     if (url.pathname === "/app/installations/1/access_tokens")
       return Response.json({ token: "local-installation" });
     if (url.pathname === `/repos/${repository}`) return Response.json(identity);
@@ -645,6 +667,17 @@ async function indirectAcceptance(renamed: boolean) {
       : url.pathname;
     const path = `${pathname}${url.search}`;
     requests.push(path);
+    if (url.pathname === "/app/installations/1")
+      return Response.json({
+        permissions: {
+          contents: "read",
+          issues: "write",
+          members: "read",
+          metadata: "read",
+          pull_requests: "write",
+          repository_advisories: "read",
+        },
+      });
     if (url.pathname === "/app/installations/1/access_tokens")
       return Response.json({ token: "local-installation" });
     if (url.pathname === "/installation/repositories")
@@ -760,6 +793,17 @@ test("a recorded repository rename still reaches the consumer", async () => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.origin !== "https://api.github.com")
       throw new Error("No provider call is authorized in this test");
+    if (url.pathname === "/app/installations/1")
+      return Response.json({
+        permissions: {
+          contents: "read",
+          issues: "write",
+          members: "read",
+          metadata: "read",
+          pull_requests: "write",
+          repository_advisories: "read",
+        },
+      });
     if (url.pathname === "/app/installations/1/access_tokens")
       return Response.json({ token: "local-installation" });
     if (url.pathname === "/installation/repositories")

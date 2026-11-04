@@ -127,6 +127,17 @@ async function reviewEmptyPull(
           usage: { input_tokens: 1, output_tokens: 1 },
         });
       }
+      if (/^\/app\/installations\/\d+$/u.test(path))
+        return Response.json({
+          permissions: {
+            contents: "read",
+            issues: "write",
+            members: "read",
+            metadata: "read",
+            pull_requests: "write",
+            repository_advisories: "read",
+          },
+        });
       if (path.endsWith("/access_tokens"))
         return Response.json({ token: "local-synthetic-token" });
       if (path === `/repos/${owner}/${repo}`)

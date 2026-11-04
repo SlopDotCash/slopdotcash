@@ -45,6 +45,44 @@ function base64url(input: ArrayBuffer | string): string {
 
 // GitHub issues PKCS#1 keys; Workers WebCrypto imports PKCS#8 only. The secret
 // must be converted once with `openssl pkcs8 -topk8 -nocrypt` (README).
+/**
+ * App permissions that an installation token never carries. The App holds
+ * repository security advisory access only so that a researcher-authorized
+ * user token can forward that researcher's private report. An installation
+ * token must never create or change an advisory (PRD section 8, owner
+ * decision of 30 October 2026).
+ */
+const WITHHELD_INSTALLATION_PERMISSIONS = new Set(["repository_advisories"]);
+
+type PermissionLevel = "read" | "write";
+
+/**
+ * The explicit permission map for one installation token: the permissions
+ * the installation grants, never a withheld one, and, when `wanted` is set,
+ * only those names at no more than the wanted level. Throws when the
+ * installation answer has no permission map or nothing usable remains, so a
+ * request never falls back to the full installation grant.
+ */
+export function installationTokenPermissions(
+  granted: unknown,
+  wanted?: Readonly<Record<string, PermissionLevel>>,
+): Record<string, PermissionLevel> {
+  if (granted === null || typeof granted !== "object" || Array.isArray(granted))
+    throw new Error("installation permissions are invalid");
+  const permissions: Record<string, PermissionLevel> = {};
+  for (const [name, level] of Object.entries(granted)) {
+    if (WITHHELD_INSTALLATION_PERMISSIONS.has(name)) continue;
+    if (level !== "read" && level !== "write") continue;
+    const limit = wanted === undefined ? level : wanted[name];
+    if (limit === undefined) continue;
+    permissions[name] =
+      level === "write" && limit === "write" ? "write" : "read";
+  }
+  if (Object.keys(permissions).length === 0)
+    throw new Error("installation grants no requested permission");
+  return permissions;
+}
+
 export async function appJwt(appId: string, pkcs8Pem: string): Promise<string> {
   if (!pkcs8Pem.includes("-----BEGIN PRIVATE KEY-----")) {
     throw new Error("SLOPBOT_APP_PRIVATE_KEY must be a PKCS#8 PEM");
@@ -96,11 +134,25 @@ export class GitHubClient {
     installationId: number,
   ) {
     const jwt = await appJwt(appId, privateKey);
+    // A token request without a permission map receives every permission of
+    // the installation, so read what it grants and request it explicitly.
+    const installation = await fetch(
+      `${API}/app/installations/${installationId}`,
+      { headers: headers(jwt) },
+    );
+    if (!installation.ok)
+      throw new GitHubError(installation.status, "installation lookup failed");
+    const { permissions } = (await installation.json()) as {
+      permissions?: unknown;
+    };
     const response = await fetch(
       `${API}/app/installations/${installationId}/access_tokens`,
       {
         method: "POST",
-        headers: headers(jwt),
+        headers: { ...headers(jwt), "content-type": "application/json" },
+        body: JSON.stringify({
+          permissions: installationTokenPermissions(permissions),
+        }),
       },
     );
     if (!response.ok)

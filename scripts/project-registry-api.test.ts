@@ -1876,7 +1876,11 @@ describe("project registry API", () => {
     const github = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.endsWith("/installation"))
-        return Response.json({ id: 42, suspended_at: null });
+        return Response.json({
+          id: 42,
+          suspended_at: null,
+          permissions: { contents: "read", metadata: "read" },
+        });
       if (url.endsWith("/access_tokens"))
         return Response.json({ token: "installation-token-fixture" });
       if (url === firstPage) {

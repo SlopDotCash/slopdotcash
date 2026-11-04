@@ -22,6 +22,16 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
+/** The permissions of the production slopdotcash App installation. */
+const SLOPBOT_INSTALLATION_PERMISSIONS = {
+  contents: "read",
+  issues: "write",
+  members: "read",
+  metadata: "read",
+  pull_requests: "write",
+  repository_advisories: "read",
+};
+
 /** The site session that owns its user repositories. */
 export const E2E_OWNER = { githubId: "900000003", login: "e2e-owner" };
 export const E2E_REWARD_TOKEN = Object.freeze({
@@ -523,7 +533,7 @@ function handleGithubUsers(users, request, response, url) {
  * a repository owner has admin access and anyone else has no access, unless
  * a `/__fixture/slopbot` route sets the state.
  */
-function handleSlopbotApp(state, request, response, path) {
+async function handleSlopbotApp(state, request, response, path) {
   const send = (status, body) => {
     response.writeHead(status, { "content-type": "application/json" });
     response.end(body === undefined ? "" : JSON.stringify(body));
@@ -566,15 +576,30 @@ function handleSlopbotApp(state, request, response, path) {
       : send(200, {
           id: 5151,
           suspended_at: found === "suspended" ? "2026-10-01T00:00:00Z" : null,
+          permissions: SLOPBOT_INSTALLATION_PERMISSIONS,
         });
   }
+  // Repository reads take only contents and metadata read. An installation
+  // token never carries the App's advisory permission (PRD section 8, owner
+  // decision of 30 October 2026), so any other or missing map is refused.
   if (
     request.method === "POST" &&
     route === "/app/installations/5151/access_tokens"
-  )
-    return bearer.split(".").length === 3
+  ) {
+    if (bearer.split(".").length !== 3)
+      return send(401, { message: "A JSON web token is required" });
+    const body = await readBody(request);
+    const permissions = body ? JSON.parse(body).permissions : undefined;
+    return JSON.stringify(Object.entries(permissions ?? {}).sort()) ===
+      JSON.stringify([
+        ["contents", "read"],
+        ["metadata", "read"],
+      ])
       ? send(201, { token: state.token })
-      : send(401, { message: "A JSON web token is required" });
+      : send(422, {
+          message: "Repository reads need contents and metadata read only",
+        });
+  }
   if (bearer !== state.token) return send(401, { message: "Bad credentials" });
   const repository = /^\/repos\/([^/]+\/[^/]+)$/u.exec(route);
   if (request.method === "GET" && repository)
@@ -680,7 +705,7 @@ export function startGitHubApiFixture(port) {
       response.end();
       return;
     }
-    if (handleSlopbotApp(slopbot, request, response, path)) return;
+    if (await handleSlopbotApp(slopbot, request, response, path)) return;
     if (handleGithubUsers(githubUsers, request, response, url)) return;
     try {
       if (await handlePrivateIntake(privateIntake, request, response, url))

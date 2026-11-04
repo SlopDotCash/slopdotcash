@@ -157,7 +157,14 @@ Registered App: [slopdotcash](https://github.com/apps/slopdotcash), App ID
 `5257625`. Do not create a second App or use the unrelated `slopcash` App.
 
 Permissions: Contents read, Metadata read, Organization members read, Issues
-write, Pull requests write. No others.
+write, Pull requests write, and Repository security advisories. The App holds
+the advisory permission only for researcher-authorized private report
+forwarding (PRD section 8, owner decision of 30 October 2026). No others.
+
+Every installation token requests an explicit permission map and never
+carries Repository security advisories (`installationTokenPermissions` in
+`github.ts`). Review and publication tokens take the installation's other
+permissions. Repository access tokens take Contents and Metadata read only.
 
 Events: Installation, Issues, Issue comment, Pull request, Pull request review,
 Pull request review comment. The review events queue a fresh value assessment

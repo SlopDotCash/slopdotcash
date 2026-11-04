@@ -512,7 +512,10 @@ test.each(["before restart", "after the initial restart read"])(
       reads.push(url.pathname);
       switch (url.pathname) {
         case "/repos/example/alpha/installation":
-          return Response.json({ id: 1 });
+          return Response.json({
+            id: 1,
+            permissions: { contents: "read", metadata: "read" },
+          });
         case "/app/installations/1/access_tokens":
           return Response.json({ token: "synthetic-read-token" });
         case "/repos/example/alpha":
@@ -942,7 +945,10 @@ test("triage resolves the current repository path after a project rename or tran
     }
     switch (url.pathname) {
       case "/repos/renamed-org/alpha-next/installation":
-        return Response.json({ id: 1 });
+        return Response.json({
+          id: 1,
+          permissions: { contents: "read", metadata: "read" },
+        });
       case "/app/installations/1/access_tokens":
         return Response.json({ token: "synthetic-read-token" });
       case "/repos/renamed-org/alpha-next":
