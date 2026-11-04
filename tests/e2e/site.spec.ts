@@ -510,6 +510,11 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
   await expect(elizaCard.getByText("$1k", { exact: true })).toBeVisible();
+  // The fixture eliza pool is pledged with nothing committed, so the card
+  // headlines its funding state alongside the cap, not the cap alone.
+  await expect(
+    elizaCard.getByText("Not funded yet", { exact: true }),
+  ).toBeVisible();
   // The external prize is a community listing that also earns points.
   await expect(
     community.locator('a.project-row[href="/projects/delta-star"]'),

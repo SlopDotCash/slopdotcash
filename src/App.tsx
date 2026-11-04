@@ -61,9 +61,11 @@ import {
   formatDateTime,
   formatMicroUsdc,
   monthlyPoolPointsOnly,
+  monthlyPoolUnfunded,
   NotFound,
   RoutePageHeader,
   reviewBudgetLabel,
+  UNFUNDED_POOL_HEADLINE,
 } from "./Presentation";
 
 /**
@@ -648,7 +650,13 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
           </small>
         ) : monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
-        ) : project.reward.kind === "monthly-pool" ? null : (
+        ) : project.reward.kind === "monthly-pool" ? (
+          monthlyPoolUnfunded(project.reward) ? (
+            <small className="project-money-state">
+              {UNFUNDED_POOL_HEADLINE}
+            </small>
+          ) : null
+        ) : (
           <small className="project-money-state">External prize</small>
         )}
         {project.reward.reviewBudget ? (
@@ -670,7 +678,9 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
     : monthlyPoolPointsOnly(project.reward)
       ? "Points only"
       : project.reward.kind === "monthly-pool"
-        ? `${monthlyPoolCapLabel(project)}/mo`
+        ? monthlyPoolUnfunded(project.reward)
+          ? `${monthlyPoolCapLabel(project)}/mo · not funded`
+          : `${monthlyPoolCapLabel(project)}/mo`
         : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
   return (
     <li>
