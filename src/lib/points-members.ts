@@ -1,11 +1,12 @@
 /**
  * The small published record of every contributor's Points that the
- * contributor and project pages read instead of the complete journal. Each
- * page shows a few values of a member: the all-time total, the points of the
- * last days and the monthly points per project. scripts/generate-points.ts
- * publishes this record at /data/points-members.json beside the full journal
- * from the same member aggregation that the leaderboard page still runs in the
- * browser (PRD section 9: public pages serve published snapshots).
+ * leaderboard, contributor and project pages read instead of the complete
+ * journal. Each page shows a few values of a member: the all-time total, the
+ * points of the last days and the monthly points per project.
+ * scripts/generate-points.ts publishes this record at
+ * /data/points-members.json beside the full journal from the same member
+ * aggregation the journal defines (PRD section 9: public pages serve
+ * published snapshots).
  */
 import type { PointAward, PointsJournal, PointsMember } from "./points";
 

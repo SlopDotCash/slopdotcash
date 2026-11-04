@@ -41,10 +41,8 @@ async function serveSingleAward(page: Page) {
     shards: shards.map(({ text: _text, ...entry }) => entry),
   };
   await page.clock.install({ time: new Date("2026-07-31T00:00:00.000Z") });
-  await page.route("**/data/points.json", (route) =>
-    route.fulfill({ json: index }),
-  );
-  // The contributor page reads the member record derived from this journal.
+  // The ranking and the contributor page read the member record derived
+  // from this journal.
   await page.route("**/data/points-members.json", (route) =>
     route.fulfill({
       json: publishedPointsMembers(
@@ -54,14 +52,6 @@ async function serveSingleAward(page: Page) {
       ),
     }),
   );
-  await page.route("**/data/points/*.json", (route) => {
-    const shard = shards.find(
-      (s) => s.path === new URL(route.request().url()).pathname,
-    );
-    return shard
-      ? route.fulfill({ body: shard.text, contentType: "application/json" })
-      : route.abort();
-  });
   return journal.revisions[0].award.actor.login as string;
 }
 
@@ -123,7 +113,7 @@ test("legacy people navigation preserves the pending ranking read and URL query"
     observed = resolve;
   });
   let rankingReads = 0;
-  await page.route("**/data/leaderboard.json?**", async (route) => {
+  await page.route("**/data/standings.json?**", async (route) => {
     rankingReads++;
     observed();
     await held;
