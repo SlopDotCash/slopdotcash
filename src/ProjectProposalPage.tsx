@@ -43,6 +43,7 @@ import {
   type OwnedRepository,
   type ProjectSetupStatus,
   SLOPBOT_INSTALL_URL,
+  slopbotInstallScopeNote,
   validRepositoryPath,
 } from "./lib/project-contracts";
 import {
@@ -1738,7 +1739,8 @@ export default function ProjectProposalPage() {
                 <div>
                   <dt>Before you create</dt>
                   <dd>
-                    Install Slopbot on {p.repository || "the repository"}.
+                    Install Slopbot on {p.repository || "the repository"}.{" "}
+                    {slopbotInstallScopeNote(p.repository || "that repository")}
                   </dd>
                 </div>
                 {p.fundingMode === "bounty" ? null : (
