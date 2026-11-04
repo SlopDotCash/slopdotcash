@@ -312,20 +312,25 @@ function commandToken(name: string): string {
   return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
 }
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
-const OPERAND = String.raw`[^\s|;&<>()'"-][^\s|;&<>()'"]*`;
+/** An option value: a bare word or a quoted string that is not an option. */
+const OPERAND = String.raw`(?:"(?!-)[^"\n]{1,256}"|'(?!-)[^'\n]{1,256}'|[^\s|;&<>()'"-][^\s|;&<>()'"]*)`;
 /**
- * `env` with assignments, `-i` or `-u NAME` still runs the command that
- * follows, so `| env FOO=1 bash` is the same act as `| bash`.
+ * `env` options and assignments that still run the command that follows
+ * (GNU and BSD `env`): `-`, `--`, `-i`, `-v`, `-u NAME`, `-C DIR`, `-P PATH`,
+ * an unquoted `-S`, and `NAME=value`. Option letters are case-sensitive.
+ * Options and quoted values are bounded so a chain of `env -u env -u …`
+ * cannot make the scan quadratic.
  */
-const ENV_COMMAND = String.raw`${commandToken("env")}(?:\s+(?:-i|--ignore-environment|-u\s+${OPERAND}|--unset=${OPERAND}|[A-Za-z_]\w*=(?:"[^"\n]*"|'[^'\n]*'|[^\s|;&<>()'"]*)))*`;
+const ENV_COMMAND = String.raw`${commandToken("env")}(?:\s+(?:(?-i:-(?:[iv]+|[iv]*[uCP]\s*${OPERAND}|S)|--(?:ignore-environment|debug|(?:unset|chdir|split-string)(?:=|\s+)${OPERAND})?|-)(?=$|[\s|;&<>()])|[A-Za-z_]\w*=(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\s|;&<>()'"]*))){0,16}`;
 /**
- * `sudo` with options that still run the named command as given: `-E`, `-H`,
- * `-n`, `-P`, `-k` (alone or clustered), `--preserve-env`, `--set-home`,
- * `--non-interactive`, `--preserve-groups`, `--reset-timestamp`,
- * `-u`/`-g` and their long forms, and `--`. `-s`, `-i`, `-l`, `-v` and `-e`
- * select a different mode and are not matched.
+ * `sudo` options that still run the command that follows, alone or
+ * clustered (`-Eu root`), with their long forms and `--`. `-s` and `-i` pass
+ * a following command to a shell's `-c`, so they run it too. `-e`, `-l`,
+ * `-v`, `-V`, `-K` and `-U` never run the command and are not matched.
+ * Option letters are case-sensitive: `-E` runs the command, `-e` edits it.
  */
-const SUDO_COMMAND = String.raw`${commandToken("sudo")}(?:\s+(?:-[EHnPk]+|--preserve-env(?:=${OPERAND})?|--set-home|--non-interactive|--preserve-groups|--reset-timestamp|-[ug]\s*${OPERAND}|--(?:user|group)(?:=|\s+)${OPERAND}|--))*`;
+const SUDO_FLAG = "[ABbEHikNnPSs]";
+const SUDO_COMMAND = String.raw`${commandToken("sudo")}(?:\s+(?-i:-(?:${SUDO_FLAG}+|${SUDO_FLAG}*[aCcDghpRrTtu]\s*${OPERAND})|--(?:askpass|bell|background|preserve-env(?:=${OPERAND})?|set-home|login|reset-timestamp|no-update|non-interactive|preserve-groups|stdin|shell|(?:auth-type|login-class|close-from|chdir|group|host|prompt|chroot|role|type|command-timeout|user)(?:=|\s+)${OPERAND})?)(?=$|[\s|;&<>()])){0,16}`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
