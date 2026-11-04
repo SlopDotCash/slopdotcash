@@ -852,6 +852,27 @@ describe("two-contributor flags", () => {
     expect(crossSite.status).toBe(403);
   });
 
+  test("flag evidence length counts characters, as the stored record does", async () => {
+    await activeProject();
+    const file = (evidence: string) =>
+      flagApi(
+        sessionRequest("POST", "project-flags/open-registry", "alice", {
+          category: "credential-theft",
+          evidence,
+        }),
+      );
+    // 13 characters, but 21 UTF-16 code units: the database refuses it, so
+    // the API must refuse it with the evidence rule, not a server error.
+    const short = "evil 🔥🔥🔥🔥🔥🔥🔥🔥";
+    expect([...short]).toHaveLength(13);
+    expect(short).toHaveLength(21);
+    const refused = await file(short);
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).error).toBe("invalid_request");
+    const accepted = await file("postinstall.js posts the wallet key 🔥🔥");
+    expect(accepted.status).toBe(201);
+  });
+
   test("only established contributors outside the project may flag", async () => {
     await activeProject();
     for (const [actor, code] of [
