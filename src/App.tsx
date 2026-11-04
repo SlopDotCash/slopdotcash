@@ -1505,12 +1505,12 @@ export function App() {
       source={
         globalThis.__SLOP_PROJECT_REGISTRY_ERROR__
           ? null
-          : route.kind === "points"
-            ? "journal"
-            : // The home table reads the small points summary instead.
-              route.kind === "project" || route.kind === "profile"
-              ? "members"
-              : null
+          : // The home table reads the small points summary instead.
+            route.kind === "points" ||
+              route.kind === "project" ||
+              route.kind === "profile"
+            ? "members"
+            : null
       }
     >
       <AppContent route={route} />

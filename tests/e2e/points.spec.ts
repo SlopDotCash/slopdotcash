@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { assertPointsJournal, pointRevisionId } from "../../src/lib/points";
+import {
+  assertPointsJournal,
+  pointMembers,
+  pointRevisionId,
+} from "../../src/lib/points";
+import { publishedPointsMembers } from "../../src/lib/points-members";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test("This month uses the current UTC month after a period switch", async ({
@@ -25,27 +30,26 @@ test("This month uses the current UTC month after a period switch", async ({
       sha256: createHash("sha256").update(text).digest("hex"),
     };
   });
+  const index = {
+    schemaVersion: "1",
+    ruleVersion: journal.ruleVersion,
+    generatedAt: journal.generatedAt,
+    coverage: journal.coverage,
+    revisionCount: 1,
+    shards: shards.map(({ text: _text, ...entry }) => entry),
+  };
   await page.clock.install({ time: new Date("2026-07-31T23:59:59.000Z") });
-  await page.route("**/data/points.json", (route) =>
+  // The ranking reads the member record the publication derives from this
+  // journal's sixteen-shard index.
+  await page.route("**/data/points-members.json", (route) =>
     route.fulfill({
-      json: {
-        schemaVersion: "1",
-        ruleVersion: journal.ruleVersion,
-        generatedAt: journal.generatedAt,
-        coverage: journal.coverage,
-        revisionCount: 1,
-        shards: shards.map(({ text: _text, ...entry }) => entry),
-      },
+      json: publishedPointsMembers(
+        journal,
+        pointMembers(journal),
+        createHash("sha256").update(JSON.stringify(index)).digest("hex"),
+      ),
     }),
   );
-  await page.route("**/data/points/*.json", (route) => {
-    const shard = shards.find(
-      (s) => s.path === new URL(route.request().url()).pathname,
-    );
-    return shard
-      ? route.fulfill({ body: shard.text, contentType: "application/json" })
-      : route.abort();
-  });
   await page.goto("/points");
   const table = page.getByRole("region", {
     name: "Contributor standings table",
@@ -95,7 +99,7 @@ test("legacy people navigation preserves the pending ranking read and URL query"
     observed = resolve;
   });
   let rankingReads = 0;
-  await page.route("**/data/leaderboard.json?**", async (route) => {
+  await page.route("**/data/standings.json?**", async (route) => {
     rankingReads++;
     observed();
     await held;

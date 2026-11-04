@@ -25,11 +25,7 @@ import {
   localBackendOrigin,
   loginHref,
 } from "./lib/browser-deployment";
-import {
-  fetchWithDeadline,
-  readBoundedJson,
-  readBoundedText,
-} from "./lib/browser-json";
+import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
@@ -44,17 +40,11 @@ import {
   saveLocalFlow,
 } from "./lib/local-signin";
 import { loginReturnPath } from "./lib/login-return";
-import {
-  assemblePoints,
-  POINTS_NOTICE,
-  type PointsIndex,
-  pointMembers,
-} from "./lib/points";
+import { POINTS_NOTICE } from "./lib/points";
 import {
   assertPublishedPointsMembers,
   MAX_POINTS_MEMBERS_BYTES,
   type MemberPoints,
-  memberPoints,
   pointsOf,
 } from "./lib/points-members";
 import { recentPoints } from "./lib/profile-activity";
@@ -62,7 +52,7 @@ import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
-import { useSnapshot } from "./lib/use-snapshot";
+import { useStandings } from "./lib/use-standings";
 import {
   Avatar,
   DataNotice,
@@ -109,11 +99,12 @@ type State =
       stale?: boolean;
     };
 /**
- * Which published Points record a page reads: the leaderboard page verifies
- * the complete sixteen-shard journal; the contributor and project pages show
- * a few values of each member and read the small published member record.
+ * The published Points record a page reads: the leaderboard, contributor and
+ * project pages show a few values of each member and read the small published
+ * member record. The complete sixteen-shard journal stays published for
+ * download and for the publication's own checks.
  */
-export type PointsSource = "journal" | "members";
+export type PointsSource = "members";
 type PointsContext = {
   state: State;
   me: Membership | null;
@@ -169,23 +160,6 @@ async function requestJson(url: string, init: RequestInit = {}) {
     throw new PointsRequestError(response.status, code);
   }
   return readBoundedJson(response, 24 * 1024 * 1024, "points");
-}
-async function loadPoints(signal: AbortSignal) {
-  const index = (await requestJson("/data/points.json", {
-    signal,
-  })) as PointsIndex;
-  if (!Array.isArray(index.shards) || index.shards.length !== 16)
-    throw new Error("Invalid points index");
-  const parts = await Promise.all(
-    index.shards.map(async (s, i) => {
-      if (s.path !== `/data/points/${i.toString(16)}.json`)
-        throw new Error("Invalid points path");
-      const r = await fetchWithDeadline(s.path, { signal, cache: "no-store" });
-      if (!r.ok) throw new Error("Points shard unavailable");
-      return readBoundedText(r, 8 * 1024 * 1024, "points history");
-    }),
-  );
-  return memberPoints(pointMembers(assemblePoints(index, parts)));
 }
 async function loadPointsMembers(signal: AbortSignal) {
   const response = await fetchWithDeadline("/data/points-members.json", {
@@ -256,28 +230,11 @@ export function PointsProvider({
     if (!read) return;
     const loaded = loadedAttempt.current;
     const age = loaded ? Date.now() - loaded.completedAt : -1;
-    // The verified journal covers the members a later page needs; the
-    // leaderboard page still reads the complete journal itself.
-    if (
-      loaded?.attempt === attempt &&
-      age >= 0 &&
-      age < 60_000 &&
-      (loaded.source === read || loaded.source === "journal")
-    ) {
-      // A cancelled journal read left the page loading; the record read in
-      // the last minute still covers it.
-      const members = verifiedMembers.current;
-      if (members)
-        setState((previous) =>
-          previous.status === "ready" ? previous : { status: "ready", members },
-        );
-      return;
-    }
+    // A record read in the last minute covers every page's members.
+    if (loaded?.attempt === attempt && age >= 0 && age < 60_000) return;
     const controller = new AbortController();
     setState({ status: "loading" });
-    void (read === "journal" ? loadPoints : loadPointsMembers)(
-      controller.signal,
-    )
+    void loadPointsMembers(controller.signal)
       .then((members) => {
         if (controller.signal.aborted) return;
         verifiedMembers.current = members;
@@ -1169,13 +1126,13 @@ export function ContributorStandings({
   compact?: boolean;
   title?: string;
   renderHeader?: (periodControls: ReactNode) => ReactNode;
-  /** A caller's own read of the current leaders; the full snapshot otherwise. */
+  /** A caller's own read of the current leaders; the standings record otherwise. */
   scoreState?: ScoreActorsState;
   retryScore?: () => void;
   /** Shows score loading, error and stale states for a caller's shared read. */
   showDataNotice?: boolean;
 }) {
-  const [loadedScore, retryLoadedScore] = useSnapshot(!scoreState);
+  const [loadedScore, retryLoadedScore] = useStandings(!scoreState);
   const scores = scoreState ?? loadedScore;
   const readFilters = useCallback(() => {
     const params = new URLSearchParams(window.location.search);

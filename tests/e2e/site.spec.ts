@@ -1629,10 +1629,16 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
 
 test("shows an explicit error for invalid data and retries", async ({
   page,
+  diagnostics,
 }) => {
   let attempts = 0;
   let failSnapshot = true;
-  await page.route("**/data/leaderboard.json?**", async (route) => {
+  // The ranking reads the published standings record; a refused record
+  // cancels the cycle index read paired with it.
+  diagnostics.allow(
+    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/data\/cycles\/index\.json\?\S*$/u,
+  );
+  await page.route("**/data/standings.json?**", async (route) => {
     attempts += 1;
     if (failSnapshot) {
       await route.fulfill({
