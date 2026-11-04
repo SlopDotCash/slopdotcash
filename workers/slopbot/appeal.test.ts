@@ -48,6 +48,17 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
     fetch(request) {
       const path = new URL(request.url).pathname;
       calls.push(`${request.method} ${path}`);
+      if (/^\/app\/installations\/\d+$/u.test(path))
+        return Response.json({
+          permissions: {
+            contents: "read",
+            issues: "write",
+            members: "read",
+            metadata: "read",
+            pull_requests: "write",
+            repository_advisories: "read",
+          },
+        });
       if (path.endsWith("/access_tokens"))
         return Response.json({ token: "local-synthetic-token" });
       if (path.endsWith("/labels")) {
@@ -241,6 +252,7 @@ test("Slopbot queue confirms appeal labels and refuses private or replaced repos
         );
         assert.equal(acknowledged, true);
         assert.deepEqual(calls.slice(before), [
+          "GET /app/installations/1",
           "POST /app/installations/1/access_tokens",
           `GET /repos/${owner}/${repo}`,
         ]);

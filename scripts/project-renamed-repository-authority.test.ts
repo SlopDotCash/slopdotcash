@@ -201,7 +201,11 @@ function slopbotAccess(
   const github = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const { pathname } = new URL(String(input));
     if (pathname === `${repository}/installation`)
-      return Response.json({ id: 42, suspended_at: null });
+      return Response.json({
+        id: 42,
+        suspended_at: null,
+        permissions: { contents: "read", metadata: "read" },
+      });
     if (
       pathname === "/app/installations/42/access_tokens" &&
       init?.method === "POST"

@@ -10,7 +10,7 @@ import {
   REPOSITORY_READ_URL,
   type RepositoryAccess,
 } from "../../src/lib/project-contracts";
-import { appJwt } from "./github";
+import { appJwt, installationTokenPermissions } from "./github";
 
 export { REPOSITORY_READ_URL };
 
@@ -44,15 +44,17 @@ async function repositoryInstallation(
   fetcher: typeof fetch,
 ): Promise<Installation> {
   const jwt = await appJwt(env.SLOPBOT_APP_ID, env.SLOPBOT_APP_PRIVATE_KEY);
-  const call = (path: string, token: string, method = "GET") =>
+  const call = (path: string, token: string, body?: unknown) =>
     fetcher(`https://api.github.com${path}`, {
-      method,
+      method: body === undefined ? "GET" : "POST",
       headers: {
         accept: "application/vnd.github+json",
         authorization: `Bearer ${token}`,
         "user-agent": "slopbot",
         "x-github-api-version": "2022-11-28",
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: "manual",
     });
   const found = await call(`/repos/${owner}/${repo}/installation`, jwt);
@@ -62,6 +64,7 @@ async function repositoryInstallation(
   const installation = (await found.json()) as {
     id?: unknown;
     suspended_at?: unknown;
+    permissions?: unknown;
   };
   if (
     typeof installation.id !== "number" ||
@@ -74,10 +77,17 @@ async function repositoryInstallation(
     installation.suspended_at !== undefined
   )
     return { state: "suspended", installationId: installation.id };
+  // Repository, permission, branch and license reads only. A request without
+  // a permission map would receive every installation permission.
   const issued = await call(
     `/app/installations/${installation.id}/access_tokens`,
     jwt,
-    "POST",
+    {
+      permissions: installationTokenPermissions(installation.permissions, {
+        contents: "read",
+        metadata: "read",
+      }),
+    },
   );
   if (!issued.ok) throw new Error("Installation token request failed");
   const { token } = (await issued.json()) as { token?: unknown };

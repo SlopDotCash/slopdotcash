@@ -123,6 +123,17 @@ async function uncertainReview(
           ],
           usage: { input_tokens: 10, output_tokens: 10 },
         });
+      if (/^\/app\/installations\/\d+$/u.test(path))
+        return Response.json({
+          permissions: {
+            contents: "read",
+            issues: "write",
+            members: "read",
+            metadata: "read",
+            pull_requests: "write",
+            repository_advisories: "read",
+          },
+        });
       if (path.endsWith("/access_tokens"))
         return Response.json({ token: "local-synthetic-token" });
       if (path === `/repos/${owner}/${repo}`)
