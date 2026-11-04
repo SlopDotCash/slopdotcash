@@ -20,6 +20,10 @@ import {
 } from "./value-branch-policy";
 import { githubLinkDestinations } from "./value-commit-hints";
 import {
+  type AcceptedDirectMerge,
+  collectAcceptedDirectMerge,
+} from "./value-direct-merge";
+import {
   needsAddedValueComparison,
   needsFullValueComparison,
   needsRemovedValueComparison,
@@ -547,6 +551,7 @@ export interface ValueEvidence {
   mergeCommitEvidence: CommitChangeEvidence | null;
   acceptedRange?: AcceptedValueRange;
   acceptedPatchReplay?: AcceptedPatchReplay;
+  acceptedDirectMerge?: AcceptedDirectMerge;
   indirectAcceptance?: IndirectValueAcceptance;
   commits: Commit[];
   reviews: Review[];
@@ -800,6 +805,7 @@ export async function collectValueEvidence(
   let mergeCommitEvidence: CommitChangeEvidence | null = null;
   let acceptedRange: AcceptedValueRange | null = null;
   let acceptedPatchReplay: AcceptedPatchReplay | null = null;
+  let acceptedDirectMerge: AcceptedDirectMerge | null = null;
   if (pull.merged_at !== null) {
     if (!pull.merge_commit_sha) {
       limitations.push("Reported merge commit is unavailable");
@@ -853,6 +859,32 @@ export async function collectValueEvidence(
           mergeCommitEvidence.parents.length === 1 &&
           files.length > 0 &&
           changeBytes(files) === changeBytes(mergeCommitEvidence.files);
+        // A direct merge no longer passes on parentage alone: prove every
+        // submitted path survives in the merge tree, or limit it exactly
+        // like a partial squash. A conflict resolved in favour of the base
+        // side drops or rewrites a file, and the tree proof catches that.
+        if (
+          directMerge &&
+          !matchingSingleParent &&
+          accepted.limitations.length === 0
+        ) {
+          acceptedDirectMerge = await collectAcceptedDirectMerge(
+            client,
+            repository,
+            pull.head.sha,
+            files,
+            mergeCommitEvidence,
+          );
+        }
+        if (
+          directMerge &&
+          acceptedDirectMerge === null &&
+          accepted.limitations.length === 0
+        ) {
+          limitations.push(
+            "Direct merge does not retain every submitted file unchanged; reconcile the accepted range and related PRs",
+          );
+        }
         if (
           !directMerge &&
           !matchingSingleParent &&
@@ -1136,6 +1168,7 @@ export async function collectValueEvidence(
     mergeCommitEvidence,
     ...(acceptedRange === null ? {} : { acceptedRange }),
     ...(acceptedPatchReplay === null ? {} : { acceptedPatchReplay }),
+    ...(acceptedDirectMerge === null ? {} : { acceptedDirectMerge }),
     ...(indirect.acceptance === null
       ? {}
       : { indirectAcceptance: indirect.acceptance }),
