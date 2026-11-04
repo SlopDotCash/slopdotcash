@@ -19,6 +19,7 @@ import {
   parseRepositoryIdentity,
   type RepositoryIdentity,
   SLOPBOT_INSTALL_URL,
+  slopbotInstallScopeNote,
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
@@ -154,7 +155,7 @@ export function setupAuthority(
   if (access.access.installation !== "installed")
     return {
       state: "denied",
-      message: `Install Slopbot on ${repository} to confirm your access.`,
+      message: `Install Slopbot on ${repository} to confirm your access. ${slopbotInstallScopeNote(repository)}`,
     };
   if (writes(access.access))
     return {
@@ -342,7 +343,7 @@ export function projectSetupStatus(input: {
     state = "action_required";
     nextAction = action(
       "install_slopbot",
-      `${installation.message} Install it to continue. It is free.`,
+      `${installation.message} Install it to continue. It is free. ${slopbotInstallScopeNote(repository)}`,
       SLOPBOT_INSTALL_URL,
     );
   } else if (authority.state === "retry") {

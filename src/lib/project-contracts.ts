@@ -206,6 +206,14 @@ export const SLOPBOT_INSTALL_URL =
   "https://github.com/apps/slopdotcash/installations/new";
 
 /**
+ * GitHub's install screen preselects "All repositories". Slopbot needs only
+ * the listed repository, so every install prompt says how to scope it.
+ */
+export function slopbotInstallScopeNote(repository: string): string {
+  return `On GitHub's install screen choose "Only select repositories" and pick ${repository}. Slopbot gets no access to your other private repositories.`;
+}
+
+/**
  * What the Slopbot installation reports for one repository and one GitHub
  * account. `permission` is GitHub's base access level, which maps maintain to
  * write; `roleName` is the role GitHub names, for display only.
