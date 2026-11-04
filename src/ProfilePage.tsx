@@ -210,7 +210,7 @@ export function ProfilePage({
         <details className="section profile-section">
           <summary>Penalty history · {penalties.length}</summary>
           <p>
-            <Link href="/how-it-works#points">How penalties work</Link>
+            <Link href="/how-it-works#penalties">How penalties work</Link>
           </p>
           <ul className="profile-penalties">
             {penalties.map((penalty) => (
