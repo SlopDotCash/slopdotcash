@@ -376,7 +376,7 @@ const RULES: Rule[] = [
     threat: "secret-exfiltration",
     severity: "high",
     pattern:
-      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b/iu,
+      /JSON\.stringify\(\s*process\.env\s*\)|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:env|printenv|export\s+-p|set)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b/iu,
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
