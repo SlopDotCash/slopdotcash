@@ -7,7 +7,7 @@ import type { DeploymentView } from "./index";
 type ScanDeployment = DeploymentView<
   "projectId" | "vault",
   "deploymentTransaction" | "scanPageBlocks" | "projectPda" | "programId"
->;
+> & { chainId?: string | bigint };
 export interface ScanEvent {
   projectId: string;
   network: string;
@@ -29,6 +29,14 @@ export async function scanEvmPayments(
   const page = deployment.scanPageBlocks;
   if (page === undefined || !/^[1-9][0-9]{0,6}$/.test(page))
     throw new Error("Reviewed scan page size required for EVM scanning");
+  // Empty pages never reach the event verifier. Authenticate the chain before
+  // advancing coverage, including when the independent vault refresh failed.
+  if (
+    !deployment.chainId ||
+    BigInt((await evmRpc({ rpcUrl }, "eth_chainId", [])) as string) !==
+      BigInt(deployment.chainId)
+  )
+    throw new Error("Payment scanner chain mismatch");
   const span = BigInt(page) - 1n;
   const cursor = await db
     .prepare(
