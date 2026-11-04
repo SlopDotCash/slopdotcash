@@ -7,7 +7,10 @@ export const MAINTAINER_HOLD_DAYS = 7;
 const REQUEUE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /** Queue each due, unresolved row's job. A lost queue message is sent again
- * after a day; the row's one-time resolution prevents a duplicate.
+ * after a day; the row's one-time resolution prevents a duplicate. One job's
+ * failed send or checkpoint does not stop the rest: every due job is
+ * attempted, the failures are reported together at the end, and a failed
+ * job keeps its old queued_at so a later run selects it again.
  */
 export async function dispatchDueJobs<T>(
   db: D1Database,
@@ -35,16 +38,25 @@ export async function dispatchDueJobs<T>(
     )
     .first<{ items: string }>();
   const pending = JSON.parse(result?.items ?? "[]") as T[];
+  const failures: unknown[] = [];
+  let dispatched = 0;
   for (const job of pending) {
-    await queue.send(job);
-    await db
-      .prepare(
-        `UPDATE ${rows.table} SET queued_at = ? WHERE ${rows.key} = ? AND resolved_at IS NULL`,
-      )
-      .bind(at.toISOString(), rows.keyOf(job))
-      .run();
+    try {
+      await queue.send(job);
+      await db
+        .prepare(
+          `UPDATE ${rows.table} SET queued_at = ? WHERE ${rows.key} = ? AND resolved_at IS NULL`,
+        )
+        .bind(at.toISOString(), rows.keyOf(job))
+        .run();
+      dispatched += 1;
+    } catch (error) {
+      failures.push(error);
+    }
   }
-  return pending.length;
+  if (failures.length)
+    throw new AggregateError(failures, "Due job dispatch failures");
+  return dispatched;
 }
 
 type ReviewJob = Extract<Job, { kind: "review" }>;
