@@ -391,6 +391,18 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // `eval "$(curl ...)"` executes the download as code without a pipe: the
+    // command substitution runs, and its output is evaluated as shell source
+    // in the same line. `sh -c "$(curl ...)"` is covered by the rule above.
+    // The fetch must be the substitution's first command, so
+    // `eval "$(cat ...)"` and `source "$(make path)"` are not downloads.
+    pattern:
+      /\beval\s*["']?\s*\$\(\s*(?:[^\s;|&()'"`]*\/)?(?:sudo\s+|env\s+)*(?:[^\s;|&()'"`]*\/)?(?:curl|wget)\b/iu,
+    summary: "Evaluates a remote download as code",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     // Process substitution hands a remote download to a shell without a
     // pipe: `bash <(curl ...)`, `sh <(curl ...)`, `source <(curl ...)`
     // and `. <(curl ...)` are the same act. Shell flags can select stdin
