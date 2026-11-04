@@ -1294,3 +1294,88 @@ for (const [name, expectedId] of [
     });
   });
 }
+
+test("project setup retains the selected image before a step can leave", async ({
+  page,
+}) => {
+  await routeGitHub(page);
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await enterRepository(page, "example/open-protein");
+  await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
+  await page.getByLabel("Project name").fill("Open Protein");
+  await page
+    .getByLabel("Short description")
+    .fill("Reproducible protein-folding benchmarks.");
+  await page.getByLabel("Goal").fill("Make protein research reproducible.");
+
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 32;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("No canvas");
+    context.fillStyle = "#dc1414";
+    context.fillRect(0, 0, 32, 32);
+    return canvas.toDataURL("image/png");
+  });
+  await page.evaluate(() => {
+    // Decode real bytes. Hold only completion so each browser can exercise
+    // navigation during the asynchronous operation without a timing guess.
+    const decode = window.createImageBitmap.bind(window);
+    let release = () => {};
+    const completion = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    Object.assign(window, { releaseProjectImage: release });
+    window.createImageBitmap = async (source: ImageBitmapSource) => {
+      const bitmap = await decode(source);
+      await completion;
+      return bitmap;
+    };
+  });
+  const image = page.getByLabel("Project image (optional)", { exact: true });
+  await image.setInputFiles({
+    name: "project.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(png.split(",")[1], "base64"),
+  });
+  const next = page.getByRole("button", { name: "Next: Rewards", exact: true });
+  const steps = page.getByRole("navigation", { name: "Setup steps" });
+  await expect(
+    page.getByRole("status").filter({ hasText: "Preparing image" }),
+  ).toBeVisible();
+  await expect(next).toBeDisabled();
+  await expect(
+    steps.getByRole("button", { name: "Rewards", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    steps.getByRole("button", { name: "Review", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseProjectImage: () => void }
+    ).releaseProjectImage(),
+  );
+  await expect(next).toBeEnabled();
+  const preview = page.locator(".project-image-upload img");
+  await expect(preview).toHaveAttribute(
+    "src",
+    /^data:image\/(?:webp|jpeg);base64,/u,
+  );
+  const selected = await preview.getAttribute("src");
+  if (!selected) throw new Error("Missing selected image");
+  await next.focus();
+  await next.press("Enter");
+  await expect(page.getByLabel("Points only")).toBeVisible();
+  await steps.getByRole("button", { name: "Project", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(preview).toHaveAttribute("src", selected);
+  // A decoder error also releases navigation and preserves the last image.
+  await image.setInputFiles({
+    name: "broken.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("not a PNG"),
+  });
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(next).toBeEnabled();
+  await expect(preview).toHaveAttribute("src", selected);
+});

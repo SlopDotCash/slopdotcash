@@ -10,11 +10,13 @@ import { Avatar } from "./Presentation";
 export function ProjectImageField({
   value,
   onChange,
+  onBusyChange,
   compact = false,
   ownerLogin,
 }: {
   value: string;
   onChange: (value: string) => void;
+  onBusyChange?: (busy: boolean) => void;
   compact?: boolean;
   ownerLogin?: string;
 }) {
@@ -23,6 +25,7 @@ export function ProjectImageField({
   async function choose(file: File) {
     setError("");
     setBusy(true);
+    onBusyChange?.(true);
     try {
       if (!new Set(["image/png", "image/jpeg", "image/webp"]).has(file.type))
         throw new Error("Choose a PNG, JPEG or WebP image.");
@@ -66,6 +69,7 @@ export function ProjectImageField({
       );
     } finally {
       setBusy(false);
+      onBusyChange?.(false);
     }
   }
   const input = (

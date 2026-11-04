@@ -749,6 +749,7 @@ function FundingFields({
 
 export default function ProjectProposalPage() {
   const [sessionRevision, setSessionRevision] = useState(0);
+  const [imageBusy, setImageBusy] = useState(false);
   const projectSession = useProjectSession(sessionRevision);
   const [proposal, setProposal] = useState<Proposal>(
     () => readDraft() ?? EMPTY_PROPOSAL,
@@ -1293,6 +1294,7 @@ export default function ProjectProposalPage() {
   }
 
   function goTo(index: number) {
+    if (imageBusy) return;
     if (index > step || index === 2) {
       setAttempted((current) =>
         current.map((value, owner) => value || owner < index),
@@ -1350,6 +1352,7 @@ export default function ProjectProposalPage() {
       {step > 0 ? (
         <button
           className="button secondary-button"
+          disabled={imageBusy}
           onClick={() => goTo(step - 1)}
           type="button"
         >
@@ -1357,7 +1360,12 @@ export default function ProjectProposalPage() {
         </button>
       ) : null}
       {step < SETUP_STEPS.length - 1 ? (
-        <button className="button primary-button" onClick={next} type="button">
+        <button
+          className="button primary-button"
+          disabled={imageBusy}
+          onClick={next}
+          type="button"
+        >
           Next: {SETUP_STEPS[step + 1]} <ArrowRight aria-hidden="true" />
         </button>
       ) : null}
@@ -1423,6 +1431,7 @@ export default function ProjectProposalPage() {
               <li key={label}>
                 <button
                   aria-current={step === index ? "step" : undefined}
+                  disabled={imageBusy}
                   onClick={() => goTo(index)}
                   type="button"
                 >
@@ -1508,6 +1517,7 @@ export default function ProjectProposalPage() {
                 ownerLogin={p.stewardLogin}
                 value={p.image}
                 onChange={set("image")}
+                onBusyChange={setImageBusy}
               />
               <TextField
                 error={shown("name")}
@@ -1937,6 +1947,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
 
 function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
   const session = useProjectSession();
+  const [imageBusy, setImageBusy] = useState(false);
   const [base, setBase] = useState<{
     revision: number;
     project: ProjectDefinition;
@@ -2286,6 +2297,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
   const valid = Object.values(errors).every((error) => !error);
   const shown = (field: string) => (attempted ? errors[field] : undefined);
   async function publish() {
+    if (imageBusy) return;
     setAttempted(true);
     if (!valid) {
       const fieldNames: Record<string, string> = {
@@ -2376,7 +2388,11 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
       >
         <details className="proposal-advanced" open>
           <summary>Project listing</summary>
-          <ProjectImageField value={value.image} onChange={set("image")} />
+          <ProjectImageField
+            value={value.image}
+            onChange={set("image")}
+            onBusyChange={setImageBusy}
+          />
           <TextField
             error={shown("headline")}
             label="Short description"
@@ -2487,6 +2503,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
             <button
               type="button"
               className="button secondary-button"
+              disabled={imageBusy}
               onClick={() => setDraftRevision(base?.revision ?? null)}
             >
               Use this draft
@@ -2494,6 +2511,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
             <button
               type="button"
               className="button secondary-button"
+              disabled={imageBusy}
               onClick={() => {
                 setDraft(null);
                 setDraftRevision(null);
@@ -2556,7 +2574,10 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
           <button
             className="button primary-button"
             disabled={
-              submission.state === "publishing" || base === null || staleDraft
+              imageBusy ||
+              submission.state === "publishing" ||
+              base === null ||
+              staleDraft
             }
             onClick={() => void publish()}
             type="button"
