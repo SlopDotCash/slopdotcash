@@ -323,6 +323,21 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+/**
+ * A download command as it appears inside a command substitution, in the
+ * spellings a shell runs as curl/wget: an absolute or relative path, a
+ * backslash escape, a `command [-p|--]` prefix, and a `"curl"`/`'curl'`/
+ * `$'curl'` quoted name (the shell runs a quoted command name as the bare
+ * one, matching the file's commandToken). The `(?![\w./-])` boundary excludes
+ * a longer name that only begins with the word, such as `curl-config`, which
+ * downloads nothing. This mirrors the shared download token introduced by
+ * #2141; unify the two when that lands rather than keeping separate
+ * definitions. Residual, deferred to that shared token: an exec/run-wrapper
+ * prefix inside the substitution (`$(exec curl …)`, `$(nice curl …)`) and the
+ * sudo/env prefix owned by #2161 stay out here.
+ */
+const DOWNLOAD_NAME = String.raw`(?:[^\s|;&<>()'"]*/|\\)?(?:curl|wget)(?:\.exe)?(?![\w./-])`;
+const DOWNLOAD_COMMAND = String.raw`(?:command\s+(?:(?:--|-p)\s+)*)?(?:"${DOWNLOAD_NAME}"|'${DOWNLOAD_NAME}'|\$'${DOWNLOAD_NAME}'|${DOWNLOAD_NAME})`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -401,6 +416,31 @@ const RULES: Rule[] = [
       "iu",
     ),
     summary: "Runs a remote download in a shell via process substitution",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A here-string feeds its text to the command as standard input, and a
+    // shell or an interpreter with no script argument runs that input as its
+    // program: `bash <<< "$(curl ...)"` and `python3 <<< "$(curl ...)"` run
+    // the downloaded bytes, the same act as a pipe without the pipe. Only a
+    // command substitution of a download qualifies: a literal here-string
+    // (`bash <<< "echo hi"`), a non-download substitution (`$(date)`), a
+    // here-document (`<<EOF`), and a non-executing target (`cat`, `grep`)
+    // stay out. Flags that keep stdin as the program are covered: the shell's
+    // `-s` (read commands from stdin, remaining words are positional
+    // parameters) and the interpreter's `-`/`-u` forms, including options
+    // after them. A file argument (`sh tools/check.sh <<<`, `python3 x.py
+    // <<<`), a module (`python3 -m json.tool`), and a syntax-only check
+    // (`bash -n`) run or inspect something other than the here-string. The
+    // download inside the substitution is matched through DOWNLOAD_COMMAND, so
+    // a path, a backslash escape or a `command` prefix does not evade it, and
+    // a longer name such as `curl-config` is not mistaken for a download.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()'"])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-s(?:\s+[^\s|;&<>()]+)*)?|${INTERPRETER_PIPE_TARGET}(?:(?<=\s-)(?:\s+[^\s|;&<>()]+)+)?)\s*<<<\s*["']?(?:\$\(|\x60)\s*${DOWNLOAD_COMMAND}`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a shell via a here-string",
   },
 
   {
