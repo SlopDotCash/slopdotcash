@@ -491,10 +491,13 @@ test("superseded Points Retry opens the current record @registry", async ({
     await page.keyboard.press("Tab");
   }
   await expect(retry).toBeFocused();
+  // Resetting the old cursor can cancel a transient response after its headers.
+  // Assert the completed response body rather than selecting that aborted GET.
   const freshList = page.waitForResponse(
-    (next) =>
+    async (next) =>
       next.request().method() === "GET" &&
-      new URL(next.url()).pathname === "/api/v1/points/disputes",
+      new URL(next.url()).pathname === "/api/v1/points/disputes" &&
+      (await next.finished()) === null,
   );
   await page.keyboard.press("Enter");
   const refreshed = await freshList;
