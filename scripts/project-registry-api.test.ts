@@ -511,6 +511,49 @@ describe("project registry API", () => {
     expect(await persistence.getProject("open-registry")).toEqual(before);
   });
 
+  test("a setup check keeps the installed Slopbot when only the GitHub facts check is unavailable", async () => {
+    access = {
+      installation: "installed",
+      installationId: 7,
+      permission: "write",
+      roleName: "maintain",
+    };
+    const created = await call("POST", "projects", "applicant", {
+      manifest: applicationManifest("open-registry", "example/open-registry"),
+    });
+    expect(created.status).toBe(201);
+    // Slopbot answers, but the GitHub repository facts check fails.
+    control = () => {
+      throw new Error("GitHub is down");
+    };
+    const checked = await call(
+      "POST",
+      "project-setup/open-registry/check",
+      "applicant",
+      {},
+    );
+    expect(checked.status).toBe(200);
+    const { setup } = await checked.json();
+    expect(setup.checks.installation).toMatchObject({ state: "installed" });
+    expect(setup.checks.authority).toEqual({
+      state: "retry",
+      message: "GitHub could not be checked. Try again.",
+    });
+    expect(setup.state).toBe("retry");
+    expect(setup.nextAction).toMatchObject({
+      kind: "retry_authority",
+      message: "GitHub could not be checked. Try again.",
+    });
+    // Callers that require authority still refuse with the same retry answer.
+    const management = await call(
+      "GET",
+      "project-setup/open-registry",
+      "applicant",
+    );
+    expect(management.status).toBe(503);
+    expect((await management.json()).error).toBe("github_unavailable");
+  });
+
   test("serves a newly approved project at once, purging the cached list", async () => {
     const empty = await call("GET", "projects");
     expect((await empty.json()).projects).toEqual([]);
