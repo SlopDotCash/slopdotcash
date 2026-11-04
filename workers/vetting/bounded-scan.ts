@@ -180,6 +180,7 @@ const INSTALL_FILES = new Set([
   "build.pl",
   "build.sbt",
   "build.boot",
+  "mix.exs",
   "build.bazel",
   "module.bazel",
   "workspace",
