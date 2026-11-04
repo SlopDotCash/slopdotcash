@@ -10,6 +10,7 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import { summarizeModelOutcomes } from "../src/lib/model-outcomes";
 import { createProjectView } from "../src/lib/project-view";
 import { PROJECTS } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
@@ -120,6 +121,17 @@ test("the published standings carry exactly what the pages derived from the full
     unique.map(({ id, login, avatarUrl }) => ({ id, login, avatarUrl })),
   );
   expect(standings.actors.length).toBe(pairs.size);
+
+  // The sponsors page used to derive these totals from the full snapshot.
+  const outcomes = summarizeModelOutcomes(snapshot).totals;
+  expect(snapshot.ledger.length).toBeGreaterThan(0);
+  expect(standings.audience).toEqual({
+    windowDays: snapshot.window.days,
+    contributors: snapshot.leaders.length,
+    scoredEvents: snapshot.ledger.length,
+    mergedPullRequests: outcomes.mergedPullRequests,
+    mergedPullRequestsWithModel: outcomes.mergedPullRequestsWithModel,
+  });
 });
 
 test("the published standings list the same suggested work the project page derived from the full snapshot", () => {
@@ -189,6 +201,16 @@ test("the standings validator refuses records a page cannot trust", () => {
     [
       "duplicate global leader",
       (v) => v.globalLeaderIds.push(v.globalLeaderIds[0]),
+    ],
+    [
+      "audience above merged",
+      (v) =>
+        (v.audience.mergedPullRequestsWithModel =
+          v.audience.mergedPullRequests + 1),
+    ],
+    [
+      "audience contributors off the leaders",
+      (v) => (v.audience.contributors += 1),
     ],
     [
       "penalty applied above debit",

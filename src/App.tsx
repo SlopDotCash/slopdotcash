@@ -183,7 +183,7 @@ const ROUTES: Record<
 > = {
   home: { snapshot: false, registry: "cached" },
   "how-it-works": { snapshot: false, registry: "independent" },
-  sponsors: { snapshot: "complete", registry: "cached" },
+  sponsors: { snapshot: "standings", registry: "cached" },
   "cycle-archive": { snapshot: false, registry: "cached" },
   unknown: { snapshot: false, registry: "cached" },
   account: {
@@ -1572,7 +1572,7 @@ function AppContent({ route }: { route: Route }) {
   else if (route.kind === "inbox") content = <InboxPage />;
   else if (route.kind === "how-it-works") content = <HowItWorksPage />;
   else if (route.kind === "sponsors")
-    content = <SponsorsPage retry={retry} state={state} />;
+    content = <SponsorsPage retry={retryStandings} state={standings} />;
   else if (route.kind === "cycle-archive")
     content = <CycleArchivePage retry={retryArchive} state={archive} />;
   else if (route.kind === "new-project") content = <ProjectProposalPage />;

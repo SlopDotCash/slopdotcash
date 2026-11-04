@@ -14,13 +14,11 @@ import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
-import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
-import type { DataState } from "./lib/use-snapshot";
+import type { StandingsState } from "./lib/use-standings";
 import {
-  summarizeWhoBuilds,
   WHO_BUILDS_CROSS_REFERENCE,
   WHO_BUILDS_SNAPSHOT,
   whoBuildsDateLabel,
@@ -274,7 +272,7 @@ function WhoBuildsOnSlop({
   state,
   retry,
 }: {
-  state: DataState;
+  state: StandingsState;
   retry: () => void;
 }) {
   const count = new Intl.NumberFormat("en-US");
@@ -307,10 +305,8 @@ function WhoBuildsOnSlop({
       : massCount === 1
         ? ", one mass pull-request account excluded"
         : `, ${massCount === 2 ? "two" : count.format(massCount)} mass pull-request accounts excluded`;
-  const footprint =
-    state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
-  const models =
-    state.status === "ready" ? summarizeModelOutcomes(state.snapshot) : null;
+  // The publication computes these totals from the complete snapshot.
+  const live = state.status === "ready" ? state.snapshot.audience : null;
   return (
     <section
       aria-labelledby="who-builds-heading"
@@ -441,17 +437,14 @@ function WhoBuildsOnSlop({
             </section>
           </section>
         </div>
-        {footprint && models && footprint.scoredEvents > 0 ? (
+        {live && live.scoredEvents > 0 ? (
           <p className="model-outcomes-note">
-            Inside Slop, live: {count.format(footprint.contributors)}{" "}
-            contributors scored in the last {footprint.windowDays} days, and{" "}
-            {percent(
-              models.totals.mergedPullRequestsWithModel,
-              models.totals.mergedPullRequests,
-            )}{" "}
+            Inside Slop, live: {count.format(live.contributors)} contributors
+            scored in the last {live.windowDays} days, and{" "}
+            {percent(live.mergedPullRequestsWithModel, live.mergedPullRequests)}{" "}
             of merged pull requests name the model that did the work (
-            {count.format(models.totals.mergedPullRequestsWithModel)} of{" "}
-            {count.format(models.totals.mergedPullRequests)}).
+            {count.format(live.mergedPullRequestsWithModel)} of{" "}
+            {count.format(live.mergedPullRequests)}).
           </p>
         ) : null}
       </details>
@@ -473,7 +466,7 @@ export function SponsorsPage({
   state,
   retry,
 }: {
-  state: DataState;
+  state: StandingsState;
   retry: () => void;
 }) {
   const hasReviewBudget = PROJECTS.some(

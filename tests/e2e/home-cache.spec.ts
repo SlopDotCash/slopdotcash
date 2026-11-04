@@ -220,16 +220,16 @@ test("a failed snapshot refresh keeps the last good sponsor report with a stale 
   diagnostics.allowPreviewApiMisses();
   const start = Date.now();
   await page.clock.setFixedTime(start);
-  // The refused snapshot reads below; each cancels its paired cycle index
+  // The refused standings reads below; each cancels its paired cycle index
   // read.
   diagnostics.allow(
-    /^console Failed to load resource: the server responded with a status of 503 .*\/data\/leaderboard\.json\?\S*$/u,
-    /^503 GET http:\/\/[^ ]+\/data\/leaderboard\.json\?\S*$/u,
+    /^console Failed to load resource: the server responded with a status of 503 .*\/data\/standings\.json\?\S*$/u,
+    /^503 GET http:\/\/[^ ]+\/data\/standings\.json\?\S*$/u,
     /^net::ERR_ABORTED GET http:\/\/[^ ]+\/data\/cycles\/index\.json\?\S*$/u,
   );
   let failSnapshot = false;
   let failedSnapshotReads = 0;
-  await page.route("**/data/leaderboard.json?*", (route) => {
+  await page.route("**/data/standings.json?*", (route) => {
     if (!failSnapshot) return route.fallback();
     failedSnapshotReads++;
     return route.fulfill({ status: 503, json: { error: "unavailable" } });
