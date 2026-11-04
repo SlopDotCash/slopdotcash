@@ -1663,6 +1663,43 @@ describe("project registry API", () => {
     expect(again.status).toBe(409);
   });
 
+  test("a setup check shows contradicted repository facts as a denial beside the installed Slopbot", async () => {
+    const manifest = applicationManifest(
+      "open-registry",
+      "example/open-registry",
+    );
+    access = {
+      installation: "installed",
+      installationId: 7,
+      permission: "write",
+      roleName: "maintain",
+    };
+    const created = await call("POST", "projects", "applicant", { manifest });
+    expect(created.status).toBe(201);
+    // GitHub later contradicts the recorded facts (for example a renamed
+    // steward login or a private repository) while Slopbot stays installed.
+    const reason = "Repository or steward facts do not match GitHub";
+    control = () => ({ state: "mismatch", reason });
+    const checked = await call(
+      "POST",
+      "project-setup/open-registry/check",
+      "applicant",
+      {},
+    );
+    expect(checked.status).toBe(200);
+    const { setup } = await checked.json();
+    expect(setup.checks.authority).toEqual({
+      state: "denied",
+      message: reason,
+    });
+    expect(setup.checks.installation).toMatchObject({ state: "installed" });
+    expect(setup.state).toBe("action_required");
+    expect(setup.nextAction).toMatchObject({
+      kind: "ask_maintainer",
+      message: reason,
+    });
+  });
+
   test("serves the exact approved bytes of a revision", async () => {
     await listProject();
     const response = await call("GET", "project-revisions/open-registry/1");
