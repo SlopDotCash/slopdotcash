@@ -49,6 +49,7 @@ import {
   readAcquiredSource,
 } from "../workers/vetting/bounded-scan";
 import { publishResult } from "../workers/vetting/publication";
+import { filePublicationJournal } from "../workers/vetting/publication-journal";
 import { acquireQueuedAssessment } from "../workers/vetting/queue";
 import {
   runScanPass,
@@ -326,6 +327,14 @@ function github(url: URL): Response {
       id: 123456789,
       node_id: "R_example",
       full_name: githubName,
+      private: false,
+    });
+  // A second registered repository, for passes that queue two projects.
+  if (path === "/repos/example/second-registry")
+    return Response.json({
+      id: 123456790,
+      node_id: "R_second",
+      full_name: "example/second-registry",
       private: false,
     });
   const user = /^\/user\/([0-9]+)$/u.exec(path)?.[1];
@@ -847,6 +856,102 @@ test("a pending investigation on an exempt project recovers without changing its
   });
   templateInputs.acceptedRevisions = ["1", "2", "3"];
   templateSha256 = digest(JSON.stringify(templateInputs));
+  expect((await runScanPass(config)).assessments).toEqual([]);
+});
+
+test("an error that escapes one assessment leaves it pending and the pass continues to the next project", async () => {
+  // A second registered project is queued in the same pass.
+  const created = await projectApi(
+    new Request(`${ORIGIN}/api/v1/projects`, {
+      method: "POST",
+      headers: {
+        "x-test-actor": "applicant",
+        "content-type": "application/json",
+        origin: ORIGIN,
+      },
+      body: JSON.stringify({
+        manifest: applicationManifest(
+          "second-registry",
+          "example/second-registry",
+          {
+            authority: {
+              state: "unverified",
+              reason: "missing-repository-proof",
+              role: "project-steward",
+              repositoryId: "123456790",
+              repositoryNodeId: "R_second",
+              proof: null,
+            },
+          },
+        ),
+      }),
+    }),
+  );
+  expect(created.status).toBe(201);
+  // The signed service journal refuses one reservation, after the review and
+  // the evidence upload. Nothing in the assessment handles that, so the error
+  // escapes it.
+  const file = filePublicationJournal(config.journalDirectory);
+  let refusals = 1;
+  config.journal = {
+    has: (id) => file.has(id),
+    reserve: async (intent) => {
+      if (refusals > 0) {
+        refusals -= 1;
+        throw new Error("fixture: journal reservation refused");
+      }
+      await file.reserve(intent);
+    },
+    complete: (receipt) => file.complete(receipt),
+  };
+  const pass = await runScanPass(config);
+  expect(pass.refreshed).toBe(true);
+  expect(pass.assessments).toHaveLength(2);
+  const refused = pass.assessments.find((a) => a.state === "retry");
+  const published = pass.assessments.find((a) => a.state === "published");
+  if (!refused || !published) throw new Error("Both outcomes are expected");
+  // The escaped error names its step and error, never its message.
+  expect(refused).toEqual({
+    assessmentId: refused.assessmentId,
+    state: "retry",
+    step: "assessment",
+    reason: "Error",
+  });
+  expect(published).toEqual({
+    assessmentId: published.assessmentId,
+    state: "published",
+    disposition: "clean",
+    outcome: "accepted",
+    specialist: false,
+    evidence: "retained",
+  });
+  const pending = await vetting.getAssessment(refused.assessmentId);
+  const cleared = await vetting.getAssessment(published.assessmentId);
+  expect(pending?.state).toBe("pending");
+  expect(cleared?.state).toBe("clean");
+  expect(new Set([pending?.projectId, cleared?.projectId])).toEqual(
+    new Set(["open-registry", "second-registry"]),
+  );
+  // Only the published attempt is journaled; the acquired bytes are gone.
+  expect(await readdir(config.journalDirectory)).toEqual([
+    published.assessmentId,
+  ]);
+  expect(await readdir(config.workDirectory)).toEqual([]);
+  // The next pass completes the assessment whose publication was refused.
+  const next = await runScanPass(config);
+  expect(next.assessments).toEqual([
+    {
+      assessmentId: refused.assessmentId,
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  expect((await vetting.getAssessment(refused.assessmentId))?.state).toBe(
+    "clean",
+  );
   expect((await runScanPass(config)).assessments).toEqual([]);
 });
 

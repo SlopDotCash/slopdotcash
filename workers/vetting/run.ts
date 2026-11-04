@@ -8,7 +8,10 @@
  * publishes the result once.
  *
  * A service failure (an unavailable queue, source or provider) publishes
- * nothing and leaves the assessment pending, so the next pass retries it.
+ * nothing and leaves the assessment pending, so the next pass retries it. An
+ * error that escapes one assessment is recorded against that assessment alone
+ * and the pass continues with the next pending assessment, so one repository
+ * cannot hold back every project queued behind it.
  * A bound acquisition-policy refusal publishes an incomplete result instead;
  * no source inspection or model review is claimed.
  * A clean result is never published without its retained evidence. An
@@ -148,7 +151,9 @@ export type AssessmentOutcome =
         | "primary-review"
         | "specialist-review"
         | "review-batches"
-        | "evidence";
+        | "evidence"
+        /** An error escaped the assessment as a whole. */
+        | "assessment";
       /** The error name of a step that threw, never its message. */
       reason?: string;
     }
@@ -186,7 +191,7 @@ async function signedRequest(
  */
 function retry(
   assessmentId: string,
-  step: "acquire" | "isolated-execution" | "reuse",
+  step: "acquire" | "isolated-execution" | "reuse" | "assessment",
   error: unknown,
 ): AssessmentOutcome {
   return {
@@ -727,7 +732,14 @@ export async function runScanPass(
       });
       continue;
     }
-    assessments.push(await scanOne(config, assessment));
+    // An error that escapes the assessment leaves it pending for the next
+    // pass and is reported by step and error name only, never its message. The
+    // pass goes on to the next queued project instead of ending here.
+    assessments.push(
+      await scanOne(config, assessment).catch((error: unknown) =>
+        retry(assessment.assessmentId, "assessment", error),
+      ),
+    );
   }
   return { refreshed, assessments };
 }
