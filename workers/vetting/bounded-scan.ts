@@ -380,6 +380,19 @@ const RULES: Rule[] = [
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
+    threat: "secret-exfiltration",
+    severity: "high",
+    // The serialization rule above catches `json.dumps(os.environ)`, but the
+    // whole environment can also be handed straight to a network call:
+    // `requests.post(url, data=dict(os.environ))` or `json=os.environ`. Match
+    // a requests/httpx write call whose arguments reference the whole
+    // `os.environ`. A single key (`os.environ['TOKEN']`, `os.environ.get(…)`)
+    // is a specific read, not a dump, so the negative lookahead excludes it.
+    pattern:
+      /\b(?:requests|httpx)\.(?:post|put|patch|request)\s*\([^)\n]*\bos\.environ(?![\w\[.])/iu,
+    summary: "Sends the whole environment to the network",
+  },
+  {
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
