@@ -43,6 +43,20 @@ export function ContributorAllocationRow({
   >(undefined);
   const [error, setError] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [now, setNow] = useState(Date.now);
+  const closesAt =
+    allocation && !allocation.closed
+      ? Date.parse(allocation.registrationClosesAt)
+      : null;
+  useEffect(() => {
+    if (closesAt === null || now >= closesAt) return;
+    // Long registration windows must not overflow the browser's timer limit.
+    const timer = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.min(Math.max(0, closesAt - Date.now()), 2_147_483_647),
+    );
+    return () => window.clearTimeout(timer);
+  }, [closesAt, now]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads the published file.
   useEffect(() => {
     const controller = new AbortController();
@@ -86,7 +100,7 @@ export function ContributorAllocationRow({
     allocation,
     recipient,
     account.wallets,
-    Date.now(),
+    now,
   );
   const network = NETWORK_NAMES[allocation.chain];
   return (
