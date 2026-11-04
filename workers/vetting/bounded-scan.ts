@@ -145,6 +145,7 @@ const INSTALL_FILES = new Set([
   "build.rs",
   "extconf.rb",
   "setup.hs",
+  "setup.lhs",
   "makefile",
   "makefile.pl",
   "justfile",
