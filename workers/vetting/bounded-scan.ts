@@ -1699,7 +1699,8 @@ export function inspectRepository(input: {
     const text = decode(file.bytes);
     // Ant imports may use any filename. Its project root identifies the
     // executable build document without parsing XML or resolving entities.
-    if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
+    const antProject = text !== null && /<project(?=[\t\n\r />])/u.test(text);
+    if (antProject) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
@@ -1718,8 +1719,11 @@ export function inspectRepository(input: {
     // character references are decoded. Shell text, and every other file,
     // is left as written.
     const msbuild = MSBUILD_RECIPE.test(file.path);
+    // Ant normalizes quoted attributes the same way whatever the filename, so
+    // an imported build document hides a pipe behind a literal newline or a
+    // character reference exactly as `build.xml` does.
     const attributes =
-      msbuild || ANT_BUILD_XML.test(file.path)
+      msbuild || antProject || ANT_BUILD_XML.test(file.path)
         ? xmlAttributeRuleText(text, msbuild)
         : undefined;
     const ruleText = attributes?.text ?? text;
