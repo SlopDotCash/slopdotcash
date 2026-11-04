@@ -9,6 +9,7 @@ import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
+import { PENALTY_CATEGORY_LABELS } from "./lib/penalty-labels";
 import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 import { ProfilePoints, useProfileMembership } from "./Points";
@@ -21,14 +22,6 @@ import {
   NotFound,
 } from "./Presentation";
 import { useProfiles } from "./Profiles";
-
-/** The categories of the published penalty table (PRD section 7). */
-const PENALTY_CATEGORY_LABELS: Record<string, string> = {
-  spam: "Spam",
-  scam: "Scam or malicious",
-  busywork: "Clear violation of a quoted project rule",
-  gaming: "Clear violation of a quoted project rule",
-};
 
 export function ProfilePage({
   login,
@@ -221,8 +214,9 @@ export function ProfilePage({
                   #{penalty.source.number}
                 </ExternalLinkAnchor>{" "}
                 <span>
-                  {PENALTY_CATEGORY_LABELS[penalty.category] ??
-                    penalty.category}{" "}
+                  {PENALTY_CATEGORY_LABELS[
+                    penalty.category as keyof typeof PENALTY_CATEGORY_LABELS
+                  ] ?? penalty.category}{" "}
                   · {formatCycleMonth(penalty.occurredAt.slice(0, 7))} · −
                   {formatPointsFromThirds(penalty.debitThirds)} point debit ·{" "}
                   {formatPointsFromThirds(

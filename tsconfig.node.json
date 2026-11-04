@@ -99,6 +99,7 @@
     "src/lib/review-records.ts",
     "src/lib/score-records.ts",
     "src/lib/score-penalties.ts",
+    "src/lib/penalty-labels.ts",
     "src/lib/scoring-policy.ts",
     "src/lib/value-assessment.ts",
     "src/lib/run-receipts.ts",
