@@ -388,8 +388,11 @@ const RULES: Rule[] = [
     // a requests/httpx write call whose arguments reference the whole
     // `os.environ`. A single key (`os.environ['TOKEN']`, `os.environ.get(…)`)
     // is a specific read, not a dump, so the negative lookahead excludes it.
+    // The argument scan spans newlines so a multi-line call (the default
+    // black/ruff formatting) is covered; it stays bounded by the first `)`,
+    // so it cannot reach an unrelated `os.environ` after the call.
     pattern:
-      /\b(?:requests|httpx)\.(?:post|put|patch|request)\s*\([^)\n]*\bos\.environ(?![\w\[.])/iu,
+      /\b(?:requests|httpx)\.(?:post|put|patch|request)\s*\([^)]*\bos\.environ(?![\w\[.])/iu,
     summary: "Sends the whole environment to the network",
   },
   {
