@@ -680,9 +680,11 @@ function webmMetadata(bytes) {
   const tracks = children?.find(
     (element) => element.id === "1654ae6b" && !element.truncated,
   );
-  const cluster = children?.find((element) => element.id === "1f43b675");
-  if (!tracks || !cluster || !webmClusterHasPayload(bytes, cluster))
-    return null;
+  const cluster = children?.find(
+    (element) =>
+      element.id === "1f43b675" && webmClusterHasPayload(bytes, element),
+  );
+  if (!tracks || !cluster) return null;
   const dimensions = webmTrackDimensions(bytes, tracks);
   return dimensions ? { ...dimensions, kind: "video" } : null;
 }
