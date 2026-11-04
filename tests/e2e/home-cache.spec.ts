@@ -85,133 +85,160 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
   }
 });
 
-test("an unavailable registry with no last good copy shows an error, never an empty list", async ({
-  diagnostics,
-  page,
-}) => {
-  diagnostics.allowPreviewApiMisses();
-  diagnostics.allow(
-    /^console Failed to load resource: the server responded with a status of (?:503|404) .*\/data\/(?:fixture-)?project-registry\.json$/u,
-    /^(?:503 GET http:\/\/[^ ]+\/data\/fixture-project-registry|404 GET http:\/\/[^ ]+\/data\/project-registry)\.json$/u,
-  );
-  // The fixture build reads its live registry from this file.
-  await page.route("**/data/fixture-project-registry.json", (route) =>
-    route.fulfill({ status: 503, json: { error: "unavailable" } }),
-  );
-  // A pull-request build publishes no last good registry.
-  await page.route("**/data/project-registry.json", (route) =>
-    route.fulfill({ status: 404, body: "Not Found" }),
-  );
-  await page.goto("/");
-  // With no last good registry, the failure is an alert with a retry, never
-  // a list.
-  const alert = page.getByRole("alert");
-  await expect(alert).toBeVisible();
-  await expect(alert.getByRole("button")).toBeVisible();
-  await expect(page.locator("#projects")).toHaveCount(0);
-  await expectAccessible(page);
-  for (const [path, heading] of [
-    ["/account", "Settings"],
-    ["/login", "Log in"],
-  ]) {
-    await page.goto(path);
-    await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      heading,
+for (const publishedFailure of ["no", "an invalid"] as const) {
+  test(`an unavailable registry with ${publishedFailure} last good copy shows an error, never an empty list`, async ({
+    diagnostics,
+    page,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    diagnostics.allow(
+      /^console Failed to load resource: the server responded with a status of (?:503|404) .*\/data\/(?:fixture-)?project-registry\.json$/u,
+      /^(?:503 GET http:\/\/[^ ]+\/data\/fixture-project-registry|404 GET http:\/\/[^ ]+\/data\/project-registry)\.json$/u,
     );
+    // The fixture build reads its live registry from this file.
+    await page.route("**/data/fixture-project-registry.json", (route) =>
+      route.fulfill({ status: 503, json: { error: "unavailable" } }),
+    );
+    // A pull-request build publishes no last good registry.
+    await page.route("**/data/project-registry.json", (route) =>
+      route.fulfill(
+        publishedFailure === "no"
+          ? { status: 404, body: "Not Found" }
+          : {
+              json: {
+                schemaVersion: "1",
+                syncedAt: "2026-10-16T06:00:00.000Z",
+                projects: [{ id: "invalid-project" }],
+              },
+            },
+      ),
+    );
+    await page.goto("/");
+    // With no last good registry, the failure is an alert with a retry, never
+    // a list.
+    const alert = page.getByRole("alert");
+    await expect(alert).toBeVisible();
+    await expect(alert.getByRole("button")).toBeVisible();
+    await expect(page.locator("#projects")).toHaveCount(0);
+    await expectAccessible(page);
+    for (const [path, heading] of [
+      ["/account", "Settings"],
+      ["/login", "Log in"],
+    ]) {
+      await page.goto(path);
+      await expect(page.getByRole("heading", { level: 1 })).toContainText(
+        heading,
+      );
+      await expect(
+        page.getByRole("heading", { name: "Projects are unavailable" }),
+      ).toHaveCount(0);
+    }
+  });
+}
+
+for (const failure of ["failed", "invalid"] as const) {
+  test(`a ${failure} registry read keeps the last good projects with a stale label`, async ({
+    diagnostics,
+    page,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    if (failure === "failed")
+      diagnostics.allow(
+        /^console Failed to load resource: the server responded with a status of 503 .*\/data\/fixture-project-registry\.json$/u,
+        /^503 GET http:\/\/[^ ]+\/data\/fixture-project-registry\.json$/u,
+      );
+    const published: number[] = [];
+    page.on("response", (response) => {
+      if (new URL(response.url()).pathname === "/data/project-registry.json")
+        published.push(response.status());
+    });
+    // The fixture build reads its live registry from this file. The build
+    // publishes its synced snapshot at /data/project-registry.json.
+    await page.route("**/data/fixture-project-registry.json", (route) =>
+      route.fulfill(
+        failure === "failed"
+          ? { status: 503, json: { error: "unavailable" } }
+          : {
+              json: {
+                schemaVersion: "1",
+                projects: [{ id: "invalid-project" }],
+                restrictions: [],
+              },
+            },
+      ),
+    );
+    await page.goto("/", { waitUntil: "networkidle" });
+    const notice = page
+      .getByRole("complementary", { name: "Project data status" })
+      .getByRole("status");
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText("Oct 16, 2026");
+    await expect(
+      notice.getByRole("button", { name: "Try again" }),
+    ).toBeVisible();
+    expect(published).toEqual([200]);
+    // The last good list is shown, never an outage page or an empty list.
+    const expected = homeProjects().filter(
+      (project) => project.listingTier === "featured",
+    );
+    expect(expected.length).toBeGreaterThan(0);
+    await expect(page.locator(".project-card")).toHaveCount(expected.length);
     await expect(
       page.getByRole("heading", { name: "Projects are unavailable" }),
     ).toHaveCount(0);
-  }
-});
-
-test("a failed registry read keeps the last good projects with a stale label", async ({
-  diagnostics,
-  page,
-}) => {
-  diagnostics.allowPreviewApiMisses();
-  diagnostics.allow(
-    /^console Failed to load resource: the server responded with a status of 503 .*\/data\/fixture-project-registry\.json$/u,
-    /^503 GET http:\/\/[^ ]+\/data\/fixture-project-registry\.json$/u,
-  );
-  const published: number[] = [];
-  page.on("response", (response) => {
-    if (new URL(response.url()).pathname === "/data/project-registry.json")
-      published.push(response.status());
-  });
-  // The fixture build reads its live registry from this file. The build
-  // publishes its synced snapshot at /data/project-registry.json.
-  await page.route("**/data/fixture-project-registry.json", (route) =>
-    route.fulfill({ status: 503, json: { error: "unavailable" } }),
-  );
-  await page.goto("/", { waitUntil: "networkidle" });
-  const notice = page
-    .getByRole("complementary", { name: "Project data status" })
-    .getByRole("status");
-  await expect(notice).toBeVisible();
-  await expect(notice).toContainText("Oct 16, 2026");
-  await expect(notice.getByRole("button", { name: "Try again" })).toBeVisible();
-  expect(published).toEqual([200]);
-  // The last good list is shown, never an outage page or an empty list.
-  const expected = homeProjects().filter(
-    (project) => project.listingTier === "featured",
-  );
-  expect(expected.length).toBeGreaterThan(0);
-  await expect(page.locator(".project-card")).toHaveCount(expected.length);
-  await expect(
-    page.getByRole("heading", { name: "Projects are unavailable" }),
-  ).toHaveCount(0);
-  await page.screenshot({
-    path: test.info().outputPath("stale-registry-home.png"),
-    fullPage: true,
-  });
-  await expectAccessible(page);
-  // The retry control is reachable by keyboard, and the label reflows at
-  // 200% zoom (only where that keeps at least 320 CSS pixels).
-  const retry = notice.getByRole("button", { name: "Try again" });
-  for (let step = 0; step < 12; step += 1) {
-    if (await retry.evaluate((element) => element === document.activeElement))
-      break;
-    await page.keyboard.press("Tab");
-  }
-  await expect(retry).toBeFocused();
-  if ((page.viewportSize()?.width ?? 0) >= 640) {
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
+    await page.screenshot({
+      path: test.info().outputPath("stale-registry-home.png"),
+      fullPage: true,
     });
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      )
-      .toBe(true);
+    await expectAccessible(page);
+    // The retry control is reachable by keyboard, and the label reflows at
+    // 200% zoom (only where that keeps at least 320 CSS pixels).
+    const retry = notice.getByRole("button", { name: "Try again" });
+    for (let step = 0; step < 12; step += 1) {
+      if (await retry.evaluate((element) => element === document.activeElement))
+        break;
+      await page.keyboard.press("Tab");
+    }
+    await expect(retry).toBeFocused();
+    if ((page.viewportSize()?.width ?? 0) >= 640) {
+      await page.evaluate(() => {
+        document.documentElement.style.zoom = "2";
+      });
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+      await expect(notice).toBeVisible();
+    }
+
+    const project = expected[0];
+    await page.goto(`/projects/${project.slug}`, { waitUntil: "networkidle" });
+    await expect(
+      page.getByRole("heading", { level: 1, name: project.name }),
+    ).toBeVisible();
     await expect(notice).toBeVisible();
-  }
 
-  const project = expected[0];
-  await page.goto(`/projects/${project.slug}`, { waitUntil: "networkidle" });
-  await expect(
-    page.getByRole("heading", { level: 1, name: project.name }),
-  ).toBeVisible();
-  await expect(notice).toBeVisible();
+    // Pages that act on the current manifest never use the last good copy.
+    await page.goto(`/projects/${project.slug}/manage`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("heading", { name: "Projects are unavailable" }),
+    ).toBeVisible();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(notice).toHaveCount(0);
 
-  // Pages that act on the current manifest never use the last good copy.
-  await page.goto(`/projects/${project.slug}/manage`, {
-    waitUntil: "networkidle",
+    // Account routes do not depend on the registry and show no label.
+    await page.goto("/account", { waitUntil: "networkidle" });
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      "Settings",
+    );
+    await expect(notice).toHaveCount(0);
   });
-  await expect(
-    page.getByRole("heading", { name: "Projects are unavailable" }),
-  ).toBeVisible();
-  await expect(page.getByRole("alert")).toBeVisible();
-  await expect(notice).toHaveCount(0);
-
-  // Account routes do not depend on the registry and show no label.
-  await page.goto("/account", { waitUntil: "networkidle" });
-  await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "Settings",
-  );
-  await expect(notice).toHaveCount(0);
-});
+}
 
 test("a failed snapshot refresh keeps the last good sponsor report with a stale label", async ({
   diagnostics,

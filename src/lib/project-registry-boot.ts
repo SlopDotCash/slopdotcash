@@ -4,6 +4,7 @@
  */
 
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
+import { assertProjectRegistry } from "./project-schema.mjs";
 
 const MAX_REGISTRY_BYTES = 4 * 1024 * 1024;
 
@@ -63,10 +64,14 @@ export async function loadProjectRegistry(): Promise<unknown[]> {
   );
   // A quarantined or banned project is shown as paused and retired at once,
   // even while its matching revision is still pending.
-  return projects.map((project) =>
-    restricted.has((project as { id?: unknown } | null)?.id as string)
-      ? { ...(project as object), status: "paused", listingTier: "retired" }
-      : project,
+  // Validate before App imports the registry; an import failure cannot fall
+  // back to the published copy or leave account routes available.
+  return assertProjectRegistry(
+    projects.map((project) =>
+      restricted.has((project as { id?: unknown } | null)?.id as string)
+        ? { ...(project as object), status: "paused", listingTier: "retired" }
+        : project,
+    ),
   );
 }
 
@@ -103,7 +108,10 @@ export async function loadPublishedProjectRegistry(): Promise<{
     body.projects.length === 0
   )
     throw new Error("The published project registry is not valid.");
-  return { projects: body.projects, syncedAt: body.syncedAt };
+  return {
+    projects: assertProjectRegistry(body.projects),
+    syncedAt: body.syncedAt,
+  };
 }
 
 export function installProjectRegistry(projects: unknown[]): void {
