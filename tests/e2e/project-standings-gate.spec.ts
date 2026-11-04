@@ -149,7 +149,9 @@ test("project standings render when the snapshot cycle view has no leaders", asy
   page,
 }) => {
   await fixtures(page);
-  await page.goto(`${site}/projects/delta-star?period=lifetime`);
+  // Plain navigation is the acceptance case: no ?period=lifetime, so the
+  // panel must show the lifetime-only contributor on its own.
+  await page.goto(`${site}/projects/delta-star`);
   const standings = page.getByRole("region", {
     name: "Contributor standings",
     exact: true,
