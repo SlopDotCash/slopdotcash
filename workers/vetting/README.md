@@ -202,7 +202,12 @@ published even when the evidence upload fails, because the intake needs
 retained evidence only for a clean result: the quarantine is recorded and the
 models are not called again on every pass. A published attempt is journaled, so a
 later pass never sends it again; an uncertain or rejected attempt waits for
-an operator. The pass removes the acquired bytes after each assessment. It
+an operator. The pass removes the acquired bytes after each assessment. An
+error that escapes one assessment (for example a refused journal reservation)
+is reported for that assessment alone, as `retry` at step `assessment` with
+the error name and never its message; the assessment stays pending and the
+pass continues with the next queued project, so one repository cannot hold
+back every project queued behind it. It
 never executes repository content on its host, never confirms malice and never releases
 a quarantined artifact.
 
