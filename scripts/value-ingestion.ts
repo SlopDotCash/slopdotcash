@@ -543,8 +543,9 @@ export async function loadValueInputs(
     return decision;
   }
 
+  const unresolvedActors = new Set<string>();
   const hydrateActors = (actorIds: ReadonlySet<string>) =>
-    hydrateValueActors(github.graphql, actorIds, valueActors);
+    hydrateValueActors(github.graphql, actorIds, valueActors, unresolvedActors);
 
   for (const outcome of outcomes) {
     const [owner, repo] = new URL(outcome.url).pathname
@@ -753,9 +754,13 @@ export async function hydrateValueActors(
   graphql: <T>(query: string, variables: Record<string, unknown>) => Promise<T>,
   actorIds: ReadonlySet<string>,
   actors: Map<string, GitHubActor>,
+  /** Accounts GitHub did not resolve earlier in this run; not queried again. */
+  knownUnresolved: Set<string> = new Set(),
 ): Promise<string[]> {
-  const unresolved: string[] = [];
-  const missing = [...actorIds].filter((id) => !actors.has(id));
+  const unresolved = [...actorIds].filter((id) => knownUnresolved.has(id));
+  const missing = [...actorIds].filter(
+    (id) => !actors.has(id) && !knownUnresolved.has(id),
+  );
   for (let offset = 0; offset < missing.length; offset += 100) {
     let ids = missing.slice(offset, offset + 100);
     while (ids.length > 0) {
@@ -774,6 +779,7 @@ export async function hydrateValueActors(
         const unavailable = unavailableRequestedIds(error, ids);
         if (unavailable.length === 0) throw error;
         unresolved.push(...unavailable);
+        for (const id of unavailable) knownUnresolved.add(id);
         ids = ids.filter((id) => !unavailable.includes(id));
         continue;
       }
