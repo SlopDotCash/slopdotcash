@@ -168,3 +168,66 @@ test("Turkish generation keeps expand-review opportunity on English-first review
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
+
+// Two maintainer ratification comments written in the same second on one
+// merged pull request: the correction must be processed after the record it
+// supersedes, and that processing order falls to the comment node IDs. A
+// Turkish default collation reverses the pair, so generation reads the
+// correction first and fails the whole snapshot. The comment IDs are the
+// production pair in `ids` above, on issue comments of the same shape.
+const ratificationCommentIds = [
+  "IC_kwDOMT5cIs8AAAABG3i2Yg",
+  "IC_kwDOMT5cIs8AAAABG3IwgQ",
+];
+
+function ratificationComment(id: string, supersedes: string | null, n: number) {
+  const record = {
+    schemaVersion: "1",
+    ruleVersion: "slop-score-v2",
+    projectId: "asi",
+    pullRequestNodeId: "PR_november",
+    headSha: "8".repeat(40),
+    workUnitId: "wu_asi_pr_8",
+    tier: "micro",
+    scoreThirds: 1,
+    proposalReviewNodeIds: [],
+    coRatifierNodeIds: [],
+    reason: "Maintainer ratification recorded for the ordering test.",
+    supersedes,
+  };
+  return {
+    id,
+    artifactId: "PR_november",
+    kind: "comment" as const,
+    body: `\`\`\`slop-score\n${JSON.stringify(record)}\n\`\`\``,
+    url: `https://github.com/SlopDotCash/asi/pull/8#issuecomment-${1001 + n}`,
+    createdAt: "2026-11-18T12:00:00.000Z",
+    updatedAt: "2026-11-18T12:00:00.000Z",
+    author: PROJECT_OWNER,
+    authorAssociation: "OWNER",
+  };
+}
+
+test("Turkish generation keeps same-second ratification processing order", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const pull = input.mergedPullRequests.find(
+    (entry) => entry.id === "PR_november",
+  );
+  if (!pull) throw new Error("fixture PR missing");
+  pull.comments = [
+    ratificationComment(ratificationCommentIds[0], null, 0),
+    ratificationComment(
+      ratificationCommentIds[1],
+      ratificationCommentIds[0],
+      1,
+    ),
+  ];
+  withTurkishLocale(() => {
+    const snapshot = createLeaderboardSnapshot(input);
+    const event = snapshot.ledger.find(
+      (entry) => entry.source.id === "PR_november",
+    );
+    expect(event?.scoreDecisionSourceId).toBe(ratificationCommentIds[1]);
+  });
+});
