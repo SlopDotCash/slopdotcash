@@ -130,8 +130,10 @@ const AGENT_INSTRUCTIONS = new Set([
  * Package-manager configuration read on every install or run. Each file can
  * make the package manager execute code (`node-options` and `script-shell` in
  * `.npmrc`, `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the
- * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`), so it is an
- * install surface, never unreviewed content.
+ * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`, and in
+ * `NuGet.Config` a `<clear/>` plus a new `packageSources` feed whose packages
+ * bring the `build/<id>.props` and `build/<id>.targets` that restore imports
+ * into the build), so it is an install surface, never unreviewed content.
  */
 const PACKAGE_MANAGER_CONFIGS = new Set([
   ".npmrc",
@@ -139,6 +141,7 @@ const PACKAGE_MANAGER_CONFIGS = new Set([
   ".yarnrc.yml",
   ".pnpmfile.cjs",
   "bunfig.toml",
+  "nuget.config",
 ]);
 const INSTALL_FILES = new Set([
   "setup.py",
@@ -194,6 +197,10 @@ const INSTALL_FILES = new Set([
   "build.ninja",
   "tupfile",
   "tuprules.tup",
+  // MSBuild adds these switches to every build below the file, so one line
+  // such as `-p:RestoreSources=<feed>` or
+  // `-p:CustomBeforeMicrosoftCommonTargets=<file>` chooses what the build runs.
+  "directory.build.rsp",
 ]);
 /**
  * Build recipes identified by a name suffix, such as `Dockerfile.prod` or
