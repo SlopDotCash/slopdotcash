@@ -354,6 +354,102 @@ export function retiredEvaluatorAwards(journal: PointsJournal): PointAward[] {
 }
 
 /**
+ * The GitHub work a journal award names, across node-ID spellings, URL case
+ * and registered repository transfers: the canonical repository, the item
+ * number, and the lowercased fragment. Null for sources that cannot name a
+ * registered GitHub item (external evaluated sources, non-GitHub URLs).
+ */
+function journalWorkKey(award: PointAward): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(award.sourceUrl);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.hostname !== "github.com" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port ||
+    parsed.search
+  )
+    return null;
+  const path = parsed.pathname.match(
+    /^\/([^/]+)\/([^/]+)\/(?:issues|pull)\/([1-9][0-9]*)\/?$/u,
+  );
+  if (!path) return null;
+  const repository = findHistoricalRepository(`${path[1]}/${path[2]}`);
+  if (!repository || repository.projectId !== award.projectId) return null;
+  if (
+    parsed.hash !== "" &&
+    !/^#(?:issuecomment-|pullrequestreview-|discussion_r)[0-9]+$/iu.test(
+      parsed.hash,
+    )
+  )
+    return null;
+  return JSON.stringify([
+    repository.repositoryId,
+    Number(path[3]),
+    parsed.hash.toLowerCase(),
+  ]);
+}
+
+/**
+ * The snapshot builder refuses an evaluated contribution whose source the
+ * ordinary ledger already scored, but it only sees evaluated awards inside
+ * the rolling window: the generator filters older awards out before the
+ * snapshot is built. This batch is the all-time path and applies every
+ * manifest, so without the same check here an evaluated award for already
+ * scored work outside the window would enter the journal under its own
+ * category key and be paid a second time. Ordinary review credit is out of
+ * scope: the member projection already suppresses a substantive review
+ * that an evaluated award names.
+ */
+function assertNoOrdinaryDuplicate(
+  journal: PointsJournal,
+  awards: PointAward[],
+): void {
+  const ordinary = [...latestPoints(journal).values()]
+    .map((revision) => revision.award)
+    .filter(
+      (award) =>
+        award.category === "merged-pull-request" ||
+        award.category === "resolved-issue" ||
+        award.category === "material-test-change" ||
+        award.category === "evidence",
+    );
+  if (!ordinary.length) return;
+  const ordinaryIds = new Set(
+    ordinary.map((award) => `${award.projectId}\0${award.sourceId}`),
+  );
+  const ordinaryUrls = new Set(
+    ordinary.map((award) => `${award.projectId}\0${award.sourceUrl}`),
+  );
+  const ordinaryWork = new Set(
+    ordinary
+      .map((award) => {
+        const workKey = journalWorkKey(award);
+        return workKey === null ? null : `${award.projectId}\0${workKey}`;
+      })
+      .filter((key): key is string => key !== null),
+  );
+  for (const award of awards) {
+    if (award.category !== "evaluated-contribution") continue;
+    const workKey = journalWorkKey(award);
+    if (
+      ordinaryIds.has(`${award.projectId}\0${award.sourceId}`) ||
+      ordinaryUrls.has(`${award.projectId}\0${award.sourceUrl}`) ||
+      (workKey !== null && ordinaryWork.has(`${award.projectId}\0${workKey}`))
+    ) {
+      throw new Error(
+        `Evaluated contribution ${award.sourceId} duplicates a score-bearing source`,
+      );
+    }
+  }
+}
+
+/**
  * Applies the retained history batch in full: the supplied awards, the
  * removal corrections they imply, and explicit source provenance.
  * generatePoints applies snapshots before this batch, and a snapshot
@@ -376,6 +472,7 @@ export function applyRetainedHistoryBatch(
   sourceDigest: string,
   recordedAt: string,
 ): PointsJournal {
+  assertNoOrdinaryDuplicate(journal, awards);
   const retired = retiredEvaluatorAwards(journal);
   const supplied = new Set(awards.map((award) => award.key));
   const retiredKeys = new Set(retired.map((award) => award.key));
