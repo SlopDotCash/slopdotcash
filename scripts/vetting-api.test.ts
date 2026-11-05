@@ -46,6 +46,7 @@ const ORIGIN = "https://slop.cash";
 const ADMIN = { githubId: "900000001", githubLogin: "e2e-admin" };
 const APPLICANT = { githubId: "900000002", githubLogin: "e2e-applicant" };
 const NOW = new Date("2026-10-18T12:00:00.000Z");
+let serverNow = NOW;
 
 let sqlite: ReturnType<typeof sqliteD1>["sqlite"];
 let projects: CloudflareProjectPersistence;
@@ -54,6 +55,7 @@ let keys: Awaited<ReturnType<typeof vettingKeyPair>>;
 let configuredKeys: string | undefined;
 /** The live integration-branch head and template digest; null is unreadable. */
 let livePin: VettingPin | null;
+let sandbox: { fetch(request: Request): Promise<Response> } | undefined;
 const HEAD = "a".repeat(40);
 const TEMPLATE = "b".repeat(64);
 
@@ -80,6 +82,8 @@ beforeEach(async () => {
   keys = await vettingKeyPair();
   configuredKeys = keys.publicKey;
   livePin = { commitSha: HEAD, templateSha256: TEMPLATE };
+  sandbox = undefined;
+  serverNow = NOW;
 });
 
 const actorOf = (request: Request) =>
@@ -126,8 +130,9 @@ function vettingApi(request: Request) {
       const actor = actorOf(value);
       return actor && { ...actor, admin: actor === ADMIN };
     },
-    now: () => NOW,
+    now: () => serverNow,
     randomId: () => `0000000000004000a000${String(++ids).padStart(12, "0")}`,
+    sandbox,
   }) as Promise<Response>;
 }
 
@@ -677,6 +682,108 @@ describe("community security vetting", () => {
       ).status,
     ).toBe(503);
   });
+});
+
+test("a signed sandbox request is accepted once and its exact replay is refused", async () => {
+  let forwarded = 0;
+  sandbox = {
+    fetch: async () => {
+      forwarded++;
+      return Response.json({ ok: true });
+    },
+  };
+  const body = JSON.stringify({ artifact: "harmless" });
+  const request = await signed("POST", "vetting/sandbox", body);
+  const replay = request.clone();
+
+  expect((await vettingApi(request)).status).toBe(200);
+  expect((await vettingApi(replay)).status).toBe(409);
+  expect(forwarded).toBe(1);
+});
+
+test("sandbox requests refuse malformed nonces and expired signatures before forwarding", async () => {
+  let forwarded = 0;
+  sandbox = {
+    fetch: async () => {
+      forwarded++;
+      return Response.json({ ok: true });
+    },
+  };
+  const body = JSON.stringify({ artifact: "harmless" });
+  const malformed = new Request(`${ORIGIN}/api/v1/vetting/sandbox`, {
+    method: "POST",
+    body,
+    headers: await signedVettingHeaders(
+      keys.privateKey,
+      keys.raw,
+      "POST",
+      "/api/v1/vetting/sandbox",
+      body,
+      NOW,
+      "too-short",
+    ),
+  });
+  const expired = await signed(
+    "POST",
+    "vetting/sandbox",
+    body,
+    new Date(NOW.getTime() - 5 * 60 * 1000 - 1),
+  );
+
+  expect((await vettingApi(malformed)).status).toBe(401);
+  expect((await vettingApi(expired)).status).toBe(401);
+  expect(forwarded).toBe(0);
+});
+
+test("concurrent duplicate sandbox requests have one atomic winner", async () => {
+  let forwarded = 0;
+  sandbox = {
+    fetch: async () => {
+      forwarded++;
+      return Response.json({ ok: true });
+    },
+  };
+  const body = JSON.stringify({ artifact: "harmless" });
+  const request = await signed("POST", "vetting/sandbox", body);
+
+  const responses = await Promise.all([
+    vettingApi(request.clone()),
+    vettingApi(request.clone()),
+  ]);
+
+  expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
+  expect(forwarded).toBe(1);
+});
+
+test("a consumed nonce stays refused after the signature window", async () => {
+  let forwarded = 0;
+  sandbox = {
+    fetch: async () => {
+      forwarded++;
+      return Response.json({ ok: true });
+    },
+  };
+  const body = JSON.stringify({ artifact: "harmless" });
+  const nonce = "fedcba9876543210fedcba9876543210";
+  const request = async (at: Date) =>
+    new Request(`${ORIGIN}/api/v1/vetting/sandbox`, {
+      method: "POST",
+      body,
+      headers: await signedVettingHeaders(
+        keys.privateKey,
+        keys.raw,
+        "POST",
+        "/api/v1/vetting/sandbox",
+        body,
+        at,
+        nonce,
+      ),
+    });
+
+  expect((await vettingApi(await request(NOW))).status).toBe(200);
+  serverNow = new Date(NOW.getTime() + 6 * 60 * 1000);
+  expect((await vettingApi(await request(serverNow))).status).toBe(409);
+  expect(forwarded).toBe(1);
 });
 
 test("private retained bytes remain inspectable without granting clean clearance", async () => {

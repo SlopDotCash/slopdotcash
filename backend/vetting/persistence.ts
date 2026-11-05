@@ -263,6 +263,21 @@ export class CloudflareVettingPersistence {
     ) => Promise<boolean>,
   ) {}
 
+  /** Atomically wins one signed request nonce. Nonces are retained permanently. */
+  async consumeSignedRequestNonce(
+    signingKeySha256: string,
+    nonce: string,
+    consumedAt: string,
+  ): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        "INSERT OR IGNORE INTO vetting_signed_request_nonces(signing_key_sha256,nonce,consumed_at) VALUES(?,?,?)",
+      )
+      .bind(signingKeySha256, nonce, consumedAt)
+      .run();
+    return result.meta?.changes === 1;
+  }
+
   async listAdmissionExemptions(): Promise<AdmissionExemption[]> {
     const rows = await this.db
       .prepare(`${EXEMPTION_SELECT} ORDER BY g.sequence DESC`)
