@@ -580,6 +580,32 @@ function prospectiveFinancialChange(
       "financial_change_restricted",
       "Only the monthly amount, network and asset change through owner self-service",
     );
+  return pinMonthlyAmountChange(previous, next, now);
+}
+
+/**
+ * Pins the monthly amount a change leaves behind for the months it must
+ * not resize: every month from the reward start through the open UTC
+ * cycle keeps the amount it had, so the new amount starts with the next
+ * cycle. A closed month waits up to three days for its proposal, which
+ * reads the newest revision, so the closed months need the pin too.
+ * Every revision path that changes the monthly amount or the reward
+ * asset applies this; a revision that changes neither returns `next`
+ * untouched, so an explicit `cycleCaps` edit still stands on its own.
+ */
+function pinMonthlyAmountChange(
+  previous: ProjectDefinition,
+  next: ProjectDefinition,
+  now: Date,
+): ProjectDefinition {
+  const before = previous.reward;
+  const after = next.reward;
+  if (before.kind !== "monthly-pool" || after.kind !== "monthly-pool")
+    return next;
+  const assetChanged =
+    !sameValue(previous.rewardAsset, next.rewardAsset) ||
+    before.chain !== after.chain ||
+    before.currency !== after.currency;
   const cycleId = now.toISOString().slice(0, 7);
   if (assetChanged) {
     // Old caps remain in immutable revisions of the old asset. The new
@@ -1972,7 +1998,7 @@ async function replaceProjectManifest(
   if (current === null) fail(404, "not_found", "Project not found");
   if (current.revision !== expectedRevision)
     fail(409, "stale_revision", "The project changed since you loaded it");
-  const { manifest } = canonicalManifest(
+  const { manifest: submitted } = canonicalManifest(
     await verifiedBountyAmount(
       await verifiedRewardAsset(
         body.manifest,
@@ -1984,9 +2010,18 @@ async function replaceProjectManifest(
       deps,
     ),
   );
-  if (manifest.id !== projectId)
+  if (submitted.id !== projectId)
     fail(422, "invalid_manifest", "Project id cannot change");
-  assertReviewBudgetTransition(current.manifest, manifest, deps.now());
+  assertReviewBudgetTransition(current.manifest, submitted, deps.now());
+  // A monthly amount or reward asset change is prospective on every
+  // revision path: without the pin, this revision would resize a closed
+  // month whose proposal has not run yet (it reads the newest revision)
+  // and the open month, which the owner path keeps at their old amount.
+  const manifest = pinMonthlyAmountChange(
+    current.manifest,
+    submitted,
+    deps.now(),
+  );
   const updated = await appendRevision(request, deps, {
     current,
     manifest,
