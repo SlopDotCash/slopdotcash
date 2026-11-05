@@ -58,6 +58,7 @@ import {
   rewardFields,
   safeProposalHttpsUrl,
   slugify,
+  submittedProposalText,
 } from "./lib/project-proposal";
 import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
@@ -1083,7 +1084,7 @@ export default function ProjectProposalPage() {
       valid &&
       projectSession.status === "signed-in"
         ? privateBountyTerms({
-            name: p.name,
+            name: submittedProposalText(p.name),
             repository,
             commit: p.sourceCommit,
             scope: p.goal,
@@ -1097,14 +1098,18 @@ export default function ProjectProposalPage() {
       schemaVersion: "1",
       id: slug,
       slug,
-      name: p.name || "New project",
+      name: submittedProposalText(p.name) || "New project",
       eyebrow:
         p.fundingMode === "bounty"
           ? "Private security bounty"
           : "Open-source project",
-      headline: p.headline || "Describe the project in one sentence.",
+      headline:
+        submittedProposalText(p.headline) ||
+        "Describe the project in one sentence.",
       ...(p.image ? { image: p.image } : {}),
-      description: p.goal || "Describe the concrete open-source goal.",
+      description:
+        submittedProposalText(p.goal) ||
+        "Describe the concrete open-source goal.",
       listingTier: "community",
       status: "paused",
       steward: {
@@ -1142,7 +1147,9 @@ export default function ProjectProposalPage() {
         copyright: {
           model: p.copyrightModel,
           claimedLegalHolder:
-            p.copyrightModel === "sponsor-owned" ? p.legalHolder || null : null,
+            p.copyrightModel === "sponsor-owned"
+              ? submittedProposalText(p.legalHolder) || null
+              : null,
           notice: null,
           legalCapacity: null,
           governanceResolution: null,
@@ -1165,19 +1172,28 @@ export default function ProjectProposalPage() {
               },
         inbound: {
           mode: p.inboundMode,
-          termsUrl: p.inboundMode === "unknown" ? null : p.inboundTermsUrl,
+          termsUrl:
+            p.inboundMode === "unknown"
+              ? null
+              : submittedProposalText(p.inboundTermsUrl),
           commitSha: p.inboundMode === "unknown" ? null : p.inboundCommit,
           fileSha256: p.inboundMode === "unknown" ? null : p.inboundDigest,
-          version: p.inboundMode === "unknown" ? null : p.inboundVersion,
-          acceptance: p.inboundMode === "unknown" ? null : p.inboundAcceptance,
+          version:
+            p.inboundMode === "unknown"
+              ? null
+              : submittedProposalText(p.inboundVersion),
+          acceptance:
+            p.inboundMode === "unknown"
+              ? null
+              : submittedProposalText(p.inboundAcceptance),
         },
         assignment:
           p.copyrightModel === "sponsor-owned" || p.inboundMode === "assignment"
             ? {
-                assignee: p.assignmentAssignee,
-                instrumentUrl: p.assignmentUrl,
+                assignee: submittedProposalText(p.assignmentAssignee),
+                instrumentUrl: submittedProposalText(p.assignmentUrl),
                 fileSha256: p.assignmentDigest,
-                version: p.assignmentVersion,
+                version: submittedProposalText(p.assignmentVersion),
                 signedAt: p.assignmentSignedAt
                   ? new Date(p.assignmentSignedAt).toISOString()
                   : "",
@@ -1190,7 +1206,9 @@ export default function ProjectProposalPage() {
           id: repository,
           displayName: repository,
           githubUrl: `https://github.com/${repository}`,
-          description: p.headline || "Describe the project in one sentence.",
+          description:
+            submittedProposalText(p.headline) ||
+            "Describe the project in one sentence.",
           integrationBranch: p.integrationBranch,
         },
       ],

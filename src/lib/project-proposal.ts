@@ -78,6 +78,16 @@ export function boundedText(
   return length >= minimum && length <= maximum;
 }
 
+/**
+ * The form measures its text fields after trimming (see boundedText), so the
+ * manifest it submits must carry that same trimmed text: the registry schema
+ * measures the stored text as-is, so a padded value the form accepted would
+ * be rejected at creation, or stored and displayed with its padding.
+ */
+export function submittedProposalText(value: string): string {
+  return value.trim();
+}
+
 export function slugify(value: string): string {
   const slug = value
     .toLowerCase()
