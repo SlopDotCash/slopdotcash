@@ -325,6 +325,28 @@ const INTERPRETER_COMMAND = commandToken(
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
 /**
+ * An instruction that hides an action from the human is the same act whatever
+ * verb carries it, and whatever it is the agent is told to hide. These
+ * fragments are shared by the concealment rule so a rewrite of one word cannot
+ * change the verdict.
+ */
+const CONCEAL_VERB = String.raw`(?:tell|inform|show|mention|reveal|disclose|alert|notify|warn|say)`;
+const CONCEAL_GERUND = String.raw`(?:telling|informing|alerting|notifying|mentioning|revealing|disclosing|warning)`;
+// The human the agent answers to. Domain roles (owner, client, maintainer)
+// are deliberately absent: this repository uses "owner" for a project owner in
+// its own privacy prose ("recoverable without notifying the owner"), which the
+// repository self-scan reports as a false positive.
+const CONCEAL_PERSON = String.raw`(?:user|operator|human|reviewer)`;
+/** What is concealed: a step, a change, or the instruction itself. */
+const CONCEAL_SUBJECT = String.raw`(?:steps?|changes?|edits?|modifications?|instructions?|prompts?|actions?|commands?|requests?|messages?|diffs?|scans?|reviews?|plans?|results?|work|intents?|decisions?)`;
+/**
+ * A credential object. Guidance that tells an agent to keep a secret out of a
+ * message is legitimate, and it names a credential, so the imperative forms
+ * exclude this object rather than excluding the verb.
+ */
+const CONCEAL_SECRET = String.raw`(?:the\s+)?(?:raw\s+|private\s+|secret\s+|api\s+|access\s+|auth\s+|signing\s+|encryption\s+|recovery\s+){0,2}(?:secrets?|keys?|tokens?|passwords?|passphrase|credentials?|api[ _-]?keys?|private\s+keys?|seed\s+phrases?|\.env)`;
+
+/**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
  */
@@ -442,8 +464,18 @@ const RULES: Rule[] = [
   {
     threat: "prompt-injection",
     severity: "medium",
-    pattern:
-      /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)|do\s+not\s+(?:tell|inform|show)\s+the\s+(?:user|operator|human)/iu,
+    pattern: new RegExp(
+      String.raw`\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|prompts|rules)` +
+        String.raw`|\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|god|jailbreak)` +
+        // "do not <verb> the <human>", unless what follows is a credential
+        String.raw`|\b(?:do\s+not|never|don'?t)\s+${CONCEAL_VERB}\s+the\s+${CONCEAL_PERSON}\b(?!\s+${CONCEAL_SECRET}\b)` +
+        // "do not <verb> this/the action to the <human>"
+        String.raw`|\b(?:do\s+not|never|don'?t)\s+${CONCEAL_VERB}\s+(?:this|that|it|these|those|anything|nothing)\s+(?:to|from)\s+the\s+${CONCEAL_PERSON}\b` +
+        String.raw`|\b(?:do\s+not|never|don'?t)\s+${CONCEAL_VERB}\s+(?:(?:this|that|these|those|the)\s+)?${CONCEAL_SUBJECT}\s+(?:to|from)\s+the\s+${CONCEAL_PERSON}\b` +
+        // "run it without telling the <human>"
+        String.raw`|\bwithout\s+${CONCEAL_GERUND}\s+(?:the\s+)?${CONCEAL_PERSON}\b`,
+      "iu",
+    ),
     summary: "Text matches wording used to override agent instructions",
   },
   {
