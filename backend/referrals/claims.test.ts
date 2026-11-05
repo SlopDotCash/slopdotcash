@@ -166,6 +166,73 @@ test("cache failure and expiry preserve last verified totals; never-activated is
   dryRun.sqlite.close();
 });
 
+test("pendingUntil is the next maturing root, not the latest one, and survives a voided latest root", async () => {
+  const h = harness();
+  const day = 24 * 3600;
+  const time = h.snapshot.block.timestamp;
+  // Two roots are posted and still maturing: contract epoch 1 (the filed
+  // 2027-01 root, cumulative 150) matures first, epoch 2 three weeks of
+  // accrual later. The screen must name the earlier date.
+  const tree150 = buildTree([{ address: wallet, cumulativeBase: 150n * unit }]);
+  const tree200 = buildTree([{ address: wallet, cumulativeBase: 200n * unit }]);
+  if (!tree150 || !tree200) throw new Error("Missing fixture tree");
+  const body200 = JSON.stringify({
+    referrers: [
+      {
+        githubId: "900000100",
+        githubLogin: "referrer",
+        wallet,
+        cumulativeBase: (200n * unit).toString(),
+        leaf: { hash: tree200.leaves[0].hash, proof: tree200.leaves[0].proof },
+      },
+    ],
+  });
+  h.sqlite
+    .query(
+      "INSERT INTO referral_accrual_files(period,epoch,run_id,mode,body,body_sha256,merkle_root,tree_total_base,leaf_count,created_at) VALUES('2027-02',3,'rrun_fixture0002','live',?,?,?,?,1,?)",
+    )
+    .run(
+      body200,
+      sha(body200),
+      tree200.root,
+      (200n * unit).toString(),
+      now.toISOString(),
+    );
+  h.snapshot.epochs.push(
+    {
+      epoch: 1,
+      period: "2027-01",
+      root: tree150.root,
+      totalBase: (150n * unit).toString(),
+      claimableAt: time + 3 * day,
+      voided: false,
+    },
+    {
+      epoch: 2,
+      period: "2027-02",
+      root: tree200.root,
+      totalBase: (200n * unit).toString(),
+      claimableAt: time + 10 * day,
+      voided: false,
+    },
+  );
+  h.save(h.snapshot);
+  expect((await h.read()).body).toMatchObject({
+    claimableBase: (80n * unit).toString(),
+    pendingBase: (100n * unit).toString(),
+    pendingUntil: new Date((time + 3 * day) * 1000).toISOString(),
+  });
+  // Voiding the latest root must not hide the earlier root's date: its
+  // rewards are still pending and still mature on schedule.
+  h.snapshot.epochs[2].voided = true;
+  h.save(h.snapshot);
+  expect((await h.read()).body).toMatchObject({
+    latestVoided: true,
+    pendingUntil: new Date((time + 3 * day) * 1000).toISOString(),
+  });
+  h.sqlite.close();
+});
+
 test("a paused pending window never matures, and a void retains the preceding root", async () => {
   const h = harness();
   const time = h.snapshot.block.timestamp;
