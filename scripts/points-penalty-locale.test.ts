@@ -62,32 +62,34 @@ function debits(journal: PointsJournal, work: PointsJournal) {
 }
 
 test("same-time penalty split in the journal is host-locale independent", () => {
-  setSystemTime(new Date(GENERATED_AT));
-  const { snapshot, work } = build();
-  const english = debits(
-    reconcilePointPenalties(work, "a".repeat(64), GENERATED_AT, snapshot),
-    work,
-  );
-  expect(english).toEqual({ "PR_T:penalty": -10, "PR_Z:penalty": 0 });
-
-  const originalCompare = String.prototype.localeCompare;
-  const compare = spyOn(String.prototype, "localeCompare").mockImplementation(
-    function (
-      this: string,
-      other: string,
-      locales?: Intl.LocalesArgument,
-      options?: Intl.CollatorOptions,
-    ) {
-      return originalCompare.call(this, other, locales ?? "et", options);
-    },
-  );
+  let compare: { mockRestore: () => void } | undefined;
   try {
+    setSystemTime(new Date(GENERATED_AT));
+    const { snapshot, work } = build();
+    const english = debits(
+      reconcilePointPenalties(work, "a".repeat(64), GENERATED_AT, snapshot),
+      work,
+    );
+    expect(english).toEqual({ "PR_T:penalty": -10, "PR_Z:penalty": 0 });
+
+    const originalCompare = String.prototype.localeCompare;
+    compare = spyOn(String.prototype, "localeCompare").mockImplementation(
+      function (
+        this: string,
+        other: string,
+        locales?: Intl.LocalesArgument,
+        options?: Intl.CollatorOptions,
+      ) {
+        return originalCompare.call(this, other, locales ?? "et", options);
+      },
+    );
     const estonian = debits(
       reconcilePointPenalties(work, "a".repeat(64), GENERATED_AT, snapshot),
       work,
     );
     expect(estonian).toEqual(english);
   } finally {
-    compare.mockRestore();
+    compare?.mockRestore();
+    setSystemTime();
   }
 });
