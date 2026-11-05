@@ -582,6 +582,95 @@ test.each(["before restart", "after the initial restart read"])(
   },
 );
 
+test("a decided dispute stays linked from the record after its correction revision", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The month is wrong.",
+    })
+  ).json();
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "Independent review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  expect(
+    (
+      await h.call(
+        `/${created.id}`,
+        { action: "uphold", reason: "Append a date correction." },
+        otherToken,
+      )
+    ).status,
+  ).toBe(200);
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const list = await (await h.call()).json();
+  expect(list.awards).toHaveLength(1);
+  expect(list.awards[0].revisionId).toBe(successor.id);
+  expect(list.awards[0].disputeId).toBe(created.id);
+});
+
+test("an open dispute stays linked from the record after a successor revision", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The month is wrong.",
+    })
+  ).json();
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const list = await (await h.call()).json();
+  expect(list.awards).toHaveLength(1);
+  expect(list.awards[0].revisionId).toBe(successor.id);
+  expect(list.awards[0].disputeId).toBe(created.id);
+});
+
+test("the list links the current revision's dispute when a record has two", async () => {
+  const h = await fixture();
+  const first = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The month is wrong.",
+    })
+  ).json();
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const second = await (
+    await h.call("", {
+      revisionId: successor.id,
+      reason: "The correction is still wrong.",
+    })
+  ).json();
+  expect(second.id).not.toBe(first.id);
+  const list = await (await h.call()).json();
+  expect(list.awards).toHaveLength(1);
+  expect(list.awards[0].revisionId).toBe(successor.id);
+  expect(list.awards[0].disputeId).toBe(second.id);
+});
+
 test("signed-out and cross-origin requests cannot create a dispute", async () => {
   const h = await fixture();
   expect(
