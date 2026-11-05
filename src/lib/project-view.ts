@@ -496,7 +496,23 @@ export function projectCycleHasOpened(
   const project = findProject(projectId);
   if (!project) return false;
   const window = projectCycleWindow(snapshot, project, requestedCycleId);
-  return window.to >= window.from;
+  if (window.to < window.from) return false;
+  if (requestedCycleId !== undefined) {
+    // A closed month can be recomputed live only while the snapshot window
+    // still covers its whole effective start. Once the rolling window slides
+    // past that start, a recompute would silently drop the month's early
+    // work and present the truncated remainder as the closed cycle, so the
+    // month has no live view: a recorded cycle renders, or none does. The
+    // live month is partial by definition and keeps its view.
+    const closed = window.calendar.to <= Date.parse(snapshot.window.to);
+    const effectiveFrom = Math.max(
+      window.calendar.from,
+      Date.parse(project.reward.rewardStartAt),
+    );
+    if (closed && Date.parse(snapshot.window.from) > effectiveFrom)
+      return false;
+  }
+  return true;
 }
 
 export function createProjectView(
