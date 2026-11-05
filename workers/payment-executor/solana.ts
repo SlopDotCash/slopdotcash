@@ -308,7 +308,15 @@ async function send(
     const status = await solanaTransactionStatus(ctx, attempt);
     if (status && !status.failed)
       return { transactionId: attempt.transactionId };
-    if (status?.failed && (role !== "keeper" || !status.finalized))
+    // A keeper payment and an attester binding may be replaced after a
+    // finalized failure: finality proves the transaction took no effect, and
+    // the refresh below re-reads the finalized obligation/binding before any
+    // new signing. A failure short of finality still blocks replacement.
+    const finalizedFailure = status?.failed === true && status.finalized;
+    if (
+      status?.failed &&
+      (!finalizedFailure || (role !== "keeper" && role !== "attester"))
+    )
       throw new Error("Existing transaction failed; reconcile before retry");
     const height = await solanaRpc(ctx.config, "getBlockHeight", [
       { commitment: "finalized" },
@@ -317,10 +325,11 @@ async function send(
       throw new Error("Invalid finalized block height");
     if (
       height > attempt.lastValidBlockHeight ||
-      (role === "keeper" && status?.failed && status.finalized)
+      ((role === "keeper" || role === "attester") && finalizedFailure)
     ) {
-      // Re-read finalized obligation/binding only after finalized expiry. No resubmission
-      // can race an old valid blockhash. Preserve prior signed attempt in the journal.
+      // Re-read finalized obligation/binding only after finalized expiry or a
+      // finalized failure. No resubmission can race an old valid blockhash.
+      // Preserve prior signed attempt in the journal.
       const current = await refresh();
       if (
         (role === "relayer" || role === "keeper") &&
