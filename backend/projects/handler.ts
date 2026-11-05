@@ -2213,6 +2213,7 @@ function adminEnforcement(
     moderation,
     decisionRequired: awaitsMaliciousDecision(restriction),
     bannedMaintainers: effective.bannedMaintainers,
+    sourceProjectId: effective.sourceProjectId,
     records: restriction.records,
   };
 }

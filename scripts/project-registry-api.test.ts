@@ -2806,6 +2806,59 @@ describe("project enforcement (ADM-06)", () => {
     expect(other.enforcement.revisionPending).toBe(false);
   });
 
+  test("an inherited restriction offers only the actions on the project itself", async () => {
+    await listProject();
+    // Listed before the ban: the renamed repository, same GitHub id.
+    await listProject(
+      applicationManifest("renamed-registry", "example/renamed-registry"),
+    );
+    expect((await enforce("admin", "quarantine")).status).toBe(200);
+
+    const admin = await (await call("GET", "admin/projects", "admin")).json();
+    const byId = new Map<string, AdminProject>(
+      admin.projects.map((entry: AdminProject) => [entry.id, entry]),
+    );
+    const renamed = byId.get("renamed-registry");
+    const source = byId.get("open-registry");
+    if (!renamed || !source) throw new Error("admin list is missing a project");
+    // The restriction in force is recorded on the source project, so the
+    // panel directs appeal decisions there; the row keeps its own sequence.
+    expect(renamed.enforcement.sourceProjectId).toBe("open-registry");
+    expect(source.enforcement.sourceProjectId).toBe("open-registry");
+    expect(renamed.enforcement.state).toBe("quarantined");
+    // The offered action acts on the project itself: banning the renamed
+    // project previews fine.
+    const offered = await call(
+      "POST",
+      "admin/projects/renamed-registry/enforcement-preview",
+      "admin",
+      {
+        action: "ban",
+        reason: "Moderator note for ban",
+        evidenceReference: EVIDENCE,
+        expectedRevision: renamed.revision,
+        expectedSequence: renamed.enforcement.nextSequence,
+      },
+    );
+    expect(offered.status).toBe(200);
+    // The appeal action the row no longer offers still fails at the API:
+    // the restriction is not recorded on this project.
+    const withheld = await call(
+      "POST",
+      "admin/projects/renamed-registry/enforcement-preview",
+      "admin",
+      {
+        action: "request_reinstatement",
+        reason: "Moderator note for request_reinstatement",
+        evidenceReference: EVIDENCE,
+        expectedRevision: renamed.revision,
+        expectedSequence: renamed.enforcement.nextSequence,
+      },
+    );
+    expect(withheld.status).toBe(409);
+    expect((await withheld.json()).error).toBe("not_restricted");
+  });
+
   test("another project listed for a banned repository can still be retired", async () => {
     await listProject();
     // Listed before the ban: the renamed repository, same GitHub id.

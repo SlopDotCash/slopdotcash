@@ -173,6 +173,13 @@ export interface ProjectEnforcementState {
   decisionRequired: boolean;
   /** Maintainer accounts banned with the restriction in force. */
   bannedMaintainers: GithubActor[];
+  /**
+   * The project whose records hold the restriction in force: this project,
+   * or another project that claims the same repository. Appeal and
+   * reinstatement decisions belong to that project, so the panel offers
+   * this row only the actions on the project itself.
+   */
+  sourceProjectId: string;
   records: ProjectEnforcement[];
 }
 
