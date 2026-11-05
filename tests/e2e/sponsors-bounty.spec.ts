@@ -141,8 +141,52 @@ test("a closed bounty-only program does not read as an open offer", async ({
   await expect(
     pool.getByText("$10k / Critical · bounty closed", { exact: true }),
   ).toBeVisible();
+  await expect(pool.getByText("Bounty closed", { exact: true })).toBeVisible();
+  await expect(pool.getByText("Funding verified")).toHaveCount(0);
+  await expect(pool.locator(".route-badge--success")).toHaveCount(0);
+  await expect(pool.getByText("$0 monthly · not funded")).toHaveCount(0);
+});
+
+test("an open bounty with verified funding still reads as verified", async ({
+  page,
+}) => {
+  const pool = await serveSponsors(
+    page,
+    bountyOnlyProject({
+      funding: {
+        state: "verified-available",
+        evidence: "vault deposit",
+        verifiedAt: "2026-10-01T00:00:00.000Z",
+      },
+    }),
+  );
   await expect(
     pool.getByText("Funding verified", { exact: true }),
   ).toBeVisible();
+  await expect(pool.locator(".route-badge--success")).toHaveCount(1);
+});
+
+test("a separate-mode bounty with a $0 pool names the bounty offer", async ({
+  page,
+}) => {
+  const pool = await serveSponsors(
+    page,
+    bountyOnlyProject({ rewardMode: "separate" }),
+  );
+  await expect(
+    pool.getByText("$10k / Critical", { exact: true }),
+  ).toBeVisible();
+  await expect(pool.getByText("Pledged", { exact: true })).toBeVisible();
   await expect(pool.getByText("$0 monthly · not funded")).toHaveCount(0);
+  await expect(pool.getByText("Vault: Not set up")).toHaveCount(0);
+  await expect(pool.getByText("Payments: Disabled")).toHaveCount(0);
+});
+
+test("a bounty-only card without a vault deployment links to the security program", async ({
+  page,
+}) => {
+  const pool = await serveSponsors(page, bountyOnlyProject());
+  await expect(
+    pool.getByRole("link", { name: "Eliza", exact: true }),
+  ).toHaveAttribute("href", "/projects/eliza/security");
 });

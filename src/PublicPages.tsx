@@ -291,6 +291,16 @@ function sponsorBountyLabel(terms: SecurityBountyTerms): string {
     : `${amount} · bounty ${terms.status}`;
 }
 
+/**
+ * Only an open program with verified funds reads as verified funding: a
+ * closed or paused program names its closure instead, so it never wears
+ * the green "success" badge for money nobody can claim.
+ */
+function sponsorBountyStatusLabel(terms: SecurityBountyTerms): string {
+  if (terms.status !== "open") return `Bounty ${terms.status}`;
+  return bountyFundingLabel(terms);
+}
+
 function WhoBuildsOnSlop({
   state,
   retry,
@@ -519,17 +529,28 @@ export function SponsorsPage({
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
           {PROJECTS.map((project) => {
+            // A separate-mode bounty with no monthly pool is the bounty
+            // offer, not a pool: name it instead of "$0 monthly · not
+            // funded". A funded pool keeps its pool display.
             const bounty =
-              hasBountyOverview(project) && project.securityBounty
+              project.securityBounty &&
+              (hasBountyOverview(project) ||
+                (project.reward.kind !== "external-prize-share" &&
+                  BigInt(project.reward.monthlyCapMinor) === 0n))
                 ? project.securityBounty
                 : undefined;
             const chain = bounty ? bounty.amount.network : project.reward.chain;
+            // A bounty-only page has no #funding section until the bounty
+            // has a vault deployment, so link to the security program page
+            // that always names the offer.
+            const cardHref =
+              hasBountyOverview(project) &&
+              !(bounty?.settlement?.deployments.length ?? 0)
+                ? `/projects/${project.slug}/security`
+                : `/projects/${project.slug}/funding`;
             return (
               <li className="route-sponsor-card" key={project.id}>
-                <Link
-                  className="route-sponsor-link"
-                  href={`/projects/${project.slug}/funding`}
-                >
+                <Link className="route-sponsor-link" href={cardHref}>
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
@@ -548,12 +569,13 @@ export function SponsorsPage({
                   <div className="route-sponsor-status">
                     <StatusBadge
                       tone={
-                        bounty.funding.state === "pledged"
-                          ? "neutral"
-                          : "success"
+                        bounty.status === "open" &&
+                        bounty.funding.state === "verified-available"
+                          ? "success"
+                          : "neutral"
                       }
                     >
-                      {bountyFundingLabel(bounty)}
+                      {sponsorBountyStatusLabel(bounty)}
                     </StatusBadge>
                   </div>
                 ) : (
