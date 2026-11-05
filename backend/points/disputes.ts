@@ -126,6 +126,11 @@ export async function handlePointsDisputes(
         "Only the recipient can dispute this Points record.",
       );
     const id = `points-dispute:${await sha256Hex(`${body.revisionId}:${actor.githubId}`)}`;
+    // The guard is chain-wide, not per appellant: a correction revision can
+    // re-credit the same logical record to another recipient, and a second
+    // open dispute on that record would recreate the moderator race this
+    // block exists to prevent. A resolved dispute still leaves the chain
+    // disputable, so only unresolved disputes block.
     await deps.db.batch([
       deps.db
         .prepare(`INSERT OR IGNORE INTO points_disputes
@@ -133,7 +138,7 @@ export async function handlePointsDisputes(
         SELECT ?,r.id,r.id,?,?,?,? FROM points_revisions r
         WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)
         AND NOT EXISTS(SELECT 1 FROM points_disputes d JOIN points_revisions dr ON dr.id=d.revision_id
-        WHERE dr.source_key=r.source_key AND d.appellant_github_id=? AND d.resolved_at IS NULL)`)
+        WHERE dr.source_key=r.source_key AND d.resolved_at IS NULL)`)
         .bind(
           id,
           actor.githubId,
@@ -143,7 +148,6 @@ export async function handlePointsDisputes(
             Date.parse(now) + APPEAL_RESOLUTION_DAYS * 86_400_000,
           ).toISOString(),
           body.revisionId,
-          actor.githubId,
         ),
       notifyPointsDispute(deps.db, id, "opened", now),
     ]);
@@ -157,9 +161,9 @@ export async function handlePointsDisputes(
           `SELECT d.appeal_key FROM points_disputes d
           JOIN points_revisions dr ON dr.id=d.revision_id
           JOIN points_revisions r ON r.source_key=dr.source_key
-          WHERE r.id=? AND d.appellant_github_id=? AND d.resolved_at IS NULL LIMIT 1`,
+          WHERE r.id=? AND d.resolved_at IS NULL LIMIT 1`,
         )
-        .bind(body.revisionId, actor.githubId)
+        .bind(body.revisionId)
         .first<{ appeal_key: string }>();
       if (open)
         fail(
