@@ -7084,15 +7084,20 @@ export function assertLeaderboardSnapshot(
     // An omitted credit is the allocation half of a published exclusion:
     // the same snapshot excludes the review as outside the window, no
     // ledger event carries the allocation, and the submission sits before
-    // the scoring window it was omitted from.
-    const outsideWindowExclusions = new Set(
+    // the scoring window it was omitted from. The credit must also agree
+    // with the exclusion's reviewer and sit on or after the value policy,
+    // exactly as a ledger value event does.
+    const outsideWindowExclusions = new Map(
       validatedReviewExclusions
         .filter(
           (exclusion) => exclusion.reason === "review-credit-outside-window",
         )
         .map(
           (exclusion) =>
-            `${exclusion.pullRequestId}\0${exclusion.reviewId}\0${exclusion.repository}\0${exclusion.url}`,
+            [
+              `${exclusion.pullRequestId}\0${exclusion.reviewId}\0${exclusion.repository}\0${exclusion.url}`,
+              exclusion,
+            ] as const,
         ),
     );
     const ledgerEventIds = new Set(validatedLedger.map((event) => event.id));
@@ -7102,18 +7107,51 @@ export function assertLeaderboardSnapshot(
           "snapshot.omittedReviewCredits cannot duplicate a score event",
         );
       }
-      if (
-        !outsideWindowExclusions.has(
-          `${credit.pullRequestId}\0${credit.reviewId}\0${credit.repository}\0${credit.url}`,
-        )
-      ) {
+      const exclusion = outsideWindowExclusions.get(
+        `${credit.pullRequestId}\0${credit.reviewId}\0${credit.repository}\0${credit.url}`,
+      );
+      if (!exclusion) {
         throw new Error(
           "snapshot.omittedReviewCredits must match a published outside-window exclusion",
+        );
+      }
+      if (
+        exclusion.reviewer !== undefined &&
+        credit.reviewer.id !== exclusion.reviewer.id
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must match its exclusion's reviewer",
+        );
+      }
+      if (
+        typeof snapshot.valuePolicyEffectiveAt === "string" &&
+        parseIsoTime(credit.submittedAt) <
+          parseIsoTime(snapshot.valuePolicyEffectiveAt)
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must not predate the value policy",
         );
       }
       if (parseIsoTime(credit.submittedAt) >= parseIsoTime(windowFrom)) {
         throw new Error(
           "snapshot.omittedReviewCredits must predate the scoring window",
+        );
+      }
+      // The exact allocation-window lower bound needs the pull request's
+      // merge time, which no published snapshot field carries: a
+      // value-assessed pull request has no merged-pull-request ledger
+      // event, and the assessment coverage row carries no merge time. The
+      // earliest a credited review can sit is one scoring-window length
+      // before the scoring window itself — the pull request merged inside
+      // the census window, so no earlier than window.from, and its
+      // allocation window reaches exactly one window length back from
+      // that merge. Reject only submissions before that outer bound.
+      if (
+        parseIsoTime(credit.submittedAt) <
+        parseIsoTime(windowFrom) - SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits predates the earliest possible allocation window",
         );
       }
     }
