@@ -195,6 +195,40 @@ test("unsigned replacements preserve the authorized wallet and dispatch, then va
   }
 });
 
+test("a GitHub login rename reuses the existing wallet claim", async () => {
+  const f = await fixture();
+  try {
+    const claimId = await f.register(first);
+    expect(
+      (
+        await f.call(
+          "wallets/authorize",
+          await f.consent(claimId, first),
+        )
+      ).status,
+    ).toBe(200);
+    f.sqlite
+      .query("UPDATE points_members SET login='alice-renamed' WHERE github_id='123'")
+      .run();
+
+    expect(await f.register(first)).toBe(claimId);
+    expect(
+      f.sqlite.query("SELECT count(*) AS n FROM wallet_claims").get(),
+    ).toEqual({ n: 1 });
+    expect(await f.current()).toEqual([
+      {
+        chain: "base",
+        claimId,
+        address: first.address.toLowerCase(),
+        authorized: true,
+        firstAuthorizedAt: now.toISOString(),
+      },
+    ]);
+  } finally {
+    f.sqlite.close();
+  }
+});
+
 test("allocation registration uses the first signed wallet confirmation, including after replacement", async () => {
   const allocation = contributorAllocation({
     distribution: {
