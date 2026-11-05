@@ -4998,6 +4998,42 @@ function createSnapshotWithReviewCutoff(
         : [],
     ),
   );
+  // The digests a joint record declares are the current heads of their
+  // histories, but the recorded credit they replaced can sit on an
+  // earlier digest when an intervening reassessment was assessed yet
+  // never published by a snapshot. Those earlier digests join the
+  // relation only as the consumed history graph proves them: a member's
+  // verified solo history is a chain whose every record names the digest
+  // it supersedes, and ancestor joint records in the consumed graph
+  // declare legacy predecessors of their own. A digest is carried only
+  // when that chain links it under a declared predecessor — never from a
+  // source's absence, window position or context presence.
+  const soloChainDigests = (memberId: string): string[] | null => {
+    const solo = input.valueDecisions?.get(memberId);
+    if (!solo || !Array.isArray(solo.history) || solo.history.length === 0)
+      return null;
+    const digests: string[] = [];
+    let previous: string | null = null;
+    for (const row of solo.history) {
+      let record: { pullRequestNodeId?: unknown; supersedes?: unknown };
+      try {
+        record = JSON.parse(row.record_json) as typeof record;
+      } catch {
+        return null;
+      }
+      if (
+        !record ||
+        typeof record !== "object" ||
+        !/^[a-f0-9]{64}$/u.test(row.record_digest) ||
+        record.pullRequestNodeId !== memberId ||
+        record.supersedes !== previous
+      )
+        return null;
+      digests.push(row.record_digest);
+      previous = row.record_digest;
+    }
+    return solo.latestDigest === previous ? digests : null;
+  };
   const supersessionRows = new Map<string, string>();
   for (const decision of jointDecisions.values()) {
     if (
@@ -5006,18 +5042,71 @@ function createSnapshotWithReviewCutoff(
       !publishedDecisionDigests.has(decision.latestDigest)
     )
       continue;
-    for (const predecessorDigest of [
-      ...(decision.record.legacyPredecessors ?? []),
-      ...(decision.record.supersedes ?? []),
-    ]) {
-      if (predecessorDigest === decision.latestDigest) continue;
+    const successor = decision.latestDigest;
+    const addRow = (predecessorDigest: string) => {
+      if (predecessorDigest === successor) return;
       const existing = supersessionRows.get(predecessorDigest);
-      if (existing !== undefined && existing !== decision.latestDigest)
+      if (existing !== undefined && existing !== successor)
         throw new Error(
           "Joint assessments disagree about a predecessor's successor",
         );
-      supersessionRows.set(predecessorDigest, decision.latestDigest);
+      supersessionRows.set(predecessorDigest, successor);
+    };
+    for (const predecessorDigest of [
+      ...(decision.record.legacyPredecessors ?? []),
+      ...(decision.record.supersedes ?? []),
+    ])
+      addRow(predecessorDigest);
+    // Walk the consumed joint graph from this record: every ancestor it
+    // supersedes is replaced by it as well, and the solo predecessors
+    // those ancestors declared are proven against the members' chains.
+    const declaredSolo = new Set<string>(
+      decision.record.legacyPredecessors ?? [],
+    );
+    const ancestors = new Map<
+      string,
+      { legacyPredecessors?: unknown; supersedes?: unknown }
+    >();
+    for (const row of decision.history ?? []) {
+      try {
+        ancestors.set(
+          row.record_digest,
+          JSON.parse(row.record_json) as {
+            legacyPredecessors?: unknown;
+            supersedes?: unknown;
+          },
+        );
+      } catch {
+        // A row that does not parse proves nothing.
+      }
     }
+    const pending = [...(decision.record.supersedes ?? [])];
+    const visited = new Set<string>();
+    while (pending.length) {
+      const digest = pending.pop() as string;
+      if (visited.has(digest)) continue;
+      visited.add(digest);
+      const ancestor = ancestors.get(digest);
+      if (!ancestor) continue;
+      addRow(digest);
+      if (Array.isArray(ancestor.legacyPredecessors))
+        for (const declared of ancestor.legacyPredecessors)
+          if (typeof declared === "string") declaredSolo.add(declared);
+      if (Array.isArray(ancestor.supersedes))
+        for (const parent of ancestor.supersedes)
+          if (typeof parent === "string") pending.push(parent);
+    }
+    if (declaredSolo.size)
+      for (const member of decision.record.sources) {
+        const chain = soloChainDigests(member.pullRequestNodeId);
+        if (!chain) continue;
+        let cutoff = -1;
+        for (const declared of declaredSolo) {
+          const index = chain.indexOf(declared);
+          if (index > cutoff) cutoff = index;
+        }
+        for (let index = 0; index <= cutoff; index++) addRow(chain[index]);
+      }
   }
   const valueAssessmentSupersessions = [...supersessionRows.entries()]
     .map(([predecessorDigest, successorDigest]) => ({
@@ -7685,7 +7774,9 @@ export function assertLeaderboardSnapshot(
     if (!Array.isArray(snapshot.valueAssessmentSupersessions))
       throw new Error("snapshot.valueAssessmentSupersessions must be an array");
     const predecessors = new Set<string>();
-    let previousRow: { predecessorDigest: string; successorDigest: string } | undefined;
+    let previousRow:
+      | { predecessorDigest: string; successorDigest: string }
+      | undefined;
     for (const value of snapshot.valueAssessmentSupersessions) {
       const row = assertObject(
         value,
