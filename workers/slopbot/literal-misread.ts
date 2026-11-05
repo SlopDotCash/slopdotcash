@@ -38,15 +38,29 @@ function sentences(text: string): string[] {
  * value") only when the summary names exactly one candidate value, so the
  * denial cannot belong to a different value.
  */
+// A backticked hex-like literal that is not 64 characters (e.g. a truncated
+// 40-hex constant). When one shares a sentence with a valid 64-hex digest,
+// a denial in that sentence may be aimed at the short value, not the digest
+// (review on PR #2260) — so the sentence cannot prove the digest was misread.
+const BACKTICKED_HEX = /`[0-9a-fA-F]+`/g;
+
+function hasOtherHexLiteral(text: string): boolean {
+  return (text.match(BACKTICKED_HEX) ?? []).some(
+    (lit) => lit.length - 2 !== 64,
+  );
+}
+
 export function refutedSha256Token(summary: string): string | null {
   const parts = sentences(summary);
   for (const part of parts) {
+    if (hasOtherHexLiteral(part)) continue;
     const token = part.match(SHA256_HEX)?.[0];
     if (token && SHA256_FORMAT_DENIALS.some((p) => p.test(part))) return token;
   }
   const tokens = [...new Set(summary.match(SHA256_HEX) ?? [])];
   if (
     tokens.length === 1 &&
+    !hasOtherHexLiteral(summary) &&
     SHA256_FORMAT_DENIALS.some((p) => parts.some((part) => p.test(part)))
   )
     return tokens[0];

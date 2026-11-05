@@ -71,3 +71,15 @@ test("does not downgrade a verdict that already has no finding", () => {
   };
   expect(downgradeLiteralMisread(verdict)).toBeNull();
 });
+
+test("keeps a finding that contrasts a valid digest with a short constant in one sentence (PR #2260 review)", () => {
+  const summary = `Unlike \`${DIGEST}\`, the constant \`8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce\` is not a valid sha256 hex value.`;
+  expect(refutedSha256Token(summary)).toBeNull();
+  expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+});
+
+test("keeps a finding when the short constant's denial sits in the next sentence", () => {
+  const summary = `The change pins the digest \`${DIGEST}\` for the deployed ELF. The constant \`8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce\` is not a sha256 hex value.`;
+  expect(refutedSha256Token(summary)).toBeNull();
+  expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+});
