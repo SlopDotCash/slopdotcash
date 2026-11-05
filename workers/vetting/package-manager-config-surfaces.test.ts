@@ -14,7 +14,8 @@ function inspected(path: string, text: string) {
  * Package managers read these files on every install or run, and each can
  * make them execute code: `node-options` and `script-shell` in `.npmrc`,
  * `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the pnpm install
- * hooks in `.pnpmfile.cjs` and `preload` in `bunfig.toml`.
+ * hooks in `.pnpmfile.cjs`, `preload` in `bunfig.toml`, and `build.rustc-wrapper`
+ * / runner hooks in `.cargo/config.toml` and `.cargo/config`.
  */
 const CONFIGS: [string, string][] = [
   [".npmrc", `node-options=--require ./x.js\nscript-shell=${PAYLOAD}\n`],
@@ -22,6 +23,8 @@ const CONFIGS: [string, string][] = [
   [".yarnrc.yml", `yarnPath: ./x.cjs\n# ${PAYLOAD}\n`],
   [".pnpmfile.cjs", `// ${PAYLOAD}\nmodule.exports = { hooks: {} };\n`],
   ["bunfig.toml", `preload = ["./x.ts"]\n# ${PAYLOAD}\n`],
+  [".cargo/config.toml", `[build]\nrustc-wrapper = "./x.sh"\n# ${PAYLOAD}\n`],
+  [".cargo/config", `[target.'cfg(all())']\nrunner = "./x.sh"\n# ${PAYLOAD}\n`],
 ];
 
 test("package-manager configuration is scanned as an install script", () => {
@@ -50,4 +53,6 @@ test("similar names that package managers do not read keep their surfaces", () =
   expect(surfacesOf("docs/npmrc.md")).toEqual([]);
   expect(surfacesOf("example.npmrc")).toEqual([]);
   expect(surfacesOf("config/bunfig.example.toml")).toEqual(["source"]);
+  expect(surfacesOf(".cargo/config.toml.example")).toEqual([]);
+  expect(surfacesOf("docs/.cargo/config.md")).toEqual([]);
 });
