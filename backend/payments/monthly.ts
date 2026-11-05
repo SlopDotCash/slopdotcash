@@ -1223,10 +1223,10 @@ export function monthlyOwnerService(deps: {
       expected: MonthlyCommitmentInput,
     ): Promise<MonthlyCommitmentPlan> {
       const project = await authorized(projectId, actor);
-      if (
-        project.manifest.status !== "active" ||
-        (await deps.restricted(project))
-      )
+      // Reserving an already funded obligation is execution of that
+      // obligation, not a new one: a paused or retired project keeps its
+      // funded obligations, and only an enforcement restriction stops it.
+      if (await deps.restricted(project))
         throw new MonthlyPaymentError(
           409,
           "project_restricted",

@@ -98,7 +98,11 @@ export async function prepareMonthlyAttestation(
       "This month is outside its commitment window.",
     );
   const project = await deps.getProject(request.projectId);
-  if (project?.manifest.status !== "active" || (await deps.restricted(project)))
+  // Only an enforcement restriction stops a frozen, funded month: a later
+  // revision that pauses or retires the project keeps its funded awards
+  // (backend/payments/README.md, Authorization and execution), while a
+  // restriction is the PRD section 11 "no new commitments" state.
+  if (!project || (await deps.restricted(project)))
     reject("project_restricted", "The project cannot create new commitments.");
   const deployment = project.manifest.escrow?.deployments.find(
     (d) => d.network === request.network,
