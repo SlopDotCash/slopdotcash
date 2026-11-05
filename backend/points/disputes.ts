@@ -131,7 +131,9 @@ export async function handlePointsDisputes(
         .prepare(`INSERT OR IGNORE INTO points_disputes
         (appeal_key,revision_id,item_node_id,appellant_github_id,statement,opened_at,due_at)
         SELECT ?,r.id,r.id,?,?,?,? FROM points_revisions r
-        WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)`)
+        WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)
+        AND NOT EXISTS(SELECT 1 FROM points_disputes d JOIN points_revisions dr ON dr.id=d.revision_id
+        WHERE dr.source_key=r.source_key AND d.appellant_github_id=? AND d.resolved_at IS NULL)`)
         .bind(
           id,
           actor.githubId,
@@ -141,6 +143,7 @@ export async function handlePointsDisputes(
             Date.parse(now) + APPEAL_RESOLUTION_DAYS * 86_400_000,
           ).toISOString(),
           body.revisionId,
+          actor.githubId,
         ),
       notifyPointsDispute(deps.db, id, "opened", now),
     ]);
@@ -148,12 +151,28 @@ export async function handlePointsDisputes(
       .prepare("SELECT statement FROM points_disputes WHERE appeal_key=?")
       .bind(id)
       .first<{ statement: string }>();
-    if (!stored)
+    if (!stored) {
+      const open = await deps.db
+        .prepare(
+          `SELECT d.appeal_key FROM points_disputes d
+          JOIN points_revisions dr ON dr.id=d.revision_id
+          JOIN points_revisions r ON r.source_key=dr.source_key
+          WHERE r.id=? AND d.appellant_github_id=? AND d.resolved_at IS NULL LIMIT 1`,
+        )
+        .bind(body.revisionId, actor.githubId)
+        .first<{ appeal_key: string }>();
+      if (open)
+        fail(
+          409,
+          "already_submitted",
+          "This Points record already has a dispute. Open it in Inbox.",
+        );
       fail(
         409,
         "superseded",
         "This Points record has a newer revision. Dispute the current record instead.",
       );
+    }
     if (stored.statement !== body.reason.trim())
       fail(
         409,
