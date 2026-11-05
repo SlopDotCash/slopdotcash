@@ -3798,7 +3798,7 @@ function createSnapshotWithReviewCutoff(
   const evaluatedContributions = [...(input.evaluatedContributions ?? [])].sort(
     (left, right) =>
       parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
-      left.id.localeCompare(right.id),
+      left.id.localeCompare(right.id, "en"),
   );
   for (const [index, event] of evaluatedContributions.entries()) {
     assertLedgerValue(

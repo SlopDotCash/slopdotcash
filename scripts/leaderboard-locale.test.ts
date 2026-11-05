@@ -168,3 +168,81 @@ test("Turkish generation keeps expand-review opportunity on English-first review
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
+
+test("Turkish generation keeps the same evaluated contributions under the legacy cap", () => {
+  // Evaluated-contribution credit scores only before Score v2 takes effect,
+  // so this case stays in the July 2026 legacy window. Four same-time awards
+  // from one actor compete for the cap of three; the i/I pair straddles the
+  // boundary, so an unpinned tie-break would credit a different award — worth
+  // 8 points instead of 1 — on a Turkish-locale host.
+  const generatedAt = "2026-07-20T00:00:00.000Z";
+  const occurredAt = "2026-07-15T12:00:00.000Z";
+  setSystemTime(new Date(generatedAt));
+  const pair = [
+    "eval:PR_kwDOMT5cIs8AAAABG3i2Yg",
+    "eval:PR_kwDOMT5cIs8AAAABG3IwgQ",
+  ];
+  const awardIds = ["eval:aaa-first", "eval:aaa-second", ...pair];
+  const buildInput = () => {
+    const input = penaltyScoreInput([], generatedAt);
+    input.mergedPullRequests = [];
+    input.mergedPullRequestOutcomes = [];
+    input.closedUnmergedPullRequests = [];
+    input.detailEligibleMergedPullRequestIds = [];
+    input.sourceUpdatedAt = generatedAt;
+    input.valuePolicy = undefined;
+    input.valueDecisions = undefined;
+    input.closedIssueCount = 0;
+    input.evaluatedContributions = awardIds.map((id, index) => ({
+      id,
+      actor: PENALIZED_AUTHOR,
+      category: "evaluated-contribution",
+      points: id === pair[1] ? 8 : 1,
+      occurredAt,
+      repository: "elizaOS/asi",
+      source: {
+        id: `SRC_eval_${index}`,
+        kind: "pull-request",
+        number: 100 + index,
+        title: "Evaluated change",
+        url: `https://github.com/SlopDotCash/asi/pull/${100 + index}`,
+      },
+      reason:
+        "The evaluated contribution fixed the failing boundary case directly.",
+      evaluation: {
+        decisionUrl: "https://github.com/SlopDotCash/slopdotcash/pull/1",
+        reviewedAt: "2026-07-16T00:00:00.000Z",
+        reviewer: "maintainer",
+        manifestPath: `evaluations/asi/award-${index}.json`,
+        manifestSha256: String(index + 1)
+          .repeat(64)
+          .slice(0, 64)
+          .replace(/./g, (char) => "abcdef"[Number(char) % 6]),
+      },
+    })) as never;
+    return input;
+  };
+  const credited = () => {
+    const snapshot = createLeaderboardSnapshot(buildInput());
+    const leader = snapshot.leaders.find(
+      (entry) => entry.actor.id === PENALIZED_AUTHOR.id,
+    );
+    return {
+      ids: snapshot.ledger
+        .filter((entry) => entry.category === "evaluated-contribution")
+        .map((entry) => entry.id)
+        .sort(),
+      points: leader?.points.evaluatedContributions,
+      score: leader?.score,
+    };
+  };
+  const expected = {
+    ids: ["eval:aaa-first", "eval:aaa-second", pair[0]].sort(),
+    points: 3,
+    score: 3,
+  };
+  expect(credited()).toEqual(expected);
+  withTurkishLocale(() => {
+    expect(credited()).toEqual(expected);
+  });
+});
