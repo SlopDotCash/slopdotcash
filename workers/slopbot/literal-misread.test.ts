@@ -41,9 +41,35 @@ test("refutes an uppercase digest called an invalid sha256", () => {
   expect(refutedSha256Token(summary)).toBe(DIGEST.toUpperCase());
 });
 
-test("refutes the 'sha256 is not valid' phrasing", () => {
+test("keeps the bare 'sha256 is not valid' phrasing: format or mismatch is ambiguous (PR #2260 review)", () => {
   const summary = `The recorded sha256 \`${DIGEST}\` is not valid, so the checksum test should fail.`;
-  expect(refutedSha256Token(summary)).toBe(DIGEST);
+  expect(refutedSha256Token(summary)).toBeNull();
+  expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+});
+
+test("keeps a mismatch wording that names a comparison target (PR #2260 review)", () => {
+  for (const summary of [
+    `The pinned checksum \`${DIGEST}\` is not a valid sha256 for v1.2.0; the real digest differs.`,
+    `The recorded sha256 \`${DIGEST}\` is not valid for the tarball, so verification can never pass.`,
+    `The recorded sha256 \`${DIGEST}\` is not valid, the deployed ELF changed since this digest was pinned.`,
+  ]) {
+    expect(refutedSha256Token(summary)).toBeNull();
+    expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+  }
+});
+
+test("keeps a verdict with a second, independent defect claim (PR #2260 review)", () => {
+  const summary = `The pinned digest \`${DIGEST}\` is not a valid sha256 hex value. The test also never asserts the comparison helper runs, so a wrong digest would pass silently.`;
+  expect(refutedSha256Token(summary)).toBeNull();
+  expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+});
+
+test("does not downgrade a non-low_quality verdict (PR #2260 review)", () => {
+  const verdict: Verdict = {
+    ...finding(`The value \`${DIGEST}\` is not a sha256 hex value.`),
+    category: "scam",
+  };
+  expect(downgradeLiteralMisread(verdict)).toBeNull();
 });
 
 test("keeps a correctness claim: the digest does not match the file's sha256", () => {
@@ -82,4 +108,31 @@ test("keeps a finding when the short constant's denial sits in the next sentence
   const summary = `The change pins the digest \`${DIGEST}\` for the deployed ELF. The constant \`8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce\` is not a sha256 hex value.`;
   expect(refutedSha256Token(summary)).toBeNull();
   expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+});
+
+test("keeps contrast sentences whatever the short constant's quoting (PR #2260 review)", () => {
+  const short = "8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce";
+  for (const summary of [
+    `Unlike ${DIGEST}, the constant ${short} is not a valid sha256 hex value.`,
+    `Unlike \`${DIGEST}\`, the constant '${short}' is not a valid sha256 hex value.`,
+    `Unlike \`${DIGEST}\`, the constant "${short}" is not a valid sha256 hex value.`,
+    `Unlike \`${DIGEST}\`, the constant \`0x${short}\` is not a valid sha256 hex value.`,
+    `Unlike ${DIGEST}, the constant 0x${short} is not a valid sha256 hex value.`,
+  ]) {
+    expect(refutedSha256Token(summary)).toBeNull();
+    expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+  }
+});
+
+test("keeps contrast sentences in the next sentence whatever the short constant's quoting (PR #2260 review)", () => {
+  const short = "8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce";
+  for (const summary of [
+    `The change pins the digest \`${DIGEST}\` for the deployed ELF. The constant ${short} is not a sha256 hex value.`,
+    `The change pins the digest \`${DIGEST}\` for the deployed ELF. The constant '${short}' is not a sha256 hex value.`,
+    `The change pins the digest \`${DIGEST}\` for the deployed ELF. The constant "${short}" is not a sha256 hex value.`,
+    `The change pins the digest \`${DIGEST}\` for the deployed ELF. The constant \`0x${short}\` is not a sha256 hex value.`,
+  ]) {
+    expect(refutedSha256Token(summary)).toBeNull();
+    expect(downgradeLiteralMisread(finding(summary))).toBeNull();
+  }
 });
