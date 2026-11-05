@@ -167,6 +167,10 @@ test("organization maintainers reach private monthly awards after an approved re
     ];
     renamed.repositories[0].displayName = currentPath;
     renamed.repositories[0].githubUrl = `https://github.com/${currentPath}`;
+    // A transfer revision publishes the appended alias in the project
+    // links as well (`assertTransferLinks`).
+    renamed.links.repository = `https://github.com/${currentPath}`;
+    renamed.links.issues = `https://github.com/${currentPath}/issues`;
     assertProjectPolicyTransition(project, renamed);
     const renamedText = JSON.stringify(renamed);
     expect(
