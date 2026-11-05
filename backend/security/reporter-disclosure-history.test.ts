@@ -250,3 +250,72 @@ test("the reporter sees a disclosure entry's approved digest and embargo change,
   expect(outsider.status).toBe(404);
   h.sqlite.close();
 });
+
+test("the reporter is not shown an embargoed entry's digest as approved", async () => {
+  const h = setup();
+  const imported = await h.call(MAINTAINER, "POST", "security-cases", {
+    mode: "import",
+    projectId: PROJECT,
+  });
+  expect(imported.status).toBe(200);
+  const { id } = h.sqlite.query("SELECT id FROM security_cases").get() as {
+    id: string;
+  };
+
+  expect(
+    (
+      await h.act(id, {
+        action: "assign-triager",
+        githubId: TRIAGER.githubId,
+        githubLogin: TRIAGER.githubLogin,
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await h.act(id, {
+        action: "decide",
+        outcome: "confirmed",
+        severity: "critical",
+        loss: "verified-potential",
+        inScope: true,
+        reason: "Reproduced on an isolated local fork.",
+        relatedParty: false,
+        rootCauseKey: "vault-share-rounding",
+        evidenceReference: EVIDENCE,
+      })
+    ).status,
+  ).toBe(200);
+  // The writer lets an embargoed entry carry a digest, but that digest was
+  // never approved, so the reporter must not see it labeled as approved.
+  const UNAPPROVED = "b".repeat(64);
+  expect(
+    (
+      await h.act(id, {
+        action: "disclosure",
+        disclosureState: "embargoed",
+        reason: "Embargo extended while the retest runs.",
+        evidenceReference: EVIDENCE,
+        redactedContentDigest: UNAPPROVED,
+        embargoChange: EMBARGO,
+      })
+    ).status,
+  ).toBe(200);
+
+  const reporter = await h.call(REPORTER, "GET", `security-cases/${id}`);
+  expect(reporter.status).toBe(200);
+  const disclosure = reporter.body.case.events?.find(
+    (event) => event.kind === "disclosure",
+  );
+  expect(disclosure?.detail).toEqual({
+    disclosureState: "embargoed",
+    redactedContentDigest: null,
+    embargoChange: EMBARGO,
+  });
+  expect(JSON.stringify(reporter.body)).not.toContain(UNAPPROVED);
+
+  // The maintainer's restricted view still carries the recorded digest.
+  const maintainer = await h.call(MAINTAINER, "GET", `security-cases/${id}`);
+  expect(JSON.stringify(maintainer.body)).toContain(UNAPPROVED);
+  h.sqlite.close();
+});
