@@ -834,11 +834,12 @@ export function applyPointsSnapshot(
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
     let invalidatedJointDecision: PointDecision | undefined;
+    let coverage: ReturnType<typeof coverageByPullRequest.get>;
     if (snapshot.valueAssessmentCoverage && match) {
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
       );
-      const coverage = coverageByPullRequest.get(
+      coverage = coverageByPullRequest.get(
         `${repository?.id}\0${Number(match[3])}`,
       );
       // The exact completion source can invalidate its prior joint decision
@@ -886,9 +887,21 @@ export function applyPointsSnapshot(
       project?.repositories.every((r) => repositoryIds.has(r.id))
     ) {
       awards.push({ ...a, amount: 0 });
+      // An assessed source whose current decision credits nobody publishes
+      // no event for this pull request, so no parent decision exists. The
+      // superseding revision still records that decision from its coverage
+      // row, as protocol/points-v1.md requires of source-bound decisions.
       const decision =
         invalidatedJointDecision ??
-        parentDecisions.get(a.sourceUrl.split("#")[0]);
+        parentDecisions.get(a.sourceUrl.split("#")[0]) ??
+        (coverage?.recordDigest
+          ? {
+              sourceId: `value:${coverage.recordDigest}`,
+              effectiveAt: snapshot.generatedAt,
+              reason:
+                "The current source-bound assessment does not credit this award.",
+            }
+          : undefined);
       if (decision)
         decisions.set(a.key, {
           ...decision,
