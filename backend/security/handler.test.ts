@@ -1966,8 +1966,7 @@ describe("remediation recording", () => {
     id: string,
     remediationState: string,
     extra: Record<string, unknown> = {},
-  ) =>
-    env.act(as, id, { action: "remediation", remediationState, ...extra });
+  ) => env.act(as, id, { action: "remediation", remediationState, ...extra });
 
   test("a rejected or out-of-scope case takes no remediation record", async () => {
     const env = open();
@@ -2036,9 +2035,9 @@ describe("remediation recording", () => {
     const env = open();
     const id = await env.receive(REPORTER, "2026-10-19T08:00:00.000Z");
     // Investigation starts while the report is still undecided.
-    expect(
-      (await remediate(env, MAINTAINER, id, "investigating")).status,
-    ).toBe(200);
+    expect((await remediate(env, MAINTAINER, id, "investigating")).status).toBe(
+      200,
+    );
     expect((await env.decide(id, "vault-share-rounding")).status).toBe(200);
     expect((await remediate(env, MAINTAINER, id, "fixing")).status).toBe(200);
     const resolved = await remediate(env, MAINTAINER, id, "resolved", {
