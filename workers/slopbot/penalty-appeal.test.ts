@@ -2134,6 +2134,98 @@ test("a spam close debits 3 thirds once; an accepted uphold draft reopens the it
   });
 });
 
+test("a first appeal filed after a push is escalated, not drafted on the new head; a moderator denial keeps the debit", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    // The author pushes a new head to the closed pull request and only then
+    // appeals. The new head was never reviewed or closed, so Slopbot drafts
+    // no resolution from it even though the model now clears the content.
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: the item changed after Slopbot recorded its finding",
+    );
+    expect(run.sql(APPEAL)).toEqual([
+      { draft: null, escalated: 1, resolution: null, resolved_by: null },
+    ]);
+    // No draft comment is published; the escalation comment is.
+    expect(
+      run.comments.some((body) => body.includes("Slopbot appeal triage")),
+    ).toBe(false);
+    expect(
+      run.comments.some((body) =>
+        body.includes("Appeal sent to a Slop moderator"),
+      ),
+    ).toBe(true);
+    // The appellant cannot settle the appeal; only a moderator decides.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "deny", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: null,
+        escalated: 1,
+        resolution: "denied",
+        resolved_by: "moderator",
+      },
+    ]);
+  });
+});
+
+test("a moderator can uphold the changed-head appeal and reverse the debit once", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.head("d".repeat(40));
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: the item changed after Slopbot recorded its finding",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "uphold", senderId: MODERATOR }),
+      ),
+    ).toBe("appeal upheld by the moderator");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "appeal_upheld",
+      },
+    ]);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: null,
+        escalated: 1,
+        resolution: "upheld",
+        resolved_by: "moderator",
+      },
+    ]);
+  });
+});
+
 test("an upheld appeal reopens only Slopbot's own close, never a later maintainer close", async () => {
   await closedItem(async (run) => {
     expect(await run.review()).toBe("closed (spam)");

@@ -2044,6 +2044,37 @@ async function latestFinding(
   return row.category;
 }
 
+/** The revision the newest finding on the item belongs to, read from the
+ * same two sources as latestFinding. Null when no source row carries one
+ * (a legacy close action whose review row is gone): the caller then cannot
+ * prove the item moved, and triage proceeds as before.
+ */
+async function latestFindingRevision(
+  db: store.D1Database,
+  itemNodeId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT revision FROM (
+         SELECT r.revision AS revision,
+           r.completed_at AS at, r.review_key FROM slopbot_reviews r
+         WHERE r.item_node_id = ?1 AND r.status = 'completed' AND r.verdict IS NOT NULL
+           AND r.action IN ('close', 'label', 'hold')
+           AND json_extract(r.verdict, '$.category') IS NOT NULL
+           AND json_extract(r.verdict, '$.category') != 'none'
+         UNION ALL
+         SELECT (SELECT r2.revision FROM slopbot_reviews r2
+           WHERE r2.review_key = a.review_key), a.created_at, a.review_key
+         FROM slopbot_actions a WHERE a.item_node_id = ?1 AND a.action = 'close'
+           AND json_extract(a.detail, '$.category') IS NOT NULL
+           AND json_extract(a.detail, '$.category') != 'none')
+       ORDER BY at DESC, review_key DESC LIMIT 1`,
+    )
+    .bind(itemNodeId)
+    .first<{ revision: string | null }>();
+  return row?.revision ?? null;
+}
+
 /** The newest Slopbot finding when it belongs to an appealed revision: its
  * review is of that revision, or it was recorded at or before the appeal
  * opened. A newer revision's finding returns null, so its label stays.
@@ -2481,6 +2512,27 @@ async function triageAppeal(
   const db = env.SLOPBOT_DB;
   let current = appeal;
   if (current.draft === null) {
+    // The draft is an independent review of the finding's own revision
+    // (protocol/slopbot-v2.md, "Appeals"). When the item has moved past
+    // that revision — a push or an edit after the close — the current
+    // content was never closed, so no draft is made from it: a moderator
+    // decides, as for a value dispute whose head changed. An appeal whose
+    // draft already exists keeps it; only the drafting step is gated.
+    const findingRevision = await latestFindingRevision(
+      db,
+      session.issue.node_id,
+    );
+    if (findingRevision !== null && findingRevision !== session.revision) {
+      await escalateAppeal(
+        db,
+        appeal.appeal_key,
+        "the item changed after Slopbot recorded its finding",
+        moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS),
+      );
+      current = (await appealByKey(db, appeal.appeal_key)) ?? current;
+      await publishAppealState(env, job, session, current, "escalation");
+      return `appeal escalated: ${current.escalation}`;
+    }
     const draft = await draftResolution(env, job, session, appeal, finding);
     if (typeof draft === "string") return draft;
     current = await recordDraft(
