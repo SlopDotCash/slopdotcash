@@ -84,6 +84,12 @@ const PR_SPAM = pull("PR_spam", 13, PENALIZED_AUTHOR, {
   mergedAt: null,
   closedAt: "2026-08-24T00:00:00.000Z",
 });
+/** Spam PR closed before ASI's reward start; outside every ASI cycle. */
+const PR_SPAM_PRE = pull("PR_spam_pre", 14, PENALIZED_AUTHOR, {
+  createdAt: "2026-08-07T00:00:00.000Z",
+  mergedAt: null,
+  closedAt: "2026-08-08T00:00:00.000Z",
+});
 
 function input(debitThirds: number | null): LeaderboardInput {
   const base = penaltyScoreInput(
@@ -139,15 +145,60 @@ function input(debitThirds: number | null): LeaderboardInput {
   return base;
 }
 
+/** The reviewer's pre-start debit: one third recorded 2026-08-08. */
+function preStartDebitInput(): LeaderboardInput {
+  const base = penaltyScoreInput(
+    [
+      {
+        itemNodeId: "PR_spam_pre",
+        authorGithubId: "42",
+        category: "spam",
+        tableVersion: "slopbot-penalties-v1",
+        debitThirds: 1,
+        period: "2026-08",
+        recordedAt: "2026-08-08T00:00:00.000Z",
+      },
+    ],
+    GENERATED_AT,
+  );
+  const mergedPullRequests = [
+    structuredClone(PR_PRE),
+    structuredClone(PR_POST),
+  ];
+  base.mergedPullRequests = mergedPullRequests;
+  base.mergedPullRequestOutcomes = mergedPullRequests.map((p) => ({
+    id: p.id,
+    number: p.number,
+    title: p.title,
+    url: p.url,
+    body: p.body,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+    mergedAt: p.mergedAt as string,
+    headRefOid: p.headRefOid,
+    author: p.author,
+    additions: p.additions,
+    deletions: p.deletions,
+    baseRefName: "main",
+    commits: [{ oid: p.headRefOid, author: p.author }],
+  }));
+  base.closedUnmergedPullRequests = [structuredClone(PR_SPAM_PRE)];
+  base.detailEligibleMergedPullRequestIds = mergedPullRequests.map((p) => p.id);
+  base.source.counts.mergedPullRequests = mergedPullRequests.length;
+  base.source.counts.detailedMergedPullRequests = mergedPullRequests.length;
+  base.sourceUpdatedAt = "2026-08-20T12:00:00.000Z";
+  return base;
+}
+
 const EMPTY_CYCLES = {
   schemaVersion: "1",
   generatedAt: GENERATED_AT,
   cycles: [],
 } as unknown as CycleIndex;
 
-function totals(debitThirds: number | null) {
+function totalsFor(makeInput: () => LeaderboardInput) {
   setSystemTime(new Date(GENERATED_AT));
-  const snapshot = createLeaderboardSnapshot(input(debitThirds));
+  const snapshot = createLeaderboardSnapshot(makeInput());
   const view = createProjectView(snapshot, "asi", "2026-08");
   const global = createGlobalLeaders(snapshot, [view], EMPTY_CYCLES);
   const snapLeader = snapshot.leaders.find(
@@ -161,6 +212,7 @@ function totals(debitThirds: number | null) {
     ledger: snapshot.ledger
       .filter((e) => e.actor.id === PENALIZED_AUTHOR.id)
       .map((e) => e.source.id),
+    penalties: (snapshot.penalties ?? []).map((p) => p.id),
     snapshotThirds: snapLeader?.scoreThirds,
     snapshotPenaltyThirds: snapLeader?.penaltyThirds,
     viewThirds: viewLeader?.scoreThirds,
@@ -172,6 +224,10 @@ function totals(debitThirds: number | null) {
       EMPTY_CYCLES,
     ).deductions.byActor.get(PENALIZED_AUTHOR.id),
   };
+}
+
+function totals(debitThirds: number | null) {
+  return totalsFor(() => input(debitThirds));
 }
 
 test("work merged before the reward start earns no snapshot credit", () => {
@@ -198,6 +254,20 @@ test("a debit larger than the in-cycle credit stays capped in every reader", () 
   // pre-start work would have added.
   expect(t.snapshotPenaltyThirds).toBe(t.appliedByActor);
   expect(t.viewPenaltyThirds).toBe(t.appliedByActor);
+  expect(t.snapshotThirds).toBe(t.viewThirds);
+  expect(t.snapshotThirds).toBe(t.globalThirds);
+});
+
+test("a debit recorded before the reward start applies in no reader", () => {
+  const t = totalsFor(preStartDebitInput);
+  // The pre-start debit never reaches the published penalties, so the
+  // snapshot keeps the post-start third and every reader agrees.
+  expect(t.penalties).toEqual([]);
+  // The view always reports a penalty total (0 when none); the applied
+  // deductions map omits zero entries, so compare the normalized totals.
+  expect(t.snapshotPenaltyThirds ?? 0).toBe(t.appliedByActor ?? 0);
+  expect(t.viewPenaltyThirds ?? 0).toBe(t.appliedByActor ?? 0);
+  expect(t.snapshotThirds).toBe(1);
   expect(t.snapshotThirds).toBe(t.viewThirds);
   expect(t.snapshotThirds).toBe(t.globalThirds);
 });

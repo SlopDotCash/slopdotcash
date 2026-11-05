@@ -1708,6 +1708,20 @@ function publishedPenalties(
       recordedAt >= parseIsoTime(window.to)
     )
       continue;
+    // A project's published reward start bounds every cycle of that
+    // project: the project views and the global ranking exclude earlier work
+    // when they read the ledger (projectCycleWindow, openMonthScores), so
+    // the snapshot must not publish a debit for it either — every reader of
+    // the score has to agree (score-penalties.ts). A debit recorded before
+    // the start is outside every reward cycle of that project.
+    const ingestedProject = findIngestedProjectByRepositoryId(
+      repositoryIdFromUrl(pull.url),
+    );
+    if (
+      ingestedProject &&
+      recordedAt < parseIsoTime(ingestedProject.reward.rewardStartAt)
+    )
+      continue;
     if (githubUserIdFromNodeId(pull.author.id) !== record.authorGithubId)
       throw new Error(
         `Penalty author does not match the GitHub author of ${pull.url}`,
