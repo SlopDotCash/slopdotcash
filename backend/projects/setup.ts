@@ -23,7 +23,10 @@ import {
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
-import { quarantinedScanMessage } from "../vetting/summary";
+import {
+  quarantinedScanMessage,
+  type RepositoryFindingOwnerDetail,
+} from "../vetting/summary";
 import type { RepositoryControl } from "./contracts";
 import type { ProjectRestriction } from "./enforcement";
 import { type GithubFetch, githubJson } from "./github-lookup";
@@ -216,6 +219,7 @@ type ScanState = ProjectSetupStatus["checks"]["scan"];
 
 function scanCheck(
   clearance: VettingClearance | { state: "unavailable"; message: string },
+  ownerDetail: RepositoryFindingOwnerDetail | null = null,
 ): ScanState {
   switch (clearance.state) {
     case "cleared":
@@ -258,7 +262,7 @@ function scanCheck(
     case "quarantined":
       return {
         state: "quarantined",
-        message: quarantinedScanMessage(clearance.assessment),
+        message: quarantinedScanMessage(clearance.assessment, ownerDetail),
       };
     case "banned":
       return {
@@ -285,6 +289,12 @@ export function projectSetupStatus(input: {
   scanRequest: ScanRequest | null;
   activatedRevision: number | null;
   checkedAt: string;
+  /**
+   * Issue #1991 option 2 detail from the stored scan result. Included in the
+   * scan message only when authority is verified. Never serialized onto the
+   * public AssessmentSummary / project read.
+   */
+  ownerRepositoryFindings?: RepositoryFindingOwnerDetail | null;
 }): ProjectSetupStatus {
   const { project, restriction, authority, access, clearance } = input;
   const manifest = project.manifest;
@@ -306,7 +316,13 @@ export function projectSetupStatus(input: {
               state: "missing",
               message: `Slopbot is not installed on ${repository}.`,
             };
-  let scan = scanCheck(input.clearance);
+  // Paths and severity counts stay out of AssessmentSummary. Only a verified
+  // repository authority sees them in this private setup status message.
+  const ownerDetail =
+    authority.state === "verified"
+      ? (input.ownerRepositoryFindings ?? null)
+      : null;
+  let scan = scanCheck(input.clearance, ownerDetail);
   const queuedNow =
     input.scanRequest?.state === "queued" ||
     input.scanRequest?.state === "already_queued";

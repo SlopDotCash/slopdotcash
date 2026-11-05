@@ -6,6 +6,10 @@ import { applicationManifest } from "../../tests/project-application-manifest";
 import type { VettingAssessment } from "../vetting/persistence";
 import { summarize } from "../vetting/persistence";
 import type { VettingScanResult } from "../vetting/scan-result";
+import {
+  type RepositoryFindingOwnerDetail,
+  repositoryFindingOwnerDetail,
+} from "../vetting/summary";
 import { projectRestriction } from "./enforcement";
 import { projectSetupStatus } from "./setup";
 
@@ -39,6 +43,7 @@ function status(
   clearance: VettingClearance,
   authority: "verified" | "denied" = "verified",
   installation: "installed" | "missing" = "installed",
+  ownerRepositoryFindings: RepositoryFindingOwnerDetail | null = null,
 ) {
   return projectSetupStatus({
     project,
@@ -60,6 +65,7 @@ function status(
     scanRequest: null,
     activatedRevision: null,
     checkedAt: at,
+    ownerRepositoryFindings,
   });
 }
 
@@ -576,5 +582,247 @@ describe("summarize findings location classification", () => {
       result: null,
     });
     expect(summary.findingsLocation).toBeUndefined();
+  });
+});
+
+describe("owner repository finding detail (issue #1991 option 2)", () => {
+  const baseAssessment = {
+    id: "vet_fixture_quarantine",
+    revision: 1,
+    state: "incomplete" as const,
+    commitSha: "c".repeat(40),
+    templateSha256: "t".repeat(64),
+    policyVersion: "1",
+    requestedAt: at,
+    completedAt: at,
+    modelRuns: [],
+    artifacts: 0,
+    heldArtifacts: 0,
+    findingsLocation: "repository" as const,
+  };
+
+  const detail: RepositoryFindingOwnerDetail = {
+    severities: { critical: 1, high: 2, medium: 0, low: 0, info: 0 },
+    paths: ["scripts/setup.sh", "src/a.ts", "src/b.ts", "src/c.ts"],
+    pathTotal: 4,
+    unparseableEvidence: 1,
+  };
+
+  test("verified authority sees short severity and path counts with partial note", () => {
+    const result = status(
+      { state: "quarantined", assessment: baseAssessment },
+      "verified",
+      "installed",
+      detail,
+    );
+    expect(result.checks.scan.message).toBe(
+      "Findings in the project repository block clearance: 1 critical, 2 high in scripts/setup.sh, src/a.ts, src/b.ts (1 more path omitted; 1 unparseable evidence reference).",
+    );
+    expect(result.nextAction.message).toContain("Fix the cause if you know it");
+  });
+
+  test("denied authority never sees repository paths or severities", () => {
+    const result = status(
+      { state: "quarantined", assessment: baseAssessment },
+      "denied",
+      "installed",
+      detail,
+    );
+    expect(result.checks.scan.message).toBe(
+      "Findings in the project repository block clearance.",
+    );
+    expect(result.checks.scan.message).not.toContain("scripts/setup.sh");
+    expect(result.checks.scan.message).not.toContain("critical");
+  });
+
+  test("template-only copy stays unchanged even when owner detail is supplied", () => {
+    const result = status(
+      {
+        state: "quarantined",
+        assessment: { ...baseAssessment, findingsLocation: "template" },
+      },
+      "verified",
+      "installed",
+      detail,
+    );
+    expect(result.checks.scan.message).toBe(
+      "Findings in Slop's skill template block clearance.",
+    );
+  });
+
+  test("both-location copy keeps a short repository suffix", () => {
+    const result = status(
+      {
+        state: "quarantined",
+        assessment: { ...baseAssessment, findingsLocation: "both" },
+      },
+      "verified",
+      "installed",
+      {
+        severities: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+        paths: ["src/wallet/keys.ts"],
+        pathTotal: 1,
+        unparseableEvidence: 0,
+      },
+    );
+    expect(result.checks.scan.message).toBe(
+      "Findings in both the repository and skill template block clearance. Repository: 1 high in src/wallet/keys.ts.",
+    );
+  });
+
+  test("summarize never puts owner detail on the public AssessmentSummary", () => {
+    const summary = summarize({
+      id: "vet_12345678901234567890123456789012",
+      projectId: "test-project",
+      revision: 1,
+      manifestSha256: "m".repeat(64),
+      contentSha256: "c".repeat(64),
+      state: "incomplete",
+      commitSha: "c".repeat(40),
+      templateSha256: "t".repeat(64),
+      policyVersion: "1",
+      requestedBy: { githubId: "1", githubLogin: "owner" },
+      requestReason: "admission",
+      resultSha256: "r".repeat(64),
+      signingKeySha256: "s".repeat(64),
+      requestedAt: at,
+      completedAt: at,
+      result: {
+        schemaVersion: "slop-vetting-result-v2",
+        assessmentId: "vet_12345678901234567890123456789012",
+        projectId: "test-project",
+        revision: 1,
+        manifestSha256: "m".repeat(64),
+        disposition: "incomplete",
+        policyVersion: "1",
+        assessed: {
+          repository: "owner/repo",
+          commitSha: "c".repeat(40),
+          templateSha256: "t".repeat(64),
+          inputManifestSha256: "i".repeat(64),
+          dependencyLocks: [],
+        },
+        scan: {
+          runId: "r1",
+          startedAt: at,
+          completedAt: at,
+          reportSha256: "r".repeat(64),
+        },
+        coverage: {} as unknown as VettingScanResult["coverage"],
+        checks: {} as unknown as VettingScanResult["checks"],
+        visibilityGaps: [],
+        execution: null,
+        reusedAssessmentId: null,
+        primaryReview: {
+          provider: "p",
+          model: "m",
+          promptPolicyRevision: "1",
+          inputManifestSha256: "i".repeat(64),
+          runId: "r",
+          status: "completed",
+          verdict: "findings",
+          risk: "high",
+          findingCount: 2,
+        },
+        specialistReview: null,
+        artifacts: [],
+        findings: [
+          {
+            severity: "critical",
+            category: "credential-theft",
+            summary: "secret",
+            evidence: "src/wallet/keys.ts:1",
+          },
+          {
+            severity: "high",
+            category: "unsafe-execution",
+            summary: "template hit",
+            evidence: "slop-skill-template/skills/SKILL.md:10",
+          },
+          {
+            severity: "medium",
+            category: "unsafe-execution",
+            summary: "prose evidence",
+            evidence: "The reviewer found an unsafe command.",
+          },
+        ],
+        confirmation: null,
+      },
+    });
+    expect(summary.findingsLocation).toBe("unknown");
+    expect(Object.hasOwn(summary, "repositoryFindingSeverities")).toBe(false);
+    expect(Object.hasOwn(summary, "repositoryFindingPaths")).toBe(false);
+    const detail = repositoryFindingOwnerDetail({
+      ...summary,
+    } as never);
+    // repositoryFindingOwnerDetail needs the full result, not the summary.
+    expect(detail).toBeNull();
+    const fromResult = repositoryFindingOwnerDetail({
+      schemaVersion: "slop-vetting-result-v2",
+      assessmentId: "vet_12345678901234567890123456789012",
+      projectId: "test-project",
+      revision: 1,
+      manifestSha256: "m".repeat(64),
+      disposition: "incomplete",
+      policyVersion: "1",
+      assessed: {
+        repository: "owner/repo",
+        commitSha: "c".repeat(40),
+        templateSha256: "t".repeat(64),
+        inputManifestSha256: "i".repeat(64),
+        dependencyLocks: [],
+      },
+      scan: {
+        runId: "r1",
+        startedAt: at,
+        completedAt: at,
+        reportSha256: "r".repeat(64),
+      },
+      coverage: {} as unknown as VettingScanResult["coverage"],
+      checks: {} as unknown as VettingScanResult["checks"],
+      visibilityGaps: [],
+      execution: null,
+      reusedAssessmentId: null,
+      primaryReview: {
+        provider: "p",
+        model: "m",
+        promptPolicyRevision: "1",
+        inputManifestSha256: "i".repeat(64),
+        runId: "r",
+        status: "completed",
+        verdict: "findings",
+        risk: "high",
+        findingCount: 2,
+      },
+      specialistReview: null,
+      artifacts: [],
+      findings: [
+        {
+          severity: "critical",
+          category: "credential-theft",
+          summary: "secret",
+          evidence: "src/wallet/keys.ts:1",
+        },
+        {
+          severity: "high",
+          category: "unsafe-execution",
+          summary: "template hit",
+          evidence: "slop-skill-template/skills/SKILL.md:10",
+        },
+        {
+          severity: "medium",
+          category: "unsafe-execution",
+          summary: "prose evidence",
+          evidence: "The reviewer found an unsafe command.",
+        },
+      ],
+      confirmation: null,
+    });
+    expect(fromResult).toEqual({
+      severities: { critical: 1, high: 0, medium: 0, low: 0, info: 0 },
+      paths: ["src/wallet/keys.ts"],
+      pathTotal: 1,
+      unparseableEvidence: 1,
+    });
   });
 });

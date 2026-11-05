@@ -43,7 +43,11 @@ import {
   type RecordedVettingResult,
   resultReviewers,
 } from "./scan-result";
-import { findingsLocationOf, quarantinedScanMessage } from "./summary";
+import {
+  findingsLocationOf,
+  quarantinedScanMessage,
+  repositoryFindingOwnerDetail,
+} from "./summary";
 
 export type {
   AssessmentState,
@@ -637,10 +641,13 @@ export class CloudflareVettingPersistence {
       );
     const scanFailedDetail =
       result.disposition === "incomplete"
-        ? quarantinedScanMessage({
-            completedAt: input.at,
-            findingsLocation: findingsLocationOf(result),
-          })
+        ? quarantinedScanMessage(
+            {
+              completedAt: input.at,
+              findingsLocation: findingsLocationOf(result),
+            },
+            repositoryFindingOwnerDetail(result),
+          )
         : null;
     try {
       await this.db.batch([
