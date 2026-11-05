@@ -105,13 +105,14 @@ async function referralAccount(
   result.ended = snapshot.ended;
   result.latestVoided = snapshot.epochs.at(-1)?.voided ?? false;
   const current = activeClaimEpoch(snapshot);
-  const pending = snapshot.epochs.at(-1);
-  if (
-    pending &&
-    !pending.voided &&
-    pending.epoch !== current?.epoch &&
-    !result.paused
-  )
+  // Pending rewards next become claimable at the earliest maturing root
+  // after the active one. The latest root can mature later, or be voided,
+  // without moving that date.
+  const pending = snapshot.epochs
+    .filter((e) => !e.voided && (current === null || e.epoch > current.epoch))
+    .sort((a, b) => a.claimableAt - b.claimableAt)
+    .at(0);
+  if (pending && !result.paused)
     result.pendingUntil = new Date(pending.claimableAt * 1000).toISOString();
   const claimed = BigInt(
     result.wallet ? (snapshot.claimed[result.wallet] ?? "0") : "0",
