@@ -28,6 +28,7 @@ import type {
   MergedPullRequestOutcome,
   MergedPullRequestReviewRecord,
   ModelAttribution,
+  OmittedReviewCredit,
   PenaltyFeedRecord,
   PublishedPenalty,
   PullRequestFile,
@@ -92,6 +93,7 @@ export type {
   MergedPullRequestOutcome,
   MergedPullRequestReviewRecord,
   ModelAttribution,
+  OmittedReviewCredit,
   PenaltyFeedRecord,
   PublishedPenalty,
   PullRequestFile,
@@ -3052,6 +3054,7 @@ function createSnapshotWithReviewCutoff(
   const ledger: ScoreEvent[] = [];
   const mergedSources: MergedScoreSources = new Map();
   const reviewExclusions: ReviewExclusion[] = [];
+  const omittedReviewCredits: OmittedReviewCredit[] = [];
   const excludeReview = (
     pullRequest: MergedPullRequestReviewRecord,
     review: PullRequestReview,
@@ -4157,8 +4160,29 @@ function createSnapshotWithReviewCutoff(
       }
       for (const reviewId of credited.repeatedReviewIds)
         exclude(reviewId, "already-awarded-reviewer");
+      const reason = `Provisional ${candidate.value.tier} review value; reviewer ${index + 1} of ${allocation.credited.length} credited, ${credited.shareThirds} of ${allocation.poolThirds} review-credit thirds: ${candidate.value.finding} ${candidate.value.outcome}`;
       if (parseIsoTime(candidate.submittedAt) < scoringFrom) {
         exclude(candidate.reviewId, "review-credit-outside-window");
+        // The allocation stands, but a value event outside the scoring
+        // window is not publishable in the ledger. Publish the allocated
+        // share itself so Points can materialize the award when no
+        // earlier run recorded one; the journal keeps an existing award
+        // untouched, exactly as it does for the exclusion alone today.
+        const scoreDecisionAt = candidate.decision.history.at(-1)?.recorded_at;
+        omittedReviewCredits.push({
+          id: `${pullRequest.id}:value-review:${candidate.reviewId}`,
+          reviewId: candidate.reviewId,
+          pullRequestId: pullRequest.id,
+          pullRequestNumber: pullRequest.number,
+          repository: repositoryId,
+          reviewer: candidate.actor,
+          scoreThirds: credited.shareThirds,
+          submittedAt: candidate.submittedAt,
+          url: candidate.review.url,
+          scoreDecisionSourceId: `value:${candidate.decision.latestDigest}`,
+          ...(scoreDecisionAt ? { scoreDecisionAt } : {}),
+          reason,
+        });
         continue;
       }
       addScore(entries, ledger, mergedSources, participationBans, {
@@ -4179,7 +4203,7 @@ function createSnapshotWithReviewCutoff(
           title: pullRequest.title,
           url: candidate.review.url,
         },
-        reason: `Provisional ${candidate.value.tier} review value; reviewer ${index + 1} of ${allocation.credited.length} credited, ${credited.shareThirds} of ${allocation.poolThirds} review-credit thirds: ${candidate.value.finding} ${candidate.value.outcome}`,
+        reason,
       });
     }
     return allocation.credited
@@ -5073,6 +5097,13 @@ function createSnapshotWithReviewCutoff(
         left.id.localeCompare(right.id),
     ),
     reviewExclusions: reviewExclusions.sort(compareReviewExclusions),
+    ...(omittedReviewCredits.length
+      ? {
+          omittedReviewCredits: omittedReviewCredits.sort(
+            compareOmittedReviewCredits,
+          ),
+        }
+      : {}),
     penalties,
     ...(input.penaltyHistory ? { penaltyHistory: input.penaltyHistory } : {}),
     opportunities,
@@ -5444,6 +5475,76 @@ function compareReviewExclusions(
   return (
     left.pullRequestId.localeCompare(right.pullRequestId, "en") ||
     left.reviewId.localeCompare(right.reviewId, "en")
+  );
+}
+
+function compareOmittedReviewCredits(
+  left: OmittedReviewCredit,
+  right: OmittedReviewCredit,
+) {
+  return (
+    left.pullRequestId.localeCompare(right.pullRequestId, "en") ||
+    left.reviewId.localeCompare(right.reviewId, "en")
+  );
+}
+
+function assertOmittedReviewCreditValue(
+  value: unknown,
+  path: string,
+  repositoryIds: readonly string[],
+): void {
+  const credit = assertObject(value, path);
+  const expectedKeys = [
+    "id",
+    "pullRequestId",
+    "pullRequestNumber",
+    "reason",
+    "repository",
+    "reviewId",
+    "reviewer",
+    "scoreDecisionSourceId",
+    "scoreThirds",
+    "submittedAt",
+    "url",
+  ];
+  // `scoreDecisionAt` is additive; an assessment without a recorded
+  // decision time omits it, mirroring the ledger event it replaces.
+  const keys = Object.keys(credit)
+    .filter((key) => key !== "scoreDecisionAt")
+    .sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) {
+    throw new Error(
+      `${path} must contain exactly the omitted review credit fields`,
+    );
+  }
+  if ("scoreDecisionAt" in credit)
+    assertIsoTimestamp(credit.scoreDecisionAt, `${path}.scoreDecisionAt`);
+  assertString(credit.id, `${path}.id`);
+  assertString(credit.pullRequestId, `${path}.pullRequestId`);
+  assertPositiveInteger(credit.pullRequestNumber, `${path}.pullRequestNumber`);
+  assertString(credit.reviewId, `${path}.reviewId`);
+  if (credit.id !== `${credit.pullRequestId}:value-review:${credit.reviewId}`) {
+    throw new Error(`${path}.id must bind the pull request and review IDs`);
+  }
+  assertActorValue(credit.reviewer, `${path}.reviewer`);
+  assertPositiveInteger(credit.scoreThirds, `${path}.scoreThirds`);
+  assertIsoTimestamp(credit.submittedAt, `${path}.submittedAt`);
+  if (
+    typeof credit.scoreDecisionSourceId !== "string" ||
+    !/^value:[a-f0-9]{64}$/u.test(credit.scoreDecisionSourceId)
+  ) {
+    throw new Error(
+      `${path}.scoreDecisionSourceId must name a value assessment decision`,
+    );
+  }
+  assertString(credit.reason, `${path}.reason`);
+  assertEnum(credit.repository, repositoryIds, `${path}.repository`);
+  assertRepositoryUrl(
+    credit.url,
+    `${path}.url`,
+    "review",
+    credit.pullRequestNumber,
+    credit.repository as RepositoryId,
   );
 }
 
@@ -6887,6 +6988,7 @@ export function assertLeaderboardSnapshot(
   }
 
   const reviewExclusions = snapshot.reviewExclusions;
+  let validatedReviewExclusions: ReviewExclusion[] = [];
   if (reviewExclusions === undefined) {
     // Schema 6 was deployed before this additive audit field existed. Newly
     // generated snapshots always publish it, while readers remain compatible
@@ -6894,16 +6996,14 @@ export function assertLeaderboardSnapshot(
   } else if (!Array.isArray(reviewExclusions)) {
     throw new Error("snapshot.reviewExclusions must be an array");
   } else {
-    const validatedReviewExclusions = reviewExclusions.map(
-      (exclusion, index) => {
-        assertReviewExclusionValue(
-          exclusion,
-          `snapshot.reviewExclusions[${index}]`,
-          repositoryIds,
-        );
-        return exclusion;
-      },
-    );
+    validatedReviewExclusions = reviewExclusions.map((exclusion, index) => {
+      assertReviewExclusionValue(
+        exclusion,
+        `snapshot.reviewExclusions[${index}]`,
+        repositoryIds,
+      );
+      return exclusion;
+    });
     if (
       new Set(validatedReviewExclusions.map((exclusion) => exclusion.id))
         .size !== validatedReviewExclusions.length
@@ -6942,6 +7042,116 @@ export function assertLeaderboardSnapshot(
       if (compareReviewExclusions(previous, current) > 0) {
         throw new Error(
           "snapshot.reviewExclusions must be ordered by pull request and review ID",
+        );
+      }
+    }
+  }
+
+  const omittedReviewCredits = snapshot.omittedReviewCredits;
+  if (omittedReviewCredits !== undefined) {
+    if (!Array.isArray(omittedReviewCredits)) {
+      throw new Error("snapshot.omittedReviewCredits must be an array");
+    }
+    const validatedOmittedReviewCredits = omittedReviewCredits.map(
+      (credit, index) => {
+        assertOmittedReviewCreditValue(
+          credit,
+          `snapshot.omittedReviewCredits[${index}]`,
+          repositoryIds,
+        );
+        return credit;
+      },
+    );
+    if (
+      new Set(validatedOmittedReviewCredits.map((credit) => credit.id)).size !==
+      validatedOmittedReviewCredits.length
+    ) {
+      throw new Error("snapshot.omittedReviewCredits must contain unique IDs");
+    }
+    for (
+      let index = 1;
+      index < validatedOmittedReviewCredits.length;
+      index += 1
+    ) {
+      const previous = validatedOmittedReviewCredits[index - 1];
+      const current = validatedOmittedReviewCredits[index];
+      if (compareOmittedReviewCredits(previous, current) > 0) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must be ordered by pull request and review ID",
+        );
+      }
+    }
+    // An omitted credit is the allocation half of a published exclusion:
+    // the same snapshot excludes the review as outside the window, no
+    // ledger event carries the allocation, and the submission sits before
+    // the scoring window it was omitted from. The credit must also agree
+    // with the exclusion's reviewer and sit on or after the value policy,
+    // exactly as a ledger value event does.
+    const outsideWindowExclusions = new Map(
+      validatedReviewExclusions
+        .filter(
+          (exclusion) => exclusion.reason === "review-credit-outside-window",
+        )
+        .map(
+          (exclusion) =>
+            [
+              `${exclusion.pullRequestId}\0${exclusion.reviewId}\0${exclusion.repository}\0${exclusion.url}`,
+              exclusion,
+            ] as const,
+        ),
+    );
+    const ledgerEventIds = new Set(validatedLedger.map((event) => event.id));
+    for (const credit of validatedOmittedReviewCredits) {
+      if (ledgerEventIds.has(credit.id)) {
+        throw new Error(
+          "snapshot.omittedReviewCredits cannot duplicate a score event",
+        );
+      }
+      const exclusion = outsideWindowExclusions.get(
+        `${credit.pullRequestId}\0${credit.reviewId}\0${credit.repository}\0${credit.url}`,
+      );
+      if (!exclusion) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must match a published outside-window exclusion",
+        );
+      }
+      if (
+        exclusion.reviewer !== undefined &&
+        credit.reviewer.id !== exclusion.reviewer.id
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must match its exclusion's reviewer",
+        );
+      }
+      if (
+        typeof snapshot.valuePolicyEffectiveAt === "string" &&
+        parseIsoTime(credit.submittedAt) <
+          parseIsoTime(snapshot.valuePolicyEffectiveAt)
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must not predate the value policy",
+        );
+      }
+      if (parseIsoTime(credit.submittedAt) >= parseIsoTime(windowFrom)) {
+        throw new Error(
+          "snapshot.omittedReviewCredits must predate the scoring window",
+        );
+      }
+      // The exact allocation-window lower bound needs the pull request's
+      // merge time, which no published snapshot field carries: a
+      // value-assessed pull request has no merged-pull-request ledger
+      // event, and the assessment coverage row carries no merge time. The
+      // earliest a credited review can sit is one scoring-window length
+      // before the scoring window itself — the pull request merged inside
+      // the census window, so no earlier than window.from, and its
+      // allocation window reaches exactly one window length back from
+      // that merge. Reject only submissions before that outer bound.
+      if (
+        parseIsoTime(credit.submittedAt) <
+        parseIsoTime(windowFrom) - SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+      ) {
+        throw new Error(
+          "snapshot.omittedReviewCredits predates the earliest possible allocation window",
         );
       }
     }
@@ -7474,6 +7684,9 @@ export function assertLeaderboardSnapshot(
     ...((reviewExclusions as ReviewExclusion[] | undefined)?.flatMap(
       (exclusion) => (exclusion.reviewer ? [exclusion.reviewer] : []),
     ) ?? []),
+    ...((
+      snapshot.omittedReviewCredits as OmittedReviewCredit[] | undefined
+    )?.map((credit) => credit.reviewer) ?? []),
     ...validatedAttributions.flatMap((attribution) =>
       attribution.actor ? [attribution.actor] : [],
     ),
@@ -7498,6 +7711,12 @@ export function assertLeaderboardSnapshot(
     )
   )
     throw new Error("Value score events require assessment coverage");
+  if (
+    snapshot.valueAssessmentCoverage === undefined &&
+    ((snapshot.omittedReviewCredits as OmittedReviewCredit[] | undefined)
+      ?.length ?? 0) > 0
+  )
+    throw new Error("Omitted review credits require assessment coverage");
   if (snapshot.valuePolicyEffectiveAt !== undefined) {
     assertIsoTimestamp(
       snapshot.valuePolicyEffectiveAt,
@@ -7631,6 +7850,20 @@ export function assertLeaderboardSnapshot(
       )
         throw new Error(
           "Value score event is not bound to its assessment coverage",
+        );
+    }
+    // An omitted credit binds to its assessment exactly as the ledger
+    // event it replaces would: the same coverage row and digest.
+    for (const credit of (snapshot.omittedReviewCredits as
+      | OmittedReviewCredit[]
+      | undefined) ?? []) {
+      const row = coverageFor(credit.id);
+      if (
+        !(row?.status === "assessed" || row?.status === "human-ratified") ||
+        `value:${row.recordDigest}` !== credit.scoreDecisionSourceId
+      )
+        throw new Error(
+          "Omitted review credit is not bound to its assessment coverage",
         );
     }
   }

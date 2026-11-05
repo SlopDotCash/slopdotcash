@@ -800,6 +800,54 @@ export function applyPointsSnapshot(
     if (omitted) omittedReviews.set(key, exclusion.reason);
     else excludedReviews.add(key);
   }
+  // A credited review submitted before the scoring window has no ledger
+  // event in this snapshot; the builder publishes its allocated share as
+  // an omitted review credit instead. Materialize the award the ledger
+  // event would have produced, so a first generation that is already
+  // late still records the share the allocation guarantees. The
+  // materialization is only for a share the journal has never recorded:
+  // when an earlier run already recorded the award, the journal's award
+  // stands exactly as recorded — a later reassessment that changes the
+  // allocated share does not reissue it at the new amount — and the
+  // omission handling below keeps it.
+  for (const credit of snapshot.omittedReviewCredits ?? []) {
+    const project = findHistoricalRepository(credit.repository);
+    if (!project || credit.reviewer.kind !== "User")
+      throw new Error("Points require a registered project and user");
+    const award: PointAward = {
+      key: pointKey(
+        project.projectId,
+        credit.reviewer.id,
+        "substantive-review",
+        credit.reviewId,
+      ),
+      actor: { id: credit.reviewer.id, login: credit.reviewer.login },
+      projectId: project.projectId,
+      category: "substantive-review",
+      amount: credit.scoreThirds * POINTS_PER_THIRD,
+      occurredAt: new Date(credit.submittedAt).toISOString(),
+      sourceId: credit.reviewId,
+      sourceUrl: credit.url,
+      workUnitId: `wu_value_review_${credit.reviewId.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
+      provisional: true,
+    };
+    if (
+      batchOwned.has(award.key) ||
+      keys.has(award.key) ||
+      previousPoints.has(award.key) ||
+      excludedReviews.has(`${award.projectId}\0${award.sourceId}`)
+    )
+      continue;
+    awards.push(award);
+    keys.add(award.key);
+    if (credit.scoreDecisionAt) {
+      decisions.set(award.key, {
+        sourceId: credit.scoreDecisionSourceId,
+        effectiveAt: new Date(credit.scoreDecisionAt).toISOString(),
+        reason: credit.reason,
+      });
+    }
+  }
   // A complete newer census can correct a formerly accepted source. Never infer
   // deletion from missing pages or a shortened rolling window.
   for (const previous of previousPoints.values()) {

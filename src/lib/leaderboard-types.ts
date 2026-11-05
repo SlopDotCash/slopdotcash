@@ -101,6 +101,38 @@ export interface ReviewExclusion {
   reviewer?: GitHubActor;
 }
 
+/**
+ * A credited value-review allocation whose ledger event is omitted because
+ * the review was submitted before the current scoring window: a value
+ * score event outside the window is not publishable in the ledger. The
+ * entry carries the allocation the credited loop computed (reviewer,
+ * submission time, share in score thirds, and its assessment decision
+ * binding), alongside the `review-credit-outside-window` exclusion the
+ * snapshot also publishes for the same review. Points materializes an
+ * award from the entry when the journal holds no earlier award for the
+ * review, so a first generation that is already late records the share
+ * the policy guarantees ("keeps its slot and share"); an existing award
+ * is kept untouched.
+ */
+export interface OmittedReviewCredit {
+  /** The ID the omitted ledger event would have carried. */
+  id: string;
+  reviewId: string;
+  pullRequestId: string;
+  pullRequestNumber: number;
+  repository: RepositoryId;
+  reviewer: GitHubActor;
+  /** The allocated share, in score thirds; always positive. */
+  scoreThirds: number;
+  /** The review's submission time; the materialized award's occurrence. */
+  submittedAt: string;
+  url: string;
+  scoreDecisionSourceId: string;
+  scoreDecisionAt?: string;
+  /** The reason the omitted ledger event would have carried. */
+  reason: string;
+}
+
 export interface PullRequestRecord {
   id: string;
   number: number;
@@ -677,6 +709,12 @@ export interface LeaderboardSnapshot {
     recordDigest: string | null;
   }[];
   reviewExclusions?: ReviewExclusion[];
+  /**
+   * Credited review allocations omitted from the ledger because their
+   * submission predates the scoring window. Absent when no allocation
+   * was omitted, and from snapshots published before this field existed.
+   */
+  omittedReviewCredits?: OmittedReviewCredit[];
   /** Unreversed debits; absent from snapshots published before penalties. */
   penalties?: PublishedPenalty[];
   penaltyHistory?: PenaltyHistoryRecord[];
