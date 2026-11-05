@@ -3406,11 +3406,11 @@ function createSnapshotWithReviewCutoff(
     // verified merge's existing minimum or a current human ratification.
     const repositoryId = repositoryIdFromUrl(pullRequest.url);
     const valuePolicyApplies = underValuePolicy(pullRequest.mergedAt);
-    const ratification =
-      valuePolicyApplies ||
-      detailEligibleMergedPullRequestIds.has(pullRequest.id)
-        ? scoreRatifications.get(pullRequest.id)
-        : undefined;
+    // A ratification record exists here only when its sources were collected
+    // (full-detail or review-only hydration). The detail cap bounds author
+    // detail bonuses, never whether a collected maintainer ratification
+    // binds the outcome (protocol/scoring-v2.md, formal review collection).
+    const ratification = scoreRatifications.get(pullRequest.id);
     if (requiresExplicitPrizeAcceptance(repositoryId) && !ratification) {
       continue;
     }
