@@ -320,15 +320,15 @@ export const RUN_BUDGET_MS = LOCK_MS / 2;
  * provider API key, so URLs and echoed request bodies are removed.
  */
 export function message(error: unknown): string {
+  const name = error instanceof Error ? error.name : "Error";
   const text = error instanceof Error ? error.message : String(error);
-  return (
-    text
-      .split(/Request body:/u)[0]
-      .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/giu, "<url>")
-      .replace(/\s+/gu, " ")
-      .trim()
-      .slice(0, 400) || "unknown error"
-  );
+  const cleaned = text
+    .split(/Request body:/u)[0]
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/giu, "<url>")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 360);
+  return cleaned ? `${name}: ${cleaned}` : `${name}: unknown error`;
 }
 
 export function impactWithin(quote: Quote, limits: Limits): boolean {
