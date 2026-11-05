@@ -113,7 +113,7 @@ type PointsContext = {
 };
 const Context = createContext<PointsContext | null>(null);
 /** The points state of the enclosing PointsProvider; there is no default. */
-function usePoints(): PointsContext {
+export function usePoints(): PointsContext {
   const value = useContext(Context);
   if (!value) throw new Error("PointsProvider is missing");
   return value;
