@@ -105,3 +105,28 @@ test("overlapping runs keep the newer snapshot and fail the stale run loudly", a
   ) as LeaderboardSnapshot;
   expect(final.generatedAt).toBe(T_NEW);
 });
+
+test("concurrent writes under a frozen clock keep the newer snapshot", async () => {
+  // A frozen clock used to make both calls share one temporary path, so the
+  // second rename failed with ENOENT — and a stale run that had already
+  // passed its guard could rename its older snapshot over the newer one.
+  // Writers for one path now serialize and use a unique temporary path each.
+  setSystemTime(new Date("2026-11-22T00:00:00.000Z"));
+  const target = join(await workdir(), "leaderboard.json");
+  const results = await Promise.allSettled([
+    writeLeaderboardAtomically(snap(T_OLD), target),
+    writeLeaderboardAtomically(snap(T_NEW), target),
+  ]);
+  expect(results[1].status).toBe("fulfilled");
+  for (const result of results) {
+    if (result.status === "rejected")
+      expect(String(result.reason)).not.toContain("ENOENT");
+  }
+  const final = JSON.parse(
+    await readFile(target, "utf8"),
+  ) as LeaderboardSnapshot;
+  expect(final.generatedAt).toBe(T_NEW);
+  expect(
+    (await readdir(join(target, ".."))).filter((name) => name.endsWith(".tmp")),
+  ).toEqual([]);
+});
