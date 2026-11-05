@@ -1168,7 +1168,7 @@ test("private security bounty programs keep cases restricted from intake to awar
         },
       });
     });
-    await page.goto(`/projects/${a.id}/security`);
+    await page.goto(`/projects/${a.id}/security`, { waitUntil: "networkidle" });
     await expect(page.locator(".route-page-header .route-lead")).toHaveText(
       "10,000 USDC security bounty",
     );
@@ -1188,7 +1188,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("program-terms.png"),
       fullPage: true,
     });
-    await page.goto(`/projects/${b.id}/security`);
+    await page.goto(`/projects/${b.id}/security`, { waitUntil: "networkidle" });
     await expect(page.locator(".route-page-header .route-lead")).toContainText(
       "100,000 USDC security bounty",
     );
