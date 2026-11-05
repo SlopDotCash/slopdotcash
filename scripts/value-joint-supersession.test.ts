@@ -5,23 +5,23 @@
 import { afterAll, expect, setSystemTime, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
-  createLeaderboardSnapshot,
   assertLeaderboardSnapshot,
+  createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
 import {
   applyPointsSnapshot,
   emptyPointsJournal,
   latestPoints,
-  pointMembers,
   type PointsJournal,
+  pointMembers,
 } from "../src/lib/points";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../src/lib/value-assessment";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import {
-  penaltyScoreInput,
   PENALIZED_AUTHOR,
   PROJECT_OWNER,
+  penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
 import { prepareValueRecord } from "../workers/slopbot/value-journal";
 import { valueSourceDigest } from "../workers/slopbot/value-review";
@@ -29,11 +29,11 @@ import {
   prepareWorkUnitEvidence,
   type WorkUnitSource,
 } from "../workers/slopbot/value-work-unit";
-import { prepareWorkUnitRecord } from "../workers/slopbot/value-work-unit-journal";
 import {
   consumeWorkUnitHistory,
   readWorkUnitHistory,
 } from "../workers/slopbot/value-work-unit-consumption";
+import { prepareWorkUnitRecord } from "../workers/slopbot/value-work-unit-journal";
 
 setSystemTime(new Date("2027-01-16T00:00:00.000Z"));
 afterAll(() => setSystemTime());
