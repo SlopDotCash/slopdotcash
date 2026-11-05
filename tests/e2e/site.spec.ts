@@ -1053,7 +1053,14 @@ test("reaches and reads older inbox notifications without losing the page", asyn
     createdAt: "2026-10-22T00:00:00.000Z",
     readAt: null as string | null,
   }));
+  let readStarted!: () => void;
+  const pendingRead = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  let pendingWrite = false;
+  let readsWhilePending = 0;
   await page.route(/\/api\/v1\/notifications(?:\?.*)?$/u, (route) => {
+    if (pendingWrite) readsWhilePending++;
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
     const offset = cursor
       ? notifications.findIndex((n) => n.eventKey === JSON.parse(cursor)[1]) + 1
@@ -1083,10 +1090,15 @@ test("reaches and reads older inbox notifications without losing the page", asyn
       },
     }),
   );
-  await page.route("**/api/v1/notifications/read", (route) => {
+  await page.route("**/api/v1/notifications/read", async (route) => {
+    pendingWrite = true;
+    readStarted();
+    // A normal server delay lets a returning-window refresh overlap the write.
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
     const keys: string[] = route.request().postDataJSON().eventKeys;
     for (const n of notifications)
       if (keys.includes(n.eventKey)) n.readAt = "2026-10-22T01:00:00.000Z";
+    pendingWrite = false;
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/inbox");
@@ -1097,7 +1109,20 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   await page
     .getByRole("button", { name: "Mark shown as read", exact: true })
     .click();
-  await expect(page.locator(".inbox-summary")).toContainText("1 unread");
+  await pendingRead;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  try {
+    await expect(page.locator(".inbox-summary > p")).toHaveText("1 unread");
+  } finally {
+    await test.info().attach("pending-read-refresh", {
+      body: JSON.stringify({ readsWhilePending, pendingWrite }),
+      contentType: "application/json",
+    });
+    await page.screenshot({
+      path: test.info().outputPath("pending-read-focus.png"),
+      fullPage: true,
+    });
+  }
   await page.getByRole("button", { name: "Older notifications" }).click();
   await expect(page.locator(".inbox-item")).toHaveCount(1);
   await expect(page.locator(".inbox-item")).toContainText("project-100");
