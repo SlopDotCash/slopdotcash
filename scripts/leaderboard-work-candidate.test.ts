@@ -1,4 +1,4 @@
-import { expect, setSystemTime, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
@@ -9,6 +9,11 @@ import {
   PENALIZED_AUTHOR,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
+
+// `selectionFor` freezes the clock; reset after each test so the frozen
+// December time does not leak into other test files in a multi-file run
+// (same pattern as scripts/leaderboard-locale.test.ts).
+afterEach(() => setSystemTime());
 
 const label = (name: string) => ({ id: name, name, color: "" });
 
