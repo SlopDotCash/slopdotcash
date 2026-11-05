@@ -8,6 +8,11 @@ import { inspectRepository } from "./bounded-scan";
  * decoder list. These cases pin that parity: the verdict must not change when
  * `exec` is rewritten as `eval`, when the Node `vm` entry point changes, or
  * when a hex decoder replaces the base64 one.
+ *
+ * The same act must also survive a spelling change that does not change what
+ * runs: a qualified decoder (`window.atob`, `globalThis.Buffer.from`),
+ * whitespace or a block comment around the dotted name, a parenthesised
+ * decoder (`(base64.b64decode)(x)`), or a tagged template (`atob` + backtick).
  */
 function inspected(path: string, text: string) {
   return inspectRepository({
@@ -127,6 +132,65 @@ const DECODED_EXECUTION: Record<string, [string, string]> = {
     "install.js",
     'new Function("a", Buffer.from(blob, "base64").toString())();\n',
   ],
+  // A qualifier in front of the decoder is static member access, not a
+  // computed name: `window.atob` and `globalThis.Buffer.from` are the
+  // idiomatic browser and isomorphic spellings of the same act.
+  "qualified window.atob under eval": [
+    "install.js",
+    'eval(window.atob("cHJvY2Vzcy5leGl0KDEp"));\n',
+  ],
+  "qualified globalThis.atob under eval": [
+    "install.js",
+    'eval(globalThis.atob("cHJvY2Vzcy5leGl0KDEp"));\n',
+  ],
+  "qualified globalThis.Buffer.from under eval": [
+    "install.js",
+    'eval(globalThis.Buffer.from(blob, "base64").toString());\n',
+  ],
+  "qualified window.Buffer.from under eval": [
+    "install.js",
+    'eval(window.Buffer.from(blob, "base64").toString());\n',
+  ],
+  "qualified namespace on a python decoder": [
+    "setup.py",
+    'eval(util.base64.b64decode("cHJpbnQoMSk="))\n',
+  ],
+  // Whitespace around the dot is valid in both languages.
+  "whitespace before the dot": [
+    "setup.py",
+    'exec(base64 .b64decode("cHJpbnQoMSk="))\n',
+  ],
+  "whitespace after the dot": [
+    "setup.py",
+    'exec(base64. b64decode("cHJpbnQoMSk="))\n',
+  ],
+  "whitespace before the vm entry point": [
+    "install.js",
+    'vm .runInThisContext(Buffer.from(blob, "base64").toString());\n',
+  ],
+  // A parenthesised decoder is still called.
+  "parenthesised python decoder": [
+    "setup.py",
+    'exec((base64.b64decode)("cHJpbnQoMSk="))\n',
+  ],
+  "parenthesised javascript decoder": [
+    "install.js",
+    'eval((atob)("cHJvY2Vzcy5leGl0KDEp"));\n',
+  ],
+  // A block comment between the sink and its call does not change the act.
+  "block comment before the decoder call": [
+    "install.js",
+    'eval /*c*/ (atob("cHJvY2Vzcy5leGl0KDEp"));\n',
+  ],
+  "block comment before the vm entry point": [
+    "install.js",
+    'vm /*c*/ .runInThisContext(Buffer.from(blob, "base64").toString());\n',
+  ],
+  // A tagged template is a call as well.
+  "decoder used as a tagged template": [
+    "install.js",
+    "eval(atob`cHJvY2Vzcy5leGl0KDEp`);\n",
+  ],
 };
 
 const BENIGN: Record<string, [string, string]> = {
@@ -179,6 +243,26 @@ const BENIGN: Record<string, [string, string]> = {
   "decoder names in a comment": [
     "README.md",
     "The helpers wrap atob and Buffer.from for callers.\n",
+  ],
+  // Tolerating a comment must not widen the decoder list: a comment in front
+  // of a call that decodes nothing stays clean.
+  "block comment before a non-decoder call": [
+    "install.js",
+    "eval /* explanation */ (someExpression);\n",
+  ],
+  // The widening is scoped to a decoder name under a sink. A qualified,
+  // decoder-looking method anywhere else is ordinary code.
+  "decoder-looking method compared, not executed": [
+    "install.js",
+    'if (logger.atob("cHJvY2Vzcy5leGl0KDEp") === expected) throw new Error("mismatch");\n',
+  ],
+  "qualified non-decoder under eval": [
+    "install.js",
+    "eval(parser.decodeSource(source));\n",
+  ],
+  "atob-looking identifier": [
+    "install.js",
+    "const atobEnabled = flags.atobEnabled;\n",
   ],
 };
 

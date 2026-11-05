@@ -323,12 +323,33 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+// A block comment wherever the sink and its decoder call meet does not
+// change the act, so the gap between them tolerates one. Each iteration
+// consumes at least one whole block comment, so the group cannot backtrack
+// into a scan-length loop. The rule stays textual, so a comment that itself
+// spells a sink-into-decoder example is matched as well.
+const COMMENT_GAP = String.raw`(?:/\*[\s\S]*?\*/\s*)*`;
 /**
  * The calls that turn an encoded payload back into code. Every execution
  * sink below shares this one list, so the same act cannot escape by
  * renaming the decoder or by swapping the sink that runs it.
  */
-const DECODER_CALL = String.raw`(?:atob|Buffer\.from|unescape|decodeURIComponent|base64\.(?:urlsafe_)?b(?:16|32|64|85)decode|bytes\.fromhex|codecs\.decode|binascii\.unhexlify|(?:zlib|gzip|bz2|lzma)\.decompress|marshal\.loads|pickle\.loads)\s*\(`;
+// `window.atob`, `globalThis.Buffer.from`, `foo.atob`: a qualifier is static
+// member access, not a computed name (`window["atob"]`), so it stays the
+// same act. Extra parentheses around the decoder (`(base64.b64decode)(x)`)
+// and a tagged template (`atob` + backtick) are calls too.
+const DECODER_QUALIFIER = String.raw`(?:[A-Za-z_$][\w$]*\s*\.\s*)*`;
+const DECODER_NAME =
+  String.raw`(?:atob|unescape|decodeURIComponent|Buffer\s*\.\s*from` +
+  String.raw`|base64\s*\.\s*(?:urlsafe_)?b(?:16|32|64|85)decode|bytes\s*\.\s*fromhex` +
+  String.raw`|codecs\s*\.\s*decode|binascii\s*\.\s*unhexlify|(?:zlib|gzip|bz2|lzma)\s*\.\s*decompress` +
+  String.raw`|marshal\s*\.\s*loads|pickle\s*\.\s*loads)`;
+// `[(` + backtick (as \x60 to keep the raw template readable) is the call
+// opener: a normal call `atob(...)` or a tagged template `atob` + backtick.
+const DECODER_CALL =
+  String.raw`${DECODER_QUALIFIER}(?:\(\s*)?${DECODER_NAME}(?:\s*\))?\s*` +
+  COMMENT_GAP +
+  String.raw`[(\x60]`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -419,11 +440,21 @@ const RULES: Rule[] = [
     // (`bytes.fromhex`, `codecs.decode`, `binascii.unhexlify`) and the Node
     // `vm` entry points are the same family: the decoded bytes run.
     pattern: new RegExp(
-      String.raw`\b(?:eval|exec)\s*\(\s*` +
+      String.raw`\b(?:eval|exec)\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*` +
         DECODER_CALL +
-        String.raw`|\b(?:new\s+)?Function\s*\(\s*(?:[^()\n]{0,40}?,\s*)?` +
+        String.raw`|\b(?:new\s+)?Function\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*(?:[^()\n]{0,40}?,\s*)?` +
         DECODER_CALL +
-        String.raw`|\bvm\.(?:runIn(?:This|New)?Context|Script)\s*\(\s*` +
+        String.raw`|\bvm\s*` +
+        COMMENT_GAP +
+        String.raw`\.\s*` +
+        COMMENT_GAP +
+        String.raw`(?:runIn(?:This|New)?Context|Script)\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*` +
         DECODER_CALL,
       "iu",
     ),
