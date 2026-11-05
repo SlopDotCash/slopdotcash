@@ -243,14 +243,20 @@ async function accessFor(
   if (!record) fail(404, "not_found", "Report not found");
   return { record, roles: await caseRoles(deps, record, actor) };
 }
-function decorateStoredSubmission(
+/**
+ * The case record settles whether the reporter may still revise the saved
+ * report: a case-level request for information opens revision even when the
+ * intake screening did not, and a case that has moved past its open receipt
+ * states (or already holds an approved or reserved award) closes it. Every
+ * view of the intake — the submission view and the case views — must apply
+ * this one gate, because the report action enforces exactly it.
+ */
+function applyCaseReviseGate(
+  view: ReturnType<typeof intakeView>,
+  record: Pick<CaseRow, "receipt_state" | "award_state">,
   row: SubmissionRow,
-  stored: StoredIntake,
-  record: CaseRow,
   roles: Set<Role>,
-  now: Date,
-) {
-  const view = intakeView(stored, roles, row, now);
+): void {
   view.canRevise =
     (view.canRevise || record.receipt_state === "needs-information") &&
     roles.has("reporter") &&
@@ -259,6 +265,16 @@ function decorateStoredSubmission(
       record.receipt_state,
     ) &&
     !["approved", "reserved"].includes(record.award_state);
+}
+function decorateStoredSubmission(
+  row: SubmissionRow,
+  stored: StoredIntake,
+  record: CaseRow,
+  roles: Set<Role>,
+  now: Date,
+) {
+  const view = intakeView(stored, roles, row, now);
+  applyCaseReviseGate(view, record, row, roles);
   return { ...submissionView(row), intake: view };
 }
 export async function decorateSubmission(
@@ -283,9 +299,12 @@ export async function storedIntakeViewForCase(
   if (!stored) return null;
   const row = await loadSubmission(deps, stored.submission_id);
   if (!row) return null;
+  const view = intakeView(stored, roles, row, deps.now());
+  const record = await loadCase(deps, caseId);
+  if (record) applyCaseReviseGate(view, record, row, roles);
   return {
     submissionId: row.id,
-    ...intakeView(stored, roles, row, deps.now()),
+    ...view,
   };
 }
 
@@ -329,13 +348,40 @@ export async function storedIntakeViewsForCases(
       .all<SubmissionRow>();
     for (const row of rows.results ?? []) submissions.set(row.id, row);
   }
+  const caseStates = new Map<
+    string,
+    Pick<CaseRow, "receipt_state" | "award_state">
+  >();
+  for (const part of chunked(caseIds)) {
+    const rows = await deps.db
+      .prepare(
+        `SELECT id, receipt_state, award_state FROM security_cases WHERE id IN (${part
+          .map(() => "?")
+          .join(",")})`,
+      )
+      .bind(...part)
+      .all<{
+        id: string;
+        receipt_state: CaseRow["receipt_state"];
+        award_state: CaseRow["award_state"];
+      }>();
+    for (const row of rows.results ?? [])
+      caseStates.set(row.id, {
+        receipt_state: row.receipt_state,
+        award_state: row.award_state,
+      });
+  }
   const now = deps.now();
   for (const [caseId, row] of stored) {
     const submission = submissions.get(row.submission_id);
     if (!submission) continue;
+    const roles = rolesByCase.get(caseId) ?? new Set();
+    const view = intakeView(row, roles, submission, now);
+    const record = caseStates.get(caseId);
+    if (record) applyCaseReviseGate(view, record, submission, roles);
     views.set(caseId, {
       submissionId: submission.id,
-      ...intakeView(row, rolesByCase.get(caseId) ?? new Set(), submission, now),
+      ...view,
     });
   }
   return views;
