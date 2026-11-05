@@ -5,15 +5,17 @@
  * project id order. A host locale whose collation reorders ids (Danish
  * treats "aa" as "å", sorting it after "z") must not change the published
  * order: the id tie-break is pinned to English collation like the review
- * and standings orders in leaderboard.ts.
+ * and standings orders in leaderboard.ts. The same pin applies to the
+ * registry generator, which sorts the snapshot it writes.
  */
-import { describe, expect, mock, spyOn, test } from "bun:test";
-import { fileURLToPath } from "node:url";
+import { describe, expect, spyOn, test } from "bun:test";
+import { buildRegistry } from "../src/lib/projects.mjs";
 import { RAW_PROJECT_DEFINITIONS as FIXTURE } from "../tests/fixtures/project-registry.mjs";
+import { renderProjectRegistry } from "./sync-project-registry.mjs";
 
 const base = FIXTURE.find((p) => p.id === "thenetwork");
 
-function cloneProject(id) {
+function cloneProject(id: string) {
   const p = JSON.parse(JSON.stringify(base));
   p.id = id;
   p.slug = id;
@@ -40,43 +42,55 @@ function cloneProject(id) {
 // zero monthly cap, neither publishes at the root. Only the id order decides.
 const defs = [cloneProject("abacus"), cloneProject("aardvark")];
 
-mock.module(
-  fileURLToPath(
-    new URL("../src/lib/project-registry.generated.mjs", import.meta.url),
-  ),
-  () => ({ RAW_PROJECT_DEFINITIONS: defs }),
-);
+function registryOrder(): string[] {
+  return buildRegistry(defs).listed.map((p) => p.id);
+}
 
-async function registryOrder(tag) {
-  const { PROJECTS } = await import(
-    `../src/lib/projects.mjs?registry-order=${tag}`
+/**
+ * Runs a check with the host default collation simulated as Danish: only
+ * localeCompare calls without an explicit locale resolve to it.
+ */
+function withDanishHostDefault<T>(run: () => T): T {
+  const original = String.prototype.localeCompare;
+  const compare = spyOn(String.prototype, "localeCompare").mockImplementation(
+    function (
+      this: string,
+      other: string,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.CollatorOptions,
+    ) {
+      return original.call(this, other, locales ?? "da", options);
+    },
   );
-  return PROJECTS.map((p) => p.id);
+  try {
+    return run();
+  } finally {
+    compare.mockRestore();
+  }
 }
 
 describe("project registry order under a host locale", () => {
-  test("tied projects keep the English id order on an English host", async () => {
-    expect(await registryOrder("en-host")).toEqual(["aardvark", "abacus"]);
+  test("tied projects keep the English id order on an English host", () => {
+    expect(registryOrder()).toEqual(["aardvark", "abacus"]);
   });
 
-  test("tied projects keep the English id order when the host locale is Danish", async () => {
-    const original = String.prototype.localeCompare;
-    const compare = spyOn(String.prototype, "localeCompare").mockImplementation(
-      function (
-        this: string,
-        other: string,
-        locales?: Intl.LocalesArgument,
-        options?: Intl.CollatorOptions,
-      ) {
-        // Simulate a host whose default collation is Danish: only calls
-        // without an explicit locale resolve to it.
-        return original.call(this, other, locales ?? "da", options);
-      },
+  test("tied projects keep the English id order when the host locale is Danish", () => {
+    expect(withDanishHostDefault(registryOrder)).toEqual([
+      "aardvark",
+      "abacus",
+    ]);
+  });
+
+  test("the registry generator keeps the English id order when the host locale is Danish", async () => {
+    // The generator refuses active projects without generated-skill
+    // content; paused clones still exercise its id sort.
+    const paused = defs.map((d) => ({ ...d, status: "paused" }));
+    const rendered = await withDanishHostDefault(() =>
+      renderProjectRegistry(paused),
     );
-    try {
-      expect(await registryOrder("da-host")).toEqual(["aardvark", "abacus"]);
-    } finally {
-      compare.mockRestore();
-    }
+    expect(rendered.indexOf('"id":"aardvark"')).toBeGreaterThan(-1);
+    expect(rendered.indexOf('"id":"aardvark"')).toBeLessThan(
+      rendered.indexOf('"id":"abacus"'),
+    );
   });
 });

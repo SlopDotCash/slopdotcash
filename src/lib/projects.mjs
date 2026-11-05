@@ -237,6 +237,7 @@ export function findProjectByRepositoryId(repositoryId) {
 }
 
 export {
+  buildRegistry,
   HISTORICAL_PROJECTS,
   INGESTED_HISTORICAL_PROJECTS,
   INGESTED_PROJECTS,
