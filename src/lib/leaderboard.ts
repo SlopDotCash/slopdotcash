@@ -4986,6 +4986,50 @@ function createSnapshotWithReviewCutoff(
 
   assignLeaderboardRanks(leaders);
 
+  // Carry each assessed joint record's declared predecessors to Points.
+  // Only a successor that actually publishes a ledger decision in this
+  // snapshot can retire the credit it replaced: a group whose units were
+  // all withheld publishes no decision and retires nothing here.
+  const publishedDecisionDigests = new Set(
+    publishedLedger.flatMap((event) =>
+      event.category === "merged-pull-request" &&
+      event.scoreDecisionSourceId?.startsWith("value:")
+        ? [event.scoreDecisionSourceId.slice("value:".length)]
+        : [],
+    ),
+  );
+  const supersessionRows = new Map<string, string>();
+  for (const decision of jointDecisions.values()) {
+    if (
+      decision.status !== "assessed" ||
+      decision.latestDigest === null ||
+      !publishedDecisionDigests.has(decision.latestDigest)
+    )
+      continue;
+    for (const predecessorDigest of [
+      ...(decision.record.legacyPredecessors ?? []),
+      ...(decision.record.supersedes ?? []),
+    ]) {
+      if (predecessorDigest === decision.latestDigest) continue;
+      const existing = supersessionRows.get(predecessorDigest);
+      if (existing !== undefined && existing !== decision.latestDigest)
+        throw new Error(
+          "Joint assessments disagree about a predecessor's successor",
+        );
+      supersessionRows.set(predecessorDigest, decision.latestDigest);
+    }
+  }
+  const valueAssessmentSupersessions = [...supersessionRows.entries()]
+    .map(([predecessorDigest, successorDigest]) => ({
+      predecessorDigest,
+      successorDigest,
+    }))
+    .sort(
+      (left, right) =>
+        left.predecessorDigest.localeCompare(right.predecessorDigest, "en") ||
+        left.successorDigest.localeCompare(right.successorDigest, "en"),
+    );
+
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
@@ -5066,6 +5110,9 @@ function createSnapshotWithReviewCutoff(
             };
           }),
         }),
+    ...(valueAssessmentSupersessions.length
+      ? { valueAssessmentSupersessions }
+      : {}),
     ledger: publishedLedger.sort(
       (left, right) =>
         right.points - left.points ||
@@ -7631,6 +7678,75 @@ export function assertLeaderboardSnapshot(
       )
         throw new Error(
           "Value score event is not bound to its assessment coverage",
+        );
+    }
+  }
+  if (snapshot.valueAssessmentSupersessions !== undefined) {
+    if (!Array.isArray(snapshot.valueAssessmentSupersessions))
+      throw new Error("snapshot.valueAssessmentSupersessions must be an array");
+    const predecessors = new Set<string>();
+    let previousRow: { predecessorDigest: string; successorDigest: string } | undefined;
+    for (const value of snapshot.valueAssessmentSupersessions) {
+      const row = assertObject(
+        value,
+        "snapshot.valueAssessmentSupersessions record",
+      );
+      if (
+        Object.keys(row).sort().join(",") !==
+        "predecessorDigest,successorDigest"
+      )
+        throw new Error("Value supersession has unexpected fields");
+      for (const key of ["predecessorDigest", "successorDigest"] as const) {
+        if (
+          typeof row[key] !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(row[key] as string)
+        )
+          throw new Error(`Value supersession ${key} is invalid`);
+      }
+      if (row.predecessorDigest === row.successorDigest)
+        throw new Error("Value supersession cannot replace itself");
+      if (predecessors.has(row.predecessorDigest as string))
+        throw new Error("Value supersession repeats a predecessor");
+      predecessors.add(row.predecessorDigest as string);
+      const current = {
+        predecessorDigest: row.predecessorDigest as string,
+        successorDigest: row.successorDigest as string,
+      };
+      if (
+        previousRow &&
+        (previousRow.predecessorDigest.localeCompare(
+          current.predecessorDigest,
+          "en",
+        ) > 0 ||
+          (previousRow.predecessorDigest === current.predecessorDigest &&
+            previousRow.successorDigest.localeCompare(
+              current.successorDigest,
+              "en",
+            ) > 0))
+      )
+        throw new Error(
+          "snapshot.valueAssessmentSupersessions must be ordered by predecessor and successor digest",
+        );
+      previousRow = current;
+      // The successor must be in force in this snapshot: an assessed
+      // coverage row or a published implementation decision names it.
+      const successor = current.successorDigest;
+      if (
+        !(
+          snapshot.valueAssessmentCoverage?.some(
+            (coverage) =>
+              coverage.status === "assessed" &&
+              coverage.recordDigest === successor,
+          ) ||
+          validatedLedger.some(
+            (event) =>
+              event.category === "merged-pull-request" &&
+              event.scoreDecisionSourceId === `value:${successor}`,
+          )
+        )
+      )
+        throw new Error(
+          "Value supersession successor is not a published assessment decision",
         );
     }
   }
