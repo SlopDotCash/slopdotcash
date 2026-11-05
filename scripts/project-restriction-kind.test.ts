@@ -510,4 +510,41 @@ describe("project restriction kind (ADM-06)", () => {
       state: "quarantined",
     });
   });
+
+  test("a ban on the alphabetically later project outweighs a quarantine on the earlier one", async () => {
+    await listProject();
+    await listProject(
+      applicationManifest("renamed-registry", "example/renamed-registry"),
+    );
+    await listProject(
+      applicationManifest("mmm-project", "example/mmm-project"),
+    );
+    // Quarantine sits on the alphabetically earlier project, Ban on the later.
+    expect(
+      (await enforceOn("open-registry", "admin", "quarantine")).status,
+    ).toBe(200);
+    expect((await enforceOn("renamed-registry", "admin", "ban")).status).toBe(
+      200,
+    );
+    const states = await publicStates("open-registry");
+    expect(states.listEntry).toMatchObject({
+      projectId: "open-registry",
+      sourceProjectId: "renamed-registry",
+      state: "banned",
+    });
+    expect(states.detailRestriction).toMatchObject({
+      projectId: "open-registry",
+      sourceProjectId: "renamed-registry",
+      state: "banned",
+    });
+    expect(states.detailMessage).toContain("banned");
+    expect(states.skillText).toContain("banned");
+    // A third project with no restriction of its own reads the same Ban.
+    const third = await publicStates("mmm-project");
+    expect(third.listEntry).toMatchObject({
+      projectId: "mmm-project",
+      sourceProjectId: "renamed-registry",
+      state: "banned",
+    });
+  });
 });

@@ -320,18 +320,28 @@ export function sameRepositoryIdentity(
   );
 }
 
-/** The restriction in force on any repository this manifest claims. */
+/** The heaviest restriction in force on any repository this manifest claims. */
 export function restrictionForRepository(
   manifest: ProjectDefinition,
   records: ProjectEnforcement[],
 ): ProjectRestriction | null {
   const identity = repositoryIdentity(manifest);
   return (
-    activeRestrictions(records).find(
-      (restriction) =>
-        restriction.repositoryGithubId === identity.githubId ||
-        restriction.repositoryKeys.some((key) => identity.keys.includes(key)),
-    ) ?? null
+    activeRestrictions(records)
+      .filter(
+        (restriction) =>
+          restriction.repositoryGithubId === identity.githubId ||
+          restriction.repositoryKeys.some((key) => identity.keys.includes(key)),
+      )
+      // A Ban outweighs a Quarantine on the same repository, whichever
+      // project it sits on; the first match breaks a tie within one kind,
+      // so same-kind appeal ownership is unchanged.
+      .reduce<ProjectRestriction | null>((heaviest, restriction) => {
+        if (heaviest === null) return restriction;
+        if (restriction.state === "banned" && heaviest.state !== "banned")
+          return restriction;
+        return heaviest;
+      }, null)
   );
 }
 
