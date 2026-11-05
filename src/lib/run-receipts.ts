@@ -160,6 +160,14 @@ export function assertRunReceiptPolicyJoin(
     !acknowledgement ||
     !binding ||
     Date.parse(receipt.startedAt) < Date.parse(binding.activatedAt) ||
+    // The acknowledged binding must be the one in force when the run
+    // started: a later binding already active at start supersedes it, so a
+    // run begun under newer terms cannot join under the older terms.
+    activation.bindings.some(
+      (entry) =>
+        Date.parse(entry.activatedAt) > Date.parse(binding.activatedAt) &&
+        Date.parse(entry.activatedAt) <= Date.parse(receipt.startedAt),
+    ) ||
     acknowledgement.licenseSha256 !== binding.licenseSha256 ||
     acknowledgement.inboundTermsSha256 !== binding.inboundTermsSha256 ||
     acknowledgement.prizeRulesSha256 !== binding.prizeRulesSha256
