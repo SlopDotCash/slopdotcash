@@ -43,6 +43,26 @@ function actorFromCycle(actor: ActorRef): GitHubActor {
   };
 }
 
+/**
+ * The login a frozen cycle contributor's profile link must target. The
+ * frozen record keeps the login from freeze time, but profile URLs resolve
+ * against current records and the profile page vetoes a login that the
+ * same permanent actor ID now contradicts, so a contributor who renamed
+ * after the freeze is unreachable from the frozen login. Resolve the
+ * target through the current actor record for the contributor's ID — the
+ * same substitution createGlobalLeaders applies to these contributors.
+ * A contributor with no current record keeps the frozen login, which the
+ * profiles directory still resolves for them.
+ */
+export function cycleContributorProfileLogin(
+  contributor: { actor: ActorRef },
+  currentActors: ReadonlyMap<string, GitHubActor>,
+): string {
+  return (
+    currentActors.get(contributor.actor.id)?.login ?? contributor.actor.login
+  );
+}
+
 function emptyLeader(actor: GitHubActor): MutableGlobalLeader {
   return {
     actor,
