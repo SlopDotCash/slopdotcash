@@ -9,6 +9,9 @@ on:
       - 'backend/payments/**'
       - 'backend/fee-conversions/**'
       - 'workers/fee-converter/**'
+      - 'workers/payments/**'
+      - 'workers/payment-executor/**'
+      - 'scripts/payment-keeper/**'
       - 'migrations/**'
       - 'src/lib/security-bounty.*'
       - 'scripts/run-security-payments.mjs'
@@ -335,3 +338,4 @@ jobs:
 
 # These jobs use isolated local chains and public fixture keys. They receive no
 # environment secrets, create no public deployment, and do not use a paid RPC.
+
