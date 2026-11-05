@@ -257,6 +257,93 @@ async function adminTokenChange(): Promise<Response> {
   return response;
 }
 
+// A vault migration lands as a manifest revision (the vault-setup route
+// appends the verified deployment); the owner view reads the project fresh,
+// so this is the manifest the view sees after migration.
+const NEW_VAULT = "0x2222222222222222222222222222222222222222";
+const CUSTOM_ADDRESS = "0x3333333333333333333333333333333333333333";
+const CUSTOM_ASSET = {
+  network: "base",
+  kind: "token",
+  address: CUSTOM_ADDRESS,
+  symbol: "CUSTOM",
+  decimals: 18,
+  chainId: "8453",
+  cluster: null,
+  verifiedAt: "2026-12-04T00:00:00.000Z",
+};
+
+async function reviseManifest(
+  mutate: (manifest: ProjectRecord["manifest"]) => ProjectRecord["manifest"],
+): Promise<void> {
+  const current = await persistence().getProject(project.id);
+  if (!current) throw new Error("Missing fixture project");
+  const manifest = mutate(current.manifest);
+  const text = JSON.stringify(manifest);
+  expect(
+    await persistence().appendProjectRevision(
+      {
+        projectId: project.id,
+        expectedRevision: current.revision,
+        manifest: manifest as ProjectRecord["manifest"],
+        manifestText: text,
+        manifestSha256: await sha256Hex(text),
+        reason: "Fixture: migrate the vault after freeze.",
+        actor: { githubId: ADMIN.githubId, githubLogin: "admin" },
+        at: "2026-12-04T00:00:00.000Z",
+      },
+      0,
+    ),
+  ).toBe("updated");
+  const reloaded = await persistence().getProject(project.id);
+  if (!reloaded) throw new Error("Fixture project vanished");
+  project = reloaded;
+}
+
+async function migrateVault(): Promise<void> {
+  await reviseManifest((manifest) => ({
+    ...manifest,
+    rewardAsset: NEW_ASSET,
+    reward: {
+      ...manifest.reward,
+      currency: "NEW",
+      monthlyCapDisplay: monthlyAmountDisplay(
+        manifest.reward.monthlyCapMinor,
+        NEW_ASSET as never,
+      ),
+    },
+    escrow: manifest.escrow
+      ? {
+          ...manifest.escrow,
+          deployments: [
+            { ...deployment, vault: NEW_VAULT, asset: NEW_ADDRESS },
+            ...manifest.escrow.deployments.slice(1),
+          ],
+        }
+      : manifest.escrow,
+  }));
+}
+
+async function migrateToCustomAsset(): Promise<void> {
+  await reviseManifest((manifest) => ({
+    ...manifest,
+    reward: {
+      ...manifest.reward,
+      currency: "CUSTOM",
+      monthlyCapDisplay: monthlyAmountDisplay(
+        manifest.reward.monthlyCapMinor,
+        CUSTOM_ASSET as never,
+      ),
+    },
+    escrow: manifest.escrow
+      ? {
+          ...manifest.escrow,
+          deployments: [{ ...deployment, asset: CUSTOM_ADDRESS }],
+        }
+      : manifest.escrow,
+  }));
+}
+
 async function seedMember(githubId: string, login: string) {
   const token = `t${githubId}`.padEnd(43, "x");
   sqlite
@@ -440,4 +527,50 @@ test("owner self-service cannot change the reward token of a funded project", as
   expect((await persistence().getProject(project.id))?.revision).toBe(
     current.revision,
   );
+});
+
+test("a vault migration after freeze keeps the frozen month on its own vault", async () => {
+  vault("10000");
+  const report = await coordinate();
+  expect(report.frozen).toEqual([`${project.id}/2026-11`]);
+  expect(report.created).toEqual([`${project.id}/2026-11`]);
+
+  await migrateVault();
+  // The new vault is indexed too: the owner view must still read the
+  // frozen run's vault, not the migrated deployment.
+  vault("10000", 9);
+
+  const view = await owner().view(project.id, "2026-11", actor);
+  expect(view.asset?.assetAddress).toBe(deployment.asset);
+  expect(view.asset?.assetDecimals).toBe(6);
+  expect(view.asset?.symbol).toBe("USDC");
+  expect(view.run?.awards.map((award) => award.grossBase)).toEqual([
+    "600",
+    "400",
+  ]);
+});
+
+test("a vault migration before the new vault is indexed keeps the frozen month's asset", async () => {
+  vault("10000");
+  const report = await coordinate();
+  expect(report.frozen).toEqual([`${project.id}/2026-11`]);
+  expect(report.created).toEqual([`${project.id}/2026-11`]);
+
+  await migrateVault();
+
+  const view = await owner().view(project.id, "2026-11", actor);
+  expect(view.asset?.assetAddress).toBe(deployment.asset);
+  expect(view.asset?.assetDecimals).toBe(6);
+  expect(view.asset?.symbol).toBe("USDC");
+});
+
+test("an open month with no proposal and a custom deployment asset keeps the manifest currency", async () => {
+  // No coordinate(): no proposal base exists for 2026-12, so base === null.
+  await migrateToCustomAsset();
+  vault("10000", 18);
+
+  const view = await owner().view(project.id, "2026-12", actor);
+  expect(view.asset?.assetAddress).toBe(CUSTOM_ADDRESS);
+  expect(view.asset?.assetDecimals).toBe(18);
+  expect(view.asset?.symbol).toBe("CUSTOM");
 });
