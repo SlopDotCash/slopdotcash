@@ -3724,13 +3724,22 @@ function createSnapshotWithReviewCutoff(
       // implementation actor. Like the single pull request path, nobody is
       // credited; the other units of the group still score.
       if (!actors.length) continue;
+      // Apply the same prospective ban as the ledger before dividing the
+      // unit's credit, as the review allocation does. A discarded award
+      // must not take a co-author's share: the split is computed as if the
+      // banned actor had not taken part.
+      const eligibleActors = actors.filter(
+        (actor) =>
+          !participationBannedAt(participationBans, actor.id, completedAt),
+      );
+      if (!eligibleActors.length) continue;
       // An accepted unit assessed at zero keeps the minimum (owner decision D2).
       const shares = shareScoreThirds(
         Math.max(MIN_VALUE_MERGE_THIRDS, VALUE_TIERS[tier]),
-        actors.length,
+        eligibleActors.length,
         0,
       );
-      for (const [index, actor] of actors.entries()) {
+      for (const [index, actor] of eligibleActors.entries()) {
         const thirds = shares[index] as number;
         addScore(entries, ledger, mergedSources, participationBans, {
           id: `${completion.pull.node_id}:joint:${unit.workUnitId}:merged:${actor.id}`,
@@ -3753,7 +3762,7 @@ function createSnapshotWithReviewCutoff(
             title: completion.pull.title,
             url: completion.pull.html_url,
           },
-          reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale} Shared among ${actors.length} scoped implementation actors.`,
+          reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale} Shared among ${eligibleActors.length} scoped implementation actors.`,
         });
       }
     }
