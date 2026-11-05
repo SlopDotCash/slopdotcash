@@ -947,6 +947,112 @@ test("a stored update whose base revision moved on is not offered for publicatio
   ).toBe("A newer published headline.");
 });
 
+test("a stored update that owner self-service can never publish is not offered for publication", async () => {
+  const { persistence, sqlite, call, create, state } = registry();
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+  };
+  state.clearance = CLEARED;
+  // Stored applications always carry the paused submission status; the
+  // publisher replaces it with the current status.
+  const storedUpdate = async (
+    id: string,
+    projectId: string,
+    repository: string,
+    build: (base: ProjectDefinition) => Record<string, unknown>,
+  ) => {
+    await create(projectId, repository);
+    await call("POST", `project-setup/${projectId}/check`, OWNER, {});
+    const base = await persistence.getProject(projectId);
+    if (!base) throw new Error("project was not listed");
+    const manifest = build(base.manifest);
+    sqlite.exec(
+      `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at,expected_revision,change_reason)
+       VALUES ('${id}','${projectId}','${repository}','${JSON.stringify(manifest).replaceAll("'", "''")}','${"b".repeat(64)}','Merged pull requests','${OWNER}','owner','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z',${base.revision},'Stored change')`,
+    );
+  };
+  // Moving the repository is outside owner self-service, so publishing this
+  // update answers owner_field_restricted on every attempt.
+  await storedUpdate(
+    "app_s6krepomove00001",
+    "open-registry",
+    "example/open-registry",
+    (base) => ({
+      ...base,
+      status: "paused",
+      repositories: [
+        {
+          ...base.repositories[0],
+          id: "example/moved-registry",
+          displayName: "example/moved-registry",
+          githubUrl: "https://github.com/example/moved-registry",
+        },
+      ],
+      links: {
+        repository: "https://github.com/example/moved-registry",
+        issues: "https://github.com/example/moved-registry/issues",
+      },
+    }),
+  );
+  // This update differs only in the stored submission status, which the
+  // publisher replaces, so publishing it changes nothing on every attempt.
+  await storedUpdate(
+    "app_s6knochange0001",
+    "quiet-registry",
+    "example/quiet-registry",
+    (base) => ({ ...base, status: "paused" }),
+  );
+  // A name change publishes as a presentation revision.
+  await storedUpdate(
+    "app_s6krename000001",
+    "rename-registry",
+    "example/rename-registry",
+    (base) => ({ ...base, status: "paused", name: "Renamed Registry" }),
+  );
+  // Only the publishable update is offered.
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [expect.objectContaining({ id: "app_s6krename000001" })],
+  );
+  // The publish endpoints themselves are unchanged: a direct attempt still
+  // reports why each unpublishable update fails.
+  const moved = await call(
+    "POST",
+    "project-applications/app_s6krepomove00001/publish",
+    OWNER,
+    {},
+  );
+  expect(moved.status).toBe(422);
+  expect(moved.body.error).toBe("owner_field_restricted");
+  const empty = await call(
+    "POST",
+    "project-applications/app_s6knochange0001/publish",
+    OWNER,
+    {},
+  );
+  expect(empty.status).toBe(422);
+  expect(empty.body.error).toBe("no_change");
+  // The offered update publishes, and the public registry shows its name.
+  const renamed = await call(
+    "POST",
+    "project-applications/app_s6krename000001/publish",
+    OWNER,
+    {},
+  );
+  expect(renamed.status).toBe(200);
+  expect((await call("GET", "projects", OWNER)).body.projects).toContainEqual(
+    expect.objectContaining({
+      id: "rename-registry",
+      name: "Renamed Registry",
+    }),
+  );
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+});
+
 test("an explicit moderator ban blocks new contribution intake without blaming the original applicant", async () => {
   const t = registry();
   t.deps.moderatorGithubIds = new Set([ADMIN]);

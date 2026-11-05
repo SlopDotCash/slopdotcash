@@ -1794,7 +1794,12 @@ async function listSetup(
 /**
  * A stored update publishes only against its own base revision. Once another
  * revision is published it can never succeed, so setup stops offering it;
- * the owner makes the change again from the project's settings.
+ * the owner makes the change again from the project's settings. The same
+ * holds while the base is still current when publishing the stored manifest
+ * could never succeed: publishing classifies it against the current manifest
+ * with the server-owned status and listing taken from the current manifest,
+ * so an update whose differences are only fields owner self-service may not
+ * change, or that changes nothing at all, fails on every attempt.
  */
 async function isPublishable(
   deps: ProjectApiDependencies,
@@ -1802,7 +1807,19 @@ async function isPublishable(
 ): Promise<boolean> {
   if (application.expectedRevision === undefined) return true;
   const project = await deps.persistence.getProject(application.projectId);
-  return project?.revision === application.expectedRevision;
+  if (project?.revision !== application.expectedRevision) return false;
+  const changes = classifyRevisionChanges(project.manifest, {
+    ...application.manifest,
+    status: project.manifest.status,
+    listingTier: project.manifest.listingTier,
+  });
+  return (
+    changes.restricted.length === 0 &&
+    changes.presentation.length +
+      changes.executable.length +
+      changes.financial.length >
+      0
+  );
 }
 
 async function checkSetup(
