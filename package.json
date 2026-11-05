@@ -28,6 +28,7 @@
     "audit:dependencies": "bun audit",
     "verify": "bun run verify:contracts && bun run cycles:check && bun run audit:dependencies && bun run verify:code && bun run build",
     "typecheck": "tsc -b",
+    "typecheck:acceptance": "tsc -p tsconfig.node.json --noEmit",
     "test": "bun test --timeout 30000 ./scripts ./workers ./backend ./contracts",
     "test:integration": "node scripts/run-integration.mjs",
     "test:slopbot": "bun test --timeout 30000 ./workers/slopbot",

@@ -302,6 +302,7 @@ export function ownerVaultSetupService(deps: {
           const { tokenProgram, ...prepared } =
             await prepareSolanaVaultCreation(
               config,
+              project.id,
               creation,
               registrationOnly,
             );
@@ -448,6 +449,7 @@ export function ownerVaultSetupService(deps: {
         try {
           const verified = await verifySolanaVaultCreation(
             result.config,
+            project.id,
             result.creation,
             transactionId,
           );

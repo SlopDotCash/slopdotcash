@@ -150,7 +150,7 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
     );
   await mintTo(provider.connection, payer, mint, source, payer, 100_000_000n);
   const domain = hash("executor:solana-localnet"),
-    projectId = hash(`executor-project${RUN}`),
+    projectId = hash("slop-project:executor-project"),
     origin = hash("executor-source");
   const project = pda(
       Buffer.from("project"),
@@ -1202,7 +1202,7 @@ async function scannedProject(label) {
   );
   await mintTo(provider.connection, payer, mint, source, payer, 50_000_000n);
   const domain = hash(`scanned:${label}`),
-    projectId = hash(`scanned-project:${label}${RUN}`);
+    projectId = hash(`slop-project:scanned-${label}`);
   const project = pda(
       Buffer.from("project"),
       payer.publicKey.toBuffer(),

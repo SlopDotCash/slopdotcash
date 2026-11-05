@@ -6,6 +6,7 @@ import {
   acceptsPayoutFee,
   type PayoutPolicy,
 } from "../../src/lib/payments/contracts";
+import { registryProjectDigest } from "../../src/lib/vault-setup";
 import type { VaultTotals } from "../vault-totals";
 import {
   nativeLamportDeltas,
@@ -378,9 +379,9 @@ export async function verifySolanaProgram(
 /** Bind the reviewed deployment to finalized executable bytes and all project authorities. */
 export async function verifySolanaDeployment(
   config: SolanaEscrowConfig,
-  expectedProjectDigest?: string,
 ): Promise<Uint8Array> {
   await verifySolanaProgram(config);
+  const expectedProjectDigest = registryProjectDigest(config.projectId);
   const info = object(
     await rpc(config, "getAccountInfo", [
       config.projectPda,
@@ -394,16 +395,15 @@ export async function verifySolanaDeployment(
     PROJECT_DISCRIMINATOR,
   );
   if (
-    expectedProjectDigest !== undefined &&
-    (hex(project.slice(40, 72)) !== hex(digest(expectedProjectDigest)) ||
-      config.projectPda !==
-        programAddress(config.programId, [
-          encoder.encode("project"),
-          publicKeyBytes(config.owner),
-          digest(expectedProjectDigest),
-          Uint8Array.of(solanaProjectPurpose(config.payoutPolicy)),
-        ]) ||
-      config.vault !== solanaVaultAddress(config.programId, config.projectPda))
+    hex(project.slice(40, 72)) !== hex(digest(expectedProjectDigest)) ||
+    config.projectPda !==
+      programAddress(config.programId, [
+        encoder.encode("project"),
+        publicKeyBytes(config.owner),
+        digest(expectedProjectDigest),
+        Uint8Array.of(solanaProjectPurpose(config.payoutPolicy)),
+      ]) ||
+    config.vault !== solanaVaultAddress(config.programId, config.projectPda)
   )
     throw new Error("The vault belongs to a different registry project.");
   const view = new DataView(project.buffer, project.byteOffset);

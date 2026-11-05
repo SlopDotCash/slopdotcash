@@ -102,14 +102,14 @@ export async function createNativeFeeFixture(
       })
       .rpc(),
   );
-  const projectKey = "native-fee-converter-project";
-  const projectId = hash(projectKey);
+  const projectId = "native-fee-converter-project";
+  const projectDigest = hash(`slop-project:${projectId}`);
   const networkDomain = hash("native-fee-converter-local-domain");
   const project = PublicKey.findProgramAddressSync(
     [
       Buffer.from("project"),
       signer.publicKey.toBuffer(),
-      projectId,
+      projectDigest,
       Buffer.from([0]),
     ],
     programId,
@@ -121,7 +121,7 @@ export async function createNativeFeeFixture(
   await sent(
     program.methods
       .initializeNative(
-        [...projectId],
+        [...projectDigest],
         [...networkDomain],
         identity,
         fees,
@@ -173,7 +173,7 @@ export async function createNativeFeeFixture(
   if (state.accruedFees.toString() !== String(feeAmount))
     throw new Error("Native fee accrual differs from fixture");
   return {
-    projectId: projectKey,
+    projectId,
     deployment: {
       network: "solana-mainnet",
       programId: programId.toBase58(),

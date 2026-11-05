@@ -41,6 +41,7 @@ import {
   runPaymentsCron,
   runScenarios,
   type ScenarioEvidence,
+  type ScenarioProjectEvidence,
   scenarioActor,
   sha256Text,
   solanaSeed,
@@ -51,6 +52,7 @@ import {
   waitPolicy,
 } from "../../../scripts/escrow-acceptance/shared";
 import type { EscrowDeployment } from "../../../src/lib/escrow-policy.mjs";
+import { registryProjectDigest } from "../../../src/lib/vault-setup";
 import { preflightSolanaDeployment } from "../../../workers/payment-executor/solana";
 import { freezeSolanaMonthly } from "../../../workers/payment-executor/solana-monthly";
 import {
@@ -62,8 +64,11 @@ import {
   solanaMonthlyMessage,
 } from "../adapter";
 import {
+  assertCanonicalScenarioEvidence,
+  canonicalInitializationInstructions,
   cosignSolanaBinding,
   openSolanaRun,
+  reconcileScenarioProjectEvidence,
   solanaDeploymentRecord,
   solanaServices,
 } from "./acceptance";
@@ -240,44 +245,68 @@ export async function runSolanaExtended(
     mint: PublicKey,
     options: { bounty?: boolean; bindingDelay?: bigint } = {},
   ) => {
-    const projectId = sha256(
-      `slop-escrow-acceptance:${run.runId}:${network}:${name}:${mint.toBase58()}`,
+    const projectId = `acceptance-${run.runId.slice(0, 8)}-${name}`;
+    const projectDigest = registryProjectDigest(projectId);
+    const project = program.project(
+      keys.owner.publicKey,
+      Buffer.from(projectDigest, "hex"),
+      options.bounty ? 1 : 0,
     );
     const purpose = options.bounty ? 1 : 0;
-    const project = program.project(keys.owner.publicKey, projectId, purpose);
     const vault = program.vault(project);
-    await send(
+    let projectEvidence: ScenarioProjectEvidence = {
+      projectId,
+      onchainProjectId: projectDigest,
+      projectPda: project.toBase58(),
+      vault: vault.toBase58(),
+      asset: mint.toBase58(),
+      purpose: purpose as 0 | 1,
+      deployment: solanaDeploymentRecord(
+        ctx,
+        project,
+        mint,
+        options.bindingDelay ?? 0n,
+        entry.steps[`${name}:initialize`]?.transactionId ?? null,
+      ),
+    };
+    entry.projects ??= {};
+    const recorded = entry.projects[name];
+    if (recorded) {
+      projectEvidence = reconcileScenarioProjectEvidence(
+        name,
+        recorded,
+        projectEvidence,
+      );
+    } else {
+      entry.projects[name] = projectEvidence;
+      await persist();
+    }
+    const initialized = await send(
       entry,
       `${name}:initialize`,
       [keys.owner],
-      [
-        program.initialize({
-          owner: keys.owner.publicKey,
-          project,
-          mint,
-          vault,
-          config: program.config(),
-          projectId,
-          network: network32,
-          identity: identity.publicKey,
-          fees: ctx.feeRecipient,
-          bindingDelay: options.bindingDelay ?? 0n,
-          rotationDelay: ctx.rotationDelay,
-          purpose,
-        }),
-        createAssociatedTokenAccountIdempotentInstruction(
-          keys.owner.publicKey,
-          ata(mint, ctx.feeRecipient),
-          ctx.feeRecipient,
-          mint,
-        ),
-      ],
+      canonicalInitializationInstructions(ctx.programId, {
+        owner: keys.owner.publicKey,
+        project,
+        mint,
+        vault,
+        projectId: Buffer.from(projectDigest, "hex"),
+        network: network32,
+        identity: identity.publicKey,
+        fees: ctx.feeRecipient,
+        bindingDelay: options.bindingDelay ?? 0n,
+        rotationDelay: ctx.rotationDelay,
+        purpose,
+      }),
     );
+    projectEvidence.deployment.deploymentTransaction =
+      initialized.transactionId;
+    await persist();
     entry.vaults[name] = vault.toBase58();
     entry.checks[`${name}:project`] = project.toBase58();
     if (!entry.assets.includes(mint.toBase58()))
       entry.assets.push(mint.toBase58());
-    return { project, vault, mint };
+    return { projectId, project, vault, mint };
   };
   type Project = Awaited<ReturnType<typeof projectFor>>;
   const deposit = async (
@@ -722,7 +751,6 @@ export async function runSolanaExtended(
     const mint = scenarioMint;
     const amounts = await amountsFor(mint);
     const p = await projectFor(entry, "monthly", mint);
-    const projectId = `acceptance-${run.runId.slice(0, 8)}-monthly`;
     const deployment = {
       ...solanaDeploymentRecord(
         ctx,
@@ -733,7 +761,11 @@ export async function runSolanaExtended(
       ),
     } as EscrowDeployment;
     const services = solanaServices(ctx, join(directory, "monthly"), () => [
-      { projectId, effectiveCycle: run.startedAt.slice(0, 7), deployment },
+      {
+        projectId: p.projectId,
+        effectiveCycle: run.startedAt.slice(0, 7),
+        deployment,
+      },
     ]);
     services.refresh();
     await deposit(entry, "monthly", p, 500n * amounts.unit);
@@ -917,7 +949,7 @@ export async function runSolanaExtended(
     );
     const plan = (list: ReturnType<typeof entries>, frozenAt?: string) => ({
       request: {
-        projectId,
+        projectId: p.projectId,
         period: periods.open,
         network: network as EscrowDeployment["network"],
         snapshotSha256: sha256Text(JSON.stringify(list)),
@@ -1321,13 +1353,16 @@ export async function runSolanaExtended(
   ) {
     const proxy = new FaultRpc(ctx.rpcUrl);
     try {
-      const deployments: Record<string, EscrowDeployment> = {};
+      const deployments: Record<
+        string,
+        { projectId: string; deployment: EscrowDeployment }
+      > = {};
       const services = solanaServices(
         ctx,
         join(directory, "dispatch"),
         () =>
-          Object.entries(deployments).map(([name, deployment]) => ({
-            projectId: `acceptance-${run.runId.slice(0, 8)}-${name}`,
+          Object.values(deployments).map(({ projectId, deployment }) => ({
+            projectId,
             effectiveCycle: run.startedAt.slice(0, 7),
             deployment,
           })),
@@ -1344,14 +1379,17 @@ export async function runSolanaExtended(
         const amounts = await amountsFor(mint);
         const p = await projectFor(entry, name, mint);
         deployments[name] = {
-          ...solanaDeploymentRecord(
-            ctx,
-            p.project,
-            mint,
-            0n,
-            entry.steps[`${name}:initialize`].transactionId,
-          ),
-        } as EscrowDeployment;
+          projectId: p.projectId,
+          deployment: {
+            ...solanaDeploymentRecord(
+              ctx,
+              p.project,
+              mint,
+              0n,
+              entry.steps[`${name}:initialize`].transactionId,
+            ),
+          } as EscrowDeployment,
+        };
         services.refresh();
         await deposit(
           entry,
@@ -1770,6 +1808,20 @@ export async function runSolanaExtended(
   }
 
   const finalize = async (entry: ScenarioEvidence) => {
+    assertCanonicalScenarioEvidence(
+      entry,
+      ctx.programId,
+      keys.owner.publicKey,
+      run.runId,
+      {
+        networkDomain: ctx.networkDomain,
+        identityAuthority: identity.publicKey,
+        feeRecipient: ctx.feeRecipient,
+        bindingDelay: (name) =>
+          name.startsWith("lifecycle-review") ? reviewDelay : 0n,
+        rotationDelay: ctx.rotationDelay,
+      },
+    );
     const signatures = new Map<string, "success" | "reverted">();
     const include = (
       signature: string,

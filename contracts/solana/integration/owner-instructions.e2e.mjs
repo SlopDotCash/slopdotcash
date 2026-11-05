@@ -127,6 +127,7 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
           ...infrastructure,
           codeSha256: "0".repeat(64),
         },
+        projectId,
         { ...base, monthlyCap: "20", automaticMonthly: true },
       ),
     /reviewed digest/,
@@ -138,6 +139,7 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
           ...infrastructure,
           feeRecipient: owner.publicKey.toBase58(),
         },
+        projectId,
         { ...base, monthlyCap: "20", automaticMonthly: true },
       ),
     /pinned escrow Config/,
@@ -149,13 +151,14 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
           ...infrastructure,
           genesisHash: "different-cluster",
         },
+        projectId,
         { ...base, monthlyCap: "20", automaticMonthly: true },
       ),
     /Wrong Solana cluster/,
   );
   await assert.rejects(
     () =>
-      prepareSolanaVaultCreation(infrastructure, {
+      prepareSolanaVaultCreation(infrastructure, projectId, {
         ...base,
         networkDomain: hash("unreviewed-domain"),
         monthlyCap: "20",
@@ -174,10 +177,11 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
     },
     { name: "bounty", payoutPolicy: "security-bounty" },
   ]) {
+    const choiceProjectId = choice.projectId ?? projectId;
     const input = {
       ...base,
       ...choice,
-      projectDigest: hash(`slop-project:${choice.projectId ?? projectId}`),
+      projectDigest: hash(`slop-project:${choiceProjectId}`),
     };
     const plan = buildInitializeVaultInstructions(input);
     const bounty = input.payoutPolicy === "security-bounty";
@@ -227,7 +231,11 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       await provider.connection.getAccountInfo(expectedProject, "finalized"),
       null,
     );
-    const prepared = await prepareSolanaVaultCreation(infrastructure, input);
+    const prepared = await prepareSolanaVaultCreation(
+      infrastructure,
+      choiceProjectId,
+      input,
+    );
     assert.equal(prepared.existingVault, null);
     const transaction = Transaction.from(
       Buffer.from(prepared.transaction.transaction, "base64"),
@@ -266,7 +274,7 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       ...deployment,
       rpcUrl: provider.connection.rpcEndpoint,
       genesisHash,
-      projectId: choice.projectId ?? projectId,
+      projectId: choiceProjectId,
       network: "solana-localnet",
       mint: input.mint,
     };
@@ -285,13 +293,19 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
     }
     const recovered = await prepareSolanaVaultCreation(
       infrastructure,
+      choiceProjectId,
       input,
       true,
     );
     assert.equal(recovered.existingVault, plan.vault);
     assert.equal(recovered.transaction, null);
     assert.deepEqual(
-      await verifySolanaVaultCreation(infrastructure, input, signature),
+      await verifySolanaVaultCreation(
+        infrastructure,
+        choiceProjectId,
+        input,
+        signature,
+      ),
       {
         projectPda: plan.projectPda,
         vault: plan.vault,
@@ -301,6 +315,7 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
       () =>
         verifySolanaVaultCreation(
           { ...infrastructure, networkDomain: hash("other-cluster-domain") },
+          choiceProjectId,
           { ...input, networkDomain: hash("other-cluster-domain") },
           signature,
         ),
@@ -311,6 +326,7 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
         () =>
           verifySolanaVaultCreation(
             config,
+            choiceProjectId,
             {
               ...input,
               monthlyCap: "30",
@@ -356,7 +372,12 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
     monthlyCap: "20",
     automaticMonthly: true,
   };
-  const prepared = await prepareSolanaVaultCreation(infrastructure, input);
+  const extraActionProjectId = "edge-owner-extra-action";
+  const prepared = await prepareSolanaVaultCreation(
+    infrastructure,
+    extraActionProjectId,
+    input,
+  );
   const transaction = Transaction.from(
     Buffer.from(prepared.transaction.transaction, "base64"),
   );
@@ -383,7 +404,13 @@ test("edge owner instructions create distinct vaults with atomic monthly choice 
     null,
   );
   await assert.rejects(
-    () => verifySolanaVaultCreation(infrastructure, input, signature),
+    () =>
+      verifySolanaVaultCreation(
+        infrastructure,
+        extraActionProjectId,
+        input,
+        signature,
+      ),
     /does not match the pending wallet action/,
   );
 });

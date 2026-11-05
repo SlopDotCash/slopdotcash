@@ -42,6 +42,8 @@ import {
   requireEnv,
   runPaymentsCron,
   type ScenarioAmounts,
+  type ScenarioEvidence,
+  type ScenarioProjectEvidence,
   type StepRecord,
   type Suite,
   saveEvidence,
@@ -56,6 +58,7 @@ import {
   waitPolicy,
 } from "../../../scripts/escrow-acceptance/shared";
 import type { EscrowDeployment } from "../../../src/lib/escrow-policy.mjs";
+import { registryProjectDigest } from "../../../src/lib/vault-setup";
 import { lookupAttempt } from "../../../workers/payment-executor/core";
 import { PaymentSignerJournal } from "../../../workers/payment-executor/index";
 import {
@@ -500,6 +503,40 @@ export function escrow(programId: PublicKey) {
   };
 }
 
+export interface CanonicalInitialization {
+  owner: PublicKey;
+  project: PublicKey;
+  mint: PublicKey;
+  vault: PublicKey;
+  projectId: Buffer;
+  network: Buffer;
+  identity: PublicKey;
+  fees: PublicKey;
+  bindingDelay: bigint;
+  rotationDelay: bigint;
+  purpose?: number;
+}
+
+/** One canonical instruction list is shared by fresh signing and retained-proof verification. */
+export function canonicalInitializationInstructions(
+  programId: PublicKey,
+  input: CanonicalInitialization,
+): TransactionInstruction[] {
+  const program = escrow(programId);
+  return [
+    program.initialize({
+      ...input,
+      config: program.config(),
+    }),
+    createAssociatedTokenAccountIdempotentInstruction(
+      input.owner,
+      getAssociatedTokenAddressSync(input.mint, input.fees),
+      input.fees,
+      input.mint,
+    ),
+  ];
+}
+
 /** Reuses each signed step. An expired signature with unknown outcome stays pending. */
 export class SolanaChain {
   readonly connection: Connection;
@@ -556,6 +593,8 @@ export class SolanaChain {
     expect: "success" | "reverted" = "success",
   ): Promise<StepRecord> {
     let record: StepRecord | undefined = steps[key];
+    if (record)
+      this.assertRetainedTransaction(key, record, signers[0], instructions);
     if (record && !record.status) {
       const status = (
         await this.connection.getSignatureStatuses([record.transactionId], {
@@ -623,6 +662,47 @@ export class SolanaChain {
       await Bun.sleep(1000);
     }
     throw new Waiting(`${key}: ${record.transactionId} is not confirmed yet`);
+  }
+  private assertRetainedTransaction(
+    key: string,
+    record: StepRecord,
+    payer: Keypair,
+    instructions: TransactionInstruction[],
+  ) {
+    if (!record.raw || record.from !== payer.publicKey.toBase58())
+      throw new Error(`${key}: retained signed transaction is incomplete`);
+    let transaction: Transaction;
+    try {
+      transaction = Transaction.from(Buffer.from(record.raw, "base64"));
+    } catch {
+      throw new Error(`${key}: retained signed transaction is malformed`);
+    }
+    const sameInstruction = (
+      left: TransactionInstruction,
+      right: TransactionInstruction,
+    ) =>
+      left.programId.equals(right.programId) &&
+      left.data.equals(right.data) &&
+      left.keys.length === right.keys.length &&
+      left.keys.every(
+        (key, index) =>
+          key.pubkey.equals(right.keys[index].pubkey) &&
+          key.isSigner === right.keys[index].isSigner &&
+          key.isWritable === right.keys[index].isWritable,
+      );
+    if (
+      !transaction.signature ||
+      solanaBase58(transaction.signature) !== record.transactionId ||
+      !transaction.feePayer?.equals(payer.publicKey) ||
+      !transaction.verifySignatures() ||
+      transaction.instructions.length !== instructions.length ||
+      !transaction.instructions.every((instruction, index) =>
+        sameInstruction(instruction, instructions[index]),
+      )
+    )
+      throw new Error(
+        `${key}: retained signed transaction does not match the immutable step`,
+      );
   }
   async waitFinalized(signature: string) {
     const status = (
@@ -1119,9 +1199,10 @@ export function solanaDeploymentRecord(
   mint: PublicKey,
   bindingDelay: bigint,
   deploymentTransaction: string | null = null,
-): Omit<EscrowDeployment, "deploymentTransaction"> & {
-  deploymentTransaction: string | null;
-} {
+): ScenarioProjectEvidence["deployment"] &
+  Omit<EscrowDeployment, "deploymentTransaction" | "evmUpgrade"> & {
+    deploymentTransaction: string | null;
+  } {
   return {
     network: ctx.network as EscrowDeployment["network"],
     vault: ctx.program.vault(project).toBase58(),
@@ -1143,6 +1224,263 @@ export function solanaDeploymentRecord(
     factoryCodeSha256: null,
     registrar: null,
   };
+}
+
+/** Reject resumed section-21 evidence unless every identity binding is canonical. */
+export function assertCanonicalAssetEvidence(
+  entry: AssetEvidence,
+  programId: PublicKey,
+  owner: PublicKey,
+  runId: string,
+  index: number,
+  expectedInitialization: {
+    networkDomain: string;
+    identityAuthority: PublicKey;
+    feeRecipient: PublicKey;
+    bindingDelay: bigint;
+    rotationDelay: bigint;
+  },
+) {
+  const expectedProjectId = `acceptance-${runId.slice(0, 8)}-${index}`;
+  if (entry.projectId !== expectedProjectId)
+    throw new Error(
+      "Recorded project identity differs from immutable run context",
+    );
+  const digest = registryProjectDigest(entry.projectId);
+  if (entry.onchainProjectId !== digest)
+    throw new Error(
+      "Recorded identity is not the canonical registry project digest",
+    );
+  const program = escrow(programId);
+  const project = program.project(owner, Buffer.from(digest, "hex"));
+  const vault = program.vault(project);
+  const expected = {
+    programId: programId.toBase58(),
+    owner: owner.toBase58(),
+    asset: entry.address,
+    projectPda: project.toBase58(),
+    vault: vault.toBase58(),
+    networkDomain: expectedInitialization.networkDomain,
+    identityAuthority: expectedInitialization.identityAuthority.toBase58(),
+    feeRecipient: expectedInitialization.feeRecipient.toBase58(),
+    bindingDelaySeconds: expectedInitialization.bindingDelay.toString(),
+    rotationDelaySeconds: expectedInitialization.rotationDelay.toString(),
+  };
+  for (const [field, value] of Object.entries(expected))
+    if (entry.deployment[field] !== value)
+      throw new Error(`Recorded deployment ${field} is not canonically bound`);
+  const initialization = entry.steps["initialize-project"];
+  if (entry.status === "passed" || initialization) {
+    const bound =
+      entry.vault === expected.vault &&
+      entry.deployment.deploymentTransaction === initialization?.transactionId;
+    const unbound =
+      entry.vault === null && entry.deployment.deploymentTransaction === null;
+    if (entry.status === "passed" && !bound)
+      throw new Error(
+        "Passed section-21 evidence needs a non-null canonical vault",
+      );
+    if (!bound && !unbound)
+      throw new Error(
+        "Section-21 initialization metadata is only valid when wholly unbound or canonically bound",
+      );
+    assertInitializationReceipt(
+      initialization,
+      entry.deployment.deploymentTransaction,
+      {
+        programId,
+        owner,
+        project,
+        vault,
+        asset: new PublicKey(entry.address),
+        digest,
+        purpose: 0,
+        network: Buffer.from(String(entry.deployment.networkDomain), "hex"),
+        identity: new PublicKey(String(entry.deployment.identityAuthority)),
+        fees: new PublicKey(String(entry.deployment.feeRecipient)),
+        bindingDelay: BigInt(String(entry.deployment.bindingDelaySeconds)),
+        rotationDelay: BigInt(String(entry.deployment.rotationDelaySeconds)),
+      },
+      entry.status === "passed",
+    );
+  }
+}
+
+/**
+ * A resumed extended run may retain null deployment metadata while its signed
+ * initialization step is pending. Every other project/deployment field is
+ * immutable; projectFor binds the retained txid only after confirmation.
+ */
+export function reconcileScenarioProjectEvidence(
+  name: string,
+  recorded: ScenarioProjectEvidence,
+  expected: ScenarioProjectEvidence,
+): ScenarioProjectEvidence {
+  const recordedTransaction = recorded.deployment.deploymentTransaction;
+  const expectedTransaction = expected.deployment.deploymentTransaction;
+  const recordedStable = structuredClone(recorded);
+  const expectedStable = structuredClone(expected);
+  recordedStable.deployment.deploymentTransaction = null;
+  expectedStable.deployment.deploymentTransaction = null;
+  if (JSON.stringify(recordedStable) !== JSON.stringify(expectedStable))
+    throw new Error(`${name}: recorded project identity changed`);
+  if (
+    recordedTransaction !== null &&
+    recordedTransaction !== expectedTransaction
+  )
+    throw new Error(`${name}: recorded initialization transaction changed`);
+  return recorded;
+}
+
+/** Reject completed extended evidence without canonical, reconstructable identity. */
+export function assertCanonicalScenarioEvidence(
+  entry: ScenarioEvidence,
+  programId: PublicKey,
+  owner: PublicKey,
+  runId: string,
+  initialization: {
+    networkDomain: string;
+    identityAuthority: PublicKey;
+    feeRecipient: PublicKey;
+    bindingDelay: (name: string) => bigint;
+    rotationDelay: bigint;
+  },
+) {
+  const projects = entry.projects;
+  if (!projects || Object.keys(projects).length === 0)
+    throw new Error(
+      "Completed scenario lacks canonical project identity evidence",
+    );
+  const program = escrow(programId);
+  for (const [name, identity] of Object.entries(projects)) {
+    const expectedProjectId = `acceptance-${runId.slice(0, 8)}-${name}`;
+    if (identity.projectId !== expectedProjectId)
+      throw new Error(
+        `${name}: project identity differs from immutable run context`,
+      );
+    const digest = registryProjectDigest(identity.projectId);
+    if (identity.onchainProjectId !== digest)
+      throw new Error(
+        `${name}: identity is not the canonical registry project digest`,
+      );
+    const project = program.project(
+      owner,
+      Buffer.from(digest, "hex"),
+      identity.purpose,
+    );
+    const vault = program.vault(project);
+    if (identity.projectPda !== project.toBase58())
+      throw new Error(`${name}: identity is not the canonical project PDA`);
+    if (identity.vault !== vault.toBase58())
+      throw new Error(`${name}: identity is not the canonical vault PDA`);
+    const expected = {
+      programId: programId.toBase58(),
+      owner: owner.toBase58(),
+      asset: identity.asset,
+      projectPda: identity.projectPda,
+      vault: identity.vault,
+      networkDomain: initialization.networkDomain,
+      identityAuthority: initialization.identityAuthority.toBase58(),
+      feeRecipient: initialization.feeRecipient.toBase58(),
+      bindingDelaySeconds: initialization.bindingDelay(name).toString(),
+      rotationDelaySeconds: initialization.rotationDelay.toString(),
+    };
+    for (const [field, value] of Object.entries(expected))
+      if (identity.deployment[field] !== value)
+        throw new Error(
+          `${name}: deployment ${field} is not canonically bound`,
+        );
+    if (entry.vaults[name] !== identity.vault)
+      throw new Error(`${name}: scenario vault is not canonically bound`);
+    if (!entry.assets.includes(identity.asset))
+      throw new Error(`${name}: scenario asset is not canonically bound`);
+    assertInitializationReceipt(
+      entry.steps[`${name}:initialize`],
+      identity.deployment.deploymentTransaction,
+      {
+        programId,
+        owner,
+        project,
+        vault,
+        asset: new PublicKey(identity.asset),
+        digest,
+        purpose: identity.purpose,
+        network: Buffer.from(String(identity.deployment.networkDomain), "hex"),
+        identity: new PublicKey(String(identity.deployment.identityAuthority)),
+        fees: new PublicKey(String(identity.deployment.feeRecipient)),
+        bindingDelay: BigInt(String(identity.deployment.bindingDelaySeconds)),
+        rotationDelay: BigInt(String(identity.deployment.rotationDelaySeconds)),
+      },
+    );
+  }
+}
+
+function assertInitializationReceipt(
+  step: StepRecord | undefined,
+  deploymentTransaction: unknown,
+  expected: {
+    programId: PublicKey;
+    owner: PublicKey;
+    project: PublicKey;
+    vault: PublicKey;
+    asset: PublicKey;
+    digest: string;
+    purpose: 0 | 1;
+    network: Buffer;
+    identity: PublicKey;
+    fees: PublicKey;
+    bindingDelay: bigint;
+    rotationDelay: bigint;
+  },
+  requireComplete = true,
+) {
+  if (
+    !step?.raw ||
+    step.status === "reverted" ||
+    (requireComplete && step.status !== "success")
+  )
+    throw new Error(
+      "Canonical initialization receipt is missing or unsuccessful",
+    );
+  let transaction: Transaction;
+  try {
+    transaction = Transaction.from(Buffer.from(step.raw, "base64"));
+  } catch {
+    throw new Error("Canonical initialization receipt is malformed");
+  }
+  if (
+    !transaction.signature ||
+    solanaBase58(transaction.signature) !== step.transactionId ||
+    (deploymentTransaction !== null &&
+      deploymentTransaction !== step.transactionId) ||
+    step.from !== expected.owner.toBase58() ||
+    !transaction.verifySignatures()
+  )
+    throw new Error("Canonical initialization receipt identity is not bound");
+  if (!transaction.recentBlockhash)
+    throw new Error("Canonical initialization receipt is malformed");
+  const canonical = new Transaction({
+    feePayer: expected.owner,
+    recentBlockhash: transaction.recentBlockhash,
+  }).add(
+    ...canonicalInitializationInstructions(expected.programId, {
+      owner: expected.owner,
+      project: expected.project,
+      mint: expected.asset,
+      vault: expected.vault,
+      projectId: Buffer.from(expected.digest, "hex"),
+      network: expected.network,
+      identity: expected.identity,
+      fees: expected.fees,
+      bindingDelay: expected.bindingDelay,
+      rotationDelay: expected.rotationDelay,
+      purpose: expected.purpose,
+    }),
+  );
+  if (!transaction.serializeMessage().equals(canonical.serializeMessage()))
+    throw new Error(
+      "Canonical initialization receipt does not bind the recorded project",
+    );
 }
 
 export async function runSolana(
@@ -1201,10 +1539,12 @@ export async function runSolana(
       const amounts = scenarioAmounts(decimals, divisor);
       let entry = run.assets[index];
       if (!entry) {
-        const projectIdBytes = sha256(
-          `slop-escrow-acceptance:${run.runId}:${network}:${mint.toBase58()}`,
+        const projectId = `acceptance-${run.runId.slice(0, 8)}-${index}`;
+        const projectDigest = registryProjectDigest(projectId);
+        const project = program.project(
+          keys.owner.publicKey,
+          Buffer.from(projectDigest, "hex"),
         );
-        const project = program.project(keys.owner.publicKey, projectIdBytes);
         entry = {
           address: mint.toBase58(),
           decimals,
@@ -1212,8 +1552,8 @@ export async function runSolana(
             network === "solana-devnet" &&
             mint.toBase58() === "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
           amounts: amountsText(amounts),
-          projectId: `acceptance-${run.runId.slice(0, 8)}-${index}`,
-          onchainProjectId: projectIdBytes.toString("hex"),
+          projectId,
+          onchainProjectId: projectDigest,
           vault: null,
           // The escrow deployment an admin revision records in project.json;
           // the initialize-project transaction fills deploymentTransaction.
@@ -1228,6 +1568,20 @@ export async function runSolana(
         await persist();
       } else if (entry.address !== mint.toBase58())
         throw new Error("Asset list changed since the run started");
+      assertCanonicalAssetEvidence(
+        entry,
+        programId,
+        keys.owner.publicKey,
+        run.runId,
+        index,
+        {
+          networkDomain,
+          identityAuthority: identity.publicKey,
+          feeRecipient,
+          bindingDelay,
+          rotationDelay,
+        },
+      );
       if (entry.status === "passed") continue;
       await runAsset(index, entry, amounts, mint);
     }
@@ -1267,6 +1621,11 @@ export async function runSolana(
     mint: PublicKey,
   ) {
     const steps = entry.steps;
+    const projectDigest = registryProjectDigest(entry.projectId);
+    if (entry.onchainProjectId !== projectDigest)
+      throw new Error(
+        "Recorded on-chain project identity differs from the registry project",
+      );
     const project = new PublicKey(String(entry.deployment.projectPda));
     const vault = new PublicKey(String(entry.deployment.vault));
     const ata = (owner: PublicKey) =>
@@ -1283,27 +1642,18 @@ export async function runSolana(
     await send(
       "initialize-project",
       [keys.owner],
-      [
-        program.initialize({
-          owner: keys.owner.publicKey,
-          project,
-          mint,
-          vault,
-          config: program.config(),
-          projectId: Buffer.from(entry.onchainProjectId, "hex"),
-          network: Buffer.from(networkDomain, "hex"),
-          identity: identity.publicKey,
-          fees: feeRecipient,
-          bindingDelay,
-          rotationDelay,
-        }),
-        createAssociatedTokenAccountIdempotentInstruction(
-          keys.owner.publicKey,
-          feeAccount,
-          feeRecipient,
-          mint,
-        ),
-      ],
+      canonicalInitializationInstructions(programId, {
+        owner: keys.owner.publicKey,
+        project,
+        mint,
+        vault,
+        projectId: Buffer.from(projectDigest, "hex"),
+        network: Buffer.from(networkDomain, "hex"),
+        identity: identity.publicKey,
+        fees: feeRecipient,
+        bindingDelay,
+        rotationDelay,
+      }),
     );
     if (!entry.vault) {
       entry.vault = vault.toBase58();
@@ -1369,7 +1719,7 @@ export async function runSolana(
       ["registered", amounts.awardA, amounts.netA, amounts.feeA],
       ["walletless", amounts.awardB, amounts.netB, amounts.feeB],
     ] as const) {
-      const source = sha256(`${entry.onchainProjectId}:award:${role}`);
+      const source = sha256(`${projectDigest}:award:${role}`);
       const id = solanaAwardId(project.toBase58(), source.toString("hex"));
       awards[role] = { id, gross, net, fee };
       await send(

@@ -380,7 +380,7 @@ test("browser vault setup and funding reviews preserve the verified Token-2022 p
     ...program,
     rpcUrl,
     genesisHash: network.genesisHash as string,
-    projectId: projectDigest,
+    projectId: projectDef.id,
     projectPda,
     vault: vaultAddress,
     owner: OWNER_WALLET,

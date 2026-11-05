@@ -79,7 +79,7 @@ test("unsigned owner plans initialize, fund, reserve, veto and withdraw on actua
   const programId = new PublicKey(
       JSON.parse(readFileSync("idl/slop_escrow.json")).address,
     ),
-    projectDigest = hash("owner-plan-project");
+    projectDigest = hash("slop-project:owner-plan-project");
   const project = PublicKey.findProgramAddressSync(
     [
       Buffer.from("project"),
