@@ -134,7 +134,11 @@ writeFileSync(
   "SYNTHETIC-PRIVATE-MARKER",
   { mode: 0o600 },
 );
-symlinkSync(directory, alias, "dir");
+symlinkSync(
+  directory,
+  alias,
+  process.platform === "win32" ? "junction" : "dir",
+);
 mkdirSync(fixtureDirectory);
 writeFileSync(join(fixtureDirectory, ".dev.vars"), "SYNTHETIC=PRIVATE", {
   mode: 0o600,
@@ -363,7 +367,7 @@ try {
 } finally {
   await stop(site);
   await stop(api);
-  rmSync(alias, { force: true });
+  rmSync(alias, { recursive: true, force: true });
   rmSync(fixtureDirectory, { recursive: true, force: true });
   rmSync(directory, { recursive: true, force: true });
 }

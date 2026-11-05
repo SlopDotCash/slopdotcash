@@ -15,14 +15,18 @@ const privateDirectory = mkdtempSync(
 );
 writeFileSync(join(privateDirectory, "slop.sqlite"), "local");
 writeFileSync(join(privateDirectory, ".dev.vars"), "SECRET=local");
-// The dev server can reach a private directory through a symlink in the
+// The dev server can reach a private directory through a directory link in the
 // repository root, so the fixture mirrors the driver's alias.
 const aliasTarget = resolve(import.meta.dir, ".private-paths-alias-test");
-rmSync(aliasTarget, { force: true });
-symlinkSync(privateDirectory, aliasTarget, "dir");
+rmSync(aliasTarget, { recursive: true, force: true });
+symlinkSync(
+  privateDirectory,
+  aliasTarget,
+  process.platform === "win32" ? "junction" : "dir",
+);
 
 afterAll(() => {
-  rmSync(aliasTarget, { force: true });
+  rmSync(aliasTarget, { recursive: true, force: true });
   rmSync(privateDirectory, { recursive: true, force: true });
 });
 
