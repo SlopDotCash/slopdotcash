@@ -89,3 +89,38 @@ test("a score record naming the ID under any other login keeps the recorded logi
   const scores = new Map([[recorded.id, new Set(["third-login"])]]);
   expect(standingsDisplayLogin(recorded, directory, scores)).toBe("futreall");
 });
+
+test("a login the census records under two permanent IDs is ambiguous and left out", () => {
+  // The directory only enforces unique IDs, so a carried-over row can
+  // still claim a login another ID has since taken; the profile page
+  // refuses such a login, so neither ID may display through it.
+  const index = censusLoginsByActorId([
+    person("MDQ6VXNlcjg2NTUzNTgw", "shared-login"),
+    person("MDQ6VXNlcjI=", "shared-login"),
+    person("MDQ6VXNlcjM=", "someone-else"),
+  ]);
+  expect(index.has("MDQ6VXNlcjg2NTUzNTgw")).toBe(false);
+  expect(index.has("MDQ6VXNlcjI=")).toBe(false);
+  expect(index.get("MDQ6VXNlcjM=")).toBe("someone-else");
+});
+
+test("a case-only login collision across two permanent IDs is ambiguous too", () => {
+  const index = censusLoginsByActorId([
+    person("MDQ6VXNlcjg2NTUzNTgw", "Shared-Login"),
+    person("MDQ6VXNlcjI=", "shared-login"),
+  ]);
+  expect(index.has("MDQ6VXNlcjg2NTUzNTgw")).toBe(false);
+  expect(index.has("MDQ6VXNlcjI=")).toBe(false);
+});
+
+test("a score record naming another ID under the current login keeps the recorded login", () => {
+  // The profile page vetoes the directory login in exactly this case, so
+  // the row must not display a login the profile page cannot resolve to it.
+  const scores = new Map([["MDQ6VXNlcjI=", new Set(["STARMEXXX"])]]);
+  expect(standingsDisplayLogin(recorded, directory, scores)).toBe("futreall");
+});
+
+test("a score record naming another ID under a different login still displays the current login", () => {
+  const scores = new Map([["MDQ6VXNlcjI=", new Set(["someone-else"])]]);
+  expect(standingsDisplayLogin(recorded, directory, scores)).toBe("STARMEXXX");
+});

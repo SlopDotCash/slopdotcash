@@ -286,20 +286,30 @@ export function profileCounts(p: ProfileRecord) {
 /**
  * The current login the directory records for each permanent actor ID. An
  * ID the directory records under two different logins is ambiguous, so it
- * is left out: no reader may guess which login currently owns the ID.
+ * is left out: no reader may guess which login currently owns the ID. A
+ * login the directory records under two different permanent IDs is
+ * ambiguous the same way — the directory only enforces unique IDs, so a
+ * carried-over row can still claim a login another ID has since taken —
+ * and the profile page refuses such a login, so both IDs are left out.
  */
 export function censusLoginsByActorId(
   people: readonly ProfileRecord[],
 ): Map<string, string> {
   const logins = new Map<string, string>();
   const ambiguous = new Set<string>();
+  const owners = new Map<string, Set<string>>();
   for (const person of people) {
     const recorded = logins.get(person.id);
     if (recorded === undefined) logins.set(person.id, person.login);
     else if (recorded.toLowerCase() !== person.login.toLowerCase())
       ambiguous.add(person.id);
+    const claimed = owners.get(person.login.toLowerCase()) ?? new Set<string>();
+    claimed.add(person.id);
+    owners.set(person.login.toLowerCase(), claimed);
   }
   for (const id of ambiguous) logins.delete(id);
+  for (const ids of owners.values())
+    if (ids.size > 1) for (const id of ids) logins.delete(id);
   return logins;
 }
 
@@ -311,9 +321,10 @@ export function censusLoginsByActorId(
  * permanent actor ID, and the profile page resolves a person through it,
  * so the row displays that login — unless a score record (snapshot
  * leaders, review-exclusion reviewers, project-view leaders or
- * opportunities) still names the ID under another login. The profile page
- * refuses the directory login in exactly that case, so the display keeps
- * the login the score record resolves through instead.
+ * opportunities) still names the ID under another login, or names another
+ * permanent ID under that login. The profile page refuses the directory
+ * login in exactly those cases, so the display keeps the login the score
+ * record resolves through instead.
  */
 export function standingsDisplayLogin(
   actor: { id: string; login: string },
@@ -329,6 +340,12 @@ export function standingsDisplayLogin(
     [...named].some((login) => login.toLowerCase() !== current.toLowerCase())
   )
     return actor.login;
+  for (const [otherId, logins] of scoreLogins)
+    if (
+      otherId !== actor.id &&
+      [...logins].some((login) => login.toLowerCase() === current.toLowerCase())
+    )
+      return actor.login;
   return current;
 }
 

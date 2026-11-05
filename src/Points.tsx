@@ -1339,7 +1339,7 @@ export function ContributorStandings({
                         <td>
                           <Link
                             className="points-person"
-                            href={`/contributors/${encodeURIComponent(m.actor.login)}`}
+                            href={`/contributors/${encodeURIComponent(m.displayLogin)}`}
                           >
                             {compact ? (
                               <img
