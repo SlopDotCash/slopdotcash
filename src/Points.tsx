@@ -33,6 +33,7 @@ import {
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
+import { compareActors } from "./lib/github-actor";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
@@ -1204,7 +1205,7 @@ export function ContributorStandings({
     }))
     .filter((member) => member.points > 0)
     .sort((a, b) => {
-      return b.points - a.points || a.actor.id.localeCompare(b.actor.id);
+      return b.points - a.points || compareActors(a.actor, b.actor);
     });
   const ranks = new Map<string, number>();
   let previous: number | null = null;

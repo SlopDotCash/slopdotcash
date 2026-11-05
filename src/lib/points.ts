@@ -1,6 +1,6 @@
 /** Nonfinancial points. This module never supplies reward or settlement inputs. */
 
-import { githubUserIdFromNodeId } from "./github-actor";
+import { compareActors, githubUserIdFromNodeId } from "./github-actor";
 import type {
   GitHubActor,
   LeaderboardSnapshot,
@@ -1142,7 +1142,7 @@ export function pointMembers(
     ];
   }
   return [...members.values()].sort(
-    (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
+    (a, b) => b.total - a.total || compareActors(a.actor, b.actor),
   );
 }
 export function emptyPointsJournal(at: string): PointsJournal {
