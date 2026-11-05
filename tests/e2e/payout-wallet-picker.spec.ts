@@ -1056,3 +1056,64 @@ test("a rejected signature after a wallet change keeps the verified wallet activ
     "wallets/challenge",
   ]);
 });
+
+test("late legacy EVM injection updates an open picker without wallet requests", async ({
+  page,
+}, info) => {
+  const writes = await payments(page);
+  await page.addInitScript(() => {
+    Object.assign(window, { walletCalls: [] as string[] });
+  });
+  await page.goto("/account#wallets");
+  const trigger = page.getByRole("button", {
+    name: "Connect EVM wallet",
+    exact: true,
+  });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Connect an EVM wallet" });
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "MetaMask", exact: true }),
+  ).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("before-injection.png") });
+  await page.evaluate(() => {
+    Object.assign(window, {
+      ethereum: {
+        isMetaMask: true,
+        request: async ({ method }: { method: string }) => {
+          (window as unknown as { walletCalls: string[] }).walletCalls.push(
+            method,
+          );
+          throw new Error("Discovery must not request a wallet");
+        },
+      },
+    });
+    window.dispatchEvent(new Event("ethereum#initialized"));
+  });
+  const wallet = dialog.getByRole("button", { name: "MetaMask", exact: true });
+  try {
+    await expect(wallet).toBeVisible();
+  } finally {
+    await page.screenshot({ path: info.outputPath("after-injection.png") });
+  }
+  for (
+    let tab = 0;
+    tab < 12 &&
+    !(await wallet.evaluate((node) => document.activeElement === node));
+    tab++
+  ) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(wallet).toBeFocused();
+  await expectAccessible(page);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  expect(writes).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { walletCalls: string[] }).walletCalls,
+    ),
+  ).toEqual([]);
+});
