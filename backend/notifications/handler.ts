@@ -22,7 +22,12 @@ import {
   requireActor,
 } from "../http";
 import type { RepositoryAccessReader } from "../projects/setup";
-import { SCAM_REVIEW_PATH, scamReviewGitHubUrl } from "./events";
+import {
+  parseScamReviewPath,
+  SCAM_REVIEW_PATH,
+  scamReviewDetail,
+  scamReviewGitHubUrl,
+} from "./events";
 import {
   incompleteAssessments,
   readIncompleteAssessments,
@@ -55,6 +60,27 @@ interface Row {
   acknowledged_at: string | null;
   security_notice_id: string | null;
   delivery_state: string | null;
+  scam_author_login: string | null;
+}
+
+/**
+ * A scam review notice stores the author's login as GitHub reported it when
+ * Slopbot closed the item. The account under review is the penalty row's
+ * author (an immutable GitHub id), so when the member record carries that
+ * author's current login the notice names it instead: a renamed author's old
+ * login may now belong to someone else. Without a current login the stored
+ * sentence is served unchanged.
+ */
+function scamDetail(row: Row): string | null {
+  if (
+    row.kind !== "slopbot_scam_review" ||
+    row.detail === null ||
+    row.scam_author_login === null
+  )
+    return row.detail;
+  const target = parseScamReviewPath(row.action_path);
+  if (target === null) return row.detail;
+  return scamReviewDetail(row.scam_author_login, target);
 }
 
 /**
@@ -191,6 +217,14 @@ export async function handleNotificationsApi(
                       UNION ALL SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.resolved_at IS NOT NULL
                     ) THEN 'slopbot_appeal_resolved' ELSE kind END AS kind,
                     subject, detail, action_path, source_at,
+                    CASE WHEN kind = 'slopbot_scam_review' THEN (
+                      SELECT m.login FROM slopbot_penalties p
+                      JOIN points_members m ON m.github_id = p.author_github_id
+                      WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1)
+                        AND p.category = 'scam' AND p.moderator_review = 1
+                        AND p.reversed_at IS NULL
+                      ORDER BY p.recorded_at DESC LIMIT 1
+                    ) END AS scam_author_login,
                     created_at, read_at,
                     (SELECT id FROM security_notification_outbox s
                       WHERE s.event_key = notifications.event_key AND s.recipient_github_id = notifications.recipient_github_id
@@ -244,7 +278,7 @@ export async function handleNotificationsApi(
             eventKey: row.event_key,
             kind: row.kind,
             subject: row.subject,
-            detail: row.detail,
+            detail: scamDetail(row),
             actionPath:
               (row.kind === "security_case" ||
                 row.kind === "security_report_received") &&
