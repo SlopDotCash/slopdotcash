@@ -742,7 +742,12 @@ function allowedActions(row: CaseRow, roles: Set<Role>): string[] {
 /**
  * The one next step for this viewer, derived from the case state, so nobody
  * maintains a separate task field. The first response is due within the
- * program's published acknowledgement target after GitHub's receipt.
+ * program's published acknowledgement target after the verified receipt:
+ * the same instant intake counts the stored due from and the notice that
+ * first asks the owner to act is written, so the shown due is the deadline
+ * the notice escalation enforces. GitHub's filing time is receipt evidence
+ * only; a direct report linked late cannot already be due before anyone
+ * could act on it.
  */
 function nextStep(
   row: CaseRow,
@@ -777,10 +782,10 @@ function nextStep(
         : "Waiting for the project owner's response.",
       dueAt:
         row.receipt_state === "received" &&
-        row.received_at !== null &&
+        row.verified_at !== null &&
         acknowledgeHours !== null
           ? new Date(
-              Date.parse(row.received_at) + acknowledgeHours * 3_600_000,
+              Date.parse(row.verified_at) + acknowledgeHours * 3_600_000,
             ).toISOString()
           : null,
     };
