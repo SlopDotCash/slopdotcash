@@ -252,6 +252,58 @@ test("snapshot validation rejects an omitted credit that contradicts its bounds"
   expect(() => assertLeaderboardSnapshot(moved)).toThrow();
 });
 
+test("snapshot validation rejects an omitted credit predating the value policy", () => {
+  const late = build("2026-12-08T00:00:00.000Z");
+  // The policy took effect 2026-11-01; a review submitted 2026-10-15
+  // scores 0 and the builder only ever emits review-credit-before-policy
+  // for it, never an omitted credit.
+  const forged = structuredClone(late);
+  const credit = forged.omittedReviewCredits?.[0];
+  if (!credit) throw new Error("missing omitted credit");
+  credit.submittedAt = "2026-10-15T00:00:00.000Z";
+  expect(() => assertLeaderboardSnapshot(forged)).toThrow(
+    "snapshot.omittedReviewCredits must not predate the value policy",
+  );
+});
+
+test("snapshot validation rejects an omitted credit naming another reviewer", () => {
+  const late = build("2026-12-08T00:00:00.000Z");
+  // The published exclusion names early-reviewer; crediting someone-else
+  // under the same review id would misattribute the award permanently.
+  const forged = structuredClone(late);
+  const credit = forged.omittedReviewCredits?.[0];
+  if (!credit) throw new Error("missing omitted credit");
+  credit.reviewer = {
+    id: "MDQ6VXNlcjk5",
+    login: "someone-else",
+    avatarUrl: "https://avatars.githubusercontent.com/u/99?v=4",
+    url: "https://github.com/someone-else",
+    kind: "User",
+  };
+  expect(() => assertLeaderboardSnapshot(forged)).toThrow(
+    "snapshot.omittedReviewCredits must match its exclusion's reviewer",
+  );
+});
+
+test("snapshot validation rejects an omitted credit before the earliest possible allocation window", () => {
+  const late = build("2026-12-08T00:00:00.000Z");
+  // The scoring window starts 2026-11-03, so the earliest a credited
+  // review can sit is 2026-09-29 — one 35-day window before that start.
+  // 2026-09-15 predates every allocation window this snapshot could
+  // describe; the builder only ever emits review-credit-outside-window
+  // for such a review, with no share attached.
+  const forged = structuredClone(late);
+  const credit = forged.omittedReviewCredits?.[0];
+  if (!credit) throw new Error("missing omitted credit");
+  credit.submittedAt = "2026-09-15T00:00:00.000Z";
+  // Drop the policy so the outer bound itself is what rejects the entry:
+  // with a policy set, the earlier policy check fires first for this date.
+  delete forged.valuePolicyEffectiveAt;
+  expect(() => assertLeaderboardSnapshot(forged)).toThrow(
+    "snapshot.omittedReviewCredits predates the earliest possible allocation window",
+  );
+});
+
 test("late first snapshot materializes the omitted award in an empty journal", () => {
   const timely = build("2026-11-13T00:00:00.000Z");
   const timelyEarlyThirds = reviewEvents(timely).find(
