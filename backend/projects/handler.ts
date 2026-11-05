@@ -2135,7 +2135,17 @@ function activePublicRestrictions(
   projects: ProjectRecord[],
   records: ProjectEnforcement[],
 ): Record<string, unknown>[] {
-  const restricted = activeRestrictions(records);
+  // A listed project carries the restriction its public routes obey, so the
+  // list agrees with the detail route when a repository Ban outweighs the
+  // project's own Quarantine.
+  const restricted = activeRestrictions(records).map((restriction) => {
+    const project = projects.find(
+      (entry) => entry.id === restriction.projectId,
+    );
+    return project === undefined
+      ? restriction
+      : publicRestrictionOf(project, records);
+  });
   // A project listed for a restricted repository is closed with it.
   const shared = projects
     .filter(

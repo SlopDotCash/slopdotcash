@@ -338,16 +338,23 @@ export function restrictionForRepository(
 /**
  * The restriction a project's public routes obey: its own, else one in force
  * on a repository it claims. A restriction binds the repository, so another
- * project listed for it earlier closes with it (PRD ADM-06).
+ * project listed for it earlier closes with it (PRD ADM-06). A Ban in force
+ * on a claimed repository outweighs the project's own Quarantine: the public
+ * state is the heaviest restriction that closes the project, so holding or
+ * placing a lighter one can never make a banned repository read as merely
+ * quarantined.
  */
 export function publicRestrictionOf(
   project: { id: string; manifest: ProjectDefinition },
   records: ProjectEnforcement[],
 ): ProjectRestriction {
   const own = projectRestriction(project.id, records);
-  if (own.state !== "clear") return own;
+  if (own.state === "banned") return own;
   const shared = restrictionForRepository(project.manifest, records);
-  return shared === null ? own : { ...shared, projectId: project.id };
+  if (shared === null) return own;
+  if (shared.state === "banned" || own.state === "clear")
+    return { ...shared, projectId: project.id };
+  return own;
 }
 
 /** A restricted project must stay paused and out of every listing. */
