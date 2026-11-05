@@ -500,12 +500,14 @@ export function usePayoutWallets(): PayoutWallet[] {
     const offRegister = standard.on("register", update);
     const offUnregister = standard.on("unregister", update);
     window.addEventListener("eip6963:announceProvider", announce);
+    window.addEventListener("ethereum#initialized", update);
     window.dispatchEvent(new Event("eip6963:requestProvider"));
     update();
     return () => {
       offRegister();
       offUnregister();
       window.removeEventListener("eip6963:announceProvider", announce);
+      window.removeEventListener("ethereum#initialized", update);
     };
   }, []);
   return choices;
