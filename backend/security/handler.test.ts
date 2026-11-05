@@ -1958,3 +1958,101 @@ for (const fault of ["failed", "missing", "partial"] as const)
     ]);
     env.sqlite.close();
   });
+
+describe("reporter payment state against the payout queue", () => {
+  /** An approved award whose owner commitment is indexed: settlement and
+   * obligation rows exactly as the payment indexer leaves them. */
+  async function settledCase(env: ReturnType<typeof open>) {
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.decide(id, "vault-drain");
+    expect((await env.award(id, "1000000")).status).toBe(200);
+    env.sqlite
+      .query(
+        `INSERT INTO security_settlements (case_id, obligation_id, source_digest, network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, approved_at, case_revision, deployment) VALUES (?, 'obligation-1', ?, 'base-sepolia', ?, ?, 6, '1000000', '250000', ?, ?, ?, 3, '{}')`,
+      )
+      .run(
+        id,
+        "c".repeat(64),
+        VAULT,
+        ASSET,
+        REPORTER.githubId,
+        MAINTAINER.githubId,
+        REVISION_AT,
+      );
+    env.sqlite
+      .query(
+        `INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at) VALUES ('obligation-1', ?, ?, 'base-sepolia', 'base', ?, ?, 6, '1000000', '250000', ?, 'reserved', ?)`,
+      )
+      .run(
+        PROJECT,
+        REPORTER.githubId,
+        VAULT,
+        ASSET,
+        "c".repeat(64),
+        "2026-10-19T10:00:00.000Z",
+      );
+    env.sqlite
+      .query(
+        `INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES('claim-1',?,?,'0x1111111111111111111111111111111111111111','d1_registry',?,?,?,?,'base')`,
+      )
+      .run(
+        REPORTER.githubId,
+        REPORTER.githubLogin,
+        "d".repeat(64),
+        REVISION_AT,
+        "e".repeat(64),
+        REVISION_AT,
+      );
+    return id;
+  }
+  const setQueue = (
+    env: ReturnType<typeof open>,
+    state: string,
+    attempt: string | null,
+  ) => {
+    env.sqlite
+      .query(
+        `INSERT INTO security_payment_outbox(obligation_id,state,updated_at) VALUES('obligation-1',?,?)`,
+      )
+      .run(state, REVISION_AT);
+    if (attempt)
+      env.sqlite
+        .query(
+          `INSERT INTO security_payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES('attempt-1','obligation-1','claim-1',?,?)`,
+        )
+        .run(REVISION_AT, attempt);
+  };
+  const reporterView = async (env: ReturnType<typeof open>, id: string) =>
+    (await env.call(REPORTER, "GET", `security-cases/${id}`)).body
+      .case as CaseReply & {
+      paymentState: string;
+      settlement: { state: string } | null;
+    };
+
+  // The dispatcher parks the queue at held when the destination changed
+  // under an uncertain attempt; the reporter must see the hold, not a
+  // payment still in flight.
+  test.each(["unknown", "prepared"])(
+    "a held queue shows held to the reporter (latest attempt %s)",
+    async (attempt) => {
+      const env = open();
+      const id = await settledCase(env);
+      setQueue(env, "held", attempt);
+      const view = await reporterView(env, id);
+      expect(view.paymentState).toBe("held");
+      expect(view.settlement?.state).toBe("held");
+      expect(view.nextStep).toBe("The payment is held.");
+      env.sqlite.close();
+    },
+  );
+
+  test("a ready queue with an uncertain attempt still shows uncertain", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    setQueue(env, "ready", "unknown");
+    const view = await reporterView(env, id);
+    expect(view.paymentState).toBe("uncertain");
+    expect(view.nextStep).toBe("The payment is in progress.");
+    env.sqlite.close();
+  });
+});
