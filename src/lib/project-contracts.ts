@@ -176,6 +176,31 @@ export interface ProjectEnforcementState {
   records: ProjectEnforcement[];
 }
 
+/**
+ * The counts the admin project list shows above the projects it counts.
+ * A project counts as active only while no restriction is in force: a
+ * restriction lands before its paused, retired revision does, and until
+ * that revision lands the manifest still says active while the project's
+ * own badge already shows the restriction. Counting the manifest status
+ * alone would count quarantined and banned projects as active.
+ */
+export function adminProjectCounts(projects: readonly AdminProject[]): {
+  total: number;
+  active: number;
+  needReview: number;
+} {
+  return {
+    total: projects.length,
+    active: projects.filter(
+      (project) =>
+        project.status === "active" && project.enforcement.state === "clear",
+    ).length,
+    needReview: projects.filter(
+      (project) => project.enforcement.decisionRequired,
+    ).length,
+  };
+}
+
 /** The server's plan for one action; the confirmed write must match it. */
 export interface EnforcementPreview {
   projectId: string;
