@@ -177,6 +177,14 @@ actor's event is `<pull-request-node-id>:merged:<actor-node-id>`. A formal
 review, a `slop-review` record, or a `slop-score` ratification by any credit
 actor of the same pull request is a self-review and earns no review credit.
 
+For a joint work unit, the split set is the eligible implementation actors:
+an actor who was participation-banned at the unit's completion time is
+excluded before the split, so no share arises for them and the remaining
+actors divide the unit's thirds. This is the same prospective ban the review
+allocation applies, where a banned reviewer takes no slot or share. A ban
+recorded after completion does not change the split. If no implementation
+actor is eligible, the unit earns no merge credit.
+
 ## Review credit
 
 Review is paid from the same project pool: triage 1/3, standard 1, deep
