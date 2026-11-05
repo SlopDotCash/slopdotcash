@@ -228,9 +228,10 @@ function intakeView(
     canRevise:
       reporter &&
       (row.review_decision === "request-information" ||
-        ["needs-information", "spam", "unavailable"].includes(
-          row.screening_state,
-        )) &&
+        (row.review_decision === null &&
+          ["needs-information", "spam", "unavailable"].includes(
+            row.screening_state,
+          ))) &&
       submission.advisory_ghsa === null,
   };
 }
@@ -1202,9 +1203,10 @@ export async function actStoredIntake(
       row.advisory_ghsa !== null ||
       !(
         stored.review_decision === "request-information" ||
-        ["needs-information", "spam", "unavailable"].includes(
-          stored.screening_state,
-        ) ||
+        (stored.review_decision === null &&
+          ["needs-information", "spam", "unavailable"].includes(
+            stored.screening_state,
+          )) ||
         (await loadCase(deps, stored.case_id))?.receipt_state ===
           "needs-information"
       )
