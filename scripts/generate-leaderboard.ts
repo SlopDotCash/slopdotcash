@@ -20,7 +20,7 @@ import { resolveGitHubToken } from "./github-token";
 export { resolveGitHubToken } from "./github-token";
 
 import { readFileSync } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type DeploymentTier, deploymentTier } from "../src/lib/deployment";
@@ -4589,6 +4589,33 @@ export async function writeLeaderboardAtomically(
   outputPath = DEFAULT_OUTPUT_PATH,
 ): Promise<void> {
   assertPublishableLeaderboardSnapshot(snapshot);
+  // Publication never moves backwards. A run that started earlier can finish
+  // after a newer snapshot already reached this path; renaming over it would
+  // silently regress every consumer until the next run. Republishing older
+  // bytes on purpose goes through the download restore path, never this
+  // writer. An existing file that is not a readable snapshot does not block
+  // publication: replacing it is the recovery path.
+  const existing = await readFile(outputPath, "utf8").catch(() => null);
+  if (existing !== null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(existing);
+    } catch {
+      parsed = undefined;
+    }
+    const existingGeneratedAt =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as { generatedAt?: unknown }).generatedAt
+        : undefined;
+    if (
+      typeof existingGeneratedAt === "string" &&
+      Date.parse(existingGeneratedAt) > Date.parse(snapshot.generatedAt)
+    ) {
+      throw new Error(
+        `a newer snapshot (${existingGeneratedAt}) is already published at ${outputPath}; refusing to replace it with an older snapshot (${snapshot.generatedAt})`,
+      );
+    }
+  }
   await mkdir(dirname(outputPath), { recursive: true });
   const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
   try {
