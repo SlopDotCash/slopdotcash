@@ -11,6 +11,12 @@ import {
 } from "lucide-react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
+import { hasBountyOverview } from "./lib/home-projects";
+import {
+  bountyFundingLabel,
+  securityBountyAmountLabel,
+} from "./lib/project-reward-summary";
+import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -33,6 +39,7 @@ import {
   PaymentLifecycle,
   RoutePageHeader,
   reviewBudgetLabel,
+  StatusBadge,
 } from "./Presentation";
 
 export function HowItWorksPage() {
@@ -270,6 +277,20 @@ function sponsorPoolLabel(project: ProjectDefinition): string {
   return monthlyPoolLabel(reward, project.rewardAsset);
 }
 
+/**
+ * A bounty-only project has no monthly pool (PRD section 8): its card names
+ * the bounty offer itself, in the words the project page uses for it, so a
+ * closed or paused program never reads as an open one.
+ */
+function sponsorBountyLabel(terms: SecurityBountyTerms): string {
+  const amount = `${securityBountyAmountLabel(terms)} / ${
+    terms.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"
+  }`;
+  return terms.status === "open"
+    ? amount
+    : `${amount} · bounty ${terms.status}`;
+}
+
 function WhoBuildsOnSlop({
   state,
   retry,
@@ -498,6 +519,11 @@ export function SponsorsPage({
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
           {PROJECTS.map((project) => {
+            const bounty =
+              hasBountyOverview(project) && project.securityBounty
+                ? project.securityBounty
+                : undefined;
+            const chain = bounty ? bounty.amount.network : project.reward.chain;
             return (
               <li className="route-sponsor-card" key={project.id}>
                 <Link
@@ -507,16 +533,35 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project)}</p>
-                {project.reward.chain ? (
-                  <NetworkName chain={project.reward.chain}>
-                    {NETWORK_NAMES[project.reward.chain]}
+                <p>
+                  {bounty
+                    ? sponsorBountyLabel(bounty)
+                    : sponsorPoolLabel(project)}
+                </p>
+                {chain ? (
+                  <NetworkName chain={chain}>
+                    {NETWORK_NAMES[chain as keyof typeof NETWORK_NAMES] ??
+                      chain}
                   </NetworkName>
                 ) : null}
-                <FundingStatus
-                  project={project}
-                  className="route-sponsor-status"
-                />
+                {bounty ? (
+                  <div className="route-sponsor-status">
+                    <StatusBadge
+                      tone={
+                        bounty.funding.state === "pledged"
+                          ? "neutral"
+                          : "success"
+                      }
+                    >
+                      {bountyFundingLabel(bounty)}
+                    </StatusBadge>
+                  </div>
+                ) : (
+                  <FundingStatus
+                    project={project}
+                    className="route-sponsor-status"
+                  />
+                )}
                 {hasReviewBudget ? (
                   project.reward.reviewBudget ? (
                     <small>
