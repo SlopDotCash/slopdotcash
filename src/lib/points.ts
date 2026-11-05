@@ -804,10 +804,12 @@ export function applyPointsSnapshot(
   // event in this snapshot; the builder publishes its allocated share as
   // an omitted review credit instead. Materialize the award the ledger
   // event would have produced, so a first generation that is already
-  // late still records the share the allocation guarantees. When the
-  // journal already holds the award (an earlier timely run recorded it),
-  // appending is a no-op and the omission handling below keeps it, so
-  // the award is never duplicated or reissued.
+  // late still records the share the allocation guarantees. The
+  // materialization is only for a share the journal has never recorded:
+  // when an earlier run already recorded the award, the journal's award
+  // stands exactly as recorded — a later reassessment that changes the
+  // allocated share does not reissue it at the new amount — and the
+  // omission handling below keeps it.
   for (const credit of snapshot.omittedReviewCredits ?? []) {
     const project = findHistoricalRepository(credit.repository);
     if (!project || credit.reviewer.kind !== "User")
@@ -832,6 +834,7 @@ export function applyPointsSnapshot(
     if (
       batchOwned.has(award.key) ||
       keys.has(award.key) ||
+      previousPoints.has(award.key) ||
       excludedReviews.has(`${award.projectId}\0${award.sourceId}`)
     )
       continue;
