@@ -4,6 +4,8 @@ import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
 import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
+import { cycleContributorProfileLogin } from "./lib/global-leaderboard";
+import type { GitHubActor } from "./lib/leaderboard";
 import {
   monthlyCutoff,
   PRD_MONTHLY_SCHEDULE,
@@ -78,6 +80,11 @@ export function CyclePage({
       return notice({ status: "error", message: errorMessage(error) });
     }
   }
+  // Profile links for the frozen table resolve through the current actor
+  // record for each contributor's permanent ID, as in createGlobalLeaders.
+  const currentActors = new Map(
+    state.snapshot.leaders.map((leader) => [leader.actor.id, leader.actor]),
+  );
   if (!view && !record) {
     return (
       <NotFound title={`No ${formatCycleMonth(cycleId)} cycle record`}>
@@ -280,7 +287,10 @@ export function CyclePage({
       {record ? (
         // A frozen record is what is under review; never replace it with a
         // live recompute, even while the rolling window still covers the month.
-        <ArchivedCycleLeaderboard cycle={record} />
+        <ArchivedCycleLeaderboard
+          cycle={record}
+          currentActors={currentActors}
+        />
       ) : view ? (
         <CycleAllocation updatedAt={state.snapshot.generatedAt} view={view} />
       ) : null}
@@ -322,7 +332,13 @@ function CycleAmountHistory({
   );
 }
 
-function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
+function ArchivedCycleLeaderboard({
+  cycle,
+  currentActors,
+}: {
+  cycle: CycleIndexEntry;
+  currentActors: ReadonlyMap<string, GitHubActor>;
+}) {
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
@@ -367,7 +383,12 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                       <Link
                         href={
                           "/contributors/" +
-                          encodeURIComponent(contributor.actor.login)
+                          encodeURIComponent(
+                            cycleContributorProfileLogin(
+                              contributor,
+                              currentActors,
+                            ),
+                          )
                         }
                       >
                         {contributor.actor.login}
