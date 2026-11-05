@@ -43,7 +43,7 @@ const program = new Program(
 const digest = (text) => createHash("sha256").update(text).digest();
 const pda = (...seeds) =>
   PublicKey.findProgramAddressSync(seeds, program.programId)[0];
-const mint = new PublicKey("35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump");
+const mint = new PublicKey("3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh");
 const tokenProgram = TOKEN_2022_PROGRAM_ID;
 const source = getAssociatedTokenAddressSync(
   mint,
@@ -53,9 +53,9 @@ const source = getAssociatedTokenAddressSync(
 );
 const bn = (value) => new BN(value.toString());
 
-test("actual PMUP mint state: owner deposit/withdraw/claim preserve reserved Token-2022 funds", async () => {
+test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reserved Token-2022 funds", async () => {
   await ensureConfig(program);
-  const projectId = digest(`pmup:${Date.now()}`),
+  const projectId = digest(`metadata:${Date.now()}`),
     network = digest("solana:localnet");
   const project = pda(
     Buffer.from("project"),
@@ -192,7 +192,7 @@ test("actual PMUP mint state: owner deposit/withdraw/claim preserve reserved Tok
   );
   assert.equal(await balance(vault), deposited);
   assert.equal(await balance(source), before - deposited);
-  const sourceDigest = digest("pmup-reserved-local-fixture");
+  const sourceDigest = digest("metadata-reserved-local-fixture");
   const award = Buffer.from(
     solanaAwardId(project.toBase58(), sourceDigest.toString("hex")),
     "hex",
@@ -318,7 +318,7 @@ test("actual PMUP mint state: owner deposit/withdraw/claim preserve reserved Tok
         bn(77),
         [...network],
         bn(0),
-        [...digest("pmup-recipient-binding")],
+        [...digest("metadata-recipient-binding")],
         bn(Math.floor(Date.now() / 1000) + 3600),
       )
       .accountsStrict({

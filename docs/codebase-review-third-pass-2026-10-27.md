@@ -762,8 +762,6 @@ A relative-import + literal-path graph produced 27 candidate modules without sta
 | `contracts/solana/integration/deployment.mjs` | T — retain contract acceptance/integration coverage; no deletion selected |
 | `contracts/solana/integration/escrow.e2e.mjs` | T — retain contract acceptance/integration coverage; no deletion selected |
 | `contracts/solana/integration/executor.e2e.mjs` | T — retain contract acceptance/integration coverage; no deletion selected |
-| `contracts/solana/integration/fixtures/pmup-mint.bin` | T — retain contract acceptance/integration coverage; no deletion selected |
-| `contracts/solana/integration/fixtures/pmup-mint.json` | T — retain contract acceptance/integration coverage; no deletion selected |
 | `contracts/solana/integration/keeper.e2e.mjs` | T — retain contract acceptance/integration coverage; no deletion selected |
 | `contracts/solana/integration/legacy-project.mjs` | T — retain contract acceptance/integration coverage; no deletion selected |
 | `contracts/solana/integration/monthly-preload.mjs` | T — retain contract acceptance/integration coverage; no deletion selected |

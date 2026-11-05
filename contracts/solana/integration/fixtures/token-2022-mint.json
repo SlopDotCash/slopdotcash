@@ -1,0 +1,7 @@
+{
+  "mint": "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh",
+  "program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "bytes": 362,
+  "sha256": "ae475a1314a76f2d164d830f418ebf78e42d91e9bf53917b8f3098bceeba1991",
+  "scope": "Synthetic local-only fixture. Mint address is 32 bytes of 0x2a, supply is 1000000000000, decimals are 6, and mint/freeze/update authorities are disabled. The only extensions are MetadataPointer and TokenMetadata. Name and symbol are TEST; URI is https://example.invalid/fixture/mint. No chain account or token is represented."
+}

@@ -742,9 +742,8 @@ loses its network lease. It is not live Kyber, Circle or production evidence.
 The Solana check uses a local `solana-test-validator` (default port 28899).
 It captures real Jupiter V2 quote and unsigned swap responses, resolves their
 lookup tables at finalized commitment, and clones the route's public programs
-and accounts. The default input is classic SPL JUP; run
-`SLOP_FEE_TEST_TOKEN=pmup bun run test:fee-converter:solana` for the selected
-Token-2022 mint. `SLOP_FEE_TEST_TOKEN=sol bun run test:fee-converter:solana`
+and accounts. The default input is classic SPL JUP.
+`SLOP_FEE_TEST_TOKEN=sol bun run test:fee-converter:solana`
 loads the compiled local escrow, creates native fees by deposit and withdrawal,
 and verifies the converter's own finalized claim, exact atomic wrap, USDC receipt,
 unchanged vault principal and exclusion of gas topups from fee income.

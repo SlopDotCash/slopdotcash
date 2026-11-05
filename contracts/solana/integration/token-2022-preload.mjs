@@ -1,4 +1,4 @@
-// Public mint state and a throwaway local payer's balance; never a mainnet write.
+// Synthetic mint state and a throwaway local payer's balance; never a mainnet write.
 import { readFileSync, writeFileSync } from "node:fs";
 import {
   getAssociatedTokenAddressSync,
@@ -6,7 +6,7 @@ import {
 } from "@solana/spl-token";
 import { Keypair, PublicKey } from "@solana/web3.js";
 
-const mint = new PublicKey("35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump");
+const mint = new PublicKey("3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh");
 const payer = Keypair.fromSecretKey(
   Uint8Array.from(
     JSON.parse(
@@ -20,7 +20,7 @@ const source = getAssociatedTokenAddressSync(
   false,
   TOKEN_2022_PROGRAM_ID,
 );
-const mintBytes = readFileSync("integration/fixtures/pmup-mint.bin");
+const mintBytes = readFileSync("integration/fixtures/token-2022-mint.bin");
 const account = Buffer.alloc(170);
 mint.toBuffer().copy(account, 0);
 payer.publicKey.toBuffer().copy(account, 32);

@@ -101,8 +101,8 @@ function token2022Mint(decimals: number): Uint8Array {
   const payload = at + 4;
   data.set(MINT_BYTES, payload + 32);
   for (const [offset, text] of [
-    [64, "PMUP"],
-    [72, "PMUP"],
+    [64, "TEST"],
+    [72, "TEST"],
     [80, "u"],
   ] as const) {
     view.setUint32(payload + offset, text.length, true);

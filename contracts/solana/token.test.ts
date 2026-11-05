@@ -11,10 +11,10 @@ import {
   TOKEN_2022_PROGRAM,
 } from "./token";
 
-const mint = "35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump";
-const captured = new Uint8Array(
+const mint = "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh";
+const fixture = new Uint8Array(
   readFileSync(
-    new URL("./integration/fixtures/pmup-mint.bin", import.meta.url),
+    new URL("./integration/fixtures/token-2022-mint.bin", import.meta.url),
   ),
 );
 const account = (bytes: Uint8Array, owner = TOKEN_2022_PROGRAM) => ({
@@ -22,15 +22,15 @@ const account = (bytes: Uint8Array, owner = TOKEN_2022_PROGRAM) => ({
   data: [Buffer.from(bytes).toString("base64"), "base64"],
 });
 
-test("the actual PMUP metadata mint is admitted without admitting active mint or freeze authority", () => {
-  expect(inspectMintAccount(account(captured), mint).decimals).toBe(6);
+test("the synthetic metadata mint is admitted without admitting active mint or freeze authority", () => {
+  expect(inspectMintAccount(account(fixture), mint).decimals).toBe(6);
   for (const offset of [0, 46]) {
-    const changed = captured.slice();
+    const changed = fixture.slice();
     changed[offset] = 1;
     expect(() => inspectMintAccount(account(changed), mint)).toThrow();
   }
   // Classic USDC-style authorities remain valid under the existing asset policy.
-  const classic = captured.slice(0, 82);
+  const classic = fixture.slice(0, 82);
   classic[0] = 1;
   classic[46] = 1;
   expect(
@@ -40,16 +40,16 @@ test("the actual PMUP metadata mint is admitted without admitting active mint or
 
 test("economic, hook, duplicate and unknown mint extensions cannot ride alongside allowed metadata", () => {
   for (const kind of [1, 14, 60000]) {
-    const changed = captured.slice();
+    const changed = fixture.slice();
     new DataView(changed.buffer).setUint16(166, kind, true);
     expect(() => inspectMintAccount(account(changed), mint)).toThrow();
   }
-  const duplicate = new Uint8Array(captured.length + 68);
-  duplicate.set(captured);
-  duplicate.set(captured.slice(166, 234), captured.length);
+  const duplicate = new Uint8Array(fixture.length + 68);
+  duplicate.set(fixture);
+  duplicate.set(fixture.slice(166, 234), fixture.length);
   expect(() => inspectMintAccount(account(duplicate), mint)).toThrow();
-  for (const changed of [captured.slice(0, -1), captured.slice()]) {
-    if (changed.length === captured.length) changed[270] ^= 1; // Metadata's bound mint.
+  for (const changed of [fixture.slice(0, -1), fixture.slice()]) {
+    if (changed.length === fixture.length) changed[270] ^= 1; // Metadata's bound mint.
     expect(() => inspectMintAccount(account(changed), mint)).toThrow();
   }
 });
@@ -74,8 +74,8 @@ test("ImmutableOwner token accounts preserve program identity and refuse unrelat
   ).toThrow();
 });
 
-test("maintainer token submission admits PMUP from raw state but cannot hide a transfer hook in JSON parsing", async () => {
-  let bytes = captured;
+test("maintainer token submission admits a synthetic mint from raw state but cannot hide a transfer hook in JSON parsing", async () => {
+  let bytes = fixture;
   const reader = rpcTokenMetadataReader(
     (async (_url, init) => {
       const request = JSON.parse(String(init?.body));
@@ -95,7 +95,7 @@ test("maintainer token submission admits PMUP from raw state but cannot hide a t
     { solana: "https://fixture.invalid" },
   );
   expect(await reader("solana", mint)).toEqual({ decimals: 6, symbol: null });
-  bytes = captured.slice();
+  bytes = fixture.slice();
   new DataView(bytes.buffer).setUint16(166, 14, true);
   await expect(reader("solana", mint)).rejects.toBeInstanceOf(
     TokenMetadataError,

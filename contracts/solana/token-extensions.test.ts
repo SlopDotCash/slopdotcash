@@ -10,18 +10,16 @@ import {
 } from "./token-extensions";
 
 /**
- * Live mainnet bytes of the approved Pump.fun mint
- * `35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump` (PMUP), read at finalized slot
- * 461754400: a Token-2022 mint with disabled mint and freeze authorities whose only
+ * Synthetic Token-2022 mint with disabled mint and freeze authorities. Its only
  * records are MetadataPointer (18, 64 bytes) and TokenMetadata (19, 124 bytes).
  */
-const LIVE_MINT =
-  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAiK37/nBbAwAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARIAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB7pPFAi0yXAWoPNhsO1RzVnxGcRnvXIGGuq7K5sqxWvEwB8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHuk8UCLTJcBag82Gw7VHNWfEZxGe9cgYa6rsrmyrFa8EAAAAUE1VUAQAAABQTVVQJAAAAGh0dHBzOi8vbS5yYXBpZGxhdW5jaC5pby9tLzllRk93TUNDVgAAAAA=";
-/** A live token account of that mint: account type 2 plus ImmutableOwner (7, 0 bytes). */
-const LIVE_ACCOUNT =
-  "Huk8UCLTJcBag82Gw7VHNWfEZxGe9cgYa6rsrmyrFa+RbI0ckYu41JqAT511C8ekMOYhrXQNUJOKdYXGpWJKyom9WZFiUQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=";
-const APPROVED_MINT = decodeBase58Bytes(
-  "35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump",
+const FIXTURE_MINT =
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCl1OgAAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARIAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqEwB8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioEAAAAVEVTVAQAAABURVNUJAAAAGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2ZpeHR1cmUvbWludAAAAAA=";
+/** A synthetic token account of that mint: account type 2 plus ImmutableOwner (7, 0 bytes). */
+const FIXTURE_ACCOUNT =
+  "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB0BCDwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=";
+const MINT_ADDRESS = decodeBase58Bytes(
+  "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh",
 );
 const OTHER_MINT = new Uint8Array(32).fill(4);
 const bytes = (base64: string) =>
@@ -32,17 +30,17 @@ const account = (owner: string, data: Uint8Array) => ({
   lamports: 1,
   data: [Buffer.from(data).toString("base64"), "base64"],
 });
-/** A copy of the live mint with one byte range changed. */
+/** A copy of the synthetic mint with one byte range changed. */
 const mutatedMint = (
   mutate: (data: Uint8Array) => Uint8Array | undefined,
 ): Uint8Array => {
-  const data = bytes(LIVE_MINT).slice();
+  const data = bytes(FIXTURE_MINT).slice();
   return mutate(data) ?? data;
 };
 /** A Token-2022 token account: the 165-byte base, an account type and its records. */
 function tokenAccount(records: Uint8Array, type = 2): Uint8Array {
   const data = new Uint8Array(ACCOUNT_SIZE + 1 + records.length);
-  data.set(APPROVED_MINT, 0);
+  data.set(MINT_ADDRESS, 0);
   data.set(new Uint8Array(32).fill(3), 32);
   data[ACCOUNT_SIZE] = type;
   data.set(records, ACCOUNT_SIZE + 1);
@@ -58,10 +56,10 @@ function classicMint(decimals: number, size = MINT_SIZE): Uint8Array {
 const record = (...values: number[]) => Uint8Array.from(values);
 
 describe("readTokenMint", () => {
-  test("admits the live approved metadata-only mint", () => {
+  test("admits the synthetic metadata-only mint", () => {
     const mint = readTokenMint(
-      account(TOKEN_2022_PROGRAM, bytes(LIVE_MINT)),
-      APPROVED_MINT,
+      account(TOKEN_2022_PROGRAM, bytes(FIXTURE_MINT)),
+      MINT_ADDRESS,
     );
     expect(mint.program).toBe(TOKEN_2022_PROGRAM);
     expect(mint.extensions).toEqual([18, 19]);
@@ -75,7 +73,7 @@ describe("readTokenMint", () => {
       return next;
     });
     expect(
-      readTokenMint(account(TOKEN_2022_PROGRAM, padded), APPROVED_MINT)
+      readTokenMint(account(TOKEN_2022_PROGRAM, padded), MINT_ADDRESS)
         .extensions,
     ).toEqual([18, 19]);
   });
@@ -83,7 +81,7 @@ describe("readTokenMint", () => {
   test("keeps classic SPL mints", () => {
     const mint = readTokenMint(
       account(TOKEN_PROGRAM, classicMint(9)),
-      APPROVED_MINT,
+      MINT_ADDRESS,
     );
     expect(mint.program).toBe(TOKEN_PROGRAM);
     expect(mint.decimals).toBe(9);
@@ -162,12 +160,11 @@ describe("readTokenMint", () => {
   test("admits revoked authorities that retain their old key bytes", () => {
     // SPL's pack_coption_key(None) clears the four-byte tag only. Revoking a
     // previously active authority therefore leaves its old key in the body.
-    for (const mint of [classicMint(6), bytes(LIVE_MINT).slice()]) {
+    for (const mint of [classicMint(6), bytes(FIXTURE_MINT).slice()]) {
       mint.fill(9, 4, 36);
       mint.fill(7, 50, 82);
       expect(
-        readTokenMint(account(TOKEN_2022_PROGRAM, mint), APPROVED_MINT)
-          .decimals,
+        readTokenMint(account(TOKEN_2022_PROGRAM, mint), MINT_ADDRESS).decimals,
       ).toBe(6);
     }
   });
@@ -184,7 +181,7 @@ describe("readTokenMint", () => {
     ).toThrow();
     // A mint carrying an account-only extension is refused too.
     const immutableOwner = Uint8Array.from([
-      ...bytes(LIVE_MINT).slice(0, 362),
+      ...bytes(FIXTURE_MINT).slice(0, 362),
       7,
       0,
       0,
@@ -195,7 +192,7 @@ describe("readTokenMint", () => {
     ).toThrow();
     // A duplicate record is refused.
     const duplicate = Uint8Array.from([
-      ...bytes(LIVE_MINT).slice(0, 362),
+      ...bytes(FIXTURE_MINT).slice(0, 362),
       18,
       0,
       0,
@@ -207,7 +204,7 @@ describe("readTokenMint", () => {
   });
 
   test("refuses a truncated, mistyped or unpadded base", () => {
-    const truncatedRecord = bytes(LIVE_MINT).slice(0, 360);
+    const truncatedRecord = bytes(FIXTURE_MINT).slice(0, 360);
     expect(() =>
       readTokenMint(account(TOKEN_2022_PROGRAM, truncatedRecord)),
     ).toThrow();
@@ -227,14 +224,17 @@ describe("readTokenMint", () => {
 
   test("refuses metadata that does not name the requested mint", () => {
     expect(() =>
-      readTokenMint(account(TOKEN_2022_PROGRAM, bytes(LIVE_MINT)), OTHER_MINT),
+      readTokenMint(
+        account(TOKEN_2022_PROGRAM, bytes(FIXTURE_MINT)),
+        OTHER_MINT,
+      ),
     ).toThrow();
     const embedded = mutatedMint((data) => {
       data[238 + 32] = 5;
       return undefined;
     });
     expect(() =>
-      readTokenMint(account(TOKEN_2022_PROGRAM, embedded), APPROVED_MINT),
+      readTokenMint(account(TOKEN_2022_PROGRAM, embedded), MINT_ADDRESS),
     ).toThrow();
   });
 
@@ -246,7 +246,7 @@ describe("readTokenMint", () => {
       return undefined;
     });
     expect(() =>
-      readTokenMint(account(TOKEN_2022_PROGRAM, badUri), APPROVED_MINT),
+      readTokenMint(account(TOKEN_2022_PROGRAM, badUri), MINT_ADDRESS),
     ).toThrow();
     const badAdditional = mutatedMint((data) => {
       // An additional-metadata count larger than the payload can hold.
@@ -257,15 +257,15 @@ describe("readTokenMint", () => {
       return undefined;
     });
     expect(() =>
-      readTokenMint(account(TOKEN_2022_PROGRAM, badAdditional), APPROVED_MINT),
+      readTokenMint(account(TOKEN_2022_PROGRAM, badAdditional), MINT_ADDRESS),
     ).toThrow();
   });
 });
 
 describe("readTokenAccount", () => {
-  test("admits the live ImmutableOwner token account", () => {
+  test("admits the synthetic ImmutableOwner token account", () => {
     const reading = readTokenAccount(
-      account(TOKEN_2022_PROGRAM, bytes(LIVE_ACCOUNT)),
+      account(TOKEN_2022_PROGRAM, bytes(FIXTURE_ACCOUNT)),
     );
     expect(reading.program).toBe(TOKEN_2022_PROGRAM);
     expect(reading.extensions).toEqual([7]);
@@ -274,7 +274,7 @@ describe("readTokenAccount", () => {
   test("admits a Token-2022 token account with no extension", () => {
     // The real no-extension shape is the 165-byte base with no account-type byte.
     const base = new Uint8Array(ACCOUNT_SIZE);
-    base.set(APPROVED_MINT, 0);
+    base.set(MINT_ADDRESS, 0);
     const reading = readTokenAccount(account(TOKEN_2022_PROGRAM, base));
     expect(reading.extensions).toEqual([]);
     expect(readTokenAccount(account(TOKEN_PROGRAM, base)).extensions).toEqual(

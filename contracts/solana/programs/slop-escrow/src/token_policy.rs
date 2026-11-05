@@ -82,7 +82,7 @@ mod tests {
 
     fn inspect_mint(mut bytes: Vec<u8>) -> Result<bool> {
         let key = anchor_lang::solana_program::pubkey::pubkey!(
-            "35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump"
+            "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh"
         );
         let owner = anchor_spl::token_2022::ID;
         let mut lamports = 10_000_000;
@@ -100,8 +100,8 @@ mod tests {
     }
 
     #[test]
-    fn real_pmup_metadata_mint_is_admitted_but_active_authorities_are_not() {
-        let bytes = include_bytes!("../../../integration/fixtures/pmup-mint.bin");
+    fn synthetic_metadata_mint_is_admitted_but_active_authorities_are_not() {
+        let bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin");
         assert!(inspect_mint(bytes.to_vec()).unwrap());
         for offset in [0, 46] {
             let mut active = bytes.to_vec();
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn revoked_authorities_keep_key_bytes_but_are_no_longer_authorities() {
         use anchor_lang::solana_program::{program_option::COption, program_pack::Pack};
-        let mut bytes = include_bytes!("../../../integration/fixtures/pmup-mint.bin").to_vec();
+        let mut bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
         let mut mint = MintState::unpack(&bytes[..82]).unwrap();
         mint.mint_authority = COption::Some(Pubkey::new_from_array([9; 32]));
         mint.freeze_authority = COption::Some(Pubkey::new_from_array([7; 32]));
@@ -135,7 +135,7 @@ mod tests {
             ExtensionType::TransferHook as u16,
             60_000,
         ] {
-            let mut bytes = include_bytes!("../../../integration/fixtures/pmup-mint.bin").to_vec();
+            let mut bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
             bytes[166..168].copy_from_slice(&kind.to_le_bytes());
             assert!(inspect_mint(bytes).is_err());
         }

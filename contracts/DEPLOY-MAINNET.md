@@ -93,7 +93,7 @@ project activation, wallet binding or a first payment; continue those under
 
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
-The owner approved this exact program upgrade to enable the selected PMUP vault.
+The owner approved this exact program upgrade.
 The previous deployment above remains historical evidence. The upgrade finalized
 at slot **462,466,131**, transaction
 [`4cScJHGH…WP2T1`](https://solscan.io/tx/4cScJHGHPKNp23A5NDJ5Ydte3LbzmufkaVo22y9fmG3fKgBjHikrX7TvQFCjtruArhbdTb6zGBpZwNkzUCMWP2T1).

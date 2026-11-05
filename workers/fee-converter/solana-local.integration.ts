@@ -2,7 +2,6 @@
 // The validator clones the public programs, lookup tables and accounts of
 // one current Jupiter route. Only a throwaway funder receives seeded tokens;
 // a real local token transfer funds the fee wallet. No mainnet token moves.
-// SLOP_FEE_TEST_TOKEN=pmup selects the owner-approved Token-2022 mint.
 // SLOP_FEE_TEST_TOKEN=sol creates a native escrow, claims its earned SOL fees,
 // and proves the exact atomic wrap and USDC swap without spending gas topups.
 //   bun workers/fee-converter/solana-local.integration.ts
@@ -34,14 +33,12 @@ import { resolveSolanaAccounts } from "./solana-accounts";
 import { WRAPPED_SOL } from "./solana-native-route";
 
 const selected = process.env.SLOP_FEE_TEST_TOKEN ?? "jup";
-if (selected !== "jup" && selected !== "pmup" && selected !== "sol")
-  throw new Error("Select jup, pmup or sol");
+if (selected !== "jup" && selected !== "sol")
+  throw new Error("Select jup or sol");
 const nativeInput = selected === "sol";
 const INPUT_MINT = nativeInput
   ? WRAPPED_SOL
-  : selected === "pmup"
-    ? "35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump"
-    : "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
+  : "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const JUPITER = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const BUILTIN = new Set([
@@ -59,11 +56,7 @@ const PORT = Number(process.env.SLOP_FEE_TEST_PORT ?? "28899");
 if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65000)
   throw new Error("Invalid local validator port");
 const RPC = `http://127.0.0.1:${PORT}`;
-const AMOUNT = nativeInput
-  ? 100_000_000n
-  : selected === "pmup"
-    ? 30_000_000_000n
-    : 30_000_000n;
+const AMOUNT = nativeInput ? 100_000_000n : 30_000_000n;
 // A native claim costs 5,000 lamports and the next send reserves 5,000,000.
 // The actual claim receipt must prove that exact remainder before we quote it.
 const NATIVE_FEES = AMOUNT + 5_005_000n;
@@ -82,14 +75,8 @@ const pinnedRoute: typeof fetch = (async (
   if (url.href.startsWith(`${JUPITER_API}/quote?`)) {
     url.searchParams.set("asLegacyTransaction", "false");
     url.searchParams.set("instructionVersion", "V2");
-    if (selected === "jup" || nativeInput) {
-      url.searchParams.set("dexes", "Whirlpool");
-      url.searchParams.set("onlyDirectRoutes", "true");
-    } else {
-      // Stable on-chain AMMs survive local snapshot startup; expiring RFQ
-      // oracle prices do not. This restriction belongs only to this harness.
-      url.searchParams.set("dexes", "Pump.fun Amm,Whirlpool");
-    }
+    url.searchParams.set("dexes", "Whirlpool");
+    url.searchParams.set("onlyDirectRoutes", "true");
     url.searchParams.sort();
     const cached = quoteCache.get(url.href);
     if (cached) return Response.json(cached);
@@ -113,8 +100,7 @@ const pinnedRoute: typeof fetch = (async (
       if (
         JSON.stringify(body.quoteResponse) !== JSON.stringify(capturedQuote) ||
         body.userPublicKey !== capturedWallet ||
-        body.asLegacyTransaction !== false ||
-        (selected === "pmup" && body.useSharedAccounts !== true)
+        body.asLegacyTransaction !== false
       )
         throw new Error("Swap differs from the captured local route");
       return Response.json(capturedSwap);
@@ -216,7 +202,6 @@ const built = (await (
       userPublicKey: wallet,
       wrapAndUnwrapSol: false,
       asLegacyTransaction: false,
-      ...(selected === "pmup" ? { useSharedAccounts: true } : {}),
     }),
   })
 ).json()) as { swapTransaction: string };

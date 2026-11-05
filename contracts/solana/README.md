@@ -354,8 +354,8 @@ that the owner then withdraws, 18-decimal and 0-decimal mints through deposit,
 commit, pay and withdraw, the 2% withdrawal fee rounded up per withdrawal,
 `initialize` rejected when the identity authority or fee recipient differs from
 the Config, unsafe Token-2022 mint authorities rejected at `initialize`, and
-`readVaultTotals` against the on-chain counters. The Token-2022 suite loads actual
-public PMUP mint bytes into the isolated validator and covers deposit, reservation,
+`readVaultTotals` against the on-chain counters. The Token-2022 suite loads synthetic
+metadata-only mint bytes into the isolated validator and covers deposit, reservation,
 payment, withdrawal and fee claims, including wrong-program and duplicate-payment
 rejection. It uses local test funds only.
 These use real token accounts, transactions, finalized receipts and balance
