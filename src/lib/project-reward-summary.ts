@@ -1,5 +1,6 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
+import { monthlyPoolUnfunded } from "./reward-amount";
 import type {
   SecurityBountyTerms,
   SecurityProgramStatus,
@@ -10,6 +11,8 @@ export type ProjectRewardSummary =
   | {
       kind: "monthly-pool";
       amount: string;
+      /** False when the pool is pledged with nothing committed. */
+      funded: boolean;
       token?: { symbol: string; url: string };
     }
   | {
@@ -59,11 +62,13 @@ export function projectRewardSummaries(
       reward.monthlyCapMinor,
       asset?.decimals ?? 6,
     );
+    const funded = !monthlyPoolUnfunded(reward);
     summaries.push(
       asset && asset.kind !== "stablecoin"
         ? {
             kind: "monthly-pool",
             amount: compactWhole(amount),
+            funded,
             token: {
               symbol: asset.symbol.replace(/^\$/u, ""),
               url:
@@ -88,7 +93,7 @@ export function projectRewardSummaries(
                       }/token/${asset.address}`,
             },
           }
-        : { kind: "monthly-pool", amount: `$${amount}` },
+        : { kind: "monthly-pool", amount: `$${amount}`, funded },
     );
   }
   if (bounty) {

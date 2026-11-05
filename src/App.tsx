@@ -1371,6 +1371,7 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
                   </>
                 ) : null}
                 {" monthly, split between contributors"}
+                {summary.funded ? null : " · not funded"}
               </>
             ) : summary.kind === "security-bounty" ? (
               <>
