@@ -284,6 +284,51 @@ export function profileCounts(p: ProfileRecord) {
 }
 
 /**
+ * The current login the directory records for each permanent actor ID. An
+ * ID the directory records under two different logins is ambiguous, so it
+ * is left out: no reader may guess which login currently owns the ID.
+ */
+export function directoryLoginsByActorId(
+  people: readonly ProfileRecord[],
+): Map<string, string> {
+  const logins = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const person of people) {
+    const recorded = logins.get(person.id);
+    if (recorded === undefined) logins.set(person.id, person.login);
+    else if (recorded.toLowerCase() !== person.login.toLowerCase())
+      ambiguous.add(person.id);
+  }
+  for (const id of ambiguous) logins.delete(id);
+  return logins;
+}
+
+/**
+ * The login a standings row for `actor` links to. The row keeps displaying
+ * the recorded actor, but a profile URL has to name a login the profile
+ * page can resolve: the directory's current login for the same permanent
+ * actor ID. That resolution is refused when a score record still names
+ * the ID under another login, so a recorded login any score record names
+ * keeps the link — it resolves through the score record instead.
+ */
+export function standingsProfileLogin(
+  actor: { id: string; login: string },
+  directoryLogins: ReadonlyMap<string, string>,
+  scoreLogins: ReadonlyMap<string, ReadonlySet<string>>,
+): string {
+  const current = directoryLogins.get(actor.id);
+  if (!current || current.toLowerCase() === actor.login.toLowerCase())
+    return actor.login;
+  const named = scoreLogins.get(actor.id);
+  if (
+    named &&
+    [...named].some((login) => login.toLowerCase() !== current.toLowerCase())
+  )
+    return actor.login;
+  return current;
+}
+
+/**
  * Public search for one contributor's pull requests.
  * `github.com/pulls` is the signed-in dashboard and sends anonymous visitors
  * to the login page, so the profile counts cannot use it.

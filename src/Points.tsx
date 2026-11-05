@@ -52,7 +52,11 @@ import {
   pointMembers,
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
-import { profileCounts } from "./lib/profiles";
+import {
+  directoryLoginsByActorId,
+  profileCounts,
+  standingsProfileLogin,
+} from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
@@ -1197,6 +1201,35 @@ export function ContributorStandings({
       ? scores.snapshot.leaders.map(({ actor }) => [actor.id, actor] as const)
       : [],
   );
+  // The standings display the recorded actor, but only score leaders get a
+  // current one above. The directory names every contributor's current
+  // login by permanent ID, so row links resolve renames through it.
+  const census = useProfiles();
+  const directoryLogins = useMemo(
+    () =>
+      census.state.status === "ready"
+        ? directoryLoginsByActorId(census.state.index.people)
+        : new Map<string, string>(),
+    [census.state],
+  );
+  const scoreLogins = useMemo(() => {
+    const named = new Map<string, Set<string>>();
+    if (scores.status === "ready") {
+      const name = (actor: { id: string; login: string }) => {
+        const logins = named.get(actor.id) ?? new Set<string>();
+        logins.add(actor.login);
+        named.set(actor.id, logins);
+      };
+      for (const leader of scores.snapshot.leaders) name(leader.actor);
+      for (const exclusion of scores.snapshot.reviewExclusions ?? [])
+        if (exclusion.reviewer?.kind === "User") name(exclusion.reviewer);
+      for (const view of scores.views) {
+        for (const leader of view.leaders) name(leader.actor);
+        for (const opportunity of view.opportunities) name(opportunity.actor);
+      }
+    }
+    return named;
+  }, [scores]);
   const ranked = members
     .map((member) => ({
       actor: currentActors.get(member.actor.id) ?? member.actor,
@@ -1294,7 +1327,13 @@ export function ContributorStandings({
                         <td>
                           <Link
                             className="points-person"
-                            href={`/contributors/${encodeURIComponent(m.actor.login)}`}
+                            href={`/contributors/${encodeURIComponent(
+                              standingsProfileLogin(
+                                m.actor,
+                                directoryLogins,
+                                scoreLogins,
+                              ),
+                            )}`}
                           >
                             {compact ? (
                               <img
