@@ -284,6 +284,55 @@ export function profileCounts(p: ProfileRecord) {
 }
 
 /**
+ * The current login the directory records for each permanent actor ID. An
+ * ID the directory records under two different logins is ambiguous, so it
+ * is left out: no reader may guess which login currently owns the ID.
+ */
+export function censusLoginsByActorId(
+  people: readonly ProfileRecord[],
+): Map<string, string> {
+  const logins = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const person of people) {
+    const recorded = logins.get(person.id);
+    if (recorded === undefined) logins.set(person.id, person.login);
+    else if (recorded.toLowerCase() !== person.login.toLowerCase())
+      ambiguous.add(person.id);
+  }
+  for (const id of ambiguous) logins.delete(id);
+  return logins;
+}
+
+/**
+ * The login a standings row for `actor` displays. The journal names each
+ * contributor by the login recorded with their latest revision, which a
+ * GitHub rename leaves stale for anyone the current score snapshot does
+ * not name. The directory records the current login for the same
+ * permanent actor ID, and the profile page resolves a person through it,
+ * so the row displays that login — unless a score record (snapshot
+ * leaders, review-exclusion reviewers, project-view leaders or
+ * opportunities) still names the ID under another login. The profile page
+ * refuses the directory login in exactly that case, so the display keeps
+ * the login the score record resolves through instead.
+ */
+export function standingsDisplayLogin(
+  actor: { id: string; login: string },
+  directoryLogins: ReadonlyMap<string, string>,
+  scoreLogins: ReadonlyMap<string, ReadonlySet<string>>,
+): string {
+  const current = directoryLogins.get(actor.id);
+  if (!current || current.toLowerCase() === actor.login.toLowerCase())
+    return actor.login;
+  const named = scoreLogins.get(actor.id);
+  if (
+    named &&
+    [...named].some((login) => login.toLowerCase() !== current.toLowerCase())
+  )
+    return actor.login;
+  return current;
+}
+
+/**
  * Public search for one contributor's pull requests.
  * `github.com/pulls` is the signed-in dashboard and sends anonymous visitors
  * to the login page, so the profile counts cannot use it.
