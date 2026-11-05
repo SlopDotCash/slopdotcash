@@ -254,20 +254,26 @@ function splitSentences(text: string): string[] {
 }
 
 /**
- * Split a sentence only where a separator isolates a direct misread from
- * another clause. An ordinary "and" stays intact so a real finding is not
- * chopped into fragments that look like separate claims.
+ * A comma clause is its own claim when it is long enough to state one and
+ * it is not a quote of the contradicted token. The verb is not an allowlist:
+ * "omits", "leaks", and "never validates" are the same kind of claim.
+ * An ordinary "and" stays intact so a real finding is not chopped into
+ * fragments that look like separate claims.
  */
 function isSeparateClaim(part: string): boolean {
   if (isSupportQuote(part)) return false;
-  if (part.trim().split(/\s+/u).length < 4) return false;
-  // "never <verb>" is already a failure of this piece's own subject.
-  // The verb list above does not have to name that verb.
-  return (
-    /\b(?:can|could|should|is|are|was|were|raises?|reads?|uses?|bypassed|rejects?|fails?|crashes?|skipped|runs?)\b/iu.test(
-      part,
-    ) || predicatesOwnSubjectFailure(part)
-  );
+  return part.trim().split(/\s+/u).length >= 4;
+}
+
+function hexTokens(text: string): string[] {
+  const tokens: string[] = [];
+  for (const match of text.matchAll(/\b0x[0-9A-Fa-f]+\b/giu))
+    tokens.push(match[0].toLowerCase());
+  for (const match of text.matchAll(
+    /(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])/gu,
+  ))
+    tokens.push(match[0].toLowerCase());
+  return tokens;
 }
 
 /** Split on commas only when one side is a misread and the other is its own claim. */
@@ -279,8 +285,17 @@ function commaClauses(segment: string, corpus: string): string[] {
   if (parts.length < 2)
     return [segment.trim()].filter((part) => part.length > 0);
   const misread = parts.map((part) => directMisread(part, corpus));
+  const misreadTokens = new Set<string>();
+  for (const [index, part] of parts.entries()) {
+    if (!misread[index]) continue;
+    for (const token of hexTokens(part)) misreadTokens.add(token);
+  }
+  // A clause that repeats the misread token is still that claim.
   const separate = parts.map(
-    (part) => !directMisread(part, corpus) && isSeparateClaim(part),
+    (part, index) =>
+      !misread[index] &&
+      isSeparateClaim(part) &&
+      !hexTokens(part).some((token) => misreadTokens.has(token)),
   );
   if (misread.some(Boolean) && separate.some(Boolean)) return parts;
   return [segment.trim()].filter((part) => part.length > 0);

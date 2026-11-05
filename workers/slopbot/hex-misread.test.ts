@@ -309,6 +309,43 @@ test("keeps an auth bypass joined to a digest misread by a comma", () => {
   expect(output.limitations).toEqual(input.limitations);
 });
 
+test("keeps a comma-spliced defect whose verb is not on a fixed list", () => {
+  const cases = [
+    [
+      `The digest ${D} is not a valid hex value, the handler omits the auth check.`,
+      "The handler omits the auth check.",
+    ],
+    [
+      `The digest ${D} is not a valid hex value, the endpoint leaks private report bodies to other reporters.`,
+      "The endpoint leaks private report bodies to other reporters.",
+    ],
+    [
+      `The digest ${D} is not a valid hex value, the empty token breaks authentication.`,
+      "The empty token breaks authentication.",
+    ],
+    [
+      `The digest ${D} is not a valid hex value, the refresh path drops the loaded notification list.`,
+      "The refresh path drops the loaded notification list.",
+    ],
+    [
+      `The digest ${D} is not a valid hex value, the importer discards every valid row.`,
+      "The importer discards every valid row.",
+    ],
+    [
+      `The digest ${D} is not a valid hex value, the exporter truncates every output file.`,
+      "The exporter truncates every output file.",
+    ],
+  ] as const;
+  for (const [summary, kept] of cases) {
+    const input = verdict({ summary });
+    const output = suppressHexMisreads(input);
+    expect(output.category).toBe("low_quality");
+    expect(output.summary).toBe(kept);
+    expect(output.summary).not.toContain(D);
+    expect(output.limitations).toEqual(input.limitations);
+  }
+});
+
 test("does not treat an unrelated digest as the token a concrete name cites", () => {
   const input = verdict({
     summary:
