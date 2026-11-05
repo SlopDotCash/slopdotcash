@@ -7,9 +7,11 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import { monthlyAmountDisplay } from "../../src/lib/project-schema.mjs";
+import type { RewardAsset } from "../../src/lib/reward-asset.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { CONTRIBUTION } from "../../tests/project-application-manifest";
 import { sha256Hex } from "../../workers/identity/crypto";
@@ -22,7 +24,7 @@ import {
 import { handlePaymentsApi } from "./handler";
 import { coordinateMonthlyPayments, monthlyOwnerService } from "./monthly";
 
-const deployment = {
+const deployment: EscrowDeployment = {
   network: "base-sepolia",
   vault: "0x1000000000000000000000000000000000000001",
   programId: null,
@@ -46,7 +48,7 @@ const OWNER = "900000071";
 const ADMIN = { githubId: "900000001", githubLogin: "e2e-admin" };
 const STEWARD = { githubId: "186240462", githubLogin: "elizaOS" };
 const NEW_ADDRESS = "0x2222222222222222222222222222222222222222";
-const NEW_ASSET = {
+const NEW_ASSET: RewardAsset = {
   network: "base",
   kind: "token",
   address: NEW_ADDRESS,
@@ -73,7 +75,7 @@ let unit = 1n;
 beforeEach(async () => {
   unit = 1n;
   ({ db, sqlite, project } = await createMonthlyAllocationFixture({
-    deployment,
+    deployment: { ...deployment },
     unit,
   }));
   // The frozen fixture registry predates generated skills: its manifest
@@ -262,7 +264,7 @@ async function adminTokenChange(): Promise<Response> {
 // so this is the manifest the view sees after migration.
 const NEW_VAULT = "0x2222222222222222222222222222222222222222";
 const CUSTOM_ADDRESS = "0x3333333333333333333333333333333333333333";
-const CUSTOM_ASSET = {
+const CUSTOM_ASSET: RewardAsset = {
   network: "base",
   kind: "token",
   address: CUSTOM_ADDRESS,
