@@ -153,6 +153,12 @@ function AdmissionExemptionForm({
           confirmation: true,
         },
       );
+      // A retained panel keeps this form mounted across a failed refresh, so
+      // the action clears its own in-flight state and inputs on success.
+      setBusy(false);
+      setReason("");
+      setDecisionReference("");
+      setConfirmed(false);
       onSaved();
     } catch (caught) {
       setError(message(caught));
@@ -332,10 +338,19 @@ function QueueScan({
       projectId: project.id,
       revision: project.revision,
       reason: reason.trim(),
-    }).then(onQueued, (caught: unknown) => {
-      setBusy(false);
-      setError(message(caught));
-    });
+    }).then(
+      () => {
+        // A retained panel keeps this form mounted across a failed refresh,
+        // so the action clears its own in-flight state on success.
+        setBusy(false);
+        setReason("");
+        onQueued();
+      },
+      (caught: unknown) => {
+        setBusy(false);
+        setError(message(caught));
+      },
+    );
   };
   return (
     <section className="admin-subsection">
@@ -654,15 +669,20 @@ export function VettingSection({ projectId }: { projectId: string }) {
     undefined,
     { retainOnTransientFailure: true },
   );
-  const [note, setNote] = useState<string | null>(null);
+  // Scoped to the project it reports and to a loaded panel, so a success
+  // banner never outlives the record it describes.
+  const [note, setNote] = useState<{
+    projectId: string;
+    text: string;
+  } | null>(null);
   return (
     <section aria-labelledby="admin-vetting" className="admin-section">
       <div className="admin-section-heading">
         <h2 id="admin-vetting">Security vetting</h2>
       </div>
-      {note ? (
+      {state.status === "ready" && note?.projectId === projectId ? (
         <p className="admin-status" role="status">
-          {note}
+          {note.text}
         </p>
       ) : null}
       {state.status === "ready" && state.refreshError ? (
@@ -825,9 +845,10 @@ export function VettingSection({ projectId }: { projectId: string }) {
                       {state.service.queueRegistrationAvailable && !queued ? (
                         <QueueScan
                           onQueued={() => {
-                            setNote(
-                              `Queued a scan of ${project.id} revision ${project.revision}.`,
-                            );
+                            setNote({
+                              projectId: project.id,
+                              text: `Queued a scan of ${project.id} revision ${project.revision}.`,
+                            });
                             reload();
                           }}
                           project={project}
@@ -838,11 +859,12 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         project={project}
                         exemption={activeExemption}
                         onSaved={() => {
-                          setNote(
-                            activeExemption
+                          setNote({
+                            projectId: project.id,
+                            text: activeExemption
                               ? `Revoked the owner-approved exemption for ${project.id}.`
                               : `Recorded the owner-approved exemption for ${project.id}.`,
-                          );
+                          });
                           reload();
                         }}
                       />
