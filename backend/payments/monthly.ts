@@ -929,6 +929,39 @@ export function monthlyOwnerService(deps: {
         })),
       };
     }
+    // The asset block names the vault snapshot's asset: its address and
+    // decimals come from that snapshot, so its symbol must name the same
+    // asset. A later revision may move the project to a new reward asset;
+    // that asset labels later months, not this month's proposal or frozen
+    // awards. Resolve the symbol by address: the current manifest when it
+    // still names this asset (a symbol correction for the same token
+    // wins), then the proposal's own manifest, then the network's reviewed
+    // reference asset. An asset no source names keeps a null symbol rather
+    // than borrowing the new asset's.
+    const assetSymbol = (address: string): string | null => {
+      if (!vault) return null;
+      const network =
+        ESCROW_NETWORKS[vault.network as keyof typeof ESCROW_NETWORKS];
+      const sameAsset = (candidate: string | undefined) =>
+        candidate !== undefined &&
+        (network?.family === "solana"
+          ? candidate === address
+          : candidate.toLowerCase() === address.toLowerCase());
+      if (sameAsset(project.manifest.rewardAsset?.address))
+        return project.manifest.rewardAsset?.symbol ?? null;
+      if (sameAsset(base?.manifest.rewardAsset?.address))
+        return base?.manifest.rewardAsset?.symbol ?? null;
+      if (
+        base?.manifest.escrow?.deployments.some((entry) =>
+          sameAsset(entry.asset),
+        )
+      )
+        return base.manifest.reward.currency;
+      return (
+        network?.assets.find((entry) => sameAsset(entry.address))?.symbol ??
+        null
+      );
+    };
     return {
       projectId: project.id,
       period,
@@ -941,9 +974,7 @@ export function monthlyOwnerService(deps: {
             network: vault.network,
             assetAddress: vault.asset_address,
             assetDecimals: vault.asset_decimals,
-            symbol:
-              project.manifest.rewardAsset?.symbol ??
-              project.manifest.reward.currency,
+            symbol: assetSymbol(vault.asset_address),
           }
         : null,
       proposal,
