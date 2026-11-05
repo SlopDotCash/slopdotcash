@@ -34,7 +34,13 @@ pub fn admitted_mint(info: &AccountInfo) -> Result<bool> {
         );
         match kind {
             ExtensionType::MetadataPointer => {
-                state.get_extension::<MetadataPointer>()?;
+                let pointer = state.get_extension::<MetadataPointer>()?;
+                require_keys_eq!(
+                    Option::<Pubkey>::from(pointer.metadata_address)
+                        .ok_or(EscrowError::WrongMint)?,
+                    *info.key,
+                    EscrowError::WrongMint
+                );
             }
             ExtensionType::TokenMetadata => {
                 let metadata = state.get_variable_len_extension::<TokenMetadata>()?;
@@ -112,9 +118,18 @@ mod tests {
     }
 
     #[test]
+    fn metadata_pointer_to_another_account_is_refused() {
+        let mut bytes =
+            include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
+        bytes[202..234].fill(7);
+        assert!(inspect_mint(bytes).is_err());
+    }
+
+    #[test]
     fn revoked_authorities_keep_key_bytes_but_are_no_longer_authorities() {
         use anchor_lang::solana_program::{program_option::COption, program_pack::Pack};
-        let mut bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
+        let mut bytes =
+            include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
         let mut mint = MintState::unpack(&bytes[..82]).unwrap();
         mint.mint_authority = COption::Some(Pubkey::new_from_array([9; 32]));
         mint.freeze_authority = COption::Some(Pubkey::new_from_array([7; 32]));
@@ -135,7 +150,8 @@ mod tests {
             ExtensionType::TransferHook as u16,
             60_000,
         ] {
-            let mut bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
+            let mut bytes =
+                include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
             bytes[166..168].copy_from_slice(&kind.to_le_bytes());
             assert!(inspect_mint(bytes).is_err());
         }

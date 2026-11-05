@@ -16,6 +16,91 @@ interface Vm {
     function assume(bool) external;
 }
 
+contract FeeReferralToken is IReferralToken {
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount - 1;
+        return true;
+    }
+}
+
+contract OptionalReturnReferralToken is IReferralToken {
+    mapping(address => uint256) public balanceOf;
+    uint8 public mode;
+
+    function setMode(uint8 value) external {
+        mode = value;
+    }
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        if (mode == 3) revert("token revert");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        uint8 currentMode = mode;
+        assembly ("memory-safe") {
+            switch currentMode
+            case 0 { return(0, 0) }
+            case 1 {
+                mstore(0, 0)
+                return(0, 32)
+            }
+            case 2 {
+                mstore(0, 1)
+                return(0, 1)
+            }
+            case 4 {
+                mstore(0, 1)
+                return(0, 0x100000)
+            }
+            default {
+                mstore(0, 1)
+                return(0, 32)
+            }
+        }
+    }
+}
+
+contract ReentrantReferralToken is IReferralToken {
+    mapping(address => uint256) public balanceOf;
+    ReferralDistributor public distributor;
+    bytes4 public callbackError;
+
+    function configure(ReferralDistributor value) external {
+        distributor = value;
+    }
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function triggerRescue(address to) external {
+        distributor.rescue(to);
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        (bool ok, bytes memory result) = address(distributor).call(abi.encodeCall(distributor.rescue, (to)));
+        require(!ok && result.length >= 4, "reentry succeeded");
+        bytes4 selector;
+        assembly ("memory-safe") {
+            selector := mload(add(result, 32))
+        }
+        callbackError = selector;
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
 /// @dev Minimal harness: no forge-std is vendored in this project. Trees are built by hand for two and three
 /// leaves, which covers an even level, an odd promoted node, and the sorted-pair rule.
 abstract contract ReferralBase {
@@ -617,6 +702,133 @@ contract ReferralDistributorTest is ReferralBase {
         distributor.voidRoot(0);
         (bytes32 current,,) = distributor.currentRoot();
         require(current == bytes32(0), "unclaimed first root voided");
+    }
+
+    function test_feeTokenCannotBookGrossClaim() public {
+        FeeReferralToken feeToken = new FeeReferralToken();
+        ReferralDistributor feeDistributor =
+            new ReferralDistributor(IReferralToken(address(feeToken)), OWNER, POSTER, CAP, DELAY);
+        feeToken.mint(address(feeDistributor), 100 * ONE);
+        bytes32 root = feeDistributor.leaf(ALICE, 100 * ONE);
+        vm.prank(POSTER);
+        feeDistributor.postRoot(0, root, 100 * ONE);
+        bytes32[] memory proof = new bytes32[](0);
+        vm.prank(ALICE);
+        vm.expectRevert(ReferralDistributor.TransferFailed.selector);
+        feeDistributor.claim(100 * ONE, proof);
+        require(feeDistributor.claimed(ALICE) == 0 && feeDistributor.totalClaimed() == 0, "state unwound");
+    }
+
+    function test_feeTokenCannotBookGrossRescue() public {
+        FeeReferralToken feeToken = new FeeReferralToken();
+        ReferralDistributor feeDistributor =
+            new ReferralDistributor(IReferralToken(address(feeToken)), OWNER, POSTER, CAP, DELAY);
+        feeToken.mint(address(feeDistributor), 100 * ONE);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(OWNER);
+        vm.expectRevert(ReferralDistributor.TransferFailed.selector);
+        feeDistributor.rescue(CAROL);
+        require(feeToken.balanceOf(address(feeDistributor)) == 100 * ONE && feeToken.balanceOf(CAROL) == 0, "unwound");
+    }
+
+    function test_noReturnTokenClaimSucceedsWithExactTransfer() public {
+        OptionalReturnReferralToken optionalToken = new OptionalReturnReferralToken();
+        ReferralDistributor optionalDistributor =
+            new ReferralDistributor(IReferralToken(address(optionalToken)), OWNER, POSTER, CAP, DELAY);
+        optionalToken.mint(address(optionalDistributor), 100 * ONE);
+        bytes32 root = optionalDistributor.leaf(ALICE, 100 * ONE);
+        vm.prank(POSTER);
+        optionalDistributor.postRoot(0, root, 100 * ONE);
+        vm.prank(ALICE);
+        optionalDistributor.claim(100 * ONE, new bytes32[](0));
+        require(optionalToken.balanceOf(ALICE) == 100 * ONE, "claim paid exactly");
+    }
+
+    function test_noReturnTokenRescueSucceedsWithExactTransfer() public {
+        OptionalReturnReferralToken optionalToken = new OptionalReturnReferralToken();
+        ReferralDistributor optionalDistributor =
+            new ReferralDistributor(IReferralToken(address(optionalToken)), OWNER, POSTER, CAP, DELAY);
+        optionalToken.mint(address(optionalDistributor), 100 * ONE);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(OWNER);
+        optionalDistributor.rescue(CAROL);
+        require(optionalToken.balanceOf(CAROL) == 100 * ONE, "rescue paid exactly");
+    }
+
+    function test_optionalReturnTokenRejectsFalseMalformedAndRevert() public {
+        OptionalReturnReferralToken optionalToken = new OptionalReturnReferralToken();
+        ReferralDistributor optionalDistributor =
+            new ReferralDistributor(IReferralToken(address(optionalToken)), OWNER, POSTER, CAP, DELAY);
+        optionalToken.mint(address(optionalDistributor), 100 * ONE);
+        bytes32 root = optionalDistributor.leaf(ALICE, 100 * ONE);
+        vm.prank(POSTER);
+        optionalDistributor.postRoot(0, root, 100 * ONE);
+        for (uint8 mode = 1; mode <= 3; mode++) {
+            optionalToken.setMode(mode);
+            vm.prank(ALICE);
+            vm.expectRevert(ReferralDistributor.TransferFailed.selector);
+            optionalDistributor.claim(100 * ONE, new bytes32[](0));
+            require(optionalDistributor.claimed(ALICE) == 0, "failed claim unwound");
+            require(optionalToken.balanceOf(ALICE) == 0, "failed transfer unwound");
+        }
+    }
+
+    function test_oversizedReturnClaimIsRejectedWithinBoundedGas() public {
+        OptionalReturnReferralToken optionalToken = new OptionalReturnReferralToken();
+        ReferralDistributor optionalDistributor =
+            new ReferralDistributor(IReferralToken(address(optionalToken)), OWNER, POSTER, CAP, DELAY);
+        optionalToken.mint(address(optionalDistributor), 100 * ONE);
+        bytes32 root = optionalDistributor.leaf(ALICE, 100 * ONE);
+        vm.prank(POSTER);
+        optionalDistributor.postRoot(0, root, 100 * ONE);
+        optionalToken.setMode(4);
+
+        vm.prank(ALICE);
+        (bool ok, bytes memory result) = address(optionalDistributor).call{gas: 2_700_000}(
+            abi.encodeCall(optionalDistributor.claim, (100 * ONE, new bytes32[](0)))
+        );
+        require(
+            !ok && result.length == 4 && bytes4(result) == ReferralDistributor.TransferFailed.selector, "claim bomb"
+        );
+        require(optionalDistributor.claimed(ALICE) == 0 && optionalToken.balanceOf(ALICE) == 0, "claim unwound");
+    }
+
+    function test_oversizedReturnRescueIsRejectedWithinBoundedGas() public {
+        OptionalReturnReferralToken optionalToken = new OptionalReturnReferralToken();
+        ReferralDistributor optionalDistributor =
+            new ReferralDistributor(IReferralToken(address(optionalToken)), OWNER, POSTER, CAP, DELAY);
+        optionalToken.mint(address(optionalDistributor), 100 * ONE);
+        optionalToken.setMode(4);
+        vm.warp(block.timestamp + 365 days);
+
+        vm.prank(OWNER);
+        (bool ok, bytes memory result) =
+            address(optionalDistributor).call{gas: 2_700_000}(abi.encodeCall(optionalDistributor.rescue, (CAROL)));
+        require(
+            !ok && result.length == 4 && bytes4(result) == ReferralDistributor.TransferFailed.selector, "rescue bomb"
+        );
+        require(
+            optionalToken.balanceOf(address(optionalDistributor)) == 100 * ONE && optionalToken.balanceOf(CAROL) == 0,
+            "rescue unwound"
+        );
+    }
+
+    function test_constructorRefusesTokenWithoutCode() public {
+        vm.expectRevert(ReferralDistributor.InvalidInput.selector);
+        new ReferralDistributor(IReferralToken(address(0x1234)), OWNER, POSTER, CAP, DELAY);
+    }
+
+    function test_rescueRejectsTokenCallbackReentrancy() public {
+        ReentrantReferralToken reentrantToken = new ReentrantReferralToken();
+        ReferralDistributor reentrantDistributor = new ReferralDistributor(
+            IReferralToken(address(reentrantToken)), address(reentrantToken), POSTER, CAP, DELAY
+        );
+        reentrantToken.configure(reentrantDistributor);
+        reentrantToken.mint(address(reentrantDistributor), 100 * ONE);
+        vm.warp(block.timestamp + 365 days);
+        reentrantToken.triggerRescue(CAROL);
+        require(reentrantToken.callbackError() == ReferralDistributor.ReentrantCall.selector, "wrong callback error");
+        require(reentrantToken.balanceOf(CAROL) == 100 * ONE, "outer rescue failed");
     }
 
     // ------------------------------------------------------------------
