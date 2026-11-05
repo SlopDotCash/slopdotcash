@@ -15,12 +15,24 @@
  * every other notice is read state only.
  */
 
+import {
+  githubNodeIdSpellings,
+  githubUserIdFromNodeId,
+} from "../../src/lib/github-actor";
+
 type Preparer<S> = {
   prepare(query: string): { bind(...values: unknown[]): S };
 };
 type Reader = {
   prepare(query: string): {
     all<T>(): Promise<{ results?: T[] }>;
+  };
+};
+type BoundReader = {
+  prepare(query: string): {
+    bind(...values: unknown[]): {
+      all<T>(): Promise<{ results?: T[] }>;
+    };
   };
 };
 
@@ -66,18 +78,71 @@ export const PROJECT_OWNERS = (project: string) => `(
    WHERE id = ${project}
 )`;
 
-/** Current contribution and retained payment records identify affected people. */
-export const PROJECT_AFFECTED_CONTRIBUTORS = (project: string) => `(
-  SELECT m.github_id AS recipient FROM points_revisions r
-    JOIN points_members m ON m.actor_id = json_extract(r.payload, '$.award.actor.id')
-   WHERE json_extract(r.payload, '$.award.projectId') = ${project}
-     AND json_extract(r.payload, '$.award.amount') > 0
-     AND NOT EXISTS (SELECT 1 FROM points_revisions successor WHERE successor.previous = r.id)
-  UNION
-  SELECT github_user_id FROM payment_obligations WHERE project_id = ${project}
-  UNION
-  SELECT github_user_id FROM payment_direct_transfers WHERE project_id = ${project}
-)`;
+/**
+ * Current contribution and retained payment records identify a project's
+ * affected people, as numeric GitHub IDs. Membership resolves a retained
+ * award's actor by numeric identity: a membership and an award can carry
+ * either canonical node ID spelling of the same account, so the member
+ * lookup tries the award's own spelling and both canonical spellings of
+ * the numeric ID it decodes to. Payment records also identify contributors
+ * who have no points membership. Superseded and zero-credit outcomes do
+ * not select an affected contributor.
+ */
+export async function affectedContributorGithubIds(
+  db: BoundReader,
+  projectId: string,
+): Promise<string[]> {
+  const awardActors =
+    (
+      await db
+        .prepare(
+          `SELECT DISTINCT json_extract(payload, '$.award.actor.id') AS actor
+             FROM points_revisions
+            WHERE json_extract(payload, '$.award.projectId') = ?
+              AND json_extract(payload, '$.award.amount') > 0
+              AND NOT EXISTS (SELECT 1 FROM points_revisions successor
+                               WHERE successor.previous = points_revisions.id)`,
+        )
+        .bind(projectId)
+        .all<{ actor: unknown }>()
+    ).results ?? [];
+  const spellings = new Set<string>();
+  for (const { actor } of awardActors) {
+    if (typeof actor !== "string") continue;
+    spellings.add(actor);
+    const numeric = githubUserIdFromNodeId(actor);
+    if (numeric !== null)
+      for (const spelling of githubNodeIdSpellings(numeric))
+        spellings.add(spelling);
+  }
+  const ids = new Set<string>();
+  if (spellings.size > 0) {
+    const members =
+      (
+        await db
+          .prepare(
+            "SELECT github_id FROM points_members WHERE actor_id IN (SELECT value FROM json_each(?))",
+          )
+          .bind(JSON.stringify([...spellings]))
+          .all<{ github_id: string }>()
+      ).results ?? [];
+    for (const { github_id } of members) ids.add(github_id);
+  }
+  for (const table of [
+    "payment_obligations",
+    "payment_direct_transfers",
+  ] as const) {
+    const rows =
+      (
+        await db
+          .prepare(`SELECT github_user_id FROM ${table} WHERE project_id = ?`)
+          .bind(projectId)
+          .all<{ github_user_id: string }>()
+      ).results ?? [];
+    for (const { github_user_id } of rows) ids.add(github_user_id);
+  }
+  return [...ids];
+}
 
 /**
  * A manifest revision reaches the account that listed the project (its
@@ -415,16 +480,21 @@ export function notifyProjectEnforcement<S>(
 
 /**
  * VET-06 bans reach configured operators and known affected contributors.
- * Membership resolves immutable contribution actor IDs to inbox identities.
- * Payment records also reach contributors who have no points membership.
- * Superseded and zero-credit outcomes do not select an affected contributor.
+ * The audience is resolved from committed contribution and payment records
+ * before the caller's batch runs, and the insert still reads the
+ * enforcement row back, so the notice commits only with a service ban that
+ * actually happened.
  * This reads no private trace records and copies no security evidence.
  */
-export function notifyVettingBanAudience<S>(
-  db: Preparer<S>,
+export async function notifyVettingBanAudience<S>(
+  db: Preparer<S> & BoundReader,
   recordId: string,
+  projectId: string,
   operatorGithubIds: readonly string[],
-): S {
+): Promise<S> {
+  const recipients = new Set<string>(operatorGithubIds);
+  for (const id of await affectedContributorGithubIds(db, projectId))
+    recipients.add(id);
   return db
     .prepare(
       `${INSERT}
@@ -434,16 +504,16 @@ export function notifyVettingBanAudience<S>(
                 THEN '/admin' ELSE '/projects/' || e.project_id END,
            e.created_at, e.created_at
       FROM project_enforcements e
-      JOIN (
-        SELECT value AS recipient FROM json_each(?2)
-        UNION
-        SELECT recipient FROM ${PROJECT_AFFECTED_CONTRIBUTORS("(SELECT project_id FROM project_enforcements WHERE id = ?1)")}
-      ) audience
+      JOIN (SELECT value AS recipient FROM json_each(?3)) audience
      WHERE e.id = ?1 AND e.action = 'ban' AND e.actor_role = 'vetting-service'
        AND ${GITHUB_ID("audience.recipient")}
     ${ONCE}`,
     )
-    .bind(recordId, JSON.stringify(operatorGithubIds));
+    .bind(
+      recordId,
+      JSON.stringify(operatorGithubIds),
+      JSON.stringify([...recipients]),
+    );
 }
 
 /**
