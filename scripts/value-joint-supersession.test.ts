@@ -13,6 +13,7 @@ import {
   emptyPointsJournal,
   latestPoints,
   pointMembers,
+  type PointsJournal,
 } from "../src/lib/points";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import { VALUE_RUBRIC_VERSION } from "../src/lib/value-assessment";
@@ -229,6 +230,13 @@ async function solo(pull: Pull, path: string, assessedAt: string, who = actor) {
 }
 
 type Solo = Awaited<ReturnType<typeof solo>>;
+type HistoryRow = {
+  sequence: number;
+  record_digest: string;
+  record_json: string;
+  recorded_at: string;
+  assessment_key: string;
+};
 
 function soloSnapshot(at: string, entries: { pull: Pull; solo: Solo }[]) {
   const i = input(
@@ -248,7 +256,7 @@ async function joint(opts: {
   legacy: [string, string | null][];
   legacyPredecessors: string[];
   supersedes: string[];
-  priorRows: unknown[];
+  priorRows: HistoryRow[];
   assessedAt: string;
   tier?: string;
   targetId: string;
@@ -288,7 +296,7 @@ async function joint(opts: {
     recorded_at: opts.assessedAt,
     assessment_key: joint.assessmentKey,
   };
-  const rows = [...opts.priorRows, row] as { sequence: number }[];
+  const rows: HistoryRow[] = [...opts.priorRows, row];
   const graph = await readWorkUnitHistory(
     async (after: number) => ({
       throughSequence: rows.length,
@@ -322,9 +330,9 @@ function apply(
     snapshot.generatedAt,
   );
 }
-const total = (journal: never, who = actor) =>
+const total = (journal: PointsJournal, who = actor) =>
   pointMembers(journal).find((m) => m.actor.id === who.id)?.total ?? 0;
-const latestAmount = (journal: never, sourceId: string) =>
+const latestAmount = (journal: PointsJournal, sourceId: string) =>
   [...latestPoints(journal).values()]
     .filter((r) => r.award.sourceId === sourceId)
     .map((r) => r.award.amount);
@@ -533,7 +541,7 @@ test("window boundary: an original exactly at the window start still retires thr
     successorAt: "2026-12-08T00:00:00.000Z",
     at: "2026-12-10T00:00:00.000Z",
   });
-  expect(later.window.from).toBe(old.mergedAt);
+  expect(later.window.from).toBe(old.mergedAt as string);
   expect(later.valueAssessmentSupersessions).toHaveLength(1);
   expect(total(journal)).toBe(90);
   expect(latestAmount(journal, old.id)).toEqual([0]);
