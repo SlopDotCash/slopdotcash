@@ -2,7 +2,7 @@ import { type Hex, keccak256, serializeTransaction } from "viem";
 import { PROJECT_SIZE, solanaBase58 } from "../../contracts/solana/adapter";
 import type { Signer } from "../../workers/payment-executor/core";
 import type { SolanaSigner } from "../../workers/payment-executor/solana";
-import type { KeeperStore } from "./storage";
+import { GAS_OVERRUN, type KeeperStore } from "./storage";
 
 export interface GasBudget {
   /** Native base units, selected by the operator. No default economic policy. */
@@ -70,9 +70,13 @@ function reserve(
         actual: string | null;
         expiry_evidence: string | null;
       },
-      []
-    >("SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas")
-    .all();
+      [string, string]
+    >(`SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas WHERE actual IS NULL AND expiry_evidence IS NULL
+       UNION ALL
+       SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas WHERE settled_day=? AND (actual IS NOT NULL OR expiry_evidence IS NOT NULL)
+       UNION ALL
+       SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas WHERE actual IS NOT NULL AND ${GAS_OVERRUN} AND settled_day IS NOT ?`)
+    .all(day, day);
   let committed = 0n;
   // Unresolved same-nonce attempts reserve their largest worst-case charge once.
   const unresolved = new Map<string, bigint>();
