@@ -2711,6 +2711,99 @@ describe("optional GitHub forwarding of a saved report", () => {
       ).toBe(t.github.advisories[0].advisory.ghsa_id);
     }
   });
+  test("a maintainer's list settles an interrupted forward and an unverifiable one", async () => {
+    const listedByMaintainer = async (
+      t: ReturnType<typeof setup>,
+      id: string,
+    ) =>
+      (
+        (await t.call(MAINTAINER, "GET", "security-submissions")).body
+          .submissions as NonNullable<Body["submission"]>[]
+      ).find((entry) => entry.id === id);
+    // Interrupted: GitHub stored the report, then D1 refused the receipt
+    // write, so the row stays `submitting` past the timeout. The reporter
+    // must not have to read first for a case authority to see `uncertain`.
+    const interrupted = setup({ durable: true });
+    const accepted = await interrupted.create(REPORTER, { report: REPORT });
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const authorization = await interrupted.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    await interrupted.authorize(
+      REPORTER,
+      authorization.body.authorizeUrl as string,
+    );
+    const failAfterCreate = (): void =>
+      interrupted.setBeforeBatch(() => {
+        if (
+          interrupted.github.advisories.length === 0 ||
+          interrupted.row(submission.id).state !== "submitting"
+        )
+          return failAfterCreate();
+        throw new Error("D1 unavailable");
+      });
+    failAfterCreate();
+    const sent = await interrupted.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status).toBe(500);
+    expect(interrupted.row(submission.id).state).toBe("submitting");
+    interrupted.advance(61_000);
+    // The maintainer's list is read before any reporter read settles the row.
+    expect(await listedByMaintainer(interrupted, submission.id)).toMatchObject({
+      state: "uncertain",
+    });
+    // The settle left GitHub's copy for the reporter's reconcile to adopt.
+    const reconciled = await interrupted.reconcile(
+      submission.id,
+      Number(interrupted.row(submission.id).revision),
+    );
+    expect(reconciled.status).toBe(200);
+    expect(reconciled.body.submission?.state).toBe("receipt-verified");
+    expect(interrupted.github.counts.posts).toBe(1);
+    expect(interrupted.cases()).toHaveLength(1);
+    // Unverifiable: GitHub has the report but never lets Slop read it back.
+    // After the limit, a case authority sees the same failure the reporter
+    // sees, not a report that is still confirming.
+    const unverifiable = setup({ durable: true });
+    const acceptedSecond = await unverifiable.create(REPORTER, {
+      report: REPORT,
+    });
+    const second = acceptedSecond.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const secondFlow = await unverifiable.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${second.id}/authorize`,
+      {},
+    );
+    await unverifiable.authorize(
+      REPORTER,
+      secondFlow.body.authorizeUrl as string,
+    );
+    unverifiable.github.faults.get = "error";
+    const sentSecond = await unverifiable.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${second.id}/send`,
+      { expectedRevision: second.revision },
+    );
+    expect(sentSecond.body.submission?.state).toBe("submitted");
+    unverifiable.advance(SUBMITTED_LIMIT_MS + 1000);
+    expect(await listedByMaintainer(unverifiable, second.id)).toMatchObject({
+      state: "failed",
+      failureCode: "unverifiable",
+    });
+  });
   test("a list read that settles a forward still in flight leaves its GitHub copy for reconcile to adopt", async () => {
     const t = setup({ durable: true });
     const accepted = await t.create(REPORTER, { report: REPORT });
