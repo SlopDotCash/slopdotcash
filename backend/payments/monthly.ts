@@ -1258,6 +1258,26 @@ export function monthlyOwnerService(deps: {
           "vault_changed",
           "The vault changed after this month was finalized.",
         );
+      if (run.snapshot.asset !== deployment.asset)
+        throw new MonthlyPaymentError(
+          409,
+          "snapshot_changed",
+          "The asset changed after this month was finalized.",
+        );
+      // Financial terms apply prospectively: the fee policy that sized the
+      // proposal must still be the project's, as at the freeze.
+      const base = await loadBase(deps.db, project.id, period);
+      if (base) {
+        try {
+          assertEscrowFinancialPolicy(project.manifest, base.manifest);
+        } catch {
+          throw new MonthlyPaymentError(
+            409,
+            "financial_policy_changed",
+            "The project's payment terms changed after this month was proposed.",
+          );
+        }
+      }
       const obligation = await deps.db
         .prepare(
           "SELECT m.github_login,m.gross_base,m.fee_base,m.source_digest,o.state chain_state,o.github_user_id chain_actor,o.gross_base chain_gross,o.fee_base chain_fee FROM monthly_payment_obligations m LEFT JOIN payment_obligations o ON o.network=m.network AND o.vault=m.vault AND o.source_digest=m.source_digest WHERE m.project_id=? AND m.period=? AND m.github_user_id=?",

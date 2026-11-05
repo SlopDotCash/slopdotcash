@@ -234,3 +234,75 @@ test("obligations created after retirement for an already frozen month can still
   expect((await attestation()).totalGrossBase).toBe("1000");
   expect((await commitment()).award.gross).toBe("600");
 });
+
+test("a retirement revision that changes only the vault refuses both paths", async () => {
+  vault("1000");
+  const report = await coordinate();
+  expect(report.frozen).toEqual([`${project.id}/2026-11`]);
+  expect(report.created).toEqual([`${project.id}/2026-11`]);
+  expect((await attestation()).totalGrossBase).toBe("1000");
+  expect((await commitment()).award.gross).toBe("600");
+
+  await retire();
+  await revise({
+    escrow: {
+      ...project.manifest.escrow,
+      deployments: [
+        {
+          ...deployment,
+          vault: "0x1000000000000000000000000000000000000009",
+        },
+      ],
+    },
+  });
+
+  // Control: a vault-only revision is already refused by both paths.
+  await rejects(attestation(), "snapshot_changed");
+  await rejects(commitment(), "vault_changed");
+});
+
+test("a retirement revision that changes only the frozen month's asset refuses the reservation", async () => {
+  vault("1000");
+  const report = await coordinate();
+  expect(report.frozen).toEqual([`${project.id}/2026-11`]);
+  expect(report.created).toEqual([`${project.id}/2026-11`]);
+  expect((await attestation()).totalGrossBase).toBe("1000");
+  expect((await commitment()).award.gross).toBe("600");
+
+  await retire();
+  await revise({
+    escrow: {
+      ...project.manifest.escrow,
+      deployments: [
+        {
+          ...deployment,
+          asset: "0x1111111111111111111111111111111111111111",
+        },
+      ],
+    },
+  });
+
+  // The attester refuses the changed asset, and the owner reservation must
+  // refuse it too instead of issuing a plan against the new asset.
+  await rejects(attestation(), "snapshot_changed");
+  await rejects(commitment(), "snapshot_changed");
+});
+
+test("a retirement revision that changes only the fee policy refuses the reservation", async () => {
+  vault("1000");
+  const report = await coordinate();
+  expect(report.frozen).toEqual([`${project.id}/2026-11`]);
+  expect(report.created).toEqual([`${project.id}/2026-11`]);
+  expect((await attestation()).totalGrossBase).toBe("1000");
+  expect((await commitment()).award.gross).toBe("600");
+
+  await retire();
+  await revise({
+    escrow: { ...project.manifest.escrow, feeBasisPoints: 300 },
+  });
+
+  // The attester refuses the changed fee policy, and the owner reservation
+  // must refuse it too instead of issuing a plan under the new fees.
+  await rejects(attestation(), "financial_policy_changed");
+  await rejects(commitment(), "financial_policy_changed");
+});
