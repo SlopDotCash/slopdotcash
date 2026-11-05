@@ -52,7 +52,7 @@ import {
   pointMembers,
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
-import { profileCounts } from "./lib/profiles";
+import { directoryPeople } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
@@ -1435,8 +1435,9 @@ async function loadMembers(signal: AbortSignal): Promise<Person[]> {
 }
 const PEOPLE_PAGE_SIZE = 24;
 /**
- * One people view: public members and everyone with a recorded pull request.
- * People without score stay discoverable without receiving a rank.
+ * One people view: public members, everyone with a recorded pull request,
+ * and everyone the points journal records. People without score stay
+ * discoverable without receiving a rank.
  */
 function People({ query }: { query: string }) {
   const { state, me } = usePoints();
@@ -1466,30 +1467,15 @@ function People({ query }: { query: string }) {
       });
     return () => c.abort();
   }, [attempt, me]);
-  const people = useMemo(() => {
-    const byId = new Map<
-      string,
-      { id: string; login: string; merged: number | null; member?: Person }
-    >();
-    if (census.state.status === "ready")
-      for (const p of census.state.index.people)
-        byId.set(p.id, {
-          id: p.id,
-          login: p.login,
-          merged: profileCounts(p).merged,
-        });
-    if (members.status === "ready")
-      for (const p of members.people) {
-        const known = byId.get(p.actor.id);
-        byId.set(p.actor.id, {
-          id: p.actor.id,
-          login: known?.login ?? p.actor.login,
-          merged: known?.merged ?? (census.state.status === "ready" ? 0 : null),
-          member: p,
-        });
-      }
-    return [...byId.values()].sort((a, b) => a.login.localeCompare(b.login));
-  }, [census.state, members]);
+  const people = useMemo(
+    () =>
+      directoryPeople(
+        census.state.status === "ready" ? census.state.index.people : null,
+        members.status === "ready" ? members.people : [],
+        state.status === "ready" ? state.members : [],
+      ),
+    [census.state, members, state],
+  );
   const matches = people.filter((p) =>
     p.login.toLowerCase().includes(query.trim().toLowerCase()),
   );
