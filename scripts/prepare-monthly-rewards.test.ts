@@ -390,6 +390,7 @@ test("a contributor-flag pause skips that project and keeps every other project'
     symlinkSync(
       join(import.meta.dir, "..", "node_modules"),
       join(checkout, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
     );
     // monthly-rewards.yml: projects:sync, then the complete cycle ledger,
     // then rewards:propose-month.
