@@ -10,6 +10,8 @@ import type { PenaltyHistoryRecord } from "./leaderboard-types";
 import {
   findHistoricalProject,
   findHistoricalRepository,
+  findProject,
+  HISTORICAL_PROJECTS,
   isHistoricalProjectId,
   isHistoricalRepositoryId,
 } from "./projects.mjs";
@@ -983,6 +985,30 @@ export function canonicalReviewIdentity(url: string): string | undefined {
     findHistoricalRepository(ownerRepo)?.repositoryId ?? ownerRepo
   ).toLowerCase();
   return `${repositoryId}/pull/${path[3]}`;
+}
+/**
+ * Resolves a Leaderboard `?project=` filter value to the project whose
+ * earned-point standings it selects. Listed projects resolve by id or
+ * slug, as before. A project that has since been retired or removed is
+ * absent from the listed registry, but its journal awards remain
+ * recorded and its history still resolves, so its id (or a retired
+ * manifest's slug) resolves through immutable history instead of
+ * silently dropping the filter to the all-project ranking. A value
+ * with no recorded project history resolves to no filter.
+ */
+export function standingsProjectId(value: string | null): string {
+  if (!value) return "";
+  const listed = findProject(value);
+  if (listed) return listed.id;
+  const normalized = value.trim().toLowerCase();
+  const historical =
+    findHistoricalProject(normalized) ??
+    HISTORICAL_PROJECTS.find(
+      (project) => project.slug.toLowerCase() === normalized,
+    ) ??
+    null;
+  if (historical) return historical.id;
+  return isHistoricalProjectId(normalized) ? normalized : "";
 }
 export function pointMembers(
   journal: PointsJournal,
