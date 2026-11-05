@@ -2969,3 +2969,79 @@ test("an unfinished legacy draft passes the same screen before its first forward
   expect(t.row(submission.id).state).toBe("draft");
   expect(t.github.advisories).toHaveLength(0);
 });
+
+test("a verified case names the reporter under the login GitHub proved, not the session's stored login", async () => {
+  const t = setup();
+  // The session still carries the login captured at the last sign-in
+  // (REPORTER.githubLogin); GitHub's account for the same permanent ID has
+  // since been renamed, so consent completes as the renamed account.
+  const RENAMED: Account = {
+    githubId: REPORTER.githubId,
+    githubLogin: "reporter-renamed",
+  };
+  const created = await t.create(REPORTER);
+  expect(created.status).toBe(201);
+  const callback = await t.authorize(
+    REPORTER,
+    created.body.authorizeUrl as string,
+    RENAMED,
+  );
+  expect(callback.status).toBe(303);
+  const submission = created.body.submission as NonNullable<
+    (typeof created.body)["submission"]
+  >;
+  const sent = await t.send(submission.id, submission.revision);
+  expect(sent.body.submission).toMatchObject({ state: "receipt-verified" });
+  const recorded = t.cases();
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0].reporter_github_id).toBe(REPORTER.githubId);
+  expect(recorded[0].reporter_github_login).toBe("reporter-renamed");
+  const view = await t.call(
+    MAINTAINER,
+    "GET",
+    `security-cases/${recorded[0].id}`,
+  );
+  expect(view.body.case).toMatchObject({
+    reporter: {
+      githubId: REPORTER.githubId,
+      githubLogin: "reporter-renamed",
+    },
+  });
+});
+
+test("a saved report's case takes the login GitHub proved when the renamed reporter sends it", async () => {
+  const t = setup({ durable: true });
+  const RENAMED: Account = {
+    githubId: REPORTER.githubId,
+    githubLogin: "reporter-renamed",
+  };
+  const created = await t.create(REPORTER, { report: REPORT });
+  expect(created.status).toBe(201);
+  const submission = created.body.submission as NonNullable<
+    (typeof created.body)["submission"]
+  >;
+  // The case is created at receipt under the session's stored login.
+  expect(t.cases()).toHaveLength(1);
+  expect(t.cases()[0].reporter_github_login).toBe("reporter");
+  const flow = await t.call(
+    REPORTER,
+    "POST",
+    `security-submissions/${submission.id}/authorize`,
+    {},
+  );
+  const callback = await t.authorize(
+    REPORTER,
+    flow.body.authorizeUrl as string,
+    RENAMED,
+  );
+  expect(callback.status).toBe(303);
+  const sent = await t.call(
+    REPORTER,
+    "POST",
+    `security-submissions/${submission.id}/send`,
+    { expectedRevision: submission.revision },
+  );
+  expect(sent.body.submission).toMatchObject({ state: "receipt-verified" });
+  expect(t.cases()[0].reporter_github_id).toBe(REPORTER.githubId);
+  expect(t.cases()[0].reporter_github_login).toBe("reporter-renamed");
+});

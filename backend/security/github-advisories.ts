@@ -68,6 +68,13 @@ export type AdvisoryFacts = {
   repository: string;
   authorId: string | null;
   /**
+   * The login GitHub's record names for that same author, or null when the
+   * record carries none usable. A case verified against GitHub's record
+   * names its reporter under this login, never under a login a session
+   * captured before a rename.
+   */
+  authorLogin: string | null;
+  /**
    * Whether GitHub says the advisory arrived through private vulnerability
    * reporting (its `submission` object). A repository advisory a maintainer
    * drafted has none.
@@ -304,10 +311,16 @@ async function advisoryFacts(
     : [];
   // Credits are editable by maintainers and collaborators, so they never
   // establish authorship (SEC-17); only `author` does.
+  const author = advisory.author as { id?: unknown; login?: unknown } | null;
   return {
     ghsa,
     repository,
-    authorId: githubId((advisory.author as { id?: unknown } | null)?.id),
+    authorId: githubId(author?.id),
+    authorLogin:
+      typeof author?.login === "string" &&
+      /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u.test(author.login)
+        ? author.login
+        : null,
     privateReport:
       typeof advisory.submission === "object" && advisory.submission !== null,
     state: typeof advisory.state === "string" ? advisory.state : "unknown",
