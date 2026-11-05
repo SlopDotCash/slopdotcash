@@ -183,6 +183,22 @@ for (const retryStatus of [200, 403]) {
       path: info.outputPath(`retained-${retryStatus}.png`),
       fullPage: true,
     });
+    // 200% zoom keeps the recovery control of the retained record usable. The
+    // horizontal-width assertion #2073's spec makes at this zoom is not
+    // duplicated here: it fails intermittently on unmodified base at mobile
+    // width (2 of 18 repeated runs), so it would import that flake.
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "2";
+    });
+    await expect(
+      page
+        .getByRole("alert")
+        .getByRole("button", { exact: true, name: "Retry" }),
+    ).toBeVisible();
+    await expectAccessible(page);
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "1";
+    });
     retried = true;
     const retry = page
       .getByRole("alert")
