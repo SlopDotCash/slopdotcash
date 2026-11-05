@@ -18,6 +18,7 @@ export type {
   EnforcementPreview,
   PublicProjectApplication as ProjectApplication,
 } from "./project-contracts";
+export { adminProjectSearchText } from "./project-contracts";
 
 export class ProjectApiError extends Error {
   constructor(

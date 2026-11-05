@@ -155,6 +155,25 @@ export type AdminProject = ProjectRecord & {
   enforcement: ProjectEnforcementState;
 };
 
+/**
+ * The text the admin project list searches: the project id, its current
+ * name, and every repository path the project answers to — the registered
+ * path plus its transfer aliases, the same identity set the registry,
+ * enforcement and the published skills resolve. A transferred repository
+ * stays findable by the path GitHub shows today, not only by the path it
+ * was registered under.
+ */
+export function adminProjectSearchText(project: AdminProject): string {
+  return [
+    project.id,
+    project.manifest.name,
+    ...project.manifest.repositories.flatMap((repository) => [
+      repository.id,
+      ...(repository.aliases ?? []),
+    ]),
+  ].join(" ");
+}
+
 export interface ProjectEnforcementState {
   state: RestrictionState;
   appeal: AppealState;

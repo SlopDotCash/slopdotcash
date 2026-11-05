@@ -38,6 +38,7 @@ import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
+  adminProjectSearchText,
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
@@ -841,7 +842,7 @@ function ProjectsSection({
           .filter((project) =>
             selectedProject
               ? project.id === selectedProject
-              : `${project.id} ${project.manifest.name} ${project.manifest.repositories.map((repo) => repo.id).join(" ")}`
+              : adminProjectSearchText(project)
                   .toLowerCase()
                   .includes(query.trim().toLowerCase()),
           )
