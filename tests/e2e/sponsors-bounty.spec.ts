@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
-import { expect, test } from "./fixtures";
+import { expect, serveProjectCycleIndex, test } from "./fixtures";
 
 function bountyOnlyProject(
   overrides: Partial<SecurityBountyTerms> = {},
@@ -97,6 +97,10 @@ async function serveSponsors(page: Page, project: ProjectDefinition) {
     (route) =>
       route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
   );
+  // The sponsors page also reads the cycle index; the single-project
+  // registry stub would make cycles for other projects fail validation and
+  // abort the snapshot read. Serve only this project's cycles.
+  await serveProjectCycleIndex(page, [project.id]);
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   return page
     .getByRole("list", { name: "Project funding pools" })
