@@ -834,6 +834,11 @@ function nextStep(
             : "Waiting for payment preparation.",
         dueAt: row.payment_deadline,
       };
+    if (settlementState === "held")
+      return {
+        text: "The payment is held.",
+        dueAt: row.payment_deadline,
+      };
     return {
       text: "The payment is in progress.",
       dueAt: row.payment_deadline,

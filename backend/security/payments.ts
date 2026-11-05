@@ -293,9 +293,14 @@ function settlementView(row: SettlementRow) {
         ? "paid"
         : row.state === null
           ? "awaiting-owner-commitment"
-          : ["unknown", "prepared"].includes(row.attempt_state ?? "")
-            ? "uncertain"
-            : (row.queue_state ?? "needs-wallet"),
+          : // A held queue is parked until recovery, whatever the last
+            // attempt's outcome; naming it uncertain would tell the
+            // reporter a retry is still in flight.
+            row.queue_state === "held"
+            ? "held"
+            : ["unknown", "prepared"].includes(row.attempt_state ?? "")
+              ? "uncertain"
+              : (row.queue_state ?? "needs-wallet"),
     obligationId: row.obligation_id,
     network: deployment.network,
     asset: deployment.asset,
