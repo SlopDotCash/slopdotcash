@@ -1120,7 +1120,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       ).status(),
     ).toBe(204);
     await refreshReporting(request);
-    await page.goto(`/projects/${c.id}/security`);
+    await page.goto(`/projects/${c.id}/security`, { waitUntil: "networkidle" });
     await openPrivateDelivery(page);
     await expect(page.getByRole("alert")).toContainText("is out of date");
     await expect(handoff).toHaveCount(0);
