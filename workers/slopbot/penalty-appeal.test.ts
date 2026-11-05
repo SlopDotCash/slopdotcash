@@ -3869,9 +3869,9 @@ test("a maintainer reopen of a pushed head also settles the appeal opened on the
   setSystemTime(new Date(CLOSED_AT));
   await closedItem(async (run) => {
     expect(await run.review()).toBe("closed (spam)");
-    expect(
-      await run.deliver(run.job("appeal", { senderId: AUTHOR })),
-    ).toBe("appeal drafted (deny)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
     // The author pushes a new head while the appeal is open, and the
     // maintainer reopens the item at that head. The reopen reverses the
     // debit, so it also settles the appeal that debit belongs to: nothing

@@ -8,7 +8,11 @@ import { PARTICIPATION_BAN_QUERY } from "../../backend/projects/account-bans";
 import { githubIdSet } from "../../src/lib/github-ids";
 import { type Category, CLOSE_CONFIDENCE, type Job } from "./contracts";
 import { dispatchDueJobs } from "./maintainer-holds";
-import type { D1Database, D1TransactionalDatabase } from "./persistence";
+import type {
+  D1Database,
+  D1QueryStatement,
+  D1TransactionalDatabase,
+} from "./persistence";
 
 export const APPEAL_RESOLUTION_DAYS = 7;
 export const ESCALATION_DEBIT_THIRDS = 24;
@@ -136,7 +140,7 @@ export async function latestAppealFor(
  * dispute is excluded: it is selected only by its exact key, and a
  * maintainer reopen never decides one. */
 export async function unresolvedAppealsFor(
-  db: D1Database,
+  db: D1Database<D1QueryStatement>,
   itemNodeId: string,
 ): Promise<Appeal[]> {
   const rows = await db

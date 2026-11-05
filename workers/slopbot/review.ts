@@ -106,7 +106,7 @@ import type { ValueMergeVerifier } from "./value-merge-profile";
 
 export type ReviewEnv = ModelEnv &
   QualityTrust & {
-    SLOPBOT_DB: store.D1TransactionalDatabase;
+    SLOPBOT_DB: store.D1TransactionalDatabase<store.D1QueryStatement>;
     VALUE_MERGE_VERIFIER?: ValueMergeVerifier;
     SLOPBOT_APP_ID: string;
     SLOPBOT_APP_PRIVATE_KEY: string;
