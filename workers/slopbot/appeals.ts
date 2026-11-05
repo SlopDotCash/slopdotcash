@@ -132,6 +132,24 @@ export async function latestAppealFor(
     .first<Appeal>();
 }
 
+/** Every unresolved finding appeal for an item, oldest first. A value
+ * dispute is excluded: it is selected only by its exact key, and a
+ * maintainer reopen never decides one. */
+export async function unresolvedAppealsFor(
+  db: D1Database,
+  itemNodeId: string,
+): Promise<Appeal[]> {
+  const rows = await db
+    .prepare(
+      `SELECT ${COLUMNS} FROM slopbot_appeals WHERE item_node_id = ?
+         AND appeal_key NOT LIKE 'value-appeal:%' AND resolved_at IS NULL
+       ORDER BY opened_at, appeal_key`,
+    )
+    .bind(itemNodeId)
+    .all<Appeal>();
+  return rows.results ?? [];
+}
+
 /** Stores the first draft only; a retry keeps it. */
 export async function recordDraft(
   db: D1Database,
