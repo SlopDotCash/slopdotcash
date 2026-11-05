@@ -1344,6 +1344,8 @@ export async function approvedReportForForward(
 ): Promise<ReportInput | null> {
   const stored = await storedIntake(deps, id);
   if (!stored) return null;
+  if (await caseDecided(deps, stored.case_id))
+    fail(409, "case_decided", "The case already has a decision.");
   if (!intakeQualified(stored))
     fail(
       409,
