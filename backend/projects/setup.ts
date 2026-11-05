@@ -333,7 +333,11 @@ export function projectSetupStatus(input: {
     nextAction = action(
       "restricted",
       restriction.state !== "clear" || scan.state === "banned"
-        ? `This project is ${restriction.state === "clear" ? "banned" : restriction.state}. Contributor work is closed. The steward or the account that created the project may request reinstatement.`
+        ? `This project is ${restriction.state === "clear" ? "banned" : restriction.state}. Contributor work is closed. ${
+            restriction.state !== "clear" && restriction.appeal === "requested"
+              ? "A reinstatement request is open. A moderator who did not place the restriction decides it."
+              : "The steward or the account that created the project may request reinstatement."
+          }`
         : "This project is delisted. Its history stays public.",
     );
   } else if (installation.state === "retry") {
