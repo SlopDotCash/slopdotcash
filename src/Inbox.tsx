@@ -226,11 +226,12 @@ export default function InboxPage() {
   useEffect(() => load(), [load]);
   useEffect(() => {
     const refresh = () => {
-      load();
+      // The active action reloads after its write. Do not supersede it.
+      if (!busy) load();
     };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, [load]);
+  }, [busy, load]);
   const reportsIdentityChanged = useCallback(
     (actorId: string | null) => {
       acceptRecipient(actorId);
