@@ -46,6 +46,7 @@ export function initializeKeeperSchema(
   )
     db.exec("ALTER TABLE gas ADD COLUMN expiry_evidence TEXT");
   db.exec(`CREATE INDEX IF NOT EXISTS gas_unresolved ON gas(id) WHERE actual IS NULL AND expiry_evidence IS NULL;
+    CREATE INDEX IF NOT EXISTS gas_unreconciled ON gas(id) WHERE actual IS NULL;
     CREATE INDEX IF NOT EXISTS gas_settled_day ON gas(settled_day);
     CREATE INDEX IF NOT EXISTS gas_overruns ON gas(id) WHERE actual IS NOT NULL AND ${GAS_OVERRUN};`);
   if (

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { budgetEvmSigner } from "./budget";
 import { openKeeperStore } from "./store";
@@ -150,3 +151,61 @@ for (const scenario of cases) {
     }
   });
 }
+
+test("fee replacements share one reserve without grouping adjacent nonce prefixes", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "slop-gas-history-"));
+  if (!folder.startsWith(join(tmpdir(), "slop-gas-history-")))
+    throw new Error("Unexpected fixture directory");
+  const store = openKeeperStore(join(folder, "keeper.sqlite"));
+  try {
+    const group = `84532:${account.address.toLowerCase()}`;
+    store.db
+      .query("INSERT INTO gas(id,day,maximum,transaction_id) VALUES(?,?,?,?)")
+      .run(`${group}:10`, yesterday, "10000", "another-nonce");
+    const signer = budgetEvmSigner(
+      store,
+      {
+        perTransaction: "50000",
+        perDay: "60000",
+        additionalFeeReserve: "0",
+      },
+      account,
+      { now: () => new Date(`${today}T00:00:00Z`) },
+    );
+    const input = {
+      type: "eip1559" as const,
+      chainId: 84532,
+      nonce: 1,
+      gas: 21000n,
+      maxFeePerGas: 1n,
+      maxPriorityFeePerGas: 1n,
+      to: account.address,
+      data: "0x" as const,
+      value: 0n,
+    };
+    const original = await store.journal.transaction(() =>
+      signer.signTransaction(input),
+    );
+    const replace = signer.signReplacement;
+    if (!replace) throw new Error("Replacement signer missing");
+    await store.journal.transaction(() =>
+      replace({ ...input, maxFeePerGas: 2n }, keccak256(original)),
+    );
+    expect(store.db.query("SELECT id FROM gas ORDER BY id").all()).toEqual([
+      { id: `${group}:1` },
+      { id: `${group}:10` },
+      { id: `${group}:1:r1` },
+    ]);
+    await expect(
+      store.journal.transaction(() => signer.signTransaction(input)),
+    ).rejects.toThrow("Gas reservation conflict");
+    await expect(
+      store.journal.transaction(() =>
+        signer.signTransaction({ ...input, nonce: 2 }),
+      ),
+    ).rejects.toThrow("Operator gas budget reached");
+  } finally {
+    store.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

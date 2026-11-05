@@ -46,10 +46,10 @@ export function validateBudget(value: GasBudget) {
 }
 /** Same-nonce EVM fee replacements share one liability: only one of them can land. */
 const nonceGroup = (id: string) => id.replace(/:r[1-9][0-9]*$/, "");
-// Durable Object SQLite limits LIKE pattern length, so compare the exact prefix.
-const SAME_NONCE = "id=? OR substr(id,1,?)=?";
+// A B-tree range matches the replacement prefix without a full-history scan.
+const SAME_NONCE = "id=? OR (id>=? AND id<?)";
 const sameNonce = (group: string) =>
-  [group, group.length + 2, `${group}:r`] as [string, number, string];
+  [group, `${group}:r`, `${group}:s`] as [string, string, string];
 
 function reserve(
   store: KeeperStore,
@@ -154,7 +154,7 @@ export function budgetEvmSigner(
     // its own row in the nonce's group. Any other second signature is refused.
     const group = `${input.chainId}:${signer.address.toLowerCase()}:${input.nonce}`;
     const prior = store.db
-      .query<{ n: number }, [string, number, string]>(
+      .query<{ n: number }, [string, string, string]>(
         `SELECT count(*) n FROM gas WHERE ${SAME_NONCE}`,
       )
       .get(...sameNonce(group));
