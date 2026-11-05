@@ -4751,7 +4751,7 @@ function createSnapshotWithReviewCutoff(
     .sort(
       (left, right) =>
         parseIsoTime(right.occurredAt) - parseIsoTime(left.occurredAt) ||
-        left.id.localeCompare(right.id),
+        left.id.localeCompare(right.id, "en"),
     )
     .entries()) {
     assertLedgerValue(
