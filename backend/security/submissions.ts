@@ -229,12 +229,15 @@ type Transition = {
       | "evidence_digest"
       | "failure_code"
       | "case_id"
+      | "reporter_github_login"
     >
   >;
   kind: string;
   detail?: Record<string, unknown>;
   actorGithubId: string | null;
   guard?: { sql: string; values: unknown[] };
+  /** Extra statements committed in the same batch, ahead of the row update. */
+  before?: D1Statement[];
 };
 
 /**
@@ -254,6 +257,7 @@ function transitionStatements(
   };
   const columns = Object.keys(set);
   return [
+    ...(next.before ?? []),
     deps.db
       .prepare(
         `UPDATE security_submissions SET state = ?, ${columns
@@ -312,7 +316,8 @@ async function transition(
       return null;
     throw error;
   }
-  if ((results[0]?.meta?.changes ?? 0) !== 1) return null;
+  if ((results[next.before?.length ?? 0]?.meta?.changes ?? 0) !== 1)
+    return null;
   return loadSubmission(deps, row.id);
 }
 
@@ -760,6 +765,16 @@ async function writeVerifiedCase(
   const at = now.toISOString();
   const durable = await storedIntake(deps, row.id);
   if (durable) {
+    // The case was created at receipt under the login the session then
+    // carried. GitHub's record has now proved the author's current login
+    // (the author ID check above already passed), so the case and the
+    // submission take that login, as a case verified from GitHub's record
+    // does on the claim path.
+    const provedLogin =
+      facts.authorLogin !== null &&
+      facts.authorLogin !== row.reporter_github_login
+        ? facts.authorLogin
+        : null;
     const linked = await transition(deps, row, {
       state: "receipt-verified",
       set: {
@@ -767,7 +782,24 @@ async function writeVerifiedCase(
         advisory_ghsa: facts.ghsa,
         github_created_at: facts.createdAt,
         evidence_digest: facts.evidenceDigest,
+        ...(provedLogin === null ? {} : { reporter_github_login: provedLogin }),
       },
+      ...(provedLogin === null
+        ? {}
+        : {
+            before: [
+              deps.db
+                .prepare(
+                  "UPDATE security_cases SET reporter_github_login = ?, updated_at = ? WHERE id = ? AND reporter_github_id = ?",
+                )
+                .bind(
+                  provedLogin,
+                  now.toISOString(),
+                  durable.case_id,
+                  row.reporter_github_id,
+                ),
+            ],
+          }),
       guard: {
         sql: "NOT EXISTS (SELECT 1 FROM security_cases WHERE project_id = ? AND advisory_ghsa = ? AND submission_state = 'verified' AND id <> ?)",
         values: [row.project_id, facts.ghsa, durable.case_id],
@@ -826,9 +858,14 @@ async function writeVerifiedCase(
   // verify a report they filed directly. GitHub's record, not the reporter,
   // verified the receipt (`verifiedBy` below and in the detail).
   const kind = row.origin === "slop" ? "submit" : "submit-direct";
+  // GitHub's record verified this receipt, so the case names the reporter
+  // under the login that record carries for the author, not the login the
+  // session captured when the draft was created (a rename since then
+  // otherwise stays frozen on the verified case, as on the claim path the
+  // login is likewise taken from GitHub's author record).
   const reporter = {
     githubId: row.reporter_github_id,
-    githubLogin: row.reporter_github_login,
+    githubLogin: facts.authorLogin ?? row.reporter_github_login,
   };
   const idempotencyKey = `intake-${row.id}`;
   // Every case write commits only if this submission is still where it was.
@@ -908,6 +945,7 @@ async function writeVerifiedCase(
           advisory_ghsa: facts.ghsa,
           github_created_at: receivedAt,
           evidence_digest: facts.evidenceDigest,
+          reporter_github_login: reporter.githubLogin,
         },
         kind: "receipt-verified",
         detail: { caseId, advisory: facts.ghsa },
