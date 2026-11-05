@@ -323,6 +323,12 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+/**
+ * The calls that turn an encoded payload back into code. Every execution
+ * sink below shares this one list, so the same act cannot escape by
+ * renaming the decoder or by swapping the sink that runs it.
+ */
+const DECODER_CALL = String.raw`(?:atob|Buffer\.from|unescape|decodeURIComponent|base64\.b64decode|bytes\.fromhex|codecs\.decode|binascii\.unhexlify|zlib\.decompress|gzip\.decompress|marshal\.loads)\s*\(`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -406,8 +412,21 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
-    pattern:
-      /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
+    // Decoding an obfuscated payload and running it is the same act whatever
+    // the decoder or the sink is called. The sink branches share one decoder
+    // list (DECODER_CALL), so rewriting `exec` as `eval`, or `runInContext`
+    // as `runInThisContext`, cannot change the verdict. Hex decoders
+    // (`bytes.fromhex`, `codecs.decode`, `binascii.unhexlify`) and the Node
+    // `vm` entry points are the same family: the decoded bytes run.
+    pattern: new RegExp(
+      String.raw`\b(?:eval|exec)\s*\(\s*` +
+        DECODER_CALL +
+        String.raw`|\b(?:new\s+)?Function\s*\(\s*(?:[^()\n]{0,40}?,\s*)?` +
+        DECODER_CALL +
+        String.raw`|\bvm\.(?:runIn(?:This|New)?Context|Script)\s*\(\s*` +
+        DECODER_CALL,
+      "iu",
+    ),
     summary: "Executes decoded or obfuscated code",
   },
   {
