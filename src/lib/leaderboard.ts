@@ -3507,11 +3507,25 @@ function createSnapshotWithReviewCutoff(
         : valuePolicyApplies
           ? MIN_VALUE_MERGE_THIRDS
           : unratifiedMergeScoreThirds(pullRequest.mergedAt));
-    const shares = shareScoreThirds(
-      totalThirds,
-      actors.length,
-      valuePolicyApplies && (valueRecord || ratification) ? 0 : 1,
+    // Apply the same prospective ban as the ledger before dividing the
+    // pull request's credit, as the review allocation and the joint path
+    // do. A discarded award must not take a commit author's share: the
+    // split is computed as if the banned actor had not taken part.
+    const eligibleActors = actors.filter(
+      (actor) =>
+        !participationBannedAt(
+          participationBans,
+          actor.id,
+          pullRequest.mergedAt,
+        ),
     );
+    const shares = eligibleActors.length
+      ? shareScoreThirds(
+          totalThirds,
+          eligibleActors.length,
+          valuePolicyApplies && (valueRecord || ratification) ? 0 : 1,
+        )
+      : [];
     if (author) {
       const authorEntry = actorEntry(entries, author);
       authorEntry.rawActivity.additions += pullRequest.additions;
@@ -3538,7 +3552,7 @@ function createSnapshotWithReviewCutoff(
         : valuePolicyApplies
           ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
           : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
-    for (const [index, actor] of actors.entries()) {
+    for (const [index, actor] of eligibleActors.entries()) {
       const isAuthor = actor.id === author?.id;
       const scoreThirds = shares[index] as number;
       if (ratification && scoreThirds === 0) continue;
@@ -3591,9 +3605,9 @@ function createSnapshotWithReviewCutoff(
             url: pullRequest.url,
           },
           reason:
-            actors.length === 1
+            eligibleActors.length === 1
               ? baseReason
-              : `${baseReason} Shared equally among ${actors.length} commit authors.`,
+              : `${baseReason} Shared equally among ${eligibleActors.length} commit authors.`,
         },
       );
       if (scored && isAuthor) {
