@@ -6,6 +6,7 @@
 import { notifySlopbotAppeal } from "../../backend/notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../../backend/projects/account-bans";
 import { githubIdSet } from "../../src/lib/github-ids";
+import { POINTS_PER_THIRD } from "../../src/lib/points";
 import { type Category, CLOSE_CONFIDENCE, type Job } from "./contracts";
 import { dispatchDueJobs } from "./maintainer-holds";
 import type { D1Database, D1TransactionalDatabase } from "./persistence";
@@ -47,7 +48,7 @@ export function escalationFor(input: {
   if (input.category === "scam" || input.moderatorReview)
     return "the finding is a confirmed-malicious result";
   if (input.debitThirds >= ESCALATION_DEBIT_THIRDS)
-    return `the debit at stake is ${ESCALATION_DEBIT_THIRDS} thirds or more`;
+    return `the debit at stake is ${ESCALATION_DEBIT_THIRDS * POINTS_PER_THIRD} points or more`;
   if (input.draftConfidence < CLOSE_CONFIDENCE)
     return `Slopbot confidence is below ${CLOSE_CONFIDENCE}`;
   return null;
