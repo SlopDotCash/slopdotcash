@@ -45,6 +45,21 @@ test(
   },
 );
 
+test("the account page's sign-in link keeps the account page as the return route", {
+  tag: ["@pages"],
+}, async ({ page }) => {
+  // On an origin where sign-in cannot run locally, the account page's own
+  // sign-in link crosses to the site login; like the header login link, it
+  // must carry the current page so sign-in returns here, not to the
+  // profile. The bare /login link above stays bare.
+  await page.goto("/account");
+  await expect(
+    page.getByRole("link", {
+      name: `Continue with GitHub on ${new URL(deployment.site).hostname}`,
+    }),
+  ).toHaveAttribute("href", `${deployment.site}/login?next=%2Faccount`);
+});
+
 // Explicit identity and membership doubles; this proves the browser return
 // route, not live GitHub OAuth.
 for (const [next, expected] of [

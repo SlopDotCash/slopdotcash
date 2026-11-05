@@ -893,7 +893,15 @@ function JoinPoints({
   }
   if (!productOrigin()) {
     const destination = new URL("/login", browserDeployment.site);
-    const next = returnPath();
+    // Preserve this page as the return destination (PRD section 3), as the
+    // header login link does; the login page itself is never a destination,
+    // so a bare /login link stays bare. A `next` the page already carries
+    // wins, and the reader validates the path again after sign-in.
+    const next =
+      returnPath() ??
+      (window.location.pathname.replace(/\/+$/u, "") === "/login"
+        ? null
+        : currentPath());
     if (next) destination.searchParams.set("next", next);
     return (
       <section className="points-panel">
