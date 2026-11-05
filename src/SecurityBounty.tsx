@@ -1072,10 +1072,18 @@ type SecurityCase = {
 };
 
 type ReportFilter = "all" | "review" | "waiting" | "award" | "resolved";
-function matchesReport(record: SecurityCase, filter: ReportFilter): boolean {
+export function matchesReport(
+  record: SecurityCase,
+  filter: ReportFilter,
+): boolean {
   if (filter === "review")
     return record.allowedActions.some((action) =>
-      ["decide", "verify-link", "request-information"].includes(action),
+      [
+        "decide",
+        "decide-appeal",
+        "verify-link",
+        "request-information",
+      ].includes(action),
     );
   if (filter === "waiting") return record.receiptState === "needs-information";
   if (filter === "award")
@@ -1085,12 +1093,15 @@ function matchesReport(record: SecurityCase, filter: ReportFilter): boolean {
       ) || Boolean(record.award && record.paymentState !== "paid")
     );
   if (filter === "resolved")
+    // An open appeal means the outcome is still being decided: the case is
+    // neither paid nor finally ineligible until the reviewer decides it.
     return (
-      record.paymentState === "paid" ||
-      ["rejected", "duplicate", "out-of-scope"].includes(
-        record.receiptState ?? "",
-      ) ||
-      record.awardState === "ineligible"
+      record.appealState !== "open" &&
+      (record.paymentState === "paid" ||
+        ["rejected", "duplicate", "out-of-scope"].includes(
+          record.receiptState ?? "",
+        ) ||
+        record.awardState === "ineligible")
     );
   return true;
 }
