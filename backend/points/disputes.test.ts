@@ -995,3 +995,126 @@ test("triage resolves the current repository path after a project rename or tran
     globalThis.fetch = nativeFetch;
   }
 });
+
+async function historyFixture() {
+  const { db, sqlite } = sqliteD1();
+  databases.push(sqlite);
+  sqlite
+    .query(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1)",
+    )
+    .run(owner.node, owner.githubId, owner.githubLogin, NOW);
+  sqlite
+    .query(
+      "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
+    )
+    .run(await sha256Hex(token), owner.node, "2026-10-31T14:00:00.000Z");
+  const deps = {
+    db,
+    now: () => new Date(NOW),
+    rateLimitSecret: "s".repeat(64),
+    identity: { fetch: async () => Response.json({}) },
+    disputes: { moderators: new Set<string>(), process: async () => {} },
+  };
+  const insert = (
+    key: string,
+    amount: number,
+    previous: string | null = null,
+    recordedAt = NOW,
+  ): PointRevision => {
+    const record: Omit<PointRevision, "id"> = {
+      previous,
+      recordedAt,
+      sourceDigest: "a".repeat(64),
+      sourceRule: "history-fixture",
+      award: {
+        key,
+        actor: { id: owner.node, login: owner.githubLogin },
+        projectId: "alpha",
+        category: "evaluated-contribution",
+        amount,
+        occurredAt: NOW,
+        sourceId: `src-${key}`,
+        sourceUrl: "https://example.com/work",
+        workUnitId: `src-${key}`,
+        provisional: false,
+      },
+    };
+    const revision: PointRevision = { ...record, id: pointRevisionId(record) };
+    sqlite
+      .query(
+        "INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(?,?,?,?,?)",
+      )
+      .run(revision.id, key, previous, recordedAt, JSON.stringify(revision));
+    return revision;
+  };
+  const list = async (before?: string) => {
+    const response = await handlePointsApi(
+      new Request(
+        `https://slop.cash/api/v1/points/disputes${before ? `?before=${before}` : ""}`,
+        {
+          method: "GET",
+          headers: {
+            cookie: `__Host-slop_points=${token}`,
+            origin: "https://slop.cash",
+          },
+        },
+      ),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    return (await response.json()) as {
+      awards: {
+        revisionId: string;
+        award: { key: string; amount: number };
+      }[];
+      next: string | null;
+    };
+  };
+  return { insert, list };
+}
+
+test("the history walk stays complete when a correction lands mid-walk", async () => {
+  const h = await historyFixture();
+  const inserted = new Map<string, PointRevision>();
+  for (let i = 1; i <= 30; i++) {
+    const key = `key-${String(i).padStart(2, "0")}`;
+    inserted.set(key, h.insert(key, i));
+  }
+  const page1 = await h.list();
+  expect(page1.awards).toHaveLength(25);
+  expect(page1.next).not.toBeNull();
+  // key-03 is only reached on page 2; correct it after page 1 was read.
+  const pending = inserted.get("key-03");
+  if (!pending || !page1.next) throw new Error("fixture walk incomplete");
+  h.insert("key-03", 0, pending.id, "2026-10-30T15:00:00.000Z");
+  const page2 = await h.list(page1.next);
+  const walked = new Map(
+    [...page1.awards, ...page2.awards].map((a) => [a.award.key, a]),
+  );
+  // The pinned walk still shows the record, at the revision page 1 pinned.
+  expect(walked.size).toBe(30);
+  expect(walked.get("key-03")?.revisionId).toBe(pending.id);
+  expect(walked.get("key-03")?.award.amount).toBe(3);
+  expect(page2.next).toBeNull();
+  // A fresh walk sees the correction instead.
+  const fresh = await h.list();
+  const corrected = fresh.awards.find((a) => a.award.key === "key-03");
+  expect(corrected?.award.amount).toBe(0);
+  expect(corrected?.revisionId).not.toBe(pending.id);
+});
+
+test("a record first appended mid-walk joins only the next fresh walk", async () => {
+  const h = await historyFixture();
+  for (let i = 1; i <= 30; i++)
+    h.insert(`key-${String(i).padStart(2, "0")}`, i);
+  const page1 = await h.list();
+  if (!page1.next) throw new Error("fixture walk incomplete");
+  h.insert("key-new", 500);
+  const page2 = await h.list(page1.next);
+  const walked = [...page1.awards, ...page2.awards].map((a) => a.award.key);
+  expect(walked).toHaveLength(30);
+  expect(walked).not.toContain("key-new");
+  const fresh = await h.list();
+  expect(fresh.awards[0]?.award.key).toBe("key-new");
+});
