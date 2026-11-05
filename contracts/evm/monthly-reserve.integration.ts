@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { encodeFunctionData, parseAbi } from "viem";
+import { encodeFunctionData, keccak256, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
@@ -1449,6 +1449,83 @@ try {
       BigInt(completed.reservedFees ?? "0"),
     98999999n,
   );
+  // A journaled leaf can lose the race to another keeper. Its eventual revert
+  // consumes a signer nonce, but only a finalized nonce can retire the retry.
+  const reorgJournal = journal();
+  const reorgNonce = Number(
+    BigInt(
+      String(await rpc("eth_getTransactionCount", [gas.address, "latest"])),
+    ),
+  );
+  const reorgRaw = await gas.signTransaction({
+    type: "eip1559",
+    chainId: Number(chainId),
+    nonce: reorgNonce,
+    to: vault as `0x${string}`,
+    data: buildCommitMonthlyLeafCalldata(
+      period,
+      next.entries[0],
+      0,
+      tree.proofs[0],
+    ) as `0x${string}`,
+    gas: 100000n,
+    maxFeePerGas: 2000000000n,
+    maxPriorityFeePerGas: 1000000n,
+    value: 0n,
+  });
+  const reorgHash = keccak256(reorgRaw);
+  const reorgKey = `monthly:v2:base-sepolia:${vault.toLowerCase()}:${period}:${tree.hash}`;
+  await reorgJournal.store.put(`${reorgKey}:leaf:0`, {
+    monthlyPeriod: period,
+    network: "base-sepolia",
+    vault,
+    fingerprint: reorgHash,
+    rawTransaction: reorgRaw,
+    transactionId: reorgHash,
+  });
+  const reorgEnv = { ...env, JOURNAL: reorgJournal.store };
+  const beforeReorgSend = await rpc("evm_snapshot", []);
+  assert.equal(
+    (await submitEvmMonthly(reorgEnv, authorization)).complete,
+    false,
+  );
+  await rpc("anvil_mine", ["0x1"]);
+  const reorgReceipt = (await rpc("eth_getTransactionReceipt", [
+    reorgHash,
+  ])) as Receipt;
+  assert.equal(
+    reorgReceipt.status,
+    "0x0",
+    "the already-committed leaf reverts",
+  );
+  assert.equal(
+    (await submitEvmMonthly(reorgEnv, authorization)).complete,
+    false,
+    "an unfinalized consumed nonce cannot finish the month",
+  );
+  assert.equal(
+    await reorgJournal.store.get(`${reorgKey}:finalized-cursor`),
+    undefined,
+  );
+  assert.equal(await rpc("evm_revert", [beforeReorgSend]), true);
+  assert.equal(await rpc("eth_getTransactionReceipt", [reorgHash]), null);
+  assert.equal(
+    (await submitEvmMonthly(reorgEnv, authorization)).complete,
+    false,
+  );
+  await rpc("anvil_mine", ["0x1"]);
+  assert.equal(
+    ((await rpc("eth_getTransactionReceipt", [reorgHash])) as Receipt).status,
+    "0x0",
+    "the identical journaled transaction is re-sent after the reorg",
+  );
+  await finalized();
+  assert.equal(
+    (await submitEvmMonthly(reorgEnv, authorization, false, entries.length))
+      .complete,
+    true,
+    "finalized nonce consumption allows durable completion",
+  );
   await send(
     token,
     encodeFunctionData({
@@ -1758,6 +1835,7 @@ try {
         keeper:
           "public HTTP, durable V1-to-V2 and later attempt cache, restart, one leaf after Off/window",
         allFundedMonth: "sealed-with-no-leaves",
+        journaledNonceReorg: "retry-retained-until-finalized",
         manualRace: "rejected-before-reserve",
         optedOutAndWindowExpired: "leaves-completed",
         replay: "refused",

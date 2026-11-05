@@ -129,6 +129,8 @@ const chain = {
   broadcasts: [] as Hex[],
   /** When set, only nonces below it are mined; later accepted bytes wait in the mempool. */
   mined: null as number | null,
+  /** Finalized nonce may lag the latest block, which can still be reorganized. */
+  finalized: null as number | null,
 };
 const awardId = (index: number) =>
   evmAwardId(84532n, vault, entries[index].sourceDigest).toLowerCase();
@@ -206,7 +208,11 @@ function answer(method: string, params: unknown[]) {
       return { number: "0x10", timestamp: "0x68000000", baseFeePerGas: "0x1" };
     case "eth_getTransactionCount": {
       const next = executableNonce();
-      return `0x${(params[1] === "latest" && chain.mined !== null ? Math.min(next, chain.mined) : next).toString(16)}`;
+      const confirmed =
+        params[1] === "finalized"
+          ? (chain.finalized ?? chain.mined)
+          : chain.mined;
+      return `0x${(params[1] !== "pending" && confirmed !== null ? Math.min(next, confirmed) : next).toString(16)}`;
     }
     case "eth_estimateGas":
       return "0x186a0";
@@ -326,6 +332,7 @@ function reset(admitted: boolean) {
   chain.sent.clear();
   chain.broadcasts = [];
   chain.mined = null;
+  chain.finalized = null;
 }
 
 test("a leaf another keeper committed still sends this keeper's signed leaf bytes", async () => {
@@ -430,6 +437,50 @@ test("a finished month stays incomplete while this keeper's re-sent leaf nonce i
   expect(chain.broadcasts.slice(before)).not.toContain(leaf?.transactionId);
 });
 
+test("a finished month retains its leaf retry across an unfinalized nonce reorg", async () => {
+  reset(true);
+  const env = keeperEnvironment();
+  const signed = await authorization();
+  await expect(submitEvmMonthly(env, signed, true, 16)).rejects.toThrow();
+  const leafKey = `monthly:v2:base-sepolia:${vault}:${period}:${tree.hash}:leaf:0`;
+  const leaf = await env.JOURNAL.get<Attempt>(leafKey);
+  expect(leaf).toBeDefined();
+  commitElsewhere(0);
+  commitElsewhere(1);
+  chain.funded = true;
+  const incomplete = {
+    transactionId: null,
+    alreadyCommitted: true,
+    complete: false,
+  };
+  expect(await submitEvmMonthly(env, signed, true, 16)).toEqual(incomplete);
+
+  // The nonce is consumed in the latest block, but not in finalized history.
+  chain.mined = 1;
+  chain.finalized = 0;
+  expect(await submitEvmMonthly(env, signed, true, 16)).toEqual(incomplete);
+  const cursorKey = `monthly:v2:base-sepolia:${vault}:${period}:${tree.hash}:finalized-cursor`;
+  expect((await env.JOURNAL.get<number>(cursorKey)) ?? 0).toBe(0);
+
+  // That block is removed and the node drops its transaction. The next run
+  // must offer the retained nonce-zero bytes again instead of skipping them.
+  chain.sent.clear();
+  chain.mined = 0;
+  const before = chain.broadcasts.length;
+  expect(await submitEvmMonthly(env, signed, true, 16)).toEqual(incomplete);
+  expect(chain.broadcasts.slice(before)).toContain(leaf?.transactionId as Hex);
+  expect(sentNonces()).toEqual([0]);
+
+  chain.mined = 1;
+  chain.finalized = 1;
+  const settledBroadcasts = chain.broadcasts.length;
+  expect(await submitEvmMonthly(env, signed, true, 16)).toEqual({
+    ...incomplete,
+    complete: true,
+  });
+  expect(chain.broadcasts.length).toBe(settledBroadcasts);
+});
+
 test("a month another keeper admitted still sends this keeper's signed reserve bytes", async () => {
   reset(false);
   const env = keeperEnvironment();
@@ -497,6 +548,40 @@ function bind(index: number, cancelled = false) {
       .join(""),
   );
 }
+
+test.each([false, true])(
+  "a finished month waits for its root nonce to finalize (legacy: %s)",
+  async (legacy) => {
+    reset(false);
+    const env = keeperEnvironment();
+    const signed = await authorization(legacy);
+    await expect(submitEvmMonthly(env, signed, true, 16)).rejects.toThrow();
+    if (legacy) chain.root = legacyRoot;
+    else {
+      admitElsewhere();
+      commitElsewhere(0);
+      commitElsewhere(1);
+    }
+    chain.funded = true;
+    const incomplete = {
+      transactionId: null,
+      alreadyCommitted: true,
+      complete: false,
+    };
+    expect(await submitEvmMonthly(env, signed, true, 16)).toEqual(incomplete);
+    chain.mined = 1;
+    chain.finalized = 0;
+    const before = chain.broadcasts.length;
+    expect(await submitEvmMonthly(env, signed, true, 16)).toEqual(incomplete);
+    expect(chain.broadcasts.length).toBe(before);
+    chain.finalized = 1;
+    expect(await submitEvmMonthly(env, signed, true, 16)).toEqual({
+      transactionId: null,
+      alreadyCommitted: true,
+      ...(legacy ? {} : { complete: true }),
+    });
+  },
+);
 
 test("an award whose binding the owner cancelled still sends this keeper's signed payment bytes", async () => {
   reset(true);
