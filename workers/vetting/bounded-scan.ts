@@ -323,12 +323,15 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
-// A block comment wherever the sink and its decoder call meet does not
-// change the act, so the gap between them tolerates one. Each iteration
-// consumes at least one whole block comment, so the group cannot backtrack
-// into a scan-length loop. The rule stays textual, so a comment that itself
-// spells a sink-into-decoder example is matched as well.
-const COMMENT_GAP = String.raw`(?:/\*[\s\S]*?\*/\s*)*`;
+// A block comment wherever the sink and its decoder call meet does not change
+// the act, so the gap between them tolerates one. It is one optional comment,
+// never a repeat: a repeated lazy comment group is exponentially ambiguous
+// once the whole match fails, and the first version of this shape took 17 s on
+// 625 bytes of `eval`, a run of block comments, then a call that decodes
+// nothing. The rule stays textual, so a comment that itself spells a
+// sink-into-decoder example is matched as well.
+const COMMENT = String.raw`/\*(?:[^*]|\*(?!/))*\*/`;
+const COMMENT_GAP = String.raw`(?:\s*` + COMMENT + String.raw`)*(?:\s*)`;
 /**
  * The calls that turn an encoded payload back into code. Every execution
  * sink below shares this one list, so the same act cannot escape by

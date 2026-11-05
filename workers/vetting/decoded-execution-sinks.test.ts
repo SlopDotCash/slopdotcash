@@ -285,3 +285,32 @@ test("decoding without an execution sink, or running a literal, keeps no finding
     });
   }
 });
+
+test("a run of block comments in the gap keeps the rule cheap and still flags", () => {
+  // Cost is part of the rule, not an afterthought: the first version of the
+  // comment gap repeated a lazy `/* ... */` group, which is exponentially
+  // ambiguous once the whole match fails. `eval` followed by 100 block comments
+  // and a call that decodes nothing took about 17 s on 625 bytes, and a
+  // submitted repository controls that text. The bound below is ~60x the
+  // measured cost (~30 ms for the 4000-comment pair on a dev machine), so it
+  // catches a return to the exponential shape without being load-sensitive.
+  const run = (n: number) => "/*c*/ ".repeat(n);
+  const build = (n: number) =>
+    `eval ${run(n)}(plainThing());\n` + `exec ${run(n)}(plainThing())\n`;
+  const time = (text: string) => {
+    const started = performance.now();
+    inspectRepository({
+      files: [{ path: "install.js", bytes: new TextEncoder().encode(text) }],
+    });
+    return performance.now() - started;
+  };
+  time(build(200)); // warm up
+  expect(time(build(4000))).toBeLessThan(2000);
+
+  // The repeated gap must not be bought by dropping the match itself.
+  const commented = inspected(
+    "install.js",
+    `eval ${run(5)}(atob("cHJvY2Vzcy5leGl0KDEp"));\n`,
+  );
+  expect(categories(commented)).toEqual(["install.js:unsafe-execution:high"]);
+});
