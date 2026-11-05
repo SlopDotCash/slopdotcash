@@ -3,6 +3,7 @@ import {
   findRegisteredRepositoryById,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
+import { GitHubGraphQLError } from "./github";
 import { collectAcceptedValueRange } from "./value-accepted-range";
 import {
   addedBinaryRecovery,
@@ -223,6 +224,37 @@ async function collectCommitChanges(
   }
   return { commit, limitations };
 }
+interface OutgoingReference {
+  repository: {
+    isPrivate: boolean;
+    nameWithOwner: string;
+    issueOrPullRequest: {
+      __typename: string;
+      id?: string;
+      number?: number;
+      url?: string;
+    } | null;
+  } | null;
+}
+/** GitHub answers a missing number with the resolved repository in `data`
+ * and one NOT_FOUND error on `issueOrPullRequest`. Keep that answer; any
+ * other failure stays unknown. */
+function absentOutgoingReference(error: unknown): OutgoingReference | null {
+  if (!(error instanceof GitHubGraphQLError)) return null;
+  const repository = (error.data as OutgoingReference | null)?.repository;
+  if (repository?.isPrivate !== false || repository.issueOrPullRequest !== null)
+    return null;
+  if (
+    error.errors.length === 0 ||
+    error.errors.some(
+      (entry) =>
+        entry.type !== "NOT_FOUND" ||
+        entry.path?.join("/") !== "repository/issueOrPullRequest",
+    )
+  )
+    return null;
+  return { repository: { ...repository, issueOrPullRequest: null } };
+}
 async function relatedPullRequests(
   client: EvidenceClient,
   repository: string,
@@ -335,35 +367,22 @@ async function relatedPullRequests(
       continue;
     const [targetOwner, targetName] = target.repository.split("/");
     const result = await client
-      .graphql<{
-        repository: {
-          isPrivate: boolean;
-          nameWithOwner: string;
-          issueOrPullRequest: {
-            __typename: string;
-            id?: string;
-            number?: number;
-            url?: string;
-          } | null;
-        } | null;
-      }>(
+      .graphql<OutgoingReference>(
         `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}}}`,
         { owner: targetOwner, name: targetName, number: target.number },
       )
-      .catch(() => null);
+      .catch((error: unknown) => absentOutgoingReference(error));
     // Failed discovery is retained as an explicit gap, never an empty success.
     const repo = result?.repository;
     if (!repo || repo.isPrivate !== false) {
       limitations.push("Outgoing reference is unavailable or private");
       continue;
     }
+    // GitHub resolved the public repository and reports no item with that
+    // number: a deleted PR or a number that never existed. Text pointing at
+    // nothing is not a related source, and no retry can make it one.
     const referenced = repo.issueOrPullRequest;
-    if (!referenced) {
-      limitations.push(
-        `Outgoing reference is unavailable: ${target.repository}#${target.number}`,
-      );
-      continue;
-    }
+    if (!referenced) continue;
     if (referenced.__typename !== "PullRequest") continue;
     if (
       !referenced.id ||

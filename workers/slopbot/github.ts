@@ -47,6 +47,17 @@ export class GitHubError extends Error {
   }
 }
 
+/** A GraphQL response with errors. `data` is the partial result GitHub sent
+ * with them, so a caller can tell a definite NOT_FOUND from an outage. */
+export class GitHubGraphQLError extends Error {
+  constructor(
+    readonly errors: { type?: string; path?: (string | number)[] }[],
+    readonly data: unknown,
+  ) {
+    super("GitHub GraphQL evidence is incomplete");
+  }
+}
+
 export class GitHubClient {
   private constructor(private readonly token: string) {}
 
@@ -131,13 +142,15 @@ export class GitHubClient {
     query: string,
     variables: Record<string, unknown>,
   ): Promise<T> {
-    const response = await this.request<{ data?: T; errors?: unknown[] }>(
-      "POST",
-      "/graphql",
-      { query, variables },
-    );
+    const response = await this.request<{
+      data?: T;
+      errors?: { type?: string; path?: (string | number)[] }[];
+    }>("POST", "/graphql", { query, variables });
     if (!response.data?.data || response.data.errors?.length)
-      throw new Error("GitHub GraphQL evidence is incomplete");
+      throw new GitHubGraphQLError(
+        response.data?.errors ?? [],
+        response.data?.data ?? null,
+      );
     return response.data.data;
   }
 
