@@ -197,7 +197,15 @@ export async function finishValueRequest(
       at.toISOString(),
       0,
       blocked ? 1 : 0,
-      outcome === "source-incomplete" ? at.toISOString() : null,
+      // The Inbox marker records when this pull request became known to be
+      // unassessed with no automatic completion coming: a source gap opens
+      // it, and an attempts-exhausted end opens it too, because that outcome
+      // is terminal yet not an assessment. Without the second case a pull
+      // request whose evidence was always complete would never enter the
+      // maintainer queue when its paid attempts run out.
+      outcome === "source-incomplete" || outcome === "attempts-exhausted"
+        ? at.toISOString()
+        : null,
       complete && outcome !== "attempts-exhausted" ? 1 : 0,
     )
     .first();
