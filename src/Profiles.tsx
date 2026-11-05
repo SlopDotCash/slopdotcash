@@ -56,15 +56,40 @@ type ProfileState = PublicResourceState<{
 // A new mount stays loading so a reassigned GitHub login cannot use old identity.
 let lastVerifiedProfiles: ProfileIndex | null = null;
 
+// One in-flight directory read shared by every consumer. A single mount's
+// unmount must not abort a fetch another mount is still waiting on, so the
+// shared read runs on its own signal (fetchWithDeadline still bounds it
+// to 15s); a consumer's signal only decides whether that consumer still
+// listens for the result.
+let profilesRead: Promise<{ index: ProfileIndex }> | null = null;
+
+function loadSharedProfiles(): Promise<{ index: ProfileIndex }> {
+  if (profilesRead === null) {
+    profilesRead = loadProfiles(new AbortController().signal).then((value) => {
+      lastVerifiedProfiles = value.index;
+      return value;
+    });
+    // Clear on settlement so a retry or a later mount starts a fresh read.
+    void profilesRead.then(
+      () => {
+        profilesRead = null;
+      },
+      () => {
+        profilesRead = null;
+      },
+    );
+  }
+  return profilesRead;
+}
+
 export function useProfiles(enabled = true): {
   state: ProfileState;
   retry: () => void;
 } {
-  const loadVerifiedProfiles = useCallback(async (signal: AbortSignal) => {
-    const value = await loadProfiles(signal);
-    lastVerifiedProfiles = value.index;
-    return value;
-  }, []);
+  const loadVerifiedProfiles = useCallback(
+    async (_signal: AbortSignal) => loadSharedProfiles(),
+    [],
+  );
   const [current, retry] = usePublicResource(
     enabled,
     loadVerifiedProfiles,
