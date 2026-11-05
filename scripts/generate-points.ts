@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readBoundedJson, readBoundedText } from "../src/lib/browser-json";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
+import { compareActors } from "../src/lib/github-actor";
 import {
   assertLeaderboardSnapshot,
   ledgerWorkUnitId,
@@ -492,7 +493,7 @@ export function pointsSummary(
 ): PointsSummary {
   const ranked = members
     .filter((member) => member.total > 0)
-    .sort((a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id));
+    .sort((a, b) => b.total - a.total || compareActors(a.actor, b.actor));
   return {
     schemaVersion: "1",
     ruleVersion: journal.ruleVersion,
