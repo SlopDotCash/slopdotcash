@@ -642,6 +642,19 @@ export class CloudflareVettingPersistence {
             findingsLocation: findingsLocationOf(result),
           })
         : null;
+    // The ban audience is resolved from committed contribution and payment
+    // records before the batch; the notice itself commits inside it. The
+    // writer's statement writes only for a service ban, so other
+    // enforcements need no audience.
+    const banAudience =
+      enforcement && enforcement.action === "ban"
+        ? await notifyVettingBanAudience(
+            this.db,
+            enforcement.id,
+            enforcement.projectId,
+            input.operatorGithubIds ?? [],
+          )
+        : null;
     try {
       await this.db.batch([
         this.db
@@ -665,11 +678,7 @@ export class CloudflareVettingPersistence {
               enforcementStatement(this.db, enforcement),
               notifyProjectEnforcement(this.db, enforcement.id),
               // Reads back the record and writes only for a service ban.
-              notifyVettingBanAudience(
-                this.db,
-                enforcement.id,
-                input.operatorGithubIds ?? [],
-              ),
+              ...(banAudience ? [banAudience] : []),
             ]
           : []),
         // A scan that could not establish clearance tells the owners once.

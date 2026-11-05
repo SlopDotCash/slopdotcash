@@ -818,7 +818,12 @@ test("vetting ban mail rechecks affected contributors and current staff after an
         );
       await h.db.batch([
         notifyProjectEnforcement(h.db, "enf_mail_fixture"),
-        notifyVettingBanAudience(h.db, "enf_mail_fixture", ["103", "104"]),
+        await notifyVettingBanAudience(
+          h.db,
+          "enf_mail_fixture",
+          "affected-project",
+          ["103", "104"],
+        ),
       ]);
       expect(h.rows()).toHaveLength(4);
       // The owner writer wins the shared event key, so this staff member's

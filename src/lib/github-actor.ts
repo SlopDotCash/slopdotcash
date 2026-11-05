@@ -71,6 +71,35 @@ export function githubUserIdFromNodeId(nodeId: string): string | null {
 }
 
 /**
+ * Both canonical node ID spellings of a numeric GitHub user ID, legacy
+ * first: the base64 of `04:User<id>` and the current `U_` MessagePack form,
+ * exactly as `githubUserIdFromNodeId` accepts them. Records written from
+ * different GitHub surfaces can carry either spelling for one account, so
+ * matching a record to an account must try both. Returns an empty list for
+ * a value that is not a canonical numeric ID.
+ */
+export function githubNodeIdSpellings(githubId: string): string[] {
+  if (!/^[1-9]\d{0,19}$/u.test(githubId)) return [];
+  const id = BigInt(githubId);
+  if (id > 0xffff_ffff_ffff_ffffn) return [];
+  const spellings: string[] = [];
+  // The decoder accepts the legacy form only for up to 16 digits.
+  if (githubId.length <= 16) spellings.push(btoa(`04:User${githubId}`));
+  const bytes = new Uint8Array(id <= 0xffff_ffffn ? 7 : 11);
+  bytes.set([0x92, 0, bytes.length === 7 ? 0xce : 0xcf]);
+  const view = new DataView(bytes.buffer);
+  if (bytes.length === 7) view.setUint32(3, Number(id));
+  else view.setBigUint64(3, id);
+  spellings.push(
+    `U_${btoa(String.fromCharCode(...bytes))
+      .replace(/\+/gu, "-")
+      .replace(/\//gu, "_")
+      .replace(/=+$/u, "")}`,
+  );
+  return spellings;
+}
+
+/**
  * Login and immutable-ID tie order for project and global standings and for
  * the largest-remainder extra unit. English case folding and collation keep
  * that order the same on every host. A default locale that case-folds "I"

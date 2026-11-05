@@ -5,7 +5,7 @@ import {
   issueEmailUnsubscribeToken,
 } from "../../backend/notifications/email-destinations";
 import {
-  PROJECT_AFFECTED_CONTRIBUTORS,
+  affectedContributorGithubIds,
   PROJECT_OWNERS,
 } from "../../backend/notifications/events";
 import type { SecurityD1Database } from "../../backend/security/handler";
@@ -87,6 +87,7 @@ async function stillProjectRecipient(
   const notice = await db
     .prepare(
       `SELECT n.kind,
+              n.subject,
               n.action_path,
               n.recipient_github_id = (
                 SELECT json_extract(manifest, '$.steward.github.actorId')
@@ -99,19 +100,18 @@ async function stillProjectRecipient(
                    AND n.event_key = 'project-enforcement:' || e.id
                    AND e.project_id = n.subject AND e.action = 'ban'
                    AND e.actor_role = 'vetting-service'
-              ) AS vetting_ban,
-              n.recipient_github_id IN ${PROJECT_AFFECTED_CONTRIBUTORS("n.subject")} AS affected_contributor
+              ) AS vetting_ban
          FROM notifications n
         WHERE n.event_key = ? AND n.recipient_github_id = ?`,
     )
     .bind(row.event_key, row.recipient_github_id)
     .first<{
       kind: string;
+      subject: string;
       action_path: string;
       steward: number | null;
       owner: number | null;
       vetting_ban: number;
-      affected_contributor: number;
     }>();
   if (!notice) return true;
   if (notice.kind === "payout_exception") return notice.steward === 1;
@@ -119,7 +119,11 @@ async function stillProjectRecipient(
   // Recheck the actual audience, not the link that happened to be retained.
   if (notice.kind === "project_banned" && notice.vetting_ban === 1)
     return (
-      notice.owner === 1 || notice.affected_contributor === 1 || currentStaff
+      notice.owner === 1 ||
+      (await affectedContributorGithubIds(db, notice.subject)).includes(
+        row.recipient_github_id,
+      ) ||
+      currentStaff
     );
   // A staff copy links to `/admin`, as the contributor-flag pause notice to
   // the configured administrators and moderators does. It mails only current
