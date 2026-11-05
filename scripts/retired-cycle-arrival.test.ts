@@ -29,7 +29,7 @@ beforeAll(() => {
     join(root, "retired-cycle-check.ts"),
     `
 import { syncCycleIndex } from "./scripts/sync-cycle-index";
-import { findCycleProject, findProject } from "./src/lib/projects.mjs";
+import { findCycleProject, findHistoricalProject, findProject } from "./src/lib/projects.mjs";
 const index = await syncCycleIndex();
 const cycleProject = findCycleProject("eliza");
 const record =
@@ -57,6 +57,12 @@ console.log(
       ? { id: findCycleProject("asi").id, listingTier: findCycleProject("asi").listingTier }
       : null,
     unknown: findCycleProject("no-such-project"),
+    // The id lookup normalizes case and surrounding space, like the
+    // listed registry lookup: the schema pins slug to id, so the
+    // slug fallback and the history lookup must agree on both.
+    cycleUpper: findCycleProject("ELIZA")?.id ?? null,
+    cycleSpaced: findCycleProject(" eliza ")?.id ?? null,
+    historicalUpper: findHistoricalProject("ELIZA")?.id ?? null,
   }),
 );
 `,
@@ -91,6 +97,9 @@ test("a retired project's recorded cycle still resolves", () => {
     } | null;
     listedProject: { id: string; listingTier: string } | null;
     unknown: unknown;
+    cycleUpper: string | null;
+    cycleSpaced: string | null;
+    historicalUpper: string | null;
   };
   // The frozen record is real and keeps its contributors.
   expect(out.record).not.toBeNull();
@@ -110,4 +119,8 @@ test("a retired project's recorded cycle still resolves", () => {
   expect(out.listedProject?.id).toBe("asi");
   expect(out.listedProject?.listingTier).not.toBe("retired");
   expect(out.unknown).toBeNull();
+  // Uppercase and spaced ids resolve to the same retired project.
+  expect(out.cycleUpper).toBe("eliza");
+  expect(out.cycleSpaced).toBe("eliza");
+  expect(out.historicalUpper).toBe("eliza");
 }, 240000);

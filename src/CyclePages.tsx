@@ -51,6 +51,9 @@ export function CyclePage({
   if (!/^\d{4}-(0[1-9]|1[0-2])$/u.test(cycleId)) {
     return <NotFound title="Cycle unavailable" />;
   }
+  // A retired project has no project page: the project route answers
+  // "Project not found", so the cycle page must not link to it.
+  const retired = project.listingTier === "retired";
   const notice = (noticeState: DataState) => (
     <main className="shell route-main">
       <h1>
@@ -85,7 +88,12 @@ export function CyclePage({
           {collected
             ? ""
             : "Activity for this project has not been collected yet. "}
-          See the <Link href={`/projects/${project.slug}`}>project page</Link>.
+          {retired ? null : (
+            <>
+              See the{" "}
+              <Link href={`/projects/${project.slug}`}>project page</Link>.
+            </>
+          )}
         </p>
       </NotFound>
     );
@@ -178,7 +186,11 @@ export function CyclePage({
     <main className="shell route-main cycle-page route-cycle">
       <DataNotice state={state} retry={retry} />
       <p className="breadcrumb">
-        <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+        {retired ? (
+          project.name
+        ) : (
+          <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+        )}
       </p>
       <section className="cycle-hero">
         <RoutePageHeader
@@ -239,9 +251,11 @@ export function CyclePage({
           <CircleAlert aria-hidden="true" size={18} />
           <span>
             {reminder.message}{" "}
-            <Link href={`/projects/${project.slug}/funding`}>
-              View project funding
-            </Link>
+            {retired ? null : (
+              <Link href={`/projects/${project.slug}/funding`}>
+                View project funding
+              </Link>
+            )}
           </span>
         </div>
       ) : null}

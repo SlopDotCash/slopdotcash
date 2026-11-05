@@ -113,7 +113,7 @@ const HISTORICAL_PROJECTS_BY_REPOSITORY = new Map(
 /** Resolves a project id in immutable history, including retired projects. */
 export function findHistoricalProject(projectId) {
   if (typeof projectId !== "string") return null;
-  return HISTORICAL_PROJECTS_BY_ID.get(projectId) ?? null;
+  return HISTORICAL_PROJECTS_BY_ID.get(projectId.trim().toLowerCase()) ?? null;
 }
 
 /** Resolves a repository in immutable history, including retired projects. */
