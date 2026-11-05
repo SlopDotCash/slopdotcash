@@ -31,6 +31,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* Fragment links, scrollIntoView and keyboard focus stop below the
+     sticky site header (88px on desktop, shorter on phones). */
+  scroll-padding-top: calc(88px + 1rem);
 }
 
 body {
@@ -258,15 +261,6 @@ textarea:focus-visible {
   margin: 28px 0 0;
   color: var(--muted);
   line-height: 1.65;
-}
-
-/* Keep the profile penalty-link target below the 88px sticky header. */
-#penalties {
-  scroll-margin-top: calc(88px + 1rem);
-}
-
-.faq {
-  scroll-margin-top: 64px;
 }
 
 .faq-answers {
@@ -589,10 +583,6 @@ p {
 
 .home-projects-section {
   padding-block: 0 96px;
-}
-
-.home-leaderboard-section {
-  scroll-margin-top: 64px;
 }
 
 .home-section-heading {
@@ -3662,11 +3652,6 @@ a.payout-tx:hover {
   .security-case-choice {
     grid-template-columns: minmax(0, 1fr);
   }
-}
-
-/* Keep keyboard-focused reporting controls below the 88px sticky header. */
-html:has(.security-page) {
-  scroll-padding-top: calc(88px + 1rem);
 }
 
 .security-handoff {
