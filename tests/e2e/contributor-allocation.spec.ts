@@ -73,6 +73,39 @@ async function setup(
 const section = (page: Page) =>
   page.getByRole("region", { name: "Contributor allocation" });
 
+for (const event of ["focus", "visibilitychange"] as const) {
+  test(`an allocation rechecks its deadline on ${event} after a wall-clock jump`, async ({
+    page,
+  }, info) => {
+    await page.clock.install({ time: new Date("2026-11-05T00:00:00Z") });
+    await setup(
+      page,
+      allocation(
+        { amountBase: "1537000000000000000000", transactionId: null },
+        "2026-11-05T00:10:00Z",
+      ),
+    );
+    await page.goto("/earnings", { waitUntil: "networkidle" });
+    await expect(section(page)).toContainText("Awaiting wallet");
+    await section(page).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath("before-return.png") });
+    // Unlike fastForward, changing the wall clock does not run the timeout.
+    await page.clock.setSystemTime(new Date("2026-11-05T01:00:00Z"));
+    await page.evaluate((type) => {
+      const target = type === "focus" ? window : document;
+      target.dispatchEvent(new Event(type));
+    }, event);
+    await expect(section(page)).toContainText("Unclaimed");
+    await expect(
+      section(page).getByRole("link", {
+        name: "Add or confirm your Robinhood Chain wallet",
+      }),
+    ).toHaveCount(0);
+    await expectAccessible(page);
+    await page.screenshot({ path: info.outputPath("after-return.png") });
+  });
+}
+
 test("an open allocation stops offering wallet registration when its deadline passes", async ({
   page,
 }, info) => {

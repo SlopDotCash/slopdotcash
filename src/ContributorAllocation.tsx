@@ -55,7 +55,17 @@ export function ContributorAllocationRow({
       () => setNow(Date.now()),
       Math.min(Math.max(0, closesAt - Date.now()), 2_147_483_647),
     );
-    return () => window.clearTimeout(timer);
+    // A returning page may have crossed the deadline while timers were paused.
+    const onReturn = () => {
+      if (document.visibilityState === "visible") setNow(Date.now());
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
   }, [closesAt, now]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads the published file.
   useEffect(() => {
