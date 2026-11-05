@@ -2,6 +2,7 @@ import { ArrowDown } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import { compareActors } from "./lib/github-actor";
 import { isPointsSummary, type PointsSummary } from "./lib/points-summary";
 import { usePublicResource } from "./lib/use-public-resource";
 
@@ -31,7 +32,7 @@ export function HomeStandings() {
   const ranked = useMemo(() => {
     if (points.status !== "ready") return [];
     return [...points.summary.contributors].sort(
-      (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
+      (a, b) => b.total - a.total || compareActors(a.actor, b.actor),
     );
   }, [points]);
   const ranks = new Map<string, number>();
