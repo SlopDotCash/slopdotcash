@@ -230,6 +230,63 @@ async function solo(pull: Pull, path: string, assessedAt: string, who = actor) {
 }
 
 type Solo = Awaited<ReturnType<typeof solo>>;
+
+/** A second solo record for the same source, chained over the first via
+ * `supersedes`. It is assessed but, in the interleaving scenario, no
+ * snapshot ever publishes it. The returned decision mirrors what the
+ * production ingestion hands the snapshot builder for a joint member:
+ * the member's complete verified solo history with the new record as
+ * its head. */
+async function soloRevision(first: Solo, pull: Pull, assessedAt: string) {
+  const prepared = await prepareValueRecord(
+    {
+      rubricVersion: VALUE_RUBRIC_VERSION,
+      sourceDigest: await valueSourceDigest(
+        first.src.evidence,
+        first.src.policy,
+      ),
+      pullRequestNodeId: pull.id,
+      headSha: pull.headRefOid,
+      policySha: base,
+      assessedAt,
+      verdict: assessment([pull.url]),
+      provenance,
+    } as never,
+    first.src.evidence,
+    first.src.policy,
+    "a".repeat(40),
+    first.digest,
+    "Reassessed on maintainer request before the joint review.",
+    [project],
+  );
+  const row = (sequence: number, digest: string, json: string, at: string) => ({
+    sequence,
+    record_digest: digest,
+    record_json: json,
+    recorded_at: at,
+  });
+  return {
+    prepared,
+    digest: prepared.recordDigest,
+    decision: {
+      status: "assessed",
+      record: prepared.record,
+      assessment: prepared.record.assessment,
+      implementationActorNodeIds: [actor.id],
+      latestDigest: prepared.recordDigest,
+      history: [
+        row(
+          1,
+          first.digest,
+          first.prepared.recordJson,
+          "2026-11-06T00:00:00.000Z",
+        ),
+        row(2, prepared.recordDigest, prepared.recordJson, assessedAt),
+      ],
+    },
+  };
+}
+
 type HistoryRow = {
   sequence: number;
   record_digest: string;
@@ -638,4 +695,84 @@ test("a supersession whose successor published nothing retires nothing", async (
   expect(
     journal.revisions.filter((r) => r.award.sourceId === old.id),
   ).toHaveLength(1);
+});
+
+test("an assessed but unpublished solo reassessment heading the member's chain does not strand the published original", async () => {
+  // Snapshot 1 publishes the original solo assessment A (90).
+  const first = await solo(old, "first.ts", "2026-11-06T00:00:00.000Z");
+  const initial = soloSnapshot("2026-11-20T00:00:00.000Z", [
+    { pull: old, solo: first },
+  ]);
+  let journal = apply(emptyPointsJournal(initial.generatedAt), initial);
+  expect(total(journal)).toBe(90);
+
+  // The same source is reassessed solo (B, chained over A) but no snapshot
+  // runs before the joint assessment J is prepared, so B is never
+  // published. J declares B — the solo chain's current head — as its
+  // legacy predecessor, and the original has left the collection window,
+  // so B's solo award appears in no ledger either.
+  const reassessed = await soloRevision(first, old, "2026-12-01T00:00:00.000Z");
+  const followup = variantPull(
+    "PR_followup",
+    18,
+    "2026-12-15T00:00:00.000Z",
+    "f".repeat(40),
+  );
+  const followSrc = source(followup, "second.ts");
+  const j = await joint({
+    sources: [first.src, followSrc],
+    legacy: [
+      [old.id, reassessed.digest],
+      [followup.id, null],
+    ],
+    legacyPredecessors: [reassessed.digest],
+    supersedes: [],
+    priorRows: [],
+    assessedAt: "2026-12-15T00:00:00.000Z",
+    targetId: followup.id,
+    reason: "Assess the original and follow-up as one retained outcome.",
+  });
+  expect(j.consumed.status).toBe("assessed");
+  const laterInput = input("2026-12-20T00:00:00.000Z", [followup], [old]);
+  laterInput.valueActors = new Map([
+    [actor.id, actor],
+    [owner.id, owner],
+  ]);
+  // Production hands the builder the member's verified solo decision
+  // alongside the joint decision (the ingestion's legacy read); its
+  // history is the chain A -> B with B as the unpublished head.
+  laterInput.valueDecisions = new Map([[old.id, reassessed.decision]]) as never;
+  laterInput.jointValueDecisions = new Map([
+    [old.id, j.consumed],
+    [followup.id, j.consumed],
+  ]) as never;
+  const later = createLeaderboardSnapshot(laterInput);
+  assertLeaderboardSnapshot(later);
+  // The relation names both digests: the declared head B and, through the
+  // consumed solo chain, the published original A it superseded.
+  expect(later.valueAssessmentSupersessions).toEqual(
+    [
+      { predecessorDigest: first.digest, successorDigest: j.digest },
+      { predecessorDigest: reassessed.digest, successorDigest: j.digest },
+    ].sort((a, b) => a.predecessorDigest.localeCompare(b.predecessorDigest)),
+  );
+  journal = apply(journal, later);
+  // A's recorded award is retired by J's published decision; B never
+  // published an award, so no revision carries its decision.
+  const revisions = journal.revisions.filter(
+    (r) => r.award.sourceId === old.id,
+  );
+  expect(revisions).toHaveLength(2);
+  expect(revisions[1].award.amount).toBe(0);
+  expect(revisions[1].decision?.sourceId).toBe(`value:${j.digest}`);
+  expect(revisions[1].decision?.delta).toBe(-90);
+  expect(
+    journal.revisions.some(
+      (r) => r.decision?.sourceId === `value:${reassessed.digest}`,
+    ),
+  ).toBe(false);
+  expect(latestAmount(journal, old.id)).toEqual([0]);
+  expect(total(journal)).toBe(90);
+  const count = journal.revisions.length;
+  expect(apply(journal, later).revisions.length).toBe(count);
 });
