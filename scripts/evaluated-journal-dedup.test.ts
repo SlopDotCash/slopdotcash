@@ -14,9 +14,15 @@ import { join } from "node:path";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import {
+  appendPointAwards,
   applyPointsSnapshot,
+  latestPoints,
+  type PointAward,
+  type PointRevision,
   type PointsJournal,
+  pointKey,
   pointMembers,
+  pointRevisionId,
 } from "../src/lib/points";
 import {
   GENERATED_AT,
@@ -138,6 +144,188 @@ test("the same refusal applies under a legacy source id and a lowercase URL", ()
   expect(() =>
     applyRetainedHistoryBatch(
       journalWithOrdinaryAwards(),
+      retainedHistoryAwards(events),
+      hash(JSON.stringify(events)),
+      LATER,
+    ),
+  ).toThrow("duplicates a score-bearing source");
+});
+
+test("a zeroed ordinary award no longer blocks an evaluated award", () => {
+  const journal = journalWithOrdinaryAwards();
+  const ordinary = [...latestPoints(journal).values()]
+    .map((revision) => revision.award)
+    .find(
+      (award) =>
+        award.category === "merged-pull-request" &&
+        award.sourceUrl.includes("/pull/8"),
+    );
+  if (!ordinary) {
+    throw new Error("fixture has no merged-pull-request award for PR 8");
+  }
+  expect(ordinary.amount).toBeGreaterThan(0);
+  // Revocations never delete a revision; they append an amount-0 one, and
+  // the member projection already skips it, so no ordinary credit remains.
+  const zeroed = appendPointAwards(
+    journal,
+    [{ ...ordinary, amount: 0 }],
+    hash("zero-revocation"),
+    "slop-score-v2",
+    LATER,
+  );
+  expect(memberTotal(zeroed) ?? 0).toBeLessThan(memberTotal(journal) ?? 0);
+  const events = load(duplicateAward);
+  const applied = applyRetainedHistoryBatch(
+    zeroed,
+    retainedHistoryAwards(events),
+    hash(JSON.stringify(events)),
+    LATER,
+  );
+  // 2 evaluated score points are 60 journal points, counted exactly once.
+  expect(memberTotal(applied)).toBe((memberTotal(zeroed) ?? 0) + 60);
+});
+
+test("a mixed-case pull segment still matches the ordinary award", () => {
+  // The manifest loader rejects a mixed-case path today (githubWorkKey
+  // throws), so this pins the guard's own case handling directly: the
+  // guard promises URL-case matching, and a null work key must not let a
+  // duplicate through if such an award ever reaches the batch.
+  const evaluated: PointAward = {
+    key: pointKey(
+      "asi",
+      AUTHOR,
+      "evaluated-contribution",
+      "MDExOlB1bGxSZXF1ZXN0NDI=",
+    ),
+    actor: { id: AUTHOR, login: "author" },
+    projectId: "asi",
+    category: "evaluated-contribution",
+    amount: 60,
+    occurredAt: "2026-09-05T00:00:00.000Z",
+    sourceId: "MDExOlB1bGxSZXF1ZXN0NDI=",
+    sourceUrl: "https://github.com/SlopDotCash/asi/PULL/8",
+    workUnitId: "wu_asi_MDExOlB1bGxSZXF1ZXN0NDI=",
+    provisional: false,
+  };
+  expect(() =>
+    applyRetainedHistoryBatch(
+      journalWithOrdinaryAwards(),
+      [evaluated],
+      hash("mixed-case-pull"),
+      LATER,
+    ),
+  ).toThrow("duplicates a score-bearing source");
+});
+
+// The published journal's retirement zeroing, mirrored from
+// scripts/generate-points.ts: a retired evaluated award is recognised only
+// by this exact digest, rule and timestamp.
+const RETIREMENT_ZERO_DIGEST =
+  "782097740ab32fa43352c9b7d43b34cc4586f8611068c40a9cddcc58edc9aa37";
+
+function retiredJournal(
+  retiredAward: PointAward,
+  extra: PointAward[],
+): PointsJournal {
+  const rev = (
+    previous: string | null,
+    recordedAt: string,
+    sourceDigest: string,
+    award: PointAward,
+  ): PointRevision => {
+    const body = {
+      previous,
+      recordedAt,
+      sourceDigest,
+      sourceRule: "slop-score-v2",
+      award,
+    };
+    return { id: pointRevisionId(body), ...body };
+  };
+  const first = rev(
+    null,
+    "2026-10-18T00:00:00.000Z",
+    hash("original-evaluated"),
+    retiredAward,
+  );
+  const zeroed = rev(
+    first.id,
+    "2026-10-20T05:30:25.870Z",
+    RETIREMENT_ZERO_DIGEST,
+    { ...retiredAward, amount: 0 },
+  );
+  const rest = extra.map((award) =>
+    rev(null, "2026-10-21T00:00:00.000Z", hash("ordinary-merge"), award),
+  );
+  return {
+    schemaVersion: "1",
+    ruleVersion: "slop-points-v1",
+    generatedAt: GENERATED_AT,
+    coverage: [],
+    revisions: [first, zeroed, ...rest],
+  };
+}
+
+test("recovering a retired evaluated award refused when ordinary credit exists", () => {
+  const retiredAward: PointAward = {
+    key: pointKey("asi", AUTHOR, "evaluated-contribution", "PR_retired"),
+    actor: { id: AUTHOR, login: "author" },
+    projectId: "asi",
+    category: "evaluated-contribution",
+    amount: 60,
+    occurredAt: "2026-09-05T00:00:00.000Z",
+    sourceId: "PR_retired",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/7",
+    workUnitId: "wu_asi_PR_retired",
+    provisional: false,
+  };
+  const ordinaryAward: PointAward = {
+    key: pointKey("asi", AUTHOR, "merged-pull-request", "PR_retired"),
+    actor: { id: AUTHOR, login: "author" },
+    projectId: "asi",
+    category: "merged-pull-request",
+    amount: 30,
+    occurredAt: "2026-10-21T00:00:00.000Z",
+    sourceId: "PR_retired",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/7",
+    workUnitId: "wu_asi_PR_retired",
+    provisional: false,
+  };
+  const journal = retiredJournal(retiredAward, [ordinaryAward]);
+  const before = memberTotal(journal);
+  expect(() =>
+    applyRetainedHistoryBatch(journal, [], hash("recovery-batch"), LATER),
+  ).toThrow("duplicates a score-bearing source");
+  expect(memberTotal(journal)).toBe(before);
+});
+
+test("a retired award is refused when a supplied award names the same work", () => {
+  const retiredAward: PointAward = {
+    key: pointKey("asi", AUTHOR, "evaluated-contribution", "PR_retired_legacy"),
+    actor: { id: AUTHOR, login: "author" },
+    projectId: "asi",
+    category: "evaluated-contribution",
+    amount: 60,
+    occurredAt: "2026-09-05T00:00:00.000Z",
+    sourceId: "PR_retired_legacy",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/7",
+    workUnitId: "wu_asi_PR_retired_legacy",
+    provisional: false,
+  };
+  const events = load({
+    ...duplicateAward,
+    id: "award_journal_retired_duplicate",
+    occurredAt: "2026-09-06T00:00:00.000Z",
+    source: {
+      ...duplicateAward.source,
+      id: "PR_retired_current",
+      number: 7,
+      url: "https://github.com/SlopDotCash/asi/pull/7",
+    },
+  });
+  expect(() =>
+    applyRetainedHistoryBatch(
+      retiredJournal(retiredAward, []),
       retainedHistoryAwards(events),
       hash(JSON.stringify(events)),
       LATER,

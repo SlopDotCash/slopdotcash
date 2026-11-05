@@ -376,7 +376,7 @@ function journalWorkKey(award: PointAward): string | null {
   )
     return null;
   const path = parsed.pathname.match(
-    /^\/([^/]+)\/([^/]+)\/(?:issues|pull)\/([1-9][0-9]*)\/?$/u,
+    /^\/([^/]+)\/([^/]+)\/(?:issues|pull)\/([1-9][0-9]*)\/?$/iu,
   );
   if (!path) return null;
   const repository = findHistoricalRepository(`${path[1]}/${path[2]}`);
@@ -410,16 +410,20 @@ function assertNoOrdinaryDuplicate(
   journal: PointsJournal,
   awards: PointAward[],
 ): void {
+  // Only positive ordinary credit is score-bearing: revocations and
+  // snapshot corrections append an amount-0 revision for the same key, and
+  // the member projection already skips those. A zeroed ordinary award must
+  // not keep blocking an evaluated award for the same source.
   const ordinary = [...latestPoints(journal).values()]
     .map((revision) => revision.award)
     .filter(
       (award) =>
-        award.category === "merged-pull-request" ||
-        award.category === "resolved-issue" ||
-        award.category === "material-test-change" ||
-        award.category === "evidence",
+        award.amount > 0 &&
+        (award.category === "merged-pull-request" ||
+          award.category === "resolved-issue" ||
+          award.category === "material-test-change" ||
+          award.category === "evidence"),
     );
-  if (!ordinary.length) return;
   const ordinaryIds = new Set(
     ordinary.map((award) => `${award.projectId}\0${award.sourceId}`),
   );
@@ -434,18 +438,34 @@ function assertNoOrdinaryDuplicate(
       })
       .filter((key): key is string => key !== null),
   );
+  // Evaluated awards in this batch must not name one source twice either:
+  // a supplied award and a recovered retired award can carry different
+  // source ids for one GitHub item. This mirrors the snapshot guard
+  // (evaluatedGitHubWork in src/lib/leaderboard.ts), which refuses the
+  // same shape. A zero-amount evaluated award pays nothing, so it can
+  // neither duplicate credit nor be duplicated.
+  const seenEvaluated = new Set<string>();
   for (const award of awards) {
-    if (award.category !== "evaluated-contribution") continue;
+    if (award.category !== "evaluated-contribution" || award.amount === 0)
+      continue;
     const workKey = journalWorkKey(award);
+    const identities = [
+      `${award.projectId}\0${award.sourceId}`,
+      `${award.projectId}\0${award.sourceUrl}`,
+      ...(workKey === null ? [] : [`${award.projectId}\0${workKey}`]),
+    ];
     if (
       ordinaryIds.has(`${award.projectId}\0${award.sourceId}`) ||
       ordinaryUrls.has(`${award.projectId}\0${award.sourceUrl}`) ||
-      (workKey !== null && ordinaryWork.has(`${award.projectId}\0${workKey}`))
+      (workKey !== null &&
+        ordinaryWork.has(`${award.projectId}\0${workKey}`)) ||
+      identities.some((identity) => seenEvaluated.has(identity))
     ) {
       throw new Error(
         `Evaluated contribution ${award.sourceId} duplicates a score-bearing source`,
       );
     }
+    for (const identity of identities) seenEvaluated.add(identity);
   }
 }
 
@@ -472,9 +492,14 @@ export function applyRetainedHistoryBatch(
   sourceDigest: string,
   recordedAt: string,
 ): PointsJournal {
-  assertNoOrdinaryDuplicate(journal, awards);
+  // The recovered retired awards are appended by this batch too, so the
+  // duplicate check must cover them as well: a retired evaluated award
+  // whose source the ordinary ledger has since scored would otherwise be
+  // paid a second time through the recovery path.
   const retired = retiredEvaluatorAwards(journal);
   const supplied = new Set(awards.map((award) => award.key));
+  const toRecover = retired.filter((award) => !supplied.has(award.key));
+  assertNoOrdinaryDuplicate(journal, [...awards, ...toRecover]);
   const retiredKeys = new Set(retired.map((award) => award.key));
   const priorIds = new Set(
     [...latestPoints(journal).values()]
@@ -483,7 +508,7 @@ export function applyRetainedHistoryBatch(
   );
   const recovered = appendPointAwards(
     journal,
-    retired.filter((award) => !supplied.has(award.key)),
+    toRecover,
     RETIREMENT_RECOVERY_DIGEST,
     "slop-score-v2",
     recordedAt,
