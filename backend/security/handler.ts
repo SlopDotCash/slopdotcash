@@ -2662,6 +2662,9 @@ async function planChange(
             ...reviewed,
             award_state: "ineligible",
             award_gross_minor: null,
+            // A refusal is a fresh no-award decision: it clears an earlier
+            // upheld appeal so the reporter may appeal this decision.
+            appeal_state: "none",
           },
         };
       // An approval reserves the proposed amount now, if funds exist. A
