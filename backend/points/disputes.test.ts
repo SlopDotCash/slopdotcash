@@ -671,6 +671,70 @@ test("the list links the current revision's dispute when a record has two", asyn
   expect(list.awards[0].disputeId).toBe(second.id);
 });
 
+test("a resolved dispute on an earlier revision still leaves the current revision disputable", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The month is wrong.",
+    })
+  ).json();
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const openList = await (await h.call()).json();
+  expect(openList.awards[0].revisionId).toBe(successor.id);
+  expect(openList.awards[0].disputeId).toBe(created.id);
+  expect(openList.awards[0].disputeRevisionId).toBe(h.revision.id);
+  expect(openList.awards[0].disputeResolvedAt).toBeNull();
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "Independent review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  expect(
+    (
+      await h.call(
+        `/${created.id}`,
+        { action: "uphold", reason: "Append a date correction." },
+        otherToken,
+      )
+    ).status,
+  ).toBe(200);
+  const { id: _next, ...nextRecord } = successor;
+  const wrongCorrection = {
+    ...nextRecord,
+    previous: successor.id,
+    award: { ...nextRecord.award, amount: 0 },
+  };
+  const latest: PointRevision = {
+    ...wrongCorrection,
+    id: pointRevisionId(wrongCorrection),
+  };
+  h.insert(latest);
+  const list = await (await h.call()).json();
+  expect(list.awards).toHaveLength(1);
+  expect(list.awards[0].revisionId).toBe(latest.id);
+  expect(list.awards[0].disputeId).toBe(created.id);
+  expect(list.awards[0].disputeRevisionId).toBe(h.revision.id);
+  expect(list.awards[0].disputeResolvedAt).not.toBeNull();
+  // The UI now offers Review for this row because the inherited dispute is
+  // resolved and belongs to an earlier revision; the API accepts the filing.
+  const second = await h.call("", {
+    revisionId: latest.id,
+    reason: "The correction is still wrong.",
+  });
+  expect(second.status).toBe(201);
+  expect((await second.json()).id).not.toBe(created.id);
+});
+
 test("signed-out and cross-origin requests cannot create a dispute", async () => {
   const h = await fixture();
   expect(

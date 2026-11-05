@@ -17,7 +17,13 @@ type Dispute = {
   mayDecide?: boolean;
 };
 type List = {
-  awards: { revisionId: string; award: PointAward; disputeId: string | null }[];
+  awards: {
+    revisionId: string;
+    award: PointAward;
+    disputeId: string | null;
+    disputeRevisionId: string | null;
+    disputeResolvedAt: string | null;
+  }[];
   next: string | null;
 };
 const stateLabel = (value: Dispute) =>
@@ -306,7 +312,10 @@ export default function PointsDisputes({
                     >
                       Open review
                     </Link>
-                  ) : (
+                  ) : null}{" "}
+                  {!item.disputeId ||
+                  (item.disputeResolvedAt &&
+                    item.disputeRevisionId !== item.revisionId) ? (
                     <button
                       type="button"
                       className="text-button"
@@ -318,7 +327,7 @@ export default function PointsDisputes({
                     >
                       Review
                     </button>
-                  )}
+                  ) : null}
                 </li>
               ))}
             </ul>
