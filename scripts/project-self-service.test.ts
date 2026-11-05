@@ -896,6 +896,81 @@ test("an application stored before self-service setup publishes once, by its app
   });
 });
 
+test("a stored application the registry permanently conflicts with is not offered for publication", async () => {
+  const { sqlite, call, create } = registry();
+  const storedApplication = (
+    id: string,
+    projectId: string,
+    repository: string,
+  ) => {
+    const manifest = JSON.stringify(
+      applicationManifest(projectId, repository, {
+        rewardAsset: {
+          network: "ethereum",
+          kind: "stablecoin",
+          address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          symbol: "USDC",
+          decimals: 6,
+          chainId: "1",
+          cluster: null,
+          verifiedAt: "2026-10-10T00:00:00.000Z",
+        },
+      }),
+    );
+    sqlite.exec(
+      `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at)
+       VALUES ('${id}','${projectId}','${repository}','${manifest}','${"a".repeat(64)}','Merged pull requests','${OWNER}','owner','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z')`,
+    );
+  };
+  // The project was listed through the creation form after the application
+  // was stored, so its id and repository are taken permanently.
+  expect((await create("open-registry", "example/open-registry")).status).toBe(
+    201,
+  );
+  expect((await create("other-registry", "example/shared")).status).toBe(201);
+  storedApplication(
+    "app_takenapplication1",
+    "open-registry",
+    "example/open-registry",
+  );
+  // A second stored application conflicts only through its repository,
+  // which a different listed project now holds.
+  storedApplication(
+    "app_takenapplication2",
+    "second-registry",
+    "example/shared",
+  );
+  // A third stored application is still free to publish.
+  storedApplication(
+    "app_freeapplication01",
+    "free-registry",
+    "example/free-registry",
+  );
+  const listed = await call("GET", "project-setup", OWNER);
+  expect(listed.body.applications).toEqual([
+    expect.objectContaining({ id: "app_freeapplication01" }),
+  ]);
+  // Publishing a conflicted application still answers the conflict; setup
+  // only stops offering what can never succeed.
+  for (const id of ["app_takenapplication1", "app_takenapplication2"]) {
+    const published = await call(
+      "POST",
+      `project-applications/${id}/publish`,
+      OWNER,
+      {},
+    );
+    expect(published.status).toBe(409);
+    expect(published.body.error).toBe("registry_conflict");
+  }
+  const published = await call(
+    "POST",
+    "project-applications/app_freeapplication01/publish",
+    OWNER,
+    {},
+  );
+  expect(published.status).toBe(201);
+});
+
 test("a stored update whose base revision moved on is not offered for publication", async () => {
   const { persistence, sqlite, call, create, state } = registry();
   await create("open-registry", "example/open-registry");
