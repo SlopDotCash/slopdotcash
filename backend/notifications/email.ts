@@ -460,8 +460,26 @@ async function verifyEmail(
     )
     .bind(githubId)
     .first<{ revision: number }>();
-  const version = randomEmailToken();
   const at = deps.now().toISOString();
+  // Re-verifying the address already on file is not an address change: PRD
+  // section 9 binds new consent to a *changed* address, so this destination
+  // keeps its version and the consent, queued deliveries and unsubscribe
+  // capabilities bound to that version stay in force. A changed address
+  // still rotates to a fresh version below. The preference-revision guard
+  // in the batch still refuses if a competing save lands first.
+  const pending = await deps.db
+    .prepare(
+      "SELECT email FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?",
+    )
+    .bind(await verificationTokenHash(body.token), githubId, at)
+    .first<{ email: string }>();
+  const current = pending ? await enrolledDestination(deps.db, githubId) : null;
+  const version =
+    current &&
+    pending &&
+    current.email.toLowerCase() === pending.email.toLowerCase()
+      ? current.destinationVersion
+      : randomEmailToken();
   const result = await emailBatch(deps, [
     deps.db
       .prepare(
