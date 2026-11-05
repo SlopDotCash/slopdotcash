@@ -328,7 +328,7 @@ const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${
  * sink below shares this one list, so the same act cannot escape by
  * renaming the decoder or by swapping the sink that runs it.
  */
-const DECODER_CALL = String.raw`(?:atob|Buffer\.from|unescape|decodeURIComponent|base64\.b64decode|bytes\.fromhex|codecs\.decode|binascii\.unhexlify|zlib\.decompress|gzip\.decompress|marshal\.loads)\s*\(`;
+const DECODER_CALL = String.raw`(?:atob|Buffer\.from|unescape|decodeURIComponent|base64\.(?:urlsafe_)?b(?:16|32|64|85)decode|bytes\.fromhex|codecs\.decode|binascii\.unhexlify|(?:zlib|gzip|bz2|lzma)\.decompress|marshal\.loads|pickle\.loads)\s*\(`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a

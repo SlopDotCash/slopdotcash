@@ -82,6 +82,25 @@ const DECODED_EXECUTION: Record<string, [string, string]> = {
     'exec(binascii.unhexlify("7072696e74283129"))\n',
   ],
   "gzip decoder under exec": ["setup.py", "exec(gzip.decompress(blob))\n"],
+  "bz2 decoder under exec": ["setup.py", "exec(bz2.decompress(blob))\n"],
+  "lzma decoder under exec": ["setup.py", "exec(lzma.decompress(blob))\n"],
+  "pickle decoder under eval": ["setup.py", "eval(pickle.loads(blob))\n"],
+  "urlsafe base64 decoder under eval": [
+    "setup.py",
+    'eval(base64.urlsafe_b64decode("cHJpbnQoMSk="))\n',
+  ],
+  "base32 decoder under exec": [
+    "setup.py",
+    'exec(base64.b32decode("OBYXE5DZOJ2GK==="))\n',
+  ],
+  "base16 decoder under exec": [
+    "setup.py",
+    'exec(base64.b16decode("7072696e74283129"))\n',
+  ],
+  "base85 decoder under exec": [
+    "setup.py",
+    'exec(base64.b85decode("NM&qnZ%G(qNKb?8$G"))\n',
+  ],
   // The Node vm entry points run a decoded payload exactly as eval does.
   "vm.runInContext of a decoded buffer": [
     "install.js",
@@ -141,6 +160,16 @@ const BENIGN: Record<string, [string, string]> = {
   "hex decoder without a sink": [
     "setup.py",
     'checksum = bytes.fromhex("7072696e74283129")\n',
+  ],
+  // Encoding a payload is not decoding it.
+  "base64 encoder without a sink": [
+    "setup.py",
+    "encoded = base64.b64encode(payload)\n",
+  ],
+  "pickle dumps without a sink": ["setup.py", "blob = pickle.dumps(state)\n"],
+  "bz2 compressor feeding a file": [
+    "setup.py",
+    "archive = bz2.compress(payload)\n",
   ],
   "codecs decode of a local string": [
     "setup.py",
