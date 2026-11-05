@@ -176,6 +176,29 @@ test("unrelated documentation does not select native EVM accounting", () => {
   );
 });
 
+for (const path of [
+  "workers/payments/index.ts",
+  "workers/payment-executor/core.ts",
+  "workers/payment-executor/solana.ts",
+  "scripts/payment-keeper/budget.ts",
+  "backend/payments/monthly.ts",
+]) {
+  test(`both escrow rails qualify payment execution changes in ${path}`, () => {
+    const scope = scopeFor({ [path]: "export {};\n" });
+    expect({ evm: scope.evm, solana: scope.solana }).toEqual({
+      evm: "true",
+      solana: "true",
+    });
+    const workflow = readFileSync(".github/workflows/escrow-tests.yml", "utf8");
+    const paths = workflow.match(/paths:\s*\n([\s\S]*?)\n {2}schedule:/u)?.[1];
+    expect(paths).toBeDefined();
+    const triggered = [...(paths ?? "").matchAll(/- '([^']+)'/gu)].some(
+      ([, pattern]) => new Bun.Glob(pattern).match(path),
+    );
+    expect(triggered).toBe(true);
+  });
+}
+
 const registryLanes = (lanes: string[]) =>
   lanes.filter((lane) => lane.startsWith("registry-"));
 
