@@ -839,6 +839,20 @@ function nextStep(
         text: "The payment is held.",
         dueAt: row.payment_deadline,
       };
+    if (settlementState === "needs-wallet")
+      return {
+        text: reporter
+          ? "Register and authorize a payout wallet."
+          : "Waiting for the reporter to register and authorize a payout wallet.",
+        dueAt: row.payment_deadline,
+      };
+    if (settlementState === "awaiting-owner-commitment")
+      return {
+        text: owner
+          ? "Sign the owner commitment to release the payment."
+          : "Waiting for the vault owner to sign the payment commitment.",
+        dueAt: row.payment_deadline,
+      };
     return {
       text: "The payment is in progress.",
       dueAt: row.payment_deadline,
