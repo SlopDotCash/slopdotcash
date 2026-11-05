@@ -12,6 +12,7 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import { buildPaymentWalletMessage } from "../../backend/payments/possession";
 import {
+  BINDING_SIZE,
   CONFIG_DISCRIMINATOR,
   CONFIG_SIZE,
   OBLIGATION_DISCRIMINATOR,
@@ -121,8 +122,18 @@ const accountInfo = (data: Uint8Array, ownerAddress = programId) => ({
 type SignatureStatus = { err: unknown; confirmationStatus: string } | null;
 const statuses = new Map<string, SignatureStatus>();
 let sendResult = "";
+/** A binding that already landed on chain, seen by the getAccountInfo stub. */
+let existingBinding: Uint8Array | null = null;
+function bindingBytes(): Uint8Array {
+  const out = new Uint8Array(BINDING_SIZE);
+  out.set(hexToBytes("33d3ccb9a84434b0"), 0);
+  out.set(hexToBytes(claimDigest), 8);
+  pubkeyAt(out, 112, destination.address);
+  new DataView(out.buffer).setBigUint64(144, 1n, true);
+  return out;
+}
 const originalFetch = globalThis.fetch;
-globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
+const fixtureFetch = (async (input: unknown, init?: { body?: unknown }) => {
   if (String(input) !== RPC_URL) throw new Error("Unexpected fetch target");
   const request = JSON.parse(String(init?.body ?? "{}")) as {
     method?: string;
@@ -147,7 +158,10 @@ globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
       if (address === projectPda) return reply(accountInfo(projectBytes()));
       if (address === awardAddress)
         return reply(accountInfo(obligationBytes()));
-      if (address === bindingAddress) return reply({ value: null });
+      if (address === bindingAddress)
+        return reply(
+          existingBinding ? accountInfo(existingBinding) : { value: null },
+        );
       throw new Error(`Unexpected account ${String(address)}`);
     }
     case "getLatestBlockhash":
@@ -160,7 +174,9 @@ globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
       return reply(1000);
     case "getSignatureStatuses":
       return reply({
-        value: [statuses.get(String(request.params?.[0]?.[0])) ?? null],
+        value: [
+          statuses.get(String((request.params?.[0] as unknown[])?.[0])) ?? null,
+        ],
       });
     case "sendTransaction":
       return reply(sendResult);
@@ -168,6 +184,7 @@ globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
       throw new Error(`Unexpected RPC method ${String(request.method)}`);
   }
 }) as typeof fetch;
+globalThis.fetch = fixtureFetch;
 
 function journal(): JournalStore & { map: Map<string, unknown> } {
   const map = new Map<string, unknown>();
@@ -367,6 +384,42 @@ test("a finalized failed Solana binding permits one fresh binding for the same a
     );
     expect(second.transactionId).toBe(replacement.transactionId);
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a finalized failed Solana binding refuses replacement when a matching binding already landed", async () => {
+  const { env, input } = setup();
+  const attester = createSolanaAttester(env);
+  try {
+    // The earlier test's finally restores the real fetch; re-install the
+    // fixture stub for this test.
+    globalThis.fetch = fixtureFetch;
+    const prepared = await attester.submit(input);
+    expect(prepared.transaction).toBeString();
+
+    // The contributor co-signs and the completed transaction is broadcast.
+    sendResult = prepared.transactionId;
+    const completed = await completeSolanaBinding(
+      env,
+      input,
+      coSign(prepared.transaction as string),
+    );
+    expect(completed.transactionId).toBe(prepared.transactionId);
+
+    // The broadcast attempt failed and the failure is finalized, so the
+    // replacement path opens — but a binding for this destination and claim
+    // digest already landed on chain, so no fresh binding may be prepared.
+    statuses.set(prepared.transactionId, {
+      err: { InstructionError: [0, "Custom:6001"] },
+      confirmationStatus: "finalized",
+    });
+    existingBinding = bindingBytes();
+    await expect(attester.submit(input)).rejects.toThrow(
+      "Binding changed; finalized receipt reconciliation required",
+    );
+  } finally {
+    existingBinding = null;
     globalThis.fetch = originalFetch;
   }
 });
