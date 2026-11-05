@@ -717,6 +717,63 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
     );
   });
 
+  test("a finding below high at a repository path never says the repository cannot clear it", () => {
+    const medium = (evidence: string) => ({
+      severity: "medium" as const,
+      category: "unsafe-execution" as const,
+      summary: "A postinstall script runs a package",
+      evidence,
+    });
+    const slopSide = /Slop's side|will not clear it/u;
+    const cases = [
+      {
+        findings: [medium("scripts/postinstall.js:12")],
+        message: "Findings in the project repository block clearance.",
+        first:
+          "Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in the repository.",
+      },
+      {
+        findings: [
+          medium("scripts/postinstall.js:12"),
+          medium("slop-skill-template/scripts/run-receipt.mjs:12"),
+        ],
+        message:
+          "Findings in both the repository and skill template block clearance.",
+        first:
+          "Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in the repository and Slop's skill template.",
+      },
+    ];
+    for (const { findings, message, first } of cases) {
+      const { summary, setup } = quarantined(
+        incompleteScan({
+          primaryReview: review("primary-run-2", "findings", "ambiguous"),
+          findings,
+        }),
+      );
+      expect(setup.checks.scan.message).toBe(message);
+      expect(setup.checks.scan.reasons).toEqual([
+        first,
+        "The primary review reported findings and rated the result ambiguous, and the specialist review that this result requires did not run.",
+      ]);
+      expect(JSON.stringify(setup.checks.scan)).not.toMatch(slopSide);
+      expect(JSON.stringify(setup.checks.scan)).not.toContain("postinstall");
+      expect(scanClearanceReasons(summary)).toEqual(
+        setup.checks.scan.reasons ?? [],
+      );
+    }
+    // Evidence with no path cannot be attributed, so no location sentence.
+    const { setup } = quarantined(
+      incompleteScan({
+        primaryReview: review("primary-run-2", "findings", "ambiguous"),
+        findings: [medium("no path here")],
+      }),
+    );
+    expect(setup.checks.scan.message).toBe("Findings block clearance.");
+    expect(setup.checks.scan.reasons).toEqual([
+      "The primary review reported findings and rated the result ambiguous, and the specialist review that this result requires did not run.",
+    ]);
+  });
+
   test("a flagged check, a high finding and a partial surface each name the repository", () => {
     const result = incompleteScan({
       coverage: {

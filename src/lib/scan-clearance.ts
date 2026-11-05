@@ -72,7 +72,10 @@ const REVIEW_AREA_GAP = /^(primary|specialist):([A-Za-z]+):partial$/u;
  * review outcome. Empty for any other state or for a historical result.
  */
 export function scanClearanceReasons(
-  assessment: Pick<AssessmentSummary, "state" | "scan" | "heldArtifacts">,
+  assessment: Pick<
+    AssessmentSummary,
+    "state" | "scan" | "heldArtifacts" | "findingsLocation"
+  >,
 ): string[] {
   const facts = assessment.scan;
   if (facts === undefined || assessment.state !== "incomplete") return [];
@@ -83,10 +86,20 @@ export function scanClearanceReasons(
     facts.incompleteSurfaces.length === 0 &&
     facts.openFindings.length === 0 &&
     assessment.heldArtifacts === 0;
-  if (repositoryClear)
-    reasons.push(
-      "Every deterministic check passed and every surface was read completely, so nothing in the repository was flagged by the checks. The block is a review-coverage decision on Slop's side; changing the repository will not clear it.",
-    );
+  // The "Slop's side" sentence must agree with the heading, which follows
+  // `findingsLocation` at every severity: a finding below high at a
+  // repository path still points the owner at the repository.
+  if (repositoryClear) {
+    const location = assessment.findingsLocation;
+    if (location === undefined || location === "template")
+      reasons.push(
+        "Every deterministic check passed and every surface was read completely, so nothing in the repository was flagged by the checks. The block is a review-coverage decision on Slop's side; changing the repository will not clear it.",
+      );
+    else if (location === "repository" || location === "both")
+      reasons.push(
+        `Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in ${location === "both" ? "the repository and Slop's skill template" : "the repository"}.`,
+      );
+  }
   for (const threat of facts.flaggedChecks) {
     const open =
       facts.openFindings.find((finding) => finding.category === threat)
