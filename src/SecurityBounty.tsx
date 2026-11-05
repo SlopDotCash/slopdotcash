@@ -4249,10 +4249,22 @@ function SecurityInboxContent({
     },
     [reload, embedded],
   );
+  // Selection changes keep the `case` parameter in sync: opening a case
+  // writes it and closing the case removes it, so a copied or reloaded URL
+  // always names the case on screen.
+  const closeCase = useCallback(() => {
+    setSelected(null);
+    const query = new URLSearchParams(window.location.search);
+    query.delete("case");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}?${query}`,
+    );
+  }, []);
   const created = (record: SecurityCase) => {
-    setSelected(record.id);
+    openCase(record.id);
     setNote("Report saved.");
-    reload();
   };
   const programProjects = useMemo(
     () => PROJECTS.filter((project) => project.listingTier !== "retired"),
@@ -4328,7 +4340,7 @@ function SecurityInboxContent({
               value={filter}
               onChange={(event) => {
                 setFilter(event.target.value as ReportFilter);
-                setSelected(null);
+                closeCase();
               }}
             >
               <option value="all">All reports</option>
@@ -4388,7 +4400,7 @@ function SecurityInboxContent({
                       <button
                         aria-pressed={selected === record.id}
                         className="security-case-choice"
-                        onClick={() => setSelected(record.id)}
+                        onClick={() => openCase(record.id)}
                         type="button"
                       >
                         <span>{record.projectId}</span>
@@ -4405,16 +4417,7 @@ function SecurityInboxContent({
                 <button
                   type="button"
                   className="text-button"
-                  onClick={() => {
-                    setSelected(null);
-                    const query = new URLSearchParams(window.location.search);
-                    query.delete("case");
-                    window.history.replaceState(
-                      window.history.state,
-                      "",
-                      `${window.location.pathname}?${query}`,
-                    );
-                  }}
+                  onClick={closeCase}
                 >
                   Back to reports
                 </button>
