@@ -409,6 +409,62 @@ async function programTerms(
   return reportingContext(deps, projectId);
 }
 
+/**
+ * Whether `stored` and `current` name the same registered repository of
+ * `projectId`. A recorded rename or transfer keeps the repository id and
+ * appends the current path as an alias (see `assertRepositoryTransition`),
+ * so a submission stored under the former path still names this repository.
+ * A path the registry never recorded for the project does not.
+ */
+async function sameRegisteredRepository(
+  deps: SecurityApiDependencies,
+  projectId: string,
+  stored: string,
+  current: string,
+): Promise<boolean> {
+  if (stored.toLowerCase() === current.toLowerCase()) return true;
+  const row = await deps.db
+    .prepare("SELECT manifest FROM projects WHERE id = ?")
+    .bind(projectId)
+    .first<{ manifest: string }>();
+  if (row === null) return false;
+  let repositories: unknown;
+  try {
+    repositories = (JSON.parse(row.manifest) as { repositories?: unknown })
+      .repositories;
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(repositories)) return false;
+  for (const entry of repositories) {
+    const repository = entry as {
+      id?: unknown;
+      aliases?: unknown;
+      githubUrl?: unknown;
+    };
+    const names = new Set<string>();
+    if (typeof repository.id === "string")
+      names.add(repository.id.toLowerCase());
+    if (Array.isArray(repository.aliases))
+      for (const alias of repository.aliases)
+        if (typeof alias === "string") names.add(alias.toLowerCase());
+    if (typeof repository.githubUrl === "string") {
+      try {
+        names.add(
+          new URL(repository.githubUrl).pathname
+            .replace(/^\/|\/$/gu, "")
+            .toLowerCase(),
+        );
+      } catch {
+        // A malformed URL records no current path; the names above stand.
+      }
+    }
+    if (names.has(stored.toLowerCase()) && names.has(current.toLowerCase()))
+      return true;
+  }
+  return false;
+}
+
 async function grantResponse(
   deps: SecurityApiDependencies,
   actor: Actor,
@@ -674,9 +730,12 @@ async function verifyReceipt(
   const terms = await programTerms(deps, row.project_id);
   const ghsa = row.advisory_ghsa as string;
   const marker = row.origin === "slop" ? markerLine(row.marker) : undefined;
+  // GitHub is read under the repository's current registered name: the
+  // client follows no redirect, so the former path stored on the row
+  // cannot reach the advisory after a recorded rename or transfer.
   const fetched = await intake.advisories.getAdvisory(
     grant,
-    row.repository,
+    terms.intake.repository,
     ghsa,
     marker,
   );
@@ -709,8 +768,13 @@ async function verifyReceipt(
   const reporter = row.reporter_github_id;
   if (
     facts.ghsa !== ghsa ||
-    facts.repository.toLowerCase() !== row.repository.toLowerCase() ||
-    row.repository.toLowerCase() !== terms.intake.repository.toLowerCase()
+    facts.repository.toLowerCase() !== terms.intake.repository.toLowerCase() ||
+    !(await sameRegisteredRepository(
+      deps,
+      row.project_id,
+      row.repository,
+      terms.intake.repository,
+    ))
   )
     return failWith("invalid");
   // A pasted link never establishes authorship (SEC-17); GitHub's author
@@ -840,7 +904,7 @@ async function writeVerifiedCase(
     caseInsertStatement(deps, {
       id: caseId,
       projectId: row.project_id,
-      repository: row.repository,
+      repository: facts.repository,
       advisory: facts.ghsa,
       reporter,
       verified: {
@@ -1026,7 +1090,14 @@ async function sendSubmission(
     );
   const report = storedReport ?? parseReportInput(body.report);
   const terms = await programTerms(deps, row.project_id);
-  if (terms.intake.repository.toLowerCase() !== row.repository.toLowerCase())
+  if (
+    !(await sameRegisteredRepository(
+      deps,
+      row.project_id,
+      row.repository,
+      terms.intake.repository,
+    ))
+  )
     fail(409, "intake_changed", "The program's intake changed; start again");
   const grant = await requireGrant(request, deps, intake, row);
   if ((await pvrState(deps, row.project_id)) !== "ready")
@@ -1073,7 +1144,7 @@ async function sendSubmission(
   }
   const result = await intake.advisories.createReport(
     grant,
-    sending.repository,
+    terms.intake.repository,
     report,
     markerLine(sending.marker),
   );
@@ -1112,7 +1183,14 @@ async function sendSubmission(
   // binding is set once, so the earliest copy is chosen before it is set.
   const copies =
     sending.attempt > 1
-      ? await earlierCopies(deps, intake, sending, grant, result.facts)
+      ? await earlierCopies(
+          deps,
+          intake,
+          sending,
+          grant,
+          result.facts,
+          terms.intake.repository,
+        )
       : [result.facts];
   const adopted = copies[0];
   let submitted: SubmissionRow | null = null;
@@ -1190,10 +1268,11 @@ async function earlierCopies(
   row: SubmissionRow,
   grant: ReporterGrant,
   accepted: AdvisoryFacts,
+  repository: string,
 ): Promise<AdvisoryFacts[]> {
   const listing = await intake.advisories.findByMarker(
     grant,
-    row.repository,
+    repository,
     markerLine(row.marker),
     sinceFirstAttempt(await firstAttemptAt(deps, row)),
   );
@@ -1239,9 +1318,12 @@ async function reconcileSubmission(
     fail(409, "nothing_to_reconcile", "This submission is not uncertain");
   const grant = await requireGrant(request, deps, intake, row);
   if (row.state === "uncertain" && row.advisory_ghsa === null) {
+    // The listing reads GitHub under the repository's current registered
+    // name, for the same no-redirect reason as the receipt check.
+    const terms = await programTerms(deps, row.project_id);
     const listing = await intake.advisories.findByMarker(
       grant,
-      row.repository,
+      terms.intake.repository,
       markerLine(row.marker),
       sinceFirstAttempt(await firstAttemptAt(deps, row)),
     );
