@@ -284,6 +284,22 @@ export function profileCounts(p: ProfileRecord) {
 }
 
 /**
+ * Directory search: a row matches when the query is a case-insensitive
+ * substring of any login the person is recorded under — the directory's
+ * current login or an earlier one the journal keeps for the same permanent
+ * actor ID after a rename.
+ */
+export function directoryLoginMatches(
+  logins: Iterable<string>,
+  query: string,
+): boolean {
+  const needle = query.trim().toLowerCase();
+  for (const login of logins)
+    if (login.toLowerCase().includes(needle)) return true;
+  return false;
+}
+
+/**
  * Public search for one contributor's pull requests.
  * `github.com/pulls` is the signed-in dashboard and sends anonymous visitors
  * to the login page, so the profile counts cannot use it.

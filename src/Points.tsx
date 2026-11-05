@@ -45,6 +45,7 @@ import {
 import { loginReturnPath } from "./lib/login-return";
 import {
   assemblePoints,
+  journalLoginsByActorId,
   POINTS_NOTICE,
   type PointsIndex,
   type PointsJournal,
@@ -52,7 +53,7 @@ import {
   pointMembers,
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
-import { profileCounts } from "./lib/profiles";
+import { directoryLoginMatches, profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
@@ -1490,8 +1491,20 @@ function People({ query }: { query: string }) {
       }
     return [...byId.values()].sort((a, b) => a.login.localeCompare(b.login));
   }, [census.state, members]);
+  // A renamed contributor is still recorded under their earlier login in
+  // the points journal; searching that login must find the same person.
+  const recordedLogins = useMemo(
+    () =>
+      state.status === "ready"
+        ? journalLoginsByActorId(state.journal)
+        : new Map<string, Set<string>>(),
+    [state],
+  );
   const matches = people.filter((p) =>
-    p.login.toLowerCase().includes(query.trim().toLowerCase()),
+    directoryLoginMatches(
+      [p.login, ...(recordedLogins.get(p.id) ?? [])],
+      query,
+    ),
   );
   const pages = Math.max(1, Math.ceil(matches.length / PEOPLE_PAGE_SIZE));
   const current = Math.min(page, pages - 1);
