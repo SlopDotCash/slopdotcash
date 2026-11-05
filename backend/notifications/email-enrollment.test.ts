@@ -713,6 +713,48 @@ test("re-verifying the current address keeps its version, queued deliveries and 
   h.sqlite.close();
 });
 
+test("re-verifying after a consent toggle does not replay the old disabled-consent row", async () => {
+  const h = await setup();
+  await h.enroll("member@example.com", MEMBER, {
+    enabled: false,
+    securityEnabled: true,
+  });
+  const first = await h.verify();
+  const version = first.body.destinationVersion as string;
+  h.advance();
+  await h.enroll("member@example.com", MEMBER, {
+    enabled: true,
+    securityEnabled: true,
+  });
+  await h.verify();
+  h.advance();
+  h.activity("queued-after-opt-in");
+  h.advance();
+  await h.enroll("member@example.com", MEMBER, {
+    enabled: true,
+    securityEnabled: true,
+  });
+  const reverified = await h.verify();
+  expect(reverified.body).toMatchObject({
+    destinationVersion: version,
+    enabled: true,
+    securityEnabled: true,
+  });
+  const outbox = h.sqlite
+    .query(
+      "SELECT state FROM activity_notification_outbox WHERE event_key='queued-after-opt-in'",
+    )
+    .get() as { state: string };
+  expect(outbox.state).toBe("queued");
+  const prefs = h.sqlite
+    .query(
+      "SELECT enabled, revision FROM notification_email_preferences WHERE github_id=?",
+    )
+    .get(MEMBER) as { enabled: number; revision: number };
+  expect(prefs.enabled).toBe(1);
+  h.sqlite.close();
+});
+
 test.each(["/verification", "/verify"])(
   "email %s returns a client error for malformed JSON",
   async (path) => {
