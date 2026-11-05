@@ -54,6 +54,7 @@ type Intake = {
   canForward: boolean;
   canRetryScreening: boolean;
   canReview: boolean;
+  canRevise: boolean;
   reason: string | null;
 };
 type Submission = {
@@ -2111,6 +2112,82 @@ describe("durable private report controls", () => {
     expect(t.notices(OWNER)).toHaveLength(1);
     expect(t.screeningCalls()).toBe(1);
   });
+
+  test.each(["spam", "needs-information"] as const)(
+    "a maintainer forward over a %s screen closes the reporter revision window",
+    async (screening) => {
+      const t = fixture();
+      t.decision(screening);
+      const accepted = await t.create();
+      const created = required(accepted.body.submission);
+      expect(created.intake.state).toBe(screening);
+      expect(created.intake.canRevise).toBe(true);
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${created.id}/review`,
+        {
+          expectedRevision: created.intake.revision,
+          decision: "forward",
+          reason: "The maintainer independently reproduced the finding.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      const view = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${created.id}`,
+      );
+      const cleared = required(view.body.submission);
+      expect(cleared.intake.canForward).toBe(true);
+      expect(cleared.intake.routingState).toBe("routed");
+      expect(cleared.intake.canRevise).toBe(false);
+      const revised = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${created.id}/report`,
+        {
+          expectedRevision: cleared.intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Appended after routing.`,
+          },
+        },
+      );
+      expect(revised.status).toBe(409);
+      expect(revised.body.error).toBe("report_not_editable");
+      // The routing decision and the routed state survive the refused edit.
+      expect(
+        t.sqlite
+          .query(
+            "SELECT review_decision, routed_at, report_version FROM security_submission_intake WHERE submission_id=?",
+          )
+          .get(created.id),
+      ).toEqual({
+        review_decision: "forward",
+        routed_at: "2026-10-27T12:00:00.000Z",
+        report_version: 1,
+      });
+      // Asking for information again reopens the window.
+      const held = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${created.id}/review`,
+        {
+          expectedRevision: cleared.intake.revision,
+          decision: "request-information",
+          reason: "One more reproduction detail is required.",
+        },
+      );
+      expect(held.status).toBe(200);
+      const reopened = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${created.id}`,
+      );
+      expect(required(reopened.body.submission).intake.canRevise).toBe(true);
+    },
+  );
 
   test("a stale model answer cannot override the owner's information request or block revision", async () => {
     const t = fixture();
