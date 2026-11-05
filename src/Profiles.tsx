@@ -14,7 +14,7 @@ import {
   type ProfileIndex,
   profileCounts,
 } from "./lib/profiles";
-import { findProject } from "./lib/projects.mjs";
+import { findCycleProject, findProject } from "./lib/projects.mjs";
 import { isUsdMicroAsset } from "./lib/received-totals";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
@@ -314,7 +314,7 @@ function ProfilePaymentHistory({
         <PaymentRecord
           name={
             <Link href={`/cycles/${cycle.projectId}/${cycle.cycleId}`}>
-              {findProject(cycle.projectId)?.name ?? cycle.projectId} ·{" "}
+              {findCycleProject(cycle.projectId)?.name ?? cycle.projectId} ·{" "}
               {formatCycleMonth(cycle.cycleId)}
             </Link>
           }

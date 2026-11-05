@@ -13,7 +13,7 @@ import {
   type ProjectView,
   projectCycleHasOpened,
 } from "./lib/project-view";
-import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
+import { findCycleProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
 import type { CycleIndexState } from "./lib/use-cycle-index";
 import type { DataState } from "./lib/use-snapshot";
@@ -464,7 +464,7 @@ export function CycleArchivePage({
   // A filter appears only when the published records offer a choice.
   const options = {
     project: [...new Set(all.map((cycle) => cycle.projectId))].map(
-      (id) => [id, findProject(id)?.name ?? id] as const,
+      (id) => [id, findCycleProject(id)?.name ?? id] as const,
     ),
     month: [...new Set(all.map((cycle) => cycle.cycleId))].map(
       (id) => [id, formatCycleMonth(id)] as const,
@@ -552,7 +552,7 @@ export function CycleArchivePage({
       ) : null}
       <div className="cycle-records">
         {cycles.map((cycle) => {
-          const project = findProject(cycle.projectId);
+          const project = findCycleProject(cycle.projectId);
           const amountStage =
             cycle.state === "paid"
               ? "Paid"

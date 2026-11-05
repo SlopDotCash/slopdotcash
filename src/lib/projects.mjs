@@ -219,6 +219,27 @@ export function findProject(value) {
 }
 
 /**
+ * Resolves a project for its cycle pages: the listed registry first, then
+ * immutable history. A retired project leaves every page and list, but its
+ * recorded cycles stay public history — the cycle archive and the profile
+ * payment history keep linking to them — so a cycle route resolves the
+ * project here instead of reporting it missing.
+ */
+export function findCycleProject(value) {
+  const listed = findProject(value);
+  if (listed) return listed;
+  const historical = findHistoricalProject(value);
+  if (historical) return historical;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return (
+    HISTORICAL_PROJECTS.find(
+      (project) => project.slug.toLowerCase() === normalized,
+    ) ?? null
+  );
+}
+
+/**
  * Resolves a ledger repository in the registry snapshot the ledger was
  * collected from, including retired projects. Score events always resolve
  * here, even when the runtime registry no longer lists their project.
