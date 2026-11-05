@@ -1904,6 +1904,29 @@ describe("private intake: direct GitHub reports", () => {
     });
     expect(t.cases()).toHaveLength(1);
   });
+
+  test("a direct report's shown response due runs from its verified receipt, not the GitHub filing time", async () => {
+    const t = setup();
+    // Filed on GitHub on 2026-10-20, verified at the harness clock three
+    // days later. Counted from the filing, the published 24-hour
+    // acknowledgement target would already be past at the first view,
+    // before the owner was ever notified or could act.
+    const { verified } = await direct(t, REPORTER);
+    expect(verified.body.submission?.state).toBe("receipt-verified");
+    const [row] = t.cases();
+    expect(row.received_at).toBe("2026-10-20T08:30:00.000Z");
+    expect(row.verified_at).toBe(START);
+    // Intake stores the due from the verification time, and the notice
+    // escalation measures the same window from the notice written at
+    // verification. The reporter's view must show that same due.
+    expect(row.next_action_due_at).toBe("2026-10-24T10:00:00.000Z");
+    const view = await t.call(REPORTER, "GET", `security-cases/${row.id}`);
+    expect(view.body.case).toMatchObject({
+      receivedAt: "2026-10-20T08:30:00.000Z",
+      nextStep: "Waiting for the project owner's response.",
+      nextStepDueAt: "2026-10-24T10:00:00.000Z",
+    });
+  });
 });
 
 describe("private intake: analysis, access, privacy and mode", () => {
