@@ -1145,6 +1145,24 @@ export function pointMembers(
     (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
   );
 }
+/**
+ * Every login the journal has recorded for one permanent actor ID. A
+ * contributor who renames their GitHub account keeps earlier history under
+ * the previous login, while the directory carries only the current one;
+ * readers that resolve people by ID (PRD section 3) meet both spellings.
+ */
+export function journalLoginsByActorId(
+  journal: PointsJournal,
+): Map<string, Set<string>> {
+  const logins = new Map<string, Set<string>>();
+  for (const revision of journal.revisions) {
+    const { id, login } = revision.award.actor;
+    const recorded = logins.get(id);
+    if (recorded) recorded.add(login);
+    else logins.set(id, new Set([login]));
+  }
+  return logins;
+}
 export function emptyPointsJournal(at: string): PointsJournal {
   return {
     schemaVersion: "1",
