@@ -330,22 +330,49 @@ const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${
 /** Literal path token a staged download writes and a later command runs. */
 const STAGED_PATH = String.raw`[A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*`;
 /**
+ * PowerShell OutFile/BITS Destination: a literal path, or `$name` /
+ * `$env:Name\rest` so a later Start-Process/msiexec can link the same
+ * token. Shell staged downloads keep STAGED_PATH (no `$`) so
+ * `curl -o $TMPDIR/…` stays unlinked.
+ */
+const STAGED_PS_DEST = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z_][A-Za-z0-9_]*)?(?:\\[A-Za-z0-9._~/%+=@-]+)*|${STAGED_PATH})`;
+/**
  * Run capture group `n` after a staged download: shell/interpreter/`source`,
- * PowerShell `-File`, call operator, or a path-prefixed direct execution.
+ * PowerShell `-File`, call operator, path-prefixed direct execution,
+ * `Start-Process` / `-FilePath`, or `msiexec /i` (including ArgumentList).
  */
 function stagedRun(n: number): string {
   // `.\` is a PowerShell path prefix; the character class keeps the
   // trailing backslash from escaping the group closer. Build the
   // backreference outside String.raw: `\${n}` there stays literal `{n}`.
-  return (
+  const pathRef = `\\${n}`;
+  const classic =
     String.raw`(?:^|[\n;|&])[ \t]*${PRIVILEGE_WRAPPER}(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.|powershell(?:\.exe)?|pwsh(?:\.exe)?)\s+(?:-[Ff]ile\s+)?["']?(?:\./|\.[\\])?|&\s+["']?(?:\./|\.[\\])?|["']?(?:\./|\.[\\]|(?=/)))` +
-    `\\${n}` +
-    String.raw`["']?(?=$|[\s|;&<>()'"])`
-  );
+    pathRef +
+    String.raw`["']?(?=$|[\s|;&<>()'"])`;
+  // Dominant PowerShell installer form: no `./` required on the path.
+  const startProcess =
+    String.raw`(?:^|[\n;|&])[ \t]*Start-Process\b(?:\s+-[Ff]ile[Pp]ath)?\s+["']?(?:\./|\.[\\])?` +
+    pathRef +
+    String.raw`["']?(?=$|[\s|;&<>()'"])`;
+  const startProcessMsiexec =
+    String.raw`(?:^|[\n;|&])[ \t]*Start-Process\b\s+msiexec(?:\.exe)?\b[^\n;|&]{0,200}?-ArgumentList\s+["'][^"'\n]*?/[Ii]\s+` +
+    pathRef +
+    String.raw`(?=[\s"'])`;
+  const msiexec =
+    String.raw`(?:^|[\n;|&])[ \t]*msiexec(?:\.exe)?\b[^\n;|&]*?/[Ii]\s+["']?` +
+    pathRef +
+    String.raw`["']?(?=$|[\s|;&<>()'"])`;
+  return `(?:${classic}|${startProcess}|${startProcessMsiexec}|${msiexec})`;
 }
 /** Download tool that names an output path, then later runs that path. */
-function stagedTool(tool: string, outFlag: string, n: number): string {
-  return String.raw`(?:^|[\n;|&])[ \t]*${tool}\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:${outFlag})(?:=|\s+)["']?(${STAGED_PATH})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${stagedRun(n)}`;
+function stagedTool(
+  tool: string,
+  outFlag: string,
+  n: number,
+  path: string = STAGED_PATH,
+): string {
+  return String.raw`(?:^|[\n;|&])[ \t]*${tool}\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:${outFlag})(?:=|\s+)["']?(${path})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${stagedRun(n)}`;
 }
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -538,16 +565,18 @@ const RULES: Rule[] = [
     // command position or after a shell, interpreter or `source` verb.
     // Bare filenames search PATH, so direct execution requires a path.
     // Shell flags can select syntax-only or version output and are excluded.
-    // The path is one literal token: quoted spellings count, but a
-    // variable, a glob, a glued or clustered output flag and `curl -O`
-    // (which is given no path) stay out. Reading, checksumming or
-    // mentioning the downloaded file keeps no finding, and neither does
-    // running a file this file did not download. The rule is
-    // case-sensitive because the tools assign opposite meanings to the
-    // two spellings: `curl -o` names the download, `wget -o` names a
-    // log file, and only `wget -O` names the download. Inventory siblings
-    // aria2c/axel and PowerShell OutFile/BITS Destination use the same
-    // link: the download inventory already names them.
+    // The path is one token: quoted spellings count. Shell curl/wget keep
+    // a literal path only (a `$var`, a glob, a glued flag and `curl -O`
+    // stay out). PowerShell OutFile/BITS Destination also accept
+    // `$name` / `$env:Name\rest` so Start-Process/msiexec can link the
+    // same token. Reading, checksumming or mentioning the downloaded
+    // file keeps no finding, and neither does running a file this file
+    // did not download. The rule is case-sensitive because the tools
+    // assign opposite meanings to the two spellings: `curl -o` names
+    // the download, `wget -o` names a log file, and only `wget -O`
+    // names the download. Inventory siblings aria2c/axel and PowerShell
+    // OutFile/BITS Destination use the same link: the download inventory
+    // already names them.
     pattern: new RegExp(
       [
         stagedTool("curl", "-o|--output", 1),
@@ -559,8 +588,11 @@ const RULES: Rule[] = [
           "(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)",
           "-[Oo]ut[Ff]ile",
           6,
+          STAGED_PS_DEST,
         ),
-        String.raw`(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n]*-TransferType\s+["']?Upload\b)(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:-Destination)(?:=|\s+)["']?(${STAGED_PATH})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${stagedRun(7)}`,
+        // Source may be a literal URL or `$downloadUrl`-style variable
+        // (public BITS installers often hide the URL in a variable).
+        String.raw`(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n]*-TransferType\s+["']?Upload\b)(?=[^\n;|&]*(?:https?://|-Source(?:\s+|=)["']?\$))[^\n;|&]*?(?<![\w-])(?:-Destination)(?:=|\s+)["']?(${STAGED_PS_DEST})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${stagedRun(7)}`,
       ].join("|"),
       "mu",
     ),

