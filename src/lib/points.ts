@@ -829,9 +829,15 @@ export function applyPointsSnapshot(
     }
     const project = findHistoricalProject(a.projectId);
     const sourceUrl = new URL(a.sourceUrl);
+    // The journal keeps the raw URL. The manifest validator compares the
+    // path case-folded, so "/PULL/" is the same pull request as "/pull/".
+    // A case-sensitive match skips the coverage guard below and zeroes an
+    // award whose valuation is still missing.
     const match =
       sourceUrl.origin === "https://github.com"
-        ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
+        ? sourceUrl.pathname.match(
+            /^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/iu,
+          )
         : null;
     let invalidatedJointDecision: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
