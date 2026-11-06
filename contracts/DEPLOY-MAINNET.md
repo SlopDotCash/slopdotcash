@@ -1283,13 +1283,21 @@ Build the unsigned calldata only through the fail-closed preflight. The reviewed
 schema-v2 approval file is a separate input that pins the contract role, both the
 outgoing and replacement source commits and provenance, complete storage-layout
 digests, CREATE2 implementation addresses and runtime SHA-256 values. The command
-rebuilds the replacement from the clean checked-out source and independently
-archives and compiles the exact outgoing commit. It reads the target proxy's
-ERC-1967 implementation slot, proves that implementation is the approved outgoing
-vault or factory by exact runtime-byte comparison, compares the complete storage
-rows and recursively referenced types and struct members, then checks the deployed
-replacement runtime with canonical even-length RPC hex, calls `proxiableUUID()`,
-and only then prints an owner-signable zero-value transaction:
+rebuilds both the replacement and outgoing implementations from detached worktrees
+of their exact approved commits (never from mutable checkout bytes). It resolves one
+canonical RPC block hash and number, pins the proxy slot, both runtime reads and the
+UUID call to that same block, and rejects a reorg or inconsistent block response. It
+then proves that the proxy's implementation is the approved outgoing vault or factory
+by exact runtime-byte comparison, compares the complete storage rows and recursively
+referenced types and struct members, compares the deployed replacement runtime with
+canonical even-length RPC hex, calls `proxiableUUID()`, and only then prints an
+owner-signable zero-value transaction package. The package records the pinned block,
+outgoing implementation and outgoing runtime digest, plus a mandatory pre-broadcast
+revalidation instruction: immediately before broadcast, rerun the preflight and
+require an identical snapshot and transaction payload. The current production UUPS
+ABI cannot atomically assert the outgoing implementation on-chain, so this procedure
+reduces but does not eliminate the execution-time race; never describe the package as
+on-chain atomic protection:
 
 ```sh
 bun contracts/evm/prepare-upgrade.ts \

@@ -77,24 +77,10 @@ function compileAtRoot(
 }
 
 export function compileCurrentImplementation(kind: UpgradeKind) {
-  const sourceStatus = git(
-    "status",
-    "--porcelain",
-    "--untracked-files=all",
-    "--",
-    "src",
-    "vendor",
-    "foundry.toml",
-  );
-  assert.equal(
-    sourceStatus,
-    "",
-    "contract sources or compiler configuration differ from HEAD",
-  );
-  return compileAtRoot(root, kind, sourceAt("HEAD"));
+  return compileImplementationAtCommit(kind, git("rev-parse", "HEAD^{commit}"));
 }
 
-export function compileHistoricalImplementation(
+export function compileImplementationAtCommit(
   kind: UpgradeKind,
   commit: string,
 ) {
@@ -122,6 +108,8 @@ export function compileHistoricalImplementation(
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+export const compileHistoricalImplementation = compileImplementationAtCommit;
 
 export async function main(argv = process.argv) {
   const args = new Map<string, string>();
@@ -156,7 +144,10 @@ export async function main(argv = process.argv) {
     "approval contract does not match its kind",
   );
 
-  const compiled = compileCurrentImplementation(approval.kind);
+  const compiled = compileImplementationAtCommit(
+    approval.kind,
+    approval.source.commit,
+  );
   const previousCompiled = compileHistoricalImplementation(
     approval.kind,
     approval.previous.source.commit,

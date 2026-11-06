@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -42,6 +43,8 @@ test("clean prior worktree and clean checkout produce a legitimate owner-signabl
     },
   };
   const rpc = async (method: string, params: unknown[]) => {
+    if (method === "eth_getBlockByNumber")
+      return { number: "0x123", hash: `0x${"ab".repeat(32)}` };
     if (method === "eth_getStorageAt")
       return `0x${previousCompiled.implementation.slice(2).padStart(64, "0")}`;
     if (method === "eth_getCode")
@@ -65,3 +68,20 @@ test("clean prior worktree and clean checkout produce a legitimate owner-signabl
   expect(transaction.implementation).toBe(compiled.implementation);
   expect(transaction.data).toStartWith("0x4f1ef286");
 }, 120_000);
+
+test("current implementation compilation ignores mutable checkout bytes and compiles exact HEAD", () => {
+  const sourcePath = `${root}/src/ProjectEscrow.sol`;
+  const before = readFileSync(sourcePath, "utf8");
+  try {
+    const pristine = compileCurrentImplementation("vault");
+    appendFileSync(sourcePath, "\n// sabotage mutable checkout compilation\n");
+    const sabotagedCheckout = compileCurrentImplementation("vault");
+    expect(sabotagedCheckout.source).toEqual(pristine.source);
+    expect(sabotagedCheckout.runtimeCode).toBe(pristine.runtimeCode);
+    expect(sabotagedCheckout.storageLayoutSha256).toBe(
+      pristine.storageLayoutSha256,
+    );
+  } finally {
+    writeFileSync(sourcePath, before);
+  }
+}, 180_000);

@@ -106,6 +106,11 @@ const rpcFor =
     } = {},
   ) =>
   async (method: string, params: unknown[]) => {
+    if (method === "eth_getBlockByNumber")
+      return {
+        number: "0x123",
+        hash: `0x${"ab".repeat(32)}`,
+      };
     if (method === "eth_getStorageAt")
       return storageWord(options.current ?? CURRENT);
     if (method === "eth_getCode")
@@ -123,6 +128,83 @@ const inputs = () => ({
 });
 
 describe("UUPS upgrade preflight", () => {
+  test("pins every state read to one canonical block and records the mandatory pre-broadcast revalidation", async () => {
+    const calls: Array<[string, unknown[]]> = [];
+    const base = rpcFor();
+    const transaction = await prepareUpgradeTransaction({
+      ...inputs(),
+      rpc: async (method, params) => {
+        calls.push([method, params]);
+        return base(method, params);
+      },
+    });
+    const blockTag = {
+      blockHash: `0x${"ab".repeat(32)}`,
+      requireCanonical: true,
+    };
+    expect(calls).toEqual([
+      ["eth_getBlockByNumber", ["latest", false]],
+      ["eth_getStorageAt", [PROXY, IMPLEMENTATION_SLOT, blockTag]],
+      ["eth_getCode", [CURRENT, blockTag]],
+      ["eth_getCode", [ADDRESS, blockTag]],
+      ["eth_call", [{ to: ADDRESS, data: "0x52d1902d" }, blockTag]],
+      ["eth_getBlockByNumber", ["0x123", false]],
+    ]);
+    expect(transaction.snapshot).toEqual({
+      blockNumber: "0x123",
+      blockHash: `0x${"ab".repeat(32)}`,
+      currentImplementation: CURRENT,
+      currentRuntimeCodeSha256: sha256(GOOD_CODE),
+    });
+    expect(transaction.preBroadcastRevalidation).toEqual({
+      required: true,
+      instruction:
+        "Immediately before broadcast, rerun this preflight and require an identical snapshot and transaction payload.",
+    });
+  });
+
+  test("rejects a canonical block whose hash changes while state is read", async () => {
+    let blockReads = 0;
+    await expect(
+      prepareUpgradeTransaction({
+        ...inputs(),
+        rpc: async (method, params) => {
+          if (method === "eth_getBlockByNumber") {
+            blockReads++;
+            return {
+              number: "0x123",
+              hash: `0x${(blockReads === 1 ? "ab" : "cd").repeat(32)}`,
+            };
+          }
+          return rpcFor()(method, params);
+        },
+      }),
+    ).rejects.toThrow("RPC canonical block changed during preflight");
+  });
+
+  test("rejects malformed or mismatched canonical block responses", async () => {
+    for (const block of [
+      { number: "291", hash: `0x${"ab".repeat(32)}` },
+      { number: "0x123", hash: "0x1234" },
+      { number: "0x124", hash: `0x${"ab".repeat(32)}` },
+    ]) {
+      let reads = 0;
+      await expect(
+        prepareUpgradeTransaction({
+          ...inputs(),
+          rpc: async (method, params) => {
+            if (method === "eth_getBlockByNumber") {
+              reads++;
+              return reads === 1
+                ? { number: "0x123", hash: `0x${"ab".repeat(32)}` }
+                : block;
+            }
+            return rpcFor()(method, params);
+          },
+        }),
+      ).rejects.toThrow(/canonical block/);
+    }
+  });
   test("rejects a target proxy whose current implementation is the other approved contract kind", async () => {
     const value = inputs();
     value.previousCompiled = {
@@ -266,6 +348,17 @@ describe("UUPS upgrade preflight", () => {
       kind: "vault",
       runtimeCodeSha256: value.compiled.runtimeCodeSha256,
       sourceCommit: value.approval.source.commit,
+      snapshot: {
+        blockNumber: "0x123",
+        blockHash: `0x${"ab".repeat(32)}`,
+        currentImplementation: CURRENT,
+        currentRuntimeCodeSha256: sha256(GOOD_CODE),
+      },
+      preBroadcastRevalidation: {
+        required: true,
+        instruction:
+          "Immediately before broadcast, rerun this preflight and require an identical snapshot and transaction payload.",
+      },
     });
   });
 });

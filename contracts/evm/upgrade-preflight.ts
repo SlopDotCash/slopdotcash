@@ -53,6 +53,26 @@ export interface CompiledImplementation extends ApprovedBuild {
 }
 type Rpc = (method: string, params: unknown[]) => Promise<unknown>;
 
+interface RpcBlock {
+  number: string;
+  hash: string;
+}
+
+const canonicalBlock = (value: unknown): RpcBlock => {
+  assert(value && typeof value === "object", "RPC canonical block is missing");
+  const block = value as { number?: unknown; hash?: unknown };
+  assert(
+    typeof block.number === "string" &&
+      /^0x(?:0|[1-9a-f][0-9a-f]*)$/.test(block.number),
+    "RPC canonical block has an invalid number",
+  );
+  assert(
+    typeof block.hash === "string" && /^0x[0-9a-f]{64}$/.test(block.hash),
+    "RPC canonical block has an invalid hash",
+  );
+  return { number: block.number, hash: block.hash };
+};
+
 const canonicalCode = (value: unknown, emptyMessage: string) => {
   assert(
     typeof value === "string" && /^0x(?:[0-9a-fA-F]{2})+$/.test(value),
@@ -212,11 +232,15 @@ export async function prepareUpgradeTransaction({
   );
 
   const normalizedProxy = getAddress(proxy);
+  const block = canonicalBlock(
+    await rpc("eth_getBlockByNumber", ["latest", false]),
+  );
+  const blockTag = { blockHash: block.hash, requireCanonical: true } as const;
   const implementationWord = String(
     await rpc("eth_getStorageAt", [
       normalizedProxy,
       IMPLEMENTATION_SLOT,
-      "latest",
+      blockTag,
     ]),
   );
   assert(
@@ -232,7 +256,7 @@ export async function prepareUpgradeTransaction({
     "target proxy does not select the approved prior implementation",
   );
   const currentCode = canonicalCode(
-    await rpc("eth_getCode", [currentImplementation, "latest"]),
+    await rpc("eth_getCode", [currentImplementation, blockTag]),
     "RPC returned non-canonical current implementation bytecode",
   );
   assert.equal(
@@ -246,7 +270,7 @@ export async function prepareUpgradeTransaction({
 
   const implementation = getAddress(compiled.implementation);
   const onchainCode = canonicalCode(
-    await rpc("eth_getCode", [implementation, "latest"]),
+    await rpc("eth_getCode", [implementation, blockTag]),
     "RPC returned non-canonical runtime bytecode",
   );
   assert.equal(
@@ -265,10 +289,18 @@ export async function prepareUpgradeTransaction({
   const uuid = String(
     await rpc("eth_call", [
       { to: implementation, data: "0x52d1902d" },
-      "latest",
+      blockTag,
     ]),
   );
   assert.equal(uuid.toLowerCase(), IMPLEMENTATION_SLOT, "unexpected UUPS UUID");
+  const confirmedBlock = canonicalBlock(
+    await rpc("eth_getBlockByNumber", [block.number, false]),
+  );
+  assert(
+    confirmedBlock.number === block.number &&
+      confirmedBlock.hash === block.hash,
+    "RPC canonical block changed during preflight",
+  );
 
   return {
     to: normalizedProxy,
@@ -282,5 +314,16 @@ export async function prepareUpgradeTransaction({
     kind: compiled.kind,
     runtimeCodeSha256: compiled.runtimeCodeSha256,
     sourceCommit: compiled.source.commit,
+    snapshot: {
+      blockNumber: block.number,
+      blockHash: block.hash,
+      currentImplementation,
+      currentRuntimeCodeSha256: sha256Code(currentCode),
+    },
+    preBroadcastRevalidation: {
+      required: true as const,
+      instruction:
+        "Immediately before broadcast, rerun this preflight and require an identical snapshot and transaction payload.",
+    },
   };
 }
