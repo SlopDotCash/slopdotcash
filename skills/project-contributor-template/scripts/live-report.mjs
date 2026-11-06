@@ -141,6 +141,8 @@ const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const FULL_COMMIT_RE = /^[a-f0-9]{40}$/i;
 const CLOSING_REFERENCE_RE =
   /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>[1-9]\d*)\b/gi;
+const TITLE_ISSUE_REFERENCE_RE =
+  /(?<![\w/#&])(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>[1-9]\d*)\b/g;
 const DOMAIN_ARTIFACT_HOSTS = new Set([
   "arbiscan.io",
   "basescan.org",
@@ -717,6 +719,21 @@ function compareComment(left, right) {
   return left.id - right.id || left.url.localeCompare(right.url);
 }
 
+function addSameRepositoryNumbers(numbers, text, pattern, repo) {
+  for (const match of text.matchAll(pattern)) {
+    const owner = match.groups?.owner;
+    const name = match.groups?.name;
+    if (
+      owner !== undefined &&
+      name !== undefined &&
+      `${owner}/${name}`.toLowerCase() !== repo.toLowerCase()
+    ) {
+      continue;
+    }
+    numbers.add(Number(match.groups?.number));
+  }
+}
+
 /** Returns same-repository issues an open PR body explicitly closes. */
 export function closingIssueNumbers(body, repo) {
   const text = nullableText(body, "pull request body").replace(
@@ -728,19 +745,24 @@ export function closingIssueNumbers(body, repo) {
   }
   const numbers = new Set();
   for (const line of declarationLines(text)) {
-    for (const match of line.matchAll(CLOSING_REFERENCE_RE)) {
-      const owner = match.groups?.owner;
-      const name = match.groups?.name;
-      if (
-        owner !== undefined &&
-        name !== undefined &&
-        `${owner}/${name}`.toLowerCase() !== repo.toLowerCase()
-      ) {
-        continue;
-      }
-      numbers.add(Number(match.groups?.number));
-    }
+    addSameRepositoryNumbers(numbers, line, CLOSING_REFERENCE_RE, repo);
   }
+  return [...numbers].sort((left, right) => left - right);
+}
+
+/**
+ * Returns same-repository issues an open PR works on: those its body closes
+ * and those its title names, as in `fix(security): pass prior cases (#2010)`.
+ * Contributors here cite the issue in the title, not with a closing keyword.
+ */
+export function openPullIssueNumbers(pull, repo) {
+  const numbers = new Set(closingIssueNumbers(pull.body, repo));
+  addSameRepositoryNumbers(
+    numbers,
+    nullableText(pull.title, "pull request title"),
+    TITLE_ISSUE_REFERENCE_RE,
+    repo,
+  );
   return [...numbers].sort((left, right) => left - right);
 }
 
@@ -3082,7 +3104,7 @@ export function collectLiveReport(
     .sort((left, right) => left.number - right.number);
   const openPullsByClosingIssue = new Map();
   for (const item of pullItems) {
-    for (const issueNumber of closingIssueNumbers(item.body, repo)) {
+    for (const issueNumber of openPullIssueNumbers(item, repo)) {
       const pullNumbers = openPullsByClosingIssue.get(issueNumber) ?? [];
       pullNumbers.push(item.number);
       openPullsByClosingIssue.set(issueNumber, pullNumbers);
@@ -3421,7 +3443,7 @@ function markdownItems(items) {
       }
       if (item.closingPullRequests?.length > 0) {
         suffixes.push(
-          `open closing PR${item.closingPullRequests.length === 1 ? "" : "s"}: ${item.closingPullRequests.map((number) => `#${number}`).join(", ")}`,
+          `open PR${item.closingPullRequests.length === 1 ? "" : "s"}: ${item.closingPullRequests.map((number) => `#${number}`).join(", ")}`,
         );
       }
       const suffix = suffixes.length === 0 ? "" : `: ${suffixes.join("; ")}`;
@@ -3444,7 +3466,7 @@ export function renderMarkdown(report) {
       ? `Review epoch cutoff: ${report.selection.reviewEpoch.cutoff}; frozen candidates: ${report.selection.reviewEpoch.candidates.length}/${report.selection.reviewEpoch.candidateCount}; deferred to a later epoch: ${report.selection.reviewEpoch.deferred.length}.`
       : "Review epoch: unavailable.",
     "",
-    "## Priority 1: unclaimed issue candidates with no open closing PR",
+    "## Priority 1: unclaimed issue candidates with no open PR",
     "",
     markdownItems(report.candidateIssues),
     "",
