@@ -490,12 +490,19 @@ const RULES: Rule[] = [
     // --allow-read/write/net/env/run/ffi/sys/import/hrtime, bare or with
     // an =list), --deny-* flags, the --unstable family, and no-value
     // runtime flags (-q/--quiet, --no-check, --no-lock, --no-npm,
-    // --no-config, -r/--reload). Flags that take the target as a
-    // separate value (--config), change the act (--help) or forbid the
-    // fetch (--no-remote) stay out. A URL after a local script is
-    // just script data.
+    // --no-config, -r/--reload), plus the other runtime flags that
+    // leave the URL as the main module: --inspect/-brk/-wait,
+    // --watch/-hmr, --check, --env, --node-modules-dir and --vendor
+    // (bare or with an =value), --ext=/--env-file=/--lock=/--cert=/
+    // --v8-flags=/--seed=/--preload=/--config= (value attached with =),
+    // and -L/--log-level (value attached with = or as the next token,
+    // never a bare flag, so a URL in the value slot stays the flag's
+    // value, not the module). Flags that take the target as a separate
+    // value (--config path, --lock path, --ext ext and the like),
+    // change the act (--help) or forbid the fetch (--no-remote) stay
+    // out. A URL after a local script is just script data.
     pattern:
-      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-[ARWNEFSIP](?:=\S+)?|--allow-(?:all|read|write|net|env|run|ffi|sys|import|hrtime)(?:=\S+)?|--deny-[a-z-]+(?:=\S+)?|--unstable(?:-[a-z0-9-]+)?|-q|--quiet|--no-check(?:=\S+)?|--no-lock|--no-npm|--no-config|-r|--reload(?:=\S+)?)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
+      /(?:^[ \t]*|:[ \t]*")(?:deno[ \t]+run[ \t]+(?:(?:-[ARWNEFSIP](?:=\S+)?|--allow-(?:all|read|write|net|env|run|ffi|sys|import|hrtime)(?:=\S+)?|--deny-[a-z-]+(?:=\S+)?|--unstable(?:-[a-z0-9-]+)?|-q|--quiet|--no-check(?:=\S+)?|--no-lock|--no-npm|--no-config|-r|--reload(?:=\S+)?|--inspect(?:-brk|-wait)?(?:=\S+)?|--watch(?:-hmr)?(?:=\S+)?|--ext=\S+|--env-file=\S+|--env(?:=\S+)?|--lock=\S+|--log-level(?:=\S+|[ \t]+(?![-])\S+)|-L(?:=\S+|[ \t]+(?![-])\S+|\S+)|--check(?:=\S+)?|--config=\S+|--cert=\S+|--v8-flags=\S+|--seed=\S+|--node-modules-dir(?:=\S+)?|--vendor|--preload=\S+)[ \t]+)*|mshta(?:\.exe)?[ \t]+)["']?https?:\/\//imu,
     summary: "Runs a remote script URL directly",
   },
   {

