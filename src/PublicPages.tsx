@@ -571,7 +571,7 @@ export function SponsorsPage({
               </li>
             </ul>
             <p>
-              <Link href="/how-it-works">Payment stages</Link>
+              <Link href="/how-it-works#payments">Payment stages</Link>
             </p>
           </div>
         </section>
