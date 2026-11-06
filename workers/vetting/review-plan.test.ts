@@ -11,6 +11,7 @@ import {
 } from "./bounded-scan";
 import {
   BYTES_PER_TOKEN,
+  MAX_CALL_ATTEMPTS,
   planReview,
   reviewInventory,
   synthesisCall,
@@ -377,17 +378,20 @@ test("a batched review combines every call and fails when any batch fails", asyn
   });
   expect(combined.evidence?.coverage?.["prompt-injection"]).toBe("partial");
   // A failed batch fails the review; no synthesis runs over missing batches.
-  const failing = provider((_input, index) =>
-    index === 0 ? new Response("unavailable", { status: 503 }) : null,
+  const failing = provider((input) =>
+    input === plan.batches[0].evidence
+      ? new Response("unavailable", { status: 503 })
+      : null,
   );
   const failed = await reviewInventory({
     inspection,
     profile,
     fetch: failing.fetcher,
     concurrency: 1,
+    retryDelayMs: 0,
   });
   expect(failed.evidence?.review.status).toBe("failed");
-  expect(failing.calls).toHaveLength(1);
+  expect(failing.calls).toHaveLength(MAX_CALL_ATTEMPTS);
 });
 
 test("identical paths outside batches share the reviewed bytes without another call", async () => {
@@ -724,10 +728,13 @@ test("a failed batched review says whether a batch or the synthesis failed", asy
   const batch = await reviewInventory({
     inspection,
     profile,
-    fetch: provider((_input, index) =>
-      index === 0 ? new Response("unavailable", { status: 503 }) : null,
+    fetch: provider((input) =>
+      input === plan.batches[0].evidence
+        ? new Response("unavailable", { status: 503 })
+        : null,
     ).fetcher,
     concurrency: 1,
+    retryDelayMs: 0,
   });
   expect(batch.evidence?.failure).toBe("batch:provider-http-503");
   const synthesis = await reviewInventory({
@@ -747,4 +754,73 @@ test("a failed batched review says whether a batch or the synthesis failed", asy
     concurrency: 1,
   });
   expect(synthesis.evidence?.failure).toBe("synthesis:stop-max_tokens");
+});
+
+const unreadableReview = () =>
+  Response.json({
+    id: "msg_unreadable",
+    model: "claude-opus-5.5",
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: "not a review" }],
+    usage: { input_tokens: 7, output_tokens: 3 },
+  });
+
+test("a batch call that returns an unreadable review is retried before the review fails", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const first = plan.batches[0].evidence;
+  // One bad answer, then a good one: the review completes and counts both.
+  let seen = 0;
+  const once = provider((input) =>
+    input === first && seen++ === 0 ? unreadableReview() : null,
+  );
+  const recovered = await reviewInventory({
+    inspection,
+    profile,
+    fetch: once.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(recovered.evidence?.review.status).toBe("completed");
+  expect(once.calls).toHaveLength(plan.batches.length + 2);
+  expect(recovered.evidence?.passes?.[0].attempts).toBe(2);
+  expect(recovered.evidence?.passes?.[1].attempts).toBe(1);
+  expect(recovered.evidence?.usage?.uncachedInput).toBe(
+    7 + 100 * (plan.batches.length + 1),
+  );
+  // A call that keeps answering badly fails after its last attempt.
+  const always = provider((input) =>
+    input === first ? unreadableReview() : null,
+  );
+  const failed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: always.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(failed.evidence?.failure).toBe("batch:invalid-review");
+  expect(always.calls).toHaveLength(MAX_CALL_ATTEMPTS);
+  // A deterministic stop is not retried.
+  const stopped = provider((input) =>
+    input === first
+      ? Response.json({
+          id: "msg_stop",
+          model: "claude-opus-5.5",
+          stop_reason: "max_tokens",
+          content: [{ type: "text", text: "{" }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        })
+      : null,
+  );
+  const stop = await reviewInventory({
+    inspection,
+    profile,
+    fetch: stopped.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(stop.evidence?.failure).toBe("batch:stop-max_tokens");
+  expect(stopped.calls).toHaveLength(1);
 });

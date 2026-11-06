@@ -408,6 +408,54 @@ export function synthesisCall(
   );
 }
 
+/**
+ * Attempts per batch or synthesis call. One failed call fails a review of
+ * hundreds, so a failure a fresh call can clear is retried. Identity, stop
+ * and timeout failures are not: they repeat, or would exceed the job time.
+ */
+export const MAX_CALL_ATTEMPTS = 3;
+const retryable = (failure: string | undefined) =>
+  failure !== undefined &&
+  (failure === "invalid-review" ||
+    failure === "invalid-response" ||
+    failure === "truncated" ||
+    failure === "network" ||
+    failure === "response-unreadable" ||
+    /^provider-http-(?:429|5\d\d)$/u.test(failure));
+
+/** The retried call's evidence, carrying the usage and cost of every attempt. */
+function withEarlierAttempts(
+  last: ScannerEvidence,
+  earlier: ScannerEvidence[],
+): ScannerEvidence {
+  if (earlier.length === 0) return last;
+  const usage = last.usage
+    ? earlier.reduce(
+        (sum, attempt) => ({
+          uncachedInput:
+            sum.uncachedInput + (attempt.usage?.uncachedInput ?? 0),
+          cachedInput: sum.cachedInput + (attempt.usage?.cachedInput ?? 0),
+          cacheCreation:
+            sum.cacheCreation + (attempt.usage?.cacheCreation ?? 0),
+          output: sum.output + (attempt.usage?.output ?? 0),
+        }),
+        last.usage,
+      )
+    : null;
+  const cost = last.cost
+    ? {
+        ...last.cost,
+        nanoUsd: earlier
+          .reduce(
+            (sum, attempt) => sum + BigInt(attempt.cost?.nanoUsd ?? "0"),
+            BigInt(last.cost.nanoUsd),
+          )
+          .toString(),
+      }
+    : null;
+  return { ...last, usage, cost };
+}
+
 /** Optional operator-private store that lets a long review resume next pass. */
 export type ReviewCache = { directory: string; maxCallsPerPass: number };
 
@@ -544,6 +592,8 @@ export async function reviewInventory(input: {
   batchTokens?: number;
   concurrency?: number;
   cache?: ReviewCache;
+  /** Wait before a retried call, times its attempt number. */
+  retryDelayMs?: number;
 }): Promise<{ evidence: ScannerEvidence | null; plan: ReviewPlan }> {
   const { inspection, profile } = input;
   const plan = planReview(inspection, input.batchTokens);
@@ -574,28 +624,50 @@ export async function reviewInventory(input: {
   const run = async (
     call: PlannedCall,
     kind: ReviewPass["kind"],
-  ): Promise<{ evidence: ScannerEvidence; cached: boolean } | null> => {
+  ): Promise<{
+    evidence: ScannerEvidence;
+    cached: boolean;
+    attempts: number;
+  } | null> => {
     const id = key(call, kind);
     const hit = await cached(input.cache, id, call, profile, kind);
-    if (hit) return { evidence: hit, cached: true };
+    if (hit) return { evidence: hit, cached: true, attempts: 0 };
     if (budget <= 0) {
       exhausted = true;
       return null;
     }
-    budget -= 1;
-    const evidence = await reviewScan({
-      evidence: call.evidence,
-      inputSha256: call.inputSha256,
-      profile,
-      fetch: input.fetch,
-      synthesis: kind === "synthesis",
-      timeoutMs: callTimeoutMs(call.estimatedTokens),
-    });
-    await store(input.cache, id, evidence);
-    return { evidence, cached: false };
+    const earlier: ScannerEvidence[] = [];
+    for (;;) {
+      budget -= 1;
+      const attempt = await reviewScan({
+        evidence: call.evidence,
+        inputSha256: call.inputSha256,
+        profile,
+        fetch: input.fetch,
+        synthesis: kind === "synthesis",
+        timeoutMs: callTimeoutMs(call.estimatedTokens),
+      });
+      if (
+        attempt.review.status !== "completed" &&
+        retryable(attempt.failure) &&
+        earlier.length + 1 < MAX_CALL_ATTEMPTS &&
+        budget > 0
+      ) {
+        earlier.push(attempt);
+        const delay = (input.retryDelayMs ?? 2_000) * earlier.length;
+        if (delay > 0) await new Promise((done) => setTimeout(done, delay));
+        continue;
+      }
+      const evidence = withEarlierAttempts(attempt, earlier);
+      await store(input.cache, id, evidence);
+      return { evidence, cached: false, attempts: earlier.length + 1 };
+    }
   };
-  const outcomes: ({ evidence: ScannerEvidence; cached: boolean } | null)[] =
-    new Array(plan.batches.length).fill(null);
+  const outcomes: ({
+    evidence: ScannerEvidence;
+    cached: boolean;
+    attempts: number;
+  } | null)[] = new Array(plan.batches.length).fill(null);
   let next = 0;
   let failed = false;
   const worker = async () => {
@@ -617,7 +689,7 @@ export async function reviewInventory(input: {
     kind: ReviewPass["kind"],
     index: number,
     call: PlannedCall,
-    outcome: { evidence: ScannerEvidence; cached: boolean },
+    outcome: { evidence: ScannerEvidence; cached: boolean; attempts: number },
   ): ReviewPass => ({
     kind,
     index,
@@ -631,6 +703,7 @@ export async function reviewInventory(input: {
     responseSha256: outcome.evidence.responseSha256,
     usage: outcome.evidence.usage,
     cached: outcome.cached,
+    attempts: outcome.attempts,
   });
   const done = outcomes.filter((outcome) => outcome !== null);
   if (failed) {
