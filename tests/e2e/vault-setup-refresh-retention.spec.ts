@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { expect, expectAccessible, test } from "./fixtures";
+import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 const site = deploymentOrigins(
@@ -94,7 +94,10 @@ test("vault setup keeps the loaded options when a reload fails temporarily", asy
   // The fixture serves the build under the deployed site origin, so the
   // browser's console report of the same 500 names that origin instead.
   diagnostics.allow(
-    /^console Failed to load resource: the server responded with a status of 500 \(.+\) at https:\/\/slop\.cash\/api\/v1\/project-vaults\/eliza\?purpose=ordinary$/u,
+    new RegExp(
+      `^console Failed to load resource: the server responded with a status of 500 \\(.+\\) at ${escapeRegExp(site)}/api/v1/project-vaults/eliza\\?purpose=ordinary$`,
+      "u",
+    ),
   );
   await page.route("**/api/v1/project-vaults/eliza?**", (route) =>
     unavailable
