@@ -891,10 +891,14 @@ export function applyPointsSnapshot(
       // no event for this pull request, so no parent decision exists. The
       // superseding revision still records that decision from its coverage
       // row, as protocol/points-v1.md requires of source-bound decisions.
+      // Only an assessed merged-PR award is decided by the value
+      // assessment. Any other category (a substantive review, for
+      // example) is decided by its own rules, so a value-assessment
+      // decision recorded here would name a false source and reason.
       const decision =
         invalidatedJointDecision ??
         parentDecisions.get(a.sourceUrl.split("#")[0]) ??
-        (coverage?.recordDigest
+        (a.category === "merged-pull-request" && coverage?.recordDigest
           ? {
               sourceId: `value:${coverage.recordDigest}`,
               effectiveAt: snapshot.generatedAt,
