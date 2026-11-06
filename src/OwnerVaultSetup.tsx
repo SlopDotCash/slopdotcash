@@ -50,7 +50,7 @@ async function request(path: string, body?: unknown) {
             ? "Sign in with GitHub to set up the project vault."
             : "Vault setup could not be loaded. Retry."),
       ),
-      { code: result.error },
+      { code: result.error, status: response.status },
     );
   return result;
 }
@@ -113,6 +113,10 @@ export function OwnerVaultSetup({
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const [reload, setReload] = useState(0);
+  // Whether a load has already populated the form in this mount. A reload
+  // that fails temporarily keeps what is on screen; only an authoritative
+  // answer (the session ending, a sign-in or permission failure) clears it.
+  const loaded = useRef(false);
   const solana =
     ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.family ===
     "solana";
@@ -134,6 +138,7 @@ export function OwnerVaultSetup({
         if (!active) return null;
         if (!(result as unknown as { session: unknown }).session) {
           setSignInRequired(true);
+          loaded.current = false;
           setInfo(null);
           setClaims([]);
           setWallet(null);
@@ -154,11 +159,23 @@ export function OwnerVaultSetup({
           networks: string[];
         };
         setInfo(value);
+        loaded.current = true;
         setNetwork((current) => current || value.networks[0] || "");
         setClaims((account as unknown as { wallets: WalletClaim[] }).wallets);
       })
       .catch((e: unknown) => {
         if (!active) return;
+        // A network failure or a server error says nothing about the
+        // session or the saved setup, so it must not discard the options,
+        // the connected wallet or the reviewed request already on screen.
+        const status = (e as { status?: unknown }).status;
+        const transient =
+          typeof status !== "number" || status === 0 || status >= 500;
+        if (transient && loaded.current) {
+          setError(errorMessage(e, "Vault setup could not load."));
+          return;
+        }
+        loaded.current = false;
         setInfo(null);
         setClaims([]);
         setWallet(null);
