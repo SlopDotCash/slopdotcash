@@ -318,9 +318,17 @@ const SUDO_COMMAND = commandToken("sudo");
  * The download command a command substitution runs. Inside `$( )` or
  * backticks the shell honours the same `sudo` and `env` prefixes as before
  * a piped shell, in either order, so `$(env curl …)`, `$(sudo curl …)` and
- * `` `sudo env wget …` `` are the same download as `$(curl …)`.
+ * `` `sudo env wget …` `` are the same download as `$(curl …)`. The
+ * prefixes may also carry their usual options and assignments — `sudo -E`,
+ * `sudo -u root`, `env -i`, `env -u NAME` and `env FOO=1` — which real
+ * installs use far more often than the bare spellings, so those forms are
+ * the same download too. A flag that takes a value (`-u`/`--user` for sudo,
+ * `-u`/`--unset` for env) consumes exactly one following word; any other
+ * flag is a bare `-x` run, so the download token itself is never swallowed.
  */
-const SUBSTITUTION_DOWNLOAD = String.raw`(?:(?:${SUDO_COMMAND}|${ENV_COMMAND})\s+){0,2}(?:curl|wget)\b`;
+const SUDO_ARGS = String.raw`(?:\s+(?:-[A-Za-z]*u\s+[^\s|;&<>()'"]+|-[A-Za-z]+|--user(?:=|\s+)[^\s|;&<>()'"]+))*`;
+const ENV_ARGS = String.raw`(?:\s+(?:-[A-Za-z0-9]*u\s+[^\s|;&<>()'"]+|-[A-Za-z0-9]+|--unset(?:=|\s+)[^\s|;&<>()'"]+|[A-Za-z_][A-Za-z0-9_]*=[^\s|;&<>()'"]*))*`;
+const SUBSTITUTION_DOWNLOAD = String.raw`(?:(?:${SUDO_COMMAND}${SUDO_ARGS}|${ENV_COMMAND}${ENV_ARGS})\s+){0,2}(?:curl|wget)\b`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the

