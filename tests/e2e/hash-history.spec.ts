@@ -52,11 +52,19 @@ for (const pendingDestination of [false, true]) {
       .getByRole("link", { name: "Payment stages and timing", exact: true })
       .click();
     await expect(page).toHaveURL(/\/how-it-works#payments$/u);
+    // The section lands at the root scroll padding, below the sticky header.
     await expect
       .poll(() =>
         page
           .locator("#payments")
-          .evaluate((element) => Math.abs(element.getBoundingClientRect().top)),
+          .evaluate((element) =>
+            Math.abs(
+              element.getBoundingClientRect().top -
+                (Number.parseFloat(
+                  getComputedStyle(document.documentElement).scrollPaddingTop,
+                ) || 0),
+            ),
+          ),
       )
       .toBeLessThan(1);
 
