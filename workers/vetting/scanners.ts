@@ -92,7 +92,47 @@ export type ScannerEvidence = {
   visibilityGaps: string[];
   /** Every call of a batched review; absent for a single-call review. */
   passes?: ReviewPass[];
+  /**
+   * Why a failed review failed, as one fixed category (`ReviewFailureCategory`,
+   * prefixed `batch:` or `synthesis:` in a batched review). It never carries
+   * provider text. Absent when the review completed.
+   */
+  failure?: string;
 };
+
+/**
+ * The fixed vocabulary of a failed review. Only these strings, an HTTP status
+ * number, and allowlisted provider stop reasons can appear, so the category
+ * is safe to log beside a retry.
+ */
+export type ReviewFailureCategory =
+  | `provider-http-${number}`
+  | "timeout"
+  | "network"
+  | "response-unreadable"
+  | "truncated"
+  | "model-mismatch"
+  | `stop-${"max_tokens" | "pause_turn" | "refusal" | "tool_use" | "stop_sequence" | "other"}`
+  | `incomplete-${"max_output_tokens" | "content_filter" | "other"}`
+  | "invalid-response"
+  | "invalid-review";
+const STOP_REASONS = new Set([
+  "max_tokens",
+  "pause_turn",
+  "refusal",
+  "tool_use",
+  "stop_sequence",
+]);
+const INCOMPLETE_REASONS = new Set(["max_output_tokens", "content_filter"]);
+class ReviewFailure extends Error {
+  constructor(readonly category: ReviewFailureCategory) {
+    super(category);
+    this.name = "ReviewFailure";
+  }
+}
+const isTimeout = (error: unknown) =>
+  error instanceof Error &&
+  (error.name === "TimeoutError" || error.name === "AbortError");
 const record = (value: unknown) => readRecord(value, "Record");
 function text(value: unknown, maximum = 1000): string {
   if (typeof value !== "string" || !value.trim() || value.length > maximum)
@@ -200,9 +240,13 @@ export function validateProfile(profile: ScannerProfile) {
 async function limitedResponse(response: Response): Promise<string> {
   if (!response.ok) {
     await response.body?.cancel();
-    throw new Error("Provider unavailable");
+    throw new ReviewFailure(`provider-http-${response.status}`);
   }
-  return readBoundedText(response, 1024 * 1024, "Provider response");
+  try {
+    return await readBoundedText(response, 1024 * 1024, "Provider response");
+  } catch (error) {
+    throw isTimeout(error) ? error : new ReviewFailure("response-unreadable");
+  }
 }
 async function reviewOne(
   profile: ScannerProfile,
@@ -239,6 +283,10 @@ async function reviewOne(
     cost: null,
     visibilityGaps: [...bundle.visibilityGaps],
   };
+  // Anything that fails before the review text is read is a malformed
+  // provider response; anything after it is a review that broke its contract.
+  let phase: "invalid-response" | "invalid-review" = "invalid-response";
+  let truncated = false;
   try {
     const openai = profile.transport === "openai-responses";
     const response = await fetcher(profile.endpoint, {
@@ -269,10 +317,12 @@ async function reviewOne(
               max_tokens: profile.maxOutputTokens,
             },
       ),
+    }).catch((error: unknown) => {
+      throw isTimeout(error) ? error : new ReviewFailure("network");
     });
     // Surplus marks a response that its deadline cut short; the JSON and
     // stop reason can still look complete.
-    const truncated = response.headers.get("x-si-truncated") === "1";
+    truncated = response.headers.get("x-si-truncated") === "1";
     const raw = await limitedResponse(response);
     result.responseSha256 = digest(raw);
     const body = record(JSON.parse(raw));
@@ -307,16 +357,31 @@ async function reviewOne(
         nanoUsd: nanoUsd.toString(),
         rateCardSha256: digest(JSON.stringify(rates)),
       };
-    if (
-      truncated ||
-      body.model !== profile.model ||
-      (openai
-        ? body.status !== "completed" ||
-          body.error != null ||
-          body.incomplete_details != null
-        : body.stop_reason !== "end_turn" || body.stop_details != null)
-    )
-      throw new Error("Provider identity or completion mismatch");
+    if (truncated) throw new ReviewFailure("truncated");
+    if (body.model !== profile.model) throw new ReviewFailure("model-mismatch");
+    if (openai) {
+      if (
+        body.status !== "completed" ||
+        body.error != null ||
+        body.incomplete_details != null
+      ) {
+        const reason = String(
+          (body.incomplete_details as { reason?: unknown } | null)?.reason,
+        );
+        throw new ReviewFailure(
+          INCOMPLETE_REASONS.has(reason)
+            ? (`incomplete-${reason}` as ReviewFailureCategory)
+            : "incomplete-other",
+        );
+      }
+    } else if (body.stop_reason !== "end_turn" || body.stop_details != null) {
+      const reason = String(body.stop_reason);
+      throw new ReviewFailure(
+        STOP_REASONS.has(reason)
+          ? (`stop-${reason}` as ReviewFailureCategory)
+          : "stop-other",
+      );
+    }
     let output: string;
     if (openai) {
       if (!Array.isArray(body.output))
@@ -358,6 +423,7 @@ async function reviewOne(
         throw new Error("Unexpected provider output");
       output = text(answers[0].text, 1024 * 1024);
     }
+    phase = "invalid-review";
     // Some completed model replies wrap the single JSON answer in a code
     // fence. Accept only that whole-answer wrapper, never surrounding prose.
     const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u.exec(output.trim());
@@ -412,8 +478,18 @@ async function reviewOne(
         result.visibilityGaps.push(
           `${profile.reviewer}:${area}:${coverage[area]}`,
         );
-  } catch {
-    // No provider error body, secret, source or output escapes through an exception.
+  } catch (error) {
+    // No provider error body, secret, source or output escapes through an
+    // exception: only a fixed category is kept.
+    result.failure =
+      error instanceof ReviewFailure
+        ? error.category
+        : isTimeout(error)
+          ? "timeout"
+          : // A cut-short reply often cannot even be parsed.
+            truncated
+            ? "truncated"
+            : phase;
     result.visibilityGaps.push(
       `${profile.reviewer}:review-failed-or-unavailable`,
     );
