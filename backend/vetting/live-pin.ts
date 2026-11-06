@@ -12,6 +12,7 @@ import {
   PUBLIC_PROJECT_TTL_SECONDS,
 } from "../projects/edge-cache";
 import { type GithubFetch, readBranchHead } from "../projects/github-lookup";
+import { currentRepositoryPath } from "../projects/setup";
 import type { VettingPin } from "./persistence";
 
 export type VettingGithub = {
@@ -93,10 +94,12 @@ export async function readVettingPin(
       `Slop vets exactly one repository per project; this manifest names ${manifest.repositories.length}.`,
     );
   const [repository] = manifest.repositories;
+  // A recorded rename or transfer keeps the original path as `id` and publishes
+  // the current GitHub path in `githubUrl`.
   return {
     commitSha: await branchHead(
       github,
-      repository.id,
+      currentRepositoryPath(repository),
       repository.integrationBranch,
     ),
     templateSha256,
