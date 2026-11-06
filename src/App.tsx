@@ -41,6 +41,7 @@ import {
 } from "./lib/projects.mjs";
 import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
@@ -627,6 +628,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
       </div>
       <div className="project-card-content">
         <p className="project-summary">{project.description}</p>
+        <ProjectPayoutLine project={project} />
         <p className="project-bounty">
           <strong>{amount}</strong>
           {bounty ? (
@@ -1433,6 +1435,15 @@ function ProjectBountyIntroduction({
   );
 }
 
+/** One line naming what a project pays and where, when the registry says. */
+function ProjectPayoutLine({ project }: { project: ProjectDefinition }) {
+  const { chain, currency } = project.reward;
+  if (!chain && !currency) return null;
+  const network = chain ? NETWORK_NAMES[chain] ?? chain : null;
+  const text = currency && network ? `${currency} on ${network}` : network ?? currency;
+  return <p className="project-payout-line">Pays in {text}</p>;
+}
+
 function ProjectPage({
   project,
   state,
@@ -1452,6 +1463,7 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectPayoutLine project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
