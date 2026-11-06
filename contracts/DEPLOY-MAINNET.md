@@ -1280,12 +1280,16 @@ NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
    the new template was selected. Creation is permissionless.
 
 Build the unsigned calldata only through the fail-closed preflight. The reviewed
-approval file is a separate input that pins the contract role, source commit and
-blob, Foundry configuration, append-compatible storage prefix, compiled storage
-layout, CREATE2 implementation address and runtime SHA-256. The command rebuilds
-from the checked-out source, checks the deployed runtime is nonempty, calls
-`proxiableUUID()`, and compares the deployed bytes with the independent build
-before it prints an owner-signable zero-value transaction:
+schema-v2 approval file is a separate input that pins the contract role, both the
+outgoing and replacement source commits and provenance, complete storage-layout
+digests, CREATE2 implementation addresses and runtime SHA-256 values. The command
+rebuilds the replacement from the clean checked-out source and independently
+archives and compiles the exact outgoing commit. It reads the target proxy's
+ERC-1967 implementation slot, proves that implementation is the approved outgoing
+vault or factory by exact runtime-byte comparison, compares the complete storage
+rows and recursively referenced types and struct members, then checks the deployed
+replacement runtime with canonical even-length RPC hex, calls `proxiableUUID()`,
+and only then prints an owner-signable zero-value transaction:
 
 ```sh
 bun contracts/evm/prepare-upgrade.ts \

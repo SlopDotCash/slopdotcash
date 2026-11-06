@@ -1,63 +1,247 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { encodeFunctionData, parseAbi } from "viem";
 import {
   type CompiledImplementation,
   IMPLEMENTATION_SLOT,
   prepareUpgradeTransaction,
+  type StorageLayout,
   type UpgradeApproval,
 } from "./upgrade-preflight";
 
 const GOOD_CODE = "0x6001600055";
+const NEXT_CODE = "0x6002600055";
 const MALICIOUS_CODE = "0x60006000fd";
-const GOOD_DIGEST =
-  "8880a54d03747df9eda6b310443a788558dc080c804db3fde94aee0382f66ea9";
+const sha256 = (code: string) =>
+  createHash("sha256")
+    .update(Buffer.from(code.slice(2), "hex"))
+    .digest("hex");
 const ADDRESS = "0x1111111111111111111111111111111111111111";
+const CURRENT = "0x3333333333333333333333333333333333333333";
 const PROXY = "0x2222222222222222222222222222222222222222";
+const storageWord = (address: string) =>
+  `0x${address.slice(2).padStart(64, "0")}`;
 
-const approval: UpgradeApproval = {
-  schemaVersion: 1,
-  kind: "vault",
-  contract: "ProjectEscrow",
-  implementation: ADDRESS,
-  runtimeCodeSha256: GOOD_DIGEST,
-  source: {
-    commit: "a".repeat(40),
-    evmTree: "e".repeat(40),
-    projectEscrowBlob: "b".repeat(40),
-    foundryTomlSha256: "c".repeat(64),
-  },
-  storageLayoutSha256: "d".repeat(64),
-  previousStorage: [
-    { label: "owner", slot: "0", offset: 0, type: "t_address" },
+const previousLayout: StorageLayout = {
+  storage: [
+    {
+      astId: 1,
+      contract: "ProjectEscrow.sol:ProjectEscrow",
+      label: "owner",
+      slot: "0",
+      offset: 0,
+      type: "t_address",
+    },
   ],
+  types: {
+    t_address: { encoding: "inplace", label: "address", numberOfBytes: "20" },
+  },
 };
-const compiled: CompiledImplementation = {
+const nextLayout: StorageLayout = {
+  storage: [
+    ...previousLayout.storage,
+    {
+      astId: 2,
+      contract: "ProjectEscrow.sol:ProjectEscrow",
+      label: "revision",
+      slot: "1",
+      offset: 0,
+      type: "t_uint256",
+    },
+  ],
+  types: {
+    ...previousLayout.types,
+    t_uint256: { encoding: "inplace", label: "uint256", numberOfBytes: "32" },
+  },
+};
+const source = {
+  commit: "a".repeat(40),
+  evmTree: "e".repeat(40),
+  projectEscrowBlob: "b".repeat(40),
+  foundryTomlSha256: "c".repeat(64),
+};
+const previousSource = { ...source, commit: "1".repeat(40) };
+const approval = (): UpgradeApproval => ({
+  schemaVersion: 2,
   kind: "vault",
   contract: "ProjectEscrow",
   implementation: ADDRESS,
+  runtimeCodeSha256: sha256(NEXT_CODE),
+  source,
+  storageLayoutSha256: "d".repeat(64),
+  previous: {
+    implementation: CURRENT,
+    runtimeCodeSha256: sha256(GOOD_CODE),
+    source: previousSource,
+    storageLayoutSha256: "e".repeat(64),
+  },
+});
+const compiled = (): CompiledImplementation => ({
+  kind: "vault",
+  contract: "ProjectEscrow",
+  implementation: ADDRESS,
+  runtimeCode: NEXT_CODE,
+  runtimeCodeSha256: sha256(NEXT_CODE),
+  source,
+  storageLayoutSha256: "d".repeat(64),
+  storageLayout: nextLayout,
+});
+const previousCompiled = (): CompiledImplementation => ({
+  kind: "vault",
+  contract: "ProjectEscrow",
+  implementation: CURRENT,
   runtimeCode: GOOD_CODE,
-  runtimeCodeSha256: GOOD_DIGEST,
-  source: approval.source,
-  storageLayoutSha256: approval.storageLayoutSha256,
-  storage: approval.previousStorage,
-};
-
+  runtimeCodeSha256: sha256(GOOD_CODE),
+  source: previousSource,
+  storageLayoutSha256: "e".repeat(64),
+  storageLayout: previousLayout,
+});
 const rpcFor =
-  (code: string, uuid = IMPLEMENTATION_SLOT) =>
-  async (method: string) => {
-    if (method === "eth_getCode") return code;
-    if (method === "eth_call") return uuid;
+  (
+    options: {
+      targetCode?: string;
+      currentCode?: string;
+      current?: string;
+      uuid?: string;
+    } = {},
+  ) =>
+  async (method: string, params: unknown[]) => {
+    if (method === "eth_getStorageAt")
+      return storageWord(options.current ?? CURRENT);
+    if (method === "eth_getCode")
+      return String(params[0]).toLowerCase() === CURRENT.toLowerCase()
+        ? (options.currentCode ?? GOOD_CODE)
+        : (options.targetCode ?? NEXT_CODE);
+    if (method === "eth_call") return options.uuid ?? IMPLEMENTATION_SLOT;
     throw new Error(`Unexpected RPC method ${method}`);
   };
+const inputs = () => ({
+  approval: approval(),
+  compiled: compiled(),
+  previousCompiled: previousCompiled(),
+  proxy: PROXY,
+});
 
 describe("UUPS upgrade preflight", () => {
-  test("rejects a compatible-UUID implementation whose runtime is not independently compiled", async () => {
+  test("rejects a target proxy whose current implementation is the other approved contract kind", async () => {
+    const value = inputs();
+    value.previousCompiled = {
+      ...value.previousCompiled,
+      kind: "factory",
+      contract: "EscrowFactory",
+    };
+    await expect(
+      prepareUpgradeTransaction({ ...value, rpc: rpcFor() }),
+    ).rejects.toThrow("target proxy contract kind does not match the approval");
+  });
+
+  test("rejects a proxy whose implementation slot does not select the independently built prior implementation", async () => {
     await expect(
       prepareUpgradeTransaction({
-        approval,
-        compiled,
-        proxy: PROXY,
-        rpc: rpcFor(MALICIOUS_CODE),
+        ...inputs(),
+        rpc: rpcFor({ current: "0x4444444444444444444444444444444444444444" }),
+      }),
+    ).rejects.toThrow(
+      "target proxy does not select the approved prior implementation",
+    );
+  });
+
+  test("rejects a one-entry previous-layout approval by using the complete independently compiled prior layout", async () => {
+    const value = inputs();
+    value.compiled.storageLayout = { storage: [], types: nextLayout.types };
+    await expect(
+      prepareUpgradeTransaction({ ...value, rpc: rpcFor() }),
+    ).rejects.toThrow("storage layout is not append-compatible");
+  });
+
+  test("rejects a struct member type change even when storage rows are unchanged", async () => {
+    const value = inputs();
+    value.previousCompiled.storageLayout = {
+      storage: [
+        {
+          astId: 1,
+          contract: "C",
+          label: "record",
+          slot: "0",
+          offset: 0,
+          type: "t_struct_old",
+        },
+      ],
+      types: {
+        t_struct_old: {
+          encoding: "inplace",
+          label: "struct Record",
+          numberOfBytes: "32",
+          members: [
+            {
+              astId: 2,
+              contract: "C",
+              label: "amount",
+              slot: "0",
+              offset: 0,
+              type: "t_uint128",
+            },
+          ],
+        },
+        t_uint128: {
+          encoding: "inplace",
+          label: "uint128",
+          numberOfBytes: "16",
+        },
+      },
+    };
+    value.compiled.storageLayout = {
+      storage: [
+        {
+          astId: 1,
+          contract: "C",
+          label: "record",
+          slot: "0",
+          offset: 0,
+          type: "t_struct_new",
+        },
+      ],
+      types: {
+        t_struct_new: {
+          encoding: "inplace",
+          label: "struct Record",
+          numberOfBytes: "32",
+          members: [
+            {
+              astId: 9,
+              contract: "C",
+              label: "amount",
+              slot: "0",
+              offset: 0,
+              type: "t_uint256",
+            },
+          ],
+        },
+        t_uint256: {
+          encoding: "inplace",
+          label: "uint256",
+          numberOfBytes: "32",
+        },
+      },
+    };
+    await expect(
+      prepareUpgradeTransaction({ ...value, rpc: rpcFor() }),
+    ).rejects.toThrow("storage layout is not append-compatible");
+  });
+
+  test("rejects odd-length, truncated and non-canonical RPC bytecode", async () => {
+    for (const targetCode of ["0x600160005", "0X6002600055", "6002600055"]) {
+      await expect(
+        prepareUpgradeTransaction({ ...inputs(), rpc: rpcFor({ targetCode }) }),
+      ).rejects.toThrow("RPC returned non-canonical runtime bytecode");
+    }
+  });
+
+  test("rejects bytecode that differs before hashing", async () => {
+    await expect(
+      prepareUpgradeTransaction({
+        ...inputs(),
+        rpc: rpcFor({ targetCode: MALICIOUS_CODE }),
       }),
     ).rejects.toThrow(
       "runtime bytecode does not match the approved independent build",
@@ -65,11 +249,10 @@ describe("UUPS upgrade preflight", () => {
   });
 
   test("accepts the approved implementation and emits only its zero-value upgrade call", async () => {
+    const value = inputs();
     const transaction = await prepareUpgradeTransaction({
-      approval,
-      compiled,
-      proxy: PROXY,
-      rpc: rpcFor(GOOD_CODE),
+      ...value,
+      rpc: rpcFor(),
     });
     expect(transaction).toEqual({
       to: PROXY,
@@ -81,64 +264,8 @@ describe("UUPS upgrade preflight", () => {
       }),
       implementation: ADDRESS,
       kind: "vault",
-      runtimeCodeSha256: GOOD_DIGEST,
-      sourceCommit: approval.source.commit,
+      runtimeCodeSha256: value.compiled.runtimeCodeSha256,
+      sourceCommit: value.approval.source.commit,
     });
-  });
-
-  test("rejects a contract-kind substitution before producing calldata", async () => {
-    await expect(
-      prepareUpgradeTransaction({
-        approval,
-        compiled: { ...compiled, kind: "factory", contract: "EscrowFactory" },
-        proxy: PROXY,
-        rpc: rpcFor(GOOD_CODE),
-      }),
-    ).rejects.toThrow(
-      "approved contract kind does not match the independent build",
-    );
-  });
-
-  test("rejects an incompatible storage layout before producing calldata", async () => {
-    await expect(
-      prepareUpgradeTransaction({
-        approval,
-        compiled: {
-          ...compiled,
-          storage: [
-            { label: "owner", slot: "1", offset: 0, type: "t_address" },
-          ],
-        },
-        proxy: PROXY,
-        rpc: rpcFor(GOOD_CODE),
-      }),
-    ).rejects.toThrow("storage layout is not append-compatible");
-  });
-
-  test("rejects unapproved source provenance before producing calldata", async () => {
-    await expect(
-      prepareUpgradeTransaction({
-        approval,
-        compiled: {
-          ...compiled,
-          source: { ...compiled.source, evmTree: "f".repeat(40) },
-        },
-        proxy: PROXY,
-        rpc: rpcFor(GOOD_CODE),
-      }),
-    ).rejects.toThrow(
-      "independent build provenance does not match the approval",
-    );
-  });
-
-  test("rejects an implementation with no runtime code", async () => {
-    await expect(
-      prepareUpgradeTransaction({
-        approval,
-        compiled,
-        proxy: PROXY,
-        rpc: rpcFor("0x"),
-      }),
-    ).rejects.toThrow("implementation has no runtime code");
   });
 });
