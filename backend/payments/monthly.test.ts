@@ -1330,6 +1330,125 @@ describe("monthly coordinator", () => {
     expect(count("monthly_payment_runs")).toBe(0);
   });
 
+  test("a frozen month on an unserved network is neither evaluated nor distributed by another network's coordinator", async () => {
+    expect(await coordinate(afterCutoff)).toMatchObject({
+      frozen: [`${project.id}/2026-11`],
+      created: [],
+      waiting: [{ key: `${project.id}/2026-11`, reason: "stale-funding" }],
+      failures: [],
+    });
+    expect(count("monthly_payment_runs")).toBe(1);
+    expect(count("monthly_payment_obligations")).toBe(0);
+
+    // Award A (600) is reserved on-chain, leaving 400 free in vault_snapshots,
+    // before the base-sepolia worker has indexed the Reserved event.
+    vault("400");
+    const foreignBeforeIndex = await coordinateMonthlyPayments({
+      db,
+      projects: projects(),
+      networks: ["solana-devnet"],
+      schedule,
+      now: afterCutoff,
+    });
+    expect(foreignBeforeIndex).toEqual({
+      scheduled: true,
+      frozen: [],
+      created: [],
+      waiting: [{ key: `${project.id}/2026-11`, reason: "vault-not-served" }],
+      failures: [],
+    });
+    expect(
+      sqlite
+        .query(
+          "SELECT event_key FROM notifications WHERE event_key LIKE 'monthly-underfunded:%'",
+        )
+        .all(),
+    ).toEqual([]);
+
+    // Even when vault_snapshots covers the whole 1000 month, an unserved
+    // worker must still leave obligation creation to the serving network.
+    vault("1000");
+    const foreignFunded = await coordinateMonthlyPayments({
+      db,
+      projects: projects(),
+      networks: ["solana-devnet"],
+      schedule,
+      now: afterCutoff,
+    });
+    expect(foreignFunded).toEqual({
+      scheduled: true,
+      frozen: [],
+      created: [],
+      waiting: [{ key: `${project.id}/2026-11`, reason: "vault-not-served" }],
+      failures: [],
+    });
+    expect(count("monthly_payment_obligations")).toBe(0);
+
+    // An unserved run must not read vault snapshots or fail another network's
+    // scheduled coordinator pass.
+    const prepare = db.prepare.bind(db);
+    db.prepare = (sql) => {
+      if (sql.includes("FROM vault_snapshots"))
+        throw new Error("unserved network vault snapshot should not be read");
+      return prepare(sql);
+    };
+    try {
+      const foreignWorker = await runMonthlyCoordinator(
+        {
+          PAYMENTS_DB: db,
+          REGISTRY_DB: db,
+          PAYMENT_NETWORKS: JSON.stringify(["solana-devnet"]),
+          PAYMENT_RPC_URLS: "{}",
+          MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
+        },
+        afterCutoff,
+      );
+      expect(foreignWorker).toEqual({
+        scheduled: true,
+        frozen: [],
+        created: [],
+        waiting: [{ key: `${project.id}/2026-11`, reason: "vault-not-served" }],
+        failures: [],
+      });
+    } finally {
+      db.prepare = prepare;
+    }
+
+    // Once base-sepolia indexes the 600 reservation (with 400 free balance) and
+    // runs its own coordinator, obligations are created with zero false notices.
+    vault("400");
+    sqlite
+      .prepare(
+        "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,?,?,?,?,?,?,6,'600','12',?,'reserved',?,NULL)",
+      )
+      .run(
+        `0x${"7".repeat(64)}`,
+        project.id,
+        A,
+        "base-sepolia",
+        "base",
+        deployment.vault,
+        deployment.asset,
+        escrowAwardOrigin(project.id, "2026-11", A),
+        afterCutoff.toISOString(),
+      );
+    expect(await coordinate(afterCutoff)).toEqual({
+      scheduled: true,
+      frozen: [],
+      created: [`${project.id}/2026-11`],
+      waiting: [],
+      failures: [],
+    });
+    expect(count("monthly_payment_obligations")).toBe(2);
+    expect(
+      sqlite
+        .query(
+          "SELECT event_key FROM notifications WHERE event_key LIKE 'monthly-underfunded:%'",
+        )
+        .all(),
+    ).toEqual([]);
+  });
+
   test("an award reserved earlier needs no new funds and cannot be planned twice", async () => {
     sqlite
       .prepare(

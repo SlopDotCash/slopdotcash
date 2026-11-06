@@ -736,13 +736,17 @@ export async function coordinateMonthlyPayments(input: {
     (
       await db
         .prepare(
-          "SELECT json_group_array(json_object('projectId',project_id,'period',period)) items FROM (SELECT project_id,period FROM monthly_payment_runs WHERE obligations_created_at IS NULL ORDER BY period,project_id)",
+          "SELECT json_group_array(json_object('projectId',project_id,'period',period,'network',network)) items FROM (SELECT project_id,period,network FROM monthly_payment_runs WHERE obligations_created_at IS NULL ORDER BY period,project_id)",
         )
         .first<{ items: string }>()
     )?.items ?? "[]",
-  ) as { projectId: string; period: string }[];
-  for (const { projectId, period } of pending) {
+  ) as { projectId: string; period: string; network: string }[];
+  for (const { projectId, period, network } of pending) {
     const key = `${projectId}/${period}`;
+    if (!input.networks.includes(network)) {
+      report.waiting.push({ key, reason: "vault-not-served" });
+      continue;
+    }
     try {
       const result = await createMonthlyObligations(db, projectId, period, now);
       if (result === "created") report.created.push(key);
