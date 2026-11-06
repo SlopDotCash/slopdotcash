@@ -68,6 +68,8 @@ export type ReviewPass = {
   responseSha256: string | null;
   usage: ScannerEvidence["usage"];
   cached: boolean;
+  /** Provider calls this pass made, counting retried attempts. */
+  attempts?: number;
 };
 export type ScannerEvidence = {
   review: ModelReview;
