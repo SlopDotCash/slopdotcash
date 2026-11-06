@@ -3,6 +3,7 @@ import {
   isEscrowChain,
 } from "../../src/lib/escrow-policy.mjs";
 import {
+  acceptsPayoutFee,
   isBaseUnits,
   type PublicVaultPayment,
   type PublicVaultPaymentPage,
@@ -20,7 +21,7 @@ const RECORDS = `FROM payment_events e
    AND o.paid_transaction=e.transaction_id
  LEFT JOIN monthly_payment_obligations m ON m.project_id=o.project_id
    AND m.network=o.network AND m.vault=o.vault AND m.source_digest=o.source_digest
-   AND m.github_user_id=o.github_user_id AND m.gross_base=o.gross_base AND m.fee_base=o.fee_base
+   AND m.github_user_id=o.github_user_id AND m.gross_base=o.gross_base
  WHERE e.kind='paid' AND o.state='paid'
    AND NOT EXISTS (SELECT 1 FROM points_members p WHERE p.github_id=o.github_user_id
      AND (p.public!=1 OR p.closed_at IS NOT NULL))`;
@@ -42,8 +43,29 @@ type Row = {
   obligationId: string;
   evidence: string;
   contributionMonth: string | null;
+  /** Fee on the monthly row, when one matches this award. Not a public field. */
+  monthlyFee: string | null;
   indexedAt: string;
 };
+
+/**
+ * The month of a paid award. An exact fee match links it. So does the other
+ * accepted 2% rounding of the same gross: a vault that reserved the award
+ * before fees rounded up holds floor(gross / 50), and a month frozen now
+ * records ceil(gross / 50). Any other fee is a different award and adds no month.
+ */
+function linkedContributionMonth(row: Row): string | null {
+  if (row.contributionMonth == null || row.monthlyFee == null) return null;
+  if (!/^(0|[1-9]\d*)$/.test(row.monthlyFee)) return null;
+  if (row.monthlyFee === row.feeBase) return row.contributionMonth;
+  const gross = BigInt(row.grossBase);
+  const chainFee = BigInt(row.feeBase);
+  const monthlyFee = BigInt(row.monthlyFee);
+  return acceptsPayoutFee(gross, chainFee) &&
+    acceptsPayoutFee(gross, monthlyFee)
+    ? row.contributionMonth
+    : null;
+}
 
 function publicRecord(row: Row): PublicVaultPayment {
   const evidence = JSON.parse(row.evidence) as Record<string, unknown>;
@@ -62,6 +84,7 @@ function publicRecord(row: Row): PublicVaultPayment {
   )
     throw new Error("Invalid finalized payment record");
   const netBase = (BigInt(row.grossBase) - BigInt(row.feeBase)).toString();
+  const contributionMonth = linkedContributionMonth(row);
   const facts = {
     kind: "paid",
     transactionId: row.transactionId,
@@ -91,7 +114,7 @@ function publicRecord(row: Row): PublicVaultPayment {
     projectId: row.projectId,
     network: row.network,
     chain: row.chain,
-    contributionMonth: row.contributionMonth,
+    contributionMonth,
     assetAddress: row.assetAddress,
     assetDecimals: row.assetDecimals,
     netBase,
@@ -153,7 +176,7 @@ export async function publicVaultPayments(
         'assetAddress',o.asset_address,'assetDecimals',o.asset_decimals,
         'transactionId',e.transaction_id,'eventIndex',e.event_index,
         'obligationId',o.id,'evidence',e.evidence_json,
-        'contributionMonth',m.period,'indexedAt',e.observed_at) item
+        'contributionMonth',m.period,'monthlyFee',m.fee_base,'indexedAt',e.observed_at) item
       ${RECORDS}${filter}${testnetFilter} AND e.rowid>? AND e.rowid<=?
       ORDER BY e.rowid LIMIT ?)`)
     .bind(...values, after, through, PAGE_SIZE + 1)
@@ -262,7 +285,7 @@ export async function publicReceivedTotals(
         'assetAddress',o.asset_address,'assetDecimals',o.asset_decimals,
         'transactionId',e.transaction_id,'eventIndex',e.event_index,
         'obligationId',o.id,'evidence',e.evidence_json,
-        'contributionMonth',m.period,'indexedAt',e.observed_at,
+        'contributionMonth',m.period,'monthlyFee',m.fee_base,'indexedAt',e.observed_at,
         'memberLogin',(SELECT login FROM points_members p WHERE p.github_id=o.github_user_id
           AND p.public=1 AND p.closed_at IS NULL)) item
       ${RECORDS} AND e.rowid>? AND e.rowid<=? ORDER BY e.rowid LIMIT ?)`,
