@@ -817,6 +817,38 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
     expect(JSON.stringify(setup.checks.scan)).not.toContain("wallet store");
   });
 
+  test("a coverage gap the scanner recorded twice is listed once", () => {
+    const { summary, setup } = quarantined(
+      incompleteScan({
+        primaryReview: review("primary-run-2", "findings", "ambiguous"),
+        specialistReview: review("specialist-run-2", "findings", "ambiguous"),
+        visibilityGaps: [
+          "specialist:agentInstructions:partial",
+          "specialist:agentInstructions:partial",
+          "A download was not retrievable",
+          "A download was not retrievable",
+        ],
+      }),
+    );
+    const reasons = setup.checks.scan.reasons ?? [];
+    expect(
+      reasons.filter(
+        (reason) =>
+          reason ===
+          "The specialist review covered the agent instructions area partially.",
+      ),
+    ).toHaveLength(1);
+    expect(
+      reasons.filter(
+        (reason) =>
+          reason ===
+          "Coverage note from the scanner: A download was not retrievable",
+      ),
+    ).toHaveLength(1);
+    expect(new Set(reasons).size).toBe(reasons.length);
+    expect(scanClearanceReasons(summary)).toEqual(reasons);
+  });
+
   test("a scan that did not finish, and a historical result, list no reasons", () => {
     const unfinished = status({
       state: "quarantined",
