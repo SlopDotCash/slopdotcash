@@ -791,9 +791,18 @@ try {
   assert.equal(receipt.to, vault);
   await mine(64);
 
-  // Payable: the finalized binding is current, so the attester does
-  // nothing more, and the vault reports a payable destination.
+  // Payable: the finalized binding is current. The stored version-0 consent is
+  // now stale, so the production trigger must not submit it over version 1.
   await scheduled();
+  const broadcastsBeforeStaleReplay = bindingBroadcasts;
+  assert.equal(
+    sql
+      .query<{ n: number }, []>(
+        "SELECT count(*) n FROM payment_binding_authorizations WHERE claim_id='claim' AND expected_version='0'",
+      )
+      .get()?.n,
+    4,
+  );
   assert.deepEqual(await runDestinationBindings(env as never), {
     candidates: 1,
     current: 1,
@@ -801,6 +810,11 @@ try {
     failed: 0,
     submitted: [],
   });
+  assert.equal(
+    bindingBroadcasts,
+    broadcastsBeforeStaleReplay,
+    "A stale expected binding version must not be submitted",
+  );
   const [payTo, version] = words(
     await read(vault, "payableBinding(uint64)", ["123"]),
   );
