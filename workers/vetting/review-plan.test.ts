@@ -11,6 +11,7 @@ import {
 } from "./bounded-scan";
 import {
   BYTES_PER_TOKEN,
+  MAX_CALL_ATTEMPTS,
   planReview,
   reviewInventory,
   synthesisCall,
@@ -377,17 +378,20 @@ test("a batched review combines every call and fails when any batch fails", asyn
   });
   expect(combined.evidence?.coverage?.["prompt-injection"]).toBe("partial");
   // A failed batch fails the review; no synthesis runs over missing batches.
-  const failing = provider((_input, index) =>
-    index === 0 ? new Response("unavailable", { status: 503 }) : null,
+  const failing = provider((input) =>
+    input === plan.batches[0].evidence
+      ? new Response("unavailable", { status: 503 })
+      : null,
   );
   const failed = await reviewInventory({
     inspection,
     profile,
     fetch: failing.fetcher,
     concurrency: 1,
+    retryDelayMs: 0,
   });
   expect(failed.evidence?.review.status).toBe("failed");
-  expect(failing.calls).toHaveLength(1);
+  expect(failing.calls).toHaveLength(MAX_CALL_ATTEMPTS);
 });
 
 test("identical paths outside batches share the reviewed bytes without another call", async () => {
@@ -616,4 +620,207 @@ test("a cached review from another prompt revision is not reused", async () => {
   expect(refreshed.evidence?.review.status).toBe("completed");
   expect(second.calls).toHaveLength(plan.batches.length + 1);
   expect(refreshed.evidence?.passes?.every((pass) => !pass.cached)).toBe(true);
+});
+
+test("a failed review names one fixed failure category and never provider text", async () => {
+  const inspection = inspectRepository({
+    files: [file("src/index.ts", "export const ok = true;\n")],
+  });
+  const answer = (overrides: Record<string, unknown>, text?: string) =>
+    Response.json({
+      id: "msg_failure",
+      model: "claude-opus-5.5",
+      stop_reason: "end_turn",
+      content: [
+        {
+          type: "text",
+          text:
+            text ??
+            JSON.stringify({
+              verdict: "no-findings",
+              confidence: 0.8,
+              coverage: Object.fromEntries(
+                SCAN_REVIEW_AREAS.map((area) => [area, "complete"]),
+              ),
+              findings: [],
+            }),
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      ...overrides,
+    });
+  const cases: [string, () => Response | Promise<Response>][] = [
+    [
+      "provider-http-503",
+      () => new Response("secret provider text", { status: 503 }),
+    ],
+    ["provider-http-429", () => new Response("slow down", { status: 429 })],
+    [
+      "truncated",
+      () =>
+        new Response(JSON.stringify({}), {
+          headers: { "x-si-truncated": "1" },
+        }),
+    ],
+    ["model-mismatch", () => answer({ model: "claude-other" })],
+    ["stop-max_tokens", () => answer({ stop_reason: "max_tokens" })],
+    ["stop-other", () => answer({ stop_reason: "secret provider text" })],
+    ["invalid-response", () => new Response("not json at all")],
+    ["invalid-review", () => answer({}, "secret provider text")],
+    [
+      "invalid-review",
+      () =>
+        answer(
+          {},
+          JSON.stringify({
+            verdict: "findings",
+            confidence: 0.8,
+            coverage: Object.fromEntries(
+              SCAN_REVIEW_AREAS.map((area) => [area, "complete"]),
+            ),
+            findings: [
+              { severity: "high", summary: "x", evidenceIds: ["missing"] },
+            ],
+          }),
+        ),
+    ],
+    [
+      "timeout",
+      () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      },
+    ],
+    [
+      "network",
+      () => {
+        throw new TypeError("fetch failed: secret provider text");
+      },
+    ],
+  ];
+  for (const [category, respond] of cases) {
+    const failing = provider(() => null);
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      await failing.fetcher(url, init);
+      return respond();
+    }) as unknown as typeof fetch;
+    const { evidence } = await reviewInventory({
+      inspection,
+      profile,
+      fetch: fetcher,
+    });
+    expect(evidence?.review.status).toBe("failed");
+    expect(evidence?.failure).toBe(category);
+    expect(JSON.stringify(evidence)).not.toContain("secret provider text");
+  }
+  const { evidence } = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider(() => null).fetcher,
+  });
+  expect(evidence?.review.status).toBe("completed");
+  expect(evidence?.failure).toBeUndefined();
+});
+
+test("a failed batched review says whether a batch or the synthesis failed", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const batch = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider((input) =>
+      input === plan.batches[0].evidence
+        ? new Response("unavailable", { status: 503 })
+        : null,
+    ).fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(batch.evidence?.failure).toBe("batch:provider-http-503");
+  const synthesis = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider((_input, index) =>
+      index === plan.batches.length
+        ? Response.json({
+            id: "msg_synthesis",
+            model: "claude-opus-5.5",
+            stop_reason: "max_tokens",
+            content: [{ type: "text", text: "{" }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          })
+        : null,
+    ).fetcher,
+    concurrency: 1,
+  });
+  expect(synthesis.evidence?.failure).toBe("synthesis:stop-max_tokens");
+});
+
+const unreadableReview = () =>
+  Response.json({
+    id: "msg_unreadable",
+    model: "claude-opus-5.5",
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: "not a review" }],
+    usage: { input_tokens: 7, output_tokens: 3 },
+  });
+
+test("a batch call that returns an unreadable review is retried before the review fails", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const first = plan.batches[0].evidence;
+  // One bad answer, then a good one: the review completes and counts both.
+  let seen = 0;
+  const once = provider((input) =>
+    input === first && seen++ === 0 ? unreadableReview() : null,
+  );
+  const recovered = await reviewInventory({
+    inspection,
+    profile,
+    fetch: once.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(recovered.evidence?.review.status).toBe("completed");
+  expect(once.calls).toHaveLength(plan.batches.length + 2);
+  expect(recovered.evidence?.passes?.[0].attempts).toBe(2);
+  expect(recovered.evidence?.passes?.[1].attempts).toBe(1);
+  expect(recovered.evidence?.usage?.uncachedInput).toBe(
+    7 + 100 * (plan.batches.length + 1),
+  );
+  // A call that keeps answering badly fails after its last attempt.
+  const always = provider((input) =>
+    input === first ? unreadableReview() : null,
+  );
+  const failed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: always.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(failed.evidence?.failure).toBe("batch:invalid-review");
+  expect(always.calls).toHaveLength(MAX_CALL_ATTEMPTS);
+  // A deterministic stop is not retried.
+  const stopped = provider((input) =>
+    input === first
+      ? Response.json({
+          id: "msg_stop",
+          model: "claude-opus-5.5",
+          stop_reason: "max_tokens",
+          content: [{ type: "text", text: "{" }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        })
+      : null,
+  );
+  const stop = await reviewInventory({
+    inspection,
+    profile,
+    fetch: stopped.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(stop.evidence?.failure).toBe("batch:stop-max_tokens");
+  expect(stopped.calls).toHaveLength(1);
 });
