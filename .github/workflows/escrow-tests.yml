@@ -164,6 +164,7 @@ jobs:
 
       - run: forge fmt --root contracts/evm --check
       - run: forge build --root contracts/evm --sizes
+      - run: bun run test:upgrade-preflight
       - run: forge test --root contracts/evm
       - run: bun run test:contracts:evm
         if: github.event_name != 'pull_request'

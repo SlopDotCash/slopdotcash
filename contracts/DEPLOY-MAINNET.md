@@ -1279,14 +1279,29 @@ NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
 4. Read the creation logs again and upgrade any old-logic vault created before
    the new template was selected. Creation is permissionless.
 
-Build the unsigned calldata:
+Build the unsigned calldata only through the fail-closed preflight. The reviewed
+approval file is a separate input that pins the contract role, source commit and
+blob, Foundry configuration, append-compatible storage prefix, compiled storage
+layout, CREATE2 implementation address and runtime SHA-256. The command rebuilds
+from the checked-out source, checks the deployed runtime is nonempty, calls
+`proxiableUUID()`, and compares the deployed bytes with the independent build
+before it prints an owner-signable zero-value transaction:
 
 ```sh
-UPGRADE_VAULT=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_VAULT" 0x)
-UPGRADE_FACTORY=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_FACTORY" 0x)
-SELECT_VAULT=$(cast calldata 'setVaultImplementation(address)' "$NEW_VAULT")
-ATOMIC_FACTORY=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_FACTORY" "$SELECT_VAULT")
+bun contracts/evm/prepare-upgrade.ts \
+  --approval "$REVIEWED_APPROVAL" \
+  --rpc "$RPC" \
+  --proxy "$VAULT_OR_FACTORY_PROXY" \
+  > prepared-upgrade.json
 ```
+
+Run it once for every vault and once for the factory. For the factory transaction
+that also selects the new vault implementation, review and simulate the nested
+`setVaultImplementation` call separately after both plain preflights pass. Never
+replace this command with a UUID-only `cast calldata` check: a hostile contract can
+return the expected UUID and still brick or steal from the proxy. Any source,
+Foundry settings, contract kind, storage layout, address, runtime, or provenance
+mismatch refuses before calldata is emitted.
 
 All proxy changes have value zero and use the upgrade authority. Simulate
 against the correct preceding state before signing. The rehearsal covers the
