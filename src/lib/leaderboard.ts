@@ -5169,7 +5169,13 @@ function createSnapshotWithReviewCutoff(
     const currentMembers = new Set(
       decision.record.sources.map((source) => source.pullRequestNodeId),
     );
+    // The solo chains are walked for the members of every record in the
+    // consumed graph, not only this record's own sources: an ancestor's
+    // declared predecessor stays linked even after its member leaves
+    // the current group.
     const walkMembers = new Set(currentMembers);
+    for (const digest of ancestorDigests)
+      for (const member of ancestorMembers(digest)) walkMembers.add(member);
     // The member set a chain digest is gated on: the member itself when
     // it belongs to this record; for a member that left the group, the
     // sources of the ancestor records that carried it into the graph —
@@ -5208,6 +5214,14 @@ function createSnapshotWithReviewCutoff(
       }
       if (ancestors.has(predecessorDigest))
         return ancestorMembers(predecessorDigest);
+      for (const digest of ancestorDigests) {
+        const ancestor = ancestors.get(digest);
+        if (
+          Array.isArray(ancestor?.legacyPredecessors) &&
+          (ancestor.legacyPredecessors as unknown[]).includes(predecessorDigest)
+        )
+          return ancestorMembers(digest);
+      }
       return null;
     };
     const addProvenRow = (predecessorDigest: string) => {
@@ -5220,6 +5234,16 @@ function createSnapshotWithReviewCutoff(
     ])
       addProvenRow(predecessorDigest);
     for (const digest of ancestorDigests) addProvenRow(digest);
+    // An ancestor's declared solo predecessors are carried directly,
+    // not only through a member's solo chain: the chain can be
+    // unavailable to this snapshot even though the consumed graph
+    // proves the declaration.
+    for (const digest of ancestorDigests) {
+      const ancestor = ancestors.get(digest);
+      if (Array.isArray(ancestor?.legacyPredecessors))
+        for (const declared of ancestor.legacyPredecessors)
+          if (typeof declared === "string") addProvenRow(declared);
+    }
     if (declaredSolo.size)
       for (const chain of chains.values()) {
         let cutoff = -1;

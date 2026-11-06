@@ -966,3 +966,224 @@ test("a share dropped for a banned actor does not retire that actor's earlier so
   expect(total(journal, actor)).toBe(90);
   expect(total(journal, owner)).toBe(40);
 });
+
+test("an ancestor's declared solo predecessor retires through a later group when the member's solo chain is unavailable", async () => {
+  // Snapshot 1 publishes solo A (90). Snapshot 2 publishes its solo
+  // revision B, so the recorded award's decision is B.
+  const first = await solo(old, "first.ts", "2026-11-06T00:00:00.000Z");
+  const initial = soloSnapshot("2026-11-20T00:00:00.000Z", [
+    { pull: old, solo: first },
+  ]);
+  let journal = apply(emptyPointsJournal(initial.generatedAt), initial);
+  expect(total(journal)).toBe(90);
+  const revised = await soloRevision(first, old, "2026-12-01T00:00:00.000Z");
+  const secondInput = input("2026-12-05T00:00:00.000Z", [old]);
+  secondInput.valueDecisions = new Map([[old.id, revised.decision]]) as never;
+  const second = createLeaderboardSnapshot(secondInput);
+  assertLeaderboardSnapshot(second);
+  journal = apply(journal, second);
+  expect(total(journal)).toBe(90);
+  expect(
+    journal.revisions.filter((r) => r.award.sourceId === old.id).at(-1)
+      ?.decision?.sourceId,
+  ).toBe(`value:${revised.digest}`);
+  // J1 groups the original with a second pull request and declares B.
+  // No snapshot ever publishes J1.
+  const secondPull = variantPull(
+    "PR_second",
+    19,
+    "2026-12-08T00:00:00.000Z",
+    "9".repeat(40),
+  );
+  const secondSrc = source(secondPull, "second.ts");
+  const j1 = await joint({
+    sources: [first.src, secondSrc],
+    legacy: [
+      [old.id, revised.digest],
+      [secondPull.id, null],
+    ],
+    legacyPredecessors: [revised.digest],
+    supersedes: [],
+    priorRows: [],
+    assessedAt: "2026-12-10T00:00:00.000Z",
+    targetId: secondPull.id,
+    reason: "Group the original with the second pull request.",
+  });
+  expect(j1.consumed.status).toBe("assessed");
+  // A further solo revision C is assessed (never published) and heads
+  // the member's solo history when J2 is prepared, so J2 declares C;
+  // B is declared only by the ancestor J1.
+  const rerevised = await soloRevision(
+    { ...first, digest: revised.digest, prepared: revised.prepared },
+    old,
+    "2026-12-20T00:00:00.000Z",
+  );
+  const thirdPull = variantPull(
+    "PR_third",
+    21,
+    "2027-01-10T00:00:00.000Z",
+    "7".repeat(40),
+  );
+  const thirdSrc = source(thirdPull, "third.ts");
+  const j2 = await joint({
+    sources: [first.src, secondSrc, thirdSrc],
+    legacy: [
+      [old.id, rerevised.digest],
+      [secondPull.id, null],
+      [thirdPull.id, null],
+    ],
+    legacyPredecessors: [rerevised.digest],
+    supersedes: [j1.digest],
+    priorRows: [j1.row],
+    assessedAt: "2027-01-12T00:00:00.000Z",
+    targetId: thirdPull.id,
+    reason: "Reassess all three sources as one retained outcome.",
+  });
+  expect(j2.consumed.status).toBe("assessed");
+  // Snapshot 3 publishes J2. The builder receives no solo decision for
+  // the original member, so no solo chain can link B under C; B rides
+  // only on the ancestor's own declaration.
+  const thirdInput = input(
+    "2027-01-15T00:00:00.000Z",
+    [thirdPull],
+    [old, secondPull],
+  );
+  thirdInput.valueActors = new Map([[actor.id, actor]]);
+  thirdInput.jointValueDecisions = new Map([
+    [old.id, j2.consumed],
+    [secondPull.id, j2.consumed],
+    [thirdPull.id, j2.consumed],
+  ]) as never;
+  const third = createLeaderboardSnapshot(thirdInput);
+  assertLeaderboardSnapshot(third);
+  expect(third.valueAssessmentSupersessions).toEqual(
+    [
+      { predecessorDigest: revised.digest, successorDigest: j2.digest },
+      { predecessorDigest: rerevised.digest, successorDigest: j2.digest },
+      { predecessorDigest: j1.digest, successorDigest: j2.digest },
+    ].sort((a, b) =>
+      a.predecessorDigest.localeCompare(b.predecessorDigest, "en"),
+    ),
+  );
+  journal = apply(journal, third);
+  expect(latestAmount(journal, old.id)).toEqual([0]);
+  expect(total(journal)).toBe(90);
+});
+
+test("an ancestor's declared solo predecessors retire even after their member leaves the group", async () => {
+  // Solo A is published; its revision B heads the member's chain.
+  const first = await solo(old, "first.ts", "2026-11-06T00:00:00.000Z");
+  const initial = soloSnapshot("2026-11-20T00:00:00.000Z", [
+    { pull: old, solo: first },
+  ]);
+  let journal = apply(emptyPointsJournal(initial.generatedAt), initial);
+  expect(total(journal)).toBe(90);
+  const revised = await soloRevision(first, old, "2026-12-01T00:00:00.000Z");
+  const secondPull = variantPull(
+    "PR_second",
+    19,
+    "2026-12-08T00:00:00.000Z",
+    "9".repeat(40),
+  );
+  const secondSrc = source(secondPull, "second.ts");
+  const j1 = await joint({
+    sources: [first.src, secondSrc],
+    legacy: [
+      [old.id, revised.digest],
+      [secondPull.id, null],
+    ],
+    legacyPredecessors: [revised.digest],
+    supersedes: [],
+    priorRows: [],
+    assessedAt: "2026-12-10T00:00:00.000Z",
+    targetId: secondPull.id,
+    reason: "Group the original with the second pull request.",
+  });
+  expect(j1.consumed.status).toBe("assessed");
+  // J2 groups only the second and third pull requests and supersedes
+  // J1. The current history read rejects a graph whose predecessor
+  // keeps a member the successor dropped, so this decision is assembled
+  // directly from its verified record and evidence: the builder must
+  // still carry the ancestor's declared predecessors for any consumed
+  // decision it accepts.
+  const thirdPull = variantPull(
+    "PR_third",
+    21,
+    "2027-01-10T00:00:00.000Z",
+    "7".repeat(40),
+  );
+  const thirdSrc = source(thirdPull, "third.ts");
+  const evidence = await prepareWorkUnitEvidence(
+    [secondSrc, thirdSrc],
+    [repository],
+  );
+  expect(evidence.limitations).toEqual([]);
+  const prepared = await prepareWorkUnitRecord(
+    {
+      rubricVersion: VALUE_RUBRIC_VERSION,
+      sourceDigest: evidence.sourceDigest,
+      assessedAt: "2027-01-12T00:00:00.000Z",
+      verdict: {
+        units: [
+          {
+            claimIds: evidence.claims.map((c) => c.id),
+            assessment: assessment([secondPull.url, thirdPull.url]),
+          },
+        ],
+      },
+      provenance,
+    } as never,
+    evidence,
+    "a".repeat(40),
+    [j1.digest],
+    [],
+    "Reassess the second and third sources as one retained outcome.",
+    [project],
+  );
+  const row2 = {
+    sequence: 2,
+    record_digest: prepared.recordDigest,
+    record_json: prepared.recordJson,
+    recorded_at: "2027-01-12T00:00:00.000Z",
+    assessment_key: prepared.assessmentKey,
+  };
+  const consumed2 = {
+    status: "assessed",
+    record: prepared.record,
+    evidence,
+    latestDigest: prepared.recordDigest,
+    history: [j1.row, row2],
+    throughSequence: 2,
+  };
+  const laterInput = input(
+    "2027-01-15T00:00:00.000Z",
+    [thirdPull],
+    [secondPull],
+  );
+  laterInput.valueActors = new Map([[actor.id, actor]]);
+  laterInput.valueDecisions = new Map([[old.id, revised.decision]]) as never;
+  laterInput.jointValueDecisions = new Map([
+    [secondPull.id, consumed2],
+    [thirdPull.id, consumed2],
+  ]) as never;
+  const later = createLeaderboardSnapshot(laterInput);
+  assertLeaderboardSnapshot(later);
+  expect(later.valueAssessmentSupersessions).toEqual(
+    [
+      {
+        predecessorDigest: first.digest,
+        successorDigest: prepared.recordDigest,
+      },
+      {
+        predecessorDigest: revised.digest,
+        successorDigest: prepared.recordDigest,
+      },
+      { predecessorDigest: j1.digest, successorDigest: prepared.recordDigest },
+    ].sort((a, b) =>
+      a.predecessorDigest.localeCompare(b.predecessorDigest, "en"),
+    ),
+  );
+  journal = apply(journal, later);
+  expect(latestAmount(journal, old.id)).toEqual([0]);
+  expect(total(journal)).toBe(90);
+});
