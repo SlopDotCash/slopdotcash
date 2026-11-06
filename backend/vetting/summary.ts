@@ -88,7 +88,8 @@ export function scanClearanceFactsOf(
         ? [{ surface, state }]
         : [];
     }),
-    visibilityGaps: [...result.visibilityGaps],
+    // The parser keeps repeated gaps; the owner sees each note once.
+    visibilityGaps: [...new Set(result.visibilityGaps)],
     openFindings: [...open].map(([category, count]) => ({ category, count })),
     review: {
       primary: reviewOutcome(result.primaryReview),
