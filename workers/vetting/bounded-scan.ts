@@ -147,6 +147,8 @@ const INSTALL_FILES = new Set([
   "makefile",
   "makefile.pl",
   "justfile",
+  // just also loads this hidden name, in any capitalization.
+  ".justfile",
   "install.sh",
   "postinstall.js",
   "preinstall.js",
@@ -204,6 +206,13 @@ const INSTALL_FILES = new Set([
  */
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
 const GYP_EXTENSION = "gyp|gypi";
+/**
+ * just module recipes. `mod name` loads `name.just` or `name/mod.just`.
+ * The stem keeps the module name's case and the extension is the lowercase
+ * spelling `.just`, so this is matched on the original path. `foo.JUST` is
+ * not a module file. `.justfile` is not this pattern; it is an install name.
+ */
+const JUST_MODULE = /(?:^|\/)[^/]+\.just$/u;
 const BUILD_RECIPE = new RegExp(
   String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
   "u",
@@ -285,6 +294,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
+    JUST_MODULE.test(path) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
     lower.startsWith(".vscode/") ||
