@@ -325,16 +325,35 @@ const INTERPRETER_COMMAND = commandToken(
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
 /**
- * A store path is also assembled one argument at a time, as
+ * A store path is assembled one argument at a time, as
  * `os.path.join(home, ".aws", "credentials")` does, and then no separator is
- * written anywhere. Match the quoted components in order with a comma between
- * them, allowing one identifier argument in between, which is the
- * `join(home, ".aws", os.sep, "credentials")` spelling. Both quantifiers are
- * bounded, so neither can be driven quadratic.
+ * written anywhere. Two spellings assemble it: a comma-separated call, and
+ * Python's `pathlib` `/` operator.
+ *
+ * The first component of the call spelling is anchored to an argument list: it
+ * either follows a comma (any argument after the first) or a call opener
+ * immediately before it (the first argument). A list, tuple or set that merely
+ * names the components - `[".aws", "credentials"]`, `(".kube", "config")` -
+ * therefore reads as data, not as a store read, while every call form the
+ * suite pins (`join(home, ...)`, `os.path.join(str(home), ...)`, a call split
+ * across lines) is still read. Anchoring it as a call would cost several times
+ * more on files dense in call syntax, so the anchor is a bounded lookbehind
+ * guarded by a lookahead: it is evaluated only where a quoted component
+ * begins, and no quantifier in it is unbounded.
  */
+const CALL_OR_ARG = String.raw`(?=["'\x60])(?:(?<=,\s{0,4})|(?<=[A-Za-z_$][\w$.]{0,40}\(\s{0,4}))`;
 function joinedPath(...components: string[]): string {
   const quoted = components.map((component) => `["'\x60]${component}["'\x60]`);
-  return quoted.join(String.raw`\s*,\s*(?:[A-Za-z_$][\w$.]{0,15}\s*,\s*)?`);
+  return (
+    CALL_OR_ARG +
+    quoted.join(String.raw`\s*,\s*(?:[A-Za-z_$][\w$.]{0,15}\s*,\s*)?`)
+  );
+}
+
+/** The same stores assembled with Python's `pathlib` `/` operator. */
+function slashJoinedPath(...components: string[]): string {
+  const quoted = components.map((component) => `["'\x60]${component}["'\x60]`);
+  return quoted.join(String.raw`\s*\/\s*`);
 }
 
 /**
@@ -352,7 +371,9 @@ const RULES: Rule[] = [
     pattern: new RegExp(
       String.raw`\.config[/\\]+solana[/\\]+id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'\x60/\\}])Local Extension Settings\b|\.ethereum[/\\]+keystore` +
         `|${joinedPath("\\.config", "solana", "id\\.json")}` +
-        `|${joinedPath("\\.ethereum", "keystore")}`,
+        `|${joinedPath("\\.ethereum", "keystore")}` +
+        `|${slashJoinedPath("\\.config", "solana", "id\\.json")}` +
+        `|${slashJoinedPath("\\.ethereum", "keystore")}`,
       "iu",
     ),
     summary: "Reads a wallet key file or browser wallet extension store",
@@ -379,7 +400,9 @@ const RULES: Rule[] = [
     pattern: new RegExp(
       String.raw`[/\\]+\.ssh[/\\]+|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[/\\]+credentials|\.git-credentials|\.netrc\b|\.config[/\\]+gh[/\\]+hosts\.yml|(?<=["'\x60/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b` +
         `|${joinedPath("\\.aws", "credentials")}` +
-        `|${joinedPath("\\.config", "gh", "hosts\\.yml")}`,
+        `|${joinedPath("\\.config", "gh", "hosts\\.yml")}` +
+        `|${slashJoinedPath("\\.aws", "credentials")}` +
+        `|${slashJoinedPath("\\.config", "gh", "hosts\\.yml")}`,
       "iu",
     ),
     summary: "Reads a stored credential, key or password store",
@@ -393,7 +416,9 @@ const RULES: Rule[] = [
     pattern: new RegExp(
       String.raw`[/\\]+\.npmrc|\.pypirc|\.docker[/\\]+config\.json|\.kube[/\\]+config` +
         `|${joinedPath("\\.docker", "config\\.json")}` +
-        `|${joinedPath("\\.kube", "config")}`,
+        `|${joinedPath("\\.kube", "config")}` +
+        `|${slashJoinedPath("\\.docker", "config\\.json")}` +
+        `|${slashJoinedPath("\\.kube", "config")}`,
       "iu",
     ),
     summary: "Reads a package-registry or cluster credential file",

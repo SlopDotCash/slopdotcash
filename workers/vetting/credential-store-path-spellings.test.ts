@@ -249,3 +249,76 @@ test("a store named only relative to the working directory is a documented miss"
     });
   }
 });
+
+/**
+ * Python's `pathlib` assembles the same path with the `/` operator, which
+ * writes neither a separator nor a comma, so none of the forms above can
+ * match it. Every store is covered, each paired with its `join()` control.
+ */
+const SLASH_ASSEMBLED: [string, string][] = [
+  ['open(Path.home() / ".aws" / "credentials")\n', "credential-theft:high"],
+  [
+    'open(Path.home() / ".config" / "gh" / "hosts.yml")\n',
+    "credential-theft:high",
+  ],
+  [
+    'open(Path.home() / ".config" / "solana" / "id.json")\n',
+    "wallet-drainer:high",
+  ],
+  ['open(Path.home() / ".ethereum" / "keystore")\n', "wallet-drainer:high"],
+  [
+    'open(Path.home() / ".docker" / "config.json")\n',
+    "credential-theft:medium",
+  ],
+  ['open(Path.home() / ".kube" / "config")\n', "credential-theft:medium"],
+  ['open(Path . home ( ) / ".aws" / "credentials")\n', "credential-theft:high"],
+];
+
+test("a store assembled with the pathlib / operator is the same read", () => {
+  for (const [text, expected] of SLASH_ASSEMBLED) {
+    expect({ text, findings: described("src/read.py", text) }).toEqual({
+      text,
+      findings: [`src/read.py:${expected}`],
+    });
+  }
+});
+
+test("naming the components is not reading them", () => {
+  // A list, tuple or set that holds the component strings never opens a
+  // store, so the call anchor on the comma form has to exclude it. These
+  // are controls for the anchor, not for the stores.
+  for (const text of [
+    'ALLOWED = [".aws", "credentials"]\n',
+    'STORE = (".config", "gh", "hosts.yml")\n',
+    'NAMES = {".aws", "credentials"}\n',
+    'pairs = [".config", "solana", "id.json"]\n',
+  ]) {
+    expect({ text, findings: described("src/read.py", text) }).toEqual({
+      text,
+      findings: [],
+    });
+  }
+});
+
+test("the call spellings the anchor must keep reading still read", () => {
+  for (const [text, expected] of [
+    [
+      'os.path.join(str(home), ".aws", "credentials")\n',
+      "credential-theft:high",
+    ],
+    [
+      'join(\n  home,\n  ".aws",\n  "credentials",\n)\n',
+      "credential-theft:high",
+    ],
+    [
+      'x = join(home, ".aws", os.sep, "credentials")\n',
+      "credential-theft:high",
+    ],
+    ['p = path.join(home, ".kube", "config")\n', "credential-theft:medium"],
+  ] as [string, string][]) {
+    expect({ text, findings: described("src/read.py", text) }).toEqual({
+      text,
+      findings: [`src/read.py:${expected}`],
+    });
+  }
+});
