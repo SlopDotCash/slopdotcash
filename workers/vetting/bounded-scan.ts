@@ -325,6 +325,19 @@ const INTERPRETER_COMMAND = commandToken(
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
 /**
+ * A store path is also assembled one argument at a time, as
+ * `os.path.join(home, ".aws", "credentials")` does, and then no separator is
+ * written anywhere. Match the quoted components in order with a comma between
+ * them, allowing one identifier argument in between, which is the
+ * `join(home, ".aws", os.sep, "credentials")` spelling. Both quantifiers are
+ * bounded, so neither can be driven quadratic.
+ */
+function joinedPath(...components: string[]): string {
+  const quoted = components.map((component) => `["'\x60]${component}["'\x60]`);
+  return quoted.join(String.raw`\s*,\s*(?:[A-Za-z_$][\w$.]{0,15}\s*,\s*)?`);
+}
+
+/**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
  */
@@ -336,8 +349,12 @@ const RULES: Rule[] = [
     // slash, backslash, or closing brace is immediately on the left, in any
     // case. A closing quote is not required. A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
-    pattern:
-      /\.config[/\\]+solana[/\\]+id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`/\\}])Local Extension Settings\b|\.ethereum[/\\]+keystore/iu,
+    pattern: new RegExp(
+      String.raw`\.config[/\\]+solana[/\\]+id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'\x60/\\}])Local Extension Settings\b|\.ethereum[/\\]+keystore` +
+        `|${joinedPath("\\.config", "solana", "id\\.json")}` +
+        `|${joinedPath("\\.ethereum", "keystore")}`,
+      "iu",
+    ),
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
@@ -354,15 +371,23 @@ const RULES: Rule[] = [
     // slash, backslash, or closing brace is immediately on the left, in any
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
-    pattern:
-      /~[/\\]+\.ssh[/\\]+|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[/\\]+credentials|\.git-credentials|\.netrc\b|\.config[/\\]+gh[/\\]+hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+    pattern: new RegExp(
+      String.raw`~[/\\]+\.ssh[/\\]+|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[/\\]+credentials|\.git-credentials|\.netrc\b|\.config[/\\]+gh[/\\]+hosts\.yml|(?<=["'\x60/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b` +
+        `|${joinedPath("\\.aws", "credentials")}` +
+        `|${joinedPath("\\.config", "gh", "hosts\\.yml")}`,
+      "iu",
+    ),
     summary: "Reads a stored credential, key or password store",
   },
   {
     threat: "credential-theft",
     severity: "medium",
-    pattern:
-      /~[/\\]+\.npmrc|\.pypirc|\.docker[/\\]+config\.json|\.kube[/\\]+config/iu,
+    pattern: new RegExp(
+      String.raw`~[/\\]+\.npmrc|\.pypirc|\.docker[/\\]+config\.json|\.kube[/\\]+config` +
+        `|${joinedPath("\\.docker", "config\\.json")}` +
+        `|${joinedPath("\\.kube", "config")}`,
+      "iu",
+    ),
     summary: "Reads a package-registry or cluster credential file",
   },
   {

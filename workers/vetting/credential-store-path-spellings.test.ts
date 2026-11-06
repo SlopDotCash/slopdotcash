@@ -4,10 +4,12 @@ import { inspectRepository } from "./bounded-scan";
 /**
  * PRD section 8: the scan checks for wallet drainers and credential theft.
  *
- * A credential store is named by its path, and the same path is written with a
- * forward slash on POSIX and a backslash on Windows. Only the separator
- * differs, so a rule that matches one form and not the other depends on which
- * machine the scanned script was written on, not on what the script does.
+ * A credential store is named by its path, and the same path is spelled more
+ * than one way: a forward slash on POSIX, a backslash on Windows, and one
+ * argument per component when it is assembled with a path builder. Only the
+ * spelling differs, so a rule that matches one form and not another depends on
+ * which machine the scanned script was written on, not on what the script
+ * does.
  */
 function inspected(path: string, text: string) {
   return inspectRepository({
@@ -117,6 +119,63 @@ test("a doubled or mixed separator is the same store", () => {
     expect({ text, findings: described("src/read.py", text) }).toEqual({
       text,
       findings: [`src/read.py:${expected}`],
+    });
+  }
+});
+
+/**
+ * The same stores, assembled one component at a time. No separator is written
+ * in the source at all, so the separator forms above cannot match them.
+ */
+const ASSEMBLED: [string, string][] = [
+  [
+    "open(os.path.join(home, '.aws', 'credentials'))\n",
+    "credential-theft:high",
+  ],
+  [
+    'readFileSync(path.join(home, ".kube", "config"))\n',
+    "credential-theft:medium",
+  ],
+  [
+    "open(os.path.join(home, '.config', 'solana', 'id.json'))\n",
+    "wallet-drainer:high",
+  ],
+  [
+    "open(File.join(home, '.config', 'gh', 'hosts.yml'))\n",
+    "credential-theft:high",
+  ],
+  [
+    "open(os.path.join(home, '.docker', 'config.json'))\n",
+    "credential-theft:medium",
+  ],
+  // One separator argument between the components is the same read.
+  [
+    "open(os.path.join(home, '.aws', os.sep, 'credentials'))\n",
+    "credential-theft:high",
+  ],
+  ["open(join(home, `.ethereum`, `keystore`))\n", "wallet-drainer:high"],
+];
+
+test("a store assembled one component at a time is the same read", () => {
+  for (const [text, expected] of ASSEMBLED) {
+    expect({ text, findings: described("src/read.py", text) }).toEqual({
+      text,
+      findings: [`src/read.py:${expected}`],
+    });
+  }
+});
+
+test("building a path from ordinary components keeps no finding", () => {
+  // The join form must not turn every path builder into a credential read.
+  for (const text of [
+    "open(os.path.join(home, 'documents', 'report.txt'))\n",
+    "readFileSync(path.join(root, 'config', 'solana.json'))\n",
+    "join(configDir, 'gh', 'config.yml')\n",
+    "open(os.path.join(home, '.config', 'settings.json'))\n",
+  ]) {
+    expect({ text, findings: described("src/read.py", text) }).toEqual({
+      text,
+      findings: [],
     });
   }
 });
