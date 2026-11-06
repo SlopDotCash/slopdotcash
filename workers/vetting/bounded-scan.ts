@@ -356,6 +356,20 @@ function slashJoinedPath(...components: string[]): string {
   return quoted.join(String.raw`\s*\/\s*`);
 }
 
+/** A file name component, as it appears quoted inside an assembled path. */
+const FILE_COMPONENT = String.raw`[^"'\x60]{1,40}`;
+/**
+ * A store whose name is a single component, so there is no separator to key
+ * on: `join(home, ".npmrc")` names it in an argument position and
+ * `Path.home() / ".npmrc"` puts the pathlib operator in front of it. Both are
+ * evidence of assembly; a bare quoted name (a list of store names, a prose
+ * mention) is not, so neither form matches one.
+ */
+function singleComponentPath(component: string): string {
+  const quoted = `["'\x60]${component}["'\x60]`;
+  return `${CALL_OR_ARG}${quoted}` + String.raw`|\s*\/\s*` + quoted;
+}
+
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
@@ -401,8 +415,10 @@ const RULES: Rule[] = [
       String.raw`[/\\]+\.ssh[/\\]+|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[/\\]+credentials|\.git-credentials|\.netrc\b|\.config[/\\]+gh[/\\]+hosts\.yml|(?<=["'\x60/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b` +
         `|${joinedPath("\\.aws", "credentials")}` +
         `|${joinedPath("\\.config", "gh", "hosts\\.yml")}` +
+        `|${joinedPath("\\.ssh", FILE_COMPONENT)}` +
         `|${slashJoinedPath("\\.aws", "credentials")}` +
-        `|${slashJoinedPath("\\.config", "gh", "hosts\\.yml")}`,
+        `|${slashJoinedPath("\\.config", "gh", "hosts\\.yml")}` +
+        `|${slashJoinedPath("\\.ssh", FILE_COMPONENT)}`,
       "iu",
     ),
     summary: "Reads a stored credential, key or password store",
@@ -415,6 +431,7 @@ const RULES: Rule[] = [
     // separator before it is required.
     pattern: new RegExp(
       String.raw`[/\\]+\.npmrc|\.pypirc|\.docker[/\\]+config\.json|\.kube[/\\]+config` +
+        `|${singleComponentPath("\\.npmrc")}` +
         `|${joinedPath("\\.docker", "config\\.json")}` +
         `|${joinedPath("\\.kube", "config")}` +
         `|${slashJoinedPath("\\.docker", "config\\.json")}` +

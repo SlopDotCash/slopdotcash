@@ -154,6 +154,14 @@ const ASSEMBLED: [string, string][] = [
     "credential-theft:high",
   ],
   ["open(join(home, `.ethereum`, `keystore`))\n", "wallet-drainer:high"],
+  // A store whose name is a single component has no separator to key on, so
+  // the argument position is the only evidence of assembly.
+  ["open(os.path.join(home, '.npmrc'))\n", "credential-theft:medium"],
+  ["open(os.path.join(home, '.ssh', 'config'))\n", "credential-theft:high"],
+  [
+    "open(os.path.join(home, '.ssh', 'known_hosts'))\n",
+    "credential-theft:high",
+  ],
 ];
 
 test("a store assembled one component at a time is the same read", () => {
@@ -272,6 +280,10 @@ const SLASH_ASSEMBLED: [string, string][] = [
   ],
   ['open(Path.home() / ".kube" / "config")\n', "credential-theft:medium"],
   ['open(Path . home ( ) / ".aws" / "credentials")\n', "credential-theft:high"],
+  // The single-component and `.ssh`-file stores, in the operator spelling.
+  ['open(Path.home() / ".npmrc")\n', "credential-theft:medium"],
+  ['open(Path.home() / ".ssh" / "config")\n', "credential-theft:high"],
+  ['open(Path.home() / ".ssh" / "known_hosts")\n', "credential-theft:high"],
 ];
 
 test("a store assembled with the pathlib / operator is the same read", () => {
@@ -292,6 +304,10 @@ test("naming the components is not reading them", () => {
     'STORE = (".config", "gh", "hosts.yml")\n',
     'NAMES = {".aws", "credentials"}\n',
     'pairs = [".config", "solana", "id.json"]\n',
+    // The single-component forms are anchored the same way: a list of store
+    // names is data, not a read, in both the comma and the slash spelling.
+    'CONFIGS = [".npmrc", ".yarnrc"]\n',
+    'SSH_FILES = (".ssh", "config")\n',
   ]) {
     expect({ text, findings: described("src/read.py", text) }).toEqual({
       text,
