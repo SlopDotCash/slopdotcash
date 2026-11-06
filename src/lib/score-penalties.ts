@@ -10,6 +10,7 @@
  * cycles bind their own snapshot bytes, so a later debit never changes an
  * approved, scheduled or paid award.
  */
+import { compareEnglish } from "./collation";
 import type {
   PenaltyHistoryRecord,
   PublishedPenalty,
@@ -105,12 +106,10 @@ export function penaltyDeductions(
   }
   const byActor = new Map<string, number>();
   const byPenalty = new Map<string, number>();
-  // Pin English collation: host-default localeCompare can reverse mixed-case
-  // penalty ids (Turkish i/I) and change which debit wins a capped month.
   for (const penalty of [...penalties].sort(
     (left, right) =>
-      left.occurredAt.localeCompare(right.occurredAt, "en") ||
-      left.id.localeCompare(right.id, "en"),
+      compareEnglish(left.occurredAt, right.occurredAt) ||
+      compareEnglish(left.id, right.id),
   )) {
     const bucket = key(
       penalty.actor.id,
