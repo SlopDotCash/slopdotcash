@@ -149,7 +149,10 @@ export type AssessmentOutcome =
         | "specialist-review"
         | "review-batches"
         | "evidence";
-      /** The error name of a step that threw, never its message. */
+      /**
+       * The error name of a step that threw, never its message; for a failed
+       * model review, its fixed failure category (`ReviewFailureCategory`).
+       */
       reason?: string;
     }
   | {
@@ -194,6 +197,21 @@ function retry(
     state: "retry",
     step,
     reason: error instanceof Error ? error.name : "unknown",
+  };
+}
+
+/** A retry for a model review that failed. It names only the fixed failure
+ * category the scanner recorded, never provider text. */
+function reviewRetry(
+  assessmentId: string,
+  step: "primary-review" | "specialist-review",
+  failure: string | undefined,
+): AssessmentOutcome {
+  return {
+    assessmentId,
+    state: "retry",
+    step,
+    ...(failure === undefined ? {} : { reason: failure }),
   };
 }
 
@@ -549,7 +567,7 @@ async function scanOne(
     if (primary === null)
       return { assessmentId, state: "retry", step: "review-batches" };
     if (primary.review.status !== "completed")
-      return { assessmentId, state: "retry", step: "primary-review" };
+      return reviewRetry(assessmentId, "primary-review", primary.failure);
     const runId = `scan_${(config.randomId ?? randomUUID)().replaceAll("-", "")}`;
     const queued = { ...assessment, repository: inputs.repository };
     const compose = (specialist: typeof primary | null) =>
@@ -573,7 +591,7 @@ async function scanOne(
       if (second === null)
         return { assessmentId, state: "retry", step: "review-batches" };
       if (second.review.status !== "completed")
-        return { assessmentId, state: "retry", step: "specialist-review" };
+        return reviewRetry(assessmentId, "specialist-review", second.failure);
       composed = compose(second);
       specialist = true;
     }

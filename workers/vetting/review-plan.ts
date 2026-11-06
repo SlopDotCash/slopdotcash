@@ -414,6 +414,16 @@ export type ReviewCache = { directory: string; maxCallsPerPass: number };
 const promptRevision = (kind: ReviewPass["kind"]) =>
   kind === "synthesis" ? SYNTHESIS_PROMPT_REVISION : SCAN_PROMPT_REVISION;
 
+/** Names the failed call of a batched review beside its fixed category. */
+function labelFailure(
+  evidence: ScannerEvidence,
+  kind: ReviewPass["kind"],
+): ScannerEvidence {
+  return evidence.failure === undefined
+    ? evidence
+    : { ...evidence, failure: `${kind}:${evidence.failure}` };
+}
+
 async function cached(
   cache: ReviewCache | undefined,
   key: string,
@@ -625,7 +635,10 @@ export async function reviewInventory(input: {
   const done = outcomes.filter((outcome) => outcome !== null);
   if (failed) {
     const first = done.find((o) => o.evidence.review.status !== "completed");
-    return { plan, evidence: first?.evidence ?? null };
+    return {
+      plan,
+      evidence: first ? labelFailure(first.evidence, "batch") : null,
+    };
   }
   if (exhausted || done.length !== plan.batches.length)
     return { plan, evidence: null };
@@ -640,7 +653,7 @@ export async function reviewInventory(input: {
   const final = await run(synthesis, "synthesis");
   if (!final) return { plan, evidence: null };
   if (final.evidence.review.status !== "completed")
-    return { plan, evidence: final.evidence };
+    return { plan, evidence: labelFailure(final.evidence, "synthesis") };
   return {
     plan,
     evidence: combine(

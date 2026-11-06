@@ -613,6 +613,7 @@ test("source acquisition is one Git fetch; the GitHub credential reaches only th
   expect(pass.assessments[0]).toMatchObject({
     state: "retry",
     step: "primary-review",
+    reason: "provider-http-503",
   });
   const githubRequests = acquisitionRequests.filter(
     (r) => r.host === "api.github.com",
@@ -860,6 +861,7 @@ test("a provider outage leaves the scan pending; the next pass clears the projec
     assessmentId,
     state: "retry",
     step: "primary-review",
+    reason: "provider-http-503",
   });
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("pending");
   expect(await readdir(config.journalDirectory)).toEqual([]);
@@ -1745,6 +1747,7 @@ test("a failed specialist is a service failure: nothing is published and the sca
     assessmentId,
     state: "retry",
     step: "specialist-review",
+    reason: "provider-http-503",
   });
   expect(provider.calls.map((call) => call.path)).toEqual([
     "/anthropic/v1/messages",

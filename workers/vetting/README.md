@@ -349,6 +349,14 @@ on the next pass (`retry` at step `review-batches`); it is never published
 partial. The scheduled controller runs on an ephemeral runner and sets no
 cache, so it completes each review in one pass.
 
+A failed review is a `retry` at step `primary-review` or `specialist-review`
+whose `reason` names one fixed failure category: `provider-http-<status>`,
+`timeout`, `network`, `response-unreadable`, `truncated`, `model-mismatch`,
+`stop-<reason>` or `incomplete-<reason>` (allowlisted provider stop reasons,
+otherwise `other`), `invalid-response` or `invalid-review`. A batched review
+prefixes `batch:` or `synthesis:`. The category never carries provider text,
+so the controller's pass report can print it.
+
 Estimated primary-review input at 3 bytes per token (real tokenizers report
 fewer), measured on the real acquisitions of 28 October 2026:
 
