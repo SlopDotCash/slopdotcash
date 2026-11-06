@@ -9,6 +9,7 @@
  * at most one postRoot per run through a PosterClient the chain file provides.
  */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import {
   CLAIM_CHAIN,
@@ -651,9 +652,16 @@ export interface PostStore {
   openPosts(network: string): Promise<PostRow[]>;
   /** Every post that occupies a contract epoch (not failed), by epoch. */
   acceptedPosts(network: string): Promise<PostRow[]>;
-  /** Filed files with a root, in epoch order: period, root and tree total. */
+  /** Filed files with a root, including the exact public evidence, in epoch order. */
   postableFiles(): Promise<
-    { period: string; merkleRoot: string; treeTotalBase: string }[]
+    {
+      period: string;
+      merkleRoot: string;
+      treeTotalBase: string;
+      leafCount: number;
+      body: string;
+      bodySha256: string;
+    }[]
   >;
   unsettledGasPosts(network: string): Promise<PostRow[]>;
   recordGas(row: PostRow, cost: ReferralGasCost): Promise<void>;
@@ -701,6 +709,68 @@ export interface PostResult {
     | "precheck_failed";
   reconciled: number;
   reason?: string;
+}
+
+const UINT256_LIMIT = 1n << 256n;
+const DECIMAL_UNITS = /^(0|[1-9][0-9]*)$/u;
+const LOWERCASE_ADDRESS = /^0x[0-9a-f]{40}$/u;
+
+/** Independently totals the exact leaf set retained in a filed public accrual. */
+export function declaredTotalEvidenceError(file: {
+  treeTotalBase: string;
+  leafCount: number;
+  body: string;
+}): string | null {
+  try {
+    const parsed: unknown = JSON.parse(file.body);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+      return "file body is not an object";
+    const record = parsed as Record<string, unknown>;
+    const totals = record.totals;
+    if (totals === null || typeof totals !== "object" || Array.isArray(totals))
+      return "file totals are malformed";
+    if (
+      (totals as Record<string, unknown>).treeTotalBase !== file.treeTotalBase
+    )
+      return "file total differs from its public body";
+    if (!DECIMAL_UNITS.test(file.treeTotalBase))
+      return "file total is not canonical uint256 units";
+    const declared = BigInt(file.treeTotalBase);
+    if (declared >= UINT256_LIMIT) return "file total exceeds uint256";
+    if (!Array.isArray(record.referrers)) return "file referrers are malformed";
+    const wallets = new Set<string>();
+    let sum = 0n;
+    let leaves = 0;
+    for (const item of record.referrers) {
+      if (item === null || typeof item !== "object" || Array.isArray(item))
+        return "file referrer is malformed";
+      const referrer = item as Record<string, unknown>;
+      if (referrer.wallet === null) continue;
+      if (
+        typeof referrer.wallet !== "string" ||
+        !LOWERCASE_ADDRESS.test(referrer.wallet)
+      )
+        return "file leaf wallet is malformed";
+      if (wallets.has(referrer.wallet)) return "file has duplicate leaf wallet";
+      wallets.add(referrer.wallet);
+      if (
+        typeof referrer.cumulativeBase !== "string" ||
+        !DECIMAL_UNITS.test(referrer.cumulativeBase)
+      )
+        return "file leaf amount is not canonical uint256 units";
+      const amount = BigInt(referrer.cumulativeBase);
+      if (amount >= UINT256_LIMIT) return "file leaf amount exceeds uint256";
+      sum += amount;
+      if (sum >= UINT256_LIMIT) return "file leaf total exceeds uint256";
+      leaves += 1;
+    }
+    if (leaves !== file.leafCount) return "file leaf count differs";
+    return sum === declared
+      ? null
+      : `leaf total ${sum} differs from declared total ${declared}`;
+  } catch {
+    return "file body is malformed";
+  }
 }
 
 async function reconcilePosts(
@@ -900,18 +970,24 @@ async function postWithinGasBudget(
       (max, row) => (BigInt(row.totalBase) > max ? BigInt(row.totalBase) : max),
       0n,
     );
+  const evidenceError =
+    (await sha256Hex(candidate.body)) !== candidate.bodySha256
+      ? "file body digest differs"
+      : declaredTotalEvidenceError(candidate);
   const precheck =
-    total < previous
+    evidenceError ??
+    (total < previous
       ? `file total ${total} is below the last finalized total ${previous}`
       : total - previous > state.epochCap
         ? `file total grows by ${total - previous}, over the epoch cap ${state.epochCap}`
         : state.balance + state.totalClaimed < total
           ? `balance ${state.balance} plus claimed ${state.totalClaimed} does not cover ${total}`
-          : null;
+          : null);
   if (precheck) {
     deps.log({
       event: "referral_post_precheck_failed",
       period: candidate.period,
+      bodySha256: candidate.bodySha256,
       reason: precheck,
     });
     return { status: "precheck_failed", reconciled, reason: precheck };

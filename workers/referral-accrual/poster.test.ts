@@ -53,8 +53,21 @@ function addFile(
   epoch: number,
   root: string | null,
   total: bigint,
+  cumulativeBases: string[] = [total.toString()],
+  wallets: string[] = cumulativeBases.map(
+    (_amount, index) => `0x${(index + 1).toString(16).padStart(40, "0")}`,
+  ),
+  bodySha256?: string,
 ) {
-  const body = JSON.stringify({ period, epoch });
+  const body = JSON.stringify({
+    period,
+    epoch,
+    totals: { treeTotalBase: total.toString() },
+    referrers: cumulativeBases.map((cumulativeBase, index) => ({
+      wallet: wallets[index],
+      cumulativeBase,
+    })),
+  });
   sqlite
     .query(
       "INSERT INTO referral_accrual_files (period, epoch, run_id, mode, body, body_sha256, merkle_root, tree_total_base, leaf_count, created_at) VALUES (?, ?, 'rrun_test0001', 'live', ?, ?, ?, ?, ?, ?)",
@@ -63,7 +76,7 @@ function addFile(
       period,
       epoch,
       body,
-      sha(body),
+      bodySha256 ?? sha(body),
       root,
       total.toString(),
       root === null ? 0 : 1,
@@ -582,6 +595,80 @@ describe("durable referral native fee budgets", () => {
     };
     addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
     expect((await postNextRoot(h.deps)).status).toBe("gas_budget");
+    expect(chain.prepared).toHaveLength(0);
+    expect(chain.broadcasts).toHaveLength(0);
+    expect(h.posts()).toHaveLength(0);
+    h.sqlite.close();
+  });
+});
+
+describe("declared referral total consistency", () => {
+  test.each([
+    {
+      name: "under-declared",
+      total: ONE,
+      cumulativeBases: [ONE.toString(), ONE.toString()],
+      wallets: undefined,
+    },
+    {
+      name: "duplicate claimant",
+      total: ONE,
+      cumulativeBases: [ONE.toString(), "0"],
+      wallets: [`0x${"1".padStart(40, "0")}`, `0x${"1".padStart(40, "0")}`],
+    },
+    {
+      name: "uint256 leaf overflow",
+      total: 1n,
+      cumulativeBases: [(1n << 256n).toString()],
+      wallets: undefined,
+    },
+    {
+      name: "uint256 aggregate overflow",
+      total: 1n,
+      cumulativeBases: [((1n << 256n) - 1n).toString(), "1"],
+      wallets: undefined,
+    },
+    {
+      name: "malformed amount",
+      total: ONE,
+      cumulativeBases: ["1e18"],
+      wallets: undefined,
+    },
+  ])(
+    "refuses $name evidence before signing",
+    async ({ total, cumulativeBases, wallets }) => {
+      const chain = fakeChain();
+      const h = harness(chain);
+      addFile(h.sqlite, "2026-11", 0, ROOT_A, total, cumulativeBases, wallets);
+
+      expect(await postNextRoot(h.deps)).toMatchObject({
+        status: "precheck_failed",
+      });
+      expect(chain.prepared).toHaveLength(0);
+      expect(chain.broadcasts).toHaveLength(0);
+      expect(h.posts()).toHaveLength(0);
+      h.sqlite.close();
+    },
+  );
+
+  test("refuses a body whose retained digest no longer matches", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    addFile(
+      h.sqlite,
+      "2026-11",
+      0,
+      ROOT_A,
+      ONE,
+      undefined,
+      undefined,
+      "0".repeat(64),
+    );
+
+    expect(await postNextRoot(h.deps)).toMatchObject({
+      status: "precheck_failed",
+      reason: "file body digest differs",
+    });
     expect(chain.prepared).toHaveLength(0);
     expect(chain.broadcasts).toHaveLength(0);
     expect(h.posts()).toHaveLength(0);
