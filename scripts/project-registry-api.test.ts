@@ -306,11 +306,15 @@ const ADMIN_ACCESS: RepositoryAccess = {
 };
 
 /** Creates a project as an owner whose admin access Slopbot reads. */
-async function create(manifest: unknown, extra: Record<string, unknown> = {}) {
+async function create(
+  manifest: unknown,
+  extra: Record<string, unknown> = {},
+  path = "projects",
+) {
   const previous = access;
   access = ADMIN_ACCESS;
   try {
-    return await call("POST", "projects", "applicant", { manifest, ...extra });
+    return await call("POST", path, "applicant", { manifest, ...extra });
   } finally {
     access = previous;
   }
@@ -509,6 +513,51 @@ describe("project registry API", () => {
       (await call("GET", "project-setup/open-registry", "applicant")).status,
     ).toBe(503);
     expect(await persistence.getProject("open-registry")).toEqual(before);
+  });
+
+  test("rejects ignored read queries and empty API path segments before caching", async () => {
+    const canonical = await call("GET", "projects");
+    expect(canonical.status).toBe(200);
+    expect(canonical.headers.get("x-slop-cache")).toBe("miss");
+
+    for (const path of [
+      "projects?ignored=1",
+      "project-revisions?ignored=1",
+      "project-account-bans?ignored=1",
+      "/projects",
+      "projects/",
+    ]) {
+      const response = await call("GET", path);
+      expect(response.status).toBe(404);
+      expect(response.headers.get("x-slop-cache")).toBeNull();
+    }
+
+    expect((await call("GET", "projects")).headers.get("x-slop-cache")).toBe(
+      "hit",
+    );
+  });
+
+  test("allows a legitimate project write query", async () => {
+    const response = await create(
+      applicationManifest("query-project", "example/query-project"),
+      {},
+      "projects?from=local-test",
+    );
+
+    expect(response.status).toBe(201);
+    expect(await persistence.getProject("query-project")).toMatchObject({
+      id: "query-project",
+      revision: 1,
+    });
+  });
+
+  test("passes non-project API routes with empty segments to downstream handlers", async () => {
+    expect(
+      await handleProjectApi(
+        new Request(`${ORIGIN}/api/v1/points//history`),
+        deps,
+      ),
+    ).toBeNull();
   });
 
   test("serves a newly approved project at once, purging the cached list", async () => {
@@ -2035,6 +2084,188 @@ async function publicationRequests() {
 }
 
 describe("generated skill publication", () => {
+  test("rejects noncanonical publication URLs before expensive work", async () => {
+    const { publication } = await publicationRequests();
+    await listProject();
+    const calls = { projects: 0, template: 0, clearance: 0, files: 0 };
+    const guarded = {
+      ...publication,
+      getProject: async (id: string) => {
+        calls.projects += 1;
+        return publication.getProject(id);
+      },
+      loadTemplate: async () => {
+        calls.template += 1;
+        const template = await publication.loadTemplate();
+        return {
+          ...template,
+          readFile: async (path: string) => {
+            calls.files += 1;
+            return template.readFile(path);
+          },
+        };
+      },
+      vettingClearance: async () => {
+        calls.clearance += 1;
+        return {
+          state: "cleared" as const,
+          assessment: null,
+          grandfathered: true as const,
+        };
+      },
+    };
+    const request = (path: string, method = "GET") =>
+      handleProjectArtifactRequest(
+        new Request(`${ORIGIN}${path}`, { method }),
+        guarded,
+      );
+
+    const discoveryHead = await request(
+      "/.well-known/slop/projects.json",
+      "HEAD",
+    );
+    expect(discoveryHead?.status).toBe(200);
+    expect(await discoveryHead?.text()).toBe("");
+    expect(calls).toEqual({ projects: 0, template: 1, clearance: 0, files: 0 });
+
+    for (const path of [
+      "/projects",
+      "/projects/",
+      "/projects/open-registry",
+      "/projects/open-registry/",
+      "/projects/open-registry/manage",
+      "/projects/open-registry/manage/settings",
+      "/projects/open-registry/security",
+      "/projects/open-registry/funding",
+      "/projects/open-registry/not-an-artifact.md",
+      "/.well-known/slop/projects.json/extra",
+      "/projects-other/open-registry/skill.md",
+    ]) {
+      expect(await request(path)).toBeNull();
+      expect(await request(path, "HEAD")).toBeNull();
+    }
+    expect(calls).toEqual({ projects: 0, template: 1, clearance: 0, files: 0 });
+
+    for (const path of [
+      "/.well-known/slop/projects.json?ignored=1",
+      "/projects//open-registry/skill.md",
+      "/projects/open-registry//skill.md",
+    ]) {
+      expect((await request(path))?.status).toBe(404);
+      const head = await request(path, "HEAD");
+      expect(head?.status).toBe(404);
+      expect(await head?.text()).toBe("");
+    }
+    expect(calls).toEqual({ projects: 0, template: 1, clearance: 0, files: 0 });
+
+    const missing = await request(
+      "/projects/open-registry/downloads/not-the-published-skill.skill",
+    );
+    expect(missing?.status).toBe(404);
+    expect(calls).toEqual({ projects: 1, template: 1, clearance: 0, files: 0 });
+
+    const head = await request("/projects/open-registry/skill.md", "HEAD");
+    expect(head?.status).toBe(200);
+    expect(await head?.text()).toBe("");
+    expect(calls).toEqual({ projects: 2, template: 2, clearance: 1, files: 9 });
+  });
+
+  test("HEAD preserves GET failures for publication dependencies and template bytes", async () => {
+    const { publication } = await publicationRequests();
+    await listProject();
+    const project = await persistence.getProject("open-registry");
+    if (!project) throw new Error("project was not listed");
+    const cleared = {
+      state: "cleared" as const,
+      assessment: null,
+      grandfathered: true as const,
+    };
+    const request = (path: string, method: "GET" | "HEAD", overrides: object) =>
+      handleProjectArtifactRequest(
+        new Request(`${ORIGIN}${path}`, { method }),
+        {
+          ...publication,
+          getProject: async () => project,
+          vettingClearance: async () => cleared,
+          ...overrides,
+        },
+      ) as Promise<Response>;
+    const parity = async (path: string, overrides: object) => {
+      const get = await request(path, "GET", overrides);
+      const head = await request(path, "HEAD", overrides);
+      expect(head.status).toBe(get.status);
+      expect(await head.text()).toBe("");
+      return get.status;
+    };
+
+    expect(
+      await parity("/.well-known/slop/projects.json", {
+        listProjects: async () => {
+          throw new Error("registry unavailable");
+        },
+      }),
+    ).toBe(503);
+    expect(
+      await parity("/projects/open-registry/skill.md", {
+        loadTemplate: async () => {
+          throw new Error("template index missing");
+        },
+      }),
+    ).toBe(503);
+    expect(
+      await parity("/projects/open-registry/skill.md", {
+        loadTemplate: async () => {
+          const template = await publication.loadTemplate();
+          return {
+            ...template,
+            readFile: async () => {
+              throw new Error("template file missing");
+            },
+          };
+        },
+      }),
+    ).toBe(503);
+    expect(
+      await parity("/projects/open-registry/skill.md", {
+        loadTemplate: async () => {
+          const template = await publication.loadTemplate();
+          return {
+            ...template,
+            readFile: async () => new TextEncoder().encode("wrong bytes"),
+          };
+        },
+      }),
+    ).toBe(503);
+    for (const indexPatch of [
+      { renderer: { paths: null } },
+      { renderer: { paths: [null] } },
+      { acceptedRevisions: null },
+      { acceptedRevisions: [null] },
+    ])
+      expect(
+        await parity("/projects/open-registry/skill.md", {
+          loadTemplate: async () => {
+            const template = await publication.loadTemplate();
+            return {
+              ...template,
+              index: {
+                ...template.index,
+                ...indexPatch,
+                ...(indexPatch.renderer
+                  ? {
+                      renderer: {
+                        ...template.index.renderer,
+                        ...indexPatch.renderer,
+                      },
+                    }
+                  : {}),
+              },
+            };
+          },
+        }),
+      ).toBe(503);
+  });
+
   test("discovery lists only active cleared projects", async () => {
     // #1411 D3 / bootstrap SKILL.md: the index is for agent setup. A paused
     // project may still be cleared (legacy exemption) and may serve skill
