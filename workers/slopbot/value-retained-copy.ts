@@ -52,7 +52,7 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
         valueDeletionCount(file),
         valuePatch(file),
       ])
-      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]), "en"));
   if (
     !original.files.length ||
     !original.files.every(hasCompleteValuePatch) ||

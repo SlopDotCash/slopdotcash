@@ -183,7 +183,7 @@ function fileChange({
 function changeBytes(files: FileChange[]): string {
   return JSON.stringify(
     [...files]
-      .sort((left, right) => left.filename.localeCompare(right.filename))
+      .sort((left, right) => left.filename.localeCompare(right.filename, "en"))
       .map((file) => [
         file.filename,
         file.previous_filename ?? null,
@@ -491,7 +491,7 @@ async function relatedPullRequests(
   }
   return {
     references: [...references.values()].sort((a, b) =>
-      a.id.localeCompare(b.id),
+      a.id.localeCompare(b.id, "en"),
     ),
     limitations: [...new Set(limitations)],
   };

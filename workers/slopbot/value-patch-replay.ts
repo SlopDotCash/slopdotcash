@@ -214,10 +214,10 @@ export async function collectAcceptedPatchReplay(
   )
     return null;
   const submitted = [...files].sort((a, b) =>
-    a.filename.localeCompare(b.filename),
+    a.filename.localeCompare(b.filename, "en"),
   );
   const accepted = [...merge.files].sort((a, b) =>
-    a.filename.localeCompare(b.filename),
+    a.filename.localeCompare(b.filename, "en"),
   );
   if (new Set(submitted.map((file) => file.filename)).size !== files.length)
     return null;

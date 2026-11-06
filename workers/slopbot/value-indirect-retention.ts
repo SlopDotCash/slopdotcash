@@ -88,7 +88,7 @@ export async function collectIndirectValueRetention(
   }
   const result: IndirectRetainedFile[] = [];
   for (const file of [...files].sort((a, b) =>
-    a.filename.localeCompare(b.filename),
+    a.filename.localeCompare(b.filename, "en"),
   )) {
     const sourcePath = file.filename,
       acceptedPath = renames.get(sourcePath) ?? sourcePath;

@@ -96,7 +96,7 @@ export async function collectAcceptedValueRange(
     const parent = await readValueTree(client, repository, proof.parentSha);
     if (!head || !accepted || !parent) return null;
     for (const file of [...files].sort((a, b) =>
-      a.filename.localeCompare(b.filename),
+      a.filename.localeCompare(b.filename, "en"),
     )) {
       const path = file.filename;
       const before = head.get(path);
@@ -127,7 +127,7 @@ export async function collectAcceptedValueRange(
     return proof;
   }
   for (const file of [...files].sort((a, b) =>
-    a.filename.localeCompare(b.filename),
+    a.filename.localeCompare(b.filename, "en"),
   )) {
     const path = file.filename;
     const head = await blob(path, headSha);

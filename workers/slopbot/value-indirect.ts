@@ -170,7 +170,7 @@ export async function collectIndirectValueAcceptance(
   }
   observations.sort(
     (a, b) =>
-      a.run.created_at.localeCompare(b.run.created_at) || a.run.id - b.run.id,
+      a.run.created_at.localeCompare(b.run.created_at, "en") || a.run.id - b.run.id,
   );
   const proofs: Omit<IndirectValueAcceptance, "retainedFiles">[] = [];
   for (const integration of integrations) {

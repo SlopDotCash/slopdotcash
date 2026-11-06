@@ -429,7 +429,11 @@ export function appendPointAwards(
     revisions: [...journal.revisions],
   };
   const latest = latestPoints(journal);
-  for (const award of [...awards].sort((a, b) => a.key.localeCompare(b.key))) {
+  // Pin English collation: host-default localeCompare can reverse mixed-case
+  // award keys (Turkish i/I) and change journal append / capped-debit order.
+  for (const award of [...awards].sort((a, b) =>
+    a.key.localeCompare(b.key, "en"),
+  )) {
     appendPointAward(
       output,
       latest,
@@ -626,8 +630,8 @@ export function reconcilePointPenalties(
   const latest = latestPoints(journal);
   for (const candidate of [...candidates.values()].sort(
     (a, b) =>
-      a.award.occurredAt.localeCompare(b.award.occurredAt) ||
-      a.award.workUnitId.localeCompare(b.award.workUnitId),
+      a.award.occurredAt.localeCompare(b.award.occurredAt, "en") ||
+      a.award.workUnitId.localeCompare(b.award.workUnitId, "en"),
   )) {
     const evidence = candidate.penalty;
     if (!evidence) continue;
@@ -1124,7 +1128,8 @@ export function pointMembers(
     m.actor = actors.get(m.actor.id)?.award.actor ?? m.actor;
     m.awards.sort(
       (a, b) =>
-        b.occurredAt.localeCompare(a.occurredAt) || a.key.localeCompare(b.key),
+        b.occurredAt.localeCompare(a.occurredAt, "en") ||
+        a.key.localeCompare(b.key, "en"),
     );
     const earned = m.awards.filter((a) => a.category !== "slopbot-penalty");
     m.projects = new Set(earned.map((a) => a.projectId)).size;
@@ -1142,7 +1147,7 @@ export function pointMembers(
     ];
   }
   return [...members.values()].sort(
-    (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
+    (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id, "en"),
   );
 }
 export function emptyPointsJournal(at: string): PointsJournal {
