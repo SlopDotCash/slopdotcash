@@ -776,3 +776,193 @@ test("an assessed but unpublished solo reassessment heading the member's chain d
   const count = journal.revisions.length;
   expect(apply(journal, later).revisions.length).toBe(count);
 });
+
+/** Partitioned variant of `joint`: the claims credited to each named
+ * source form their own unit with their own tier, so one unit of the
+ * record can publish while another unit of the same record is withheld. */
+async function jointPartitioned(opts: {
+  sources: WorkUnitSource[];
+  units: { pullId: string; tier: string }[];
+  legacy: [string, string | null][];
+  legacyPredecessors: string[];
+  supersedes: string[];
+  priorRows: HistoryRow[];
+  assessedAt: string;
+  targetId: string;
+  reason: string;
+}) {
+  const evidence = await prepareWorkUnitEvidence(opts.sources, [repository]);
+  expect(evidence.limitations).toEqual([]);
+  const claimed = new Set<string>();
+  const units = opts.units.map(({ pullId, tier }) => {
+    const claimIds = evidence.claims
+      .filter((claim) => claim.creditPullRequestId === pullId)
+      .map((claim) => claim.id);
+    expect(claimIds.length).toBeGreaterThan(0);
+    for (const id of claimIds) {
+      expect(claimed.has(id)).toBe(false);
+      claimed.add(id);
+    }
+    const source = opts.sources.find((s) => s.evidence.pull.node_id === pullId);
+    if (!source) throw new Error("Partition names a source outside the record");
+    return {
+      claimIds,
+      assessment: assessment([source.evidence.pull.html_url], tier),
+    };
+  });
+  expect(claimed.size).toBe(evidence.claims.length);
+  const prepared = await prepareWorkUnitRecord(
+    {
+      rubricVersion: VALUE_RUBRIC_VERSION,
+      sourceDigest: evidence.sourceDigest,
+      assessedAt: opts.assessedAt,
+      verdict: { units },
+      provenance,
+    } as never,
+    evidence,
+    "a".repeat(40),
+    opts.supersedes,
+    opts.legacyPredecessors,
+    opts.reason,
+    [project],
+  );
+  const row = {
+    sequence: opts.priorRows.length + 1,
+    record_digest: prepared.recordDigest,
+    record_json: prepared.recordJson,
+    recorded_at: opts.assessedAt,
+    assessment_key: prepared.assessmentKey,
+  };
+  const rows: HistoryRow[] = [...opts.priorRows, row];
+  const graph = await readWorkUnitHistory(
+    async (after: number) => ({
+      throughSequence: rows.length,
+      totalRecords: rows.length,
+      records: rows.filter((r) => r.sequence > after),
+      nextAfter: null,
+    }),
+    {
+      repositoryNodeId: opts.sources[0].evidence.repositoryNodeId,
+      pullRequestNodeId: opts.targetId,
+    },
+    [repository],
+  );
+  const consumed = await consumeWorkUnitHistory(
+    graph,
+    opts.sources,
+    new Map(opts.legacy),
+    [repository],
+  );
+  return { joint: prepared, row, consumed, digest: prepared.recordDigest };
+}
+
+test("multi-unit record: a unit dropped by the rolling window does not retire its predecessor's recorded credit", async () => {
+  const first = await solo(old, "first.ts", "2026-11-06T00:00:00.000Z");
+  const initial = soloSnapshot("2026-11-20T00:00:00.000Z", [
+    { pull: old, solo: first },
+  ]);
+  let journal = apply(emptyPointsJournal(initial.generatedAt), initial);
+  expect(total(journal)).toBe(90);
+  const followup = variantPull(
+    "PR_followup",
+    18,
+    "2026-12-15T00:00:00.000Z",
+    "f".repeat(40),
+  );
+  const followSrc = source(followup, "second.ts");
+  const j = await jointPartitioned({
+    sources: [first.src, followSrc],
+    units: [
+      { pullId: old.id, tier: "medium" },
+      { pullId: followup.id, tier: "small" },
+    ],
+    legacy: [
+      [old.id, first.digest],
+      [followup.id, null],
+    ],
+    legacyPredecessors: [first.digest],
+    supersedes: [],
+    priorRows: [],
+    assessedAt: "2026-12-15T00:00:00.000Z",
+    targetId: followup.id,
+    reason: "Assess the original and follow-up as two units of one record.",
+  });
+  expect(j.consumed.status).toBe("assessed");
+  const laterInput = input("2026-12-20T00:00:00.000Z", [followup], [old]);
+  laterInput.valueActors = new Map([[actor.id, actor]]);
+  laterInput.jointValueDecisions = new Map([
+    [old.id, j.consumed],
+    [followup.id, j.consumed],
+  ]) as never;
+  const later = createLeaderboardSnapshot(laterInput);
+  assertLeaderboardSnapshot(later);
+  // The follow-up unit publishes its 30 Points under the joint digest
+  // while the original's own unit is withheld by the rolling window:
+  // the record published, but the unit covering the predecessor did not.
+  const published = later.ledger.filter(
+    (event) => event.scoreDecisionSourceId === `value:${j.digest}`,
+  );
+  expect(published.map((event) => event.scoreThirds)).toEqual([3]);
+  expect(later.valueAssessmentSupersessions ?? []).toEqual([]);
+  journal = apply(journal, later);
+  expect(latestAmount(journal, old.id)).toEqual([90]);
+  expect(total(journal)).toBe(120);
+});
+
+test("a share dropped for a banned actor does not retire that actor's earlier solo credit", async () => {
+  const first = await solo(old, "first.ts", "2026-11-06T00:00:00.000Z");
+  const initial = soloSnapshot("2026-11-20T00:00:00.000Z", [
+    { pull: old, solo: first },
+  ]);
+  let journal = apply(emptyPointsJournal(initial.generatedAt), initial);
+  expect(total(journal)).toBe(90);
+  const followup = variantPull(
+    "PR_followup",
+    18,
+    "2026-12-15T00:00:00.000Z",
+    "f".repeat(40),
+    owner,
+  );
+  const followSrc = source(followup, "second.ts", owner);
+  const j = await joint({
+    sources: [first.src, followSrc],
+    legacy: [
+      [old.id, first.digest],
+      [followup.id, null],
+    ],
+    legacyPredecessors: [first.digest],
+    supersedes: [],
+    priorRows: [],
+    assessedAt: "2026-12-15T00:00:00.000Z",
+    targetId: followup.id,
+    reason: "Assess the original and follow-up as one retained outcome.",
+  });
+  expect(j.consumed.status).toBe("assessed");
+  const laterInput = input("2026-12-20T00:00:00.000Z", [followup], [old]);
+  laterInput.valueActors = new Map([
+    [actor.id, actor],
+    [owner.id, owner],
+  ]);
+  // PRD section 8: the ban lands after the solo award was earned and
+  // before the joint completion, so the banned actor's share of the
+  // joint record is dropped while the co-implementer's share publishes.
+  laterInput.participationBans = new Map([
+    [actor.id, "2026-12-01T00:00:00.000Z"],
+  ]);
+  laterInput.jointValueDecisions = new Map([
+    [old.id, j.consumed],
+    [followup.id, j.consumed],
+  ]) as never;
+  const later = createLeaderboardSnapshot(laterInput);
+  assertLeaderboardSnapshot(later);
+  const published = later.ledger.filter(
+    (event) => event.scoreDecisionSourceId === `value:${j.digest}`,
+  );
+  expect(published.map((event) => event.actor.id)).toEqual([owner.id]);
+  expect(later.valueAssessmentSupersessions ?? []).toEqual([]);
+  journal = apply(journal, later);
+  // The pre-ban solo credit stays; only the co-implementer's share lands.
+  expect(latestAmount(journal, old.id)).toEqual([90]);
+  expect(total(journal, actor)).toBe(90);
+  expect(total(journal, owner)).toBe(40);
+});
