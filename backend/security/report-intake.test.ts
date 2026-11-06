@@ -54,6 +54,7 @@ type Intake = {
   canForward: boolean;
   canRetryScreening: boolean;
   canReview: boolean;
+  canRevise: boolean;
   reason: string | null;
 };
 type Submission = {
@@ -1049,6 +1050,64 @@ describe("durable private report controls", () => {
     expect(submission.intake.reason).not.toMatch(/evidence digest/i);
     expect(t.screeningCalls()).toBe(2);
     expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("a revision that copies an intervening report is held as duplicate evidence", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("digest-revise-first00")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    const opened = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${first.id}/review`,
+      {
+        expectedRevision: first.intake.revision,
+        decision: "request-information",
+        reason: "Add the isolated reproduction that shows the second path.",
+      },
+    );
+    expect(opened.status).toBe(200);
+    const pending = required(
+      (await t.call(REPORTER, "GET", `security-submissions/${first.id}`)).body
+        .submission,
+    );
+    expect(pending.intake.canRevise).toBe(true);
+    t.advance(1000);
+    const copied = {
+      ...REPORT,
+      description: `${REPORT.description} Second path, synthetic only.`,
+    };
+    const second = required(
+      (await t.create("digest-revise-second0", OTHER, copied)).body.submission,
+    );
+    expect(second.intake.state).toBe("legitimate");
+    expect(second.intake.reason).not.toMatch(/evidence digest/i);
+    const calls = t.screeningCalls();
+    const assessments = t.analyzed.length;
+    t.advance(1000);
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${first.id}/report`,
+      { expectedRevision: pending.intake.revision, report: copied },
+    );
+    expect(revised.status).toBe(200);
+    const held = required(revised.body.submission);
+    expect(held.intake.reportVersion).toBe(2);
+    expect(held.intake.state).toBe("needs-information");
+    expect(held.intake.canForward).toBe(false);
+    expect(held.intake.reason).toMatch(/evidence digest/i);
+    expect(held.intake.reason).not.toContain("PRIVATE-REPORT-SENTINEL");
+    expect(t.screeningCalls()).toBe(calls);
+    expect(t.analyzed).toHaveLength(assessments);
+    const earlier = await t.call(
+      OTHER,
+      "GET",
+      `security-submissions/${second.id}`,
+    );
+    expect(required(earlier.body.submission).intake.state).toBe("legitimate");
   });
 
   test("a first unique report still routes as legitimate when screening agrees", async () => {
