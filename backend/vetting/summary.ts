@@ -55,7 +55,7 @@ export function quarantinedScanMessage(
 ): string {
   const loc = assessment.findingsLocation;
   if (assessment.completedAt === null || !loc) {
-    return "The last scan could not finish, so it did not clear the project.";
+    return "The last scan could not finish (a check or review did not complete), so it did not clear the project.";
   }
   if (loc === "template") {
     return "Findings in Slop's skill template block clearance.";
