@@ -26,7 +26,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
 import "./operations-design.css";
 import "./admin-design.css";
@@ -708,6 +714,16 @@ function DelistButton({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const prompt = useRef<HTMLSpanElement>(null);
+  const wasConfirming = useRef(false);
+  // The trigger unmounts while the confirmation is shown, so focus moves
+  // to the prompt on open and back to the trigger when it is dismissed.
+  useEffect(() => {
+    if (confirming) prompt.current?.focus();
+    else if (wasConfirming.current) trigger.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
   if (project.manifest.listingTier === "retired") return null;
   const delist = () => {
     setBusy(true);
@@ -741,7 +757,9 @@ function DelistButton({
       ) : null}
       {confirming ? (
         <div>
-          <span>Hide this project everywhere?</span>
+          <span ref={prompt} tabIndex={-1}>
+            Hide this project everywhere?
+          </span>
           <button
             className="button danger-button"
             disabled={busy}
@@ -763,6 +781,7 @@ function DelistButton({
           <button
             className="button ghost-button"
             onClick={() => setConfirming(true)}
+            ref={trigger}
             type="button"
           >
             <Trash2 aria-hidden="true" /> Delist
