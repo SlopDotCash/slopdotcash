@@ -717,6 +717,7 @@ const LOWERCASE_ADDRESS = /^0x[0-9a-f]{40}$/u;
 
 /** Independently totals the exact leaf set retained in a filed public accrual. */
 export function declaredTotalEvidenceError(file: {
+  merkleRoot: string;
   treeTotalBase: string;
   leafCount: number;
   body: string;
@@ -739,6 +740,7 @@ export function declaredTotalEvidenceError(file: {
     if (declared >= UINT256_LIMIT) return "file total exceeds uint256";
     if (!Array.isArray(record.referrers)) return "file referrers are malformed";
     const wallets = new Set<string>();
+    const retainedLeaves: Leaf[] = [];
     let sum = 0n;
     let leaves = 0;
     for (const item of record.referrers) {
@@ -760,14 +762,27 @@ export function declaredTotalEvidenceError(file: {
         return "file leaf amount is not canonical uint256 units";
       const amount = BigInt(referrer.cumulativeBase);
       if (amount >= UINT256_LIMIT) return "file leaf amount exceeds uint256";
+      retainedLeaves.push({ address: referrer.wallet, cumulativeBase: amount });
       sum += amount;
       if (sum >= UINT256_LIMIT) return "file leaf total exceeds uint256";
       leaves += 1;
     }
     if (leaves !== file.leafCount) return "file leaf count differs";
-    return sum === declared
+    if (sum !== declared)
+      return `leaf total ${sum} differs from declared total ${declared}`;
+    const merkle = record.merkle;
+    if (merkle === null || typeof merkle !== "object" || Array.isArray(merkle))
+      return "file merkle evidence is malformed";
+    const bodyMerkle = merkle as Record<string, unknown>;
+    if (
+      bodyMerkle.root !== file.merkleRoot ||
+      bodyMerkle.leafCount !== file.leafCount
+    )
+      return "file merkle evidence differs";
+    const rebuilt = buildTree(retainedLeaves);
+    return rebuilt?.root === file.merkleRoot
       ? null
-      : `leaf total ${sum} differs from declared total ${declared}`;
+      : "file merkle root differs from retained leaves";
   } catch {
     return "file body is malformed";
   }
@@ -961,7 +976,6 @@ async function postWithinGasBudget(
     (file) => !posted.has(file.period) && file.period > lastPeriod,
   );
   if (!candidate) return { status: "nothing_to_post", reconciled };
-  const total = BigInt(candidate.treeTotalBase);
   // The contract repeats these checks; failing them here records the reason
   // instead of spending gas on a revert.
   const previous = accepted
@@ -974,6 +988,7 @@ async function postWithinGasBudget(
     (await sha256Hex(candidate.body)) !== candidate.bodySha256
       ? "file body digest differs"
       : declaredTotalEvidenceError(candidate);
+  const total = evidenceError === null ? BigInt(candidate.treeTotalBase) : 0n;
   const precheck =
     evidenceError ??
     (total < previous
