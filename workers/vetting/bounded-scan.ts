@@ -168,6 +168,8 @@ const INSTALL_FILES = new Set([
   "jenkinsfile",
   "vagrantfile",
   "rakefile",
+  "thorfile",
+  "tiltfile",
   "brewfile",
   "procfile",
   "cmakelists.txt",
