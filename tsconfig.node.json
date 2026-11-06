@@ -91,6 +91,7 @@
     "src/lib/received-totals.ts",
     "src/lib/points-summary.ts",
     "src/lib/use-snapshot.ts",
+    "src/lib/profile-actor.ts",
     "src/lib/profile-activity.ts",
     "src/lib/reward-amount.ts",
     "src/lib/reward-cycle.ts",
