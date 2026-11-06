@@ -617,3 +617,134 @@ test("a cached review from another prompt revision is not reused", async () => {
   expect(second.calls).toHaveLength(plan.batches.length + 1);
   expect(refreshed.evidence?.passes?.every((pass) => !pass.cached)).toBe(true);
 });
+
+test("a failed review names one fixed failure category and never provider text", async () => {
+  const inspection = inspectRepository({
+    files: [file("src/index.ts", "export const ok = true;\n")],
+  });
+  const answer = (overrides: Record<string, unknown>, text?: string) =>
+    Response.json({
+      id: "msg_failure",
+      model: "claude-opus-5.5",
+      stop_reason: "end_turn",
+      content: [
+        {
+          type: "text",
+          text:
+            text ??
+            JSON.stringify({
+              verdict: "no-findings",
+              confidence: 0.8,
+              coverage: Object.fromEntries(
+                SCAN_REVIEW_AREAS.map((area) => [area, "complete"]),
+              ),
+              findings: [],
+            }),
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      ...overrides,
+    });
+  const cases: [string, () => Response | Promise<Response>][] = [
+    [
+      "provider-http-503",
+      () => new Response("secret provider text", { status: 503 }),
+    ],
+    ["provider-http-429", () => new Response("slow down", { status: 429 })],
+    [
+      "truncated",
+      () =>
+        new Response(JSON.stringify({}), {
+          headers: { "x-si-truncated": "1" },
+        }),
+    ],
+    ["model-mismatch", () => answer({ model: "claude-other" })],
+    ["stop-max_tokens", () => answer({ stop_reason: "max_tokens" })],
+    ["stop-other", () => answer({ stop_reason: "secret provider text" })],
+    ["invalid-response", () => new Response("not json at all")],
+    ["invalid-review", () => answer({}, "secret provider text")],
+    [
+      "invalid-review",
+      () =>
+        answer(
+          {},
+          JSON.stringify({
+            verdict: "findings",
+            confidence: 0.8,
+            coverage: Object.fromEntries(
+              SCAN_REVIEW_AREAS.map((area) => [area, "complete"]),
+            ),
+            findings: [
+              { severity: "high", summary: "x", evidenceIds: ["missing"] },
+            ],
+          }),
+        ),
+    ],
+    [
+      "timeout",
+      () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      },
+    ],
+    [
+      "network",
+      () => {
+        throw new TypeError("fetch failed: secret provider text");
+      },
+    ],
+  ];
+  for (const [category, respond] of cases) {
+    const failing = provider(() => null);
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      await failing.fetcher(url, init);
+      return respond();
+    }) as unknown as typeof fetch;
+    const { evidence } = await reviewInventory({
+      inspection,
+      profile,
+      fetch: fetcher,
+    });
+    expect(evidence?.review.status).toBe("failed");
+    expect(evidence?.failure).toBe(category);
+    expect(JSON.stringify(evidence)).not.toContain("secret provider text");
+  }
+  const { evidence } = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider(() => null).fetcher,
+  });
+  expect(evidence?.review.status).toBe("completed");
+  expect(evidence?.failure).toBeUndefined();
+});
+
+test("a failed batched review says whether a batch or the synthesis failed", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const batch = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider((_input, index) =>
+      index === 0 ? new Response("unavailable", { status: 503 }) : null,
+    ).fetcher,
+    concurrency: 1,
+  });
+  expect(batch.evidence?.failure).toBe("batch:provider-http-503");
+  const synthesis = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider((_input, index) =>
+      index === plan.batches.length
+        ? Response.json({
+            id: "msg_synthesis",
+            model: "claude-opus-5.5",
+            stop_reason: "max_tokens",
+            content: [{ type: "text", text: "{" }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          })
+        : null,
+    ).fetcher,
+    concurrency: 1,
+  });
+  expect(synthesis.evidence?.failure).toBe("synthesis:stop-max_tokens");
+});
