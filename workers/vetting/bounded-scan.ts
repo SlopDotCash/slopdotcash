@@ -367,12 +367,17 @@ const RULES: Rule[] = [
   {
     threat: "credential-theft",
     severity: "high",
+    // A store path is written with any directory prefix: `~`, `$HOME`,
+    // `/home/<user>`, `%USERPROFILE%` or a drive letter. The prefix is not
+    // part of the store's name, so only the separator before it is required,
+    // and the literal `~` this alternation used to name alone refused every
+    // other one.
     // "Login Data" is Chromium's password-file name. Match when a quote,
     // slash, backslash, or closing brace is immediately on the left, in any
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern: new RegExp(
-      String.raw`~[/\\]+\.ssh[/\\]+|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[/\\]+credentials|\.git-credentials|\.netrc\b|\.config[/\\]+gh[/\\]+hosts\.yml|(?<=["'\x60/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b` +
+      String.raw`[/\\]+\.ssh[/\\]+|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[/\\]+credentials|\.git-credentials|\.netrc\b|\.config[/\\]+gh[/\\]+hosts\.yml|(?<=["'\x60/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b` +
         `|${joinedPath("\\.aws", "credentials")}` +
         `|${joinedPath("\\.config", "gh", "hosts\\.yml")}`,
       "iu",
@@ -382,8 +387,11 @@ const RULES: Rule[] = [
   {
     threat: "credential-theft",
     severity: "medium",
+    // Same prefix rule as the high store rule above: the registry token file
+    // is named relatively or through any home expansion, and only the
+    // separator before it is required.
     pattern: new RegExp(
-      String.raw`~[/\\]+\.npmrc|\.pypirc|\.docker[/\\]+config\.json|\.kube[/\\]+config` +
+      String.raw`[/\\]+\.npmrc|\.pypirc|\.docker[/\\]+config\.json|\.kube[/\\]+config` +
         `|${joinedPath("\\.docker", "config\\.json")}` +
         `|${joinedPath("\\.kube", "config")}`,
       "iu",
