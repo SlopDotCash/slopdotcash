@@ -334,11 +334,13 @@ const CONCEAL_VERB = String.raw`(?:tell|inform|show|mention|reveal|disclose|aler
 // The same verbs as gerunds. Keep in step with CONCEAL_VERB: a verb with no
 // gerund entry (or the reverse) leaves the conditional form blind to that verb.
 const CONCEAL_GERUND = String.raw`(?:telling|informing|showing|mentioning|revealing|disclosing|alerting|notifying|warning|saying)`;
-// The human the agent answers to. Domain roles (owner, client, maintainer)
-// are deliberately absent: this repository uses "owner" for a project owner in
-// its own privacy prose ("recoverable without notifying the owner"), which the
-// repository self-scan reports as a false positive.
-const CONCEAL_PERSON = String.raw`(?:user|operator|human|reviewer)`;
+// The human the agent answers to. A plural of the same role noun is the same
+// act: `user` cannot satisfy the `\b` inside `users`, so a singular-only list
+// let every branch be defeated by adding an "s". Domain roles (owner, client,
+// maintainer) are deliberately absent: this repository uses "owner" for a
+// project owner in its own privacy prose ("recoverable without notifying the
+// owner"), which the repository self-scan reports as a false positive.
+const CONCEAL_PERSON = String.raw`(?:users?|operators?|humans?|reviewers?)`;
 /** What is concealed: a step, a change, or the instruction itself. */
 const CONCEAL_SUBJECT = String.raw`(?:steps?|changes?|edits?|modifications?|instructions?|prompts?|actions?|commands?|requests?|messages?|diffs?|scans?|reviews?|plans?|results?|work|intents?|decisions?|words?)`;
 /**
