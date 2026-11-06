@@ -13,6 +13,7 @@ import {
   appealByKey,
   escalateAppeal,
   escalationFor,
+  hasDeniedAppeal,
   latestAppealFor,
   MODERATOR_LABEL,
   moderatorIds,
@@ -2495,12 +2496,14 @@ async function triageAppeal(
   const penalty = await activePenalty(db, session.issue.node_id);
   const reason = (await hasParticipationBan(db, current.appellant_github_id))
     ? "the appellant has an active participation ban"
-    : escalationFor({
-        category: finding,
-        debitThirds: penalty?.debit_thirds ?? 0,
-        moderatorReview: penalty?.moderator_review === 1,
-        draftConfidence: current.draft_confidence,
-      });
+    : (await hasDeniedAppeal(db, session.issue.node_id, appeal.appeal_key))
+      ? "an earlier appeal of this item was denied"
+      : escalationFor({
+          category: finding,
+          debitThirds: penalty?.debit_thirds ?? 0,
+          moderatorReview: penalty?.moderator_review === 1,
+          draftConfidence: current.draft_confidence,
+        });
   if (reason !== null)
     await escalateAppeal(
       db,
