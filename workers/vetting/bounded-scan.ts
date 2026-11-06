@@ -225,6 +225,18 @@ const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
  * evaluating them.
  */
 const EXPO_CONFIG = /^app\.config\.[cm]?[jt]s$/u;
+/**
+ * Expo resolves a config plugin by the same fixed name: `@expo/config`
+ * calls `withConfigPlugins` on every config load, and
+ * `@expo/config-plugins` resolves `<package>/app.plugin` over
+ * `.js/.cjs/.mjs/.ts/.cts/.mts` (`.js` first) and evaluates the file —
+ * `@expo/require-utils` `loadModuleSync` evaluates TypeScript entries
+ * too — so a plugin is build-time code on the same path as
+ * `app.config.<ext>`, never parsed configuration. A static `app.json`
+ * naming the package is enough to run it. The `.json` spelling stays
+ * out: the resolver never probes it.
+ */
+const EXPO_CONFIG_PLUGIN = /^app\.plugin\.[cm]?[jt]s$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -295,6 +307,7 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (
     INSTALL_FILES.has(name) ||
     EXPO_CONFIG.test(name) ||
+    EXPO_CONFIG_PLUGIN.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
