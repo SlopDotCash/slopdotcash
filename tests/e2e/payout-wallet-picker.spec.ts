@@ -782,6 +782,40 @@ test("keeping the saved address registers nothing and returns focus to the walle
   expect(await walletCalls(page)).not.toContain("MetaMask:personal_sign");
 });
 
+test("registering the wallet account returns focus to the wallet button", async ({
+  page,
+}) => {
+  await payments(page, savedEvm(true));
+  await providers(page, false, { connected: savedAddress });
+  await page.goto("/account#wallets");
+  await chooseMetaMask(page, "Change");
+  const confirmation = page.getByRole("region", {
+    name: "Register a different EVM address?",
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(
+    confirmation.getByRole("heading", {
+      name: "Register a different EVM address?",
+    }),
+  ).toBeFocused();
+  // A keyboard-only user Tabs from the heading to the confirm button and
+  // activates it with Enter; focus must survive the panel unmounting and
+  // the wallet round-trip, landing back on the button that started the flow.
+  const register = confirmation.getByRole("button", {
+    name: "Register wallet account",
+    exact: true,
+  });
+  await register.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
+  ).toBeVisible();
+  await expect(confirmation).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Change EVM wallet", exact: true }),
+  ).toBeFocused();
+});
+
 test("connecting with an unconfirmed saved address asks before registering a different active account", async ({
   page,
 }) => {
