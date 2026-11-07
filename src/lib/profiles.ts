@@ -283,6 +283,61 @@ export function profileCounts(p: ProfileRecord) {
   );
 }
 
+/** One row of the People directory on the points page. */
+export interface DirectoryPersonRow<Member> {
+  id: string;
+  login: string;
+  /** Merged-PR count from the profile census; null when the census has no
+   * count for this person, so the row must not claim one. */
+  merged: number | null;
+  member?: Member;
+}
+
+/**
+ * The People directory's rows: the profile census, the public members, and
+ * everyone the points journal records. The census only sees pull requests
+ * whose author GitHub still reports as a user, so contributors whose
+ * accounts were deleted or are bots are missing from it even when the
+ * journal records their accepted work; the journal is the public record
+ * the standings on the same page are built from, so a person it names
+ * must not be absent here. Census data wins where it exists (it carries
+ * the current login and the PR counts); a journal-only row keeps the
+ * journal's latest recorded login and an unknown PR count.
+ */
+export function directoryPeople<
+  Member extends { actor: { id: string; login: string } },
+>(
+  census: readonly ProfileRecord[] | null,
+  members: readonly Member[],
+  journal: readonly { actor: { id: string; login: string } }[],
+): DirectoryPersonRow<Member>[] {
+  const byId = new Map<string, DirectoryPersonRow<Member>>();
+  if (census)
+    for (const p of census)
+      byId.set(p.id, {
+        id: p.id,
+        login: p.login,
+        merged: profileCounts(p).merged,
+      });
+  for (const p of members) {
+    const known = byId.get(p.actor.id);
+    byId.set(p.actor.id, {
+      id: p.actor.id,
+      login: known?.login ?? p.actor.login,
+      merged: known?.merged ?? (census ? 0 : null),
+      member: p,
+    });
+  }
+  for (const m of journal)
+    if (!byId.has(m.actor.id))
+      byId.set(m.actor.id, {
+        id: m.actor.id,
+        login: m.actor.login,
+        merged: null,
+      });
+  return [...byId.values()].sort((a, b) => a.login.localeCompare(b.login));
+}
+
 /**
  * Public search for one contributor's pull requests.
  * `github.com/pulls` is the signed-in dashboard and sends anonymous visitors
