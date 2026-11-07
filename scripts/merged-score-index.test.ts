@@ -7,6 +7,7 @@ import type {
 import {
   AFTER_NOVEMBER,
   PENALIZED_AUTHOR,
+  PLACEHOLDER_LINKED_ACCOUNT,
   PROJECT_OWNER,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
@@ -73,15 +74,6 @@ test("a second snapshot independently credits its accepted merges", () => {
   expect(second.leaders).toEqual(first.leaders);
 });
 
-// GitHub links the placeholder commit identity `x <x@x>` to this account.
-const PLACEHOLDER_LINKED_ACCOUNT: GitHubActor = {
-  id: "MDQ6VXNlcjM4MjUwNTA=",
-  login: "xxxxxxxxxxxxx",
-  avatarUrl: "https://avatars.githubusercontent.com/u/3825050?v=4",
-  url: "https://github.com/xxxxxxxxxxxxx",
-  kind: "User",
-};
-
 test("a commit linked to the placeholder identity earns no merge credit", () => {
   setSystemTime(new Date(AFTER_NOVEMBER));
   const input = acceptedMerges();
@@ -110,11 +102,40 @@ test("a commit linked to the placeholder identity earns no merge credit", () => 
   ).toBe(false);
 });
 
-test("a recorded assessment that names the placeholder account credits the author alone", () => {
+const AUTOMATION_BOT: GitHubActor = {
+  id: "BOT_kgDOautomation",
+  login: "automation[bot]",
+  avatarUrl: "https://avatars.githubusercontent.com/in/1?v=4",
+  url: "https://github.com/apps/automation",
+  kind: "Bot",
+};
+
+type ValueDecision =
+  NonNullable<LeaderboardInput["valueDecisions"]> extends ReadonlyMap<
+    string,
+    infer V
+  >
+    ? V
+    : never;
+
+/** PR_november's merge credit under one recorded value assessment. */
+function recordedAssessmentCredit(
+  implementationActorNodeIds: string[],
+  author?: GitHubActor,
+) {
   setSystemTime(new Date(AFTER_NOVEMBER));
   const input = penaltyScoreInput([]);
   const pull = input.mergedPullRequests.find((row) => row.id === "PR_november");
   if (!pull?.mergedAt) throw new Error("missing fixture pull request");
+  if (author) {
+    pull.author = author;
+    input.mergedPullRequestOutcomes = input.mergedPullRequestOutcomes.map(
+      (outcome) =>
+        outcome.id === pull.id
+          ? { ...outcome, author, commits: [{ oid: pull.headRefOid, author }] }
+          : outcome,
+    );
+  }
   input.detailEligibleMergedPullRequestIds = [];
   input.valueActors = new Map([
     [PENALIZED_AUTHOR.id, PENALIZED_AUTHOR],
@@ -122,10 +143,7 @@ test("a recorded assessment that names the placeholder account credits the autho
   ]);
   const decision = {
     status: "assessed",
-    implementationActorNodeIds: [
-      PENALIZED_AUTHOR.id,
-      PLACEHOLDER_LINKED_ACCOUNT.id,
-    ],
+    implementationActorNodeIds,
     record: {
       pullRequestNodeId: pull.id,
       repository: "elizaOS/asi",
@@ -145,23 +163,29 @@ test("a recorded assessment that names the placeholder account credits the autho
     latestDigest: "d".repeat(64),
   };
   input.valueDecisions = new Map([
-    [
-      pull.id,
-      decision as unknown as NonNullable<
-        LeaderboardInput["valueDecisions"]
-      > extends ReadonlyMap<string, infer V>
-        ? V
-        : never,
-    ],
+    [pull.id, decision as unknown as ValueDecision],
   ]);
-  const snapshot = createLeaderboardSnapshot(input);
+  return createLeaderboardSnapshot(input)
+    .ledger.filter(
+      (event) =>
+        event.source.id === pull.id && event.category === "merged-pull-request",
+    )
+    .map((event) => [event.actor.id, event.scoreThirds]);
+}
+
+test("a recorded assessment that names the placeholder account credits the author alone", () => {
   expect(
-    snapshot.ledger
-      .filter(
-        (event) =>
-          event.source.id === pull.id &&
-          event.category === "merged-pull-request",
-      )
-      .map((event) => [event.actor.id, event.scoreThirds]),
+    recordedAssessmentCredit([
+      PENALIZED_AUTHOR.id,
+      PLACEHOLDER_LINKED_ACCOUNT.id,
+    ]),
   ).toEqual([[PENALIZED_AUTHOR.id, 3]]);
+});
+
+// Collection lists a person who opens a pull request, so only a bot pull
+// request can be left with no implementation actor.
+test("a bot pull request whose only recorded actor is the placeholder account credits nobody", () => {
+  expect(
+    recordedAssessmentCredit([PLACEHOLDER_LINKED_ACCOUNT.id], AUTOMATION_BOT),
+  ).toEqual([]);
 });

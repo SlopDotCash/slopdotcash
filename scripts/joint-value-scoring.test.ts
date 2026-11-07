@@ -7,10 +7,12 @@
  */
 import { afterAll, beforeAll, expect, setSystemTime, test } from "bun:test";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import type { GitHubActor } from "../src/lib/leaderboard-types";
 import {
   AFTER_NOVEMBER,
   GENERATED_AT,
   PENALIZED_AUTHOR,
+  PLACEHOLDER_LINKED_ACCOUNT,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
 
@@ -20,13 +22,18 @@ afterAll(() => setSystemTime());
 const HUMAN_CLAIM = "a".repeat(64);
 const BOT_CLAIM = "b".repeat(64);
 
-function snapshotWithJointUnits(botClaimActors: string[]) {
+function snapshotWithJointUnits(
+  botClaimActors: string[],
+  otherActors: GitHubActor[] = [],
+) {
   const input = penaltyScoreInput([], GENERATED_AT);
   const pull = input.mergedPullRequests.find(
     (record) => record.id === "PR_november",
   );
   if (!pull) throw new Error("fixture pull request missing");
-  input.valueActors = new Map([[PENALIZED_AUTHOR.id, PENALIZED_AUTHOR]]);
+  input.valueActors = new Map(
+    [PENALIZED_AUTHOR, ...otherActors].map((actor) => [actor.id, actor]),
+  );
   const unit = (workUnitId: string, claimId: string) => ({
     workUnitId,
     claimIds: [claimId],
@@ -98,6 +105,18 @@ test("a joint unit with only bot-authored claims scores nobody and keeps the oth
   expect(jointMerges(snapshotWithJointUnits([]))).toEqual([
     ["wu_human", PENALIZED_AUTHOR.id, 1],
   ]);
+});
+
+// The carrier's author does not take copied work, so the unit stays empty.
+test("a joint unit whose claims name only the placeholder account scores nobody and keeps the other units", () => {
+  expect(
+    jointMerges(
+      snapshotWithJointUnits(
+        [PLACEHOLDER_LINKED_ACCOUNT.id],
+        [PLACEHOLDER_LINKED_ACCOUNT],
+      ),
+    ),
+  ).toEqual([["wu_human", PENALIZED_AUTHOR.id, 1]]);
 });
 
 test("a joint unit with a verified implementation actor still scores", () => {

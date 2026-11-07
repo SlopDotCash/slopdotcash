@@ -24,6 +24,12 @@ const actor = (id: string, login: string, user: number): GitHubActor => ({
 });
 export const PENALIZED_AUTHOR = actor("MDQ6VXNlcjQy", "author", 42);
 export const PROJECT_OWNER = actor("MDQ6VXNlcjQz", "project-owner", 43);
+/** GitHub links the placeholder commit identity `x <x@x>` to this account. */
+export const PLACEHOLDER_LINKED_ACCOUNT = actor(
+  "MDQ6VXNlcjM4MjUwNTA=",
+  "xxxxxxxxxxxxx",
+  3825050,
+);
 export const CLOSED_PULL_REQUEST_ID = "PR_local";
 /** Inside November 2026, after every fixture event. */
 export const GENERATED_AT = "2026-11-20T00:00:00.000Z";
