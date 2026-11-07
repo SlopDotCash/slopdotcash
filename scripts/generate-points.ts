@@ -379,18 +379,29 @@ export function applyRetainedHistoryBatch(
   const retired = retiredEvaluatorAwards(journal);
   const supplied = new Set(awards.map((award) => award.key));
   const retiredKeys = new Set(retired.map((award) => award.key));
+  const before = latestPoints(journal);
   const priorIds = new Set(
-    [...latestPoints(journal).values()]
+    [...before.values()]
       .filter((revision) => retiredKeys.has(revision.award.key))
       .map((revision) => revision.id),
   );
-  const recovered = appendPointAwards(
-    journal,
-    retired.filter((award) => !supplied.has(award.key)),
-    RETIREMENT_RECOVERY_DIGEST,
-    "slop-score-v2",
-    recordedAt,
+  const missingRetired = retired.filter(
+    (award) =>
+      !supplied.has(award.key) &&
+      JSON.stringify(before.get(award.key)?.award) !== JSON.stringify(award),
   );
+  // The batch append below validates the journal in either case. An empty
+  // recovery (including awards already restored) would copy and validate its
+  // entire history a second time without appending a revision.
+  const recovered = missingRetired.length
+    ? appendPointAwards(
+        journal,
+        missingRetired,
+        RETIREMENT_RECOVERY_DIGEST,
+        "slop-score-v2",
+        recordedAt,
+      )
+    : journal;
   let result = appendPointAwards(
     recovered,
     [

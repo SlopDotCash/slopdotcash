@@ -656,6 +656,69 @@ test("a failed review names one fixed failure category and never provider text",
     ],
     ["provider-http-429", () => new Response("slow down", { status: 429 })],
     [
+      "provider-http-400-input-too-long-213456-over-200000",
+      () =>
+        Response.json(
+          {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message:
+                "prompt is too long: 213,456 tokens > 200,000 maximum (secret provider text)",
+            },
+          },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-400-input-too-long-198000-plus-16384-over-200000",
+      () =>
+        Response.json(
+          {
+            error: {
+              type: "invalid_request_error",
+              message:
+                "input length and `max_tokens` exceed context limit: 198000 + 16384 > 200000, secret provider text",
+            },
+          },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-400-invalid_request_error",
+      () =>
+        Response.json(
+          {
+            error: {
+              type: "invalid_request_error",
+              message: "secret provider text",
+            },
+          },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-400",
+      () =>
+        Response.json(
+          { error: { type: "secret provider text", message: "no" } },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-529-overloaded_error",
+      () =>
+        Response.json(
+          {
+            error: {
+              type: "overloaded_error",
+              message: "secret provider text",
+            },
+          },
+          { status: 529 },
+        ),
+    ],
+    [
       "truncated",
       () =>
         new Response(JSON.stringify({}), {
@@ -729,14 +792,18 @@ test("a failed batched review says whether a batch or the synthesis failed", asy
     inspection,
     profile,
     fetch: provider((input) =>
-      input === plan.batches[0].evidence
+      input === plan.batches[1].evidence
         ? new Response("unavailable", { status: 503 })
         : null,
     ).fetcher,
     concurrency: 1,
     retryDelayMs: 0,
   });
-  expect(batch.evidence?.failure).toBe("batch:provider-http-503");
+  // The label names the failing call, so a stuck review can be rebuilt and
+  // that one batch inspected locally.
+  expect(batch.evidence?.failure).toBe(
+    `batch-2-of-${plan.batches.length}:provider-http-503`,
+  );
   const synthesis = await reviewInventory({
     inspection,
     profile,
@@ -800,7 +867,9 @@ test("a batch call that returns an unreadable review is retried before the revie
     concurrency: 1,
     retryDelayMs: 0,
   });
-  expect(failed.evidence?.failure).toBe("batch:invalid-review");
+  expect(failed.evidence?.failure).toBe(
+    `batch-1-of-${plan.batches.length}:invalid-review`,
+  );
   expect(always.calls).toHaveLength(MAX_CALL_ATTEMPTS);
   // A deterministic stop is not retried.
   const stopped = provider((input) =>
@@ -821,6 +890,41 @@ test("a batch call that returns an unreadable review is retried before the revie
     concurrency: 1,
     retryDelayMs: 0,
   });
-  expect(stop.evidence?.failure).toBe("batch:stop-max_tokens");
+  expect(stop.evidence?.failure).toBe(
+    `batch-1-of-${plan.batches.length}:stop-max_tokens`,
+  );
   expect(stopped.calls).toHaveLength(1);
+});
+
+test("a later retry without a receipt keeps the earlier usage and cost", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const first = plan.batches[0].evidence;
+  let attempts = 0;
+  const mixed = provider((input) =>
+    input === first && attempts++ === 0
+      ? unreadableReview()
+      : input === first
+        ? new Response("unavailable", { status: 503 })
+        : null,
+  );
+  const failed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: mixed.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(failed.evidence?.failure).toBe(
+    `batch-1-of-${plan.batches.length}:provider-http-503`,
+  );
+  expect(mixed.calls).toHaveLength(MAX_CALL_ATTEMPTS);
+  expect(failed.evidence?.usage).toEqual({
+    uncachedInput: 7,
+    cachedInput: 0,
+    cacheCreation: 0,
+    output: 3,
+  });
+  expect(failed.evidence?.cost?.nanoUsd).toBe("48");
 });
