@@ -755,6 +755,48 @@ test("re-verifying after a consent toggle does not replay the old disabled-conse
   h.sqlite.close();
 });
 
+test("a same-token retry after opt-out does not restore consent", async () => {
+  const gates: Array<() => void> = [];
+  let armed = false;
+  const h = await setup(async (sql) => {
+    if (
+      armed &&
+      sql.includes(
+        "token_hash=? AND github_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?",
+      )
+    )
+      await new Promise<void>((resolve) => {
+        gates.push(resolve);
+      });
+  });
+  await h.enroll("member@example.com");
+  armed = true;
+  const first = h.verify();
+  const second = h.verify();
+  for (let i = 0; i < 100 && gates.length < 2; i++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  if (gates.length < 2) {
+    for (const release of gates) release();
+    throw new Error(
+      `expected both verify requests to pause after the token read, only ${gates.length} did`,
+    );
+  }
+  gates[0]();
+  expect((await first).status).toBe(200);
+  expect(
+    (await h.call("", { enabled: false, securityEnabled: false })).status,
+  ).toBe(200);
+  gates[1]();
+  expect((await second).status).toBe(409);
+  const prefs = h.sqlite
+    .query(
+      "SELECT enabled,security_enabled FROM notification_email_preferences WHERE github_id=?",
+    )
+    .get(MEMBER) as { enabled: number; security_enabled: number };
+  expect(prefs).toEqual({ enabled: 0, security_enabled: 0 });
+  h.sqlite.close();
+});
+
 test.each(["/verification", "/verify"])(
   "email %s returns a client error for malformed JSON",
   async (path) => {

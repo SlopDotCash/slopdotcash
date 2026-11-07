@@ -496,21 +496,41 @@ async function verifyEmail(
         prior?.revision ?? null,
       ),
     deps.db
-      // Scope both upserts to the row this token just consumed. Reusing the
+      // Scope both upserts to the row this request just consumed. Reusing the
       // destination version across verifications of the same address leaves
       // several consumed rows on one version; without the token the SELECTs
       // replay every historical row in (github_id, created_at) order, so an
       // older disabled-consent row fires the opt-out triggers and suppresses
-      // queued mail before the newest row restores consent.
+      // queued mail before the newest row restores consent. Matching the
+      // token alone is still not proof this request consumed it: a same-token
+      // retry that paused after the token read would match the row the first
+      // request consumed and restore consent after an opt-out. So both
+      // SELECTs also require consumed_at to be the timestamp this request's
+      // UPDATE wrote, and require no competing preference save since this
+      // request's revision read, mirroring the guard on the UPDATE.
       .prepare(`INSERT INTO notification_email_destinations(github_id,email,destination_version,verified_at)
-      SELECT github_id,email,destination_version,consumed_at FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND destination_version=?
+      SELECT github_id,email,destination_version,consumed_at FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND destination_version=? AND consumed_at=? AND (SELECT revision FROM notification_email_preferences WHERE github_id=?) IS ?
       ON CONFLICT(github_id) DO UPDATE SET email=excluded.email,destination_version=excluded.destination_version,verified_at=excluded.verified_at`)
-      .bind(tokenHash, githubId, version),
+      .bind(
+        tokenHash,
+        githubId,
+        version,
+        at,
+        githubId,
+        prior?.revision ?? null,
+      ),
     deps.db
       .prepare(`INSERT INTO notification_email_preferences(github_id,enabled,security_enabled,destination_version,updated_at)
-      SELECT github_id,activity_enabled,security_enabled,destination_version,consumed_at FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND destination_version=?
+      SELECT github_id,activity_enabled,security_enabled,destination_version,consumed_at FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND destination_version=? AND consumed_at=? AND (SELECT revision FROM notification_email_preferences WHERE github_id=?) IS ?
       ON CONFLICT(github_id) DO UPDATE SET enabled=excluded.enabled,security_enabled=excluded.security_enabled,destination_version=excluded.destination_version,updated_at=excluded.updated_at`)
-      .bind(tokenHash, githubId, version),
+      .bind(
+        tokenHash,
+        githubId,
+        version,
+        at,
+        githubId,
+        prior?.revision ?? null,
+      ),
   ]);
   if (result[0].meta?.changes !== 1)
     return json(409, { error: "verification_invalid" });
