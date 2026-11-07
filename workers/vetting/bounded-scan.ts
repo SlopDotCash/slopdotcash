@@ -315,6 +315,21 @@ const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
 /**
+ * The download command a command substitution runs. Inside `$( )` or
+ * backticks the shell honours the same `sudo` and `env` prefixes as before
+ * a piped shell, in either order, so `$(env curl …)`, `$(sudo curl …)` and
+ * `` `sudo env wget …` `` are the same download as `$(curl …)`. The
+ * prefixes may also carry their usual options and assignments — `sudo -E`,
+ * `sudo -u root`, `env -i`, `env -u NAME` and `env FOO=1` — which real
+ * installs use far more often than the bare spellings, so those forms are
+ * the same download too. A flag that takes a value (`-u`/`--user` for sudo,
+ * `-u`/`--unset` for env) consumes exactly one following word; any other
+ * flag is a bare `-x` run, so the download token itself is never swallowed.
+ */
+const SUDO_ARGS = String.raw`(?:\s+(?:-[A-Za-z]*u\s+[^\s|;&<>()'"]+|-[A-Za-z]+|--user(?:=|\s+)[^\s|;&<>()'"]+))*`;
+const ENV_ARGS = String.raw`(?:\s+(?:-[A-Za-z0-9]*u\s+[^\s|;&<>()'"]+|-[A-Za-z0-9]+|--unset(?:=|\s+)[^\s|;&<>()'"]+|[A-Za-z_][A-Za-z0-9_]*=[^\s|;&<>()'"]*))*`;
+const SUBSTITUTION_DOWNLOAD = String.raw`(?:(?:${SUDO_COMMAND}${SUDO_ARGS}|${ENV_COMMAND}${ENV_ARGS})\s+){0,2}(?:curl|wget)\b`;
+/**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
  * download exactly as a pipe into a shell does.
@@ -383,7 +398,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?(?:\$\(|\x60)\s*${SUBSTITUTION_DOWNLOAD}|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*${SUBSTITUTION_DOWNLOAD}|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
@@ -395,9 +410,10 @@ const RULES: Rule[] = [
     // pipe: `bash <(curl ...)`, `sh <(curl ...)`, `source <(curl ...)`
     // and `. <(curl ...)` are the same act. Shell flags can select stdin
     // or syntax-only mode, so this rule covers a direct script argument.
-    // Only curl/wget inside the substitution count; `bash <(cat local.sh)` stays clean.
+    // Only curl/wget (with any sudo/env prefix) inside the substitution
+    // count; `bash <(cat local.sh)` stays clean.
     pattern: new RegExp(
-      String.raw`(?:^|[\s;|&()'"])(?:(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+|source\s+|\.\s+)<\(\s*(?:curl|wget)\b`,
+      String.raw`(?:^|[\s;|&()'"])(?:(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+|source\s+|\.\s+)<\(\s*${SUBSTITUTION_DOWNLOAD}`,
       "iu",
     ),
     summary: "Runs a remote download in a shell via process substitution",
