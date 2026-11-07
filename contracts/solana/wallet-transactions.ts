@@ -314,8 +314,10 @@ async function checkTransaction(
   );
   if (!Array.isArray(response.value) || response.value.length !== 1)
     throw new SolanaWalletActionError("Invalid transaction status response.");
-  if (response.value[0] === null)
+  if (response.value[0] === null) {
+    if (!exactSignature) throw mismatch();
     return { status: "pending" as const, meta: null };
+  }
   const status = object(response.value[0]);
   if (status.confirmationStatus !== "finalized")
     return { status: "pending" as const, meta: null };

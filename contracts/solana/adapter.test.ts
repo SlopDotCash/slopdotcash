@@ -1,14 +1,21 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
+  CONFIG_DISCRIMINATOR,
+  CONFIG_SIZE,
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
   readVaultTotals,
+  SOLANA_NATIVE_ASSET,
+  type SolanaEscrowConfig,
   solanaBase58,
   solanaConfigAddress,
   solanaMintDecimals,
   solanaMintDetails,
   solanaVaultAddress,
 } from "./adapter";
+import { checkSolanaFunding, solanaFundingMessage } from "./funding";
 
 const PROGRAM = "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ";
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -356,5 +363,97 @@ describe("program addresses", () => {
       "9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS",
     );
     expect(VAULT).toBe("DmCm1opZm61cYKAHYQ24LTVvh8UqPu5hpkRChccaCa6n");
+  });
+});
+
+describe("checkSolanaFunding", () => {
+  test("rejects an unindexed mismatched deposit signature while keeping an exact signature pending", async () => {
+    const ownerBytes = new Uint8Array(32).fill(3);
+    const feeBytes = new Uint8Array(32).fill(4);
+    const identityBytes = new Uint8Array(32).fill(5);
+    const rotationBytes = new Uint8Array(32).fill(6);
+    const domainBytes = new Uint8Array(32).fill(8);
+    const donorSeed = new Uint8Array(32).fill(11);
+    const donorBytes = ed25519.getPublicKey(donorSeed);
+    const code = new Uint8Array([0x7f, 0x45, 0x4c, 0x46]);
+    const codeSha256 = Buffer.from(sha256(code)).toString("hex");
+    const configAccount = new Uint8Array(CONFIG_SIZE);
+    configAccount.set(Buffer.from(CONFIG_DISCRIMINATOR, "hex"), 0);
+    configAccount.set(identityBytes, 8);
+    configAccount.set(feeBytes, 40);
+    configAccount.set(rotationBytes, 72);
+    const project = projectAccount(base, new Uint8Array(32));
+    project.set(ownerBytes, 8);
+    project.set(domainBytes, 72);
+    project.set(feeBytes, 136);
+    const escrowConfig: SolanaEscrowConfig = {
+      ...config,
+      genesisHash: solanaBase58(new Uint8Array(32).fill(1)),
+      projectId: "eliza",
+      networkDomain: Buffer.from(domainBytes).toString("hex"),
+      vault: VAULT,
+      mint: SOLANA_NATIVE_ASSET,
+      owner: solanaBase58(ownerBytes),
+      identityAuthority: solanaBase58(identityBytes),
+      feeRecipient: solanaBase58(feeBytes),
+      rotationAuthority: solanaBase58(rotationBytes),
+      codeSha256,
+      upgradeAuthority: null,
+      bindingDelaySeconds: "3600",
+      rotationDelaySeconds: "604800",
+    };
+    const configPda = solanaConfigAddress(PROGRAM);
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      let result: unknown;
+      if (body.method === "getGenesisHash") {
+        result = escrowConfig.genesisHash;
+      } else if (body.method === "getAccountInfo") {
+        const address = body.params[0];
+        if (address === PROGRAM) {
+          result = {
+            context: { slot: 1 },
+            value: {
+              owner: "BPFLoader2111111111111111111111111111111111",
+              executable: true,
+              lamports: 1,
+              data: [Buffer.from(code).toString("base64"), "base64"],
+            },
+          };
+        } else if (address === configPda) {
+          result = {
+            context: { slot: 1 },
+            value: encoded(PROGRAM, configAccount),
+          };
+        } else if (address === PROJECT) {
+          result = {
+            context: { slot: 1 },
+            value: encoded(PROGRAM, project),
+          };
+        } else throw new Error(`Unexpected account ${address}`);
+      } else if (body.method === "getSignatureStatuses") {
+        result = { context: { slot: 1 }, value: [null] };
+      } else throw new Error(`Unexpected RPC ${body.method}`);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+    }) as typeof fetch;
+    const intent = {
+      operation: "deposit" as const,
+      wallet: solanaBase58(donorBytes),
+      gross: "1000000",
+      blockhash: solanaBase58(new Uint8Array(32).fill(12)),
+    };
+    const msg = solanaFundingMessage(
+      { ...escrowConfig, tokenProgram: SOLANA_NATIVE_ASSET },
+      intent,
+    );
+    const exactSignature = solanaBase58(ed25519.sign(msg, donorSeed));
+    expect(await checkSolanaFunding(escrowConfig, intent, exactSignature)).toBe(
+      "pending",
+    );
+    await expect(
+      checkSolanaFunding(escrowConfig, intent, "1".repeat(64)),
+    ).rejects.toThrow(
+      "This transaction does not match the pending wallet action. Check its signature in your wallet.",
+    );
   });
 });
