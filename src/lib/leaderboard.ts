@@ -299,6 +299,7 @@ const CONTRIBUTOR_READY_LABELS = new Set([
   "good first issue",
   "help wanted",
   "launch-qa",
+  "mission-ready",
   "needs-review",
   "needs testing",
   "p0",
