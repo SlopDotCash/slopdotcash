@@ -18,6 +18,7 @@ import {
   pvrState,
   type SecurityD1Database,
 } from "./handler";
+import { securityPaymentDatabase } from "./payment-database";
 
 const migrations = readdirSync("migrations")
   .filter((f) => f.endsWith(".sql"))
@@ -1958,3 +1959,279 @@ for (const fault of ["failed", "missing", "partial"] as const)
     ]);
     env.sqlite.close();
   });
+
+describe("reporter payment state against the payout queue", () => {
+  /** An approved award whose owner commitment is indexed: settlement and
+   * obligation rows exactly as the payment indexer leaves them. */
+  async function settledCase(
+    env: ReturnType<typeof open>,
+    options: {
+      obligation?: boolean;
+      deployment?: string;
+      obligationId?: string;
+    } = {},
+  ) {
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.decide(id, "vault-drain");
+    expect((await env.award(id, "1000000")).status).toBe(200);
+    env.sqlite
+      .query(
+        `INSERT INTO security_settlements (case_id, obligation_id, source_digest, network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, approved_at, case_revision, deployment) VALUES (?, ?, ?, 'base-sepolia', ?, ?, 6, '1000000', '250000', ?, ?, ?, 3, ?)`,
+      )
+      .run(
+        id,
+        options.obligationId ?? "obligation-1",
+        "c".repeat(64),
+        VAULT,
+        ASSET,
+        REPORTER.githubId,
+        MAINTAINER.githubId,
+        REVISION_AT,
+        options.deployment ?? "{}",
+      );
+    if (options.obligation !== false)
+      env.sqlite
+        .query(
+          `INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at) VALUES ('obligation-1', ?, ?, 'base-sepolia', 'base', ?, ?, 6, '1000000', '250000', ?, 'reserved', ?)`,
+        )
+        .run(
+          PROJECT,
+          REPORTER.githubId,
+          VAULT,
+          ASSET,
+          "c".repeat(64),
+          "2026-10-19T10:00:00.000Z",
+        );
+    env.sqlite
+      .query(
+        `INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES('claim-1',?,?,'0x1111111111111111111111111111111111111111','d1_registry',?,?,?,?,'base')`,
+      )
+      .run(
+        REPORTER.githubId,
+        REPORTER.githubLogin,
+        "d".repeat(64),
+        REVISION_AT,
+        "e".repeat(64),
+        REVISION_AT,
+      );
+    return id;
+  }
+  const setQueue = (
+    env: ReturnType<typeof open>,
+    state: string,
+    attempt: string | null,
+  ) => {
+    env.sqlite
+      .query(
+        `INSERT INTO security_payment_outbox(obligation_id,state,updated_at) VALUES('obligation-1',?,?)`,
+      )
+      .run(state, REVISION_AT);
+    if (attempt)
+      env.sqlite
+        .query(
+          `INSERT INTO security_payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES('attempt-1','obligation-1','claim-1',?,?)`,
+        )
+        .run(REVISION_AT, attempt);
+  };
+  const caseViewAs = async (
+    env: ReturnType<typeof open>,
+    as: typeof MAINTAINER | typeof REPORTER,
+    id: string,
+  ) =>
+    (await env.call(as, "GET", `security-cases/${id}`)).body
+      .case as CaseReply & {
+      paymentState: string;
+      settlement: {
+        state: string;
+        submittedTransactionId: string | null;
+      } | null;
+    };
+  const reporterView = async (env: ReturnType<typeof open>, id: string) =>
+    caseViewAs(env, REPORTER, id);
+  const maintainerView = async (env: ReturnType<typeof open>, id: string) =>
+    caseViewAs(env, MAINTAINER, id);
+
+  /** Authorize a wallet claim, as the account API records it. */
+  const authorizeClaim = (env: ReturnType<typeof open>, claimId: string) => {
+    env.sqlite
+      .query(
+        `INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at) VALUES(?,?,?,?,'2026-10-20T00:00:00.000Z')`,
+      )
+      .run(`challenge-${claimId}`, claimId, REPORTER.githubId, "authorize");
+    env.sqlite
+      .query(
+        `INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,?,'0x00')`,
+      )
+      .run(claimId, REPORTER.githubId, REVISION_AT, `challenge-${claimId}`);
+  };
+  /** The reporter authorizes a new wallet (claim-2) superseding claim-1, so
+   * the effective payout destination changes under the open attempt. */
+  const authorizeNewWallet = (env: ReturnType<typeof open>) => {
+    authorizeClaim(env, "claim-1");
+    env.sqlite
+      .query(
+        `INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES('claim-2',?,?,'0x2222222222222222222222222222222222222222','d1_registry',?,?,?,'claim-1',?,'base')`,
+      )
+      .run(
+        REPORTER.githubId,
+        REPORTER.githubLogin,
+        "d".repeat(64),
+        REVISION_AT,
+        "f".repeat(64),
+        REVISION_AT,
+      );
+    authorizeClaim(env, "claim-2");
+  };
+  const addAttempt = (
+    env: ReturnType<typeof open>,
+    id: string,
+    createdAt: string,
+    state: string,
+    transactionId: string | null = null,
+  ) => {
+    env.sqlite
+      .query(
+        `INSERT INTO security_payment_attempts(id,obligation_id,claim_id,created_at,transaction_id,state) VALUES(?, 'obligation-1','claim-1',?,?,?)`,
+      )
+      .run(id, createdAt, transactionId, state);
+  };
+  // Runs the security-payments cron pre-step (workers/security-payments/
+  // index.ts) through the same table remap the worker uses, so this test
+  // exercises the statement the cron actually runs. Keep the text in sync
+  // with the worker.
+  const runSecurityPrestep = async (env: ReturnType<typeof open>) => {
+    await securityPaymentDatabase(env.db as unknown as SecurityD1Database)
+      .prepare(
+        `INSERT INTO payment_outbox(obligation_id,state,updated_at)
+      SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w
+      ON w.github_user_id=o.github_user_id AND w.chain=o.chain
+      JOIN payment_wallet_authorizations a ON a.claim_id=w.id
+      WHERE o.state='reserved'
+      AND NOT EXISTS(SELECT 1 FROM payment_attempts attempt WHERE attempt.obligation_id=o.id AND attempt.state IN ('prepared','unknown','submitted') AND attempt.claim_id<>w.id)
+      ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'`,
+      )
+      .bind("2026-10-19T11:00:00.000Z")
+      .run();
+  };
+
+  // The dispatcher parks the queue at held when the destination changed
+  // under an uncertain attempt; the reporter must see the hold, not a
+  // payment still in flight.
+  test.each(["unknown", "prepared"])(
+    "a held queue shows held to the reporter (latest attempt %s)",
+    async (attempt) => {
+      const env = open();
+      const id = await settledCase(env);
+      setQueue(env, "held", attempt);
+      const view = await reporterView(env, id);
+      expect(view.paymentState).toBe("held");
+      expect(view.settlement?.state).toBe("held");
+      expect(view.nextStep).toBe("The payment is held.");
+      env.sqlite.close();
+    },
+  );
+
+  test("a ready queue with an uncertain attempt still shows uncertain", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    setQueue(env, "ready", "unknown");
+    const view = await reporterView(env, id);
+    expect(view.paymentState).toBe("uncertain");
+    expect(view.nextStep).toBe("The payment is in progress.");
+    env.sqlite.close();
+  });
+
+  // The dispatcher parks the queue at held when the reporter authorizes a
+  // new wallet under an uncertain attempt on the old claim; the next
+  // security-payments cron tick must not free that hold back to ready.
+  test("a held queue survives the pre-step while an attempt is open on a prior claim", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    authorizeNewWallet(env);
+    setQueue(env, "held", "unknown");
+    await runSecurityPrestep(env);
+    const view = await reporterView(env, id);
+    expect(view.paymentState).toBe("held");
+    expect(view.settlement?.state).toBe("held");
+    expect(view.nextStep).toBe("The payment is held.");
+    env.sqlite.close();
+  });
+
+  test("the pre-step frees a held queue once the prior attempt is retired", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    authorizeNewWallet(env);
+    setQueue(env, "held", "failed");
+    await runSecurityPrestep(env);
+    const view = await reporterView(env, id);
+    expect(view.paymentState).toBe("ready");
+    env.sqlite.close();
+  });
+
+  // The Payout badge and the next step on the same screen must agree: a
+  // reporter with no payout wallet yet is not watching a payment in flight,
+  // and a case whose owner has not committed is not either.
+  test("needs-wallet prompts wallet registration, not a payment in progress", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    const reporter = await reporterView(env, id);
+    expect(reporter.paymentState).toBe("needs-wallet");
+    expect(reporter.nextStep).toBe("Register and authorize a payout wallet.");
+    const maintainer = await maintainerView(env, id);
+    expect(maintainer.nextStep).toBe(
+      "Waiting for the reporter to register and authorize a payout wallet.",
+    );
+    env.sqlite.close();
+  });
+
+  test("awaiting-owner-commitment prompts the owner to sign", async () => {
+    const env = open();
+    const id = await settledCase(env, {
+      obligation: false,
+      obligationId: `0x${"a".repeat(64)}`,
+      deployment: JSON.stringify({
+        projectId: PROJECT,
+        network: "base-sepolia",
+        vault: VAULT,
+        asset: ASSET,
+        chain: "base",
+        chainId: "84532",
+        owner: `0x${"c".repeat(40)}`,
+      }),
+    });
+    const reporter = await reporterView(env, id);
+    expect(reporter.paymentState).toBe("awaiting-owner-commitment");
+    expect(reporter.nextStep).toBe(
+      "Waiting for the vault owner to sign the payment commitment.",
+    );
+    const maintainer = await maintainerView(env, id);
+    expect(maintainer.nextStep).toBe(
+      "Sign the owner commitment to release the payment.",
+    );
+    env.sqlite.close();
+  });
+
+  // A retired attempt and its replacement can share one created_at; the
+  // latest attempt must be the replacement, not the retired row.
+  test("a same-timestamp replacement attempt outranks the retired attempt", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    setQueue(env, "ready", null);
+    addAttempt(env, "attempt-1", REVISION_AT, "failed");
+    addAttempt(env, "attempt-2", REVISION_AT, "unknown");
+    const view = await reporterView(env, id);
+    expect(view.settlement?.state).toBe("uncertain");
+    env.sqlite.close();
+  });
+
+  test("a newer attempt without a transaction keeps the submitted transaction id", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    setQueue(env, "ready", null);
+    addAttempt(env, "attempt-1", REVISION_AT, "failed", "0xabc");
+    addAttempt(env, "attempt-2", "2026-10-19T10:00:00.000Z", "prepared");
+    const view = await reporterView(env, id);
+    expect(view.settlement?.submittedTransactionId).toBe("0xabc");
+    env.sqlite.close();
+  });
+});
