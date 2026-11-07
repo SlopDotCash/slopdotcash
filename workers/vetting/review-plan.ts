@@ -421,7 +421,7 @@ const retryable = (failure: string | undefined) =>
     failure === "truncated" ||
     failure === "network" ||
     failure === "response-unreadable" ||
-    /^provider-http-(?:429|5\d\d)$/u.test(failure));
+    /^provider-http-(?:429|5\d\d)(?:-|$)/u.test(failure));
 
 /** The retried call's evidence, carrying the usage and cost of every attempt. */
 function withEarlierAttempts(
@@ -462,14 +462,17 @@ export type ReviewCache = { directory: string; maxCallsPerPass: number };
 const promptRevision = (kind: ReviewPass["kind"]) =>
   kind === "synthesis" ? SYNTHESIS_PROMPT_REVISION : SCAN_PROMPT_REVISION;
 
-/** Names the failed call of a batched review beside its fixed category. */
+/**
+ * Names the failed call of a batched review beside its fixed category:
+ * `synthesis:` or `batch-<n>-of-<count>:` in plan order.
+ */
 function labelFailure(
   evidence: ScannerEvidence,
-  kind: ReviewPass["kind"],
+  label: string,
 ): ScannerEvidence {
   return evidence.failure === undefined
     ? evidence
-    : { ...evidence, failure: `${kind}:${evidence.failure}` };
+    : { ...evidence, failure: `${label}:${evidence.failure}` };
 }
 
 async function cached(
@@ -707,10 +710,18 @@ export async function reviewInventory(input: {
   });
   const done = outcomes.filter((outcome) => outcome !== null);
   if (failed) {
-    const first = done.find((o) => o.evidence.review.status !== "completed");
+    const at = outcomes.findIndex(
+      (o) => o !== null && o.evidence.review.status !== "completed",
+    );
+    const first = outcomes[at];
     return {
       plan,
-      evidence: first ? labelFailure(first.evidence, "batch") : null,
+      evidence: first
+        ? labelFailure(
+            first.evidence,
+            `batch-${at + 1}-of-${plan.batches.length}`,
+          )
+        : null,
     };
   }
   if (exhausted || done.length !== plan.batches.length)
