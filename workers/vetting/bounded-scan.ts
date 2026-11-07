@@ -312,8 +312,12 @@ function commandToken(name: string): string {
   return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
 }
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
-const ENV_COMMAND = commandToken("env");
-const SUDO_COMMAND = commandToken("sudo");
+/**
+ * Privilege and multicall wrappers before an executor. Same class as the
+ * secret-exfiltration `env|…|nc` rule: `sudo -E`, `doas`, `busybox` and
+ * `env` with optional short flags. Zero or more wrappers are allowed.
+ */
+const PRIVILEGE_WRAPPER = String.raw`(?:(?:[^\s|;&<>()'"]*/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
@@ -323,7 +327,53 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
-
+/** Literal path token a staged download writes and a later command runs. */
+const STAGED_PATH = String.raw`[A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*`;
+/**
+ * PowerShell OutFile/BITS Destination: a literal path, or `$name` /
+ * `$env:Name\rest` so a later Start-Process/msiexec can link the same
+ * token. Shell staged downloads keep STAGED_PATH (no `$`) so
+ * `curl -o $TMPDIR/…` stays unlinked.
+ */
+const STAGED_PS_DEST = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z_][A-Za-z0-9_]*)?(?:\\[A-Za-z0-9._~/%+=@-]+)*|${STAGED_PATH})`;
+/**
+ * Run capture group `n` after a staged download: shell/interpreter/`source`,
+ * PowerShell `-File`, call operator, path-prefixed direct execution,
+ * `Start-Process` / `-FilePath`, or `msiexec /i` (including ArgumentList).
+ */
+function stagedRun(n: number): string {
+  // `.\` is a PowerShell path prefix; the character class keeps the
+  // trailing backslash from escaping the group closer. Build the
+  // backreference outside String.raw: `\${n}` there stays literal `{n}`.
+  const pathRef = `\\${n}`;
+  const classic =
+    String.raw`(?:^|[\n;|&])[ \t]*${PRIVILEGE_WRAPPER}(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.|powershell(?:\.exe)?|pwsh(?:\.exe)?)\s+(?:-[Ff]ile\s+)?["']?(?:\./|\.[\\])?|&\s+["']?(?:\./|\.[\\])?|["']?(?:\./|\.[\\]|(?=/)))` +
+    pathRef +
+    String.raw`["']?(?=$|[\s|;&<>()'"])`;
+  // Dominant PowerShell installer form: no `./` required on the path.
+  const startProcess =
+    String.raw`(?:^|[\n;|&])[ \t]*Start-Process\b(?:\s+-[Ff]ile[Pp]ath)?\s+["']?(?:\./|\.[\\])?` +
+    pathRef +
+    String.raw`["']?(?=$|[\s|;&<>()'"])`;
+  const startProcessMsiexec =
+    String.raw`(?:^|[\n;|&])[ \t]*Start-Process\b\s+msiexec(?:\.exe)?\b[^\n;|&]{0,200}?-ArgumentList\s+["'][^"'\n]*?/[Ii]\s+` +
+    pathRef +
+    String.raw`(?=[\s"'])`;
+  const msiexec =
+    String.raw`(?:^|[\n;|&])[ \t]*msiexec(?:\.exe)?\b[^\n;|&]*?/[Ii]\s+["']?` +
+    pathRef +
+    String.raw`["']?(?=$|[\s|;&<>()'"])`;
+  return `(?:${classic}|${startProcess}|${startProcessMsiexec}|${msiexec})`;
+}
+/** Download tool that names an output path, then later runs that path. */
+function stagedTool(
+  tool: string,
+  outFlag: string,
+  n: number,
+  path: string = STAGED_PATH,
+): string {
+  return String.raw`(?:^|[\n;|&])[ \t]*${tool}\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:${outFlag})(?:=|\s+)["']?(${path})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${stagedRun(n)}`;
+}
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
@@ -383,7 +433,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*${PRIVILEGE_WRAPPER}${SHELL_COMMAND}|(?:^|[\s;|&()'"])${PRIVILEGE_WRAPPER}${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
@@ -397,7 +447,7 @@ const RULES: Rule[] = [
     // or syntax-only mode, so this rule covers a direct script argument.
     // Only curl/wget inside the substitution count; `bash <(cat local.sh)` stays clean.
     pattern: new RegExp(
-      String.raw`(?:^|[\s;|&()'"])(?:(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+|source\s+|\.\s+)<\(\s*(?:curl|wget)\b`,
+      String.raw`(?:^|[\s;|&()'"])(?:${PRIVILEGE_WRAPPER}${SHELL_COMMAND}\s+|source\s+|\.\s+)<\(\s*(?:curl|wget)\b`,
       "iu",
     ),
     summary: "Runs a remote download in a shell via process substitution",
@@ -414,9 +464,10 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     // Reading a response object does not execute its body. Match the direct
-    // response-text forms; other data flow needs the model's source review.
+    // response body forms (`.text` or `.content`); other data flow needs
+    // the model's source review.
     pattern:
-      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.text\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
+      /(?<![\w.])(?:eval|exec)\s*\(\s*(?:(?:urllib(?:\.request)?\.)?urlopen\s*\([^()\n]*\)\s*\.read\s*\(\s*\)|requests\.[a-z]+\s*\([^()\n]*\)\s*\.(?:text|content)\b)|(?<![\w.])(?:eval|new\s+Function)\s*\(\s*await\s+\(\s*await\s+fetch\s*\([^()\n]*\)\s*\)\s*\.text\s*\(\s*\)/iu,
     summary: "Executes code fetched from the network",
   },
   {
@@ -426,8 +477,9 @@ const RULES: Rule[] = [
     // name. It matches only when the interpreter reads its program from
     // the pipe: bare, with `-`, or with Python's unbuffered option. Arbitrary
     // flags can instead print a version or select a different program.
+    // Line continuations match the shell pipe rule above.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*${PRIVILEGE_WRAPPER}${INTERPRETER_PIPE_TARGET}(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a remote download in an interpreter",
@@ -475,7 +527,7 @@ const RULES: Rule[] = [
     // decoder to known stream arguments: extra operands can read local files
     // and help/version flags do not decode the download.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*${PRIVILEGE_WRAPPER}(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a decoded remote download in a shell or interpreter",
@@ -513,16 +565,35 @@ const RULES: Rule[] = [
     // command position or after a shell, interpreter or `source` verb.
     // Bare filenames search PATH, so direct execution requires a path.
     // Shell flags can select syntax-only or version output and are excluded.
-    // The path is one literal token: quoted spellings count, but a
-    // variable, a glob, a glued or clustered output flag and `curl -O`
-    // (which is given no path) stay out. Reading, checksumming or
-    // mentioning the downloaded file keeps no finding, and neither does
-    // running a file this file did not download. The rule is
-    // case-sensitive because the tools assign opposite meanings to the
-    // two spellings: `curl -o` names the download, `wget -o` names a
-    // log file, and only `wget -O` names the download.
+    // The path is one token: quoted spellings count. Shell curl/wget keep
+    // a literal path only (a `$var`, a glob, a glued flag and `curl -O`
+    // stay out). PowerShell OutFile/BITS Destination also accept
+    // `$name` / `$env:Name\rest` so Start-Process/msiexec can link the
+    // same token. Reading, checksumming or mentioning the downloaded
+    // file keeps no finding, and neither does running a file this file
+    // did not download. The rule is case-sensitive because the tools
+    // assign opposite meanings to the two spellings: `curl -o` names
+    // the download, `wget -o` names a log file, and only `wget -O`
+    // names the download. Inventory siblings aria2c/axel and PowerShell
+    // OutFile/BITS Destination use the same link: the download inventory
+    // already names them.
     pattern: new RegExp(
-      String.raw`(?:^|[\n;|&])[ \t]*curl\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:-o|--output)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\1["']?(?=$|[\s|;&<>()'"])|(?:^|[\n;|&])[ \t]*wget\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\w-])(?:-O|--output-document)(?:=|\s+)["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\2["']?(?=$|[\s|;&<>()'"])|(?:^|[\n;|&])[ \t]*(?:curl|wget)\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\d&])>\s*["']?([A-Za-z0-9._~/%+=@][A-Za-z0-9._~/%+=@-]*)["']?(?=$|[\s;|&])[\s\S]{0,8192}?(?:^|[\n;|&])[ \t]*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:(?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.)\s+["']?(?:\./)?|["']?(?:\./|(?=/)))\3["']?(?=$|[\s|;&<>()'"])`,
+      [
+        stagedTool("curl", "-o|--output", 1),
+        stagedTool("wget", "-O|--output-document", 2),
+        String.raw`(?:^|[\n;|&])[ \t]*(?:curl|wget)\b(?=[^\n;|&]*https?://)[^\n;|&]*?(?<![\d&])>\s*["']?(${STAGED_PATH})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${stagedRun(3)}`,
+        stagedTool("aria2c", "-o|--out", 4),
+        stagedTool("axel", "-o|--output", 5),
+        stagedTool(
+          "(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)",
+          "-[Oo]ut[Ff]ile",
+          6,
+          STAGED_PS_DEST,
+        ),
+        // Source may be a literal URL or `$downloadUrl`-style variable
+        // (public BITS installers often hide the URL in a variable).
+        String.raw`(?:^|[\n;|&])[ \t]*Start-BitsTransfer\b(?![^\n]*-TransferType\s+["']?Upload\b)(?=[^\n;|&]*(?:https?://|-Source(?:\s+|=)["']?\$))[^\n;|&]*?(?<![\w-])(?:-Destination)(?:=|\s+)["']?(${STAGED_PS_DEST})["']?(?=$|[\s;|&])[\s\S]{0,8192}?${stagedRun(7)}`,
+      ].join("|"),
       "mu",
     ),
     summary: "Executes a file staged by an earlier download in the same file",
