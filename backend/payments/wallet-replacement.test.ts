@@ -200,15 +200,13 @@ test("a GitHub login rename reuses the existing wallet claim", async () => {
   try {
     const claimId = await f.register(first);
     expect(
-      (
-        await f.call(
-          "wallets/authorize",
-          await f.consent(claimId, first),
-        )
-      ).status,
+      (await f.call("wallets/authorize", await f.consent(claimId, first)))
+        .status,
     ).toBe(200);
     f.sqlite
-      .query("UPDATE points_members SET login='alice-renamed' WHERE github_id='123'")
+      .query(
+        "UPDATE points_members SET login='alice-renamed' WHERE github_id='123'",
+      )
       .run();
 
     expect(await f.register(first)).toBe(claimId);
