@@ -154,12 +154,19 @@ async function directTransfers(
   db: D1Database,
   column: "project_id" | "github_user_id",
   value: string,
+  includeTestnets: boolean,
 ): Promise<DirectTransfer[]> {
   const row = await db
     .prepare(directTransferQuery(column))
     .bind(value)
     .first<{ items: string }>();
-  return JSON.parse(row?.items ?? "[]") as DirectTransfer[];
+  const transfers = JSON.parse(row?.items ?? "[]") as DirectTransfer[];
+  // Production excludes testnet networks, mirroring the /totals, /vault, and
+  // /received deployment-tier rules. Staging keeps them because it pays in
+  // testnet stablecoins.
+  return includeTestnets
+    ? transfers
+    : transfers.filter((t) => !isTestnetNetwork(t.network));
 }
 export async function handlePaymentsApi(
   request: Request,
@@ -455,6 +462,10 @@ export async function handlePaymentsApi(
               directRoute[2] ?? directRoute[1],
               query.has("after") ? cursor("after") : 0,
               query.has("through") ? cursor("through") : null,
+              // Production excludes testnet networks, mirroring the /totals,
+              // /vault, and /received deployment-tier rules. Staging keeps them
+              // because it pays in testnet stablecoins.
+              deps.tier === "staging",
             ),
           );
         } catch (error) {
@@ -467,6 +478,7 @@ export async function handlePaymentsApi(
         deps.db,
         directRoute[2] ? "github_user_id" : "project_id",
         directRoute[2] ?? directRoute[1],
+        deps.tier === "staging",
       );
       return json(200, {
         transfers,

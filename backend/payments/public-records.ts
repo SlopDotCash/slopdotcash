@@ -273,12 +273,14 @@ export async function publicReceivedTotals(
     githubUserId: string;
     projectId: string;
     login: string;
+    network: string;
     amountMicro: string;
     memberLogin: string | null;
   }>(db, "payment_direct_transfers", (after, through) => ({
     sql: `SELECT json_group_array(json(item)) items, MAX(sequence) last FROM (
       SELECT d.rowid sequence, json_object('githubUserId',d.github_user_id,
-        'projectId',d.project_id,'login',d.github_login,'amountMicro',d.amount_micro,
+        'projectId',d.project_id,'login',d.github_login,'network',d.network,
+        'amountMicro',d.amount_micro,
         'memberLogin',(SELECT login FROM points_members p WHERE p.github_id=d.github_user_id
           AND p.public=1 AND p.closed_at IS NULL)) item
       FROM payment_direct_transfers d WHERE d.rowid>? AND d.rowid<=?
@@ -319,6 +321,13 @@ export async function publicReceivedTotals(
       !isBaseUnits(row.amountMicro)
     )
       throw new Error("Invalid direct transfer record");
+    // Production excludes testnet networks, mirroring the vault loop below.
+    // Staging keeps them because it pays in testnet stablecoins.
+    if (
+      !includeTestnets &&
+      ESCROW_NETWORKS[row.network as keyof typeof ESCROW_NETWORKS]?.testnet
+    )
+      continue;
     const value = person(row.githubUserId);
     // A disclosed transfer names its recipient; a later sign-in login wins.
     value.login = row.memberLogin ?? row.login;
@@ -403,7 +412,10 @@ export async function publicReceivedTotals(
       usdMicro: (directMicro + vaultUsdMicro).toString(),
       directMicro: directMicro.toString(),
       vaultUsdMicro: vaultUsdMicro.toString(),
-      directTransfers: directRows.length,
+      directTransfers: contributors.reduce(
+        (total, c) => total + c.directTransfers,
+        0,
+      ),
       vaultPayments: contributors.reduce(
         (total, c) => total + c.vaultPayments,
         0,
