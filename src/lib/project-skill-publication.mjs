@@ -141,6 +141,63 @@ async function verifiedTemplateFiles(group, readFile) {
   return files;
 }
 
+function assertStringArray(value, name) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+    throw new TypeError(`${name} must be an array of strings`);
+}
+
+/** Validates metadata consumed while rendering, without generating artifacts. */
+function validateProjectPublicationTemplate(template) {
+  if (template === null || typeof template !== "object")
+    throw new TypeError("Skill template index is malformed");
+  if (!/^[0-9a-f]{40}$/u.test(template.commit ?? ""))
+    throw new TypeError("Skill template commit is not a full SHA");
+  if (!new Set(["committed", "working-tree"]).has(template.revisionStatus))
+    throw new TypeError("Skill template revision status is malformed");
+  if (template.renderer === null || typeof template.renderer !== "object")
+    throw new TypeError("Skill template renderer is malformed");
+  if (
+    !new Set(["committed", "working-tree"]).has(
+      template.renderer.revisionStatus,
+    )
+  )
+    throw new TypeError("Skill template renderer revision status is malformed");
+  assertStringArray(template.renderer.paths, "Skill template renderer paths");
+  assertStringArray(
+    template.acceptedRevisions,
+    "Skill template accepted revisions",
+  );
+  for (const role of ["contributor", "reviewer"]) {
+    const group = template[role];
+    if (
+      group === null ||
+      typeof group !== "object" ||
+      !Array.isArray(group.files)
+    )
+      throw new TypeError(`Skill template ${role} group is malformed`);
+    for (const file of group.files)
+      if (
+        file === null ||
+        typeof file !== "object" ||
+        typeof file.path !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(file.sha256 ?? "")
+      )
+        throw new TypeError(`Skill template ${role} file is malformed`);
+  }
+}
+
+/** Verifies every template input without rendering guides or ZIP archives. */
+export async function verifyProjectPublicationTemplate(template, readFile) {
+  validateProjectPublicationTemplate(template);
+  for (const role of ["contributor", "reviewer"]) {
+    const sourcePath = PROJECT_SKILL_TEMPLATES[role];
+    const group = template[role];
+    if (group.sourcePath !== sourcePath)
+      throw new Error(`Skill template index does not name ${sourcePath}`);
+    await verifiedTemplateFiles(group, readFile);
+  }
+}
+
 async function guideRecord(template, input) {
   return {
     publicUrl: input.publicUrl,
@@ -334,8 +391,7 @@ export async function buildProjectPublication({
   generatedAt,
 }) {
   if (!publishesGeneratedSkills(project)) return null;
-  if (!/^[0-9a-f]{40}$/u.test(template.commit ?? ""))
-    throw new TypeError("Skill template commit is not a full SHA");
+  validateProjectPublicationTemplate(template);
   const binding = { projectId: project.id, revision, manifestSha256 };
   const files = {};
   for (const role of ["contributor", "reviewer"])

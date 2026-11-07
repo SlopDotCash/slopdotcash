@@ -34,6 +34,10 @@ export { sha256Hex } from "./async-sha256.mjs";
 export declare function storedZip(
   entries: readonly { path: string; bytes: Uint8Array }[],
 ): Uint8Array;
+export declare function verifyProjectPublicationTemplate(
+  template: SkillTemplatePublication,
+  readFile: (path: string) => Promise<Uint8Array>,
+): Promise<void>;
 export declare function buildProjectPublication(input: {
   template: SkillTemplatePublication;
   readFile: (path: string) => Promise<Uint8Array>;

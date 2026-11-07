@@ -2900,6 +2900,22 @@ export async function handleProjectApi(
   request: Request,
   deps: ProjectApiDependencies,
 ): Promise<Response | null> {
+  const url = new URL(request.url);
+  const apiPrefix = "/api/v1/";
+  if (url.pathname.startsWith(apiPrefix)) {
+    const rawParts = url.pathname.slice(apiPrefix.length).split("/");
+    const canonicalParts = rawParts.filter(Boolean);
+    if (isProjectRoute(canonicalParts) && rawParts.some((part) => part === ""))
+      return json(404, { error: "not_found" });
+    if (
+      (request.method === "GET" || request.method === "HEAD") &&
+      url.search !== "" &&
+      ["projects", "project-revisions", "project-account-bans"].includes(
+        rawParts.join("/"),
+      )
+    )
+      return json(404, { error: "not_found" });
+  }
   const parts = pathParts(request);
   const route = `${request.method} ${parts
     .map((part, index) =>

@@ -14,6 +14,7 @@ import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import {
   buildProjectPublication,
   PUBLIC_SITE_ORIGIN,
+  verifyProjectPublicationTemplate,
 } from "../../src/lib/project-skill-publication.mjs";
 import { PROJECT_ID } from "../http";
 import type { VettingClearance } from "../vetting/persistence";
@@ -116,11 +117,34 @@ function route(
   return { projectId: match[1], path: ALIASES[match[2]] ?? match[2] };
 }
 
+/** Malformed spellings of an otherwise recognizable publication path. */
+function malformedPublicationRoute(pathname: string): boolean {
+  const match = /^\/projects\/([^/]*)\/(.+)$/u.exec(pathname);
+  if (!match) return false;
+  if (ARTIFACT.test(match[2])) return true;
+  if (match[1] === "") {
+    const shifted = /^[^/]+\/(.+)$/u.exec(match[2]);
+    return shifted !== null && ARTIFACT.test(shifted[1]);
+  }
+  return match[2].startsWith("/") && ARTIFACT.test(match[2].slice(1));
+}
+
 function contentType(path: string): string {
   if (path.endsWith(".md")) return "text/markdown; charset=utf-8";
   if (path.endsWith(".json")) return "application/json; charset=utf-8";
   if (path.endsWith(".sha256")) return "text/plain; charset=utf-8";
   return "application/octet-stream";
+}
+
+function publishedArtifactPath(project: ProjectRecord, path: string): boolean {
+  if (path === "terms.json") return true;
+  if (!publishesGeneratedSkills(project.manifest)) return false;
+  if (!path.startsWith("downloads/")) return true;
+  return [project.manifest.skill.id, project.manifest.reviewSkill.id].some(
+    (name) =>
+      path === `downloads/${name}.skill` ||
+      path === `downloads/${name}.skill.sha256`,
+  );
 }
 
 function headers(type: string, extra: Record<string, string> = {}) {
@@ -179,6 +203,7 @@ function listed(
 /** The routing index the bootstrap skill matches a repository origin against. */
 async function discovery(
   deps: SkillPublicationDependencies,
+  requestMethod = "GET",
 ): Promise<Response> {
   const [all, records] = await Promise.all([
     deps.listProjects(),
@@ -202,6 +227,11 @@ async function discovery(
   const projects = candidates.filter(
     (_, index) => clearances[index].state === "cleared",
   );
+  if (requestMethod === "HEAD")
+    return new Response(null, {
+      status: 200,
+      headers: headers("application/json; charset=utf-8"),
+    });
   return jsonResponse({
     schemaVersion: "1",
     projects: projects.flatMap((project) =>
@@ -221,6 +251,7 @@ async function discovery(
 async function artifact(
   target: { projectId: string; path: string },
   deps: SkillPublicationDependencies,
+  requestMethod = "GET",
 ): Promise<Response> {
   const [project, records] = await Promise.all([
     deps.getProject(target.projectId),
@@ -233,6 +264,8 @@ async function artifact(
       `This project is ${restriction.state}. Its skills, guides and archives are not available.\n`,
     );
   if (!listed(project, records)) return text(404, "Project not found.\n");
+  if (!publishedArtifactPath(project, target.path))
+    return text(404, "Artifact not found.\n");
   if (target.path === "terms.json") {
     const manifest = project.manifest;
     return jsonResponse({
@@ -266,6 +299,18 @@ async function artifact(
       404,
       "This repository has no usable admission clearance. Slop serves no skill while admission or a required security investigation is unscanned, queued, quarantined, stale or banned.\n",
     );
+  if (requestMethod === "HEAD") {
+    await verifyProjectPublicationTemplate(template.index, template.readFile);
+    return new Response(null, {
+      status: 200,
+      headers: headers(
+        contentType(target.path),
+        target.path.startsWith("downloads/") && target.path.endsWith(".skill")
+          ? { "content-disposition": "attachment" }
+          : {},
+      ),
+    });
+  }
   const files = await buildProjectPublication({
     template: template.index,
     readFile: template.readFile,
@@ -286,14 +331,33 @@ export async function handleProjectArtifactRequest(
   deps: SkillPublicationDependencies,
 ): Promise<Response | null> {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
-  const target = route(new URL(request.url).pathname);
-  if (target === null) return null;
+  const url = new URL(request.url);
+  const target = route(url.pathname);
+  if (target === null) {
+    if (!malformedPublicationRoute(url.pathname)) return null;
+    const response = text(404, "Artifact not found.\n");
+    return request.method === "HEAD"
+      ? new Response(null, {
+          status: response.status,
+          headers: response.headers,
+        })
+      : response;
+  }
+  if (url.search !== "") {
+    const response = text(404, "Artifact not found.\n");
+    return request.method === "HEAD"
+      ? new Response(null, {
+          status: response.status,
+          headers: response.headers,
+        })
+      : response;
+  }
   try {
     // Clearance includes current private-evidence availability and expiry. A
     // cached whole response would bypass that check after access expires.
     const response = await (target === "discovery"
-      ? discovery(deps)
-      : artifact(target, deps));
+      ? discovery(deps, request.method)
+      : artifact(target, deps, request.method));
     const headers = new Headers(response.headers);
     headers.set("cache-control", "no-store");
     return new Response(request.method === "HEAD" ? null : response.body, {
@@ -302,6 +366,15 @@ export async function handleProjectArtifactRequest(
     });
   } catch {
     console.error("project artifact failure");
-    return text(503, "Project artifacts are unavailable. Try again.\n");
+    const response = text(
+      503,
+      "Project artifacts are unavailable. Try again.\n",
+    );
+    return request.method === "HEAD"
+      ? new Response(null, {
+          status: response.status,
+          headers: response.headers,
+        })
+      : response;
   }
 }
