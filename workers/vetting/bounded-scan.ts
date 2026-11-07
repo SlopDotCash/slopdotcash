@@ -130,7 +130,8 @@ const AGENT_INSTRUCTIONS = new Set([
  * Package-manager configuration read on every install or run. Each file can
  * make the package manager execute code (`node-options` and `script-shell` in
  * `.npmrc`, `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the
- * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`), so it is an
+ * `.pnpmfile.cjs` install hooks, `preload` in `bunfig.toml`, `build.rustc-wrapper`
+ * and runner hooks in `.cargo/config.toml` and `.cargo/config`), so it is an
  * install surface, never unreviewed content.
  */
 const PACKAGE_MANAGER_CONFIGS = new Set([
@@ -288,6 +289,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
     lower.startsWith(".vscode/") ||
+    /(?:^|\/)\.cargo\/config(?:\.toml)?$/u.test(lower) ||
     /(?:^|\/)(?:install|setup|bootstrap)[^/]*\.(?:sh|ps1|bat|cmd|py|js|mjs)$/u.test(
       lower,
     )
