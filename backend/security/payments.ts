@@ -13,14 +13,7 @@ export async function securityPaymentNotices(
   state: string,
   at: string,
 ) {
-  return [
-    db
-      .prepare(`INSERT INTO notifications
-    (event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at)
-    SELECT 'security-payment:' || s.obligation_id || ':' || ?, recipients.github_id,
-      'security_case',s.case_id,NULL,'/security?case=' || s.case_id,?,?
-    FROM security_settlements s JOIN (
-      SELECT id case_id,reporter_github_id github_id FROM security_cases
+  const recipients = `SELECT id case_id,reporter_github_id github_id FROM security_cases
       UNION
       SELECT c.id,json_extract(a.value,'$.githubId') FROM security_cases c
         JOIN projects p ON p.id=c.project_id,
@@ -28,11 +21,38 @@ export async function securityPaymentNotices(
       UNION
       SELECT c.id,json_extract(a.value,'$.githubId') FROM security_cases c
         JOIN projects p ON p.id=c.project_id,
-        json_each(p.manifest,'$.securityBounty.approvers.technical') a
-    ) recipients ON recipients.case_id=s.case_id
-    WHERE s.obligation_id=?
+        json_each(p.manifest,'$.securityBounty.approvers.technical') a`;
+  if (state === "held")
+    return [
+      db
+        .prepare(`INSERT INTO notifications
+      (event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at)
+      SELECT 'security-payment:' || s.obligation_id || ':held:' || COALESCE(
+        (SELECT a.id || ':' || a.state FROM security_payment_attempts a
+          WHERE a.obligation_id=s.obligation_id AND a.state IN ('prepared','unknown','submitted')
+          ORDER BY a.created_at LIMIT 1),
+        q.updated_at),
+        recipients.github_id,'security_case',s.case_id,NULL,'/security?case=' || s.case_id,q.updated_at,?
+      FROM security_settlements s
+      JOIN security_payment_obligations o ON o.id=s.obligation_id
+      JOIN security_payment_outbox q ON q.obligation_id=s.obligation_id
+      JOIN (${recipients}) recipients ON recipients.case_id=s.case_id
+      WHERE s.obligation_id=? AND o.state='reserved' AND q.state='held' AND q.updated_at=?
+      ON CONFLICT(event_key,recipient_github_id) DO NOTHING`)
+        .bind(at, obligationId, at),
+    ];
+  return [
+    db
+      .prepare(`INSERT INTO notifications
+    (event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at)
+    SELECT 'security-payment:' || s.obligation_id || ':' || ?, recipients.github_id,
+      'security_case',s.case_id,NULL,'/security?case=' || s.case_id,?,?
+    FROM security_settlements s
+    JOIN security_payment_obligations o ON o.id=s.obligation_id
+    JOIN (${recipients}) recipients ON recipients.case_id=s.case_id
+    WHERE s.obligation_id=? AND o.state=?
     ON CONFLICT(event_key,recipient_github_id) DO NOTHING`)
-      .bind(state, at, at, obligationId),
+      .bind(state, at, at, obligationId, state),
   ];
 }
 
