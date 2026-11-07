@@ -315,6 +315,8 @@ export type SetupNextAction =
   | "wait_for_scan"
   | "retry_scan"
   | "request_scan"
+  | "complete_skill_content"
+  | "activate_project"
   | "restricted"
   | "none";
 

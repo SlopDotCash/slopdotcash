@@ -21,6 +21,7 @@ import {
   SLOPBOT_INSTALL_URL,
   slopbotInstallScopeNote,
 } from "../../src/lib/project-contracts";
+import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { quarantinedScanMessage } from "../vetting/summary";
@@ -358,6 +359,22 @@ export function projectSetupStatus(input: {
       "none",
       "Contributors can find this project and its skills.",
     );
+  } else if (scan.state === "cleared") {
+    // The scan passed, so a scan retry can never change this status: the
+    // project is paused and this check did not activate it. Activation
+    // appends an active revision, which refuses a manifest whose
+    // generated-skill content is incomplete, so name that blocker when it
+    // is the one; otherwise a fresh check activates the project.
+    state = "action_required";
+    nextAction = publishesGeneratedSkills(manifest)
+      ? action(
+          "activate_project",
+          `${scan.message} Every setup check passes, but this project is still paused. Check again to activate it.`,
+        )
+      : action(
+          "complete_skill_content",
+          `${scan.message} Activation needs the contribution rules that generate the project skills. Complete them, then check again.`,
+        );
   } else if (scan.state === "queued") {
     state = "waiting";
     nextAction = action("wait_for_scan", scan.message);
