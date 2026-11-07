@@ -617,6 +617,27 @@ export async function screenStoredReport(
       const scope = manifest
         ? JSON.parse(manifest.manifest).securityBounty?.scope
         : null;
+      const prior =
+        (
+          await deps.db
+            .prepare(
+              `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
+                  LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+                  WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
+                    AND (i.case_id IS NULL OR i.review_decision='forward'
+                         OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+                  ORDER BY a.attempt DESC LIMIT 1) AS summary
+                 FROM security_cases c
+                WHERE c.project_id = ? AND c.id <> ? AND c.submission_state = 'verified'
+                ORDER BY c.received_at DESC LIMIT 25`,
+            )
+            .bind(submission.project_id, row.case_id)
+            .all<{
+              id: string;
+              root_cause_key: string | null;
+              summary: string | null;
+            }>()
+        ).results ?? [];
       const input: SecurityAnalysisInput = {
         report: analysisReport(await reportVersion(deps, row)),
         scope: scope
@@ -626,7 +647,11 @@ export async function screenStoredReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: prior.map((entry) => ({
+          id: entry.id,
+          rootCauseKey: entry.root_cause_key,
+          summary: entry.summary,
+        })),
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -704,6 +729,27 @@ export async function screenLegacyReport(
     );
   let proposal: SecurityScreeningProposal;
   try {
+    const prior =
+      (
+        await deps.db
+          .prepare(
+            `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
+                LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+                WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
+                  AND (i.case_id IS NULL OR i.review_decision='forward'
+                       OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+                ORDER BY a.attempt DESC LIMIT 1) AS summary
+               FROM security_cases c
+              WHERE c.project_id = ? AND c.submission_state = 'verified'
+              ORDER BY c.received_at DESC LIMIT 25`,
+          )
+          .bind(projectId)
+          .all<{
+            id: string;
+            root_cause_key: string | null;
+            summary: string | null;
+          }>()
+      ).results ?? [];
     proposal = await deps.analyzer.screen(
       {
         report: analysisReport(report),
@@ -714,7 +760,11 @@ export async function screenLegacyReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: prior.map((entry) => ({
+          id: entry.id,
+          rootCauseKey: entry.root_cause_key,
+          summary: entry.summary,
+        })),
       },
       ANALYSIS_TIMEOUT_MS,
     );
