@@ -36,8 +36,8 @@ export const ANALYSIS_TIMEOUT_MS = 120_000;
  * the full `ANALYSIS_TIMEOUT_MS`.
  */
 export const BACKGROUND_ANALYSIS_TIMEOUT_MS = 25_000;
-/** How many earlier cases of the same project the analysis compares. */
-const PRIOR_CASE_LIMIT = 25;
+/** How many earlier cases of the same project analysis and screening compare. */
+export const PRIOR_CASE_LIMIT = 25;
 
 const SEVERITIES = [
   "critical",
@@ -76,6 +76,44 @@ export type SecurityAnalysisInput = {
     summary: string | null;
   }[];
 };
+
+/**
+ * Recent verified cases for the same project, newest first. Shared by private
+ * analysis and intake screening so near-duplicates are visible to the model.
+ * Pass excludeCaseId to omit the case under review; null keeps every prior.
+ */
+export async function loadPriorCases(
+  db: D1Database<D1QueryStatement>,
+  projectId: string,
+  excludeCaseId: string | null,
+): Promise<SecurityAnalysisInput["priorCases"]> {
+  const rows =
+    (
+      await db
+        .prepare(
+          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
+              LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
+              WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
+                AND (i.case_id IS NULL OR i.review_decision='forward'
+                     OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
+              ORDER BY a.attempt DESC LIMIT 1) AS summary
+             FROM security_cases c
+            WHERE c.project_id = ? AND (? IS NULL OR c.id <> ?) AND c.submission_state = 'verified'
+            ORDER BY c.received_at DESC LIMIT ${PRIOR_CASE_LIMIT}`,
+        )
+        .bind(projectId, excludeCaseId, excludeCaseId)
+        .all<{
+          id: string;
+          root_cause_key: string | null;
+          summary: string | null;
+        }>()
+    ).results ?? [];
+  return rows.map((entry) => ({
+    id: entry.id,
+    rootCauseKey: entry.root_cause_key,
+    summary: entry.summary,
+  }));
+}
 
 export type SecurityAnalysisProposal = {
   summary: string;
@@ -628,27 +666,7 @@ export async function runCaseAnalysis(
     };
   };
   const scope = manifest.securityBounty?.scope;
-  const prior =
-    (
-      await deps.db
-        .prepare(
-          `SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
-              LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
-              WHERE a.case_id=c.id AND a.state='complete' AND a.report_version IS i.report_version
-                AND (i.case_id IS NULL OR i.review_decision='forward'
-                     OR (i.review_decision IS NULL AND i.screening_state='legitimate'))
-              ORDER BY a.attempt DESC LIMIT 1) AS summary
-             FROM security_cases c
-            WHERE c.project_id = ? AND c.id <> ? AND c.submission_state = 'verified'
-            ORDER BY c.received_at DESC LIMIT ${PRIOR_CASE_LIMIT}`,
-        )
-        .bind(row.project_id, caseId)
-        .all<{
-          id: string;
-          root_cause_key: string | null;
-          summary: string | null;
-        }>()
-    ).results ?? [];
+  const priorCases = await loadPriorCases(deps.db, row.project_id, caseId);
   if (row.report_version !== null) {
     const current = await deps.db
       .prepare(
@@ -674,11 +692,7 @@ export async function runCaseAnalysis(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: prior.map((entry) => ({
-          id: entry.id,
-          rootCauseKey: entry.root_cause_key,
-          summary: entry.summary,
-        })),
+        priorCases,
       },
       timeoutMs,
     );

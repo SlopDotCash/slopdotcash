@@ -10,6 +10,7 @@ import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  loadPriorCases,
   type SecurityAnalysisInput,
   type SecurityAnalysisReport,
   type SecurityScreeningProposal,
@@ -73,6 +74,26 @@ const encoder = new TextEncoder();
 
 const DUPLICATE_EVIDENCE_REASON =
   "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report.";
+
+/** Reporter-facing copy only. Model screening text stays owner-side. */
+const REPORTER_SCREENING_REASON = {
+  legitimate: "Automatic screening found concrete evidence worth human review.",
+  "needs-information":
+    "Automatic screening needs more evidence or a private maintainer review.",
+  spam: "Automatic screening classified this report as not actionable security evidence.",
+} as const;
+
+function reporterVisibleScreeningReason(row: StoredIntake): string | null {
+  // Digest short-circuit already uses fixed, non-leaking copy.
+  if (row.screening_reason === DUPLICATE_EVIDENCE_REASON)
+    return row.screening_reason;
+  if (row.screening_state in REPORTER_SCREENING_REASON)
+    return REPORTER_SCREENING_REASON[
+      row.screening_state as keyof typeof REPORTER_SCREENING_REASON
+    ];
+  // queued/running/unavailable: keep the stored fixed unavailable message or null.
+  return row.screening_reason;
+}
 
 /**
  * Same-project evidence digest already on an earlier live case or intake report.
@@ -207,6 +228,9 @@ function intakeView(
   now: Date,
 ) {
   const reporter = roles.has("reporter");
+  // Owners/triagers keep the raw model reason for triage. Reporters only see
+  // fixed copy so prior-case summaries cannot leak through free-text reasons.
+  const ownerSide = roles.has("security-maintainer") || roles.has("triager");
   return {
     state:
       row.review_decision === "request-information"
@@ -216,7 +240,9 @@ function intakeView(
     revision: row.revision,
     reportVersion: row.report_version,
     routingState: row.routed_at ? "routed" : "pending",
-    reason: row.review_reason ?? row.screening_reason,
+    reason:
+      row.review_reason ??
+      (ownerSide ? row.screening_reason : reporterVisibleScreeningReason(row)),
     reviewedAt: row.reviewed_at,
     canReview: roles.has("security-maintainer"),
     canForward: intakeQualified(row),
@@ -626,7 +652,11 @@ export async function screenStoredReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await loadPriorCases(
+          deps.db,
+          submission.project_id,
+          row.case_id,
+        ),
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -714,7 +744,7 @@ export async function screenLegacyReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: await loadPriorCases(deps.db, projectId, null),
       },
       ANALYSIS_TIMEOUT_MS,
     );

@@ -285,6 +285,7 @@ jobs:
       - name: Verify Solana fee conversion with local validators
         run: |
           SLOP_FEE_TEST_TOKEN=jup bun run test:fee-converter:solana
+          SLOP_FEE_TEST_TOKEN=pmup bun run test:fee-converter:solana
           SLOP_FEE_TEST_TOKEN=sol bun run test:fee-converter:solana
       - name: Verify the lifecycle-tested program matches the retained artifact
         run: |

@@ -242,6 +242,8 @@ function fixture(overrides: Record<string, unknown> = {}) {
   let decision: SecurityScreeningProposal["decision"] = "legitimate";
   let screeningFails = false;
   let beforeScreenResult: (() => Promise<void>) | null = null;
+  let customScreenReason: ((input: SecurityAnalysisInput) => string) | null =
+    null;
   const screenedDescriptions: string[] = [];
   const screened: SecurityAnalysisInput[] = [];
   const analyzed: SecurityAnalysisInput[] = [];
@@ -271,8 +273,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
       if (screeningFails) throw new Error("PRIVATE-PROVIDER-ERROR-SENTINEL");
       return {
         decision,
-        reason:
-          decision === "legitimate"
+        reason: customScreenReason
+          ? customScreenReason(input)
+          : decision === "legitimate"
             ? "Concrete isolated reproduction merits human review."
             : "Provide a concrete affected function and isolated reproduction.",
       };
@@ -364,6 +367,11 @@ function fixture(overrides: Record<string, unknown> = {}) {
     },
     beforeScreen: (callback: (() => Promise<void>) | null) => {
       beforeScreenResult = callback;
+    },
+    screenReason: (
+      callback: ((input: SecurityAnalysisInput) => string) | null,
+    ) => {
+      customScreenReason = callback;
     },
     beforeAnalysis: (callback: (() => Promise<void>) | null) => {
       beforeAnalysisResult = callback;
@@ -1061,6 +1069,86 @@ describe("durable private report controls", () => {
     expect(t.screeningCalls()).toBe(1);
     expect(t.screened[0]?.priorCases).toEqual([]);
     expect(t.analyzed).toHaveLength(1);
+  });
+
+  test("screening receives earlier project cases when priors exist", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("prior-first-report000")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    expect(t.screened[0]?.priorCases).toEqual([]);
+    expect(t.analyzed).toHaveLength(1);
+    t.advance(1000);
+    const second = await t.create("prior-second-report00", OTHER, {
+      ...REPORT,
+      description: `${REPORT.description} Distinct near-duplicate evidence.`,
+    });
+    expect(second.status).toBe(201);
+    const submission = required(second.body.submission);
+    // Distinct digest still calls the model; earlier case must be attached.
+    expect(t.screeningCalls()).toBe(2);
+    expect(submission.intake.state).toBe("legitimate");
+    expect(t.screened[1]?.priorCases).toEqual([
+      {
+        id: first.caseId,
+        rootCauseKey: null,
+        summary: `Assessment 1: ${REPORT.summary}`,
+      },
+    ]);
+  });
+
+  test("reporter-visible screening reason cannot echo another reporter's prior summary", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("prior-leak-first00000")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    const priorSummary = `Assessment 1: ${REPORT.summary}`;
+    // Stand-in for a model that ignores "do not reveal other reports".
+    t.screenReason((input) => {
+      const echoed = input.priorCases
+        .map((entry) => entry.summary)
+        .filter(
+          (value): value is string =>
+            typeof value === "string" && value.length > 0,
+        )
+        .join("; ");
+      return echoed
+        ? `Similar to earlier: ${echoed}`
+        : "Concrete isolated reproduction merits human review.";
+    });
+    t.advance(1000);
+    const second = await t.create("prior-leak-second0000", OTHER, {
+      ...REPORT,
+      description: `${REPORT.description} Distinct near-duplicate evidence for leak probe.`,
+    });
+    expect(second.status).toBe(201);
+    expect(t.screeningCalls()).toBe(2);
+    expect(t.screened[1]?.priorCases?.[0]?.summary).toBe(priorSummary);
+    const leakedModelReason = `Similar to earlier: ${priorSummary}`;
+    // Reporter OTHER must not see the echoed prior summary.
+    const asReporter = await t.call(
+      OTHER,
+      "GET",
+      `security-submissions/${required(second.body.submission).id}`,
+    );
+    const reporterView = required(asReporter.body.submission);
+    expect(reporterView.intake.state).toBe("legitimate");
+    expect(reporterView.intake.reason).not.toContain(priorSummary);
+    expect(reporterView.intake.reason).not.toContain(REPORT.summary);
+    expect(reporterView.intake.reason).toBe(
+      "Automatic screening found concrete evidence worth human review.",
+    );
+    // Owner-side triage still receives the raw model reason.
+    const asOwner = await t.call(
+      OWNER,
+      "GET",
+      `security-submissions/${required(second.body.submission).id}`,
+    );
+    expect(required(asOwner.body.submission).intake.reason).toBe(
+      leakedModelReason,
+    );
   });
 
   test.each(["needs-information", "spam"] as const)(
