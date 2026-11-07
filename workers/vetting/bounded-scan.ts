@@ -362,7 +362,8 @@ const RULES: Rule[] = [
   {
     threat: "credential-theft",
     severity: "medium",
-    pattern: /~\/\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.pgpass\b|\.my\.cnf\b/iu,
+    pattern:
+      /~\/\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.pgpass\b|\.my\.cnf\b/iu,
     summary: "Reads a package-registry or cluster credential file",
   },
   {
