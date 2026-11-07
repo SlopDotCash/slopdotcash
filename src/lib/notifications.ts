@@ -2,6 +2,7 @@ import {
   type IncompleteAssessments,
   parseIncompleteAssessments,
 } from "./incomplete-assessments";
+import { NETWORK_NAMES } from "./reward-asset.mjs";
 
 /** In-app inbox contract shared by the API and the page (PRD NOT-01). */
 
@@ -191,8 +192,13 @@ export function notificationTitle(n: Notification): string {
       return `A payment from ${n.subject} is finalized.`;
     case "payout_held":
       return `A payout from ${n.subject} is held.`;
-    case "wallet_changed":
-      return `A ${n.subject} payout wallet was added to your account.`;
+    case "wallet_changed": {
+      // The subject is the wallet claim's stored chain id, such as "ethereum".
+      const network = Object.hasOwn(NETWORK_NAMES, n.subject)
+        ? NETWORK_NAMES[n.subject as keyof typeof NETWORK_NAMES]
+        : n.subject;
+      return `${/^[AEIOU]/u.test(network) ? "An" : "A"} ${network} payout wallet was added to your account.`;
+    }
     case "project_quarantined":
       return `The ${n.subject} project is quarantined. It is paused and not listed.`;
     case "project_banned":
