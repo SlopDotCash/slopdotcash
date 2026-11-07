@@ -5,6 +5,7 @@ import {
   type ProfileIssueEvent,
   type ProfileIssueHistory,
   type ProfileRecord,
+  profileCanonicalRepository,
 } from "../src/lib/profiles";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import type { ConnectionPage as Page } from "./github-pagination";
@@ -203,18 +204,30 @@ export async function collectProfileIssues(
   const previousPeople = new Map(
     previous.people.map((person) => [person.id, person]),
   );
-  const collected = new Set(TARGET_REPOSITORIES.map((r) => r.id));
+  const collected = new Map<string, string>();
+  for (const repository of TARGET_REPOSITORIES) {
+    collected.set(repository.id, repository.id);
+    const canonical = profileCanonicalRepository(repository.id);
+    if (canonical) collected.set(canonical, repository.id);
+  }
   const archived: ProfileIssue[] = [];
   for (const old of prior.values()) {
     if (seen.has(old.id)) continue;
-    const retained: ProfileIssue = {
-      ...old,
-      unavailableSince: old.unavailableSince ?? new Date().toISOString(),
-    };
+    const targetRepository =
+      collected.get(old.repository) ??
+      collected.get(profileCanonicalRepository(old.repository) ?? "");
     // A paused project is not collected, and the census may only name active
     // repositories. Its records are archived unchanged, so a reactivated
-    // project resumes their corrections, gaps and retained deletions.
-    if (collected.has(old.repository)) result.items.push(retained);
+    // project resumes their corrections, gaps and retained deletions. A
+    // transferred repository is collected under its current name, so an
+    // unseen prior issue under its old name is retained under the current
+    // target instead of archived under the old name.
+    if (targetRepository)
+      result.items.push({
+        ...old,
+        repository: targetRepository,
+        unavailableSince: old.unavailableSince ?? new Date().toISOString(),
+      });
     else archived.push(old);
     if (old.authorId && !people.has(old.authorId)) {
       const identity = previousPeople.get(old.authorId);
