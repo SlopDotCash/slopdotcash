@@ -203,7 +203,7 @@ export async function prepareSourceCorrection(input: {
       existingUrls.add(event.source.url);
       return event;
     })
-    .sort((a, b) => a.id.localeCompare(b.id));
+    .sort((a, b) => a.id.localeCompare(b.id, "en"));
   const corrected: QualityEvidence = {
     ...evidence,
     events: [
