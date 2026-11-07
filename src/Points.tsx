@@ -52,7 +52,11 @@ import {
   pointMembers,
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
-import { profileCounts } from "./lib/profiles";
+import {
+  censusLoginsByActorId,
+  profileCounts,
+  standingsDisplayLogin,
+} from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
@@ -1197,11 +1201,50 @@ export function ContributorStandings({
       ? scores.snapshot.leaders.map(({ actor }) => [actor.id, actor] as const)
       : [],
   );
+  // The journal names a contributor by the login recorded with their
+  // latest revision, which a rename leaves stale for anyone the score
+  // snapshot does not name. The directory names every contributor's
+  // current login by permanent ID, so rows display it under the same
+  // caution the profile page applies to the directory.
+  const census = useProfiles();
+  const directoryLogins = useMemo(
+    () =>
+      census.state.status === "ready"
+        ? censusLoginsByActorId(census.state.index.people)
+        : new Map<string, string>(),
+    [census.state],
+  );
+  const scoreLogins = useMemo(() => {
+    const named = new Map<string, Set<string>>();
+    if (scores.status === "ready") {
+      const name = (actor: { id: string; login: string }) => {
+        const logins = named.get(actor.id) ?? new Set<string>();
+        logins.add(actor.login);
+        named.set(actor.id, logins);
+      };
+      for (const leader of scores.snapshot.leaders) name(leader.actor);
+      for (const exclusion of scores.snapshot.reviewExclusions ?? [])
+        if (exclusion.reviewer?.kind === "User") name(exclusion.reviewer);
+      for (const view of scores.views) {
+        for (const leader of view.leaders) name(leader.actor);
+        for (const opportunity of view.opportunities) name(opportunity.actor);
+      }
+    }
+    return named;
+  }, [scores]);
   const ranked = members
-    .map((member) => ({
-      actor: currentActors.get(member.actor.id) ?? member.actor,
-      points: period === "month" ? member.monthly : member.total,
-    }))
+    .map((member) => {
+      const actor = currentActors.get(member.actor.id) ?? member.actor;
+      return {
+        actor,
+        displayLogin: standingsDisplayLogin(
+          actor,
+          directoryLogins,
+          scoreLogins,
+        ),
+        points: period === "month" ? member.monthly : member.total,
+      };
+    })
     .filter((member) => member.points > 0)
     .sort((a, b) => {
       return b.points - a.points || a.actor.id.localeCompare(b.actor.id);
@@ -1214,8 +1257,10 @@ export function ContributorStandings({
     previous = m.points;
     ranks.set(m.actor.id, rank);
   });
-  const rows = ranked.filter((m) =>
-    m.actor.login.toLowerCase().includes(query.toLowerCase()),
+  const rows = ranked.filter(
+    (m) =>
+      m.actor.login.toLowerCase().includes(query.toLowerCase()) ||
+      m.displayLogin.toLowerCase().includes(query.toLowerCase()),
   );
   const pageSize = compact ? 10 : 25;
   const currentPage = Math.min(
@@ -1294,7 +1339,7 @@ export function ContributorStandings({
                         <td>
                           <Link
                             className="points-person"
-                            href={`/contributors/${encodeURIComponent(m.actor.login)}`}
+                            href={`/contributors/${encodeURIComponent(m.displayLogin)}`}
                           >
                             {compact ? (
                               <img
@@ -1304,19 +1349,19 @@ export function ContributorStandings({
                                 onError={(event) => {
                                   event.currentTarget.hidden = true;
                                 }}
-                                src={`https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`}
+                                src={`https://avatars.githubusercontent.com/${encodeURIComponent(m.displayLogin)}?size=80`}
                                 width={40}
                               />
                             ) : (
                               <Avatar
                                 actor={{
-                                  login: m.actor.login,
-                                  avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(m.actor.login)}?size=80`,
+                                  login: m.displayLogin,
+                                  avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(m.displayLogin)}?size=80`,
                                 }}
                                 size="medium"
                               />
                             )}
-                            {m.actor.login}
+                            {m.displayLogin}
                           </Link>
                         </td>
                         <td className="points-value">
