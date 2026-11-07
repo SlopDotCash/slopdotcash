@@ -397,6 +397,14 @@ export class CloudflareTracePersistence implements TracePersistence {
     return hasParticipationBan(this.db, githubId);
   }
 
+  async projectManifest(projectId: string): Promise<string | null> {
+    const row = await this.db
+      .prepare("SELECT manifest FROM projects WHERE id = ?")
+      .bind(projectId)
+      .first<{ manifest: string }>();
+    return row?.manifest ?? null;
+  }
+
   async createRun(input: CreateRunInput): Promise<PersistenceResult<TraceRun>> {
     const existing = await this.db
       .prepare(

@@ -18,6 +18,7 @@ import {
 } from "../backend/trace/handler";
 import { sha256Hex } from "../backend/trace/validation";
 import { seedParticipationBan } from "../tests/participation-ban.fixture";
+import { seedProject } from "../tests/project-registry.fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
 
 const SECRET = "trace-upload-test-secret-0123456789abcdef-0123456789";
@@ -78,6 +79,7 @@ function api() {
       .sort(),
   );
   sqlite.exec("PRAGMA foreign_keys=ON");
+  seedProject(sqlite, "slopdotcash", "SlopDotCash/slopdotcash");
   const store = r2();
   let counter = 0;
   const deps: TraceApiDependencies = {
