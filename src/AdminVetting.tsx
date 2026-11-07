@@ -21,8 +21,9 @@ import {
   ShieldCheck,
   ShieldOff,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { projectApiRequest } from "./lib/project-api";
+import { usePublicResource } from "./lib/use-public-resource";
 import type {
   AdmissionExemption,
   AssessmentState,
@@ -152,6 +153,12 @@ function AdmissionExemptionForm({
           confirmation: true,
         },
       );
+      // A retained panel keeps this form mounted across a failed refresh, so
+      // the action clears its own in-flight state and inputs on success.
+      setBusy(false);
+      setReason("");
+      setDecisionReference("");
+      setConfirmed(false);
       onSaved();
     } catch (caught) {
       setError(message(caught));
@@ -331,10 +338,19 @@ function QueueScan({
       projectId: project.id,
       revision: project.revision,
       reason: reason.trim(),
-    }).then(onQueued, (caught: unknown) => {
-      setBusy(false);
-      setError(message(caught));
-    });
+    }).then(
+      () => {
+        // A retained panel keeps this form mounted across a failed refresh,
+        // so the action clears its own in-flight state on success.
+        setBusy(false);
+        setReason("");
+        onQueued();
+      },
+      (caught: unknown) => {
+        setBusy(false);
+        setError(message(caught));
+      },
+    );
   };
   return (
     <section className="admin-subsection">
@@ -638,42 +654,44 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
 }
 
 export function VettingSection({ projectId }: { projectId: string }) {
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "error"; message: string }
-    | { status: "ready"; value: Overview }
-  >({ status: "loading" });
-  const [note, setNote] = useState<string | null>(null);
-  const generation = useRef(0);
-  const load = useCallback(() => {
-    const current = ++generation.current;
-    setState({ status: "loading" });
-    projectApiRequest<Overview>("GET", "admin/vetting").then(
-      (value) => {
-        if (generation.current === current)
-          setState({ status: "ready", value });
-      },
-      (error: unknown) => {
-        if (generation.current === current)
-          setState({ status: "error", message: message(error) });
-      },
-    );
-  }, []);
-  useEffect(() => {
-    load();
-    return () => {
-      generation.current += 1;
-    };
-  }, [load]);
+  // Recording an exemption or queuing a scan reloads this panel while it is
+  // on screen; a transient failure keeps the loaded clearance, history and
+  // controls visible, but an authorization failure (401/403) still replaces
+  // them with the full error, so private data leaves with its controls.
+  const load = useCallback(
+    () => projectApiRequest<Overview>("GET", "admin/vetting"),
+    [],
+  );
+  const [state, reload] = usePublicResource(
+    true,
+    load,
+    "Security vetting could not load.",
+    undefined,
+    { retainOnTransientFailure: true },
+  );
+  // Scoped to the project it reports and to a loaded panel, so a success
+  // banner never outlives the record it describes.
+  const [note, setNote] = useState<{
+    projectId: string;
+    text: string;
+  } | null>(null);
   return (
     <section aria-labelledby="admin-vetting" className="admin-section">
       <div className="admin-section-heading">
         <h2 id="admin-vetting">Security vetting</h2>
       </div>
-      {note ? (
+      {state.status === "ready" && note?.projectId === projectId ? (
         <p className="admin-status" role="status">
-          {note}
+          {note.text}
         </p>
+      ) : null}
+      {state.status === "ready" && state.refreshError ? (
+        <div className="form-error" role="alert">
+          <CircleAlert aria-hidden="true" /> {state.refreshError}
+          <button className="text-button" onClick={reload} type="button">
+            <RotateCcw aria-hidden="true" /> Retry
+          </button>
+        </div>
       ) : null}
       {state.status === "loading" ? (
         <p aria-live="polite" className="admin-status">
@@ -682,26 +700,26 @@ export function VettingSection({ projectId }: { projectId: string }) {
       ) : state.status === "error" ? (
         <div className="form-error" role="alert">
           <CircleAlert aria-hidden="true" /> {state.message}
-          <button className="text-button" onClick={load} type="button">
+          <button className="text-button" onClick={reload} type="button">
             <RotateCcw aria-hidden="true" /> Retry
           </button>
         </div>
       ) : (
         <>
-          {state.value.service.state === "unavailable" ? (
+          {state.service.state === "unavailable" ? (
             <p className="form-error" role="alert">
               <CircleAlert aria-hidden="true" /> Vetting service unavailable.{" "}
-              {state.value.service.reason}
+              {state.service.reason}
             </p>
           ) : null}
-          {!state.value.projects.some((project) => project.id === projectId) ? (
+          {!state.projects.some((project) => project.id === projectId) ? (
             <p className="admin-status">No vetting record yet.</p>
           ) : (
-            state.value.projects
+            state.projects
               .filter((project) => project.id === projectId)
               .map((project) => {
                 const clearance = project.clearance;
-                const history = state.value.assessments.filter(
+                const history = state.assessments.filter(
                   (assessment) => assessment.projectId === project.id,
                 );
                 // The API returns newest first. Superseded pending requests
@@ -709,7 +727,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                 const queued =
                   history[0]?.state === "pending" &&
                   history[0].revision === project.revision;
-                const exemptions = (state.value.exemptions ?? []).filter(
+                const exemptions = (state.exemptions ?? []).filter(
                   (exemption) => exemption.projectId === project.id,
                 );
                 const activeExemption = exemptions.find(
@@ -785,7 +803,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         A new scan cannot lift the ban.
                       </p>
                     ) : null}
-                    {(state.value.flags ?? []).some(
+                    {(state.flags ?? []).some(
                       (flag) => flag.projectId === project.id,
                     ) ? (
                       <section className="admin-subsection">
@@ -793,13 +811,13 @@ export function VettingSection({ projectId }: { projectId: string }) {
                           <CircleAlert aria-hidden="true" /> Active contributor
                           flags ·{" "}
                           {
-                            (state.value.flags ?? []).filter(
+                            (state.flags ?? []).filter(
                               (flag) => flag.projectId === project.id,
                             ).length
                           }
                         </h4>
                         <ul className="operations-findings">
-                          {(state.value.flags ?? [])
+                          {(state.flags ?? [])
                             .filter((flag) => flag.projectId === project.id)
                             .map((flag) => (
                               <li key={flag.id}>
@@ -824,14 +842,14 @@ export function VettingSection({ projectId }: { projectId: string }) {
                       </section>
                     ) : null}
                     <div className="admin-action-grid">
-                      {state.value.service.queueRegistrationAvailable &&
-                      !queued ? (
+                      {state.service.queueRegistrationAvailable && !queued ? (
                         <QueueScan
                           onQueued={() => {
-                            setNote(
-                              `Queued a scan of ${project.id} revision ${project.revision}.`,
-                            );
-                            load();
+                            setNote({
+                              projectId: project.id,
+                              text: `Queued a scan of ${project.id} revision ${project.revision}.`,
+                            });
+                            reload();
                           }}
                           project={project}
                         />
@@ -841,12 +859,13 @@ export function VettingSection({ projectId }: { projectId: string }) {
                         project={project}
                         exemption={activeExemption}
                         onSaved={() => {
-                          setNote(
-                            activeExemption
+                          setNote({
+                            projectId: project.id,
+                            text: activeExemption
                               ? `Revoked the owner-approved exemption for ${project.id}.`
                               : `Recorded the owner-approved exemption for ${project.id}.`,
-                          );
-                          load();
+                          });
+                          reload();
                         }}
                       />
                     </div>
