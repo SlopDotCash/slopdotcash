@@ -1,4 +1,5 @@
 import { GitHubClient } from "../workers/slopbot/github";
+import { SourceNodeUnavailableError } from "./source-availability";
 import {
   fetchProjectPenaltyState,
   loadParticipationBans,
@@ -7,6 +8,9 @@ import {
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
   ValueFeedUnavailableError,
 } from "./value-ingestion";
+
+export { SourceNodeUnavailableError };
+
 /**
  * Collects the rolling contribution ledger and current work queues from the
  * authenticated GitHub GraphQL API. Time slicing, cursor pagination, runtime
@@ -217,20 +221,6 @@ interface NodeReference {
 type ExpectedRecordState = "closed" | "merged" | "open";
 
 export class OpenSetChangedError extends Error {}
-
-/** A previously enumerated node is no longer addressable; never omit it in place. */
-export class SourceNodeUnavailableError extends Error {
-  override readonly name = "SourceNodeUnavailableError";
-  constructor(
-    readonly sources: UnavailableSource[],
-    options?: ErrorOptions,
-  ) {
-    super(
-      "GitHub could not resolve an enumerated source node; a fresh complete census is required",
-      options,
-    );
-  }
-}
 
 /** Retries only a concurrent mutation of evidence-bound open work. */
 export async function retrySlopSnapshot<T>(
@@ -4396,7 +4386,7 @@ export async function generateLeaderboardFromGitHub(
           );
   let valueRestRequests = 0;
   const github = GitHubClient.forToken(options.evidenceToken ?? "");
-  const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
+  const loaded = await loadValueInputs(
     {
       get: <T>(path: string) => {
         valueRestRequests += 1;
@@ -4417,6 +4407,11 @@ export async function generateLeaderboardFromGitHub(
     undefined,
     probeUnavailableSources,
   );
+  const { heldWorkUnits, withheldAssessments, ...valueInputs } = loaded;
+  for (const withheld of withheldAssessments)
+    console.warn(
+      `[value] ${withheld.repository}#${withheld.pullRequestNumbers.join(",#")}: assessment withheld as incomplete; GitHub cannot resolve actor ${withheld.actorNodeIds.join(", ")}`,
+    );
   const censusIds = new Set(
     [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
       (source) => source.id,

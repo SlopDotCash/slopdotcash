@@ -32,6 +32,7 @@ import {
   readWorkUnitHistory,
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
+import { unavailableRequestedIds } from "./source-availability";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import {
   hydrateValueMergeSource,
@@ -58,6 +59,13 @@ export class ValueFeedUnavailableError extends Error {
 
 /** Process exit status for a value feed outage (EX_TEMPFAIL). */
 export const VALUE_FEED_UNAVAILABLE_EXIT_CODE = 75;
+
+/** A current assessment withheld because GitHub no longer resolves an actor it names. */
+export interface WithheldAssessment {
+  repository: string;
+  pullRequestNumbers: number[];
+  actorNodeIds: string[];
+}
 
 /** Any failure to read an answered body (interrupted, reset or timed out) is
  * an outage. Malformed JSON in a complete body is an integrity failure and
@@ -401,6 +409,7 @@ export async function loadValueInputs(
   ) => Promise<readonly string[]>,
 ) {
   const heldWorkUnits: HeldWorkUnit[] = [];
+  const withheldAssessments: WithheldAssessment[] = [];
   const valueDecisions = new Map<
     string,
     NonNullable<LeaderboardInput["valueDecisions"]> extends ReadonlyMap<
@@ -534,39 +543,9 @@ export async function loadValueInputs(
     return decision;
   }
 
-  async function hydrateActors(actorIds: ReadonlySet<string>) {
-    const missing = [...actorIds].filter((id) => !valueActors.has(id));
-    for (let offset = 0; offset < missing.length; offset += 100) {
-      const ids = missing.slice(offset, offset + 100);
-      const result = await github.graphql<{
-        nodes: ({
-          __typename: string;
-          id: string;
-          login: string;
-          avatarUrl: string;
-          url: string;
-        } | null)[];
-      }>(
-        "query($ids:[ID!]!){nodes(ids:$ids){__typename ... on User{id login avatarUrl url} ... on Bot{id login avatarUrl url}} rateLimit{cost limit remaining resetAt}}",
-        { ids },
-      );
-      if (!Array.isArray(result.nodes) || result.nodes.length !== ids.length)
-        throw new Error("Value coauthor identities are incomplete");
-      for (const [index, actor] of result.nodes.entries()) {
-        if (!actor || actor.id !== ids[index] || actor.__typename !== "User")
-          throw new Error(
-            "Value coauthor is not a resolved GitHub User identity",
-          );
-        valueActors.set(actor.id, {
-          id: actor.id,
-          login: actor.login,
-          avatarUrl: canonicalActorAvatarUrl(actor.avatarUrl),
-          url: actor.url,
-          kind: "User",
-        });
-      }
-    }
-  }
+  const unresolvedActors = new Set<string>();
+  const hydrateActors = (actorIds: ReadonlySet<string>) =>
+    hydrateValueActors(github.graphql, actorIds, valueActors, unresolvedActors);
 
   for (const outcome of outcomes) {
     const [owner, repo] = new URL(outcome.url).pathname
@@ -674,7 +653,23 @@ export async function loadValueInputs(
             for (const review of member.evidence.reviews)
               if (positiveReviews.has(review.node_id) && review.user)
                 actors.add(review.user.node_id);
-          await hydrateActors(actors);
+          const unresolved = await hydrateActors(actors);
+          if (unresolved.length > 0) {
+            decision = {
+              history: decision.history,
+              throughSequence: decision.throughSequence,
+              latestDigest: decision.latestDigest,
+              status: "incomplete" as const,
+            };
+            groups.set(graph.current.row.record_digest, decision);
+            withheldAssessments.push({
+              repository: repository.id,
+              pullRequestNumbers: bindings
+                .map((member) => member.pullRequestNumber)
+                .sort((left, right) => left - right),
+              actorNodeIds: unresolved,
+            });
+          }
         }
       }
       for (const member of bindings)
@@ -714,10 +709,99 @@ export async function loadValueInputs(
       (evidence, paths) => collectValueContext(github, evidence, paths),
     );
     valueDecisions.set(outcome.id, decision);
-    if (decision.status === "assessed")
-      await hydrateActors(new Set(decision.implementationActorNodeIds));
+    if (decision.status === "assessed") {
+      const unresolved = await hydrateActors(
+        new Set(decision.implementationActorNodeIds),
+      );
+      if (unresolved.length > 0) {
+        valueDecisions.set(outcome.id, {
+          history: decision.history,
+          latestDigest: decision.latestDigest,
+          implementationActorNodeIds: decision.implementationActorNodeIds,
+          status: "incomplete" as const,
+        });
+        withheldAssessments.push({
+          repository: repository.id,
+          pullRequestNumbers: [outcome.number],
+          actorNodeIds: unresolved,
+        });
+      }
+    }
   }
-  return { valueDecisions, jointValueDecisions, valueActors, heldWorkUnits };
+  return {
+    valueDecisions,
+    jointValueDecisions,
+    valueActors,
+    heldWorkUnits,
+    withheldAssessments,
+  };
+}
+
+/** The identities GitHub resolves for a value actor hydration query. */
+const VALUE_ACTOR_QUERY =
+  "query($ids:[ID!]!){nodes(ids:$ids){__typename ... on User{id login avatarUrl url} ... on Bot{id login avatarUrl url}} rateLimit{cost limit remaining resetAt}}";
+
+/**
+ * Resolves each actor to a current GitHub User and records it in `actors`.
+ * An identity GitHub reports NOT_FOUND (a deleted or hidden account) is
+ * returned instead of thrown, and the rest of its batch is still resolved:
+ * one vanished account must not stop the publication of every other accepted
+ * outcome. The caller withholds the decision that names it as incomplete
+ * evidence, so that outcome keeps the one-third minimum until a current
+ * assessment names resolvable actors (protocol/scoring-v2.md).
+ */
+export async function hydrateValueActors(
+  graphql: <T>(query: string, variables: Record<string, unknown>) => Promise<T>,
+  actorIds: ReadonlySet<string>,
+  actors: Map<string, GitHubActor>,
+  /** Accounts GitHub did not resolve earlier in this run; not queried again. */
+  knownUnresolved: Set<string> = new Set(),
+): Promise<string[]> {
+  const unresolved = [...actorIds].filter((id) => knownUnresolved.has(id));
+  const missing = [...actorIds].filter(
+    (id) => !actors.has(id) && !knownUnresolved.has(id),
+  );
+  for (let offset = 0; offset < missing.length; offset += 100) {
+    let ids = missing.slice(offset, offset + 100);
+    while (ids.length > 0) {
+      let result: {
+        nodes: ({
+          __typename: string;
+          id: string;
+          login: string;
+          avatarUrl: string;
+          url: string;
+        } | null)[];
+      };
+      try {
+        result = await graphql<typeof result>(VALUE_ACTOR_QUERY, { ids });
+      } catch (error) {
+        const unavailable = unavailableRequestedIds(error, ids);
+        if (unavailable.length === 0) throw error;
+        unresolved.push(...unavailable);
+        for (const id of unavailable) knownUnresolved.add(id);
+        ids = ids.filter((id) => !unavailable.includes(id));
+        continue;
+      }
+      if (!Array.isArray(result.nodes) || result.nodes.length !== ids.length)
+        throw new Error("Value coauthor identities are incomplete");
+      for (const [index, actor] of result.nodes.entries()) {
+        if (!actor || actor.id !== ids[index] || actor.__typename !== "User")
+          throw new Error(
+            "Value coauthor is not a resolved GitHub User identity",
+          );
+        actors.set(actor.id, {
+          id: actor.id,
+          login: actor.login,
+          avatarUrl: canonicalActorAvatarUrl(actor.avatarUrl),
+          url: actor.url,
+          kind: "User",
+        });
+      }
+      break;
+    }
+  }
+  return unresolved;
 }
 
 const ACCOUNT_BAN_FEED = "https://slop.cash/api/v1/project-account-bans";
