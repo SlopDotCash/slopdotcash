@@ -127,7 +127,7 @@ import {
   isUnavailableModelIdentifier,
   UNAVAILABLE_MODEL_IDENTIFIER,
 } from "./model-identity";
-import { findProject } from "./projects.mjs";
+import { findIngestedProjectByRepositoryId, findProject } from "./projects.mjs";
 import {
   findRegisteredRepository,
   findRegisteredRepositoryById,
@@ -1708,6 +1708,20 @@ function publishedPenalties(
       recordedAt >= parseIsoTime(window.to)
     )
       continue;
+    // A project's published reward start bounds every cycle of that
+    // project: the project views and the global ranking exclude earlier work
+    // when they read the ledger (projectCycleWindow, openMonthScores), so
+    // the snapshot must not publish a debit for it either — every reader of
+    // the score has to agree (score-penalties.ts). A debit recorded before
+    // the start is outside every reward cycle of that project.
+    const ingestedProject = findIngestedProjectByRepositoryId(
+      repositoryIdFromUrl(pull.url),
+    );
+    if (
+      ingestedProject &&
+      recordedAt < parseIsoTime(ingestedProject.reward.rewardStartAt)
+    )
+      continue;
     if (githubUserIdFromNodeId(pull.author.id) !== record.authorGithubId)
       throw new Error(
         `Penalty author does not match the GitHub author of ${pull.url}`,
@@ -1777,6 +1791,19 @@ function addScore(
   // credit from its ban onward. Earlier credit stays.
   if (
     participationBannedAt(participationBans, event.actor.id, event.occurredAt)
+  )
+    return false;
+  // A project's published reward start bounds every cycle of that project:
+  // the project views and the global ranking exclude earlier work when they
+  // read the ledger (projectCycleWindow, openMonthScores), so the snapshot
+  // must not credit it either — every reader of the score has to agree
+  // (score-penalties.ts). Work merged before the project joined is collected
+  // in the census, but it is outside every reward cycle of that project.
+  const ingestedProject = findIngestedProjectByRepositoryId(event.repository);
+  if (
+    ingestedProject &&
+    parseIsoTime(event.occurredAt) <
+      parseIsoTime(ingestedProject.reward.rewardStartAt)
   )
     return false;
   const entry = actorEntry(entries, event.actor);
