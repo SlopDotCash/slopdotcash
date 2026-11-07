@@ -666,6 +666,42 @@ const REPORTER_EVENT_KINDS = new Set([
   "recognition",
 ]);
 
+/**
+ * The part of a disclosure event a reporter may see: which disclosure
+ * state that entry recorded, the SHA-256 of the exact redacted content it
+ * approved, and any approved embargo change. The approval's evidence
+ * reference and internal revision link stay restricted. A digest is only
+ * an approval on a `redaction-approved` or `disclosed` entry — the writer
+ * lets an `embargoed` entry carry one too, and that digest was never
+ * approved, so it is not shown.
+ */
+function reporterDisclosureDetail(raw: string): {
+  disclosureState: string | null;
+  redactedContentDigest: string | null;
+  embargoChange: string | null;
+} {
+  let detail: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null)
+      detail = parsed as Record<string, unknown>;
+  } catch {
+    // A malformed legacy detail carries none of the three fields.
+  }
+  const text = (value: unknown): string | null =>
+    typeof value === "string" ? value : null;
+  const disclosureState = text(detail.disclosureState);
+  return {
+    disclosureState,
+    redactedContentDigest:
+      disclosureState === "redaction-approved" ||
+      disclosureState === "disclosed"
+        ? text(detail.redactedContentDigest)
+        : null,
+    embargoChange: text(detail.embargoChange),
+  };
+}
+
 const OPEN_RECEIPT = ["received", "needs-information", "triaging"];
 
 /**
@@ -1163,6 +1199,16 @@ async function caseView(
           kind: event.kind,
           at: event.at,
           reason: event.reason,
+          // The history UI renders a disclosure event's approved-content
+          // digest and embargo change for every viewer of the event, and
+          // the reporter is the party bound by the embargo and the owner
+          // of the redacted text. Those two fields are not in the
+          // restricted set above (another report, root cause, triagers,
+          // analysis, evidence references), so a disclosure entry carries
+          // only them — never the rest of its detail.
+          ...(event.kind === "disclosure"
+            ? { detail: reporterDisclosureDetail(event.detail) }
+            : {}),
         })),
     };
   }
