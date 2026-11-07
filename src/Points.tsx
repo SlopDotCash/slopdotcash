@@ -50,11 +50,12 @@ import {
   type PointsJournal,
   type PointsMember,
   pointMembers,
+  standingsProjectId,
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
-import { findProject, PROJECTS } from "./lib/projects.mjs";
+import { PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
@@ -1142,7 +1143,7 @@ export function ContributorStandings({
     return {
       period: period === "lifetime" || period === "new" ? "lifetime" : "month",
       query: params.get("q") ?? "",
-      project: projectId ?? findProject(params.get("project") ?? "")?.id ?? "",
+      project: projectId ?? standingsProjectId(params.get("project")),
       page: Math.max(
         0,
         Number.parseInt(params.get("page") ?? "1", 10) - 1 || 0,
