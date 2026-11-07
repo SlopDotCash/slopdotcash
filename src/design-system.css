@@ -125,6 +125,10 @@ pre {
   border-color: var(--line-strong);
   background: transparent;
   color: var(--ink);
+  /* Enabled text must not fade through the disabled, low-contrast color. */
+  transition:
+    background var(--brand-motion-fast) var(--brand-motion-ease),
+    border-color var(--brand-motion-fast) var(--brand-motion-ease);
 }
 
 .secondary-button:hover {

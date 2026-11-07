@@ -1061,7 +1061,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     const page = await context.newPage();
     await page.clock.install();
     // The page checks readiness on open; no click is needed.
-    await page.goto(`/projects/${a.id}/security`);
+    await page.goto(`/projects/${a.id}/security`, { waitUntil: "networkidle" });
     await openPrivateDelivery(page);
     const handoff = page.getByRole("link", {
       name: /^(Or report directly|Report privately) on GitHub$/u,
@@ -1078,7 +1078,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     await expect(handoff).toHaveCount(0);
     await page.getByRole("button", { name: "Check again" }).click();
     await expect(handoff).toBeVisible();
-    await page.goto(`/projects/${b.id}/security`);
+    await page.goto(`/projects/${b.id}/security`, { waitUntil: "networkidle" });
     await openPrivateDelivery(page);
     await expect(page.getByRole("alert")).toContainText(
       "private vulnerability reporting is turned off",
@@ -1120,7 +1120,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       ).status(),
     ).toBe(204);
     await refreshReporting(request);
-    await page.goto(`/projects/${c.id}/security`);
+    await page.goto(`/projects/${c.id}/security`, { waitUntil: "networkidle" });
     await openPrivateDelivery(page);
     await expect(page.getByRole("alert")).toContainText("is out of date");
     await expect(handoff).toHaveCount(0);
@@ -1168,7 +1168,7 @@ test("private security bounty programs keep cases restricted from intake to awar
         },
       });
     });
-    await page.goto(`/projects/${a.id}/security`);
+    await page.goto(`/projects/${a.id}/security`, { waitUntil: "networkidle" });
     await expect(page.locator(".route-page-header .route-lead")).toHaveText(
       "10,000 USDC security bounty",
     );
@@ -1188,7 +1188,7 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("program-terms.png"),
       fullPage: true,
     });
-    await page.goto(`/projects/${b.id}/security`);
+    await page.goto(`/projects/${b.id}/security`, { waitUntil: "networkidle" });
     await expect(page.locator(".route-page-header .route-lead")).toContainText(
       "100,000 USDC security bounty",
     );
