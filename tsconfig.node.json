@@ -71,6 +71,7 @@
     "src/lib/cycle-index.ts",
     "src/lib/site-routes.ts",
     "src/lib/project-contracts.ts",
+    "src/lib/scan-clearance.ts",
     "src/lib/vetting-contracts.ts",
     "src/lib/project-proposal.ts",
     "src/lib/security-bounty-proposal.ts",

@@ -23,6 +23,7 @@ import {
   VETTING_EVIDENCE_OBJECTS,
   VETTING_TRACE_SHA,
   vettingResult,
+  vettingScanResult,
 } from "../vetting-fixtures";
 import {
   CANCELED,
@@ -71,6 +72,12 @@ async function postVettingResult(
   projectId: string,
   repository: string,
   disposition: "clean" | "incomplete" | "malicious",
+  options: {
+    /** A bounded scan result (v2) in place of the historical v1 fixture. */
+    result?: (
+      queued: Parameters<typeof vettingScanResult>[0],
+    ) => ReturnType<typeof vettingScanResult>;
+  } = {},
 ) {
   if (!VETTING_PUBLIC_KEY || !VETTING_PRIVATE_KEY)
     throw new Error("Missing E2E vetting key");
@@ -139,7 +146,9 @@ async function postVettingResult(
     expect(response.status()).toBeLessThan(300);
   }
   const body = JSON.stringify(
-    vettingResult({ ...queued, repository }, disposition),
+    options.result
+      ? options.result({ ...queued, repository })
+      : vettingResult({ ...queued, repository }, disposition),
   );
   const posted = await request.post("/api/v1/vetting/results", {
     data: body,
@@ -1753,6 +1762,78 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     path: test.info().outputPath("scan-inbox.png"),
     fullPage: true,
   });
+
+  // A bounded scan that finished with every check passed and every surface
+  // complete, held only by model findings in Slop's skill template: the owner
+  // sees the generic reasons from the recorded result (PRD section 8,
+  // issue #1991), never a finding summary.
+  await postVettingResult(
+    request,
+    project.id,
+    project.repository,
+    "incomplete",
+    {
+      result: (queued) => {
+        const scan = vettingScanResult(queued, "incomplete", {
+          ambiguous: true,
+        });
+        return {
+          ...scan,
+          coverage: {
+            ...scan.coverage,
+            downloads: { state: "complete", items: 0 },
+          },
+          checks: { ...scan.checks, "credential-theft": "passed" },
+          visibilityGaps: ["specialist:agentInstructions:partial"],
+          specialistReview: {
+            ...scan.primaryReview,
+            provider: "openai",
+            model: "gpt-5.5",
+            runId: `specialist-scan-${queued.revision}`,
+          },
+          findings: [
+            {
+              severity: "medium",
+              category: "unsafe-execution",
+              summary: "The receipt script runs a package with bun x",
+              evidence: "slop-skill-template/scripts/run-receipt.mjs:12",
+            },
+          ],
+        };
+      },
+    },
+  );
+  await page.goto(`/projects/${project.id}/manage`, {
+    waitUntil: "networkidle",
+  });
+  const reviewed = page.locator(".project-setup-status");
+  await expect(reviewed.locator("h2")).toHaveText(
+    "Setup status: Action needed",
+  );
+  await expect(reviewed.getByRole("status")).toContainText(
+    "Findings in Slop's skill template block clearance. Check for an updated skill template before requesting a new scan.",
+  );
+  const reasons = reviewed.getByRole("list", {
+    name: "Why the scan did not clear",
+  });
+  await expect(reasons.getByRole("listitem")).toHaveText([
+    "Every deterministic check passed and every surface was read completely, so nothing in the repository was flagged by the checks. The block is a review-coverage decision on Slop's side; changing the repository will not clear it.",
+    "The specialist review covered the agent instructions area partially.",
+    "The primary review reported findings and rated the result ambiguous, and the specialist review did not clear it: it reported findings and rated the result ambiguous.",
+  ]);
+  await expect(reviewed).not.toContainText("receipt script");
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("scan-reasons.png"),
+    fullPage: true,
+  });
+  await reviewed.getByRole("button", { name: "Request a new scan" }).click();
+  await expect(reviewed.locator("h2")).toHaveText(
+    "Setup status: Waiting for the security scan",
+  );
+  await expect(
+    reviewed.getByRole("list", { name: "Why the scan did not clear" }),
+  ).toHaveCount(0);
 
   // Owner edit: a text-only change publishes at once as revision 2.
   await page.goto(`/projects/${project.id}/manage`, {

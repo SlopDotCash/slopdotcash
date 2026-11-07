@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import { scanClearanceReasons } from "../../src/lib/scan-clearance";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import type { VettingAssessment } from "../vetting/persistence";
 import { summarize } from "../vetting/persistence";
-import type { VettingScanResult } from "../vetting/scan-result";
+import {
+  parseVettingScanResult,
+  type ScanReview,
+  scanProblems,
+  type VettingScanResult,
+} from "../vetting/scan-result";
 import { projectRestriction } from "./enforcement";
 import { projectSetupStatus } from "./setup";
 
@@ -576,5 +582,281 @@ describe("summarize findings location classification", () => {
       result: null,
     });
     expect(summary.findingsLocation).toBeUndefined();
+  });
+});
+
+describe("incomplete scan reasons for the owner (issue #1991)", () => {
+  const hex = (char: string) => char.repeat(64);
+  const assessment: VettingAssessment = {
+    id: "vet_0123456789abcdef0123456789abcdef",
+    projectId: "exemption-test",
+    revision: 2,
+    manifestSha256: hex("a"),
+    contentSha256: hex("b"),
+    state: "incomplete",
+    commitSha: "c".repeat(40),
+    templateSha256: hex("d"),
+    policyVersion: "slop-bounded-2026-10-24",
+    requestedBy: { githubId: "1", githubLogin: "owner" },
+    requestReason: "First scan after self-service setup",
+    resultSha256: hex("e"),
+    signingKeySha256: hex("f"),
+    requestedAt: at,
+    completedAt: at,
+    result: null,
+  };
+  const review = (
+    runId: string,
+    verdict: ScanReview["verdict"],
+    risk: ScanReview["risk"],
+  ): ScanReview => ({
+    provider: "anthropic",
+    model: "claude-opus-5-5",
+    promptPolicyRevision: "slop-scan-review-2",
+    inputManifestSha256: hex("1"),
+    runId,
+    status: "completed",
+    verdict,
+    risk,
+    findingCount: verdict === "no-findings" ? 0 : 1,
+  });
+  const complete = { state: "complete" as const, items: 1 };
+  /** A recorded incomplete result that passes the real schema parser. */
+  const incompleteScan = (
+    overrides: Partial<VettingScanResult>,
+  ): VettingScanResult =>
+    parseVettingScanResult({
+      schemaVersion: "slop-vetting-result-v2",
+      assessmentId: assessment.id,
+      projectId: assessment.projectId,
+      revision: assessment.revision,
+      manifestSha256: assessment.manifestSha256,
+      disposition: "incomplete",
+      policyVersion: assessment.policyVersion,
+      assessed: {
+        repository: "example/exemption-test",
+        commitSha: assessment.commitSha,
+        templateSha256: assessment.templateSha256,
+        inputManifestSha256: hex("1"),
+        dependencyLocks: [],
+      },
+      scan: {
+        runId: "scan-run-2",
+        startedAt: at,
+        completedAt: at,
+        reportSha256: hex("2"),
+      },
+      coverage: {
+        source: complete,
+        manifests: complete,
+        dependencies: complete,
+        installScripts: complete,
+        downloads: complete,
+        agentInstructions: complete,
+      },
+      checks: {
+        "wallet-drainer": "passed",
+        "credential-theft": "passed",
+        "secret-exfiltration": "passed",
+        "unsafe-execution": "passed",
+        "prompt-injection": "passed",
+      },
+      visibilityGaps: [],
+      execution: null,
+      reusedAssessmentId: null,
+      primaryReview: review("primary-run-2", "no-findings", "low"),
+      specialistReview: null,
+      artifacts: [],
+      findings: [],
+      confirmation: null,
+      ...overrides,
+    });
+  const quarantined = (result: VettingScanResult) => {
+    // The disposition is consistent with its own evidence.
+    expect(scanProblems(result)).toEqual([]);
+    const summary = summarize({ ...assessment, result });
+    return {
+      summary,
+      setup: status({ state: "quarantined", assessment: summary }),
+    };
+  };
+
+  test("every check passed and every surface complete: the block is on Slop's side", () => {
+    const result = incompleteScan({
+      primaryReview: review("primary-run-2", "findings", "ambiguous"),
+      specialistReview: review("specialist-run-2", "findings", "ambiguous"),
+      visibilityGaps: ["specialist:agentInstructions:partial"],
+      findings: [
+        {
+          severity: "medium",
+          category: "unsafe-execution",
+          summary: "The receipt script runs a package with bun x",
+          evidence: "slop-skill-template/scripts/run-receipt.mjs:12",
+        },
+      ],
+    });
+    const { summary, setup } = quarantined(result);
+    expect(setup.state).toBe("action_required");
+    expect(setup.checks.scan.message).toBe(
+      "Findings in Slop's skill template block clearance.",
+    );
+    expect(setup.checks.scan.reasons).toEqual([
+      "Every deterministic check passed and every surface was read completely, so nothing in the repository was flagged by the checks. The block is a review-coverage decision on Slop's side; changing the repository will not clear it.",
+      "The specialist review covered the agent instructions area partially.",
+      "The primary review reported findings and rated the result ambiguous, and the specialist review did not clear it: it reported findings and rated the result ambiguous.",
+    ]);
+    // Nothing the models wrote reaches the owner, and nothing reads "passed".
+    const shown = JSON.stringify(setup.checks.scan);
+    expect(shown).not.toContain("receipt script");
+    expect(shown).not.toContain("run-receipt");
+    expect(shown).not.toMatch(/\bpassed\b(?! and every surface)/u);
+    expect(setup.checks.scan.state).toBe("quarantined");
+    // The admin view derives the same list from the same summary.
+    expect(scanClearanceReasons(summary)).toEqual(
+      setup.checks.scan.reasons ?? [],
+    );
+  });
+
+  test("a finding below high at a repository path never says the repository cannot clear it", () => {
+    const medium = (evidence: string) => ({
+      severity: "medium" as const,
+      category: "unsafe-execution" as const,
+      summary: "A postinstall script runs a package",
+      evidence,
+    });
+    const slopSide = /Slop's side|will not clear it/u;
+    const cases = [
+      {
+        findings: [medium("scripts/postinstall.js:12")],
+        message: "Findings in the project repository block clearance.",
+        first:
+          "Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in the repository.",
+      },
+      {
+        findings: [
+          medium("scripts/postinstall.js:12"),
+          medium("slop-skill-template/scripts/run-receipt.mjs:12"),
+        ],
+        message:
+          "Findings in both the repository and skill template block clearance.",
+        first:
+          "Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in the repository and Slop's skill template.",
+      },
+    ];
+    for (const { findings, message, first } of cases) {
+      const { summary, setup } = quarantined(
+        incompleteScan({
+          primaryReview: review("primary-run-2", "findings", "ambiguous"),
+          findings,
+        }),
+      );
+      expect(setup.checks.scan.message).toBe(message);
+      expect(setup.checks.scan.reasons).toEqual([
+        first,
+        "The primary review reported findings and rated the result ambiguous, and the specialist review that this result requires did not run.",
+      ]);
+      expect(JSON.stringify(setup.checks.scan)).not.toMatch(slopSide);
+      expect(JSON.stringify(setup.checks.scan)).not.toContain("postinstall");
+      expect(scanClearanceReasons(summary)).toEqual(
+        setup.checks.scan.reasons ?? [],
+      );
+    }
+    // Evidence with no path cannot be attributed, so no location sentence.
+    const { setup } = quarantined(
+      incompleteScan({
+        primaryReview: review("primary-run-2", "findings", "ambiguous"),
+        findings: [medium("no path here")],
+      }),
+    );
+    expect(setup.checks.scan.message).toBe("Findings block clearance.");
+    expect(setup.checks.scan.reasons).toEqual([
+      "The primary review reported findings and rated the result ambiguous, and the specialist review that this result requires did not run.",
+    ]);
+  });
+
+  test("a flagged check, a high finding and a partial surface each name the repository", () => {
+    const result = incompleteScan({
+      coverage: {
+        source: complete,
+        manifests: complete,
+        dependencies: complete,
+        installScripts: complete,
+        downloads: { state: "partial", items: 1 },
+        agentInstructions: complete,
+      },
+      checks: {
+        "wallet-drainer": "passed",
+        "credential-theft": "flagged",
+        "secret-exfiltration": "passed",
+        "unsafe-execution": "passed",
+        "prompt-injection": "passed",
+      },
+      visibilityGaps: [
+        "A postinstall download was not retrievable: https://example.org/addon.tgz",
+      ],
+      primaryReview: review("primary-run-2", "findings", "high"),
+      findings: [
+        {
+          severity: "high",
+          category: "credential-theft",
+          summary: "A postinstall script reads the browser wallet store",
+          evidence: "scripts/postinstall.js:12",
+        },
+      ],
+    });
+    const { setup } = quarantined(result);
+    expect(setup.checks.scan.message).toBe(
+      "Findings in the project repository block clearance.",
+    );
+    expect(setup.checks.scan.reasons).toEqual([
+      "The credential theft check flagged content (1 open finding rated high or critical).",
+      "The downloads surface was read partially.",
+      "Coverage note from the scanner: A postinstall download was not retrievable: https://example.org/addon.tgz",
+      "The primary review reported findings and rated the result high risk, and the specialist review that this result requires did not run.",
+    ]);
+    expect(JSON.stringify(setup.checks.scan)).not.toContain("wallet store");
+  });
+
+  test("a coverage gap the scanner recorded twice is listed once", () => {
+    const { summary, setup } = quarantined(
+      incompleteScan({
+        primaryReview: review("primary-run-2", "findings", "ambiguous"),
+        specialistReview: review("specialist-run-2", "findings", "ambiguous"),
+        visibilityGaps: [
+          "specialist:agentInstructions:partial",
+          "specialist:agentInstructions:partial",
+          "A download was not retrievable",
+          "A download was not retrievable",
+        ],
+      }),
+    );
+    const reasons = setup.checks.scan.reasons ?? [];
+    expect(
+      reasons.filter(
+        (reason) =>
+          reason ===
+          "The specialist review covered the agent instructions area partially.",
+      ),
+    ).toHaveLength(1);
+    expect(
+      reasons.filter(
+        (reason) =>
+          reason ===
+          "Coverage note from the scanner: A download was not retrievable",
+      ),
+    ).toHaveLength(1);
+    expect(new Set(reasons).size).toBe(reasons.length);
+    expect(scanClearanceReasons(summary)).toEqual(reasons);
+  });
+
+  test("a scan that did not finish, and a historical result, list no reasons", () => {
+    const unfinished = status({
+      state: "quarantined",
+      assessment: { ...summarize(assessment), completedAt: null },
+    });
+    expect(unfinished.checks.scan.reasons).toBeUndefined();
+    expect(unfinished.checks.scan.message).toBe(
+      "The last scan could not finish, so it did not clear the project.",
+    );
   });
 });

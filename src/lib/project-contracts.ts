@@ -340,6 +340,11 @@ export type ProjectSetupStatus = {
     scan: {
       state: VettingClearance["state"] | "unavailable";
       message: string;
+      /**
+       * Why an incomplete scan did not clear, in generic sentences from the
+       * recorded result (PRD section 8, issue #1991); no finding text.
+       */
+      reasons?: string[];
       /** Recorded exemption (PRD section 8); never a passed scan. */
       exempt?: true;
       exemptionKind?: "existing-project" | "owner-approved-admission";

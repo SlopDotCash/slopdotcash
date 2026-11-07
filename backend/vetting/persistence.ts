@@ -43,7 +43,11 @@ import {
   type RecordedVettingResult,
   resultReviewers,
 } from "./scan-result";
-import { findingsLocationOf, quarantinedScanMessage } from "./summary";
+import {
+  findingsLocationOf,
+  quarantinedScanMessage,
+  scanClearanceFactsOf,
+} from "./summary";
 
 export type {
   AssessmentState,
@@ -174,6 +178,9 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
     artifacts: artifacts.length,
     heldArtifacts: held.length,
     ...(findingsLocation !== undefined ? { findingsLocation } : {}),
+    ...(result && isScanResult(result)
+      ? { scan: scanClearanceFactsOf(result) }
+      : {}),
   };
 }
 

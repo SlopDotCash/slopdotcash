@@ -22,6 +22,7 @@ import {
   slopbotInstallScopeNote,
 } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import { scanClearanceReasons } from "../../src/lib/scan-clearance";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { quarantinedScanMessage } from "../vetting/summary";
 import type { RepositoryControl } from "./contracts";
@@ -255,11 +256,16 @@ function scanCheck(
         message:
           "The repository or skill template changed since the last scan.",
       };
-    case "quarantined":
+    case "quarantined": {
+      // Generic reasons from the recorded result (issue #1991); a historical
+      // result or one that did not finish has none.
+      const reasons = scanClearanceReasons(clearance.assessment);
       return {
         state: "quarantined",
         message: quarantinedScanMessage(clearance.assessment),
+        ...(reasons.length > 0 ? { reasons } : {}),
       };
+    }
     case "banned":
       return {
         state: "banned",
