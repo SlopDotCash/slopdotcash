@@ -57,12 +57,15 @@ export async function reconcileFailedAttempts(
   rpcUrls: Record<string, string>,
   genesisHashes: Record<string, string> = {},
   now = new Date(),
+  networks?: readonly string[],
 ): Promise<void> {
-  const result = await db
-    .prepare(
-      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'",
-    )
-    .first<{ items: string }>();
+  const statement = db.prepare(
+    `SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'${networks === undefined ? "" : " AND o.network IN (SELECT value FROM json_each(?))"}`,
+  );
+  const result = await (networks === undefined
+    ? statement
+    : statement.bind(JSON.stringify(networks))
+  ).first<{ items: string }>();
   // One attempt's failure must not stop reconciliation of the others (PAY-07).
   const failures: unknown[] = [];
   for (const attempt of JSON.parse(result?.items ?? "[]") as {
