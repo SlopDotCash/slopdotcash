@@ -38,6 +38,7 @@ import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
+  adminProjectCounts,
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
@@ -846,6 +847,10 @@ function ProjectsSection({
                   .includes(query.trim().toLowerCase()),
           )
       : [];
+  const counts =
+    state.status === "ready"
+      ? adminProjectCounts(state.projects)
+      : { total: 0, active: 0, needReview: 0 };
   const backToOverview = () => {
     const current = new URL(window.location.href);
     if (
@@ -878,22 +883,11 @@ function ProjectsSection({
             />
           </label>
           <MetricGrid className="admin-counts">
-            <MetricTile label="Projects" value={state.projects.length} />
-            <MetricTile
-              label="Active"
-              value={
-                state.projects.filter((project) => project.status === "active")
-                  .length
-              }
-              tone="success"
-            />
+            <MetricTile label="Projects" value={counts.total} />
+            <MetricTile label="Active" value={counts.active} tone="success" />
             <MetricTile
               label="Need review"
-              value={
-                state.projects.filter(
-                  (project) => project.enforcement.decisionRequired,
-                ).length
-              }
+              value={counts.needReview}
               tone="warning"
             />
           </MetricGrid>
