@@ -84,8 +84,11 @@ const sha256Code = (code: string) =>
   createHash("sha256")
     .update(Buffer.from(code.slice(2), "hex"))
     .digest("hex");
-const sameJson = (left: unknown, right: unknown) =>
-  JSON.stringify(left) === JSON.stringify(right);
+const sameSource = (left: BuildProvenance, right: BuildProvenance) =>
+  left.commit === right.commit &&
+  left.evmTree === right.evmTree &&
+  left.projectEscrowBlob === right.projectEscrowBlob &&
+  left.foundryTomlSha256 === right.foundryTomlSha256;
 const sameBuild = (
   approval: ApprovedBuild,
   compiled: CompiledImplementation,
@@ -97,7 +100,7 @@ const sameBuild = (
     `${prefix} implementation address does not match the independent build`,
   );
   assert(
-    sameJson(approval.source, compiled.source),
+    sameSource(approval.source, compiled.source),
     `${prefix} build provenance does not match the approval`,
   );
   const runtime = canonicalCode(

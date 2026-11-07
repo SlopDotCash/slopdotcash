@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { expectedImplementation } from "./integration/upgrade";
 import {
   compileCurrentImplementation,
   compileHistoricalImplementation,
@@ -84,4 +85,19 @@ test("current implementation compilation ignores mutable checkout bytes and comp
   } finally {
     writeFileSync(sourcePath, before);
   }
+}, 180_000);
+
+test("factory-kind compilation selects EscrowFactory and its deterministic prediction", () => {
+  execFileSync(process.env.FORGE ?? "forge", ["build", "--quiet", "--force"], {
+    cwd: root,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+  const expected = expectedImplementation(root, "EscrowFactory");
+  const factory = compileCurrentImplementation("factory");
+
+  expect(factory.kind).toBe("factory");
+  expect(factory.contract).toBe("EscrowFactory");
+  expect(factory.implementation).toBe(expected.predicted);
+  expect(factory.runtimeCode).toBe(expected.runtimeCode);
+  expect(factory.runtimeCodeSha256).toBe(expected.digest);
 }, 180_000);

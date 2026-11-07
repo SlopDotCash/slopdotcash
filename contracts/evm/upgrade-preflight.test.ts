@@ -217,6 +217,26 @@ describe("UUPS upgrade preflight", () => {
     ).rejects.toThrow("target proxy contract kind does not match the approval");
   });
 
+  test("accepts equivalent build provenance with a different property order", async () => {
+    const value = inputs();
+    value.approval.source = {
+      foundryTomlSha256: source.foundryTomlSha256,
+      projectEscrowBlob: source.projectEscrowBlob,
+      evmTree: source.evmTree,
+      commit: source.commit,
+    };
+    value.approval.previous.source = {
+      foundryTomlSha256: previousSource.foundryTomlSha256,
+      projectEscrowBlob: previousSource.projectEscrowBlob,
+      evmTree: previousSource.evmTree,
+      commit: previousSource.commit,
+    };
+
+    await expect(
+      prepareUpgradeTransaction({ ...value, rpc: rpcFor() }),
+    ).resolves.toMatchObject({ implementation: ADDRESS });
+  });
+
   test("rejects a proxy whose implementation slot does not select the independently built prior implementation", async () => {
     await expect(
       prepareUpgradeTransaction({
@@ -328,6 +348,15 @@ describe("UUPS upgrade preflight", () => {
     ).rejects.toThrow(
       "runtime bytecode does not match the approved independent build",
     );
+  });
+
+  test("rejects an implementation with the wrong proxiableUUID", async () => {
+    await expect(
+      prepareUpgradeTransaction({
+        ...inputs(),
+        rpc: rpcFor({ uuid: `0x${"ff".repeat(32)}` }),
+      }),
+    ).rejects.toThrow("unexpected UUPS UUID");
   });
 
   test("accepts the approved implementation and emits only its zero-value upgrade call", async () => {
