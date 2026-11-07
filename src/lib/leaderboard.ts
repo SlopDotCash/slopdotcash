@@ -3491,8 +3491,17 @@ function createSnapshotWithReviewCutoff(
           return owner !== undefined && owner !== pullRequest.id;
         })
       )
+        const overlapping = (pullRequest.commits ?? [])
+          .filter((commit) => {
+            const owner = commitOwners.get(
+              `${repositoryId.toLowerCase()}\0${commit.oid}`,
+            );
+            return owner !== undefined && owner !== pullRequest.id;
+          })
+          .map((commit) => commit.oid)
+          .slice(0, 5);
         throw new Error(
-          "Overlapping accepted commits require joint value assessment",
+          `Overlapping accepted commits require joint value assessment (example oids: ${overlapping.join(", ")})`,
         );
     }
     if (actors.length === 0) continue;
