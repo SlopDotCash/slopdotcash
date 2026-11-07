@@ -10,6 +10,7 @@
  * cycles bind their own snapshot bytes, so a later debit never changes an
  * approved, scheduled or paid award.
  */
+import { compareEnglish } from "./collation";
 import type {
   PenaltyHistoryRecord,
   PublishedPenalty,
@@ -107,8 +108,8 @@ export function penaltyDeductions(
   const byPenalty = new Map<string, number>();
   for (const penalty of [...penalties].sort(
     (left, right) =>
-      left.occurredAt.localeCompare(right.occurredAt) ||
-      left.id.localeCompare(right.id),
+      compareEnglish(left.occurredAt, right.occurredAt) ||
+      compareEnglish(left.id, right.id),
   )) {
     const bucket = key(
       penalty.actor.id,

@@ -2,6 +2,7 @@
  * discovery hint, never sufficient evidence for assigning implementation credit.
  */
 
+import { compareEnglish } from "../../src/lib/collation";
 import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { FileChange, ValueEvidence } from "./value-evidence";
 import { retainedManifestIdentity } from "./value-manifest-identity";
@@ -52,7 +53,7 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
         valueDeletionCount(file),
         valuePatch(file),
       ])
-      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      .sort((a, b) => compareEnglish(String(a[0]), String(b[0])));
   if (
     !original.files.length ||
     !original.files.every(hasCompleteValuePatch) ||

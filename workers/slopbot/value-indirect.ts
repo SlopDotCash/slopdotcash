@@ -1,3 +1,4 @@
+import { compareEnglish } from "../../src/lib/collation";
 import { sameRepositoryCommitHints } from "./value-commit-hints";
 import type { EvidenceClient, ValueEvidence } from "./value-evidence";
 import {
@@ -170,7 +171,7 @@ export async function collectIndirectValueAcceptance(
   }
   observations.sort(
     (a, b) =>
-      a.run.created_at.localeCompare(b.run.created_at) || a.run.id - b.run.id,
+      compareEnglish(a.run.created_at, b.run.created_at) || a.run.id - b.run.id,
   );
   const proofs: Omit<IndirectValueAcceptance, "retainedFiles">[] = [];
   for (const integration of integrations) {

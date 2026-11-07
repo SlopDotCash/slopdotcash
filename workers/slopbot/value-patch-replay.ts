@@ -1,3 +1,4 @@
+import { compareEnglish } from "../../src/lib/collation";
 import { valueFileReader } from "./value-blob";
 import type { EvidenceClient, FileChange } from "./value-evidence";
 import {
@@ -214,10 +215,10 @@ export async function collectAcceptedPatchReplay(
   )
     return null;
   const submitted = [...files].sort((a, b) =>
-    a.filename.localeCompare(b.filename),
+    compareEnglish(a.filename, b.filename),
   );
   const accepted = [...merge.files].sort((a, b) =>
-    a.filename.localeCompare(b.filename),
+    compareEnglish(a.filename, b.filename),
   );
   if (new Set(submitted.map((file) => file.filename)).size !== files.length)
     return null;

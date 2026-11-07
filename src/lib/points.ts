@@ -1,5 +1,6 @@
 /** Nonfinancial points. This module never supplies reward or settlement inputs. */
 
+import { compareEnglish } from "./collation";
 import { githubUserIdFromNodeId } from "./github-actor";
 import type {
   GitHubActor,
@@ -429,7 +430,9 @@ export function appendPointAwards(
     revisions: [...journal.revisions],
   };
   const latest = latestPoints(journal);
-  for (const award of [...awards].sort((a, b) => a.key.localeCompare(b.key))) {
+  for (const award of [...awards].sort((a, b) =>
+    compareEnglish(a.key, b.key),
+  )) {
     appendPointAward(
       output,
       latest,
@@ -626,8 +629,8 @@ export function reconcilePointPenalties(
   const latest = latestPoints(journal);
   for (const candidate of [...candidates.values()].sort(
     (a, b) =>
-      a.award.occurredAt.localeCompare(b.award.occurredAt) ||
-      a.award.workUnitId.localeCompare(b.award.workUnitId),
+      compareEnglish(a.award.occurredAt, b.award.occurredAt) ||
+      compareEnglish(a.award.workUnitId, b.award.workUnitId),
   )) {
     const evidence = candidate.penalty;
     if (!evidence) continue;
@@ -1124,7 +1127,8 @@ export function pointMembers(
     m.actor = actors.get(m.actor.id)?.award.actor ?? m.actor;
     m.awards.sort(
       (a, b) =>
-        b.occurredAt.localeCompare(a.occurredAt) || a.key.localeCompare(b.key),
+        compareEnglish(b.occurredAt, a.occurredAt) ||
+        compareEnglish(a.key, b.key),
     );
     const earned = m.awards.filter((a) => a.category !== "slopbot-penalty");
     m.projects = new Set(earned.map((a) => a.projectId)).size;
@@ -1142,7 +1146,7 @@ export function pointMembers(
     ];
   }
   return [...members.values()].sort(
-    (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
+    (a, b) => b.total - a.total || compareEnglish(a.actor.id, b.actor.id),
   );
 }
 export function emptyPointsJournal(at: string): PointsJournal {

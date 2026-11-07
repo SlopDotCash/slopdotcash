@@ -1,3 +1,4 @@
+import { compareEnglish } from "../../src/lib/collation";
 import { valueFileReader } from "./value-blob";
 import type { EvidenceClient, FileChange } from "./value-evidence";
 import { readValueTree } from "./value-tree";
@@ -88,7 +89,7 @@ export async function collectIndirectValueRetention(
   }
   const result: IndirectRetainedFile[] = [];
   for (const file of [...files].sort((a, b) =>
-    a.filename.localeCompare(b.filename),
+    compareEnglish(a.filename, b.filename),
   )) {
     const sourcePath = file.filename,
       acceptedPath = renames.get(sourcePath) ?? sourcePath;

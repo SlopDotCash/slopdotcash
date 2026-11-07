@@ -1,3 +1,4 @@
+import { compareEnglish } from "../../src/lib/collation";
 import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
 import {
   findRegisteredRepositoryById,
@@ -180,10 +181,11 @@ function fileChange({
     blob_url,
   };
 }
-function changeBytes(files: FileChange[]): string {
+/** Filename-ordered digest payload for value evidence. Exported for locale tests. */
+export function changeBytes(files: FileChange[]): string {
   return JSON.stringify(
     [...files]
-      .sort((left, right) => left.filename.localeCompare(right.filename))
+      .sort((left, right) => compareEnglish(left.filename, right.filename))
       .map((file) => [
         file.filename,
         file.previous_filename ?? null,
@@ -491,7 +493,7 @@ async function relatedPullRequests(
   }
   return {
     references: [...references.values()].sort((a, b) =>
-      a.id.localeCompare(b.id),
+      compareEnglish(a.id, b.id),
     ),
     limitations: [...new Set(limitations)],
   };
