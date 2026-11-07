@@ -112,6 +112,9 @@ const ABI = parseAbi([
   "function proposeIdentityAuthority(address)",
   "function executeIdentityAuthorityRotation()",
 ]);
+const LEGACY_MONTHLY_ABI = parseAbi([
+  "function commitMonthly(uint32 period,(uint64 actorId,uint128 gross,bytes32 sourceDigest)[] awards,bytes signature)",
+]);
 async function rpc(method: string, params: unknown[]): Promise<unknown> {
   const response = await fetch(rpcUrl, {
     method: "POST",
@@ -1142,13 +1145,67 @@ try {
       evmAllocationRoot(entries),
     ) as `0x${string}`,
   });
+  assert.match(
+    buildCommitMonthlyCalldata(period, entries, legacySignature),
+    /^0x[0-9a-f]+$/,
+    "legacy calldata construction leaves gas admission to the deployment-aware executor",
+  );
+  // Keep an independent ABI encoding for measured regressions against the reviewed bytecode.
+  const unboundedLegacyCalldata = (
+    batch: readonly MonthlyAllocationEntry[],
+    signature: `0x${string}`,
+  ) =>
+    encodeFunctionData({
+      abi: LEGACY_MONTHLY_ABI,
+      functionName: "commitMonthly",
+      args: [
+        202611,
+        batch.map((entry) => ({
+          actorId: BigInt(entry.githubUserId),
+          gross: BigInt(entry.grossMicro),
+          sourceDigest: entry.sourceDigest as `0x${string}`,
+        })),
+        signature,
+      ],
+    });
+  const estimateLegacy = async (batch: readonly MonthlyAllocationEntry[]) => {
+    const signature = await authority.sign({
+      hash: evmMonthlyDigest(
+        chainId,
+        vault,
+        period,
+        evmAllocationRoot(batch),
+      ) as `0x${string}`,
+    });
+    return BigInt(
+      String(
+        await rpc("eth_estimateGas", [
+          {
+            from: gas.address,
+            to: vault,
+            data: unboundedLegacyCalldata(batch, signature),
+          },
+        ]),
+      ),
+    );
+  };
+  const maxLegacyGas = await estimateLegacy(entries.slice(0, 3));
+  const oversizedLegacyGas = await estimateLegacy(entries.slice(0, 4));
+  assert(
+    (maxLegacyGas * 12n) / 10n <= 500000n,
+    "three legacy awards fit the existing gas ceiling with signing margin",
+  );
+  assert(
+    oversizedLegacyGas > 500000n,
+    "four legacy awards exceed the existing gas ceiling before signing margin",
+  );
   const legacyGas = BigInt(
     String(
       await rpc("eth_estimateGas", [
         {
           from: gas.address,
           to: vault,
-          data: buildCommitMonthlyCalldata(period, entries, legacySignature),
+          data: unboundedLegacyCalldata(entries, legacySignature),
         },
       ]),
     ),
@@ -1743,6 +1800,9 @@ try {
         awards: entries.length,
         newlyMaterialized: next.entries.length,
         legacyGas: legacyGas.toString(),
+        maxAcceptedLegacyGas: maxLegacyGas.toString(),
+        maxAcceptedLegacyGasWithMargin: ((maxLegacyGas * 12n) / 10n).toString(),
+        firstRejectedLegacyGas: oversizedLegacyGas.toString(),
         highestBoundedGas: gasUsed
           .reduce((a, b) => (a > b ? a : b), 0n)
           .toString(),
