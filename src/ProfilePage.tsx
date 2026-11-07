@@ -9,9 +9,10 @@ import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
+import { resolveProfileActor } from "./lib/profile-actor";
 import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
-import { ProfilePoints, useProfileMembership } from "./Points";
+import { ProfilePoints, usePoints, useProfileMembership } from "./Points";
 import {
   ContributorIdentity,
   DataNotice,
@@ -41,7 +42,16 @@ export function ProfilePage({
 }) {
   const profiles = useProfiles();
   const membership = useProfileMembership(login);
-  const actor = currentProfileActor(state, login, profiles.state, membership);
+  const points = usePoints();
+  const actor = currentProfileActor(
+    state,
+    login,
+    profiles.state,
+    membership,
+    points.state.status === "ready"
+      ? points.state.members.map((member) => member.actor)
+      : null,
+  );
   const currentWallet = useCurrentWallet(actor, login);
   // Until the ledger or profile data names this login, the page links to no
   // GitHub profile: the path is only what the visitor typed.
@@ -56,11 +66,13 @@ export function ProfilePage({
     const checking =
       profiles.state.status === "loading" ||
       membership.joinStatus === "loading" ||
-      membership.sessionStatus === "loading";
+      membership.sessionStatus === "loading" ||
+      points.state.status === "loading";
     const unavailable =
       profiles.state.status === "error" ||
       membership.joinStatus === "unavailable" ||
-      membership.sessionStatus === "error";
+      membership.sessionStatus === "error" ||
+      points.state.status === "error";
     if (!checking && !unavailable) return <UnknownContributor login={login} />;
     return (
       <main className="shell route-main">
@@ -80,6 +92,7 @@ export function ProfilePage({
               onClick={() => {
                 profiles.retry();
                 membership.retry();
+                points.refresh();
               }}
             >
               Retry profile
@@ -268,24 +281,9 @@ function currentProfileActor(
   login: string,
   profiles: ReturnType<typeof useProfiles>["state"],
   membership: ReturnType<typeof useProfileMembership>,
+  journal: readonly { id: string; login: string }[] | null,
 ): GitHubActor | undefined {
   if (state.status !== "ready") return;
-  const normalizedLogin = login.toLowerCase();
-  const matchesLogin = (actor: { login: string }) =>
-    actor.login.toLowerCase() === normalizedLogin;
-  const asActor = (actor: {
-    id: string;
-    login: string;
-    avatarUrl?: string;
-  }): GitHubActor => ({
-    id: actor.id,
-    login: actor.login,
-    avatarUrl:
-      actor.avatarUrl ??
-      `https://avatars.githubusercontent.com/${encodeURIComponent(actor.login)}?size=160`,
-    url: `https://github.com/${encodeURIComponent(actor.login)}`,
-    kind: "User",
-  });
   const actors: Array<{ id: string; login: string; avatarUrl?: string }> = [
     ...(membership.signedInActor ? [membership.signedInActor] : []),
     ...state.snapshot.leaders.map((leader) => leader.actor),
@@ -297,10 +295,6 @@ function currentProfileActor(
       ...view.opportunities.map((opportunity) => opportunity.actor),
     ]),
   ];
-  const conflictsWith = (candidate: { id: string }) =>
-    actors.some((actor) =>
-      actor.id === candidate.id ? !matchesLogin(actor) : matchesLogin(actor),
-    );
   // Every identity source can veto a stale login. Wait for the session,
   // membership and directory before selecting the actor for wallet/history reads.
   if (
@@ -309,30 +303,14 @@ function currentProfileActor(
     (!membership.own && membership.joinStatus === "loading")
   )
     return;
-  const directoryConflict = (candidate: { id: string }) =>
-    profiles.index.people.some((person) =>
-      person.id === candidate.id ? !matchesLogin(person) : matchesLogin(person),
-    );
   const member = membership.own ?? membership.joined;
-  if (member)
-    return matchesLogin(member.actor) &&
-      !conflictsWith(member.actor) &&
-      !directoryConflict(member.actor)
-      ? asActor(member.actor)
-      : undefined;
-  const current = actors.find(matchesLogin);
-  if (current) {
-    if (conflictsWith(current) || directoryConflict(current)) return;
-    return asActor(current);
-  }
-  // The directory can resolve an inactive actor, but cannot override a known rename.
-  const candidates = profiles.index.people.filter(
-    (person) =>
-      matchesLogin(person) &&
-      !actors.some((actor) => actor.id === person.id && !matchesLogin(actor)),
-  );
-  if (candidates.length !== 1) return;
-  return asActor(candidates[0]);
+  return resolveProfileActor({
+    login,
+    actors,
+    people: profiles.index.people,
+    member: member ? member.actor : null,
+    journal,
+  });
 }
 
 function shortAddress(address: string): string {
