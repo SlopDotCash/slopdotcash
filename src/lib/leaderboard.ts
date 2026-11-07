@@ -1,6 +1,6 @@
 import {
-  creditEligibleImplementationActorIds,
-  isCreditEligibleCommitAuthor,
+  isMergeCreditCommitAuthor,
+  scoredImplementationActorIds,
 } from "./commit-credit";
 import {
   assertExternalSourceEvidence,
@@ -2773,7 +2773,7 @@ function mergeCreditActors(
   for (const commit of sharesCommitCredit ? (pullRequest.commits ?? []) : []) {
     if (
       commit.author &&
-      isCreditEligibleCommitAuthor(commit.author) &&
+      isMergeCreditCommitAuthor(commit.author) &&
       commit.author.id !== author?.id &&
       commitOwners.get(`${repositoryId}\0${commit.oid}`) === pullRequest.id
     ) {
@@ -3466,7 +3466,7 @@ function createSnapshotWithReviewCutoff(
         "Value scoring requires hydrated human decision and review sources",
       );
     if (valueRecord) {
-      const ids = creditEligibleImplementationActorIds(
+      const ids = scoredImplementationActorIds(
         valueDecision?.implementationActorNodeIds ?? [],
         author?.id,
       );
@@ -3708,7 +3708,7 @@ function createSnapshotWithReviewCutoff(
         .filter((source) => source !== undefined)
         .sort((a, b) => compareCodeUnits(a.pull.node_id, b.pull.node_id))[0];
       const primaryAuthorId = (retainedOriginal ?? first).pull.user.node_id;
-      const actors = creditEligibleImplementationActorIds(
+      const actors = scoredImplementationActorIds(
         [
           ...new Set(
             scoped.flatMap((claim) => claim.implementationActorNodeIds),

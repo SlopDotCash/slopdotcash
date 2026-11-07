@@ -1,4 +1,5 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
+import { isCreditEligibleCommitAuthor } from "../src/lib/commit-credit";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import type {
   GitHubActor,
@@ -172,6 +173,12 @@ function recordedAssessmentCredit(
     )
     .map((event) => [event.actor.id, event.scoreThirds]);
 }
+
+// A changed actor list would change the evidence digest, so the recorded
+// assessment would go stale and the merge would fall to the minimum.
+test("value collection still lists the placeholder account, so recorded assessments keep their source digest", () => {
+  expect(isCreditEligibleCommitAuthor(PLACEHOLDER_LINKED_ACCOUNT)).toBe(true);
+});
 
 test("a recorded assessment that names the placeholder account credits the author alone", () => {
   expect(

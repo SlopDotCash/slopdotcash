@@ -160,9 +160,8 @@ Approved by the repository owner on 2026-10-08 in response to issue #506
 integration branch is shared among its pull-request author and every distinct
 non-bot GitHub user that GitHub links as a commit author. Unlinked commit
 emails, `[bot]` app logins, the vendor coding-agent accounts `claude`, `codex`,
-and `cursoragent`, the account that GitHub links to the placeholder identity
-`x <x@x>` (`xxxxxxxxxxxxx`) (all pinned by node ID), and `Co-authored-by`
-trailers do not count. A commit SHA gives credit
+and `cursoragent` (pinned by node ID), and `Co-authored-by` trailers do not
+count. A commit SHA gives credit
 only in the earliest merged pull request that lists it, so a consolidation or
 promotion pull request cannot score it again. Collect every commit page before
 scoring. Above GitHub's 250-commit pull-request listing limit, paginate the
@@ -177,6 +176,13 @@ Each actor keeps at least one third. The author's event keeps the
 actor's event is `<pull-request-node-id>:merged:<actor-node-id>`. A formal
 review, a `slop-review` record, or a `slop-score` ratification by any credit
 actor of the same pull request is a self-review and earns no review credit.
+
+Placeholder identity amendment for #2380 (proposed 2026-11-07, owner decision
+pending): the account that GitHub links to the placeholder commit identity
+`x <x@x>` (`xxxxxxxxxxxxx`, pinned by node ID) does not count as a commit author
+for merge credit. Value collection still lists it, so a recorded value
+assessment keeps its source digest. Scoring drops it from the assessment's
+actors unless it opened the pull request.
 
 ## Review credit
 

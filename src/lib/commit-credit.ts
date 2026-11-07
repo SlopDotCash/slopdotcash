@@ -3,9 +3,18 @@ const AGENT_COMMIT_ACCOUNT_IDS: ReadonlySet<string> = new Set([
   "MDQ6VXNlcjgxODQ3", // claude (Anthropic)
   "U_kgDOD-0LXg", // codex (OpenAI)
   "U_kgDOC972lw", // cursoragent (Cursor)
-  "MDQ6VXNlcjM4MjUwNTA=", // xxxxxxxxxxxxx: GitHub links the placeholder `x <x@x>` to it
 ]);
 
+/**
+ * GitHub links the placeholder commit identity `x <x@x>` to this account.
+ * Scoring drops it. Value collection still lists it, so recorded evidence
+ * keeps the source digest that its assessment was made from.
+ */
+const PLACEHOLDER_COMMIT_ACCOUNT_IDS: ReadonlySet<string> = new Set([
+  "MDQ6VXNlcjM4MjUwNTA=", // xxxxxxxxxxxxx
+]);
+
+/** Value collection: a commit author that recorded evidence lists. */
 export function isCreditEligibleCommitAuthor(
   actor: { id: string; kind: string } | null,
 ): boolean {
@@ -16,16 +25,26 @@ export function isCreditEligibleCommitAuthor(
   );
 }
 
+/** Merge scoring: a listed commit author that is not a placeholder account. */
+export function isMergeCreditCommitAuthor(
+  actor: { id: string; kind: string } | null,
+): boolean {
+  return (
+    actor !== null &&
+    isCreditEligibleCommitAuthor(actor) &&
+    !PLACEHOLDER_COMMIT_ACCOUNT_IDS.has(actor.id)
+  );
+}
+
 /**
- * A recorded value assessment keeps the actor list of its collection time.
- * Credit follows the current rule. The pull-request author is never removed,
- * as in the merge-credit path that this rule does not apply to.
+ * Drops placeholder accounts from the actor list of a recorded assessment,
+ * except the given pull-request author.
  */
-export function creditEligibleImplementationActorIds(
+export function scoredImplementationActorIds(
   ids: readonly string[],
   authorId: string | undefined,
 ): string[] {
   return ids.filter(
-    (id) => id === authorId || !AGENT_COMMIT_ACCOUNT_IDS.has(id),
+    (id) => id === authorId || !PLACEHOLDER_COMMIT_ACCOUNT_IDS.has(id),
   );
 }
