@@ -824,3 +824,34 @@ test("a batch call that returns an unreadable review is retried before the revie
   expect(stop.evidence?.failure).toBe("batch:stop-max_tokens");
   expect(stopped.calls).toHaveLength(1);
 });
+
+test("a later retry without a receipt keeps the earlier usage and cost", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const first = plan.batches[0].evidence;
+  let attempts = 0;
+  const mixed = provider((input) =>
+    input === first && attempts++ === 0
+      ? unreadableReview()
+      : input === first
+        ? new Response("unavailable", { status: 503 })
+        : null,
+  );
+  const failed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: mixed.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(failed.evidence?.failure).toBe("batch:provider-http-503");
+  expect(mixed.calls).toHaveLength(MAX_CALL_ATTEMPTS);
+  expect(failed.evidence?.usage).toEqual({
+    uncachedInput: 7,
+    cachedInput: 0,
+    cacheCreation: 0,
+    output: 3,
+  });
+  expect(failed.evidence?.cost?.nanoUsd).toBe("48");
+});

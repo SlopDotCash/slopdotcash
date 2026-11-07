@@ -429,31 +429,33 @@ function withEarlierAttempts(
   earlier: ScannerEvidence[],
 ): ScannerEvidence {
   if (earlier.length === 0) return last;
-  const usage = last.usage
-    ? earlier.reduce(
-        (sum, attempt) => ({
-          uncachedInput:
-            sum.uncachedInput + (attempt.usage?.uncachedInput ?? 0),
-          cachedInput: sum.cachedInput + (attempt.usage?.cachedInput ?? 0),
-          cacheCreation:
-            sum.cacheCreation + (attempt.usage?.cacheCreation ?? 0),
-          output: sum.output + (attempt.usage?.output ?? 0),
-        }),
-        last.usage,
-      )
-    : null;
-  const cost = last.cost
-    ? {
-        ...last.cost,
-        nanoUsd: earlier
-          .reduce(
-            (sum, attempt) => sum + BigInt(attempt.cost?.nanoUsd ?? "0"),
-            BigInt(last.cost.nanoUsd),
-          )
-          .toString(),
-      }
-    : null;
-  return { ...last, usage, cost };
+  let hasUsage = false;
+  let uncachedInput = 0;
+  let cachedInput = 0;
+  let cacheCreation = 0;
+  let output = 0;
+  let costBasis: NonNullable<ScannerEvidence["cost"]> | null = null;
+  let nanoUsd = 0n;
+  for (const attempt of [...earlier, last]) {
+    if (attempt.usage) {
+      hasUsage = true;
+      uncachedInput += attempt.usage.uncachedInput;
+      cachedInput += attempt.usage.cachedInput;
+      cacheCreation += attempt.usage.cacheCreation;
+      output += attempt.usage.output;
+    }
+    if (attempt.cost) {
+      costBasis = attempt.cost;
+      nanoUsd += BigInt(attempt.cost.nanoUsd);
+    }
+  }
+  return {
+    ...last,
+    usage: hasUsage
+      ? { uncachedInput, cachedInput, cacheCreation, output }
+      : null,
+    cost: costBasis ? { ...costBasis, nanoUsd: nanoUsd.toString() } : null,
+  };
 }
 
 /** Optional operator-private store that lets a long review resume next pass. */
