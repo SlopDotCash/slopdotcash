@@ -4,8 +4,9 @@ import { inspectRepository } from "./bounded-scan";
 const enc = (text: string) => new TextEncoder().encode(text);
 
 function categories(text: string): string[] {
-  return inspectRepository({ files: [{ path: "install.sh", bytes: enc(text) }] })
-    .findings.map((finding) => finding.category);
+  return inspectRepository({
+    files: [{ path: "install.sh", bytes: enc(text) }],
+  }).findings.map((finding) => finding.category);
 }
 
 /**
