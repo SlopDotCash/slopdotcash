@@ -327,14 +327,17 @@ async function oauthCallback(
   }
   let verifier = "";
   try {
-    verifier = await decryptPkceVerifier(
-      flow.encryptedPkceVerifier,
-      flow.pkceIv,
-      flow.id,
-      deps.stateEncryptionSecret,
-    );
     let identity: Awaited<ReturnType<typeof deps.resolveGithubIdentity>>;
     try {
+      // The claim already deleted the only stored verifier. Decrypting it is
+      // as terminal as the GitHub exchange: a failure must end the flow, or
+      // the original tab keeps polling a callback that cannot be repeated.
+      verifier = await decryptPkceVerifier(
+        flow.encryptedPkceVerifier,
+        flow.pkceIv,
+        flow.id,
+        deps.stateEncryptionSecret,
+      );
       identity = await deps.resolveGithubIdentity(code, verifier);
     } catch (error) {
       await deps.persistence.failCallback(flow.id);
