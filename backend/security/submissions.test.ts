@@ -2402,6 +2402,56 @@ describe("optional GitHub forwarding of a saved report", () => {
     expect(JSON.stringify(sent.body)).not.toContain(SENTINEL);
   });
 
+  test("a decided case refuses authorization and sends nothing to GitHub", async () => {
+    const t = setup({ durable: true });
+    const accepted = await t.create(REPORTER, { report: REPORT });
+    expect(accepted.status).toBe(201);
+    const submission = accepted.body.submission as NonNullable<
+      Body["submission"]
+    >;
+    const [original] = t.cases();
+    const viewed = await t.call(
+      MAINTAINER,
+      "GET",
+      `security-cases/${original.id}`,
+    );
+    const decided = await t.call(
+      MAINTAINER,
+      "POST",
+      `security-cases/${original.id}/actions`,
+      {
+        action: "decide",
+        expectedRevision: (viewed.body.case as { revision: number }).revision,
+        idempotencyKey: t.key(),
+        outcome: "rejected",
+        severity: "high",
+        loss: "not-verified",
+        inScope: false,
+        reason: "The reproduction does not show the claimed impact.",
+        relatedParty: false,
+      },
+    );
+    expect(decided.status).toBe(200);
+    const authorize = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/authorize`,
+      {},
+    );
+    expect(authorize.status).toBe(409);
+    expect(authorize.body.error).toBe("case_decided");
+    const sent = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/send`,
+      { expectedRevision: submission.revision },
+    );
+    expect(sent.status).toBe(409);
+    expect(sent.body.error).toBe("case_decided");
+    expect(t.github.counts.posts).toBe(0);
+    expect(t.github.advisories).toHaveLength(0);
+  });
+
   test("retained legacy drafts share the screening budget and verify a grant before paid work", async () => {
     const options = { durable: false };
     const t = setup(options);

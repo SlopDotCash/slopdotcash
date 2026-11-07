@@ -54,6 +54,8 @@ type Intake = {
   canForward: boolean;
   canRetryScreening: boolean;
   canReview: boolean;
+  canRevise: boolean;
+  canAuthorize: boolean;
   reason: string | null;
 };
 type Submission = {
@@ -73,6 +75,7 @@ type Case = {
   terms: { grossMinor: string; researcherMinor: string; slopMinor: string };
   awardState: string;
   award: { grossMinor: string; researcherMinor: string; slopMinor: string };
+  intake: (Intake & { submissionId: string }) | null;
 };
 type Body = {
   recipientGithubId?: string;
@@ -2326,4 +2329,148 @@ test("durable-intake migration preserves funded historical receipts and immutabl
     sqlite.exec("UPDATE security_cases SET award_gross_minor='2000000'"),
   ).toThrow();
   expect(() => sqlite.exec("DELETE FROM security_cases")).toThrow();
+});
+
+describe("intake work after a final case decision", () => {
+  const rejection = {
+    action: "decide",
+    outcome: "rejected",
+    severity: "high",
+    loss: "not-verified",
+    inScope: false,
+    reason: "The reproduction does not show the claimed impact.",
+    relatedParty: false,
+  };
+  const intakeRow = (t: ReturnType<typeof fixture>, id: string) =>
+    t.sqlite
+      .query("SELECT * FROM security_submission_intake WHERE submission_id=?")
+      .get(id) as {
+      revision: number;
+      screening_state: string;
+      routed_at: string | null;
+      review_decision: string | null;
+    };
+  const analyses = (t: ReturnType<typeof fixture>) =>
+    (
+      t.sqlite
+        .query("SELECT COUNT(*) AS c FROM security_case_analyses")
+        .get() as {
+        c: number;
+      }
+    ).c;
+
+  test("a screening retry after the decision is refused and moves nothing", async () => {
+    const t = fixture();
+    t.failScreening(true);
+    const created = required((await t.create()).body.submission);
+    expect(created.intake.state).toBe("unavailable");
+    expect((await t.caseAction(created.caseId, { ...rejection })).status).toBe(
+      200,
+    );
+    const owners = t.notices(OWNER).length;
+    t.failScreening(false);
+    t.decision("legitimate");
+    const screened = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${created.id}/screen`,
+      { expectedRevision: intakeRow(t, created.id).revision },
+    );
+    expect(screened.status).toBe(409);
+    expect(screened.body.error).toBe("case_decided");
+    expect(intakeRow(t, created.id).screening_state).toBe("unavailable");
+    expect(intakeRow(t, created.id).routed_at).toBeNull();
+    expect(t.notices(OWNER).length).toBe(owners);
+    expect(analyses(t)).toBe(0);
+    t.sqlite.close();
+  });
+
+  test("a screen that finishes after the decision records its outcome without routing or analysis", async () => {
+    const t = fixture();
+    t.failScreening(true);
+    const created = required((await t.create()).body.submission);
+    expect(created.intake.state).toBe("unavailable");
+    t.failScreening(false);
+    t.decision("legitimate");
+    t.beforeScreen(async () => {
+      expect(
+        (await t.caseAction(created.caseId, { ...rejection })).status,
+      ).toBe(200);
+    });
+    const owners = t.notices(OWNER).length;
+    const screened = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${created.id}/screen`,
+      { expectedRevision: intakeRow(t, created.id).revision },
+    );
+    expect(screened.status).toBe(200);
+    expect(intakeRow(t, created.id).screening_state).toBe("legitimate");
+    expect(intakeRow(t, created.id).routed_at).toBeNull();
+    expect(t.notices(OWNER).length).toBe(owners);
+    expect(analyses(t)).toBe(0);
+    t.sqlite.close();
+  });
+
+  test("a routing review after the decision is refused and solicits nothing", async () => {
+    const t = fixture();
+    const created = required((await t.create()).body.submission);
+    expect((await t.caseAction(created.caseId, { ...rejection })).status).toBe(
+      200,
+    );
+    const reporters = t.notices(REPORTER).length;
+    const reviewed = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${created.id}/review`,
+      {
+        expectedRevision: intakeRow(t, created.id).revision,
+        decision: "request-information",
+        reason: "One more reproduction detail is required.",
+      },
+    );
+    expect(reviewed.status).toBe(409);
+    expect(reviewed.body.error).toBe("case_decided");
+    expect(intakeRow(t, created.id).review_decision).toBeNull();
+    expect(t.notices(REPORTER).length).toBe(reporters);
+    t.sqlite.close();
+  });
+
+  test("a decided case offers no intake action in the case or submission view", async () => {
+    const t = fixture();
+    t.decision("spam");
+    const created = required((await t.create()).body.submission);
+    const forwarded = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${created.id}/review`,
+      {
+        expectedRevision: intakeRow(t, created.id).revision,
+        decision: "forward",
+        reason: "The maintainer independently reproduced the finding.",
+      },
+    );
+    expect(forwarded.status).toBe(200);
+    expect((await t.caseAction(created.caseId, { ...rejection })).status).toBe(
+      200,
+    );
+    const caseView = required(
+      (await t.call(REPORTER, "GET", `security-cases/${created.caseId}`)).body
+        .case,
+    );
+    const caseIntake = required(caseView.intake);
+    expect(caseIntake.canRevise).toBe(false);
+    expect(caseIntake.canForward).toBe(false);
+    expect(caseIntake.canAuthorize).toBe(false);
+    expect(caseIntake.canRetryScreening).toBe(false);
+    const submission = required(
+      (await t.call(REPORTER, "GET", `security-submissions/${created.id}`)).body
+        .submission,
+    );
+    expect(submission.intake.canRevise).toBe(false);
+    expect(submission.intake.canForward).toBe(false);
+    expect(submission.intake.canAuthorize).toBe(false);
+    expect(submission.intake.canRetryScreening).toBe(false);
+    t.sqlite.close();
+  });
 });

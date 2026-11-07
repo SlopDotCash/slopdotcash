@@ -192,6 +192,21 @@ export function intakeQualified(row: StoredIntake): boolean {
     (row.review_decision === null && row.screening_state === "legitimate")
   );
 }
+/**
+ * Receipt states a human decision has settled. Screening, routing review
+ * and routing notices exist to bring a report to that decision, so they
+ * stop here — the report route in this file already refuses revisions
+ * past it. An open appeal (`disputed`) is not final: its return reopens
+ * the receipt, and intake work may still inform it.
+ */
+const FINAL_RECEIPT = ["confirmed", "duplicate", "out-of-scope", "rejected"];
+async function caseDecided(
+  deps: Pick<SecurityApiDependencies, "db">,
+  caseId: string,
+): Promise<boolean> {
+  const record = await loadCase(deps, caseId);
+  return record !== null && FINAL_RECEIPT.includes(record.receipt_state);
+}
 function screeningRecoverable(row: StoredIntake, now: Date): boolean {
   return (
     ["queued", "unavailable"].includes(row.screening_state) ||
@@ -259,6 +274,14 @@ function decorateStoredSubmission(
       record.receipt_state,
     ) &&
     !["approved", "reserved"].includes(record.award_state);
+  if (FINAL_RECEIPT.includes(record.receipt_state)) {
+    // No intake action remains once the case has its decision; the flags
+    // must not keep offering screening, routing or forwarding for it.
+    view.canReview = false;
+    view.canForward = false;
+    view.canRetryScreening = false;
+    view.canAuthorize = false;
+  }
   return { ...submissionView(row), intake: view };
 }
 export async function decorateSubmission(
@@ -283,9 +306,17 @@ export async function storedIntakeViewForCase(
   if (!stored) return null;
   const row = await loadSubmission(deps, stored.submission_id);
   if (!row) return null;
+  const view = intakeView(stored, roles, row, deps.now());
+  if (await caseDecided(deps, caseId)) {
+    view.canReview = false;
+    view.canForward = false;
+    view.canRetryScreening = false;
+    view.canAuthorize = false;
+    view.canRevise = false;
+  }
   return {
     submissionId: row.id,
-    ...intakeView(stored, roles, row, deps.now()),
+    ...view,
   };
 }
 
@@ -329,13 +360,39 @@ export async function storedIntakeViewsForCases(
       .all<SubmissionRow>();
     for (const row of rows.results ?? []) submissions.set(row.id, row);
   }
+  const decided = new Set<string>();
+  for (const part of chunked(caseIds)) {
+    const rows = await deps.db
+      .prepare(
+        `SELECT id, receipt_state FROM security_cases WHERE id IN (${part
+          .map(() => "?")
+          .join(",")})`,
+      )
+      .bind(...part)
+      .all<{ id: string; receipt_state: string }>();
+    for (const row of rows.results ?? [])
+      if (FINAL_RECEIPT.includes(row.receipt_state)) decided.add(row.id);
+  }
   const now = deps.now();
   for (const [caseId, row] of stored) {
     const submission = submissions.get(row.submission_id);
     if (!submission) continue;
+    const view = intakeView(
+      row,
+      rolesByCase.get(caseId) ?? new Set(),
+      submission,
+      now,
+    );
+    if (decided.has(caseId)) {
+      view.canReview = false;
+      view.canForward = false;
+      view.canRetryScreening = false;
+      view.canAuthorize = false;
+      view.canRevise = false;
+    }
     views.set(caseId, {
       submissionId: submission.id,
-      ...intakeView(row, rolesByCase.get(caseId) ?? new Set(), submission, now),
+      ...view,
     });
   }
   return views;
@@ -476,6 +533,9 @@ async function routedNotice(
   actorId: string | null,
 ): Promise<void> {
   if (!intakeQualified(row) || row.routed_at) return;
+  // Routing brings a report to its decision; a case decided while the
+  // screen or review was in flight gets no fresh owner notice for it.
+  if (await caseDecided(deps, row.case_id)) return;
   const submission = await loadSubmission(deps, row.submission_id);
   if (!submission) return;
   const context = await reportingContext(
@@ -654,7 +714,9 @@ export async function screenStoredReport(
   ]);
   const updated = await storedIntake(deps, id);
   if (updated && intakeQualified(updated)) {
-    await assess(updated);
+    // The screening outcome stays recorded, but a case decided while the
+    // screen ran gets no assessment or routing for the settled report.
+    if (!(await caseDecided(deps, updated.case_id))) await assess(updated);
     await routedNotice(deps, updated, null);
   }
 }
@@ -1122,6 +1184,8 @@ export async function actStoredIntake(
   const at = deps.now().toISOString();
   if (action === "screen") {
     exactKeys(body, ["expectedRevision"]);
+    if (await caseDecided(deps, stored.case_id))
+      fail(409, "case_decided", "The case already has a decision.");
     if (
       !intakeQualified(stored) &&
       (!["queued", "unavailable", "running"].includes(stored.screening_state) ||
@@ -1143,6 +1207,8 @@ export async function actStoredIntake(
         "forbidden",
         "Only a current security maintainer can review routing.",
       );
+    if (await caseDecided(deps, stored.case_id))
+      fail(409, "case_decided", "The case already has a decision.");
     if (
       !["forward", "request-information"].includes(String(body.decision)) ||
       typeof body.reason !== "string" ||
@@ -1191,7 +1257,7 @@ export async function actStoredIntake(
         "The report changed. Reload it before acting.",
       );
     const latest = (await storedIntake(deps, id)) as StoredIntake;
-    if (intakeQualified(latest))
+    if (intakeQualified(latest) && !(await caseDecided(deps, latest.case_id)))
       await scheduleAnalysis(deps, latest.case_id, null);
     await routedNotice(deps, latest, actor.githubId);
   } else if (action === "report") {
@@ -1278,6 +1344,8 @@ export async function approvedReportForForward(
 ): Promise<ReportInput | null> {
   const stored = await storedIntake(deps, id);
   if (!stored) return null;
+  if (await caseDecided(deps, stored.case_id))
+    fail(409, "case_decided", "The case already has a decision.");
   if (!intakeQualified(stored))
     fail(
       409,
