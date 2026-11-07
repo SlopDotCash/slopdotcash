@@ -419,12 +419,13 @@ function attributionDeclarationLineRecords(
       const marker = fenceMatch[1];
       const character = marker[0] as "`" | "~";
       const info = fenceMatch[2];
-      // CommonMark: a backtick fence's info string cannot contain a backtick,
-      // and a tilde fence's info string cannot contain a tilde. A line such
-      // as ` ```bun run verify``` passes.` is inline code, not a fence, so
-      // it must not hide the attribution footer that follows it.
+      // CommonMark: a backtick fence's info string cannot contain a backtick.
+      // A tilde fence has no such restriction, so `~~~a~b` still opens one.
+      // A line such as ` ```bun run verify``` passes.` is inline code, not a
+      // fence, and must not hide the attribution footer that follows it.
       const wasInsideFence = fence !== null;
-      const opensFence = fence === null && !info.includes(character);
+      const opensFence =
+        fence === null && !(character === "`" && info.includes("`"));
       const closesFence =
         fence !== null &&
         character === fence.character &&

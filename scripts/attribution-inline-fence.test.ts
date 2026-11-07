@@ -51,9 +51,24 @@ test("an inline triple-backtick span does not hide the attribution footer", () =
   ]);
 });
 
-test("an inline tilde span does not hide the attribution footer", () => {
+test("a tilde line whose info string contains a tilde still opens a fence", () => {
   const assessment = assessModelAttribution([
     source(`~~~echo~~~ is not a fence.\n\n${footer()}`),
+  ]);
+  expect(assessment.invalidMarkers).toEqual([]);
+  expect(assessment.coverage.status).toBe("missing");
+  expect(assessment.declarations).toEqual([]);
+});
+
+test("a tilde fence with a tilde in its info string hides the block and keeps the footer", () => {
+  const fenced = "~~~a~b\nIN-BLOCK-LINE\n~~~\n\nREAL-FOOTER-LINE";
+  const assessment = assessModelAttribution([
+    source(
+      `${fenced.replace(
+        "IN-BLOCK-LINE",
+        "IN-BLOCK-LINE\nAI provider/model: OpenAI / gpt-4",
+      )}\n\n${footer()}`,
+    ),
   ]);
   expect(assessment.invalidMarkers).toEqual([]);
   expect(assessment.coverage.status).toBe("complete");
