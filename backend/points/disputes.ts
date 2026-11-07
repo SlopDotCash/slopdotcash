@@ -78,9 +78,17 @@ export async function handlePointsDisputes(
     )
       fail(400, "invalid_cursor", "Invalid Points page.");
     const rows = await deps.db
-      .prepare(`SELECT json_group_array(json_object('cursor',cursor,'id',id,'payload',payload,'disputeId',disputeId)) AS rows FROM (SELECT r.rowid AS cursor,r.id,r.payload,d.appeal_key AS disputeId
+      .prepare(`SELECT json_group_array(json_object('cursor',cursor,'id',id,'payload',payload,'disputeId',disputeId,'disputeRevisionId',disputeRevisionId,'disputeResolvedAt',disputeResolvedAt)) AS rows FROM (SELECT r.rowid AS cursor,r.id,r.payload,
+      (SELECT d.appeal_key FROM points_disputes d JOIN points_revisions dr ON dr.id=d.revision_id
+      WHERE dr.source_key=r.source_key AND d.appellant_github_id=m.github_id
+      ORDER BY dr.rowid DESC,d.opened_at DESC,d.appeal_key DESC LIMIT 1) AS disputeId,
+      (SELECT d.revision_id FROM points_disputes d JOIN points_revisions dr ON dr.id=d.revision_id
+      WHERE dr.source_key=r.source_key AND d.appellant_github_id=m.github_id
+      ORDER BY dr.rowid DESC,d.opened_at DESC,d.appeal_key DESC LIMIT 1) AS disputeRevisionId,
+      (SELECT d.resolved_at FROM points_disputes d JOIN points_revisions dr ON dr.id=d.revision_id
+      WHERE dr.source_key=r.source_key AND d.appellant_github_id=m.github_id
+      ORDER BY dr.rowid DESC,d.opened_at DESC,d.appeal_key DESC LIMIT 1) AS disputeResolvedAt
       FROM points_revisions r JOIN points_members m ON m.actor_id=json_extract(r.payload,'$.award.actor.id')
-      LEFT JOIN points_disputes d ON d.revision_id=r.id AND d.appellant_github_id=m.github_id
       WHERE m.github_id=? AND (?=0 OR r.rowid<?)
         AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)
       ORDER BY r.rowid DESC LIMIT 26)`)
@@ -91,10 +99,14 @@ export async function handlePointsDisputes(
       id: string;
       payload: string;
       disputeId: string | null;
+      disputeRevisionId: string | null;
+      disputeResolvedAt: string | null;
     }[];
     const awards = records.slice(0, 25).map((row) => ({
       revisionId: row.id,
       disputeId: row.disputeId,
+      disputeRevisionId: row.disputeRevisionId,
+      disputeResolvedAt: row.disputeResolvedAt,
       award: (JSON.parse(row.payload) as PointRevision).award,
     }));
     return json(200, {
