@@ -14,11 +14,9 @@
 import { writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { buildEscrowCycle } from "../src/lib/payments/escrow-cycle";
 import type { MonthlyBase } from "../src/lib/payments/monthly-allocation";
-import { createPaymentProjectView } from "../src/lib/project-view";
 import {
   findHistoricalProject,
   type ProjectDefinition,
@@ -94,23 +92,7 @@ export function buildMonthlyBase(
   input: { projectId: string; period: string; generatedAt: string },
   snapshotBytes: Uint8Array,
   policyBytes: Uint8Array,
-  project: ProjectDefinition,
 ): MonthlyBase {
-  const snapshot = JSON.parse(new TextDecoder().decode(snapshotBytes));
-  const view = createPaymentProjectView(
-    snapshot,
-    project.id,
-    input.period,
-    undefined,
-    project,
-  );
-  // Numeric actor IDs come from the immutable node IDs; no lookup is needed.
-  const identities = view.leaders.map((leader) => {
-    const githubUserId = githubUserIdFromNodeId(leader.actor.id);
-    if (!githubUserId)
-      throw new Error(`No numeric GitHub identity for ${leader.actor.login}`);
-    return { nodeId: leader.actor.id, githubUserId, login: leader.actor.login };
-  });
   const proposal = buildEscrowCycle(
     {
       projectId: input.projectId,
@@ -118,7 +100,7 @@ export function buildMonthlyBase(
       generatedAt: input.generatedAt,
     },
     snapshotBytes,
-    new TextEncoder().encode(JSON.stringify(identities)),
+    null,
     policyBytes,
   );
   return {
@@ -185,7 +167,6 @@ export async function prepareMonthlyBases(options: {
       { projectId: policy.project.id, period, generatedAt },
       snapshotBytes,
       policy.bytes,
-      policy.project,
     );
     if (BigInt(base.capBase) === 0n) {
       result.skipped.push(policy.project.id);

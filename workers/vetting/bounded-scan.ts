@@ -848,13 +848,20 @@ function checkText(
   surfaces: ScanSurface[],
   evidenceText = text,
   origin?: (index: number) => number,
+  nonMatches?: Set<RegExp>,
 ): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const rule of RULES) {
     if (rule.surfaces && !rule.surfaces.some((s) => surfaces.includes(s)))
       continue;
     const match = rule.pattern.exec(text);
-    if (match === null) continue;
+    if (match === null) {
+      // The caller already paid for this full scan of the text; recording
+      // the proven non-match lets a later pass over the same text skip
+      // re-scanning a pattern that cannot match it.
+      nonMatches?.add(rule.pattern);
+      continue;
+    }
     const at = origin?.(match.index) ?? match.index;
     findings.push({
       severity: rule.severity,
@@ -945,17 +952,26 @@ const SIGNAL_CONTEXT = 1536;
  * bulk file, with character offsets; null when there is none. The
  * deterministic checks still read the whole file.
  */
-export function signalExcerpt(path: string, text: string): string | null {
+export function signalExcerpt(
+  path: string,
+  text: string,
+  nonMatches?: ReadonlySet<RegExp>,
+): string | null {
   const matches: [number, number][] = [];
   for (const pattern of [
     OBFUSCATION,
     DOWNLOAD,
     ...RULES.map((rule) => rule.pattern),
-  ])
+  ]) {
+    // A pattern the deterministic pass already proved cannot match this
+    // exact text contributes no window; re-scanning it would repeat the
+    // most expensive part of that pass for an empty result.
+    if (nonMatches?.has(pattern)) continue;
     for (const match of text.matchAll(
       new RegExp(pattern.source, `g${pattern.flags.replace("g", "")}`),
     ))
       matches.push([match.index, Math.min(match[0].length, 4096)]);
+  }
   if (matches.length === 0) return null;
   matches.sort((a, b) => a[0] - b[0]);
   const windows: [number, number][] = [];
@@ -1645,6 +1661,8 @@ export function inspectRepository(input: {
     text: string;
     surfaces: ScanSurface[];
     flagged: boolean;
+    /** Rule patterns the deterministic pass proved cannot match `text`. */
+    nonMatches?: ReadonlySet<RegExp>;
   };
   const candidates: Candidate[] = [];
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
@@ -1723,12 +1741,14 @@ export function inspectRepository(input: {
         ? xmlAttributeRuleText(text, msbuild)
         : undefined;
     const ruleText = attributes?.text ?? text;
+    const provenNonMatches = new Set<RegExp>();
     const found = checkText(
       file.path,
       ruleText,
       surfaces,
       text,
       attributes?.origin,
+      provenNonMatches,
     );
     findings.push(...found);
     const hooks = installHookCommands(file.path, text);
@@ -1749,6 +1769,9 @@ export function inspectRepository(input: {
       text,
       surfaces,
       flagged: found.length > 0 || hooks.length > 0,
+      // The recorded non-matches were proven against `ruleText`; they are
+      // only valid for the excerpt pass when that is the text it reads.
+      ...(ruleText === text ? { nonMatches: provenNonMatches } : {}),
     });
   }
   // A large text file is reviewed in consecutive parts; none is skipped.
@@ -1790,7 +1813,9 @@ export function inspectRepository(input: {
     for (const candidate of candidates) {
       const kind = bulkClass(candidate.path, candidate.surfaces);
       const excerpt =
-        kind === null ? null : signalExcerpt(candidate.path, candidate.text);
+        kind === null
+          ? null
+          : signalExcerpt(candidate.path, candidate.text, candidate.nonMatches);
       // Signals too dense to excerpt in one item keep the whole file reviewed.
       if (
         kind === null ||
