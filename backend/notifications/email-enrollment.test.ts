@@ -663,6 +663,98 @@ test("address changes bind new consent, cancel stale deliveries and reject old u
   h.sqlite.close();
 });
 
+test("re-verifying the current address keeps its version, queued deliveries and unsubscribe capability", async () => {
+  const h = await setup();
+  await h.enroll("member@example.com");
+  const initial = await h.verify();
+  const version = initial.body.destinationVersion as string;
+  const unsubscribe = await emailUnsubscribeToken(KEY, version);
+  h.sqlite
+    .query(
+      "INSERT INTO notification_email_unsubscribe_tokens(token_hash,destination_version,issued_at) VALUES(?,?,?)",
+    )
+    .run(
+      await verificationTokenHash(unsubscribe),
+      version,
+      h.worker.now().toISOString(),
+    );
+  h.activity("same-address-activity");
+  h.sqlite
+    .query(
+      "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES('same-address-wallet',?,'wallet_changed','synthetic','/inbox',?,?)",
+    )
+    .run(MEMBER, h.worker.now().toISOString(), h.worker.now().toISOString());
+  h.security("same-address-security");
+  h.advance();
+  await h.enroll("member@example.com", MEMBER, {
+    enabled: true,
+    securityEnabled: true,
+  });
+  const reverified = await h.verify();
+  expect(reverified.body).toMatchObject({
+    email: "member@example.com",
+    enabled: true,
+    securityEnabled: true,
+    destinationVersion: version,
+  });
+  await dispatchActivityMail(h.worker);
+  await dispatchSecurityMail(h.worker);
+  // Two verification mails, then the queued activity, wallet and security
+  // copies still reach the unchanged address.
+  expect(h.mail).toHaveLength(5);
+  expect(h.mail.slice(2).map((message) => message.to)).toEqual([
+    "member@example.com",
+    "member@example.com",
+    "member@example.com",
+  ]);
+  expect(
+    (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+  ).toBe(200);
+  h.sqlite.close();
+});
+
+test("re-verifying after a consent toggle does not replay the old disabled-consent row", async () => {
+  const h = await setup();
+  await h.enroll("member@example.com", MEMBER, {
+    enabled: false,
+    securityEnabled: true,
+  });
+  const first = await h.verify();
+  const version = first.body.destinationVersion as string;
+  h.advance();
+  await h.enroll("member@example.com", MEMBER, {
+    enabled: true,
+    securityEnabled: true,
+  });
+  await h.verify();
+  h.advance();
+  h.activity("queued-after-opt-in");
+  h.advance();
+  await h.enroll("member@example.com", MEMBER, {
+    enabled: true,
+    securityEnabled: true,
+  });
+  const reverified = await h.verify();
+  expect(reverified.body).toMatchObject({
+    destinationVersion: version,
+    enabled: true,
+    securityEnabled: true,
+  });
+  const outbox = h.sqlite
+    .query(
+      "SELECT state FROM activity_notification_outbox WHERE event_key='queued-after-opt-in'",
+    )
+    .get() as { state: string };
+  expect(outbox.state).toBe("queued");
+  const prefs = h.sqlite
+    .query(
+      "SELECT enabled, revision FROM notification_email_preferences WHERE github_id=?",
+    )
+    .get(MEMBER) as { enabled: number; revision: number };
+  expect(prefs.enabled).toBe(1);
+  h.sqlite.close();
+});
+
 test.each(["/verification", "/verify"])(
   "email %s returns a client error for malformed JSON",
   async (path) => {

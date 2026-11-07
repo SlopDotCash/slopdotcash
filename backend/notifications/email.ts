@@ -460,8 +460,27 @@ async function verifyEmail(
     )
     .bind(githubId)
     .first<{ revision: number }>();
-  const version = randomEmailToken();
   const at = deps.now().toISOString();
+  // Re-verifying the address already on file is not an address change: PRD
+  // section 9 binds new consent to a *changed* address, so this destination
+  // keeps its version and the consent, queued deliveries and unsubscribe
+  // capabilities bound to that version stay in force. A changed address
+  // still rotates to a fresh version below. The preference-revision guard
+  // in the batch still refuses if a competing save lands first.
+  const tokenHash = await verificationTokenHash(body.token);
+  const pending = await deps.db
+    .prepare(
+      "SELECT email FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?",
+    )
+    .bind(tokenHash, githubId, at)
+    .first<{ email: string }>();
+  const current = pending ? await enrolledDestination(deps.db, githubId) : null;
+  const version =
+    current &&
+    pending &&
+    current.email.toLowerCase() === pending.email.toLowerCase()
+      ? current.destinationVersion
+      : randomEmailToken();
   const result = await emailBatch(deps, [
     deps.db
       .prepare(
@@ -470,22 +489,28 @@ async function verifyEmail(
       .bind(
         at,
         version,
-        await verificationTokenHash(body.token),
+        tokenHash,
         githubId,
         at,
         githubId,
         prior?.revision ?? null,
       ),
     deps.db
+      // Scope both upserts to the row this token just consumed. Reusing the
+      // destination version across verifications of the same address leaves
+      // several consumed rows on one version; without the token the SELECTs
+      // replay every historical row in (github_id, created_at) order, so an
+      // older disabled-consent row fires the opt-out triggers and suppresses
+      // queued mail before the newest row restores consent.
       .prepare(`INSERT INTO notification_email_destinations(github_id,email,destination_version,verified_at)
-      SELECT github_id,email,destination_version,consumed_at FROM notification_email_verifications WHERE github_id=? AND destination_version=?
+      SELECT github_id,email,destination_version,consumed_at FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND destination_version=?
       ON CONFLICT(github_id) DO UPDATE SET email=excluded.email,destination_version=excluded.destination_version,verified_at=excluded.verified_at`)
-      .bind(githubId, version),
+      .bind(tokenHash, githubId, version),
     deps.db
       .prepare(`INSERT INTO notification_email_preferences(github_id,enabled,security_enabled,destination_version,updated_at)
-      SELECT github_id,activity_enabled,security_enabled,destination_version,consumed_at FROM notification_email_verifications WHERE github_id=? AND destination_version=?
+      SELECT github_id,activity_enabled,security_enabled,destination_version,consumed_at FROM notification_email_verifications WHERE token_hash=? AND github_id=? AND destination_version=?
       ON CONFLICT(github_id) DO UPDATE SET enabled=excluded.enabled,security_enabled=excluded.security_enabled,destination_version=excluded.destination_version,updated_at=excluded.updated_at`)
-      .bind(githubId, version),
+      .bind(tokenHash, githubId, version),
   ]);
   if (result[0].meta?.changes !== 1)
     return json(409, { error: "verification_invalid" });
