@@ -107,6 +107,9 @@ function registry() {
     scans: [] as string[],
     scanAnswer: { state: "queued" } as ScanRequest,
     now: NOW,
+    ownerFindings: null as Awaited<
+      ReturnType<NonNullable<ProjectApiDependencies["ownerRepositoryFindings"]>>
+    >,
   };
   const deps: ProjectApiDependencies = {
     persistence,
@@ -139,6 +142,7 @@ function registry() {
       state.scans.push(`${project.id}@${project.revision}: ${reason}`);
       return state.scanAnswer;
     },
+    ownerRepositoryFindings: async () => state.ownerFindings,
   };
   const call = async (
     method: string,
@@ -2974,4 +2978,89 @@ test("a steward who is also a moderator cannot decide the appeal they filed", as
   );
   expect(independent.status).toBe(409);
   expect(independent.body).toMatchObject({ error: "revision_pending" });
+});
+
+test("anonymous project read never includes owner repository finding detail", async () => {
+  const h = registry();
+  try {
+    expect(
+      (await h.create("open-registry", "owner/open-registry")).status,
+    ).toBe(201);
+    h.state.clearance = {
+      state: "quarantined",
+      assessment: {
+        id: "vet_00000000000000000000000000000001",
+        revision: 1,
+        state: "incomplete",
+        commitSha: "a".repeat(40),
+        templateSha256: "d".repeat(64),
+        policyVersion: "fixture",
+        requestedAt: NOW,
+        completedAt: NOW,
+        modelRuns: [],
+        artifacts: 0,
+        heldArtifacts: 0,
+        findingsLocation: "repository",
+      },
+    };
+    h.state.ownerFindings = {
+      severities: { critical: 1, high: 0, medium: 0, low: 0, info: 0 },
+      paths: ["src/wallet/keys.ts"],
+      pathTotal: 1,
+      unparseableEvidence: 0,
+    };
+    const publicResponse = await handleProjectApi(
+      new Request("https://slop.cash/api/v1/projects/open-registry"),
+      h.deps,
+    );
+    expect(publicResponse).toBeTruthy();
+    const body = (await publicResponse?.json()) as {
+      vetting: Record<string, unknown>;
+    };
+    expect(body.vetting.state).toBe("quarantined");
+    const assessment = body.vetting.assessment as Record<string, unknown>;
+    expect(assessment.findingsLocation).toBe("repository");
+    expect(assessment.repositoryFindingSeverities).toBeUndefined();
+    expect(assessment.repositoryFindingPaths).toBeUndefined();
+
+    // A signed-in non-owner still gets the public location copy only.
+    h.state.access = { installation: "missing" };
+    const denied = await h.call(
+      "POST",
+      "project-setup/open-registry/check",
+      OTHER,
+      {},
+    );
+    expect(denied.status).toBe(200);
+    const setup = denied.body.setup as {
+      checks: { scan: { message: string } };
+      nextAction: { kind: string };
+    };
+    expect(setup.checks.scan.message).toBe(
+      "Findings in the project repository block clearance.",
+    );
+    expect(setup.checks.scan.message).not.toContain("src/wallet/keys.ts");
+
+    // Verified owner authority receives the private detail in setup only.
+    h.state.access = {
+      installation: "installed",
+      installationId: 42,
+      permission: "admin",
+      roleName: "admin",
+    };
+    const owner = await h.call(
+      "POST",
+      "project-setup/open-registry/check",
+      OWNER,
+      {},
+    );
+    expect(owner.status).toBe(200);
+    const ownerSetup = owner.body.setup as {
+      checks: { scan: { message: string } };
+    };
+    expect(ownerSetup.checks.scan.message).toContain("1 critical");
+    expect(ownerSetup.checks.scan.message).toContain("src/wallet/keys.ts");
+  } finally {
+    h.sqlite.close();
+  }
 });

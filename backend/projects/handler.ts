@@ -59,6 +59,7 @@ import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
+import type { RepositoryFindingOwnerDetail } from "../vetting/summary";
 import {
   PROJECT_API_CONTRACT_VERSION,
   type ProjectPersistence,
@@ -157,6 +158,14 @@ export type ProjectApiDependencies = {
   repositoryAccess?: RepositoryAccessReader;
   /** Queues a malicious-code scan of a project's current revision. */
   requestScan?: ScanRequester;
+  /**
+   * Private owner detail for a quarantined assessment (issue #1991 option 2).
+   * Loaded only for verified repository authority in setup checks. Must never
+   * feed the public project read or AssessmentSummary.
+   */
+  ownerRepositoryFindings?: (
+    assessmentId: string,
+  ) => Promise<RepositoryFindingOwnerDetail | null>;
   /** Finalized funds in a reviewed, separate bounty vault. Never client evidence. */
   securityProgramFunds?: (
     projectId: string,
@@ -1179,6 +1188,16 @@ async function runSetupCheck(
     });
     activatedRevision = project.revision;
   }
+  let ownerRepositoryFindings: RepositoryFindingOwnerDetail | null = null;
+  if (
+    authority.state === "verified" &&
+    clearance.state === "quarantined" &&
+    deps.ownerRepositoryFindings !== undefined
+  ) {
+    ownerRepositoryFindings = await deps.ownerRepositoryFindings(
+      clearance.assessment.id,
+    );
+  }
   return projectSetupStatus({
     project,
     restriction,
@@ -1188,6 +1207,7 @@ async function runSetupCheck(
     scanRequest,
     activatedRevision,
     checkedAt: deps.now().toISOString(),
+    ownerRepositoryFindings,
   });
 }
 

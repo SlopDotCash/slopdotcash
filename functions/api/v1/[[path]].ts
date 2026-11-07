@@ -77,6 +77,7 @@ import {
   vettingScanRequester,
   vettingServiceAvailable,
 } from "../../../backend/vetting/handler";
+import { repositoryFindingOwnerDetail } from "../../../backend/vetting/summary";
 import {
   type EvmEscrowConfig,
   readEvmBindingVersion,
@@ -303,6 +304,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         () => livePin(manifest),
         forReinstatement,
       ),
+    ownerRepositoryFindings: async (assessmentId) => {
+      const assessment = await vetting.getAssessment(assessmentId);
+      return repositoryFindingOwnerDetail(assessment?.result ?? null);
+    },
     adminGithubIds,
     moderatorGithubIds,
     now,
