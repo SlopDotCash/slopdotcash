@@ -49,6 +49,7 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
+import { downgradeLiteralMisread } from "./literal-misread";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -1346,6 +1347,11 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // A finding whose premise a parser can settle does not publish: when the
+  // summary calls a 64-character hex string not a sha256 value, the value
+  // itself proves the claim wrong (issue #1930). Downgrade here, before the
+  // category drives any label, hold or closure decision.
+  verdict = downgradeLiteralMisread(verdict) ?? verdict;
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
