@@ -277,11 +277,13 @@ export function EarningsPage({
 
   useEffect(() => {
     if (pendingChange) changeHeading.current?.focus();
-    else if (returnFocus.current) {
+    else if (returnFocus.current && busy === null) {
+      // The wallet button is disabled while its flow runs, so a focus
+      // restore requested on confirm waits here until the flow settles.
       document.getElementById(`${heading}-${returnFocus.current}`)?.focus();
       returnFocus.current = null;
     }
-  }, [pendingChange, heading]);
+  }, [pendingChange, heading, busy]);
 
   useEffect(() => {
     if (picker) dialog.current?.showModal();
@@ -422,6 +424,7 @@ export function EarningsPage({
   function confirmChange() {
     if (!pendingChange) return;
     const { family, address, sign } = pendingChange;
+    returnFocus.current = family;
     setPendingChange(null);
     void walletStep(family, () => registerFamily(family, address, sign));
   }
