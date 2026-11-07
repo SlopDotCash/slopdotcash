@@ -2327,3 +2327,76 @@ test("durable-intake migration preserves funded historical receipts and immutabl
   ).toThrow();
   expect(() => sqlite.exec("DELETE FROM security_cases")).toThrow();
 });
+
+describe("case-view revision gate", () => {
+  test("the case view offers revision exactly when the report action accepts it", async () => {
+    const t = fixture();
+    const accepted = await t.create();
+    expect(accepted.status).toBe(201);
+    const submission = required(accepted.body.submission);
+    const caseIntake = async () =>
+      (
+        (await t.call(REPORTER, "GET", `security-cases/${submission.caseId}`))
+          .body.case as unknown as { intake: { canRevise: boolean } }
+      ).intake;
+    const asked = await t.caseAction(submission.caseId, {
+      action: "request-information",
+      reason: "Please add the exact-head test evidence.",
+    });
+    expect(asked.status).toBe(200);
+    // The owner asked for evidence on the case: the case view must offer the
+    // revision the report action accepts, like the submission view does.
+    expect((await caseIntake()).canRevise).toBe(true);
+    const current = await t.call(
+      REPORTER,
+      "GET",
+      `security-submissions/${submission.id}`,
+    );
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      {
+        expectedRevision: required(current.body.submission).intake.revision,
+        report: {
+          ...REPORT,
+          description: `${REPORT.description} Exact-head test evidence added.`,
+        },
+      },
+    );
+    expect(revised.status).toBe(200);
+    expect(required(revised.body.submission).intake.reportVersion).toBe(2);
+    // Once the case is decided, the case view stops offering revision and
+    // the report action refuses it.
+    const decided = await t.caseAction(submission.caseId, {
+      action: "decide",
+      outcome: "confirmed",
+      severity: "critical",
+      loss: "verified-potential",
+      inScope: true,
+      reason: "The owner completed the isolated reproduction.",
+      relatedParty: false,
+      rootCauseKey: "withdrawal-share-rounding",
+    });
+    expect(decided.status).toBe(200);
+    expect((await caseIntake()).canRevise).toBe(false);
+    const latest = await t.call(
+      REPORTER,
+      "GET",
+      `security-submissions/${submission.id}`,
+    );
+    const refused = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${submission.id}/report`,
+      {
+        expectedRevision: required(latest.body.submission).intake.revision,
+        report: {
+          ...REPORT,
+          description: `${REPORT.description} Late extra evidence.`,
+        },
+      },
+    );
+    expect(refused.status).toBe(409);
+  });
+});
