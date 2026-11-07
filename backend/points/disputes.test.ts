@@ -995,3 +995,131 @@ test("triage resolves the current repository path after a project rename or tran
     globalThis.fetch = nativeFetch;
   }
 });
+
+test("an open dispute on an earlier revision blocks a second dispute on the current revision", async () => {
+  const h = await fixture();
+  const input = {
+    revisionId: h.revision.id,
+    reason: "The accepted work was credited to the wrong month.",
+  };
+  const created = await (await h.call("", input)).json();
+  expect(created.state).toBe("triage");
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const second = await h.call("", {
+    revisionId: successor.id,
+    reason: "The correction is still wrong.",
+  });
+  expect(second.status).toBe(409);
+  expect((await second.json()).error).toBe("already_submitted");
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM notifications").get(),
+  ).toEqual({ n: 1 });
+  expect(h.started).toEqual([created.id]);
+  // The original dispute itself stays reachable and retryable.
+  expect((await h.call("", input)).status).toBe(201);
+  const detail = await (await h.call(`/${created.id}`)).json();
+  expect(detail.revision.id).toBe(h.revision.id);
+  expect(detail.reason).toBe(input.reason);
+});
+
+test("an open dispute blocks a second dispute after a correction re-credits another recipient", async () => {
+  const h = await fixture();
+  const bob = { githubId: "44", githubLogin: "bob", node: btoa("04:User44") };
+  const bobToken = "c".repeat(48);
+  h.sqlite
+    .query(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1)",
+    )
+    .run(bob.node, bob.githubId, bob.githubLogin, NOW);
+  h.sqlite
+    .query(
+      "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
+    )
+    .run(await sha256Hex(bobToken), bob.node, "2026-10-31T14:00:00.000Z");
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The accepted work was credited to the wrong month.",
+    })
+  ).json();
+  expect(created.state).toBe("triage");
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: {
+      ...record.award,
+      actor: { id: bob.node, login: bob.githubLogin },
+      amount: 30,
+    },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const second = await h.call(
+    "",
+    { revisionId: successor.id, reason: "The correction is still wrong." },
+    bobToken,
+  );
+  expect(second.status).toBe(409);
+  expect((await second.json()).error).toBe("already_submitted");
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM notifications").get(),
+  ).toEqual({ n: 1 });
+  expect(h.started).toEqual([created.id]);
+});
+
+test("a corrected revision can be disputed after the earlier dispute is resolved", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The accepted work was credited to the wrong month.",
+    })
+  ).json();
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "Original source needs review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  expect(
+    (
+      await h.call(
+        `/${created.id}`,
+        { action: "deny", reason: "The retained record is supported." },
+        otherToken,
+      )
+    ).status,
+  ).toBe(200);
+  const { id: _, ...record } = h.revision;
+  const changed = {
+    ...record,
+    previous: h.revision.id,
+    award: { ...record.award, amount: 30 },
+  };
+  const successor: PointRevision = { ...changed, id: pointRevisionId(changed) };
+  h.insert(successor);
+  const second = await h.call("", {
+    revisionId: successor.id,
+    reason: "The corrected amount is still wrong.",
+  });
+  expect(second.status).toBe(201);
+  expect((await second.json()).id).not.toBe(created.id);
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 2 });
+});

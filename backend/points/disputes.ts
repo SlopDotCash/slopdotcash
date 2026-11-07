@@ -126,12 +126,19 @@ export async function handlePointsDisputes(
         "Only the recipient can dispute this Points record.",
       );
     const id = `points-dispute:${await sha256Hex(`${body.revisionId}:${actor.githubId}`)}`;
+    // The guard is chain-wide, not per appellant: a correction revision can
+    // re-credit the same logical record to another recipient, and a second
+    // open dispute on that record would recreate the moderator race this
+    // block exists to prevent. A resolved dispute still leaves the chain
+    // disputable, so only unresolved disputes block.
     await deps.db.batch([
       deps.db
         .prepare(`INSERT OR IGNORE INTO points_disputes
         (appeal_key,revision_id,item_node_id,appellant_github_id,statement,opened_at,due_at)
         SELECT ?,r.id,r.id,?,?,?,? FROM points_revisions r
-        WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)`)
+        WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)
+        AND NOT EXISTS(SELECT 1 FROM points_disputes d JOIN points_revisions dr ON dr.id=d.revision_id
+        WHERE dr.source_key=r.source_key AND d.resolved_at IS NULL)`)
         .bind(
           id,
           actor.githubId,
@@ -148,12 +155,28 @@ export async function handlePointsDisputes(
       .prepare("SELECT statement FROM points_disputes WHERE appeal_key=?")
       .bind(id)
       .first<{ statement: string }>();
-    if (!stored)
+    if (!stored) {
+      const open = await deps.db
+        .prepare(
+          `SELECT d.appeal_key FROM points_disputes d
+          JOIN points_revisions dr ON dr.id=d.revision_id
+          JOIN points_revisions r ON r.source_key=dr.source_key
+          WHERE r.id=? AND d.resolved_at IS NULL LIMIT 1`,
+        )
+        .bind(body.revisionId)
+        .first<{ appeal_key: string }>();
+      if (open)
+        fail(
+          409,
+          "already_submitted",
+          "This Points record already has a dispute. Open it in Inbox.",
+        );
       fail(
         409,
         "superseded",
         "This Points record has a newer revision. Dispute the current record instead.",
       );
+    }
     if (stored.statement !== body.reason.trim())
       fail(
         409,
