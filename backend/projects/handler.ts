@@ -1972,7 +1972,7 @@ async function replaceProjectManifest(
   if (current === null) fail(404, "not_found", "Project not found");
   if (current.revision !== expectedRevision)
     fail(409, "stale_revision", "The project changed since you loaded it");
-  const { manifest } = canonicalManifest(
+  const { manifest, text } = canonicalManifest(
     await verifiedBountyAmount(
       await verifiedRewardAsset(
         body.manifest,
@@ -1986,6 +1986,16 @@ async function replaceProjectManifest(
   );
   if (manifest.id !== projectId)
     fail(422, "invalid_manifest", "Project id cannot change");
+  // A revision that changes nothing must not mint a new skill version: the
+  // owner path refuses the same submission with no_change, and the admin
+  // editor already disables a no-change save. Without this check an
+  // unchanged manifest still appends a revision, rebinds every published
+  // skill to the new revision number and notifies members of a change that
+  // never happened.
+  if (
+    (await sha256Hex(new TextEncoder().encode(text))) === current.manifestSha256
+  )
+    fail(422, "no_change", "The revision changes nothing");
   assertReviewBudgetTransition(current.manifest, manifest, deps.now());
   const updated = await appendRevision(request, deps, {
     current,

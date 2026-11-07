@@ -656,6 +656,53 @@ describe("project registry API", () => {
     expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
   });
 
+  test("an admin revision that changes nothing is refused instead of minting a new skill version", async () => {
+    access = ADMIN_ACCESS;
+    await listProject();
+    const current = await persistence.getProject("open-registry");
+    if (!current) throw new Error("Missing listed project");
+    // The owner path already refuses this exact submission with no_change;
+    // the admin exception path must not append a phantom revision either:
+    // a new revision number alone rebinds the published skills and notifies
+    // members although the manifest digest is unchanged.
+    const unchanged = await call(
+      "PUT",
+      "admin/projects/open-registry/manifest",
+      "admin",
+      {
+        manifest: current.manifest,
+        expectedRevision: current.revision,
+        reason: "Republish unchanged",
+      },
+    );
+    expect(unchanged.status).toBe(422);
+    expect((await unchanged.json()).error).toBe("no_change");
+    const after = await persistence.getProject("open-registry");
+    expect(after?.revision).toBe(current.revision);
+    expect(after?.manifestSha256).toBe(current.manifestSha256);
+    expect(
+      await persistence.getRevisionText("open-registry", current.revision + 1),
+    ).toBeNull();
+    // A real admin change still publishes as the next revision.
+    const changed = await call(
+      "PUT",
+      "admin/projects/open-registry/manifest",
+      "admin",
+      {
+        manifest: {
+          ...current.manifest,
+          headline: "Reproducible tooling, revised by an admin.",
+        },
+        expectedRevision: current.revision,
+        reason: "Revise the headline",
+      },
+    );
+    expect(changed.status).toBe(200);
+    expect((await persistence.getProject("open-registry"))?.revision).toBe(
+      current.revision + 1,
+    );
+  });
+
   test("owners create private bounty pledges and prefunded terms require current verified vault funds", async () => {
     access = ADMIN_ACCESS;
     const program: SecurityBountyTerms = {
