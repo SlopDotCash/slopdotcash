@@ -1409,6 +1409,20 @@ function ProjectBountyIntroduction({
 }) {
   const terms = project.securityBounty;
   if (!terms) return null;
+  // The bounty page replaces the ordinary project page, so it must apply
+  // the same participation gates before inviting reports: an archived,
+  // permission-required or paused project is not collecting work.
+  if (project.participation !== undefined || project.status === "paused") {
+    return (
+      <section className="project-hero">
+        <div className="shell">
+          <ProjectHeader project={project} />
+          <ProjectRewardSummary project={project} />
+          <ProjectParticipation project={project} />
+        </div>
+      </section>
+    );
+  }
   const origin = window.location.origin;
   const prompt = `Read ${origin}/SKILL.md and follow its private security reporting workflow for github.com/${terms.intake.repository}.`;
   return (
