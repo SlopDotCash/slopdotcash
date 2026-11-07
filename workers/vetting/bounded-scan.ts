@@ -214,6 +214,20 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * Metro loads `metro.config.<ext>` by evaluating it as code on every
+ * bundle and dev-server run, in each of the spellings its config
+ * search looks up, so the file is build-time code like a Makefile,
+ * never parsed configuration. The search looks up the same spellings
+ * under the `.config/` prefix too (`path.join(".config", "metro")`
+ * in metro-config's `SEARCH_PLACES`), so that location is the same
+ * build-time code. The `.json` spelling stays out for both prefixes:
+ * the search finds it too, but Metro parses it as data instead of
+ * evaluating it.
+ */
+const METRO_CONFIG = /^metro\.config\.[cm]?[jt]s$/u;
+/** `.config/metro.<ext>` at any depth; tested against the lowercased path. */
+const METRO_CONFIG_DIR = /(?:^|\/)\.config\/metro\.[cm]?[jt]s$/u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -283,6 +297,8 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    METRO_CONFIG.test(name) ||
+    METRO_CONFIG_DIR.test(lower) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
