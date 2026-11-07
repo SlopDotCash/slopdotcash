@@ -6,12 +6,13 @@ import type {
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { applicationManifest } from "../../tests/project-application-manifest";
-import { projectRestriction } from "./enforcement";
+import { planEnforcement, projectRestriction } from "./enforcement";
 import { projectSetupStatus } from "./setup";
 
 const at = "2026-11-05T00:00:00.000Z";
 const moderator = { githubId: "900", githubLogin: "mod-a" };
 const owner = { githubId: "100", githubLogin: "owner-a" };
+const maintainer = { githubId: "200", githubLogin: "maint-a" };
 
 const project: ProjectRecord = {
   id: "restricted-fixture",
@@ -76,6 +77,27 @@ const appealDenial = record({
   afterRevision: null,
   afterManifestSha256: null,
 });
+const maintainerBan = (sequence: number) =>
+  record({
+    sequence,
+    action: "ban",
+    stateAfter: "banned",
+    appealAfter: "none",
+    maintainerBans: [maintainer],
+  });
+const accountAppeal = (sequence: number) =>
+  record({
+    sequence,
+    action: "request_reinstatement",
+    stateAfter: "banned",
+    appealAfter: "requested",
+    actor: maintainer,
+    actorRole: "banned-account",
+    decisionSource: "owner-request",
+    result: "no_revision_needed",
+    afterRevision: null,
+    afterManifestSha256: null,
+  });
 
 const cleared: VettingClearance = {
   state: "cleared",
@@ -127,5 +149,43 @@ describe("restricted setup status next action", () => {
     const result = status([quarantine, appealRequest, appealDenial]);
     expect(result.state).toBe("restricted");
     expect(result.nextAction.message).toContain("may request reinstatement");
+  });
+
+  test("invites a project request while only an account appeal is open", () => {
+    const records = [quarantine, maintainerBan(2), accountAppeal(3)];
+    const result = status(records);
+    expect(result.state).toBe("restricted");
+    expect(result.nextAction.message).toContain("may request reinstatement");
+    expect(result.nextAction.message).not.toContain(
+      "A reinstatement request is open",
+    );
+    // The enforcement path agrees: no project appeal is open, so a project
+    // filing is accepted instead of refused with appeal_open.
+    expect(() =>
+      planEnforcement({
+        action: "request_reinstatement",
+        actor: owner,
+        actorRole: "project-steward",
+        project,
+        restriction: projectRestriction(project.id, records),
+        listedBefore: false,
+      }),
+    ).not.toThrow();
+  });
+
+  test("invites a project request after a denial while an account appeal is open", () => {
+    const records = [
+      quarantine,
+      appealRequest,
+      appealDenial,
+      maintainerBan(4),
+      accountAppeal(5),
+    ];
+    const result = status(records);
+    expect(result.state).toBe("restricted");
+    expect(result.nextAction.message).toContain("may request reinstatement");
+    expect(result.nextAction.message).not.toContain(
+      "A reinstatement request is open",
+    );
   });
 });

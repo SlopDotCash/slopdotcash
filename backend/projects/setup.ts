@@ -25,7 +25,7 @@ import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { quarantinedScanMessage } from "../vetting/summary";
 import type { RepositoryControl } from "./contracts";
-import type { ProjectRestriction } from "./enforcement";
+import { type ProjectRestriction, projectAppealState } from "./enforcement";
 import { type GithubFetch, githubJson } from "./github-lookup";
 
 /**
@@ -334,7 +334,8 @@ export function projectSetupStatus(input: {
       "restricted",
       restriction.state !== "clear" || scan.state === "banned"
         ? `This project is ${restriction.state === "clear" ? "banned" : restriction.state}. Contributor work is closed. ${
-            restriction.state !== "clear" && restriction.appeal === "requested"
+            restriction.state !== "clear" &&
+            projectAppealState(restriction) === "requested"
               ? "A reinstatement request is open. A moderator who did not place the restriction decides it."
               : "The steward or the account that created the project may request reinstatement."
           }`
