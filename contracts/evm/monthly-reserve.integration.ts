@@ -1145,13 +1145,12 @@ try {
       evmAllocationRoot(entries),
     ) as `0x${string}`,
   });
-  assert.throws(
-    () => buildCommitMonthlyCalldata(period, entries, legacySignature),
-    /500,000 gas budget supports at most 3.*bounded V2 reserve\/leaf settlement/,
-    "the production legacy boundary directs oversized allocations to V2",
+  assert.match(
+    buildCommitMonthlyCalldata(period, entries, legacySignature),
+    /^0x[0-9a-f]+$/,
+    "legacy calldata construction leaves gas admission to the deployment-aware executor",
   );
-  // Encode the retired unbounded path only to retain measured regressions against
-  // the reviewed bytecode; production callers cannot construct oversized bytes.
+  // Keep an independent ABI encoding for measured regressions against the reviewed bytecode.
   const unboundedLegacyCalldata = (
     batch: readonly MonthlyAllocationEntry[],
     signature: `0x${string}`,

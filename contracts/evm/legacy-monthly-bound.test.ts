@@ -11,26 +11,14 @@ const entry = (index: number): MonthlyAllocationEntry => ({
   sourceDigest: `0x${(index + 1).toString(16).padStart(64, "0")}`,
 });
 
-describe("legacy whole-array monthly gas bound", () => {
-  test("accepts the measured maximum historical batch", () => {
+describe("legacy whole-array monthly calldata", () => {
+  test("encodes four awards for deployment-aware gas admission", () => {
     expect(
-      buildCommitMonthlyCalldata(
-        "2026-11",
-        Array.from({ length: 3 }, (_, index) => entry(index)),
-        attestation,
-      ),
-    ).toStartWith("0x");
-  });
-
-  test("directs an oversized batch to bounded V2 settlement", () => {
-    expect(() =>
       buildCommitMonthlyCalldata(
         "2026-11",
         Array.from({ length: 4 }, (_, index) => entry(index)),
         attestation,
       ),
-    ).toThrow(
-      "Legacy monthly allocation has 4 awards; the 500,000 gas budget supports at most 3. Use bounded V2 reserve/leaf settlement.",
-    );
+    ).toStartWith("0x");
   });
 });

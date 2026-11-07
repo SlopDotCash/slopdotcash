@@ -118,6 +118,7 @@ const selector = (functionName: "monthlyRoots" | "monthlyReserves") =>
 /** A Base Sepolia node with the reviewed vault and this month's reserve state. */
 const chain = {
   funded: false,
+  estimateGas: 100000n,
   root: 0n as bigint | string,
   reserved: false,
   remaining: tree.total,
@@ -209,7 +210,7 @@ function answer(method: string, params: unknown[]) {
       return `0x${(params[1] === "latest" && chain.mined !== null ? Math.min(next, chain.mined) : next).toString(16)}`;
     }
     case "eth_estimateGas":
-      return "0x186a0";
+      return `0x${chain.estimateGas.toString(16)}`;
     case "eth_getTransactionReceipt":
       return null;
     case "eth_getTransactionByHash": {
@@ -272,10 +273,11 @@ function memoryJournal(): JournalStore {
 }
 
 /** The keeper's executor environment: its own gas key and bounded fee replacement. */
-function keeperEnvironment(): PublicEvmExecutorEnvironment {
+function keeperEnvironment(gasCeiling?: string): PublicEvmExecutorEnvironment {
+  const record = paymentDeploymentRecord("project-1", deployment);
   return {
     PAYMENT_DEPLOYMENTS: JSON.stringify([
-      paymentDeploymentRecord("project-1", deployment),
+      gasCeiling === undefined ? record : { ...record, gasCeiling },
     ]),
     PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": rpcUrl }),
     SIGNER: {
@@ -309,6 +311,32 @@ async function authorization(legacy = false): Promise<MonthlyAuthorization> {
   };
 }
 
+async function legacyAuthorization(
+  legacyEntries: typeof entries,
+): Promise<MonthlyAuthorization> {
+  const root = evmAllocationRoot(legacyEntries);
+  const signed = evmMonthlyDigest(84532n, vault, period, root);
+  return {
+    plan: {
+      family: "evm",
+      request: {
+        projectId: "project-1",
+        period,
+        network: "base-sepolia",
+        snapshotSha256,
+      },
+      deployment,
+      allocationRoot: root,
+      messageHex: signed.slice(2),
+      totalGrossBase: legacyEntries
+        .reduce((total, entry) => total + BigInt(entry.grossMicro), 0n)
+        .toString(),
+      entries: legacyEntries,
+    },
+    signatureHex: (await identity.sign({ hash: signed as Hex })).slice(2),
+  };
+}
+
 /** Another keeper's reservation of this month is finalized. */
 function admitElsewhere() {
   chain.root = tree.hash;
@@ -317,6 +345,7 @@ function admitElsewhere() {
 
 function reset(admitted: boolean) {
   chain.funded = false;
+  chain.estimateGas = 100000n;
   chain.root = 0n;
   chain.reserved = false;
   if (admitted) admitElsewhere();
@@ -327,6 +356,32 @@ function reset(admitted: boolean) {
   chain.broadcasts = [];
   chain.mined = null;
 }
+
+test("legacy monthly admission uses the deployment gas ceiling", async () => {
+  const fourEntries = [
+    ...entries,
+    ...entries.map((entry, index) => ({
+      ...entry,
+      githubUserId: String(201 + index),
+      sourceDigest: `0x${(index === 0 ? "c3" : "d4").repeat(32)}`,
+    })),
+  ];
+  const signed = await legacyAuthorization(fourEntries);
+
+  reset(false);
+  chain.funded = true;
+  chain.estimateGas = 700000n;
+  await expect(
+    submitEvmMonthly(keeperEnvironment("1000000"), signed, true, 16),
+  ).resolves.toMatchObject({ alreadyCommitted: false });
+
+  reset(false);
+  chain.funded = true;
+  chain.estimateGas = 700000n;
+  await expect(
+    submitEvmMonthly(keeperEnvironment("500000"), signed, true, 16),
+  ).rejects.toThrow("Gas exceeds narrow operation policy");
+});
 
 test("a leaf another keeper committed still sends this keeper's signed leaf bytes", async () => {
   reset(true);

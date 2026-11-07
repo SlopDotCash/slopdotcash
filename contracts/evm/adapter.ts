@@ -1402,15 +1402,6 @@ export function evmMonthlyDigest(
     unhex(`1901${domainSeparator(chainId, vault).slice(2)}${struct.slice(2)}`),
   );
 }
-/**
- * The legacy whole-array call is retained only for small historical authorizations.
- * On the reviewed ProjectEscrow bytecode, 3 awards estimate at 402,698 gas and the
- * executor's existing 20% signing margin produces 483,237 gas. Four estimate at
- * 549,406 gas before margin, above the conservative 500,000-gas executor budget.
- * Larger current allocations use reserveMonthly plus bounded commitMonthlyLeaf calls.
- */
-export const LEGACY_MONTHLY_MAX_AWARDS = 3;
-
 /** Permissionless commitMonthly(uint32,(uint64,uint128,bytes32)[],bytes) with the authority's signature. */
 export function buildCommitMonthlyCalldata(
   period: string,
@@ -1418,10 +1409,6 @@ export function buildCommitMonthlyCalldata(
   attestation: string,
 ) {
   if (!SIGNATURE.test(attestation)) throw new Error("Invalid attestation");
-  if (entries.length > LEGACY_MONTHLY_MAX_AWARDS)
-    throw new Error(
-      `Legacy monthly allocation has ${entries.length} awards; the 500,000 gas budget supports at most ${LEGACY_MONTHLY_MAX_AWARDS}. Use bounded V2 reserve/leaf settlement.`,
-    );
   evmAllocationRoot(entries);
   const count = BigInt(entries.length);
   const tail = entries
