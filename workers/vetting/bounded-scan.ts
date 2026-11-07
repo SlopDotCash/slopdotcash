@@ -355,6 +355,16 @@ const DECODER_CALL =
   String.raw`[(\x60]`;
 
 /**
+ * `compile(payload, "<string>", "exec")` is the usual Python wrapper around a
+ * decoded payload: the decoded bytes still run, so nesting the decoder inside
+ * it is the same act, not a different one.
+ */
+const DECODER_WRAPPER =
+  String.raw`(?:${DECODER_QUALIFIER}compile\s*` +
+  COMMENT_GAP +
+  String.raw`\(\s*)?`;
+
+/**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
  */
@@ -439,11 +449,19 @@ const RULES: Rule[] = [
     // Decoding an obfuscated payload and running it is the same act whatever
     // the decoder or the sink is called. The sink branches share one decoder
     // list (DECODER_CALL), so rewriting `exec` as `eval`, or `runInContext`
-    // as `runInThisContext`, cannot change the verdict. Hex decoders
-    // (`bytes.fromhex`, `codecs.decode`, `binascii.unhexlify`) and the Node
-    // `vm` entry points are the same family: the decoded bytes run.
+    // as `runInThisContext`, cannot change the verdict. `setTimeout` and
+    // `setInterval` execute a string first argument exactly like `eval`, and
+    // Python's `compile(...)` is the usual wrapper that hands the decoded
+    // payload to `exec`/`eval` unchanged, so both are the same family. Hex
+    // decoders (`bytes.fromhex`, `codecs.decode`, `binascii.unhexlify`) and
+    // the Node `vm` entry points are the same family: the decoded bytes run.
     pattern: new RegExp(
       String.raw`\b(?:eval|exec)\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*` +
+        DECODER_WRAPPER +
+        DECODER_CALL +
+        String.raw`|\b(?:setTimeout|setInterval)\s*` +
         COMMENT_GAP +
         String.raw`\(\s*` +
         DECODER_CALL +

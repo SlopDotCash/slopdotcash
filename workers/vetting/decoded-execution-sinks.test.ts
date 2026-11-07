@@ -191,6 +191,38 @@ const DECODED_EXECUTION: Record<string, [string, string]> = {
     "install.js",
     "eval(atob`cHJvY2Vzcy5leGl0KDEp`);\n",
   ],
+  // setTimeout / setInterval execute a string first argument exactly like
+  // eval, so a decoder there is the same act as a decoder under eval.
+  "setTimeout of a decoded payload": [
+    "install.js",
+    'setTimeout(atob("cHJvY2Vzcy5leGl0KDEp"), 0);\n',
+  ],
+  "setTimeout of a decoded buffer": [
+    "install.js",
+    'setTimeout(Buffer.from(blob, "base64").toString(), 1000);\n',
+  ],
+  "setInterval of a decoded payload": [
+    "install.js",
+    'setInterval(unescape("%70%72%6f%63"), 0);\n',
+  ],
+  "setTimeout of a decodeURIComponent result": [
+    "install.js",
+    "setTimeout(decodeURIComponent(x), 0);\n",
+  ],
+  // Python obfuscation wraps the decoded payload in compile() before handing
+  // it to exec/eval; the decoded bytes still run.
+  "exec of a compiled decoded payload": [
+    "setup.py",
+    'exec(compile(base64.b64decode("cHJpbnQoMSk="), "<string>", "exec"))\n',
+  ],
+  "eval of a compiled decoded payload": [
+    "setup.py",
+    'eval(compile(base64.b64decode("cHJpbnQoMSk="), "<string>", "eval"))\n',
+  ],
+  "qualified compile of a decoded payload": [
+    "setup.py",
+    'exec(builtins.compile(pickle.loads(blob), "<string>", "exec"))\n',
+  ],
 };
 
 const BENIGN: Record<string, [string, string]> = {
@@ -264,6 +296,14 @@ const BENIGN: Record<string, [string, string]> = {
     "install.js",
     "const atobEnabled = flags.atobEnabled;\n",
   ],
+  // setTimeout / setInterval with a function or identifier first argument
+  // run no decoded string, so they stay clean.
+  "setTimeout of an arrow function": [
+    "install.js",
+    "setTimeout(() => cleanup(), 0);\n",
+  ],
+  "setTimeout of an identifier": ["install.js", "setTimeout(handler, 1000);\n"],
+  "setInterval of a function": ["install.js", "setInterval(render, 1000);\n"],
 };
 
 test("decoding an obfuscated payload into an execution sink is unsafe execution", () => {
