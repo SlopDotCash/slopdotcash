@@ -858,7 +858,7 @@ test("a transient refresh failure keeps the loaded monthly awards", async ({
     }),
   );
   let status = 200;
-  let bodyMode: "json" | "html" | "wrong-period" = "json";
+  let bodyMode: "json" | "html" | "wrong-period" | "null" = "json";
   await page.route(
     "**/api/v1/payments/projects/eliza/monthly/2026-11",
     (route) => {
@@ -867,6 +867,12 @@ test("a transient refresh failure keeps the loaded monthly awards", async ({
           status,
           body: "<html><body>Forbidden</body></html>",
           contentType: "text/html",
+        });
+      if (bodyMode === "null")
+        return route.fulfill({
+          status,
+          body: "null",
+          contentType: "application/json",
         });
       return route.fulfill({
         status,
@@ -967,5 +973,24 @@ test("a transient refresh failure keeps the loaded monthly awards", async ({
   bodyMode = "wrong-period";
   await refresh.click();
   await expect(page.getByRole("alert")).toContainText("could not be verified");
+  await expect(awards).not.toContainText("first-contributor");
+  // A 403 with a scalar JSON body (`null`) is still authoritative: the
+  // private awards leave the screen instead of being kept as a stale view.
+  status = 403;
+  bodyMode = "null";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("invalid JSON");
+  await expect(awards).not.toContainText("first-contributor");
+  // A later successful refresh loads the awards again.
+  status = 200;
+  bodyMode = "json";
+  await refresh.click();
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards).toContainText("second-contributor");
+  // A 200 with a scalar JSON body (`null`) is invalid, not a silent
+  // clear: the retained awards leave the screen with an error shown.
+  bodyMode = "null";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("invalid JSON");
   await expect(awards).not.toContainText("first-contributor");
 });

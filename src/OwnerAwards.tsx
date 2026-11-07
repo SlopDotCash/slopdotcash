@@ -233,14 +233,18 @@ export default function OwnerAwards({
       }
       let body: Record<string, unknown> & { message?: string };
       try {
-        body = (await readBoundedJson(
-          response,
-          8 * 1024 * 1024,
-          label,
-        )) as Record<string, unknown> & { message?: string };
+        const parsed = await readBoundedJson(response, 8 * 1024 * 1024, label);
+        // A scalar JSON body (null, 0, false, "") is not an awards view:
+        // a 403 with a `null` body would throw reading `body.message`
+        // below and be misread as transient, and a 200 with a falsy body
+        // would clear the awards silently. Treat it as an unreadable
+        // body so the known status is kept.
+        if (typeof parsed !== "object" || parsed === null)
+          throw new Error(`${label} returned invalid JSON`);
+        body = parsed as Record<string, unknown> & { message?: string };
       } catch (error) {
         // Keep the known status on an unreadable body (an intermediary
-        // error page, an empty body, an oversize body): without it the
+        // error page, an empty body, an oversize body, a scalar body): without it the
         // refresh treats an authoritative answer as a transient failure
         // and keeps the private awards on screen.
         throw new ProjectApiError(
