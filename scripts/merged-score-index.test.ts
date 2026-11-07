@@ -1,5 +1,9 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import type {
+  GitHubActor,
+  LeaderboardInput,
+} from "../src/lib/leaderboard-types";
 import {
   AFTER_NOVEMBER,
   PENALIZED_AUTHOR,
@@ -67,4 +71,97 @@ test("a second snapshot independently credits its accepted merges", () => {
   const second = createLeaderboardSnapshot(acceptedMerges());
   expect(second.ledger).toEqual(first.ledger);
   expect(second.leaders).toEqual(first.leaders);
+});
+
+// GitHub links the placeholder commit identity `x <x@x>` to this account.
+const PLACEHOLDER_LINKED_ACCOUNT: GitHubActor = {
+  id: "MDQ6VXNlcjM4MjUwNTA=",
+  login: "xxxxxxxxxxxxx",
+  avatarUrl: "https://avatars.githubusercontent.com/u/3825050?v=4",
+  url: "https://github.com/xxxxxxxxxxxxx",
+  kind: "User",
+};
+
+test("a commit linked to the placeholder identity earns no merge credit", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = acceptedMerges();
+  input.mergedPullRequestOutcomes = input.mergedPullRequestOutcomes.map(
+    (pull) =>
+      pull.id === "PR_november"
+        ? {
+            ...pull,
+            commits: [
+              ...(pull.commits ?? []),
+              { oid: "c".repeat(40), author: PLACEHOLDER_LINKED_ACCOUNT },
+            ],
+          }
+        : pull,
+  );
+  const snapshot = createLeaderboardSnapshot(input);
+  expect(
+    snapshot.ledger
+      .filter((event) => event.source.id === "PR_november")
+      .map((event) => [event.actor.id, event.scoreThirds]),
+  ).toEqual([[PENALIZED_AUTHOR.id, 3]]);
+  expect(
+    snapshot.leaders.some(
+      (person) => person.actor.id === PLACEHOLDER_LINKED_ACCOUNT.id,
+    ),
+  ).toBe(false);
+});
+
+test("a recorded assessment that names the placeholder account credits the author alone", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  const pull = input.mergedPullRequests.find((row) => row.id === "PR_november");
+  if (!pull?.mergedAt) throw new Error("missing fixture pull request");
+  input.detailEligibleMergedPullRequestIds = [];
+  input.valueActors = new Map([
+    [PENALIZED_AUTHOR.id, PENALIZED_AUTHOR],
+    [PLACEHOLDER_LINKED_ACCOUNT.id, PLACEHOLDER_LINKED_ACCOUNT],
+  ]);
+  const decision = {
+    status: "assessed",
+    implementationActorNodeIds: [
+      PENALIZED_AUTHOR.id,
+      PLACEHOLDER_LINKED_ACCOUNT.id,
+    ],
+    record: {
+      pullRequestNodeId: pull.id,
+      repository: "elizaOS/asi",
+      headSha: pull.headRefOid,
+      occurredAt: pull.mergedAt,
+      assessment: { tier: "small", rationale: "bounded fix", reviews: [] },
+    },
+    assessment: { status: "assessed", tier: "small", reviews: [] },
+    history: [
+      {
+        sequence: 1,
+        record_digest: "e".repeat(64),
+        record_json: "{}",
+        recorded_at: "2026-11-05T01:00:00.000Z",
+      },
+    ],
+    latestDigest: "d".repeat(64),
+  };
+  input.valueDecisions = new Map([
+    [
+      pull.id,
+      decision as unknown as NonNullable<
+        LeaderboardInput["valueDecisions"]
+      > extends ReadonlyMap<string, infer V>
+        ? V
+        : never,
+    ],
+  ]);
+  const snapshot = createLeaderboardSnapshot(input);
+  expect(
+    snapshot.ledger
+      .filter(
+        (event) =>
+          event.source.id === pull.id &&
+          event.category === "merged-pull-request",
+      )
+      .map((event) => [event.actor.id, event.scoreThirds]),
+  ).toEqual([[PENALIZED_AUTHOR.id, 3]]);
 });

@@ -1,4 +1,7 @@
-import { isCreditEligibleCommitAuthor } from "./commit-credit";
+import {
+  creditEligibleImplementationActorIds,
+  isCreditEligibleCommitAuthor,
+} from "./commit-credit";
 import {
   assertExternalSourceEvidence,
   assertExternalSourcePlatform,
@@ -3463,7 +3466,10 @@ function createSnapshotWithReviewCutoff(
         "Value scoring requires hydrated human decision and review sources",
       );
     if (valueRecord) {
-      const ids = valueDecision?.implementationActorNodeIds ?? [];
+      const ids = creditEligibleImplementationActorIds(
+        valueDecision?.implementationActorNodeIds ?? [],
+        author?.id,
+      );
       actors = ids
         .map((id) => {
           const actor =
@@ -3702,9 +3708,14 @@ function createSnapshotWithReviewCutoff(
         .filter((source) => source !== undefined)
         .sort((a, b) => compareCodeUnits(a.pull.node_id, b.pull.node_id))[0];
       const primaryAuthorId = (retainedOriginal ?? first).pull.user.node_id;
-      const actors = [
-        ...new Set(scoped.flatMap((claim) => claim.implementationActorNodeIds)),
-      ]
+      const actors = creditEligibleImplementationActorIds(
+        [
+          ...new Set(
+            scoped.flatMap((claim) => claim.implementationActorNodeIds),
+          ),
+        ],
+        primaryAuthorId,
+      )
         .map((id) => {
           const actor = input.valueActors?.get(id);
           if (!actor || actor.id !== id || isBotActor(actor))
