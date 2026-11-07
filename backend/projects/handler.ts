@@ -1782,7 +1782,9 @@ async function listSetup(
         applications
           .filter((application) => application.status === "pending")
           .map(async (application) =>
-            (await isPublishable(deps, application)) ? [application] : [],
+            (await isPublishable(deps, application, actorOf(session)))
+              ? [application]
+              : [],
           ),
       )
     )
@@ -1794,15 +1796,133 @@ async function listSetup(
 /**
  * A stored update publishes only against its own base revision. Once another
  * revision is published it can never succeed, so setup stops offering it;
- * the owner makes the change again from the project's settings.
+ * the owner makes the change again from the project's settings. The same
+ * holds while the base is still current when publishing the stored manifest
+ * could never succeed: publishing classifies it against the current manifest
+ * with the server-owned status and listing taken from the current manifest,
+ * so an update whose differences are only fields owner self-service may not
+ * change, or that changes nothing at all, fails on every attempt. Financial
+ * and security-bounty changes publish rejects on every attempt are the same
+ * class, so this mirrors the publish path's deterministic refusals — the
+ * asset-change cycle-cap rule, the security-program normalization and gates,
+ * and the prospective financial change — instead of trusting the top-level
+ * classification alone. A refusal that depends on funds arriving later stays
+ * offered; only refusals that can never succeed hide the update.
  */
 async function isPublishable(
   deps: ProjectApiDependencies,
   application: ProjectApplication,
+  actor: GithubActor,
 ): Promise<boolean> {
   if (application.expectedRevision === undefined) return true;
   const project = await deps.persistence.getProject(application.projectId);
-  return project?.revision === application.expectedRevision;
+  if (project?.revision !== application.expectedRevision) return false;
+  const current = project.manifest;
+  let prepared = {
+    ...application.manifest,
+    status: current.status,
+    listingTier: current.listingTier,
+  } as ProjectDefinition;
+  // A new asset keeps the old cycle caps; changing them rejects.
+  if (
+    current.reward.kind === "monthly-pool" &&
+    prepared.reward?.kind === "monthly-pool" &&
+    (!sameValue(current.rewardAsset, prepared.rewardAsset) ||
+      current.reward.chain !== prepared.reward.chain ||
+      current.reward.currency !== prepared.reward.currency)
+  ) {
+    if (!sameValue(current.reward.cycleCaps, prepared.reward.cycleCaps))
+      return false;
+    const { cycleCaps: _oldCaps, ...reward } = prepared.reward;
+    prepared = { ...prepared, reward };
+  }
+  const programChanged = !sameValue(
+    current.securityBounty,
+    prepared.securityBounty,
+  );
+  const requestedProgramStatus = prepared.securityBounty?.status;
+  if (programChanged && prepared.securityBounty)
+    prepared = {
+      ...prepared,
+      securityBounty: {
+        ...prepared.securityBounty,
+        status:
+          requestedProgramStatus === "open"
+            ? "paused"
+            : prepared.securityBounty.status,
+        funding: { state: "pledged" },
+      },
+    };
+  let submitted: ProjectDefinition;
+  try {
+    submitted = canonicalManifest(prepared).manifest;
+  } catch {
+    return false;
+  }
+  if (classifyRevisionChanges(current, submitted).restricted.length > 0)
+    return false;
+  if (programChanged) {
+    // The contacts gate needs the applicant's authority; a lookup failure
+    // leaves the offer in place and publish still enforces it.
+    let canManageContacts =
+      actor.githubId === String(current.steward.github.actorId);
+    try {
+      const checked = await currentAuthority(deps, current, actor);
+      canManageContacts = isProjectStewardOrAdmin(
+        current,
+        actor,
+        checked.access,
+      );
+    } catch {
+      // Fall through with the steward-id answer.
+    }
+    try {
+      submitted = await ownerSecurityProgram(
+        current,
+        submitted,
+        requestedProgramStatus,
+        actor,
+        canManageContacts,
+        deps,
+      );
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code === "security_funding_unavailable") {
+        // Funds can arrive later, so the update stays offered.
+      } else if (
+        code === "security_program_required" ||
+        code === "security_split_restricted" ||
+        code === "security_contacts_restricted" ||
+        code === "security_vault_restricted" ||
+        code === "security_asset_restricted"
+      ) {
+        return false;
+      } else {
+        throw error;
+      }
+    }
+  }
+  const changes = classifyRevisionChanges(current, submitted);
+  if (
+    changes.presentation.length +
+      changes.executable.length +
+      changes.financial.length ===
+    0
+  )
+    return false;
+  if (changes.financial.length > 0) {
+    try {
+      prospectiveFinancialChange(current, submitted, deps.now());
+    } catch (error) {
+      if (
+        (error as { code?: unknown } | null)?.code ===
+        "financial_change_restricted"
+      )
+        return false;
+      throw error;
+    }
+  }
+  return true;
 }
 
 async function checkSetup(

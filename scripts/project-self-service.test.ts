@@ -947,6 +947,112 @@ test("a stored update whose base revision moved on is not offered for publicatio
   ).toBe("A newer published headline.");
 });
 
+test("a stored update that owner self-service can never publish is not offered for publication", async () => {
+  const { persistence, sqlite, call, create, state } = registry();
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+  };
+  state.clearance = CLEARED;
+  // Stored applications always carry the paused submission status; the
+  // publisher replaces it with the current status.
+  const storedUpdate = async (
+    id: string,
+    projectId: string,
+    repository: string,
+    build: (base: ProjectDefinition) => Record<string, unknown>,
+  ) => {
+    await create(projectId, repository);
+    await call("POST", `project-setup/${projectId}/check`, OWNER, {});
+    const base = await persistence.getProject(projectId);
+    if (!base) throw new Error("project was not listed");
+    const manifest = build(base.manifest);
+    sqlite.exec(
+      `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at,expected_revision,change_reason)
+       VALUES ('${id}','${projectId}','${repository}','${JSON.stringify(manifest).replaceAll("'", "''")}','${"b".repeat(64)}','Merged pull requests','${OWNER}','owner','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z',${base.revision},'Stored change')`,
+    );
+  };
+  // Moving the repository is outside owner self-service, so publishing this
+  // update answers owner_field_restricted on every attempt.
+  await storedUpdate(
+    "app_s6krepomove00001",
+    "open-registry",
+    "example/open-registry",
+    (base) => ({
+      ...base,
+      status: "paused",
+      repositories: [
+        {
+          ...base.repositories[0],
+          id: "example/moved-registry",
+          displayName: "example/moved-registry",
+          githubUrl: "https://github.com/example/moved-registry",
+        },
+      ],
+      links: {
+        repository: "https://github.com/example/moved-registry",
+        issues: "https://github.com/example/moved-registry/issues",
+      },
+    }),
+  );
+  // This update differs only in the stored submission status, which the
+  // publisher replaces, so publishing it changes nothing on every attempt.
+  await storedUpdate(
+    "app_s6knochange0001",
+    "quiet-registry",
+    "example/quiet-registry",
+    (base) => ({ ...base, status: "paused" }),
+  );
+  // A name change publishes as a presentation revision.
+  await storedUpdate(
+    "app_s6krename000001",
+    "rename-registry",
+    "example/rename-registry",
+    (base) => ({ ...base, status: "paused", name: "Renamed Registry" }),
+  );
+  // Only the publishable update is offered.
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [expect.objectContaining({ id: "app_s6krename000001" })],
+  );
+  // The publish endpoints themselves are unchanged: a direct attempt still
+  // reports why each unpublishable update fails.
+  const moved = await call(
+    "POST",
+    "project-applications/app_s6krepomove00001/publish",
+    OWNER,
+    {},
+  );
+  expect(moved.status).toBe(422);
+  expect(moved.body.error).toBe("owner_field_restricted");
+  const empty = await call(
+    "POST",
+    "project-applications/app_s6knochange0001/publish",
+    OWNER,
+    {},
+  );
+  expect(empty.status).toBe(422);
+  expect(empty.body.error).toBe("no_change");
+  // The offered update publishes, and the public registry shows its name.
+  const renamed = await call(
+    "POST",
+    "project-applications/app_s6krename000001/publish",
+    OWNER,
+    {},
+  );
+  expect(renamed.status).toBe(200);
+  expect((await call("GET", "projects", OWNER)).body.projects).toContainEqual(
+    expect.objectContaining({
+      id: "rename-registry",
+      name: "Renamed Registry",
+    }),
+  );
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+});
+
 test("an explicit moderator ban blocks new contribution intake without blaming the original applicant", async () => {
   const t = registry();
   t.deps.moderatorGithubIds = new Set([ADMIN]);
@@ -2974,4 +3080,265 @@ test("a steward who is also a moderator cannot decide the appeal they filed", as
   );
   expect(independent.status).toBe(409);
   expect(independent.body).toMatchObject({ error: "revision_pending" });
+});
+
+test("a stored update publish rejects for a financial change is not offered for publication", async () => {
+  const { persistence, sqlite, call, create, state } = registry();
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+  };
+  state.clearance = CLEARED;
+  const storedUpdate = async (
+    id: string,
+    projectId: string,
+    repository: string,
+    build: (base: ProjectDefinition) => Record<string, unknown>,
+  ) => {
+    await create(projectId, repository);
+    await call("POST", `project-setup/${projectId}/check`, OWNER, {});
+    const base = await persistence.getProject(projectId);
+    if (!base) throw new Error("project was not listed");
+    const manifest = build(base.manifest);
+    sqlite.exec(
+      `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at,expected_revision,change_reason)
+       VALUES ('${id}','${projectId}','${repository}','${JSON.stringify(manifest).replaceAll("'", "''")}','${"b".repeat(64)}','Merged pull requests','${OWNER}','owner','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z',${base.revision},'Stored change')`,
+    );
+  };
+  // Adding a separate review budget is outside owner self-service, so
+  // publishing this update answers financial_change_restricted every time.
+  await storedUpdate(
+    "app_s6kbudget00001",
+    "open-registry",
+    "example/open-registry",
+    (base) => ({
+      ...base,
+      status: "paused",
+      reward: {
+        ...(base.reward as unknown as Record<string, unknown>),
+        reviewBudget: {
+          effectiveAt: "2026-11-01T00:00:00.000Z",
+          monthlyCapMinor: "50000000",
+          monthlyCapDisplay: "$50",
+          committedMinor: "0",
+          paymentMode: "disabled",
+          unusedFunds: "rollover-without-cap-increase",
+          fundingState: "pledged",
+        },
+      },
+    }),
+  );
+  // Rewriting the historical cycle caps is likewise rejected on every
+  // attempt.
+  await storedUpdate(
+    "app_s6kcaps0000001",
+    "quiet-registry",
+    "example/quiet-registry",
+    (base) => ({
+      ...base,
+      status: "paused",
+      reward: {
+        ...(base.reward as unknown as Record<string, unknown>),
+        cycleCaps: [{ cycleId: "2026-10", monthlyCapMinor: "1000000000" }],
+      },
+    }),
+  );
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+  const budget = await call(
+    "POST",
+    "project-applications/app_s6kbudget00001/publish",
+    OWNER,
+    {},
+  );
+  expect(budget.status).toBe(422);
+  expect(budget.body.error).toBe("financial_change_restricted");
+  const caps = await call(
+    "POST",
+    "project-applications/app_s6kcaps0000001/publish",
+    OWNER,
+    {},
+  );
+  expect(caps.status).toBe(422);
+  expect(caps.body.error).toBe("financial_change_restricted");
+});
+
+test("a stored update publish rejects for a security-bounty change is not offered for publication", async () => {
+  const { persistence, sqlite, call, create, state } = registry();
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "write",
+    roleName: "write",
+  };
+  state.clearance = CLEARED;
+  const person = { githubId: OWNER, githubLogin: "owner" };
+  const programFor = (repository: string) => ({
+    version: "1",
+    status: "paused",
+    rewardMode: "separate",
+    eligibility: "critical-loss-of-funds",
+    amount: {
+      currency: "USDC",
+      decimals: 6,
+      network: "base",
+      grossMinor: "1000000",
+    },
+    split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+    sponsor: { name: "Example", githubId: OWNER },
+    funding: { state: "pledged" },
+    capacity: {
+      awards: 1,
+      closesAt: null,
+      exhaustionRule: "New awards wait for available funds.",
+    },
+    scope: {
+      sourceRevisions: [{ repository, commit: "a".repeat(40) }],
+      deployments: [],
+      includedAssets: ["Vault funds"],
+      excludedDependencies: [],
+      testingPermission: "Test only in local forks.",
+      severityRubric: "Assess the impact on covered funds.",
+      lossDefinition: "Unauthorized loss of covered funds.",
+    },
+    intake: {
+      kind: "github-private-vulnerability-reporting",
+      repository,
+    },
+    responseTargets: {
+      acknowledgeHours: 24,
+      triageBusinessDays: 3,
+      updateIntervalDays: 7,
+    },
+    approvers: {
+      technical: [person],
+      financial: [person],
+      dispute: [person],
+    },
+    dispute: {
+      authority: "advisory",
+      process: "Request a private review from Slop.",
+    },
+    disclosure: "The maintainer controls public disclosure.",
+    safeHarbor: "Good-faith testing within these rules is authorized.",
+  });
+  // The owner path cannot carry a bounty program, so the program arrives
+  // through a reviewed admin revision the way a live project gains one.
+  const bountyProject = async (id: string, repository: string) => {
+    await create(id, repository);
+    const base = await persistence.getProject(id);
+    if (!base) throw new Error("project was not listed");
+    const withProgram = await call(
+      "PUT",
+      `admin/projects/${id}/manifest`,
+      ADMIN,
+      {
+        manifest: { ...base.manifest, securityBounty: programFor(repository) },
+        expectedRevision: base.revision,
+        reason: "Add the bounty program",
+      },
+    );
+    expect(withProgram.status).toBe(200);
+    await call("POST", `project-setup/${id}/check`, OWNER, {});
+    const current = await persistence.getProject(id);
+    if (!current) throw new Error("project was not listed");
+    return current;
+  };
+  const storedUpdate = async (
+    id: string,
+    projectId: string,
+    repository: string,
+    current: { revision: number; manifest: unknown },
+    build: (manifest: Record<string, unknown>) => Record<string, unknown>,
+  ) => {
+    sqlite.exec(
+      `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at,expected_revision,change_reason)
+       VALUES ('${id}','${projectId}','${repository}','${JSON.stringify(build(current.manifest as unknown as Record<string, unknown>)).replaceAll("'", "''")}','${"b".repeat(64)}','Merged pull requests','${OWNER}','owner','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z',${current.revision},'Stored change')`,
+    );
+  };
+  // Deleting the program is refused; reports and awards stay available.
+  const deleted = await bountyProject("open-registry", "example/open-registry");
+  await storedUpdate(
+    "app_s6kdelprog0001",
+    "open-registry",
+    "example/open-registry",
+    deleted,
+    (manifest) => {
+      const { securityBounty: _removed, ...rest } = manifest;
+      return { ...rest, status: "paused" };
+    },
+  );
+  // Moving the split to a full researcher award needs admin approval. The
+  // schema only admits a full-award split under after-approval funding, so
+  // the stored update carries that policy with the split change.
+  const split = await bountyProject("quiet-registry", "example/quiet-registry");
+  await storedUpdate(
+    "app_s6ksplit000001",
+    "quiet-registry",
+    "example/quiet-registry",
+    split,
+    (manifest) => ({
+      ...manifest,
+      status: "paused",
+      securityBounty: {
+        ...(manifest.securityBounty as Record<string, unknown>),
+        split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
+        fundingPolicy: "after-approval",
+      },
+    }),
+  );
+  // A funding record alone is server-owned: the publisher resets it, so
+  // this update changes nothing on every attempt.
+  const funding = await bountyProject(
+    "third-registry",
+    "example/third-registry",
+  );
+  await storedUpdate(
+    "app_s6kfunding0001",
+    "third-registry",
+    "example/third-registry",
+    funding,
+    (manifest) => ({
+      ...manifest,
+      status: "paused",
+      securityBounty: {
+        ...(manifest.securityBounty as Record<string, unknown>),
+        funding: {
+          state: "verified-available",
+          evidence: "Finalized bounty vault balance",
+          verifiedAt: "2026-10-01T00:00:00.000Z",
+        },
+      },
+    }),
+  );
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+  const deletedPublish = await call(
+    "POST",
+    "project-applications/app_s6kdelprog0001/publish",
+    OWNER,
+    {},
+  );
+  expect(deletedPublish.status).toBe(422);
+  expect(deletedPublish.body.error).toBe("security_program_required");
+  const splitPublish = await call(
+    "POST",
+    "project-applications/app_s6ksplit000001/publish",
+    OWNER,
+    {},
+  );
+  expect(splitPublish.status).toBe(422);
+  expect(splitPublish.body.error).toBe("security_split_restricted");
+  const fundingPublish = await call(
+    "POST",
+    "project-applications/app_s6kfunding0001/publish",
+    OWNER,
+    {},
+  );
+  expect(fundingPublish.status).toBe(422);
+  expect(fundingPublish.body.error).toBe("no_change");
 });
