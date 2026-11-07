@@ -1,8 +1,7 @@
+import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { applicationManifest } from "./project-application-manifest";
-
-type Statement = { run: (...values: unknown[]) => unknown };
 
 /**
  * A registered project row for suites that exercise a route reading the
@@ -10,7 +9,7 @@ type Statement = { run: (...values: unknown[]) => unknown };
  * and its digest, revision 1.
  */
 export function seedProject(
-  sqlite: { query: (sql: string) => Statement },
+  sqlite: Database,
   id: string,
   repository: string,
   overrides: Record<string, unknown> = {},
