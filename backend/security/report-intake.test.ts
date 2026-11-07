@@ -54,6 +54,7 @@ type Intake = {
   canForward: boolean;
   canRetryScreening: boolean;
   canReview: boolean;
+  canRevise: boolean;
   reason: string | null;
 };
 type Submission = {
@@ -1049,6 +1050,179 @@ describe("durable private report controls", () => {
     expect(submission.intake.reason).not.toMatch(/evidence digest/i);
     expect(t.screeningCalls()).toBe(2);
     expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("a revision that copies an intervening report is held as duplicate evidence", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("digest-revise-first00")).body.submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    const opened = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${first.id}/review`,
+      {
+        expectedRevision: first.intake.revision,
+        decision: "request-information",
+        reason: "Add the isolated reproduction that shows the second path.",
+      },
+    );
+    expect(opened.status).toBe(200);
+    const pending = required(
+      (await t.call(REPORTER, "GET", `security-submissions/${first.id}`)).body
+        .submission,
+    );
+    expect(pending.intake.canRevise).toBe(true);
+    t.advance(1000);
+    const copied = {
+      ...REPORT,
+      description: `${REPORT.description} Second path, synthetic only.`,
+    };
+    const second = required(
+      (await t.create("digest-revise-second0", OTHER, copied)).body.submission,
+    );
+    expect(second.intake.state).toBe("legitimate");
+    expect(second.intake.reason).not.toMatch(/evidence digest/i);
+    const calls = t.screeningCalls();
+    const assessments = t.analyzed.length;
+    t.advance(1000);
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${first.id}/report`,
+      { expectedRevision: pending.intake.revision, report: copied },
+    );
+    expect(revised.status).toBe(200);
+    const held = required(revised.body.submission);
+    expect(held.intake.reportVersion).toBe(2);
+    expect(held.intake.state).toBe("needs-information");
+    expect(held.intake.canForward).toBe(false);
+    expect(held.intake.reason).toMatch(/evidence digest/i);
+    expect(held.intake.reason).not.toContain("PRIVATE-REPORT-SENTINEL");
+    expect(t.screeningCalls()).toBe(calls);
+    expect(t.analyzed).toHaveLength(assessments);
+    const earlier = await t.call(
+      OTHER,
+      "GET",
+      `security-submissions/${second.id}`,
+    );
+    expect(required(earlier.body.submission).intake.state).toBe("legitimate");
+  });
+
+  test("a screening retry of the first filer is not held by a later copy", async () => {
+    const t = fixture();
+    const firstBytes = {
+      ...REPORT,
+      description: `${REPORT.description} First filer path, synthetic only.`,
+    };
+    const otherBytes = {
+      ...REPORT,
+      description: `${REPORT.description} Unrelated path, synthetic only.`,
+    };
+    const sharedBytes = {
+      ...REPORT,
+      description: `${REPORT.description} Shared path filed first by A.`,
+    };
+    const first = required(
+      (await t.create("digest-retry-filer00", REPORTER, firstBytes)).body
+        .submission,
+    );
+    expect(first.intake.state).toBe("legitimate");
+    const opened = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${first.id}/review`,
+      {
+        expectedRevision: first.intake.revision,
+        decision: "request-information",
+        reason: "Add the isolated reproduction that shows the shared path.",
+      },
+    );
+    expect(opened.status).toBe(200);
+    const pending = required(
+      (await t.call(REPORTER, "GET", `security-submissions/${first.id}`)).body
+        .submission,
+    );
+    t.advance(1000);
+    const second = required(
+      (await t.create("digest-retry-copy000", OTHER, otherBytes)).body
+        .submission,
+    );
+    expect(second.intake.state).toBe("legitimate");
+    const openedCopy = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${second.id}/review`,
+      {
+        expectedRevision: second.intake.revision,
+        decision: "request-information",
+        reason: "Add the isolated reproduction that shows the other path.",
+      },
+    );
+    expect(openedCopy.status).toBe(200);
+    const pendingCopy = required(
+      (await t.call(OTHER, "GET", `security-submissions/${second.id}`)).body
+        .submission,
+    );
+    t.advance(1000);
+    t.failScreening(true);
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${first.id}/report`,
+      { expectedRevision: pending.intake.revision, report: sharedBytes },
+    );
+    expect(revised.status).toBe(200);
+    const unavailable = required(revised.body.submission);
+    expect(unavailable.intake.reportVersion).toBe(2);
+    expect(unavailable.intake.state).toBe("unavailable");
+    expect(unavailable.intake.canRetryScreening).toBe(true);
+    t.failScreening(false);
+    t.advance(1000);
+    const copied = await t.call(
+      OTHER,
+      "POST",
+      `security-submissions/${second.id}/report`,
+      { expectedRevision: pendingCopy.intake.revision, report: sharedBytes },
+    );
+    expect(copied.status).toBe(200);
+    const copy = required(copied.body.submission);
+    expect(copy.intake.reportVersion).toBe(2);
+    expect(copy.intake.state).toBe("legitimate");
+    expect(copy.intake.reason).not.toMatch(/evidence digest/i);
+    // Forwarding commits `submitting` before GitHub. The duplicate check
+    // ignores drafts, and this fixture has no transport, so record the same
+    // transition the send path writes. The copy's submission is older than
+    // the first filer's version; only the version clock keeps them ordered.
+    const at = t.deps.now().toISOString();
+    const forwarded = t.sqlite
+      .query(
+        "UPDATE security_submissions SET state='submitting',attempt=attempt+1,attempt_started_at=?,revision=revision+1,updated_at=? WHERE id=? AND state='draft'",
+      )
+      .run(at, at, second.id);
+    expect(forwarded.changes).toBe(1);
+    t.advance(1000);
+    const calls = t.screeningCalls();
+    const retried = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${first.id}/screen`,
+      { expectedRevision: unavailable.intake.revision },
+    );
+    expect(retried.status).toBe(200);
+    const recovered = required(retried.body.submission);
+    expect(recovered.intake.state).toBe("legitimate");
+    expect(recovered.intake.canForward).toBe(true);
+    expect(recovered.intake.reason).not.toMatch(/evidence digest/i);
+    expect(recovered.intake.reason).not.toContain("PRIVATE-REPORT-SENTINEL");
+    expect(t.screeningCalls()).toBe(calls + 1);
+    const stillCopy = await t.call(
+      OTHER,
+      "GET",
+      `security-submissions/${second.id}`,
+    );
+    expect(required(stillCopy.body.submission).intake.state).toBe("legitimate");
   });
 
   test("a first unique report still routes as legitimate when screening agrees", async () => {

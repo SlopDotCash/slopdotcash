@@ -78,6 +78,13 @@ const DUPLICATE_EVIDENCE_REASON =
  * Same-project evidence digest already on an earlier live case or intake report.
  * Later held duplicates and failed/abandoned/draft submissions must not block
  * an earlier report's screening retry or a later valid identical report.
+ * `createdAt` is the evidence version being screened, not the submission's
+ * original receipt: a revision is duplicate evidence when an intervening
+ * report already carried those bytes. When that time is set, peer intake
+ * rows are earlier only when their own version `(created_at, rowid)` is
+ * before the screened version. A later copy of those bytes does not hold
+ * the first filer on a screening retry. Case rows stay on the case clock,
+ * which records the original submission's bytes.
  */
 async function matchingEvidenceDigest(
   deps: Pick<SecurityApiDependencies, "db">,
@@ -86,8 +93,10 @@ async function matchingEvidenceDigest(
   exclude: {
     caseId?: string | null;
     submissionId?: string | null;
-    /** Current row created_at; only strictly earlier peers participate. */
+    /** Evidence-version time; only strictly earlier peers participate. */
     createdAt?: string | null;
+    /** Screened version row. With `createdAt`, orders peer report versions. */
+    versionRowid?: number | null;
   },
 ): Promise<boolean> {
   const beforeAt = exclude.createdAt ?? null;
@@ -123,7 +132,14 @@ async function matchingEvidenceDigest(
   if (caseMatch) return true;
   const reportValues: unknown[] = [projectId, digest];
   let reportEarlier = "";
-  if (beforeAt && exclude.submissionId) {
+  const versionRowid = exclude.versionRowid ?? null;
+  if (beforeAt && versionRowid !== null) {
+    // The digest lives on the version, not the submission receipt. Ordering
+    // peers by submission time lets a later copy hold the first filer when
+    // that version's screening is retried.
+    reportEarlier = " AND (r.created_at, r.rowid) < (?, ?)";
+    reportValues.push(beforeAt, versionRowid);
+  } else if (beforeAt && exclude.submissionId) {
     reportEarlier =
       " AND (s.created_at, s.rowid) < (?, (SELECT rowid FROM security_submissions WHERE id = ?))";
     reportValues.push(beforeAt, exclude.submissionId);
@@ -582,10 +598,14 @@ export async function screenStoredReport(
     const record = await loadCase(deps, row.case_id);
     const digestRow = await deps.db
       .prepare(
-        "SELECT content_sha256 FROM security_intake_reports WHERE submission_id=? AND version=?",
+        "SELECT rowid, content_sha256, created_at FROM security_intake_reports WHERE submission_id=? AND version=?",
       )
       .bind(id, row.report_version)
-      .first<{ content_sha256: string }>();
+      .first<{
+        rowid: number;
+        content_sha256: string;
+        created_at: string;
+      }>();
     const digest =
       digestRow?.content_sha256 ??
       record?.receipt_evidence_digest ??
@@ -596,7 +616,12 @@ export async function screenStoredReport(
       (await matchingEvidenceDigest(deps, submission.project_id, digest, {
         caseId: row.case_id,
         submissionId: id,
-        createdAt: submission.created_at,
+        // Judge this version against evidence filed before it. An intervening
+        // original is still held. Peer reports compare their version
+        // (created_at, rowid) with this version's row, so a later copy cannot
+        // hold the first filer when this screening is retried.
+        createdAt: digestRow?.created_at ?? submission.created_at,
+        versionRowid: digestRow?.rowid ?? null,
       }))
     ) {
       // Identical evidence is held privately without a model call (PRD §8).
