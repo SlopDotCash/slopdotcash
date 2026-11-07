@@ -351,10 +351,15 @@ export function InboxEmail({ headingId }: { headingId?: string }) {
           retryAfter > 0
             ? Math.ceil(retryAfter)
             : null;
+        // A second request soon after the first waits 60 seconds: "1 minute".
+        const [count, unit] =
+          seconds === null || seconds < 60
+            ? [seconds, "second"]
+            : [Math.ceil(seconds / 60), "minute"];
         throw new Error(
-          seconds === null
+          count === null
             ? "Wait before requesting another verification email."
-            : `Try again in ${seconds < 60 ? `${seconds} seconds` : `${Math.ceil(seconds / 60)} minutes`}.`,
+            : `Try again in ${count} ${unit}${count === 1 ? "" : "s"}.`,
         );
       }
       if (response.status !== 202)
