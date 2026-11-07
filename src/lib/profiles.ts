@@ -169,6 +169,8 @@ function assertProfileIssues(index: ProfileIndex, targets: readonly string[]) {
   )
     throw Error("Issue repository inventory mismatch");
   const people = new Set(index.people.map((p) => p.id));
+  const targetSet = new Set(targets);
+  const targetRepositories = collectedProfileRepositories(targets);
   const ids = new Set<string>();
   const counts = new Map<string, number>();
   const reason = (value: string | null) =>
@@ -183,9 +185,12 @@ function assertProfileIssues(index: ProfileIndex, targets: readonly string[]) {
       !issue.id ||
       ids.has(issue.id) ||
       (archived
-        ? targets.includes(issue.repository) ||
-          !isHistoricalRepositoryId(issue.repository)
-        : !targets.includes(issue.repository)) ||
+        ? !isCarriedProfileRepository(
+            issue.repository,
+            targetSet,
+            targetRepositories,
+          ) || !isHistoricalRepositoryId(issue.repository)
+        : !targetSet.has(issue.repository)) ||
       !Number.isSafeInteger(issue.number) ||
       issue.number <= 0 ||
       (issue.authorId !== null && !people.has(issue.authorId)) ||
@@ -297,7 +302,7 @@ export function contributorPullSearchUrl(
 }
 
 /** Canonical repository behind a census repository name, if it resolves. */
-function profileCanonicalRepository(repository: string): string | null {
+export function profileCanonicalRepository(repository: string): string | null {
   // A transferred repository's old and current names resolve to the same one.
   return findHistoricalRepositoryIdentity(repository)?.toLowerCase() ?? null;
 }

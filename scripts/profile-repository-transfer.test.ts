@@ -51,24 +51,163 @@ for (const project of RAW_PROJECT_DEFINITIONS)
 `,
   );
   // The same carry decision scripts/generate-profiles.ts makes for each
-  // repository of the previous census.
+  // repository of the previous census, and the issue retention decision
+  // scripts/profile-issue-census.ts makes for unseen prior issues.
   writeFileSync(
     join(root, "profile-carry-check.ts"),
     `
 import {
+  assertProfiles,
   collectedProfileRepositories,
   isCarriedProfileRepository,
+  type ProfileIndex,
+  type ProfileIssue,
+  type ProfileRecord,
 } from "./src/lib/profiles";
 import { TARGET_REPOSITORIES } from "./src/lib/repositories.mjs";
+import { collectProfileIssues } from "./scripts/profile-issue-census";
+
 const targets = TARGET_REPOSITORIES.map((repository) => repository.id);
 const collected = new Set(targets);
 const collectedRepositories = collectedProfileRepositories(targets);
 const previous = ${JSON.stringify(previous)};
+
+function priorIssue(
+  id: string,
+  repository: string,
+  number: number,
+  unavailableSince: string | null = null,
+): ProfileIssue {
+  return {
+    id,
+    repository,
+    number,
+    authorId: "U_kgDO1",
+    createdAt: "2026-08-14T01:55:36.000Z",
+    observedAt: "2026-10-15T00:00:00.000Z",
+    state: "CLOSED",
+    reason: "COMPLETED",
+    unavailableSince,
+    correctedAt: null,
+    historyIncompleteSince: null,
+    events: [
+      {
+        id: \`CE_\${id}\`,
+        kind: "closed",
+        occurredAt: "2026-08-14T04:16:04.000Z",
+        reason: "COMPLETED",
+        relatedIssueId: null,
+      },
+    ],
+  };
+}
+
+const priorIndex: ProfileIndex = {
+  schemaVersion: "2",
+  startedAt: "2026-10-15T00:00:00.000Z",
+  generatedAt: "2026-10-15T00:05:00.000Z",
+  repositories: [],
+  people: [
+    {
+      id: "U_kgDO1",
+      login: "alice",
+      avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+      repositories: [],
+    },
+  ],
+  issues: {
+    firstObservedAt: "2026-10-01T00:00:00.000Z",
+    repositories: [],
+    items: [],
+    archived: [
+      priorIssue("I_asi_deleted", "elizaOS/asi", 10),
+      priorIssue(
+        "I_prox_deleted",
+        "elizaOS/proximityprize",
+        4,
+        "2026-10-20T00:00:00.000Z",
+      ),
+      priorIssue("I_canonry_paused", "Canonry/canonry", 7),
+      priorIssue("I_element_retired", "heirlabs/element-sdk", 3),
+    ],
+  },
+};
+
+const people = new Map<string, ProfileRecord>();
+const issues = await collectProfileIssues(
+  async (_query, variables) => {
+    const repo = TARGET_REPOSITORIES.find(
+      (r) => r.owner === variables.owner && r.name === variables.name,
+    );
+    return {
+      repository: {
+        id: repo?.expectedNodeId ?? \`R_\${variables.owner}_\${variables.name}\`,
+        issues: {
+          totalCount: 0,
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [],
+        },
+      },
+    } as never;
+  },
+  people,
+  priorIndex,
+  "2026-11-07T00:00:00.000Z",
+);
+
+const nextIndex: ProfileIndex = {
+  schemaVersion: "2",
+  startedAt: "2026-11-07T00:00:00.000Z",
+  generatedAt: new Date().toISOString(),
+  repositories: TARGET_REPOSITORIES.map((r) => ({
+    repository: r.id,
+    count: 0,
+    excluded: 0,
+  })),
+  people: [...people.values()],
+  issues,
+};
+let nextIndexValid = true;
+try {
+  assertProfiles(nextIndex);
+} catch {
+  nextIndexValid = false;
+}
+
+let archivedOldTransferAccepted = true;
+try {
+  assertProfiles({
+    ...nextIndex,
+    issues: {
+      ...issues,
+      archived: [
+        ...(issues.archived ?? []),
+        priorIssue("I_asi_stale_archive", "elizaOS/asi", 99),
+      ],
+    },
+  });
+} catch {
+  archivedOldTransferAccepted = false;
+}
+
 console.log(JSON.stringify({
   targets,
   carried: previous.filter((repository) =>
     isCarriedProfileRepository(repository, collected, collectedRepositories),
   ),
+  nextIndexValid,
+  retainedItems: issues.items.map((item) => ({
+    id: item.id,
+    repository: item.repository,
+    unavailable: item.unavailableSince !== null,
+    unavailableSince: item.unavailableSince,
+  })),
+  archivedIssues: (issues.archived ?? []).map((item) => ({
+    id: item.id,
+    repository: item.repository,
+    unavailableSince: item.unavailableSince,
+  })),
+  archivedOldTransferAccepted,
 }));
 `,
   );
@@ -77,7 +216,7 @@ afterAll(() => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 
-test("a previous row under a transferred repository's old name is not carried", () => {
+function runTransferCheck() {
   const result = spawnSync(process.execPath, ["profile-carry-check.ts"], {
     cwd: root,
     encoding: "utf8",
@@ -86,10 +225,27 @@ test("a previous row under a transferred repository's old name is not carried", 
   });
   if (result.status !== 0)
     throw new Error(result.stderr || String(result.error));
-  const { targets, carried } = JSON.parse(result.stdout) as {
+  return JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "") as {
     targets: string[];
     carried: string[];
+    nextIndexValid: boolean;
+    retainedItems: Array<{
+      id: string;
+      repository: string;
+      unavailable: boolean;
+      unavailableSince: string | null;
+    }>;
+    archivedIssues: Array<{
+      id: string;
+      repository: string;
+      unavailableSince: string | null;
+    }>;
+    archivedOldTransferAccepted: boolean;
   };
+}
+
+test("a previous row under a transferred repository's old name is not carried", () => {
+  const { targets, carried } = runTransferCheck();
   expect(targets).toContain("SlopDotCash/asi");
   expect(targets).toContain("SlopDotCash/proximityprize");
   expect(targets).not.toContain("elizaOS/asi");
@@ -98,4 +254,41 @@ test("a previous row under a transferred repository's old name is not carried", 
     "heirlabs/element-sdk",
     "example/unregistered",
   ]);
+}, 120000);
+
+test("unseen prior issues under a transferred repository's old name are retained on the current target instead of archived", () => {
+  const {
+    nextIndexValid,
+    retainedItems,
+    archivedIssues,
+    archivedOldTransferAccepted,
+  } = runTransferCheck();
+  expect(nextIndexValid).toBe(true);
+  expect(retainedItems).toEqual([
+    {
+      id: "I_asi_deleted",
+      repository: "SlopDotCash/asi",
+      unavailable: true,
+      unavailableSince: expect.any(String),
+    },
+    {
+      id: "I_prox_deleted",
+      repository: "SlopDotCash/proximityprize",
+      unavailable: true,
+      unavailableSince: "2026-10-20T00:00:00.000Z",
+    },
+  ]);
+  expect(archivedIssues).toEqual([
+    {
+      id: "I_canonry_paused",
+      repository: "Canonry/canonry",
+      unavailableSince: null,
+    },
+    {
+      id: "I_element_retired",
+      repository: "heirlabs/element-sdk",
+      unavailableSince: null,
+    },
+  ]);
+  expect(archivedOldTransferAccepted).toBe(false);
 }, 120000);
