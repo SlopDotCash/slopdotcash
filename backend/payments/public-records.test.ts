@@ -339,12 +339,26 @@ test("production received totals exclude testnet payments while staging retains 
       paymentVault: `0x${"6".repeat(40)}`,
       network: "base-sepolia",
     });
+    // Direct transfers on a mainnet network and on a testnet network. The
+    // testnet row must not inflate production totals, mirroring the vault
+    // rows above.
+    for (const [network, transaction, amount] of [
+      ["base-mainnet", "t-main", "1000000"],
+      ["base-sepolia", "t-test", "5000000"],
+    ] as const)
+      f.sqlite
+        .query(
+          `INSERT INTO payment_direct_transfers VALUES(?,?,'project','2026-08','123','node123','first','base','r',?,'2026-09-03T00:00:00.000Z','b','p',?)`,
+        )
+        .run(network, transaction, amount, when);
 
     const production = await f.read("received", "production");
     expect(production.status).toBe(200);
     expect(production.body.totals.vaultPayments).toBe(2);
     expect(production.body.totals.contributors).toBe(1);
-    expect(production.body.totals.usdMicro).toBe("9800");
+    expect(production.body.totals.usdMicro).toBe("1009800");
+    expect(production.body.totals.directMicro).toBe("1000000");
+    expect(production.body.totals.directTransfers).toBe(1);
     expect(production.body.contributors[0].vaultPayments).toBe(2);
     expect(production.body.contributors[0].otherAssets).toEqual([
       {
@@ -359,12 +373,70 @@ test("production received totals exclude testnet payments while staging retains 
     expect(staging.status).toBe(200);
     expect(staging.body.totals.vaultPayments).toBe(4);
     expect(staging.body.totals.contributors).toBe(2);
-    expect(staging.body.totals.usdMicro).toBe("19600");
+    expect(staging.body.totals.usdMicro).toBe("6019600");
+    expect(staging.body.totals.directMicro).toBe("6000000");
+    expect(staging.body.totals.directTransfers).toBe(2);
     expect(
       staging.body.contributors.find(
         (c: { githubUserId: string }) => c.githubUserId === "123",
       ).otherAssets,
     ).toHaveLength(2);
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("production direct-transfers exclude testnet networks while staging retains them", async () => {
+  const f = fixture();
+  try {
+    for (const [network, transaction, amount] of [
+      ["base-mainnet", "t-main", "1000000"],
+      ["base-sepolia", "t-test", "5000000"],
+    ] as const)
+      f.sqlite
+        .query(
+          `INSERT INTO payment_direct_transfers VALUES(?,?,'project','2026-08','123','node123','first','base','r',?,'2026-09-03T00:00:00.000Z','b','p',?)`,
+        )
+        .run(network, transaction, amount, when);
+
+    // Non-paged route.
+    const production = await f.read(
+      "projects/project/direct-transfers",
+      "production",
+    );
+    expect(production.status).toBe(200);
+    expect(production.body.totalMicro).toBe("1000000");
+    expect(production.body.transfers).toHaveLength(1);
+    expect(production.body.transfers[0].network).toBe("base-mainnet");
+    const staging = await f.read(
+      "projects/project/direct-transfers",
+      "staging",
+    );
+    expect(staging.status).toBe(200);
+    expect(staging.body.totalMicro).toBe("6000000");
+    expect(staging.body.transfers).toHaveLength(2);
+
+    // Paged route (browsers opt in with x-slop-direct-history: paged).
+    const paged = async (tier: "staging" | "production") => {
+      const response = await handlePaymentsApi(
+        new Request(
+          `${deploymentOrigins(tier).site}/api/v1/payments/projects/project/direct-transfers`,
+          { headers: { "x-slop-direct-history": "paged" } },
+        ),
+        { db: f.database, tier },
+      );
+      return { status: response.status, body: await response.json() };
+    };
+    const pagedProduction = await paged("production");
+    expect(pagedProduction.status).toBe(200);
+    expect(pagedProduction.body.total).toBe(1);
+    expect(pagedProduction.body.totalMicro).toBe("1000000");
+    expect(pagedProduction.body.transfers).toHaveLength(1);
+    expect(pagedProduction.body.transfers[0].network).toBe("base-mainnet");
+    const pagedStaging = await paged("staging");
+    expect(pagedStaging.status).toBe(200);
+    expect(pagedStaging.body.total).toBe(2);
+    expect(pagedStaging.body.totalMicro).toBe("6000000");
   } finally {
     f.sqlite.close();
   }
