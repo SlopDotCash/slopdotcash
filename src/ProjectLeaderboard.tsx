@@ -6,6 +6,7 @@ import {
   requiredProjection,
 } from "./lib/project-view";
 import {
+  includedReviewThirds,
   type ReviewerLeader,
   selectReviewerLeaders,
 } from "./lib/reviewer-leaders";
@@ -113,6 +114,7 @@ export function CycleAllocation({
                       {formatPointsFromThirds(leader.scoreThirds)}
                     </strong>
                     <ReviewContribution
+                      leader={leader}
                       reviewer={reviewers.get(leader.actor.id)}
                     />
                     {leader.penaltyThirds > 0 ? (
@@ -190,11 +192,23 @@ function RewardValue({
   );
 }
 
-function ReviewContribution({ reviewer }: { reviewer?: ReviewerLeader }) {
+function ReviewContribution({
+  leader,
+  reviewer,
+}: {
+  leader: ProjectContributor;
+  reviewer?: ReviewerLeader;
+}) {
   if (!reviewer) return null;
+  const reviewThirds = includedReviewThirds(
+    reviewer.reviewThirds,
+    leader.scoreThirds,
+    leader.penaltyThirds,
+  );
+  if (reviewThirds <= 0) return null;
   return (
     <small className="review-score-detail">
-      Includes {formatPointsFromThirds(reviewer.reviewThirds)} review points
+      Includes {formatPointsFromThirds(reviewThirds)} review points
     </small>
   );
 }

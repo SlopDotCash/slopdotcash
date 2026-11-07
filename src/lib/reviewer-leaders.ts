@@ -20,6 +20,24 @@ export interface ReviewerLeader {
   reviewEventCount: number;
 }
 
+/**
+ * The review part of one leader's displayed score. The displayed score is
+ * net of the actor's Slopbot debit, and the project view lowers the score
+ * in the same proportion as the payment weight, so the review part of the
+ * net score is that same proportion of the gross review thirds. Without a
+ * debit the gross thirds are the exact part; with one, the gross figure
+ * could exceed the whole net score it is presented as a part of.
+ */
+export function includedReviewThirds(
+  reviewThirds: number,
+  scoreThirds: number,
+  penaltyThirds: number,
+): number {
+  const earnedThirds = scoreThirds + penaltyThirds;
+  if (penaltyThirds === 0 || earnedThirds <= 0) return reviewThirds;
+  return Math.floor((reviewThirds * scoreThirds) / earnedThirds);
+}
+
 export function selectReviewerLeaders(
   ledger: readonly ScoreEvent[],
 ): ReviewerLeader[] {
