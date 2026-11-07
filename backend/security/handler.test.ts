@@ -1123,6 +1123,170 @@ describe("discretionary awards", () => {
     });
   });
 
+  test("an upheld appeal settles the decision; it cannot be appealed again", async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.act(MAINTAINER, id, {
+      action: "decide",
+      outcome: "rejected",
+      severity: "low",
+      loss: "not-verified",
+      inScope: false,
+      reason: "Not a security issue.",
+      relatedParty: false,
+    });
+    const appealed = await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "The trace shows the loss path clearly.",
+    });
+    expect(appealed.status).toBe(200);
+    const upheld = await env.act(DISPUTE, id, {
+      action: "decide-appeal",
+      outcome: "uphold",
+      reason: "Original decision stands.",
+    });
+    expect(upheld.status).toBe(200);
+    expect(upheld.body.case.appealState).toBe("upheld");
+    // The standing decision already survived its appeal: the reporter is
+    // not offered a second appeal of the same decision, and filing one is
+    // refused without running another appeal triage.
+    const reporter = await env.call(REPORTER, "GET", `security-cases/${id}`);
+    expect(reporter.body.case.allowedActions).not.toContain("appeal");
+    const again = await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "Appealing the same upheld decision again.",
+    });
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe("action_not_allowed");
+    expect(env.appealInputs).toHaveLength(1);
+  });
+
+  test("a returned appeal lets the reporter appeal the new decision", async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    const reject = () =>
+      env.act(MAINTAINER, id, {
+        action: "decide",
+        outcome: "rejected",
+        severity: "low",
+        loss: "not-verified",
+        inScope: false,
+        reason: "Not a security issue.",
+        relatedParty: false,
+      });
+    await reject();
+    await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "The trace shows the loss path clearly.",
+    });
+    const returned = await env.act(DISPUTE, id, {
+      action: "decide-appeal",
+      outcome: "return",
+      reason: "Decide the finding again with the new evidence.",
+    });
+    expect(returned.status).toBe(200);
+    // The owner decides again; that new decision is appealable.
+    await reject();
+    const reporter = await env.call(REPORTER, "GET", `security-cases/${id}`);
+    expect(reporter.body.case.allowedActions).toContain("appeal");
+    const again = await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "The new decision repeats the same mistake.",
+    });
+    expect(again.status).toBe(200);
+    expect(again.body.case.appealState).toBe("open");
+  });
+
+  test("a new no-award decision after an upheld appeal is appealable", async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.decide(id, "vault-drain");
+    // A legacy case that waited for capacity: its award decision stayed
+    // open, so the reporter could appeal the withheld award.
+    env.sqlite
+      .query(
+        "UPDATE security_cases SET award_state = 'capacity-exhausted' WHERE id = ?",
+      )
+      .run(id);
+    const appealed = await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "The finding qualifies for the published award.",
+    });
+    expect(appealed.status).toBe(200);
+    const upheld = await env.act(DISPUTE, id, {
+      action: "decide-appeal",
+      outcome: "uphold",
+      reason: "The withheld award stands for now.",
+    });
+    expect(upheld.status).toBe(200);
+    const settled = await env.call(REPORTER, "GET", `security-cases/${id}`);
+    expect(settled.body.case.allowedActions).not.toContain("appeal");
+    // The owner then records a fresh no-award decision; that new decision
+    // clears the upheld state and is itself appealable.
+    const none = await env.act(MAINTAINER, id, {
+      action: "award",
+      decision: "none",
+      reason: "Already known and mitigated before the report.",
+    });
+    expect(none.status).toBe(200);
+    const reporter = await env.call(REPORTER, "GET", `security-cases/${id}`);
+    expect(reporter.body.case.allowedActions).toContain("appeal");
+    const again = await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "Appealing the new no-award decision.",
+    });
+    expect(again.status).toBe(200);
+  });
+
+  test("a related-party refusal after an upheld appeal is a new appealable decision", async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+    await env.decide(id, "vault-drain", { relatedParty: true });
+    // The same legacy withheld-award state as the no-award decision above:
+    // its award decision stayed open, so the reporter could appeal it.
+    env.sqlite
+      .query(
+        "UPDATE security_cases SET award_state = 'capacity-exhausted' WHERE id = ?",
+      )
+      .run(id);
+    const appealed = await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "The finding qualifies for the published award.",
+    });
+    expect(appealed.status).toBe(200);
+    const upheld = await env.act(DISPUTE, id, {
+      action: "decide-appeal",
+      outcome: "uphold",
+      reason: "The withheld award stands for now.",
+    });
+    expect(upheld.status).toBe(200);
+    expect(upheld.body.case.appealState).toBe("upheld");
+    // The owner proposes a fresh amount, and an independent reviewer
+    // refuses the related-party award: that refusal is a new decision.
+    const proposed = await env.award(id, "800000");
+    expect(proposed.status).toBe(200);
+    expect(proposed.body.case.awardState).toBe("pending");
+    const refused = await env.act(DISPUTE_3, id, {
+      action: "decide-related-party",
+      outcome: "refuse",
+      reason: "Refused after independent review.",
+    });
+    expect(refused.status).toBe(200);
+    expect(refused.body.case.awardState).toBe("ineligible");
+    // Like a fresh no-award decision, the refusal clears the upheld state,
+    // so the reporter may appeal this decision rather than being stuck
+    // with the settled one.
+    expect(refused.body.case.appealState).toBe("none");
+    const reporter = await env.call(REPORTER, "GET", `security-cases/${id}`);
+    expect(reporter.body.case.allowedActions).toContain("appeal");
+    const again = await env.act(REPORTER, id, {
+      action: "appeal",
+      reason: "Appealing the new related-party refusal.",
+    });
+    expect(again.status).toBe(200);
+    expect(again.body.case.appealState).toBe("open");
+  });
+
   test("a concurrent reservation cannot overspend the program", async () => {
     const env = open();
     const first = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");

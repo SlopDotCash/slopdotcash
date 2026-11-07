@@ -704,9 +704,15 @@ function allowedActions(row: CaseRow, roles: Set<Role>): string[] {
     actions.push("recognition");
     // An award the program withheld stays appealable: the shortage or a
     // refusal is an award exception, not a finding change (SEC-12), and a
-    // separate reviewer resolves it (SEC-04, SEC-18).
+    // separate reviewer resolves it (SEC-04, SEC-18). An upheld appeal
+    // settles the standing decision: the reporter may appeal again only
+    // after a new decision (an appeal return reopens one, and a later
+    // award decision clears the upheld state), never the same decision
+    // twice — each appeal runs a triage and consumes one reviewer, who
+    // stays conflicted for the case, so repeats could strand an open
+    // appeal with nobody left to decide it.
     if (
-      row.appeal_state !== "open" &&
+      !["open", "upheld"].includes(row.appeal_state) &&
       (["duplicate", "out-of-scope", "rejected"].includes(row.receipt_state) ||
         (row.receipt_state === "confirmed" &&
           ["ineligible", "capacity-exhausted"].includes(row.award_state)))
@@ -2656,6 +2662,9 @@ async function planChange(
             ...reviewed,
             award_state: "ineligible",
             award_gross_minor: null,
+            // A refusal is a fresh no-award decision: it clears an earlier
+            // upheld appeal so the reporter may appeal this decision.
+            appeal_state: "none",
           },
         };
       // An approval reserves the proposed amount now, if funds exist. A
@@ -3266,7 +3275,13 @@ async function planAward(
       );
     return {
       detail: { decision },
-      set: { award_state: "ineligible", award_gross_minor: null },
+      // A fresh no-award decision is a new decision: it clears an earlier
+      // upheld appeal so the reporter may appeal this decision.
+      set: {
+        award_state: "ineligible",
+        award_gross_minor: null,
+        appeal_state: "none",
+      },
     };
   }
   if (frozenTerms(row)?.fundingPolicy === "after-approval") {
