@@ -20,8 +20,15 @@ import {
   type PostStatus,
   postNextRoot,
 } from "./core";
+import { buildTree } from "./merkle";
 import { createEvmPoster } from "./poster";
 import { D1AccrualStore } from "./store";
+
+function treeRoot(address: string, cumulativeBase: bigint) {
+  const tree = buildTree([{ address, cumulativeBase }]);
+  if (tree === null) throw new Error("test tree unexpectedly empty");
+  return tree.root;
+}
 
 const ONE = 10n ** 18n;
 const DISTRIBUTOR = `0x${"d".repeat(40)}`;
@@ -31,7 +38,8 @@ const TEST_ACCOUNT = privateKeyToAccount(
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
 );
 const SIGNER = TEST_ACCOUNT.address.toLowerCase();
-const ROOT_A = `0x${"a".repeat(64)}`;
+const WALLET_A = `0x${"1".padStart(40, "0")}`;
+const ROOT_A = treeRoot(WALLET_A, ONE);
 
 const POSTER: PosterConfig = {
   network: "robinhood-testnet",
@@ -53,8 +61,23 @@ function addFile(
   epoch: number,
   root: string | null,
   total: bigint,
+  cumulativeBases: readonly string[] = [total.toString()],
+  wallets: readonly string[] = cumulativeBases.map(
+    (_amount, index) => `0x${(index + 1).toString(16).padStart(40, "0")}`,
+  ),
+  bodySha256?: string,
+  declaredTotal = total.toString(),
 ) {
-  const body = JSON.stringify({ period, epoch });
+  const body = JSON.stringify({
+    period,
+    epoch,
+    totals: { treeTotalBase: declaredTotal },
+    referrers: cumulativeBases.map((cumulativeBase, index) => ({
+      wallet: wallets[index],
+      cumulativeBase,
+    })),
+    merkle: root === null ? null : { root, leafCount: cumulativeBases.length },
+  });
   sqlite
     .query(
       "INSERT INTO referral_accrual_files (period, epoch, run_id, mode, body, body_sha256, merkle_root, tree_total_base, leaf_count, created_at) VALUES (?, ?, 'rrun_test0001', 'live', ?, ?, ?, ?, ?, ?)",
@@ -63,10 +86,10 @@ function addFile(
       period,
       epoch,
       body,
-      sha(body),
+      bodySha256 ?? sha(body),
       root,
-      total.toString(),
-      root === null ? 0 : 1,
+      declaredTotal,
+      root === null ? 0 : cumulativeBases.length,
       `${period}-28T00:00:00.000Z`,
     );
 }
@@ -582,6 +605,163 @@ describe("durable referral native fee budgets", () => {
     };
     addFile(h.sqlite, "2026-11", 0, ROOT_A, ONE);
     expect((await postNextRoot(h.deps)).status).toBe("gas_budget");
+    expect(chain.prepared).toHaveLength(0);
+    expect(chain.broadcasts).toHaveLength(0);
+    expect(h.posts()).toHaveLength(0);
+    h.sqlite.close();
+  });
+});
+
+describe("declared referral total consistency", () => {
+  test.each([
+    {
+      name: "under-declared",
+      total: ONE,
+      cumulativeBases: [ONE.toString(), ONE.toString()],
+      wallets: undefined,
+    },
+    {
+      name: "duplicate claimant",
+      total: ONE,
+      cumulativeBases: [ONE.toString(), "0"],
+      wallets: [`0x${"1".padStart(40, "0")}`, `0x${"1".padStart(40, "0")}`],
+    },
+    {
+      name: "uint256 leaf overflow",
+      total: 1n,
+      cumulativeBases: [(1n << 256n).toString()],
+      wallets: undefined,
+    },
+    {
+      name: "uint256 aggregate overflow",
+      total: 1n,
+      cumulativeBases: [((1n << 256n) - 1n).toString(), "1"],
+      wallets: undefined,
+    },
+    {
+      name: "malformed amount",
+      total: ONE,
+      cumulativeBases: ["1e18"],
+      wallets: undefined,
+    },
+  ])(
+    "refuses $name evidence before signing",
+    async ({ total, cumulativeBases, wallets }) => {
+      const chain = fakeChain();
+      const h = harness(chain);
+      addFile(h.sqlite, "2026-11", 0, ROOT_A, total, cumulativeBases, wallets);
+
+      expect(await postNextRoot(h.deps)).toMatchObject({
+        status: "precheck_failed",
+      });
+      expect(chain.prepared).toHaveLength(0);
+      expect(chain.broadcasts).toHaveLength(0);
+      expect(h.posts()).toHaveLength(0);
+      h.sqlite.close();
+    },
+  );
+
+  test("refuses a body whose retained digest no longer matches", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    addFile(
+      h.sqlite,
+      "2026-11",
+      0,
+      ROOT_A,
+      ONE,
+      undefined,
+      undefined,
+      "0".repeat(64),
+    );
+
+    expect(await postNextRoot(h.deps)).toMatchObject({
+      status: "precheck_failed",
+      reason: "file body digest differs",
+    });
+    expect(chain.prepared).toHaveLength(0);
+    expect(chain.broadcasts).toHaveLength(0);
+    expect(h.posts()).toHaveLength(0);
+    h.sqlite.close();
+  });
+
+  test("refuses retained leaves whose canonical root differs before signing", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    const inconsistentRoot = `0x${"a".repeat(64)}`;
+    addFile(h.sqlite, "2026-11", 0, inconsistentRoot, ONE);
+
+    expect(await postNextRoot(h.deps)).toEqual({
+      status: "precheck_failed",
+      reconciled: 0,
+      reason: "file merkle root differs from retained leaves",
+    });
+    expect(chain.prepared).toHaveLength(0);
+    expect(chain.broadcasts).toHaveLength(0);
+    expect(h.posts()).toHaveLength(0);
+    h.sqlite.close();
+  });
+
+  test("logs a controlled rejection for a noncanonical declared total", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    const root = treeRoot(WALLET_A, 1n);
+    addFile(
+      h.sqlite,
+      "2026-11",
+      0,
+      root,
+      1n,
+      ["01"],
+      [WALLET_A],
+      undefined,
+      "01",
+    );
+
+    expect(await postNextRoot(h.deps)).toEqual({
+      status: "precheck_failed",
+      reconciled: 0,
+      reason: "file total is not canonical uint256 units",
+    });
+    expect(h.logs.at(-1)).toMatchObject({
+      event: "referral_post_precheck_failed",
+      period: "2026-11",
+      reason: "file total is not canonical uint256 units",
+    });
+    expect(chain.prepared).toHaveLength(0);
+    expect(chain.broadcasts).toHaveLength(0);
+    expect(h.posts()).toHaveLength(0);
+    h.sqlite.close();
+  });
+
+  test("logs a controlled rejection for a malformed declared total", async () => {
+    const chain = fakeChain();
+    const h = harness(chain);
+    const body = JSON.stringify({
+      totals: { treeTotalBase: "1e18" },
+      referrers: [{ wallet: WALLET_A, cumulativeBase: ONE.toString() }],
+      merkle: { root: ROOT_A, leafCount: 1 },
+    });
+    h.deps.store.postableFiles = async () => [
+      {
+        period: "2026-11",
+        merkleRoot: ROOT_A,
+        treeTotalBase: "1e18",
+        leafCount: 1,
+        body,
+        bodySha256: sha(body),
+      },
+    ];
+
+    expect(await postNextRoot(h.deps)).toEqual({
+      status: "precheck_failed",
+      reconciled: 0,
+      reason: "file total is not canonical uint256 units",
+    });
+    expect(h.logs.at(-1)).toMatchObject({
+      event: "referral_post_precheck_failed",
+      reason: "file total is not canonical uint256 units",
+    });
     expect(chain.prepared).toHaveLength(0);
     expect(chain.broadcasts).toHaveLength(0);
     expect(h.posts()).toHaveLength(0);

@@ -330,15 +330,25 @@ export class D1AccrualStore implements AccrualStore, PostStore {
   async postableFiles() {
     const { results } = await this.db
       .prepare(
-        `SELECT period, merkle_root, tree_total_base FROM referral_accrual_files
+        `SELECT period, merkle_root, tree_total_base, leaf_count, body, body_sha256 FROM referral_accrual_files
           WHERE merkle_root IS NOT NULL ORDER BY epoch`,
       )
       .bind()
-      .all<{ period: string; merkle_root: string; tree_total_base: string }>();
+      .all<{
+        period: string;
+        merkle_root: string;
+        tree_total_base: string;
+        leaf_count: number;
+        body: string;
+        body_sha256: string;
+      }>();
     return results.map((row) => ({
       period: row.period,
       merkleRoot: row.merkle_root,
       treeTotalBase: row.tree_total_base,
+      leafCount: row.leaf_count,
+      body: row.body,
+      bodySha256: row.body_sha256,
     }));
   }
 
