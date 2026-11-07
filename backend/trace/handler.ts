@@ -824,14 +824,17 @@ async function createRun(
   assertWriter(actor);
   await assertParticipationAllowed(actor, deps);
   const body = await readJsonObject(request);
+  const projectId = requiredString(body, "projectId");
+  const repository = requiredString(body, "repository", validRepository);
+  await assertRunIdentity(deps, projectId, repository);
   const now = deps.now().toISOString();
   const result = await deps.persistence.createRun({
     id: deps.randomId(),
     clientRunId: requiredString(body, "clientRunId"),
     githubId: actor.githubId,
     githubLogin: actor.githubLogin,
-    projectId: requiredString(body, "projectId"),
-    repository: requiredString(body, "repository", validRepository),
+    projectId,
+    repository,
     projectPolicyRevision: requiredString(
       body,
       "projectPolicyRevision",
