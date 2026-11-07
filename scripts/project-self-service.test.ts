@@ -43,6 +43,7 @@ import {
   CONTRIBUTION,
 } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
+import { seedProject } from "../tests/project-registry.fixture";
 
 const ADMIN = "900000001";
 const OWNER = "900000002";
@@ -1008,6 +1009,7 @@ test("an explicit moderator ban blocks new contribution intake without blaming t
     },
     secret,
   );
+  seedProject(t.sqlite, "other-project", "example/other-project");
   let run = 0;
   const trace: TraceApiDependencies = {
     persistence: new CloudflareTracePersistence(t.db, {} as R2Bucket),

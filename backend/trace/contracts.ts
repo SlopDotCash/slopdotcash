@@ -174,6 +174,10 @@ export type PersistenceResult<T> =
 
 export interface TracePersistence {
   hasParticipationBan(githubId: string): Promise<boolean>;
+  /** The registered manifest of a project, or null when the id is unknown. */
+  projectManifest(projectId: string): Promise<string | null>;
+  /** The registered manifest of a project, or null when the id is unknown. */
+  projectManifest(projectId: string): Promise<string | null>;
   createRun(input: CreateRunInput): Promise<PersistenceResult<TraceRun>>;
   getRun(runId: string): Promise<TraceRun | null>;
   reserveTraceWrite(

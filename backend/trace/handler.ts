@@ -25,7 +25,9 @@ import {
   isWalletChain,
   type WalletChain,
 } from "../../src/lib/wallets";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { isBindingRecoveryInput } from "../../workers/payment-executor/binding-recovery";
+import { currentRepositoryPath } from "../projects/setup";
 import {
   type ApiError,
   apiErrorResponse,
@@ -816,6 +818,32 @@ async function exchangeIdentityAssertion(
   });
 }
 
+/**
+ * A run names the project and repository it belongs to, and the closure check
+ * re-derives the pair from the pull request instead of trusting the row. An
+ * unchecked pair is therefore accepted and silently never counts. Refuse it at
+ * creation with the same repository set the closure check accepts, so the two
+ * ends cannot disagree.
+ */
+async function assertRunIdentity(
+  deps: TraceApiDependencies,
+  projectId: string,
+  repository: string,
+) {
+  const manifest = await deps.persistence.projectManifest(projectId);
+  if (manifest === null)
+    fail(404, "project_not_found", "The project is not registered");
+  const project = assertProjectDefinition(JSON.parse(manifest));
+  const named = repository.toLowerCase();
+  const accepted = project.repositories.some((entry) =>
+    [entry.id, ...(entry.aliases ?? []), currentRepositoryPath(entry)]
+      .map((name) => name.toLowerCase())
+      .includes(named),
+  );
+  if (!accepted)
+    fail(422, "repository_not_in_project", "The repository is not in the project");
+}
+
 async function createRun(
   request: Request,
   actor: AuthenticatedActor,
@@ -824,14 +852,17 @@ async function createRun(
   assertWriter(actor);
   await assertParticipationAllowed(actor, deps);
   const body = await readJsonObject(request);
+  const projectId = requiredString(body, "projectId");
+  const repository = requiredString(body, "repository", validRepository);
+  await assertRunIdentity(deps, projectId, repository);
   const now = deps.now().toISOString();
   const result = await deps.persistence.createRun({
     id: deps.randomId(),
     clientRunId: requiredString(body, "clientRunId"),
     githubId: actor.githubId,
     githubLogin: actor.githubLogin,
-    projectId: requiredString(body, "projectId"),
-    repository: requiredString(body, "repository", validRepository),
+    projectId,
+    repository,
     projectPolicyRevision: requiredString(
       body,
       "projectPolicyRevision",
