@@ -18,7 +18,7 @@ import {
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { archivedPaidCycleIndex } from "../fixtures";
+import { archivedPaidCycleIndex, publishedStandings } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -58,7 +58,9 @@ test("funding resolves to the consolidated project page", async ({ page }) => {
   const snapshotReads: string[] = [];
   page.on("request", (request) => {
     if (
-      /\/data\/(?:leaderboard\.json|cycles\/index\.json)/u.test(request.url())
+      /\/data\/(?:leaderboard\.json|leaderboard\/|standings\.json|cycles\/index\.json)/u.test(
+        request.url(),
+      )
     )
       snapshotReads.push(request.url());
   });
@@ -77,9 +79,15 @@ test("funding resolves to the consolidated project page", async ({ page }) => {
     body: JSON.stringify(snapshotReads),
     contentType: "application/json",
   });
-  expect(snapshotReads.some((url) => url.includes("leaderboard.json"))).toBe(
+  // The project page reads the published standings record and the cycle
+  // index, never the complete multi-part leaderboard snapshot.
+  expect(snapshotReads.some((url) => url.includes("standings.json"))).toBe(
     true,
   );
+  expect(snapshotReads.some((url) => url.includes("cycles/index.json"))).toBe(
+    true,
+  );
+  expect(snapshotReads.some((url) => url.includes("leaderboard"))).toBe(false);
   await expectAccessible(page);
 });
 
@@ -1621,10 +1629,16 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
 
 test("shows an explicit error for invalid data and retries", async ({
   page,
+  diagnostics,
 }) => {
   let attempts = 0;
   let failSnapshot = true;
-  await page.route("**/data/leaderboard.json?**", async (route) => {
+  // The ranking reads the published standings record; a refused record
+  // cancels the cycle index read paired with it.
+  diagnostics.allow(
+    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/data\/cycles\/index\.json\?\S*$/u,
+  );
+  await page.route("**/data/standings.json?**", async (route) => {
     attempts += 1;
     if (failSnapshot) {
       await route.fulfill({
@@ -1831,9 +1845,10 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   page,
   diagnostics,
 }, testInfo) => {
-  // Returning from the home page cancels any background Points shards.
+  // Returning from the project page or the home page cancels any
+  // background Points read.
   diagnostics.allow(
-    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:-members|\/[0-9a-f])?\.json$/u,
   );
   await page.goto("/sponsors", { waitUntil: "networkidle" });
   // The page's records must finish loading before keyboard navigation
@@ -1933,8 +1948,9 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   snapshot.leaders.sort(compareRankedEntries);
   assignLeaderboardRanks(snapshot.leaders);
   assertLeaderboardSnapshot(snapshot);
-  await page.route("**/data/leaderboard.json?**", (route) =>
-    route.fulfill({ json: snapshot }),
+  const standings = publishedStandings(snapshot, await loadCycles(request));
+  await page.route("**/data/standings.json?**", (route) =>
+    route.fulfill({ json: standings }),
   );
   await page.route("**/api/v1/wallet-claims/actors/*/current", (route) =>
     route.fulfill({ json: null }),

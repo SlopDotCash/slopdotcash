@@ -2,7 +2,11 @@ import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { transactionUrl } from "../../src/lib/payments/contracts";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
-import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
+import {
+  archivedPaidCycleIndex,
+  publishedStandings,
+  snapshotFixture,
+} from "../fixtures";
 import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 
 const { site } = deploymentOrigins(
@@ -45,6 +49,11 @@ test("finalized project payments show net assets and source months on cycles and
   );
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
+  );
+  await page.route("**/data/standings.json?**", (route) =>
+    route.fulfill({
+      json: publishedStandings(snapshot, archivedPaidCycleIndex()),
+    }),
   );
   await page.route("**/data/profiles.json", (route) =>
     route.fulfill({

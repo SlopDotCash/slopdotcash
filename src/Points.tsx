@@ -25,17 +25,14 @@ import {
   localBackendOrigin,
   loginHref,
 } from "./lib/browser-deployment";
-import {
-  fetchWithDeadline,
-  readBoundedJson,
-  readBoundedText,
-} from "./lib/browser-json";
+import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
+import type { GitHubActor } from "./lib/leaderboard";
 import type { ActorRef } from "./lib/leaderboard-types";
 import {
   clearLocalFlow,
@@ -43,25 +40,25 @@ import {
   saveLocalFlow,
 } from "./lib/local-signin";
 import { loginReturnPath } from "./lib/login-return";
+import { POINTS_NOTICE } from "./lib/points";
 import {
-  assemblePoints,
-  POINTS_NOTICE,
-  type PointsIndex,
-  type PointsJournal,
-  type PointsMember,
-  pointMembers,
-} from "./lib/points";
+  assertPublishedPointsMembers,
+  MAX_POINTS_MEMBERS_BYTES,
+  type MemberPoints,
+  pointsOf,
+} from "./lib/points-members";
 import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
-import { type DataState, useSnapshot } from "./lib/use-snapshot";
+import { useStandings } from "./lib/use-standings";
 import {
   Avatar,
   DataNotice,
   Disclosure,
   NotFound,
+  type NoticeState,
   Pager,
   RoutePageHeader,
 } from "./Presentation";
@@ -98,10 +95,16 @@ type State =
   | { status: "error"; message: string }
   | {
       status: "ready";
-      journal: PointsJournal;
-      members: PointsMember[];
+      members: MemberPoints[];
       stale?: boolean;
     };
+/**
+ * The published Points record a page reads: the leaderboard, contributor and
+ * project pages show a few values of each member and read the small published
+ * member record. The complete sixteen-shard journal stays published for
+ * download and for the publication's own checks.
+ */
+export type PointsSource = "members";
 type PointsContext = {
   state: State;
   me: Membership | null;
@@ -158,22 +161,19 @@ async function requestJson(url: string, init: RequestInit = {}) {
   }
   return readBoundedJson(response, 24 * 1024 * 1024, "points");
 }
-async function loadPoints(signal: AbortSignal) {
-  const index = (await requestJson("/data/points.json", {
+async function loadPointsMembers(signal: AbortSignal) {
+  const response = await fetchWithDeadline("/data/points-members.json", {
     signal,
-  })) as PointsIndex;
-  if (!Array.isArray(index.shards) || index.shards.length !== 16)
-    throw new Error("Invalid points index");
-  const parts = await Promise.all(
-    index.shards.map(async (s, i) => {
-      if (s.path !== `/data/points/${i.toString(16)}.json`)
-        throw new Error("Invalid points path");
-      const r = await fetchWithDeadline(s.path, { signal, cache: "no-store" });
-      if (!r.ok) throw new Error("Points shard unavailable");
-      return readBoundedText(r, 8 * 1024 * 1024, "points history");
-    }),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Points members unavailable");
+  const value = await readBoundedJson(
+    response,
+    MAX_POINTS_MEMBERS_BYTES,
+    "points members",
   );
-  return assemblePoints(index, parts);
+  assertPublishedPointsMembers(value);
+  return value.members;
 }
 /** Same-origin path from `next`; anything else falls back to the profile. */
 function returnPath(search = window.location.search): string | null {
@@ -195,10 +195,11 @@ function member(value: unknown): Membership {
 }
 export function PointsProvider({
   children,
-  enabled,
+  source,
 }: {
   children: ReactNode;
-  enabled: boolean;
+  /** The record this page needs; none loads only on request. */
+  source: PointsSource | null;
 }) {
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
@@ -210,9 +211,10 @@ export function PointsProvider({
   const [requested, setRequested] = useState(false);
   const loadedAttempt = useRef<{
     attempt: number;
+    source: PointsSource;
     completedAt: number;
   } | null>(null);
-  const verifiedJournal = useRef<PointsJournal | null>(null);
+  const verifiedMembers = useRef<MemberPoints[] | null>(null);
   const sessionRequest = useRef<AbortController | null>(null);
   const updateMembership = useCallback((value: Membership | null) => {
     // A successful account action supersedes any earlier session read.
@@ -221,43 +223,32 @@ export function PointsProvider({
     setMe(value);
     setSession("ready");
   }, []);
-  const shouldLoad = enabled || requested;
+  // A request without a page record (the account menu) needs only members.
+  const read = source ?? (requested ? "members" : null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: profile session checks also recheck the public journal's age.
   useEffect(() => {
-    if (!shouldLoad) return;
+    if (!read) return;
     const loaded = loadedAttempt.current;
     const age = loaded ? Date.now() - loaded.completedAt : -1;
+    // A record read in the last minute covers every page's members.
     if (loaded?.attempt === attempt && age >= 0 && age < 60_000) return;
     const controller = new AbortController();
     setState({ status: "loading" });
-    void loadPoints(controller.signal)
-      .then((value) => {
+    void loadPointsMembers(controller.signal)
+      .then((members) => {
         if (controller.signal.aborted) return;
-        const members = pointMembers(
-          value,
-          new Date().toISOString().slice(0, 7),
-        );
-        verifiedJournal.current = value;
-        loadedAttempt.current = { attempt, completedAt: Date.now() };
-        setState({
-          status: "ready",
-          journal: value,
-          members,
-        });
+        verifiedMembers.current = members;
+        loadedAttempt.current = {
+          attempt,
+          source: read,
+          completedAt: Date.now(),
+        };
+        setState({ status: "ready", members });
       })
       .catch(() => {
         if (controller.signal.aborted) return;
-        const journal = verifiedJournal.current;
-        if (journal)
-          setState({
-            status: "ready",
-            journal,
-            members: pointMembers(
-              journal,
-              new Date().toISOString().slice(0, 7),
-            ),
-            stale: true,
-          });
+        const members = verifiedMembers.current;
+        if (members) setState({ status: "ready", members, stale: true });
         else
           setState({
             status: "error",
@@ -265,7 +256,7 @@ export function PointsProvider({
           });
       });
     return () => controller.abort();
-  }, [shouldLoad, attempt, sessionAttempt]);
+  }, [read, attempt, sessionAttempt]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionAttempt retries a failed identity read.
   useEffect(() => {
     const controller = new AbortController();
@@ -659,7 +650,7 @@ export function ProfilePoints({
   return (
     <section className="points-panel" aria-label="Slop Points">
       <ProfileActivity
-        awards={m?.awards}
+        days={m?.days}
         login={login}
         actorId={resolvedActorId ?? m?.actor.id}
         census={census}
@@ -691,7 +682,7 @@ export function ProfilePoints({
               <strong>
                 {pointsUnavailable ??
                   recentPoints(
-                    m?.awards ?? [],
+                    m?.days ?? [],
                     new Date(),
                     RECENT_POINTS_DAYS,
                   ).toLocaleString()}
@@ -1115,6 +1106,13 @@ export function PointsPage() {
     </main>
   );
 }
+/** The current leaders that name each ranked actor, from any published read. */
+type ScoreActorsState =
+  | Exclude<NoticeState, { status: "ready" }>
+  | (Extract<NoticeState, { status: "ready" }> & {
+      snapshot: { leaders: { actor: Pick<GitHubActor, "id" | "login"> }[] };
+    });
+
 export function ContributorStandings({
   scoreState,
   retryScore,
@@ -1128,12 +1126,13 @@ export function ContributorStandings({
   compact?: boolean;
   title?: string;
   renderHeader?: (periodControls: ReactNode) => ReactNode;
-  scoreState?: DataState;
+  /** A caller's own read of the current leaders; the standings record otherwise. */
+  scoreState?: ScoreActorsState;
   retryScore?: () => void;
   /** Shows score loading, error and stale states for a caller's shared read. */
   showDataNotice?: boolean;
 }) {
-  const [loadedScore, retryLoadedScore] = useSnapshot(!scoreState);
+  const [loadedScore, retryLoadedScore] = useStandings(!scoreState);
   const scores = scoreState ?? loadedScore;
   const readFilters = useCallback(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1190,7 +1189,10 @@ export function ContributorStandings({
   const month = new Date().toISOString().slice(0, 7);
   const members = useMemo(() => {
     if (state.status !== "ready") return [];
-    return pointMembers(state.journal, month, project || undefined);
+    return state.members.map((member) => ({
+      actor: member.actor,
+      ...pointsOf(member, month, project || undefined),
+    }));
   }, [state, project, month]);
   const currentActors = new Map(
     scores.status === "ready"

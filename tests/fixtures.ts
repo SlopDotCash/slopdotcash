@@ -9,6 +9,11 @@ import {
   SCORE_RULE_VERSION,
   TARGET_REPOSITORIES,
 } from "../src/lib/leaderboard";
+import { sha256Hex } from "../src/lib/sha256";
+import {
+  createPublishedStandings,
+  type PublishedStandings,
+} from "../src/lib/standings";
 
 export function cycleIndexFixture(): CycleIndex {
   return {
@@ -560,4 +565,16 @@ export function archivedPaidCycleIndex() {
     },
   ];
   return index;
+}
+
+/** The standings record the publication builds from this snapshot. */
+export function publishedStandings(
+  snapshot: LeaderboardSnapshot,
+  cycles: CycleIndex = cycleIndexFixture(),
+): PublishedStandings {
+  return createPublishedStandings(
+    snapshot,
+    cycles,
+    sha256Hex(JSON.stringify(snapshot)),
+  );
 }

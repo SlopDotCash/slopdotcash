@@ -6,7 +6,7 @@ import { deploymentTier } from "./lib/deployment";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { transactionUrl } from "./lib/payments/contracts";
-import type { PointsMember } from "./lib/points";
+import type { DailyPoints } from "./lib/points-members";
 import { dailyPoints } from "./lib/profile-activity";
 import {
   assertProfiles,
@@ -85,7 +85,7 @@ function dollars(n: bigint) {
   return formatMicroUsdc(n.toString());
 }
 export function ProfileActivity({
-  awards,
+  days,
   login,
   actorId,
   showIdentity,
@@ -96,7 +96,8 @@ export function ProfileActivity({
   children,
 }: {
   login: string;
-  awards?: PointsMember["awards"];
+  /** Every day the contributor was awarded points. */
+  days?: readonly DailyPoints[];
   actorId?: string;
   showIdentity: boolean;
   cycles?: CycleIndex;
@@ -138,7 +139,7 @@ export function ProfileActivity({
       ) : null}
       {badges}
       <div className="profile-totals">{summary}</div>
-      {awards ? <ActivityChart awards={awards} /> : null}
+      {days ? <ActivityChart awarded={days} /> : null}
       {state.status === "ready" && state.refreshError ? (
         <p role="status">
           Profile records may be outdated.{" "}
@@ -230,8 +231,8 @@ function PullRequestBar({
 const ACTIVITY_DAYS = 35;
 
 /** The same point awards shown in the activity timeline, grouped by UTC day. */
-function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
-  const days = dailyPoints(awards, new Date(), ACTIVITY_DAYS);
+function ActivityChart({ awarded }: { awarded: readonly DailyPoints[] }) {
+  const days = dailyPoints(awarded, new Date(), ACTIVITY_DAYS);
   const max = Math.max(...days.map((entry) => entry.points));
   if (max <= 0) return null;
   return (

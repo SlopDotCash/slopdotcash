@@ -9,7 +9,9 @@ import {
   emptyPointsJournal,
   type PointsIndex,
   pointKey,
+  pointMembers,
 } from "../../src/lib/points";
+import { publishedPointsMembers } from "../../src/lib/points-members";
 import { expect, test } from "./fixtures";
 
 const actor = {
@@ -60,7 +62,12 @@ function pointsFixture() {
     })),
   };
   assemblePoints(index, parts);
-  return { index, parts };
+  const members = publishedPointsMembers(
+    journal,
+    pointMembers(journal),
+    createHash("sha256").update(JSON.stringify(index)).digest("hex"),
+  );
+  return members;
 }
 
 /** All product APIs are local read-only fixtures; no identity or chain service. */
@@ -68,7 +75,7 @@ async function servePointsSite(page: Page) {
   const deployment = deploymentOrigins(
     deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
   );
-  const points = pointsFixture();
+  const members = pointsFixture();
   let unavailable = false;
   let reads = 0;
   await page.route("**/*", async (route) => {
@@ -100,18 +107,13 @@ async function servePointsSite(page: Page) {
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"/>',
       });
     if (url.origin !== deployment.site) return route.abort();
-    if (url.pathname === "/data/points.json") {
+    // The profile and the leaderboard read the published member record.
+    if (url.pathname === "/data/points-members.json") {
       reads++;
       return unavailable
         ? route.fulfill({ status: 503, body: "Points temporarily unavailable" })
-        : route.fulfill({ json: points.index });
+        : route.fulfill({ json: members });
     }
-    const shard = /^\/data\/points\/([0-9a-f])\.json$/u.exec(url.pathname);
-    if (shard)
-      return route.fulfill({
-        contentType: "application/json",
-        body: points.parts[Number.parseInt(shard[1], 16)],
-      });
     if (url.pathname === "/data/profiles.json") {
       const directory = JSON.parse(
         readFileSync(join(process.cwd(), "dist/data/profiles.json"), "utf8"),
@@ -145,7 +147,7 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
 }, info) => {
   const fixture = await servePointsSite(page);
   diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points\.json$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points-members\.json$/u,
   );
   await page.clock.install({ time: new Date(at) });
   await page.goto(`${fixture.site}/contributors/${actor.login}`, {
@@ -205,14 +207,14 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
   expect(fixture.reads()).toBe(readsBeforeRetry + 1);
 });
 
-test("an initial Points failure remains unavailable without a verified journal", async ({
+test("an initial Points failure remains unavailable without a verified record", async ({
   diagnostics,
   page,
 }) => {
   const fixture = await servePointsSite(page);
   fixture.fail();
   diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points\.json$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points-members\.json$/u,
   );
   await page.goto(`${fixture.site}/points`, { waitUntil: "networkidle" });
   await expect(

@@ -43,7 +43,8 @@ import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
-import { type DataState, useSnapshot } from "./lib/use-snapshot";
+import { useSnapshot } from "./lib/use-snapshot";
+import { type StandingsState, useStandings } from "./lib/use-standings";
 import {
   AccountPage,
   ContributorStandings,
@@ -164,7 +165,9 @@ type Route =
   | { kind: "profile"; login: string };
 
 /**
- * Each page's data needs. `snapshot` loads the public snapshot. `registry`
+ * Each page's data needs. `snapshot` loads the complete public snapshot, or
+ * only the published standings record for pages that show a few of its
+ * values (PRD section 9). `registry`
  * says whether the page works without the project registry ("independent"),
  * needs the current registry because it acts on a manifest ("current", PRD
  * section 9), or may show the last good registry ("cached").
@@ -172,14 +175,14 @@ type Route =
 const ROUTES: Record<
   Route["kind"],
   {
-    snapshot: boolean;
+    snapshot: false | "complete" | "standings";
     registry: "independent" | "current" | "cached";
     privateTitle?: string;
   }
 > = {
   home: { snapshot: false, registry: "cached" },
   "how-it-works": { snapshot: false, registry: "independent" },
-  sponsors: { snapshot: true, registry: "cached" },
+  sponsors: { snapshot: "complete", registry: "cached" },
   "cycle-archive": { snapshot: false, registry: "cached" },
   unknown: { snapshot: false, registry: "cached" },
   account: {
@@ -207,11 +210,11 @@ const ROUTES: Record<
     registry: "independent",
     privateTitle: "Security cases",
   },
-  project: { snapshot: true, registry: "cached" },
+  project: { snapshot: "standings", registry: "cached" },
   "manage-project": { snapshot: false, registry: "current" },
   "security-program": { snapshot: false, registry: "current" },
-  cycle: { snapshot: true, registry: "cached" },
-  profile: { snapshot: true, registry: "cached" },
+  cycle: { snapshot: "complete", registry: "cached" },
+  profile: { snapshot: "standings", registry: "cached" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -1161,7 +1164,7 @@ function ProjectPaymentHistory({
   state,
 }: {
   project: ProjectDefinition;
-  state: DataState;
+  state: StandingsState;
 }) {
   const [showHistory, setShowHistory] = useState(false);
   const [directState, retryDirect] = useDirectTransfers({
@@ -1295,7 +1298,7 @@ function ProjectFundsAndAwards({
   state,
 }: {
   project: ProjectDefinition;
-  state: DataState;
+  state: StandingsState;
 }) {
   return (
     <section
@@ -1439,12 +1442,14 @@ function ProjectPage({
   retry,
 }: {
   project: ProjectDefinition;
-  state: DataState;
+  state: StandingsState;
   retry: () => void;
 }) {
-  const view =
+  const standing =
     state.status === "ready"
-      ? state.views.find((candidate) => candidate.project.id === project.id)
+      ? state.snapshot.projects.find(
+          (candidate) => candidate.projectId === project.id,
+        )
       : undefined;
   return (
     <main className="route-project">
@@ -1469,7 +1474,7 @@ function ProjectPage({
           project={project}
           state={state}
         />
-        {view && state.status === "ready" && view.leaders.length > 0 ? (
+        {standing && state.status === "ready" && standing.leaders.length > 0 ? (
           <div id="contributors">
             <ContributorStandings
               projectId={project.id}
@@ -1497,10 +1502,15 @@ export function App() {
   const route = useRoute();
   return (
     <PointsProvider
-      enabled={
-        !globalThis.__SLOP_PROJECT_REGISTRY_ERROR__ &&
-        // The home table reads the small points summary, not the journal.
-        ["project", "profile", "points"].includes(route.kind)
+      source={
+        globalThis.__SLOP_PROJECT_REGISTRY_ERROR__
+          ? null
+          : // The home table reads the small points summary instead.
+            route.kind === "points" ||
+              route.kind === "project" ||
+              route.kind === "profile"
+            ? "members"
+            : null
       }
     >
       <AppContent route={route} />
@@ -1522,9 +1532,12 @@ function AppContent({ route }: { route: Route }) {
   const blocked = Boolean(registryError) && !registryIndependent;
   const project =
     route.kind === "project" ? findProject(route.projectId) : undefined;
-  const needsSnapshot =
-    !blocked && snapshot && !(project && hasBountyOverview(project));
-  const [state, retry] = useSnapshot(needsSnapshot);
+  const needsData =
+    !blocked && Boolean(snapshot) && !(project && hasBountyOverview(project));
+  const [state, retry] = useSnapshot(needsData && snapshot === "complete");
+  const [standings, retryStandings] = useStandings(
+    needsData && snapshot === "standings",
+  );
   const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
   if (blocked)
@@ -1583,8 +1596,8 @@ function AppContent({ route }: { route: Route }) {
         <ProjectPage
           key={project.id}
           project={project}
-          retry={retry}
-          state={state}
+          retry={retryStandings}
+          state={standings}
         />
       )
     ) : (
@@ -1601,8 +1614,8 @@ function AppContent({ route }: { route: Route }) {
       <ProfilePage
         key={route.login.toLowerCase()}
         login={route.login}
-        retry={retry}
-        state={state}
+        retry={retryStandings}
+        state={standings}
       />
     );
   else if (route.kind === "cycle")

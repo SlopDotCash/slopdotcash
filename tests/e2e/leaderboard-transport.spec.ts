@@ -1,17 +1,29 @@
+import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
 import {
   encodeLeaderboardParts,
   MAX_LEADERBOARD_FILE_BYTES,
 } from "../../src/lib/leaderboard-transport.mjs";
+import { createProjectView } from "../../src/lib/project-view";
 import { expect, test } from "./fixtures";
+import { readLeaderboardResponse } from "./leaderboard-response";
 
 for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
   const broken = mode === "corrupted";
   const stalled = mode === "stalled";
-  const profile = mode === "slow" || stalled;
-  test(`${profile ? "profile" : "ranking"} ${stalled ? "times out stalled" : broken ? "refuses corrupted" : "loads complete"} multi-part snapshot${mode === "slow" ? " across individual request deadlines" : ""}`, async ({
+  // The ranking, contributor and project pages read only the published
+  // standings and member records, so every transport case runs on the cycle
+  // page, which reads the complete snapshot and shows its loading, error and
+  // stale states.
+  test(`cycle page ${stalled ? "times out stalled" : broken ? "refuses corrupted" : "loads complete"} multi-part snapshot${mode === "slow" ? " across individual request deadlines" : ""}`, async ({
     page,
     diagnostics,
+    request,
   }) => {
+    const published = await request.get("/data/leaderboard.json");
+    expect(published.status()).toBe(200);
+    const snapshot: unknown = await readLeaderboardResponse(published, request);
+    assertLeaderboardSnapshot(snapshot);
+    const cycleId = createProjectView(snapshot, "eliza").cycle.id;
     if (stalled)
       diagnostics.allow(
         /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/leaderboard\/[^ ?]+\.part$/u,
@@ -66,7 +78,7 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
         contentType: "application/json",
       });
     });
-    await page.goto(profile ? "/contributors/lalalune" : "/points");
+    await page.goto(`/cycles/eliza/${cycleId}`);
     if (broken || stalled) {
       await expect(page.getByRole("alert")).toContainText(
         "Data could not load",
@@ -81,8 +93,14 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
       await expect
         .poll(() => partReads, { timeout: 35_000 })
         .toBeGreaterThan(1);
+      // The frozen fixture is older than eight hours, so the loaded snapshot
+      // shows its stale label once every part has arrived.
       await expect(
-        profile ? page.locator("main.profile-page") : page.getByRole("table"),
+        mode === "slow"
+          ? page
+              .getByRole("status")
+              .filter({ hasText: "Points may be outdated" })
+          : page.locator(".project-leader-row").first(),
       ).toBeVisible({
         timeout: mode === "slow" ? 35_000 : 10_000,
       });
