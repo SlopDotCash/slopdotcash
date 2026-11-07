@@ -33,10 +33,16 @@ const READERS = [
 
 test("a command that prints a stored secret is a credential read", () => {
   for (const text of READERS) {
-    expect({ text, findings: inspected("install.sh", `${text}\n`).findings }).toEqual({
+    expect({
+      text,
+      findings: inspected("install.sh", `${text}\n`).findings,
+    }).toEqual({
       text,
       findings: [
-        expect.objectContaining({ category: "credential-theft", severity: "high" }),
+        expect.objectContaining({
+          category: "credential-theft",
+          severity: "high",
+        }),
       ],
     });
   }
@@ -60,7 +66,10 @@ test("the command that writes the store stays clean", () => {
     `keyring.set_password("s","u","x")`,
   ];
   for (const text of clean) {
-    expect({ text, findings: inspected("install.sh", `${text}\n`).findings }).toEqual({
+    expect({
+      text,
+      findings: inspected("install.sh", `${text}\n`).findings,
+    }).toEqual({
       text,
       findings: [],
     });

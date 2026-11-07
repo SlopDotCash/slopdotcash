@@ -18,8 +18,14 @@ function inspected(path: string, text: string) {
  * `~/.aws/credentials`.
  */
 const CLOUD_STORES: [string, string][] = [
-  ["src/gcloud.py", `open(os.path.expanduser("~/.config/gcloud/application_default_credentials.json"))`],
-  ["src/terraform.py", `open(os.path.expanduser("~/.terraform.d/credentials.tfrc.json"))`],
+  [
+    "src/gcloud.py",
+    `open(os.path.expanduser("~/.config/gcloud/application_default_credentials.json"))`,
+  ],
+  [
+    "src/terraform.py",
+    `open(os.path.expanduser("~/.terraform.d/credentials.tfrc.json"))`,
+  ],
   ["src/vault.py", `open(os.path.expanduser("~/.vault-token")).read()`],
   ["src/azure.py", `open(os.path.expanduser("~/.azure/accessTokens.json"))`],
   ["src/rclone.py", `open(os.path.expanduser("~/.config/rclone/rclone.conf"))`],
@@ -49,7 +55,10 @@ test("the cloud stores are also found through a Windows path", () => {
     `type %USERPROFILE%\\\\.azure\\\\accessTokens.json`,
   ];
   for (const text of payloads) {
-    expect({ text, findings: inspected("src/win.ps1", `${text}\n`).findings }).toEqual({
+    expect({
+      text,
+      findings: inspected("src/win.ps1", `${text}\n`).findings,
+    }).toEqual({
       text,
       findings: [expect.objectContaining({ category: "credential-theft" })],
     });
@@ -63,10 +72,16 @@ test("a database password file is a medium indicator", () => {
     `open(os.path.expanduser("~/.pgpass"))`,
     `open(os.path.expanduser("~/.my.cnf"))`,
   ]) {
-    expect({ text, findings: inspected("src/db.py", `${text}\n`).findings }).toEqual({
+    expect({
+      text,
+      findings: inspected("src/db.py", `${text}\n`).findings,
+    }).toEqual({
       text,
       findings: [
-        expect.objectContaining({ category: "credential-theft", severity: "medium" }),
+        expect.objectContaining({
+          category: "credential-theft",
+          severity: "medium",
+        }),
       ],
     });
   }
@@ -83,7 +98,10 @@ test("a bare file name without its store directory stays clean", () => {
     `print("See the docs for the token")`,
   ];
   for (const text of clean) {
-    expect({ text, findings: inspected("src/clean.py", `${text}\n`).findings }).toEqual({
+    expect({
+      text,
+      findings: inspected("src/clean.py", `${text}\n`).findings,
+    }).toEqual({
       text,
       findings: [],
     });
@@ -103,7 +121,10 @@ test("the store directory shipped whole is a credential read", () => {
     `rsync ~/.terraform.d/ host:`,
   ];
   for (const text of payloads) {
-    expect({ text, findings: inspected("install.sh", `${text}\n`).findings }).toEqual({
+    expect({
+      text,
+      findings: inspected("install.sh", `${text}\n`).findings,
+    }).toEqual({
       text,
       findings: [expect.objectContaining({ category: "credential-theft" })],
     });
@@ -117,7 +138,10 @@ test("a directory that only sits under .config is not a store", () => {
     `rsync -az ./dist/ host:`,
   ];
   for (const text of clean) {
-    expect({ text, findings: inspected("install.sh", `${text}\n`).findings }).toEqual({
+    expect({
+      text,
+      findings: inspected("install.sh", `${text}\n`).findings,
+    }).toEqual({
       text,
       findings: [],
     });
