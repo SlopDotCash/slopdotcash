@@ -732,3 +732,35 @@ test("a penalty batch preserves the journal prefix, caps the month's total debit
     api.close();
   }
 });
+
+test("penalty history is validated without creating a debit when no penalty was recorded", () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const journal = checkpoint();
+  const snapshot = createLeaderboardSnapshot(penaltyScoreInput([]));
+  const history = {
+    projectId: "asi",
+    itemNodeId: "PR_unrecorded",
+    authorGithubId: "42",
+    category: "spam",
+    tableVersion: "slopbot-penalties-v1",
+    debitThirds: 3,
+    period: "2026-11",
+    recordedAt: "2026-11-10T00:00:00.000Z",
+    reversedAt: null,
+    reversal: null,
+  } as const;
+  const before = JSON.stringify(journal);
+  snapshot.penaltyHistory = [history];
+  expect(
+    JSON.stringify(
+      reconcilePointPenalties(journal, "a".repeat(64), GENERATED_AT, snapshot),
+    ),
+  ).toBe(before);
+  // History alone cannot establish a debit, but invalid evidence must still
+  // fail instead of being discarded by the no-candidate return.
+  snapshot.penaltyHistory = [{ ...history, period: "2026-10" }];
+  expect(() =>
+    reconcilePointPenalties(journal, "a".repeat(64), GENERATED_AT, snapshot),
+  ).toThrow("Invalid penalty history record");
+  expect(JSON.stringify(journal)).toBe(before);
+});

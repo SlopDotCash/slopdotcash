@@ -619,6 +619,9 @@ export function reconcilePointPenalties(
       }
     }
   }
+  // Validate supplied history even when there is no recorded debit to match.
+  // Without a candidate, no earnings projection or journal change is needed.
+  if (candidates.size === 0) return journal;
   const bucket = (award: PointAward) =>
     `${award.actor.id}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
   const available = new Map<string, number>();
