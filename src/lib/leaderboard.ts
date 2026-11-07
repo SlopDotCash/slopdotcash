@@ -3602,9 +3602,27 @@ function createSnapshotWithReviewCutoff(
     }
   }
 
+  // Proven per-unit publication for every assessed joint decision,
+  // keyed by the decision digest. A unit publishes completely only when
+  // it survives every withholding gate below (human ratification,
+  // explicit prize acceptance, the rolling window, the value policy)
+  // and every one of its implementation actors is actually credited: a
+  // share dropped by addScore — above all a banned actor's share (PRD
+  // section 8) — is an omission, not a publication. Supersession
+  // retirement further below may only rely on units that published
+  // completely.
+  const jointUnitPublication = new Map<
+    string,
+    { coveredPullRequestIds: ReadonlySet<string>; complete: boolean }[]
+  >();
   for (const decision of jointDecisions.values()) {
     if (decision.status !== "assessed" || spansValuePolicyStart(decision))
       continue;
+    const unitPublication: {
+      coveredPullRequestIds: ReadonlySet<string>;
+      complete: boolean;
+    }[] = [];
+    jointUnitPublication.set(decision.latestDigest as string, unitPublication);
     const claims = new Map(
       decision.evidence.claims.map((claim) => [claim.id, claim]),
     );
@@ -3622,6 +3640,15 @@ function createSnapshotWithReviewCutoff(
           throw new Error("Joint unit lost a verified implementation claim");
         return claim;
       });
+      // Withheld until the actor loop below credits every actor: any
+      // gate this unit hits from here on leaves it unpublished.
+      const publication = {
+        coveredPullRequestIds: new Set(
+          scoped.map((claim) => claim.creditPullRequestId),
+        ),
+        complete: false,
+      };
+      unitPublication.push(publication);
       // Human decisions reserve the affected work. An automatic group must not
       // add another award for that same implementation under a different PR.
       if (
@@ -3730,32 +3757,41 @@ function createSnapshotWithReviewCutoff(
         actors.length,
         0,
       );
+      let complete = true;
       for (const [index, actor] of actors.entries()) {
         const thirds = shares[index] as number;
-        addScore(entries, ledger, mergedSources, participationBans, {
-          id: `${completion.pull.node_id}:joint:${unit.workUnitId}:merged:${actor.id}`,
-          actor,
-          category: "merged-pull-request",
-          points: thirds / 3,
-          scoreThirds: thirds,
-          workUnitId: unit.workUnitId,
-          scoreDecisionSourceId: `value:${decision.latestDigest}`,
-          scoreDecisionAt: decision.history.at(-1)?.recorded_at,
-          ...(completion.indirectAcceptance
-            ? { acceptanceKind: "indirect-integration" as const }
-            : {}),
-          occurredAt: completedAt,
-          repository: repositoryIdFromUrl(completion.pull.html_url),
-          source: {
-            id: completion.pull.node_id,
-            kind: "pull-request",
-            number: completion.pull.number,
-            title: completion.pull.title,
-            url: completion.pull.html_url,
+        const credited = addScore(
+          entries,
+          ledger,
+          mergedSources,
+          participationBans,
+          {
+            id: `${completion.pull.node_id}:joint:${unit.workUnitId}:merged:${actor.id}`,
+            actor,
+            category: "merged-pull-request",
+            points: thirds / 3,
+            scoreThirds: thirds,
+            workUnitId: unit.workUnitId,
+            scoreDecisionSourceId: `value:${decision.latestDigest}`,
+            scoreDecisionAt: decision.history.at(-1)?.recorded_at,
+            ...(completion.indirectAcceptance
+              ? { acceptanceKind: "indirect-integration" as const }
+              : {}),
+            occurredAt: completedAt,
+            repository: repositoryIdFromUrl(completion.pull.html_url),
+            source: {
+              id: completion.pull.node_id,
+              kind: "pull-request",
+              number: completion.pull.number,
+              title: completion.pull.title,
+              url: completion.pull.html_url,
+            },
+            reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale} Shared among ${actors.length} scoped implementation actors.`,
           },
-          reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale} Shared among ${actors.length} scoped implementation actors.`,
-        });
+        );
+        if (!credited) complete = false;
       }
+      publication.complete = complete;
     }
   }
 
@@ -4986,6 +5022,250 @@ function createSnapshotWithReviewCutoff(
 
   assignLeaderboardRanks(leaders);
 
+  // Carry each assessed joint record's declared predecessors to Points.
+  // Only a successor that actually publishes a ledger decision in this
+  // snapshot can retire the credit it replaced: a group whose units were
+  // all withheld publishes no decision and retires nothing here.
+  const publishedDecisionDigests = new Set(
+    publishedLedger.flatMap((event) =>
+      event.category === "merged-pull-request" &&
+      event.scoreDecisionSourceId?.startsWith("value:")
+        ? [event.scoreDecisionSourceId.slice("value:".length)]
+        : [],
+    ),
+  );
+  // The digests a joint record declares are the current heads of their
+  // histories, but the recorded credit they replaced can sit on an
+  // earlier digest when an intervening reassessment was assessed yet
+  // never published by a snapshot. Those earlier digests join the
+  // relation only as the consumed history graph proves them: a member's
+  // verified solo history is a chain whose every record names the digest
+  // it supersedes, and ancestor joint records in the consumed graph
+  // declare legacy predecessors of their own. A digest is carried only
+  // when that chain links it under a declared predecessor — never from a
+  // source's absence, window position or context presence.
+  const soloChainDigests = (memberId: string): string[] | null => {
+    const solo = input.valueDecisions?.get(memberId);
+    if (!solo || !Array.isArray(solo.history) || solo.history.length === 0)
+      return null;
+    const digests: string[] = [];
+    let previous: string | null = null;
+    for (const row of solo.history) {
+      let record: { pullRequestNodeId?: unknown; supersedes?: unknown };
+      try {
+        record = JSON.parse(row.record_json) as typeof record;
+      } catch {
+        return null;
+      }
+      if (
+        !record ||
+        typeof record !== "object" ||
+        !/^[a-f0-9]{64}$/u.test(row.record_digest) ||
+        record.pullRequestNodeId !== memberId ||
+        record.supersedes !== previous
+      )
+        return null;
+      digests.push(row.record_digest);
+      previous = row.record_digest;
+    }
+    return solo.latestDigest === previous ? digests : null;
+  };
+  const supersessionRows = new Map<string, string>();
+  for (const decision of jointDecisions.values()) {
+    if (
+      decision.status !== "assessed" ||
+      decision.latestDigest === null ||
+      !publishedDecisionDigests.has(decision.latestDigest)
+    )
+      continue;
+    const successor = decision.latestDigest;
+    const addRow = (predecessorDigest: string) => {
+      if (predecessorDigest === successor) return;
+      const existing = supersessionRows.get(predecessorDigest);
+      if (existing !== undefined && existing !== successor)
+        throw new Error(
+          "Joint assessments disagree about a predecessor's successor",
+        );
+      supersessionRows.set(predecessorDigest, successor);
+    };
+    // Publication of the record as a whole is not enough to retire a
+    // predecessor: a joint record partitions its sources into units
+    // that are gated independently, so one unit can publish while the
+    // unit covering the predecessor's claims is withheld by the rolling
+    // window, a human ratification or prize acceptance, or loses an
+    // actor's share to a ban. A predecessor retires only when every
+    // unit covering its claims published completely. The members a
+    // predecessor belongs to are resolved from proven links only: a
+    // member's verified solo chain, or the sources an ancestor record
+    // in the consumed graph declares for itself. A digest no proven
+    // link resolves is gated on every unit of this record.
+    const units = jointUnitPublication.get(successor) ?? [];
+    const publishes = (memberIds: ReadonlySet<string> | null): boolean => {
+      const covering =
+        memberIds === null
+          ? units
+          : units.filter((unit) =>
+              [...unit.coveredPullRequestIds].some((id) => memberIds.has(id)),
+            );
+      return covering.length > 0 && covering.every((unit) => unit.complete);
+    };
+    const ancestors = new Map<
+      string,
+      { legacyPredecessors?: unknown; supersedes?: unknown; sources?: unknown }
+    >();
+    for (const row of decision.history ?? []) {
+      try {
+        ancestors.set(
+          row.record_digest,
+          JSON.parse(row.record_json) as {
+            legacyPredecessors?: unknown;
+            supersedes?: unknown;
+            sources?: unknown;
+          },
+        );
+      } catch {
+        // A row that does not parse proves nothing.
+      }
+    }
+    const ancestorMembers = (digest: string): Set<string> => {
+      const members = new Set<string>();
+      const record = ancestors.get(digest);
+      if (Array.isArray(record?.sources))
+        for (const source of record.sources)
+          if (
+            source &&
+            typeof source === "object" &&
+            typeof (source as { pullRequestNodeId?: unknown })
+              .pullRequestNodeId === "string"
+          )
+            members.add(
+              (source as { pullRequestNodeId: string }).pullRequestNodeId,
+            );
+      return members;
+    };
+    // Walk the consumed joint graph from this record: every ancestor it
+    // supersedes is replaced by it as well, and the solo predecessors
+    // those ancestors declared are proven against the members' chains.
+    const declaredSolo = new Set<string>(
+      decision.record.legacyPredecessors ?? [],
+    );
+    const ancestorDigests: string[] = [];
+    const pending = [...(decision.record.supersedes ?? [])];
+    const visited = new Set<string>();
+    while (pending.length) {
+      const digest = pending.pop() as string;
+      if (visited.has(digest)) continue;
+      visited.add(digest);
+      const ancestor = ancestors.get(digest);
+      if (!ancestor) continue;
+      ancestorDigests.push(digest);
+      if (Array.isArray(ancestor.legacyPredecessors))
+        for (const declared of ancestor.legacyPredecessors)
+          if (typeof declared === "string") declaredSolo.add(declared);
+      if (Array.isArray(ancestor.supersedes))
+        for (const parent of ancestor.supersedes)
+          if (typeof parent === "string") pending.push(parent);
+    }
+    const currentMembers = new Set(
+      decision.record.sources.map((source) => source.pullRequestNodeId),
+    );
+    // The solo chains are walked for the members of every record in the
+    // consumed graph, not only this record's own sources: an ancestor's
+    // declared predecessor stays linked even after its member leaves
+    // the current group.
+    const walkMembers = new Set(currentMembers);
+    for (const digest of ancestorDigests)
+      for (const member of ancestorMembers(digest)) walkMembers.add(member);
+    // The member set a chain digest is gated on: the member itself when
+    // it belongs to this record; for a member that left the group, the
+    // sources of the ancestor records that carried it into the graph —
+    // the part of the ancestor this record actually republishes.
+    const gateMembersFor = (member: string): ReadonlySet<string> => {
+      if (currentMembers.has(member)) return new Set([member]);
+      const members = new Set<string>();
+      for (const digest of ancestorDigests) {
+        const sources = ancestorMembers(digest);
+        if (sources.has(member))
+          for (const source of sources) members.add(source);
+      }
+      return members.size ? members : new Set([member]);
+    };
+    const chains = new Map<string, string[]>();
+    const chainOwners = new Map<string, string[]>();
+    for (const member of walkMembers) {
+      const chain = soloChainDigests(member);
+      if (!chain) continue;
+      chains.set(member, chain);
+      for (const digest of chain) {
+        const owners = chainOwners.get(digest) ?? [];
+        owners.push(member);
+        chainOwners.set(digest, owners);
+      }
+    }
+    const resolveMembers = (
+      predecessorDigest: string,
+    ): ReadonlySet<string> | null => {
+      const owners = chainOwners.get(predecessorDigest);
+      if (owners?.length) {
+        const members = new Set<string>();
+        for (const owner of owners)
+          for (const member of gateMembersFor(owner)) members.add(member);
+        return members;
+      }
+      if (ancestors.has(predecessorDigest))
+        return ancestorMembers(predecessorDigest);
+      for (const digest of ancestorDigests) {
+        const ancestor = ancestors.get(digest);
+        if (
+          Array.isArray(ancestor?.legacyPredecessors) &&
+          (ancestor.legacyPredecessors as unknown[]).includes(predecessorDigest)
+        )
+          return ancestorMembers(digest);
+      }
+      return null;
+    };
+    const addProvenRow = (predecessorDigest: string) => {
+      if (publishes(resolveMembers(predecessorDigest)))
+        addRow(predecessorDigest);
+    };
+    for (const predecessorDigest of [
+      ...(decision.record.legacyPredecessors ?? []),
+      ...(decision.record.supersedes ?? []),
+    ])
+      addProvenRow(predecessorDigest);
+    for (const digest of ancestorDigests) addProvenRow(digest);
+    // An ancestor's declared solo predecessors are carried directly,
+    // not only through a member's solo chain: the chain can be
+    // unavailable to this snapshot even though the consumed graph
+    // proves the declaration.
+    for (const digest of ancestorDigests) {
+      const ancestor = ancestors.get(digest);
+      if (Array.isArray(ancestor?.legacyPredecessors))
+        for (const declared of ancestor.legacyPredecessors)
+          if (typeof declared === "string") addProvenRow(declared);
+    }
+    if (declaredSolo.size)
+      for (const chain of chains.values()) {
+        let cutoff = -1;
+        for (const declared of declaredSolo) {
+          const index = chain.indexOf(declared);
+          if (index > cutoff) cutoff = index;
+        }
+        for (let index = 0; index <= cutoff; index++)
+          addProvenRow(chain[index]);
+      }
+  }
+  const valueAssessmentSupersessions = [...supersessionRows.entries()]
+    .map(([predecessorDigest, successorDigest]) => ({
+      predecessorDigest,
+      successorDigest,
+    }))
+    .sort(
+      (left, right) =>
+        left.predecessorDigest.localeCompare(right.predecessorDigest, "en") ||
+        left.successorDigest.localeCompare(right.successorDigest, "en"),
+    );
+
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
@@ -5066,6 +5346,9 @@ function createSnapshotWithReviewCutoff(
             };
           }),
         }),
+    ...(valueAssessmentSupersessions.length
+      ? { valueAssessmentSupersessions }
+      : {}),
     ledger: publishedLedger.sort(
       (left, right) =>
         right.points - left.points ||
@@ -7631,6 +7914,77 @@ export function assertLeaderboardSnapshot(
       )
         throw new Error(
           "Value score event is not bound to its assessment coverage",
+        );
+    }
+  }
+  if (snapshot.valueAssessmentSupersessions !== undefined) {
+    if (!Array.isArray(snapshot.valueAssessmentSupersessions))
+      throw new Error("snapshot.valueAssessmentSupersessions must be an array");
+    const predecessors = new Set<string>();
+    let previousRow:
+      | { predecessorDigest: string; successorDigest: string }
+      | undefined;
+    for (const value of snapshot.valueAssessmentSupersessions) {
+      const row = assertObject(
+        value,
+        "snapshot.valueAssessmentSupersessions record",
+      );
+      if (
+        Object.keys(row).sort().join(",") !==
+        "predecessorDigest,successorDigest"
+      )
+        throw new Error("Value supersession has unexpected fields");
+      for (const key of ["predecessorDigest", "successorDigest"] as const) {
+        if (
+          typeof row[key] !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(row[key] as string)
+        )
+          throw new Error(`Value supersession ${key} is invalid`);
+      }
+      if (row.predecessorDigest === row.successorDigest)
+        throw new Error("Value supersession cannot replace itself");
+      if (predecessors.has(row.predecessorDigest as string))
+        throw new Error("Value supersession repeats a predecessor");
+      predecessors.add(row.predecessorDigest as string);
+      const current = {
+        predecessorDigest: row.predecessorDigest as string,
+        successorDigest: row.successorDigest as string,
+      };
+      if (
+        previousRow &&
+        (previousRow.predecessorDigest.localeCompare(
+          current.predecessorDigest,
+          "en",
+        ) > 0 ||
+          (previousRow.predecessorDigest === current.predecessorDigest &&
+            previousRow.successorDigest.localeCompare(
+              current.successorDigest,
+              "en",
+            ) > 0))
+      )
+        throw new Error(
+          "snapshot.valueAssessmentSupersessions must be ordered by predecessor and successor digest",
+        );
+      previousRow = current;
+      // The successor must be in force in this snapshot: an assessed
+      // coverage row or a published implementation decision names it.
+      const successor = current.successorDigest;
+      if (
+        !(
+          snapshot.valueAssessmentCoverage?.some(
+            (coverage) =>
+              coverage.status === "assessed" &&
+              coverage.recordDigest === successor,
+          ) ||
+          validatedLedger.some(
+            (event) =>
+              event.category === "merged-pull-request" &&
+              event.scoreDecisionSourceId === `value:${successor}`,
+          )
+        )
+      )
+        throw new Error(
+          "Value supersession successor is not a published assessment decision",
         );
     }
   }

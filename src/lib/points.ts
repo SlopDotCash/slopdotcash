@@ -800,6 +800,43 @@ export function applyPointsSnapshot(
     if (omitted) omittedReviews.set(key, exclusion.reason);
     else excludedReviews.add(key);
   }
+  // Explicit supersession is the one relation that retires a recorded
+  // award without its source in the current census or its occurrence in
+  // the current window: an assessed joint record names the solo or
+  // earlier joint assessments it replaces, and the snapshot carries that
+  // relation here. The retiring decision is the successor's own decision
+  // as published in this snapshot's ledger; a supersession whose
+  // successor published no implementation decision retires nothing, so
+  // stale, incomplete or unresolved groups keep their recorded credit.
+  const successorDecisions = new Map<string, PointDecision | null>();
+  const successorDecision = (digest: string): PointDecision | null => {
+    const cached = successorDecisions.get(digest);
+    if (cached !== undefined) return cached;
+    const candidates = snapshot.ledger
+      .filter(
+        (event) =>
+          event.category === "merged-pull-request" &&
+          event.actor.kind === "User" &&
+          event.scoreDecisionSourceId === `value:${digest}` &&
+          event.scoreDecisionAt,
+      )
+      .sort((left, right) => left.id.localeCompare(right.id, "en"));
+    const event = candidates[0];
+    const decision = event
+      ? {
+          sourceId: event.scoreDecisionSourceId as string,
+          effectiveAt: new Date(event.scoreDecisionAt as string).toISOString(),
+          reason: event.reason,
+        }
+      : null;
+    successorDecisions.set(digest, decision);
+    return decision;
+  };
+  const supersededBy = new Map<string, PointDecision>();
+  for (const row of snapshot.valueAssessmentSupersessions ?? []) {
+    const decision = successorDecision(row.successorDigest);
+    if (decision) supersededBy.set(row.predecessorDigest, decision);
+  }
   // A complete newer census can correct a formerly accepted source. Never infer
   // deletion from missing pages or a shortened rolling window.
   for (const previous of previousPoints.values()) {
@@ -833,6 +870,33 @@ export function applyPointsSnapshot(
       sourceUrl.origin === "https://github.com"
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
+    // A recorded implementation award whose deciding assessment is the
+    // named predecessor of a successor published in this snapshot is
+    // retired by that successor, wherever its source and occurrence now
+    // sit. The correction is an ordinary predecessor-linked revision:
+    // it keeps the award's key, source and occurrence, records the
+    // successor decision, and reapplying the same snapshot adds nothing
+    // because the latest revision already carries amount zero.
+    const supersedingDecision =
+      a.category === "merged-pull-request" &&
+      previous.decision?.sourceId.startsWith("value:")
+        ? supersededBy.get(previous.decision.sourceId.slice("value:".length))
+        : undefined;
+    if (
+      supersedingDecision &&
+      supersedingDecision.sourceId !== previous.decision?.sourceId &&
+      a.amount &&
+      !batchOwned.has(a.key) &&
+      !keys.has(a.key) &&
+      project?.repositories.every((r) => repositoryIds.has(r.id))
+    ) {
+      awards.push({ ...a, amount: 0 });
+      decisions.set(a.key, {
+        ...supersedingDecision,
+        reason: `Prior credit was superseded by the current source-bound scoring decision. ${supersedingDecision.reason}`,
+      });
+      continue;
+    }
     let invalidatedJointDecision: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
       const repository = findRegisteredRepositoryById(
