@@ -113,7 +113,7 @@ const HISTORICAL_PROJECTS_BY_REPOSITORY = new Map(
 /** Resolves a project id in immutable history, including retired projects. */
 export function findHistoricalProject(projectId) {
   if (typeof projectId !== "string") return null;
-  return HISTORICAL_PROJECTS_BY_ID.get(projectId) ?? null;
+  return HISTORICAL_PROJECTS_BY_ID.get(projectId.trim().toLowerCase()) ?? null;
 }
 
 /** Resolves a repository in immutable history, including retired projects. */
@@ -215,6 +215,27 @@ export function findProject(value) {
     PROJECTS_BY_ID.get(normalized) ??
     PROJECTS.find((project) => project.slug.toLowerCase() === normalized) ??
     null
+  );
+}
+
+/**
+ * Resolves a project for its cycle pages: the listed registry first, then
+ * immutable history. A retired project leaves every page and list, but its
+ * recorded cycles stay public history — the cycle archive and the profile
+ * payment history keep linking to them — so a cycle route resolves the
+ * project here instead of reporting it missing.
+ */
+export function findCycleProject(value) {
+  const listed = findProject(value);
+  if (listed) return listed;
+  const historical = findHistoricalProject(value);
+  if (historical) return historical;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return (
+    HISTORICAL_PROJECTS.find(
+      (project) => project.slug.toLowerCase() === normalized,
+    ) ?? null
   );
 }
 

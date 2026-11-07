@@ -35,6 +35,7 @@ import {
   homeProjects,
 } from "./lib/home-projects";
 import {
+  findCycleProject,
   findProject,
   PROJECTS,
   type ProjectDefinition,
@@ -349,7 +350,12 @@ function routeHead(route: Route): { title: string; path: string | null } {
     };
   }
   if ("projectId" in route) {
-    const project = findProject(route.projectId);
+    // A recorded cycle of a retired project stays public history, so its
+    // page keeps its title and canonical path after delisting.
+    const project =
+      route.kind === "cycle"
+        ? findCycleProject(route.projectId)
+        : findProject(route.projectId);
     if (!project) return notFound;
     if (route.kind === "cycle") {
       return {
@@ -1493,6 +1499,18 @@ function withProject(
   return project ? render(project) : <NotFound title="Project not found" />;
 }
 
+/**
+ * A cycle page. A retired project is no longer listed, but its recorded
+ * cycles stay public history, so the project resolves through history too.
+ */
+function withCycleProject(
+  route: { projectId: string },
+  render: (project: ProjectDefinition) => ReactNode,
+): ReactNode {
+  const project = findCycleProject(route.projectId);
+  return project ? render(project) : <NotFound title="Project not found" />;
+}
+
 export function App() {
   const route = useRoute();
   return (
@@ -1606,7 +1624,7 @@ function AppContent({ route }: { route: Route }) {
       />
     );
   else if (route.kind === "cycle")
-    content = withProject(route, (project) => (
+    content = withCycleProject(route, (project) => (
       <CyclePage
         cycleId={route.cycleId}
         project={project}
