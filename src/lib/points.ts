@@ -627,7 +627,7 @@ export function reconcilePointPenalties(
   for (const candidate of [...candidates.values()].sort(
     (a, b) =>
       a.award.occurredAt.localeCompare(b.award.occurredAt) ||
-      a.award.workUnitId.localeCompare(b.award.workUnitId),
+      a.award.workUnitId.localeCompare(b.award.workUnitId, "en"),
   )) {
     const evidence = candidate.penalty;
     if (!evidence) continue;
