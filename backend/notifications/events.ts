@@ -634,6 +634,42 @@ export function scamReviewGitHubUrl(path: string): string | null {
   return `https://github.com/${owner}/${repo}/${kind}/${number}`;
 }
 
+/** The target behind a stored scam review action path, or null. */
+export function parseScamReviewPath(path: string): ScamReviewTarget | null {
+  if (!path.startsWith(SCAM_REVIEW_PATH)) return null;
+  const parts = path.slice(SCAM_REVIEW_PATH.length).split("/");
+  const [owner = "", repo = "", kind, number = ""] = parts;
+  if (
+    parts.length !== 4 ||
+    (kind !== "pull" && kind !== "issues") ||
+    !/^[1-9]\d{0,15}$/u.test(number) ||
+    !GITHUB_OWNER.test(owner) ||
+    !GITHUB_REPO.test(repo)
+  )
+    return null;
+  const value = Number(number);
+  if (!Number.isSafeInteger(value)) return null;
+  return {
+    owner,
+    repo,
+    itemKind: kind === "pull" ? "pull_request" : "issue",
+    number: value,
+  };
+}
+
+/**
+ * The one sentence a scam review notice shows its moderator. The writer
+ * stores it with the login GitHub reported at closure time; the inbox read
+ * path rebuilds it with the author's current member login, so this builder
+ * is the single source of the sentence's shape.
+ */
+export function scamReviewDetail(
+  authorLogin: string,
+  target: ScamReviewTarget,
+): string {
+  return `Review the account of @${authorLogin} after a scam closure on ${target.owner}/${target.repo}#${target.number}.`;
+}
+
 /**
  * Owner decision D4 (PRD section 11): a confirmed Slopbot close in the
  * "Scam or malicious" category asks each configured moderator to review the
@@ -668,7 +704,7 @@ export function notifySlopbotScamReview<S>(
     .bind(
       input.itemNodeId,
       input.recipient,
-      `Review the account of @${input.authorLogin} after a scam closure on ${input.owner}/${input.repo}#${input.number}.`,
+      scamReviewDetail(input.authorLogin, input),
       path,
       input.at,
     );
