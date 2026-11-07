@@ -355,13 +355,13 @@ const RULES: Rule[] = [
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
     pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|[/\\]+\.config[/\\]+gcloud[/\\]+application_default_credentials\.json|[/\\]+\.terraform\.d[/\\]+credentials\.tfrc\.json|\.vault-token\b|[/\\]+\.azure[/\\]+accessTokens\.json|[/\\]+\.config[/\\]+rclone[/\\]+rclone\.conf|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
     summary: "Reads a stored credential, key or password store",
   },
   {
     threat: "credential-theft",
     severity: "medium",
-    pattern: /~\/\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config/iu,
+    pattern: /~\/\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config|\.pgpass\b|\.my\.cnf\b/iu,
     summary: "Reads a package-registry or cluster credential file",
   },
   {
