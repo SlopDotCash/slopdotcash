@@ -26,10 +26,7 @@ export async function registerPaymentWallet(
   // Only a registry claim can be confirmed. A historical issue or profile
   // claim for the same address gets a registry successor instead. GitHub's
   // numeric actor ID is stable across login renames.
-  if (
-    current?.source === "d1_registry" &&
-    current.wallet_address === address
-  )
+  if (current?.source === "d1_registry" && current.wallet_address === address)
     return { claimId: current.id };
   const predecessor = current?.id ?? null;
   const { sourceBodySha256, recordDigest } = await canonicalWalletClaimDigests({
