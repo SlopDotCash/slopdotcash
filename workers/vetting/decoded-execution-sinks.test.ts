@@ -223,6 +223,28 @@ const DECODED_EXECUTION: Record<string, [string, string]> = {
     "setup.py",
     'exec(builtins.compile(pickle.loads(blob), "<string>", "exec"))\n',
   ],
+  // A literal prefix before the decoder is still the same argument: what the
+  // sink runs is the decoded bytes concatenated into that string.
+  "Function of a concatenated decoded payload": [
+    "install.js",
+    'new Function("return " + atob("cHJvY2Vzcy5leGl0KDEp"))();\n',
+  ],
+  "vm.runInThisContext of a concatenated decoded payload": [
+    "install.js",
+    'vm.runInThisContext("return " + Buffer.from(blob, "base64").toString());\n',
+  ],
+  "new vm.Script of a concatenated decoded payload": [
+    "install.js",
+    'new vm.Script("return " + atob("cHJvY2Vzcy5leGl0KDEp"));\n',
+  ],
+  "new vm.Script with a literal argument before the decoder": [
+    "install.js",
+    'new vm.Script("a", atob("cHJvY2Vzcy5leGl0KDEp"));\n',
+  ],
+  "setTimeout of a concatenated decoded payload": [
+    "install.js",
+    'setTimeout("return " + atob("cHJvY2Vzcy5leGl0KDEp"), 0);\n',
+  ],
 };
 
 const BENIGN: Record<string, [string, string]> = {
@@ -304,6 +326,12 @@ const BENIGN: Record<string, [string, string]> = {
   ],
   "setTimeout of an identifier": ["install.js", "setTimeout(handler, 1000);\n"],
   "setInterval of a function": ["install.js", "setInterval(render, 1000);\n"],
+  // The second argument of setTimeout is a delay, not source text: a decoder
+  // there is a value, not an execution.
+  "setTimeout with a decoded delay argument": [
+    "install.js",
+    'setTimeout(handler, atob("MQ=="));\n',
+  ],
 };
 
 test("decoding an obfuscated payload into an execution sink is unsafe execution", () => {

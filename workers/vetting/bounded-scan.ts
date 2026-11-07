@@ -463,11 +463,14 @@ const RULES: Rule[] = [
         DECODER_CALL +
         String.raw`|\b(?:setTimeout|setInterval)\s*` +
         COMMENT_GAP +
-        String.raw`\(\s*` +
+        // A prefix only counts when it ends in `+`: that is a concatenation of
+        // the payload. A comma here separates the delay argument, which never
+        // runs as code, so allowing it would flag `setTimeout(fn, atob(...))`.
+        String.raw`\(\s*(?:[^()\n]{0,40}?\+\s*)?` +
         DECODER_CALL +
         String.raw`|\b(?:new\s+)?Function\s*` +
         COMMENT_GAP +
-        String.raw`\(\s*(?:[^()\n]{0,40}?,\s*)?` +
+        String.raw`\(\s*(?:[^()\n]{0,40}?[+,]\s*)?` +
         DECODER_CALL +
         String.raw`|\bvm\s*` +
         COMMENT_GAP +
@@ -475,7 +478,7 @@ const RULES: Rule[] = [
         COMMENT_GAP +
         String.raw`(?:runIn(?:This|New)?Context|Script)\s*` +
         COMMENT_GAP +
-        String.raw`\(\s*` +
+        String.raw`\(\s*(?:[^()\n]{0,40}?[+,]\s*)?` +
         DECODER_CALL,
       "iu",
     ),
