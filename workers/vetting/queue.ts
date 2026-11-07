@@ -201,13 +201,27 @@ export async function acquireQueuedAssessment(
   const currentPath = new URL(
     manifest.repositories[0].githubUrl,
   ).pathname.replace(/^\/|\/$/gu, "");
-  const repositoryIdentity = json(
-    await bytes(fetcher, `https://api.github.com/repos/${currentPath}`, {
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "user-agent": "slop-vetting-acquisition",
-    }),
+  const identityResponse = await fetcher(
+    `https://api.github.com/repos/${currentPath}`,
+    {
+      method: "GET",
+      headers: {
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "slop-vetting-acquisition",
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    },
   );
+  // GitHub answers 404 for a deleted, hidden or private repository: the
+  // pinned public source cannot be acquired, so a retry of the same pin
+  // cannot pass. Rate limits and outages stay retryable.
+  if (identityResponse.status === 404) {
+    await identityResponse.body?.cancel();
+    throw refusal(new AcquisitionRefusal("Repository not found on GitHub"));
+  }
+  const repositoryIdentity = json(await pinnedBytes(identityResponse));
   if (
     !Number.isSafeInteger(repositoryIdentity.id) ||
     String(repositoryIdentity.id) !== manifest.authority.repositoryId ||
