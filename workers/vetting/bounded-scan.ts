@@ -382,8 +382,17 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // An executor (iex, Invoke-Expression, or the PowerShell AddScript
+    // runtime API) runs downloaded text. `iex`/`Invoke-Expression` are
+    // cmdlets, so the download may arrive in command mode without outer
+    // parentheses when it is already a value expression. `.AddScript` is a
+    // .NET method and always takes parentheses; whitespace between nesting
+    // parentheses is legal, so each `(` may carry trailing whitespace. The
+    // receiver of `.DownloadString` stays a variable-like `$name` form
+    // (bounded length, no quotes or parentheses), so inert string literals
+    // that mention the API never match.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression|\.AddScript)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod|[^()\r\n][^()\n]{0,64}?\.DownloadString\s*\()|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|\b(?:iex|Invoke-Expression)\b\s*(?:\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b|\$[\w:.]{1,64}\.DownloadString\s*\()|\$[\w:.]{1,64}\.DownloadString\s*\()|\.AddScript\s*(?:\(\s*)+(?:New-Object\s+(?:System\.)?Net\.WebClient|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b|\$[\w:.]{1,64}\.DownloadString\s*\()|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
