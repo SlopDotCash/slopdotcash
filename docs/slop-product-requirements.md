@@ -453,3 +453,45 @@ Proposed by the operator on 29 October 2026; approved by the owner on 30 October
 - **Wallets.** A recipient receives tokens at the wallet confirmed on Payouts for the allocation's network. The first wallet confirmation on that chain must precede the published registration deadline. A later wallet replacement keeps that registration time. Transfers go out in batches. Each recipient is sent once; a later wallet change does not resend.
 - **Payouts.** A signed-in recipient sees only their own row on Payouts: the amount, and Sent with the recorded transaction, Scheduled with a confirmed wallet, Awaiting wallet with a link to register before the published deadline, or Unclaimed. Unclaimed applies after the deadline without a wallet, or to any unsent row once the file records the final batch (`closed`). Accounts outside the list see nothing.
 - **Evidence.** The S.P. records each transaction in the file after it sends. Sent means the sender recorded the transfer; the application does not verify it on chain.
+
+## 12. State correctness and Quint verification
+
+Owner requirement, 7 November 2026: review all application flows and model every
+explicit and implicit state transition in Quint. This requirement covers the
+current application on `development`, including UI and UX, APIs, workers,
+databases, files, queues, scheduled jobs, contributor tools, contracts and release
+workflows. It does not authorize new product features, deployments, signing,
+funding or changes to economic and access policy.
+
+- **STATE-01 — Inventory.** Keep a source-to-model inventory in `formal/`.
+  Include state held in flags, optional values, collections, timestamps, caches,
+  pending requests, files, database records and external evidence. Account for
+  all entry points and list unmodeled transitions and assumptions explicitly.
+- **STATE-02 — Models.** Define initial states, actions, refusal conditions,
+  invariants and reachable outcomes. Include loading, empty, stale, invalid,
+  error and success; authorization, expiry, cancellation, retry, duplicates,
+  concurrency, partial writes, interruption and recovery. Preserve immutable
+  history, distinct financial states and integer asset amounts. Model external
+  uncertainty without treating a request or signature as finalized evidence.
+- **STATE-03 — Conformance.** Compare model behavior with the actual affected
+  workflow. Use model-derived traces or equivalent named scenarios through real
+  entry points. Database races need database evidence; UI changes need browser
+  evidence. Keep real-provider and chain checks where existing requirements call
+  for them. A model cannot substitute for those checks.
+- **STATE-04 — Fix and maintain.** Reproduce discrepancies, fix their causes and
+  repeat the affected checks. Update the model, source mapping and implementation
+  evidence whenever state behavior changes. Do not weaken an invariant or remove
+  an allowed failure path to hide a code defect. Preserve all existing required
+  checks and the product's authority boundaries.
+- **STATE-05 — Verification evidence.** Pin Quint in the lockfile. Run
+  `bun run formal:check` and `bun run formal:verify`. Record tool versions, source
+  hashes, scenarios, model-checker backend, bounds, results and unresolved gaps.
+  Distinguish sampled simulation, exhaustive finite exploration, implementation
+  conformance and live integration. Passing abstract models are not proof that
+  the implementation refines them or that all possible state errors are absent.
+
+Completion requires reviewed models and implementation evidence for every
+inventoried transition, corrected known discrepancies, passing required checks,
+and an explicit account of remaining assumptions. Maintain the coverage and
+verification record in `formal/`; leave this requirement open while any required
+coverage or evidence remains incomplete.

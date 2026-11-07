@@ -453,6 +453,7 @@ describe("Kyber gas pricing in the conversion workflow", () => {
     ["ethereum", { gasUsd: 0, l1FeeUsd: undefined }, "submitted"],
     ["ethereum", { gasUsd: "2.000001", l1FeeUsd: undefined }, "pending"],
     ["ethereum", { gasUsd: "2.0000009", l1FeeUsd: undefined }, "pending"],
+    ["ethereum", { gasUsd: "20000009e-7", l1FeeUsd: undefined }, "pending"],
     ["base", { gasUsd: "1", l1FeeUsd: "1.000001" }, "pending"],
   ] as const) {
     test(`${network} valid costs ${JSON.stringify(costs)} retain the 10x gate`, async () => {
@@ -515,6 +516,17 @@ describe("Kyber gas pricing in the conversion workflow", () => {
     // Exact-micro values are unchanged in either direction.
     expect(usdMicro("2.000001", "down")).toBe(2_000_001n);
     expect(usdMicro("0.004650", "down")).toBe(4_650n);
+  });
+
+  test("scientific gas prices retain exact conservative micro-unit rounding", () => {
+    expect(usdMicro("1e-1")).toBe(100_000n);
+    expect(usdMicro(1e-7)).toBe(1n);
+    expect(usdMicro(1e-7, "down")).toBe(0n);
+    expect(usdMicro("20000009e-7")).toBe(2_000_001n);
+    expect(usdMicro("20000009e-7", "down")).toBe(2_000_000n);
+    expect(usdMicro("0e-99999999999999999999999999999999")).toBe(0n);
+    expect(usdMicro("1e-99999999999999999999999999999999")).toBe(1n);
+    expect(usdMicro("1e-99999999999999999999999999999999", "down")).toBe(0n);
   });
 
   test("a quote counts price impact from untruncated USD inputs", async () => {

@@ -1206,14 +1206,8 @@ export class VettingEvidence {
         objects,
       }),
       digest = await sha256Hex(new TextEncoder().encode(manifest));
-    const previous = await this.deps.db
-      .prepare(
-        "SELECT manifest_sha256 FROM vetting_evidence_runs WHERE assessment_id=? AND run_id=?",
-      )
-      .bind(assessment, runId)
-      .first<{ manifest_sha256: string }>();
-    if (previous) {
-      if (previous.manifest_sha256 !== digest)
+    const replay = async (registeredDigest: string) => {
+      if (registeredDigest !== digest)
         fail(
           409,
           "evidence_conflict",
@@ -1224,7 +1218,16 @@ export class VettingEvidence {
         replayed: true,
         stored: await this.stored(objects),
       });
-    }
+    };
+    const registered = () =>
+      this.deps.db
+        .prepare(
+          "SELECT manifest_sha256 FROM vetting_evidence_runs WHERE assessment_id=? AND run_id=?",
+        )
+        .bind(assessment, runId)
+        .first<{ manifest_sha256: string }>();
+    const previous = await registered();
+    if (previous) return replay(previous.manifest_sha256);
     const at = this.deps.now();
     try {
       await this.deps.db.batch([
@@ -1276,6 +1279,10 @@ export class VettingEvidence {
           ),
       ]);
     } catch (error) {
+      // A concurrent registration may win after our initial read. Its full
+      // manifest/object/audit batch is the authority for replay or conflict.
+      const winner = await registered();
+      if (winner) return replay(winner.manifest_sha256);
       if (String(error).includes("evidence cleanup in progress"))
         fail(
           409,
@@ -1814,20 +1821,36 @@ export class VettingEvidence {
       fail(409, "evidence_pending", "Whole-file verification is incomplete");
     let index = 0,
       started = false,
-      ended = false;
+      ended = false,
+      cancelled = false;
     const audit = (action: string) =>
       this.audit(actor.githubId, action, assessment, runId, sha, reason);
+    const authorizePart = async () => {
+      const current = await this.operator(request);
+      if (current.githubId !== actor.githubId)
+        fail(403, "forbidden", "The download operator changed");
+    };
     await audit("download-authorized");
     const stream = new ReadableStream<Uint8Array>(
       {
         pull: async (controller) => {
           try {
-            const bucket = this.readable(run);
+            await authorizePart();
+            if (ended) return;
+            const currentRun = await this.run(assessment, runId);
+            const bucket = this.readable(currentRun);
             if (index >= (chunks?.length ?? 1)) {
-              await audit("download-finished");
               if (ended) return;
+              // Claim the terminal outcome before yielding to the audit write.
+              // A concurrent cancellation must not append a second outcome.
               ended = true;
-              controller.close();
+              try {
+                await audit("download-finished");
+              } catch (error) {
+                controller.error(error);
+                return;
+              }
+              if (!cancelled) controller.close();
               return;
             }
             const part = chunks?.[index];
@@ -1838,12 +1861,17 @@ export class VettingEvidence {
                   part.sha256,
                   part.sizeBytes,
                 )
-              : await this.bytes(object, run);
+              : await this.bytes(object, currentRun);
             if (ended) return;
             if (!started) {
               await audit("download-started");
               started = true;
             }
+            if (ended) return;
+            // Session revocation or expiry during R2 I/O must win before
+            // private bytes leave this request. The grant remains consumed.
+            await authorizePart();
+            this.readable(currentRun);
             if (ended) return;
             index++;
             controller.enqueue(bytes);
@@ -1858,6 +1886,7 @@ export class VettingEvidence {
           }
         },
         cancel: async () => {
+          cancelled = true;
           if (!ended) {
             ended = true;
             await audit("download-cancelled");

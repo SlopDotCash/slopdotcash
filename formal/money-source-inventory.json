@@ -1,0 +1,3440 @@
+{
+  "schemaVersion": 1,
+  "scope": "Current origin/development money-domain and explicitly assigned operational/contributor sources. Model links are partial contracts, not function-by-function semantic refinement. Function candidates are lexical search results.",
+  "sources": [
+    {
+      "path": "backend/fee-conversions/handler.ts",
+      "sha256": "c21119000c0bdc1e792b9d68fefe1cf83eeb92019d7ce41dd1ee75940b2ce404",
+      "models": ["fee_conversion"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "totalsPerToken",
+        "conversionRoutes",
+        "handleFeeConversionsApi"
+      ]
+    },
+    {
+      "path": "backend/payments/chain-awards.ts",
+      "sha256": "7c40dca97ccfdae847afd77cb9bba5646c4b1051f3b94c00c28c9ff8aea924de",
+      "models": ["monthly_source_conflict"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["holdsAward", "chainAwards"]
+    },
+    {
+      "path": "backend/payments/direct-history.ts",
+      "sha256": "0464e06585b1407864e7a6e3cec1384a2b8e055a1168031ff9190845299deb4e",
+      "models": ["payment_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["directTransferPage"]
+    },
+    {
+      "path": "backend/payments/dispatch.ts",
+      "sha256": "fce0c6562bed2596cea0a876d5ebeafe44855e891fef54e3fcae8dbb1017d447",
+      "models": ["payment_dispatch"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["dispatchPayment"]
+    },
+    {
+      "path": "backend/payments/evm-adapter.ts",
+      "sha256": "26b6a4284c4f6e3da1900667406ac8e47118ff9a3b10841566110690fbb37f0d",
+      "models": ["chain_evidence"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["evmPaymentAdapter"]
+    },
+    {
+      "path": "backend/payments/handler.ts",
+      "sha256": "6926d8210f6cb1012f0891eb1f8b59f8fef40ab9edafc5692f2f9c2d207a0fba",
+      "models": [
+        "binding_consent_renewal",
+        "effective_wallet_history",
+        "payment_history"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isTestnetNetwork",
+        "isMonthlyCommitmentInput",
+        "is",
+        "directTransferQuery",
+        "directTransfers",
+        "handlePaymentsApi"
+      ]
+    },
+    {
+      "path": "backend/payments/ledger.ts",
+      "sha256": "339c1162075b8876e7601d1eef135974666fb32182b0671185480a4026b26df2",
+      "models": ["payment_dispatch"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["evidenceFacts", "indexPaymentEvent"]
+    },
+    {
+      "path": "backend/payments/monthly-attestation.ts",
+      "sha256": "79098d0677e905395578c75354b2aaf857b093885901af4752287a0185266e29",
+      "models": ["monthly_coordinator", "monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["reject", "prepareMonthlyAttestation"]
+    },
+    {
+      "path": "backend/payments/monthly-publication.ts",
+      "sha256": "a19fcb537cc09242714565f16caa2766655b0879f0ee28619705f3d1afeb0d28",
+      "models": ["monthly_coordinator", "monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "publishMonthlyAuthorizations",
+        "readMonthlyAuthorization"
+      ]
+    },
+    {
+      "path": "backend/payments/monthly-reserve-release.ts",
+      "sha256": "1fdaa0a58899efd180590704079d57b90f7a4e30b21073cb01ce3af34b38615b",
+      "models": ["monthly_release"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isMonthlyReleaseRequest",
+        "retainedMonthlyAllocations",
+        "isMonthlyReleaseCheck"
+      ]
+    },
+    {
+      "path": "backend/payments/monthly.ts",
+      "sha256": "b2dbf81c8ef48bcc2e90cdfc92cd8e77f064feaa3a58a54f5bc555adeed29f1c",
+      "models": [
+        "monthly_coordinator",
+        "monthly_reserve",
+        "monthly_source_conflict"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "verifyProjectAuthority",
+        "github",
+        "loadBase",
+        "loadChanges",
+        "monthlyPaymentSettingSequence",
+        "automaticMonthlyPayment",
+        "loadRun",
+        "awardStates",
+        "servedDeployment",
+        "freezeMonthlyPeriod",
+        "createMonthlyObligations",
+        "coordinateMonthlyPayments",
+        "assertMonthlyParticipation",
+        "monthlyOwnerService",
+        "authorized",
+        "unchanged",
+        "view"
+      ]
+    },
+    {
+      "path": "backend/payments/possession.ts",
+      "sha256": "08d9d2fc2272dfb9146032559babe2e35679d444afae276b7ee3e11e01ea7908",
+      "models": ["payment_binding"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "personalMessageHash",
+        "recoverEvmSigner",
+        "canonicalEvmSignature",
+        "verifyEvmBindingSignature",
+        "verifyPaymentWalletSignature",
+        "buildPaymentWalletMessage"
+      ]
+    },
+    {
+      "path": "backend/payments/public-records.ts",
+      "sha256": "420289fc912f34fc39d1e6da7c4c92c272823b2e0a794cdd206a4896e4586b84",
+      "models": ["payment_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "publicRecord",
+        "publicVaultPayments",
+        "pagedRows",
+        "publicReceivedTotals"
+      ]
+    },
+    {
+      "path": "backend/payments/solana-funding.ts",
+      "sha256": "67427d615d82fd2119ec53df06e07e5e4811c13b95ba4e7daf8ce3d9ccf1d96c",
+      "models": ["chain_evidence"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["handleSolanaFunding"]
+    },
+    {
+      "path": "backend/payments/vault-snapshots.ts",
+      "sha256": "72ebfd03248e0e32d47c70acfba7311dbf1232c41da48fd4bbdc1f2514bb86ea",
+      "models": ["chain_evidence"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "sameAddress",
+        "storeVaultSnapshot",
+        "refreshVaultSnapshots",
+        "projectVaultSnapshots"
+      ]
+    },
+    {
+      "path": "backend/payments/wallet-registration.ts",
+      "sha256": "6378147d8f6bcf1e261174728357518742167d994042f7bc41c62ff813aa9e68",
+      "models": ["effective_wallet_history", "payment_binding"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "registerPaymentWallet",
+        "canonicalWalletClaimDigests"
+      ]
+    },
+    {
+      "path": "backend/projects/cloudflare-persistence.ts",
+      "sha256": "b8974aec5c881881db3c59b0cc8a58139b63dfece4a0595f0e7e32a4471d68c3",
+      "models": ["api_project_registry", "referrer_attribution"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "referrerFromRow",
+        "projectFromRow",
+        "applicationFromRow",
+        "enforcementFromRow",
+        "enforcementStatement",
+        "repositoryKeys",
+        "isConstraintConflict"
+      ]
+    },
+    {
+      "path": "backend/projects/handler.ts",
+      "sha256": "f5879ad8e9b6926cb7f3dfa844352c197ee190c907ab66aae8afaec28390f230",
+      "models": ["api_project_registry", "referrer_attribution"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "json",
+        "boundedText",
+        "invalidManifest",
+        "canonicalManifest",
+        "assertNewProjectManifest",
+        "fundingCommitments",
+        "sameValue",
+        "ownerSecurityProgram",
+        "monthsThrough",
+        "prospectiveFinancialChange",
+        "verifiedAsset",
+        "verifiedRewardAsset",
+        "verifiedBountyAmount",
+        "withMonthlyAmount",
+        "assertReviewBudgetTransition",
+        "assertRegistryWith",
+        "publicApplication",
+        "adminProject",
+        "sessionBody",
+        "requireSession",
+        "requireAdmin",
+        "resolveReferrer",
+        "currentAuthority",
+        "requireAuthority",
+        "isProjectStewardOrAdmin",
+        "actorOf",
+        "queueScan",
+        "runSetupCheck",
+        "refreshProjectSetup",
+        "createProject",
+        "ownerBountySolanaFunding",
+        "ownerVault",
+        "publishOwnerRevision",
+        "listSetup",
+        "isPublishable",
+        "checkSetup",
+        "publishPendingApplication",
+        "listMyApplications",
+        "listAdminProjects",
+        "replaceProjectManifest",
+        "appendRevision",
+        "publicRestriction",
+        "activePublicRestrictions",
+        "assertRepositoryUnrestricted",
+        "assertMaintainerNotBanned",
+        "adminEnforcement",
+        "requireModerator",
+        "positiveInteger",
+        "enforcementText",
+        "enforceProject",
+        "filesAccountAppeal",
+        "listAccountAppeals",
+        "requestReinstatement",
+        "recordEnforcement",
+        "publicJson",
+        "listPublicProjects",
+        "listPublicAccountBans",
+        "readPublicProject",
+        "getPublicRevision",
+        "listPublicRevisions",
+        "githubLookup",
+        "isProjectRoute",
+        "handleProjectApi"
+      ]
+    },
+    {
+      "path": "backend/projects/token-metadata.ts",
+      "sha256": "afa728641692ab2a4c1b4e774c2fc901acfc5addf2749a45f5225a1f389de88e",
+      "models": ["reward_metadata"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "rpc",
+        "word",
+        "decodeSymbol",
+        "evmMetadata",
+        "solanaMetadata",
+        "rpcTokenMetadataReader"
+      ]
+    },
+    {
+      "path": "backend/projects/vault-setup.ts",
+      "sha256": "67246198e6cca8f8498d25215f9a11a17460d26c0361ce3130d8dd6411ccc5cb",
+      "models": ["vault_creation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "networkUnavailable",
+        "currentReview",
+        "ownerVaultSetupService",
+        "templates",
+        "factories",
+        "programs",
+        "resolve",
+        "attachBountyVault",
+        "attachOrdinaryVault"
+      ]
+    },
+    {
+      "path": "backend/referrals/cache.ts",
+      "sha256": "9031218a03aac229924caffcea92862d91f4387ac274aa3671a188a6df9421e3",
+      "models": ["referral_claim_cache", "referral_distribution"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "nextEpoch",
+        "CLAIM_DELAY",
+        "totalClaimed",
+        "epochAt",
+        "decimals",
+        "balanceOf",
+        "refreshReferralClaims",
+        "activeClaimEpoch"
+      ]
+    },
+    {
+      "path": "backend/referrals/claims.ts",
+      "sha256": "724dbca6f6d24057f2ea49afbf138901bc2a42370a61c94a71531aca147b662c",
+      "models": ["referral_claim_cache", "referral_distribution"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["handleReferralClaims", "referralAccount"]
+    },
+    {
+      "path": "backend/referrals/handler.ts",
+      "sha256": "44249d4131eefeb6565bb01c5d7182de79c1d200ef3539e5cb5b9235dd6a1ee4",
+      "models": ["referral_accrual"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["handleReferralsApi"]
+    },
+    {
+      "path": "backend/security/direct-evm-balances.ts",
+      "sha256": "50bd41f5be8f2c59dd87692c3ba0a4fb07344bbb4dee124a1cf5271577ad5664",
+      "models": ["transaction_balance_proof"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "rpc",
+        "state",
+        "overrides",
+        "assertTokenProofAvailable",
+        "assertNativeProofAvailable",
+        "verifyNativeBalanceChanges",
+        "verifyTokenBalanceChanges",
+        "balance"
+      ]
+    },
+    {
+      "path": "backend/security/direct-payments.ts",
+      "sha256": "6d622e43dcce0f1d906be28ab2fb9e37dbfbcf0f1c071a566273cf95eddd3e6c",
+      "models": [
+        "api_award_recovery",
+        "bounty_payment",
+        "direct_payment_recovery"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "defaultDirectPaymentConfiguration",
+        "directPaymentNetworks",
+        "wallet",
+        "directConsent",
+        "reserveNextNonces",
+        "prepareDirectIntent",
+        "solanaDirectOrRefuse",
+        "insertDirectIntent",
+        "issuedSolanaPlans",
+        "directRecoveryStore",
+        "refreshDirectIntent",
+        "directSettlementView",
+        "directSettlementViews",
+        "directView",
+        "verifyDirectPayment",
+        "recoveryContext",
+        "directRecoveryConsent",
+        "evmRecoveryState",
+        "directRecoveryView",
+        "recoverDirectIntent"
+      ]
+    },
+    {
+      "path": "backend/security/payment-database.ts",
+      "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
+      "models": ["api_award_recovery", "bounty_payment"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["securityPaymentDatabase"]
+    },
+    {
+      "path": "backend/security/payments.ts",
+      "sha256": "5b2c198979a77d46af31dbd2ed9fccd1647905f7ae95475520e8a254a3ec5506",
+      "models": ["api_award_recovery", "bounty_payment"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "securityPaymentNotices",
+        "securityLedgerPolicy",
+        "prepareSecuritySettlement",
+        "securitySettlementView",
+        "securitySettlementViews",
+        "settlementView"
+      ]
+    },
+    {
+      "path": "contracts/evm/adapter.ts",
+      "sha256": "c7b853367460c16e4c0b50cfd9742f86c98f26d07b6184e7c602b09924510c03",
+      "models": ["chain_evidence"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isCanonicalEvmReceipt",
+        "object",
+        "quantity",
+        "hash",
+        "uint64",
+        "uint128",
+        "rpc",
+        "readEvmBindingVersion",
+        "codeSha256",
+        "runtimeSha256",
+        "settled",
+        "getter",
+        "evmVaultPurpose",
+        "evmVaultKey",
+        "verifyEvmFactory",
+        "verifyEvmDeployment",
+        "evmAwardId",
+        "finalizedLog",
+        "verify",
+        "verifyReserve",
+        "verifyPayment",
+        "verifyBinding",
+        "word",
+        "amountWord",
+        "buildPayCalldata",
+        "assertBindingInput",
+        "domainSeparator",
+        "evmBindingTypedData",
+        "evmBindingDigest",
+        "buildBindCalldata",
+        "readEvmAuthorityRotation",
+        "buildDepositCalldata",
+        "buildCommitAwardCalldata",
+        "buildCancelBindingCalldata",
+        "buildClaimFeesCalldata",
+        "buildWithdrawCalldata",
+        "monthlyCommitmentWords",
+        "buildSetMonthlyCommitmentCalldata",
+        "readEvmMonthlyCommitment",
+        "verifyMonthlyCommitmentSet",
+        "verifyVaultFundingAction",
+        "buildCreateVaultCalldata",
+        "creationData",
+        "creationVault",
+        "prepareEvmVaultCreation",
+        "verifyEvmVaultCreation",
+        "periodNumber",
+        "monthlyLeaf",
+        "evmAllocationRoot",
+        "evmMonthlyDigest",
+        "buildCommitMonthlyCalldata",
+        "readVaultTotals"
+      ]
+    },
+    {
+      "path": "contracts/evm/factories.ts",
+      "sha256": "6d70f888ea86c1667d515cbbbf175b252590c5adbccc56a6d8ecf8671d8ca025",
+      "models": ["vault_creation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/evm/foundry.toml",
+      "sha256": "0b332e1b18061214f019512419f7d213178c8bc1d836db0eea10ff4a5eeebf7a",
+      "models": ["contract_build_profile"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/evm/monthly-reserve.ts",
+      "sha256": "c3b648865493048536d4ce0b3f78d04da65ca44fcbe1160d4976d52cd0c740f5",
+      "models": ["monthly_release", "monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "identityAuthority",
+        "monthlyReserveVersion",
+        "ordinarySourceSequence",
+        "awards",
+        "monthlyRoots",
+        "monthlyReserves",
+        "reserveMonthly",
+        "commitMonthlyLeaf",
+        "releaseMonthlyReserve",
+        "periodNumber",
+        "bytes32",
+        "uint",
+        "entryTuple",
+        "parent",
+        "evmMonthlySumTree",
+        "reservationTuple",
+        "evmMonthlyReserveDigest",
+        "buildReserveMonthlyCalldata",
+        "buildCommitMonthlyLeafCalldata",
+        "words",
+        "readEvmMonthlyReserve",
+        "inspectEvmMonthlyWrongSum",
+        "evmMonthlyReleaseDigest",
+        "prepareEvmMonthlyWrongSumRelease",
+        "prepareEvmMonthlyReservation"
+      ]
+    },
+    {
+      "path": "contracts/evm/native-cost.ts",
+      "sha256": "25bca07727d2096780c09514dd6063614165b2935bbfcd19d18f69e3cb45b190",
+      "models": ["native_budget"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["evmReceiptNativeCost"]
+    },
+    {
+      "path": "contracts/evm/script/DeployBase.s.sol",
+      "sha256": "373d3e159b8d71864abc0846da97e8dc924a4fdb3051ba2a1f8beb6e81f1b130",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["run"]
+    },
+    {
+      "path": "contracts/evm/script/DeployBaseSepolia.s.sol",
+      "sha256": "46cd8addf890ed08ca19d4d9fc217018cf9ea2a96f71547d19ec213a467c96f9",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["run"]
+    },
+    {
+      "path": "contracts/evm/script/DeployEscrowFactory.sol",
+      "sha256": "9e31fe748fff3e0c0f532225a4f232c3f736540b328ec4052a745d9104f29c7e",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "envAddress",
+        "envOr",
+        "startBroadcast",
+        "stopBroadcast",
+        "getCode",
+        "deploy"
+      ]
+    },
+    {
+      "path": "contracts/evm/script/DeployEthereum.s.sol",
+      "sha256": "e259c5fe9fbc97afbe9c48e5a62b8454c3e84d316097fd0a158d6f10af77de53",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["run"]
+    },
+    {
+      "path": "contracts/evm/script/DeployEthereumSepolia.s.sol",
+      "sha256": "33e0d9f02a5ade5549a86d11879fc5afd9a071df85a9ec70525a48aaa8aeeea0",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["run"]
+    },
+    {
+      "path": "contracts/evm/script/DeployReferralDistributorRobinhoodTestnet.s.sol",
+      "sha256": "548855bdfa95b32acd979c8e4f8c0a85c8c238fc02c5c8099799ebe19a940d4f",
+      "models": ["test_contract_deployment"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "envAddress",
+        "envUint",
+        "envOr",
+        "startBroadcast",
+        "stopBroadcast",
+        "run"
+      ]
+    },
+    {
+      "path": "contracts/evm/script/DeployRobinhood.s.sol",
+      "sha256": "96a7cc03a3a12c84ff5e42a6f54ffa1324218b95dbda10a95ec01323ed22434f",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["run"]
+    },
+    {
+      "path": "contracts/evm/script/DeployRobinhoodTestnet.s.sol",
+      "sha256": "076b5b33a82a100d0fa7970efe10fe7372d5e87c8bdecf93180912cf60e02b42",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["run"]
+    },
+    {
+      "path": "contracts/evm/script/DeployUpgradeImplementations.s.sol",
+      "sha256": "d5259a20380b50621693c6cd205ed2bc245fc2c5d4209ceb27e69245d27624f5",
+      "models": ["evm_proxy_lifecycle"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "getCode",
+        "startBroadcast",
+        "stopBroadcast",
+        "proxiableUUID",
+        "run",
+        "deploy"
+      ]
+    },
+    {
+      "path": "contracts/evm/src/ProjectEscrow.sol",
+      "sha256": "79d7b63d7db428bb46658267a7719f22786a66aff8a91b86c6b64381cc551f08",
+      "models": [
+        "authority_rotation",
+        "escrow_balances",
+        "evm_proxy_lifecycle",
+        "vault_creation"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "balanceOf",
+        "transfer",
+        "transferFrom",
+        "decimals",
+        "_authorizeUpgrade",
+        "initialize",
+        "initializeWithMonthlyCommitment",
+        "_initialize",
+        "identityAuthority",
+        "domainSeparator",
+        "bindingDigest",
+        "monthlyDigest",
+        "monthlyReserveVersion",
+        "monthlyReserveDigest",
+        "monthlyReleaseDigest",
+        "allocationRoot",
+        "monthlyWindow",
+        "monthStart",
+        "signedBy",
+        "awardId",
+        "payoutFee",
+        "withdrawalFee",
+        "totals",
+        "deposit",
+        "commitAward",
+        "commitBountyAward",
+        "setMonthlyCommitment",
+        "_setMonthlyCommitment",
+        "commitMonthly",
+        "reserveMonthly",
+        "commitMonthlyLeaf",
+        "releaseMonthlyReserve",
+        "sumNode",
+        "commit",
+        "recordAward",
+        "bindDestination",
+        "cancelBinding",
+        "payableBinding",
+        "pay",
+        "withdrawUnused",
+        "claimFees",
+        "sendExact",
+        "assetBalance",
+        "readDecimals",
+        "callToken",
+        "proposeUpgradeAuthority",
+        "acceptUpgradeAuthority",
+        "setVaultImplementation",
+        "_setVaultImplementation",
+        "vaultKey",
+        "create",
+        "createWithMonthlyCommitment",
+        "_create",
+        "proposeIdentityAuthority",
+        "cancelIdentityAuthorityRotation",
+        "executeIdentityAuthorityRotation"
+      ]
+    },
+    {
+      "path": "contracts/evm/src/ReferralDistributor.sol",
+      "sha256": "0c0ba682fa8009f86ac36e16aca9ab8feed1f340e3217e36d895760ff866333c",
+      "models": ["referral_distribution"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "balanceOf",
+        "transfer",
+        "epochCount",
+        "epochAt",
+        "nextEpoch",
+        "claimableAt",
+        "hasPendingRoot",
+        "currentRoot",
+        "rescueAvailableAt",
+        "leaf",
+        "claimable",
+        "liveRoot",
+        "postRoot",
+        "voidRoot",
+        "previousLiveMarks",
+        "pause",
+        "unpause",
+        "setPoster",
+        "transferOwnership",
+        "acceptOwnership",
+        "rescue",
+        "claim",
+        "activate",
+        "verify"
+      ]
+    },
+    {
+      "path": "contracts/solana/Anchor.toml",
+      "sha256": "242ee1a295f1fa420027356b76f97be4db6b08e64ab4f021e40683f1bb6cee34",
+      "models": ["contract_build_profile"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/Cargo.toml",
+      "sha256": "2d792e4784909c1a65fde5303f38215284aff9fd35ca625f0dacbe73ca26ccb7",
+      "models": ["contract_build_profile"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/adapter.ts",
+      "sha256": "a30162fbbc96fd68def4d82ac822702d436e190f92a7de4e96c9f19d9828c1be",
+      "models": ["chain_evidence"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "base58",
+        "publicKeyBytes",
+        "programAddress",
+        "solanaConfigAddress",
+        "solanaVaultAddress",
+        "solanaAssociatedTokenAddress",
+        "digest",
+        "rpc",
+        "account",
+        "liveMint",
+        "solanaMintDetails",
+        "solanaMintDecimals",
+        "verifySolanaProgram",
+        "verifySolanaDeployment",
+        "solanaAuthorityRotation",
+        "solanaProjectPurpose",
+        "monthlyLeaf",
+        "levels",
+        "solanaAllocationRoot",
+        "solanaAllocationTotal",
+        "solanaAllocationProof",
+        "solanaMonthlyMessage",
+        "solanaAwardId",
+        "escrowInvocations",
+        "solanaPaymentAdapter",
+        "readVaultTotals"
+      ]
+    },
+    {
+      "path": "contracts/solana/commitment.ts",
+      "sha256": "71d228810a4fa1048e9685457b29295cc6fa645442ff6ce4eb8092436a6b3275",
+      "models": ["solana_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "digest",
+        "commitmentInstruction",
+        "solanaCommitmentMessage",
+        "prepareSolanaCommitment",
+        "checkSolanaCommitment"
+      ]
+    },
+    {
+      "path": "contracts/solana/funding.ts",
+      "sha256": "1d662ab096a7fcd7b8dce63c7ca222b1fac91de66ed4863a11e1bc8efb8bf9d8",
+      "models": ["solana_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "object",
+        "baseAmount",
+        "fundingInstructions",
+        "solanaFundingMessage",
+        "prepareSolanaFunding",
+        "checkSolanaFunding",
+        "balances"
+      ]
+    },
+    {
+      "path": "contracts/solana/integration/confirmation.mjs",
+      "sha256": "6a6e0a6e9d9e1dc762d9475e82b574264018899a7bb94f22f10e889662660926",
+      "models": ["solana_receipt_confirmation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["receiptProvider"]
+    },
+    {
+      "path": "contracts/solana/integration/deployment.mjs",
+      "sha256": "3e683488ee601247753273bbc93cab8b694ae79af11393269f64f86e232ef1ee",
+      "models": ["solana_fixture_config"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["initializeConfig", "ensureConfig"]
+    },
+    {
+      "path": "contracts/solana/integration/fee-converter-native-fixture.mjs",
+      "sha256": "1be381c5ed379de7d8e6d1c95e4f9afc087f3fd0e024f5e5997239ebcd8b2bc1",
+      "models": ["native_fee_fixture"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["nativeFixtureGenesis", "createNativeFeeFixture"]
+    },
+    {
+      "path": "contracts/solana/integration/legacy-project.mjs",
+      "sha256": "2b144296496384047b529e24cc39a6ec0b13f8f8b43f07e55e6a9f364d2c20bd",
+      "models": ["solana_preload_cases"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["mintData", "projectData", "preloadArgs"]
+    },
+    {
+      "path": "contracts/solana/integration/monthly-preload.mjs",
+      "sha256": "245fdca1871ff6295ac7f9664275a8e262d01bf71f168b73561847bef565fb36",
+      "models": ["solana_preload_cases"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "project",
+        "expiredVaultData",
+        "monthData",
+        "allocationTree",
+        "earlierMonth",
+        "shortVaultProject",
+        "shortVault"
+      ]
+    },
+    {
+      "path": "contracts/solana/integration/program-genesis.mjs",
+      "sha256": "7d5f3ea4afc079d24b555fb60fae5437579fd394a46cbb1ac63d15af7765c2a5",
+      "models": ["solana_fixture_config"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/integration/token-2022-preload.mjs",
+      "sha256": "8c005463d7374668bfd74b97fe66a6d4e7edf32d6c026d6abe5b63dc39e08b04",
+      "models": ["solana_preload_cases"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/monthly-commitment.ts",
+      "sha256": "c377f840a3d347111f1b233908360b8cf92d900955f56cbe52dcce8be4860cb8",
+      "models": ["monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "cap",
+        "solanaMonthlyCommitmentInstruction",
+        "solanaMonthlyCommitmentMessage",
+        "solanaMonthlyCommitmentState",
+        "readSolanaMonthlyCommitment",
+        "prepareSolanaMonthlyCommitment",
+        "checkSolanaMonthlyCommitment"
+      ]
+    },
+    {
+      "path": "contracts/solana/monthly-reserve.ts",
+      "sha256": "9899ea1931c4d13c0a7f4b13438439c0262bcd580b51e5fe87117e726825147a",
+      "models": ["monthly_release", "monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "inspectSolanaMonthlyWrongSum",
+        "snapshot",
+        "blockHash",
+        "solanaMonthlyReleaseMessage",
+        "solanaMonthlyReleaseInstructions",
+        "prepareSolanaMonthlyWrongSumRelease"
+      ]
+    },
+    {
+      "path": "contracts/solana/native.ts",
+      "sha256": "280714c876598273c05d96d93b9ace863899468d24e6afd637d6211cdc851ae5",
+      "models": ["solana_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["nativeLamportDeltas"]
+    },
+    {
+      "path": "contracts/solana/owner-creation.ts",
+      "sha256": "290739579f80b44060d1856215593ef3cde1c18a61c1a4a14f61ef44c6ed4fef",
+      "models": ["vault_creation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "candidate",
+        "object",
+        "prepareSolanaVaultCreation",
+        "verifySolanaVaultCreation"
+      ]
+    },
+    {
+      "path": "contracts/solana/owner-instructions.ts",
+      "sha256": "da18fec649e2fd03c9f7ccfd2a2eec2db06584c30d3b8dbaeb3c2684257c943b",
+      "models": ["vault_creation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["delay", "buildInitializeVaultInstructions"]
+    },
+    {
+      "path": "contracts/solana/programs.ts",
+      "sha256": "eada42bdb9cd00940291c599662478b0dfeef4a3d7b0e7171fe15cde49aa61a2",
+      "models": ["vault_creation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/programs/slop-escrow/Cargo.toml",
+      "sha256": "589ddaf7bac047f4b914c454ac88226a3a0291c09b0f7d7c873180e80a325251",
+      "models": ["contract_build_profile"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/programs/slop-escrow/src/lib.rs",
+      "sha256": "a88ff0c1520c70bc90a60fa198eff8d415d1f8eebc6d388cca8b567c18956ffa",
+      "models": ["authority_rotation", "escrow_balances"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "initialize_config",
+        "initialize",
+        "initialize_native",
+        "propose_authority_rotation",
+        "confirm_authority_rotation",
+        "cancel_authority_rotation",
+        "execute_authority_rotation",
+        "deposit",
+        "deposit_native",
+        "commit",
+        "commit_bounty",
+        "set_monthly_commitment",
+        "commit_monthly",
+        "commit_monthly_award",
+        "release_monthly_award",
+        "release_monthly_reserve",
+        "bind_wallet",
+        "veto_binding",
+        "pay",
+        "pay_native",
+        "withdraw",
+        "withdraw_native",
+        "migrate_project",
+        "claim_fees",
+        "claim_fees_native",
+        "award_id_for",
+        "commit_with_fee",
+        "settle_leaf",
+        "monthly_message",
+        "monthly_release_message",
+        "monthly_leaf",
+        "sum_node",
+        "merkle_sum_root",
+        "monthly_window",
+        "month_start",
+        "verify_attestation",
+        "fee_for",
+        "valid_delay",
+        "valid_rotation_delay",
+        "binding_review_ends_at",
+        "add_i64",
+        "unvetoed",
+        "free",
+        "held",
+        "add",
+        "vault_amount",
+        "send_native",
+        "send",
+        "production_delay_bounds",
+        "monthly_window_is_the_utc_month_plus_72_hours",
+        "merkle_proofs_match_the_documented_tree",
+        "migration_appends_two_counters",
+        "fee_is_two_percent_per_award_or_withdrawal"
+      ]
+    },
+    {
+      "path": "contracts/solana/programs/slop-escrow/src/token_policy.rs",
+      "sha256": "710e5d5b26844e7bbd0b0cab33f75963e89e2bfe03d276fb7f1e05a8057264c4",
+      "models": ["token_admission"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "admitted_mint",
+        "admitted_token_account",
+        "inspect_mint",
+        "synthetic_metadata_mint_is_admitted_but_active_authorities_are_not",
+        "revoked_authorities_keep_key_bytes_but_are_no_longer_authorities",
+        "economic_hooks_and_unknown_mint_extensions_are_refused",
+        "immutable_owner_account_is_admitted_but_even_disabled_memo_extension_is_not"
+      ]
+    },
+    {
+      "path": "contracts/solana/scripts/acceptance-extended.ts",
+      "sha256": "07d5d6352ccb6ad1a9caa71fbd070577b1089e7f5b6613decc6c6b95a41ed0a6",
+      "models": ["acceptance_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "runSolanaExtended",
+        "keyRecovery",
+        "bounty",
+        "monthly",
+        "lifecycle",
+        "dispatch"
+      ]
+    },
+    {
+      "path": "contracts/solana/scripts/acceptance.ts",
+      "sha256": "8e487129fbc75e21d4dee00a45b002e9680e51812814354742866e110d7b1ecc",
+      "models": ["acceptance_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "escrow",
+        "prepareLocalnet",
+        "openSolanaRun",
+        "solanaServices",
+        "cosignSolanaBinding",
+        "solanaDeploymentRecord",
+        "runSolana",
+        "runAsset",
+        "payThroughDispatch"
+      ]
+    },
+    {
+      "path": "contracts/solana/scripts/bootstrap-linux.sh",
+      "sha256": "3fe0a84986deca04dc3edee46120e07688d122a5fc33ed487420ceb9477e116e",
+      "models": ["deployment_artifact"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/scripts/build-local.sh",
+      "sha256": "0039c233cb536086ea49ebe4af1993352f3f08339ebc8967b1e1715dca75ead8",
+      "models": ["deployment_artifact"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/scripts/config-plan.mjs",
+      "sha256": "dea5ae895b37a609e36742f94082320e654f7ce53ebf9a2e11ac0ad409e69d0b",
+      "models": ["unsigned_owner_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "connect",
+        "configPlan",
+        "listProjects",
+        "migratePlan"
+      ]
+    },
+    {
+      "path": "contracts/solana/scripts/deploy-testnet.sh",
+      "sha256": "091a8bf7660d143f48d9c88a39341d18c083f58a7226f1156b25f15f8f815554",
+      "models": ["test_contract_deployment"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/scripts/failure-evidence.mjs",
+      "sha256": "68a46e76510aa92b4d0c7a989d13b9e3d94376acbadab006582223710e448efe",
+      "models": ["deployment_artifact"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["collect", "rpc"]
+    },
+    {
+      "path": "contracts/solana/scripts/owner-plan.mjs",
+      "sha256": "9db3b90b525f320cdae4f3eb0032d305ddb8fe22d0509af528e4d2cf6a024ea2",
+      "models": ["unsigned_owner_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["awardIdFor", "verifyProgram", "ownerPlan"]
+    },
+    {
+      "path": "contracts/solana/scripts/prepare-test-program.mjs",
+      "sha256": "24b80f77baa4484a3bb8d03d9028cb13aeea1d7cf63d0d4352bbd41970188bf9",
+      "models": ["deployment_artifact"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["prepareTestProgram"]
+    },
+    {
+      "path": "contracts/solana/scripts/run-test-stage.sh",
+      "sha256": "adaade297256078ebeea26ac1f3f094b02885bcfced64175e2b09bae7d82c8f5",
+      "models": ["deployment_artifact"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/scripts/test-e2e.sh",
+      "sha256": "adb4235a637a350bdadaca73292f83def6fc8c0ecce57a0976f73364cba30dca",
+      "models": ["deployment_artifact"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "contracts/solana/token-extensions.ts",
+      "sha256": "acf18c6291faa0ca184e64de181c5c2623c6a3b7f7b44d8ed270553f9be6087c",
+      "models": ["token_admission"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "tokenProgramData",
+        "extensionRecords",
+        "readTokenMint",
+        "readTokenAccount",
+        "extensionPayload",
+        "equal",
+        "uint32"
+      ]
+    },
+    {
+      "path": "contracts/solana/token.ts",
+      "sha256": "2f19932190a50685fc88e5ec7d12d3bc1f9811b11cdf7b880912a90fdec1fdae",
+      "models": ["token_admission"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["inspectMintAccount", "inspectTokenAccount"]
+    },
+    {
+      "path": "contracts/solana/transactions.ts",
+      "sha256": "d3e031297fa43a1aa4c5f1392e5e58425f66910e71db82462cb33e6d418930f9",
+      "models": ["solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["le", "short", "message", "createAta"]
+    },
+    {
+      "path": "contracts/solana/wallet-transactions.ts",
+      "sha256": "d110816135d832f7b07311789e369f40657f53f8f3a1d264e42a5ca0d00ded0d",
+      "models": ["chain_evidence"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "object",
+        "prepareSolanaWalletTransaction",
+        "checkSolanaWalletTransaction",
+        "checkSolanaCreationTransaction",
+        "walletMessage",
+        "checkedWalletGuards",
+        "checkTransaction"
+      ]
+    },
+    {
+      "path": "contracts/vault-totals.ts",
+      "sha256": "167ac5c3d1f7e94051e9137a0ab75671f4d08ce9a556fcdd73c3061f00270639",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0011_payments.sql",
+      "sha256": "076232ab09dc40e5656850985b441d696c4903b50d847912cfea27eeb9c601f3",
+      "models": ["payment_dispatch"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0012_solana_scan_backlog.sql",
+      "sha256": "cf017dca34f1679e3887b1ebe0631e17eb9baffe47bc134a1f09804f522714a6",
+      "models": ["solana_scan_checkpoint"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0014_direct_payments.sql",
+      "sha256": "18fc4e4252ee81f6b95c5caa0a7d6bdc612d0f00db853db183e24fca5b797c54",
+      "models": ["historical_disclosure"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0016_binding_authorizations.sql",
+      "sha256": "61668fe8d8ac0cf64a0d61391c8f09dac8dbc510f39c1095ce1138cbb5242cf0",
+      "models": ["binding_consent_renewal"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0017_robinhood_chain.sql",
+      "sha256": "31f935e6f6c10e7c89c160b1d6993cb1390af1d2035ac635abaea51677c850ca",
+      "models": ["payment_dispatch"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0021_multi_asset_vault_snapshots.sql",
+      "sha256": "028e708fc45161cf5db0261495927c882ecca381d921443a6985906496514230",
+      "models": ["payment_dispatch"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0022_fee_conversions.sql",
+      "sha256": "61102409258793142196e835457a72d4e906778e2d2078aabd83b01c7e700585",
+      "models": ["fee_conversion"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0037_points_batch_prefix.sql",
+      "sha256": "8030e741b86537abf1fd6b97e6e555a312f76544e5ce7b75602f449800dd746b",
+      "models": ["journal_publication"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0038_points_coverage_staging.sql",
+      "sha256": "75fc7a619bb8d4b60a22501e4a205fe44c66d9d181487e16796a85c1faa61c5d",
+      "models": ["journal_publication"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0044_points_immutable_history.sql",
+      "sha256": "1b1e46499fbcfe43fb40330d348845302761cd43e8c1575ce35b3100a12a0646",
+      "models": ["journal_publication"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0055_project_referrer.sql",
+      "sha256": "df17af82c695b8d3bfd74a76bf2bcf0d9a903ffc32218587994176130c7bf961",
+      "models": ["referrer_attribution"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0057_private_security_payments.sql",
+      "sha256": "99bfc406d747e486db01f59ce9456a958dcbf56322dbf34903e6939c9bfc0026",
+      "models": ["bounty_payment"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0062_monthly_allocations.sql",
+      "sha256": "aa41612673339e3cbf30432faeaeaea0bda02b7cabd93e3780ad004cf358e863",
+      "models": ["monthly_coordinator"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0071_monthly_ban_exclusions.sql",
+      "sha256": "553bf95ba13748871d3c55f82c6534729d72198eaaf57b3ec0337d5eabaa1eb3",
+      "models": ["monthly_coordinator"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0073_monthly_authorizations.sql",
+      "sha256": "a34d25e7e245e55a65fa63b78361ef0258a219a81b4cdf292de9340c88013cbf",
+      "models": ["monthly_execution_recovery"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0076_fee_conversion_pending.sql",
+      "sha256": "b7dcb5c622071dddb8b1a6039226f4ff463fcb0cb8974a5eac0898e1e4d3e6e9",
+      "models": ["fee_conversion", "fee_schema_upgrade"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0078_fee_conversion_transaction_size.sql",
+      "sha256": "e50e5d0ed363388cee346d9e57fc95292910821b4ec9e1c4e6b30ad4c3d63235",
+      "models": ["fee_conversion", "fee_schema_upgrade"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0081_monthly_asset_amount_range.sql",
+      "sha256": "895cd8b735be25c32232770e07ff3445c7a669c3935784be7778f4265e9a20bd",
+      "models": ["monthly_coordinator"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0082_fee_claim_journal.sql",
+      "sha256": "2c77d665529e73d93905e795a3765c3a45b86eed3cf2eac65b13ac8ced4d26c5",
+      "models": ["fee_conversion", "fee_schema_upgrade"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0083_monthly_execution_attempts.sql",
+      "sha256": "be50317ebf5b448510041960bd6e7a7ef79acf3d9c08f7c206bbfc9892806ead",
+      "models": ["monthly_execution_recovery"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0086_referral_accruals.sql",
+      "sha256": "dcc18fd9ace4774eed286943d0bb2cc435497a6d87b1e1dda54508437b03a209",
+      "models": ["referral_accrual"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0087_fee_send_replacements.sql",
+      "sha256": "75879e3973dac403324474cd192ee45d810cd4038df300867b3aaebab41bd728",
+      "models": ["fee_schema_upgrade", "signed_send"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0087_referral_root_posts.sql",
+      "sha256": "6192dc7dc2da783472fc31bd56034f6211286f645b7c0698e7d9ed1e9b8dbf3b",
+      "models": ["referral_distribution", "referral_posting"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0088_fee_approval_journal.sql",
+      "sha256": "30282b3a4aeade1f09bb986465fcd8740764c5caee1dc9cede957a3e37eee51c",
+      "models": ["fee_conversion", "fee_schema_upgrade"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0089_referral_claim_cache.sql",
+      "sha256": "2a9b9e101909d3e800017a8d2bba86d8b13479ab80ec5aa904c43db10ccff777",
+      "models": ["referral_claim_cache"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0090_referral_post_gas.sql",
+      "sha256": "0695b1b4efb6768d5db8647f18fb9d8e1fed138cac7e60cb70d69542a23eaa98",
+      "models": ["native_budget"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0092_fee_native_gas.sql",
+      "sha256": "c6e14cced210eea709d805c8a5c5ca9f46f6b8163dd4c20f190c624fd54776fe",
+      "models": ["fee_lease_journal", "native_budget"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0094_fee_solana_native_gas.sql",
+      "sha256": "ca9b40bfe29b760c69c0d053a44351ac07b7379742b5965ae0e48e6c58e77010",
+      "models": ["native_budget"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0095_fee_solana_expiry.sql",
+      "sha256": "0edd12c4bb830200f91a933100ceca613df7eed39b1515388a410d8c691dba9d",
+      "models": ["solana_expiry"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0096_fee_solana_accounts.sql",
+      "sha256": "592740a8cbb4d84dc5597c5a138bef32f38ab03f6fec76c12d112bd4c51375bd",
+      "models": ["native_budget"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0100_effective_payment_wallets.sql",
+      "sha256": "c7d4482cb21971396657db276ffcd476228f2cb55e71db634d9fe3e2a29b1a11",
+      "models": ["effective_wallet_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0108_private_direct_payments.sql",
+      "sha256": "1817d33ede23156d39a187b33916f19abce13b53c3601ab10114a5ccd45622f0",
+      "models": ["bounty_payment"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0109_direct_payment_transfer_receipts.sql",
+      "sha256": "c62d89b77d59ce8d51ea46e31283650d52ce6562856e70fbe70fcd9af487bd09",
+      "models": ["bounty_payment"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0112_direct_payment_recovery.sql",
+      "sha256": "739362237b182f25304949778bf40581c07d395cbc7c813f51c3490a305c65ec",
+      "models": ["direct_payment_recovery"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "migrations/0113_direct_unpaid_leg_recovery.sql",
+      "sha256": "00ddc180aa92460cbaf2b350797351791accfff0033c3d490521bf12b76aa7b5",
+      "models": ["direct_payment_recovery"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/backfill-points.ts",
+      "sha256": "d75815739ac3789852fb1b6bdda23e4c1991a5c4b3abcfd81a6c9ff604bd3f93",
+      "models": ["source_import"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["github", "user"]
+    },
+    {
+      "path": "scripts/benchmark-points-snapshot.ts",
+      "sha256": "f635a2fbe98e39d6b670927ccf32a7e2382b75f6239eb90a659b4cfb0e051d62",
+      "models": ["source_replay"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/check-direct-payment-disclosures.ts",
+      "sha256": "7473361e7e3c67bbf9e7fc780b7a8f3693a1cb11656fa505a84961292293315a",
+      "models": ["historical_disclosure", "source_import"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "roundHalfUp",
+        "assertBigint",
+        "verifyDisclosure",
+        "checkDirectPaymentDisclosures"
+      ]
+    },
+    {
+      "path": "scripts/check-payout-readiness.ts",
+      "sha256": "c297c168fcd28959844343156482caa7f10aeb6de83a7d72c9aa912398238685",
+      "models": ["payout_readiness"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "signerNetworks",
+        "payoutReadiness",
+        "call",
+        "probeRpc",
+        "parseMap"
+      ]
+    },
+    {
+      "path": "scripts/check-payout-test-funding.mjs",
+      "sha256": "e123ae7a8745076de4e2c8740b85482105434a40a1aecdc98e732610996ef7a1",
+      "models": ["test_balance_observation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["checkTestFunding", "rpc"]
+    },
+    {
+      "path": "scripts/check-referral-roots.ts",
+      "sha256": "4c6ac67749717b151294d63b2b30aa6c8bef3113932d41cda4b379bbdc1f8e62",
+      "models": ["chain_range_scan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "token",
+        "nextEpoch",
+        "epochAt",
+        "requireEvidence",
+        "units",
+        "accountId",
+        "readPublic",
+        "checkReferralFiles",
+        "referralWatchConfig",
+        "checkReferralRoots"
+      ]
+    },
+    {
+      "path": "scripts/check-unsafe-destination-transitions.ts",
+      "sha256": "a57eae41f563030ace115d74a193ca9f872349e9cef901f2a68c4358913db590",
+      "models": ["trusted_base_gate", "unsafe_destination_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "git",
+        "manifests",
+        "strictJson",
+        "readManifest",
+        "suggestedAmounts",
+        "inspectUnsafeDestinationTransitions",
+        "collectReports",
+        "verifyUnsafeDestinationTransitionAuthorities"
+      ]
+    },
+    {
+      "path": "scripts/escrow-acceptance.ts",
+      "sha256": "709fcdb2d91620f48c19bb8fb6b658c6908e2f253665de2286454bd5438f52d7",
+      "models": ["acceptance_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/escrow-acceptance/evm-extended.ts",
+      "sha256": "e7c6286468439fcfba8df2f095d80052ab35eab8371e2e7f1560231dae978b07",
+      "models": ["acceptance_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "blockAddress",
+        "commitAward",
+        "commitBountyAward",
+        "runEvmExtended",
+        "bounty",
+        "monthly",
+        "keeperCommitment",
+        "executorCommitment",
+        "lifecycle",
+        "dispatch",
+        "keyRecovery"
+      ]
+    },
+    {
+      "path": "scripts/escrow-acceptance/evm-upgrade.ts",
+      "sha256": "32e5d712f44ac994d70045296088e07baca8c98f77c3562f6055ed8409fbcb14",
+      "models": ["evm_upgrade_qualification"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "upgradeToAndCall",
+        "setVaultImplementation",
+        "initialize",
+        "finalizedBlock",
+        "plan",
+        "execute"
+      ]
+    },
+    {
+      "path": "scripts/escrow-acceptance/evm.ts",
+      "sha256": "5d20a7269187c425309321ad0ec028245e2fa1153e37fe145c582a923f5996e9",
+      "models": ["acceptance_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "balanceOf",
+        "decimals",
+        "approve",
+        "registrar",
+        "identityAuthority",
+        "feeRecipient",
+        "bindingDelay",
+        "vaults",
+        "create",
+        "pendingIdentityAuthority",
+        "upgradeAuthority",
+        "vaultImplementation",
+        "proposeIdentityAuthority",
+        "executeIdentityAuthorityRotation",
+        "awards",
+        "bindings",
+        "payableBinding",
+        "purpose",
+        "monthlyReserveVersion",
+        "freeBalance",
+        "accruedFees",
+        "monthlyCap",
+        "monthlyEnabled",
+        "monthlyRoots",
+        "monthlyWindow",
+        "setMonthlyCommitment",
+        "totals",
+        "signBinding",
+        "openEvmRun",
+        "evmServices",
+        "registerEvmWallet",
+        "evmDeploymentRecord",
+        "runEvm",
+        "runAsset",
+        "payThroughDispatch",
+        "replay"
+      ]
+    },
+    {
+      "path": "scripts/escrow-acceptance/local.ts",
+      "sha256": "b9bcb4ddad56b61efa55dc101adb0f0ddffb835b257bc274a8986e0f03e03831",
+      "models": ["acceptance_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "waitFor",
+        "runUntilDone",
+        "evmFork",
+        "solanaLocalnet"
+      ]
+    },
+    {
+      "path": "scripts/escrow-acceptance/shared.ts",
+      "sha256": "61c3f012c10ddf790a46d4c634bc1d9d7ce8a995a69fed22576ad9a9b70979cd",
+      "models": ["acceptance_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "testActor",
+        "isAcceptanceNetwork",
+        "isLoopbackRpc",
+        "rpcHost",
+        "assertEvmTestChain",
+        "assertSolanaTestCluster",
+        "scenarioAmounts",
+        "amountsText",
+        "sourceCommit",
+        "evidencePath",
+        "loadEvidence",
+        "saveEvidence",
+        "newEvidence",
+        "requireEnv",
+        "evmKey",
+        "solanaSeed",
+        "waitPolicy",
+        "unitDivisor",
+        "sha256Text",
+        "jsonRpc",
+        "journalStore",
+        "migratedDatabase",
+        "acceptanceManifest",
+        "runPaymentsCron",
+        "replayDispatch",
+        "reconcile",
+        "publicGet",
+        "reconcilePublicApi",
+        "untilReady",
+        "runScenarios",
+        "extendedAmounts",
+        "scenarioActor",
+        "openMonthlyPeriod"
+      ]
+    },
+    {
+      "path": "scripts/escrow-acceptance/upgrade-payments.ts",
+      "sha256": "b731a953db3338bd66dab1fd4e54d79755627a7eacd29f8c91e6dedcce4ac9a5",
+      "models": ["evm_upgrade_qualification"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["upgradeVaultConfig", "reconcileUpgradePayments"]
+    },
+    {
+      "path": "scripts/escrow-acceptance/upgrade-verification.ts",
+      "sha256": "c88bbddf55b759a3591d22dac001b00e333f4a65c8bbc09931ecc129a0061b55",
+      "models": ["evm_upgrade_qualification"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "upgradeToAndCall",
+        "initialize",
+        "upgradeReader",
+        "vaultRecord",
+        "factorySlots",
+        "createdVaults",
+        "verifyUpgrade"
+      ]
+    },
+    {
+      "path": "scripts/escrow-acceptance/upgrade-verify.ts",
+      "sha256": "8b4276beffe2e8447f9c4c08ad83c0e98068e066abb473814c79955161788e4d",
+      "models": ["evm_upgrade_qualification"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/generate-points.ts",
+      "sha256": "e7fe44e082fb5b5af74df0336635a1bcdcd59cb751b5e0087332607b128141ca",
+      "models": ["journal_publication", "points_journal"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "hash",
+        "loadPublishedProjection",
+        "loadPublishedPoints",
+        "retainPublishedHistory",
+        "pointsSql",
+        "archivePaths",
+        "retainedHistoryCorrections",
+        "retiredEvaluatorAwards",
+        "appends",
+        "applyRetainedHistoryBatch",
+        "retainedHistoryAwards",
+        "pointShardRows",
+        "pointsSummary",
+        "generatePoints"
+      ]
+    },
+    {
+      "path": "scripts/payment-keeper/budget.ts",
+      "sha256": "9e949b4f331fa95305c031dfbacc36c7a67b3b2f72f093908358f354b1c4ca22",
+      "models": ["operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "rpc",
+        "validateBudget",
+        "reserve",
+        "budgetEvmSigner",
+        "budgetSolanaSigner",
+        "reconcileGas",
+        "accountExpiredSolanaReserve",
+        "baseOracleFee"
+      ]
+    },
+    {
+      "path": "scripts/payment-keeper/keeper.ts",
+      "sha256": "b304a02790f6cb2b892eb965d63f749e4ca56bcb2840adf175179c4f19bd881f",
+      "models": ["monthly_execution_recovery", "operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "json",
+        "deployments",
+        "retainAuthorization",
+        "runKeeper"
+      ]
+    },
+    {
+      "path": "scripts/payment-keeper/run.ts",
+      "sha256": "ea67e63caed942e22517c952b245fa04acd5dc3ae88d3ca9354f56ebd56f14df",
+      "models": ["operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/payment-keeper/signer.ts",
+      "sha256": "2345d4dbd8bf677d817725f8994b389cec504b531496d2edd8f4ce871942cf7f",
+      "models": ["operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["keeperSigners"]
+    },
+    {
+      "path": "scripts/payment-keeper/storage.ts",
+      "sha256": "8d232b6c4f7aa06d39850b8962e484da2f24f28106a37b07f4af5f1b6326b459",
+      "models": ["operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["initializeKeeperSchema", "keeperStorage"]
+    },
+    {
+      "path": "scripts/payment-keeper/store.ts",
+      "sha256": "01290339a4567e7ad224940dac41cae214f277e8fbf221cfbc8a83a283235710",
+      "models": ["operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["openKeeperStore"]
+    },
+    {
+      "path": "scripts/pr-evidence-artifacts.mjs",
+      "sha256": "3b42ee2ee9637812d0a070ffe5b5a60e0ab978773b889f2f688461421e2fd1df",
+      "models": ["artifact_transport"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "expectedArtifactKind",
+        "ascii",
+        "crc32",
+        "usefulImageDimensions",
+        "pngMetadata",
+        "jpegMetadata",
+        "readGifSubBlocks",
+        "gifMetadata",
+        "webpMetadata",
+        "readIsoBox",
+        "isoChildBoxes",
+        "isoChild",
+        "hasIsoVideoTrack",
+        "isoBmffVideoMetadata",
+        "readEbmlVint",
+        "readEbmlId",
+        "readEbmlElement",
+        "ebmlChildren",
+        "ebmlUnsigned",
+        "webmTrackDimensions",
+        "webmClusterHasPayload",
+        "webmMetadata",
+        "mediaMetadataFromBytes",
+        "meaningfulJson",
+        "parseJsonLines",
+        "validateDocument",
+        "isHtmlResponse",
+        "withAbort",
+        "readResponsePrefix",
+        "trustedDownloadUrl",
+        "fetchArtifactResponse",
+        "verifyArtifact",
+        "planReferencedArtifacts",
+        "isTransientArtifactFailure",
+        "mapWithConcurrency",
+        "verifyReferencedArtifacts"
+      ]
+    },
+    {
+      "path": "scripts/pr-evidence-policy.mjs",
+      "sha256": "b4d9f1bc5e054bef633b226c42b98f16fa1e52eec305df7f610d6bd37d090f99",
+      "models": ["artifact_transport"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "extensionFromPath",
+        "urlReferences",
+        "trustedArtifact",
+        "trustedArtifacts",
+        "artifactCanBeEvidenceFile",
+        "substantiveTrajectoryValue",
+        "hasMeaningfulTrajectoryKey",
+        "hasTrajectorySemantics",
+        "boundRowBlock",
+        "extractEvidenceRows"
+      ]
+    },
+    {
+      "path": "scripts/prepare-escrow-cycle.ts",
+      "sha256": "5838dc4c0d0b7ffc8207c758716e4e53cbb4c91714b487307c46350f2c711711",
+      "models": ["historical_reward"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["validateEscrowCycle"]
+    },
+    {
+      "path": "scripts/prepare-monthly-rewards.ts",
+      "sha256": "28c9af67020b8c195a3eb660e7ae4268a58096600c1e424fc58202e237089533",
+      "models": ["monthly_coordinator", "monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "exactDate",
+        "periodEndTime",
+        "previousUtcCycleId",
+        "hasMonthlyAllocation",
+        "buildMonthlyBase",
+        "prepareMonthlyBases",
+        "monthlyBasesSql",
+        "parseArguments"
+      ]
+    },
+    {
+      "path": "scripts/prepare-payment-deployments.ts",
+      "sha256": "8215e026fcca7bb5e0f03cbcb6efd55ebfe6008aab5e923a3bebaf31e8db476c",
+      "models": ["deployment_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["paymentDeployments"]
+    },
+    {
+      "path": "scripts/prepare-payments-import.ts",
+      "sha256": "f38f8534397edc898a2645f99dea1e33868fdc6e9832f44e3f8360c9f9ef7ef5",
+      "models": ["historical_disclosure", "source_import"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "directPaymentsSql",
+        "frozenCycleBindings",
+        "walletObservationsSql"
+      ]
+    },
+    {
+      "path": "scripts/prepare-points-import.ts",
+      "sha256": "f3b19c877d8a4044c6447e7620d4b47fd5fd8dea2ed0247cde6436a0ceeb02e3",
+      "models": ["source_import"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/prepare-source-correction.ts",
+      "sha256": "e822f892b72d9af39773a5dc3331ce9348c1b80f8235d9828d8cd6273b6c0cf8",
+      "models": ["source_correction_preview"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/prior-cycle-accrual.ts",
+      "sha256": "98fd7be5c6b7c36707cba1f99d607706b6da3c0889babb87e476030afb5efea3",
+      "models": ["prior_cycle_carry", "unsafe_destination_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "previousCycleId",
+        "readManifest",
+        "loadUnsafeDestinationHistory",
+        "loadPriorCycleAccrual"
+      ]
+    },
+    {
+      "path": "scripts/project-revision-policy.mjs",
+      "sha256": "7d38da7a155c4a2e67778e8c012980003acbb4399b4fa42983ca3de2568188f8",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["currentProjectPolicies"]
+    },
+    {
+      "path": "scripts/protocol-identity.mjs",
+      "sha256": "224142eb81f0e7ae0ed1aaf26660d30f462c8038e79a74e5592009f085d3dd3f",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "exactKeys",
+        "iso",
+        "equalJson",
+        "validateIdentityRecord",
+        "readIdentityRecord"
+      ]
+    },
+    {
+      "path": "scripts/published-profiles.ts",
+      "sha256": "8ef02fa41df376674261a86d072d14f3f988198cf2027d0ff8357419e9332ef4",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "assertRetainedProfiles",
+        "assertPublishedProfiles"
+      ]
+    },
+    {
+      "path": "scripts/pull-request-git-files.ts",
+      "sha256": "1634b9807d734dd92c4a0405b77ee3a194321aaffd4033355550e0e61efda93d",
+      "models": ["git_file_recovery"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "streamGit",
+        "textGit",
+        "checkInput",
+        "changeDigest",
+        "readGitFiles",
+        "readPullRequestGitFiles",
+        "recoverPullRequestGitFiles"
+      ]
+    },
+    {
+      "path": "scripts/readme-proof-binding.ts",
+      "sha256": "e602760eddf7cacd59b78422fcafabac88890340e2b620ed6adb2108f8989fbc",
+      "models": ["readme_proof_binding"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isReadmeProof",
+        "priorReadmeProofs",
+        "unboundReadmeProofReason"
+      ]
+    },
+    {
+      "path": "scripts/release-referral.ts",
+      "sha256": "dd9924f480cc214670736bdaadbc98a8dbce3afccfc35c3365f4946fda8a6a7f",
+      "models": ["deployment_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "scripts/render-install-guide.mjs",
+      "sha256": "a6ef737e399390016da27fb5b465c52e2224ddecaf4a3aa6a25b4cdaf95a9342",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["fail", "renderInstallGuide", "parseArguments"]
+    },
+    {
+      "path": "scripts/run-receipt-crypto.ts",
+      "sha256": "70b4ec8801908dd0ca036ce37f86ff48405e8a2e7e3c254991c8c10adbdf7aee",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "decodeBase64url",
+        "publicKeyFromReceipt",
+        "deviceKeyId",
+        "verifyRunReceiptSignature"
+      ]
+    },
+    {
+      "path": "scripts/run-security-payments.mjs",
+      "sha256": "b1489d8346d8462bd8b97729dc94aeac77525e43841fde6672bcb7a2ab385a6f",
+      "models": ["local_security_checks"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["availablePort"]
+    },
+    {
+      "path": "scripts/skill-python.mjs",
+      "sha256": "a10e336af66e784518b896604aa7351d2e29e07f6a8e6616fd9f98e56d462454",
+      "models": ["skill_validation_runtime"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["pythonCommand"]
+    },
+    {
+      "path": "scripts/skill-source-matches-commit.mjs",
+      "sha256": "dd096be6183996eef40e0d33dcaf66cd62e875077bf3862f6b4274a7def7f892",
+      "models": ["skill_source_authority"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["skillSourceMatchesCommit"]
+    },
+    {
+      "path": "scripts/skill-validation/quick_validate.py",
+      "sha256": "25f6b980656537ea49a4e9e57acebe30d84b1136ad96f3e62c5a713786558c9c",
+      "models": ["skill_validation_runtime"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["validate_skill"]
+    },
+    {
+      "path": "scripts/source-correction.ts",
+      "sha256": "8f2b004814c7f304ba72daa34ced1fed6670e12b8da0628966352e918bef3117",
+      "models": ["source_correction_preview"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["check", "prepareSourceCorrection"]
+    },
+    {
+      "path": "scripts/unsafe-destination-hold.ts",
+      "sha256": "770dc5a670d50d0807da33d89460358b08f13347907efcfe68e30cb98061392d",
+      "models": ["unsafe_destination_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "readSignedCommit",
+        "object",
+        "verifyUnsafeDestinationReport",
+        "applyUnsafeDestinationHold",
+        "readJson"
+      ]
+    },
+    {
+      "path": "scripts/validate-evaluator-awards.ts",
+      "sha256": "c506ed3397787ab879e7d55f5a2387b0fc596437085b06467cf9a59c133f6b10",
+      "models": ["evaluated_award_import"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["validateEvaluatorAwards"]
+    },
+    {
+      "path": "skills/project-contributor-template/scripts/live-report.mjs",
+      "sha256": "754514baa71dbc3fa7fa8971bf6d07eb17ba8c49c2172bb38d0189c5f2edd4f2",
+      "models": [
+        "contributor_discovery_lock",
+        "contributor_discovery_snapshot",
+        "contributor_review_epoch"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "asRecord",
+        "asArrayField",
+        "asNumberField",
+        "asStringField",
+        "nullableText",
+        "isoTime",
+        "optionalIsoTime",
+        "nowTime",
+        "isRecent",
+        "declarationLineRecords",
+        "declarationLines",
+        "hasClaimSignal",
+        "hasHumanOnlyClaimFooter",
+        "hasHumanOnlyPullRequestDeclaration",
+        "identifierKey",
+        "isGenericProvider",
+        "isGenericModel",
+        "hasAiProvenanceSignal",
+        "accountLogin",
+        "accountId",
+        "labelNames",
+        "eligibleIssueLabels",
+        "readProjectSelectionPolicy",
+        "compareByNumber",
+        "reviewEpochCandidate",
+        "reviewEpochIdentity",
+        "createReviewEpoch",
+        "completeReviewEpoch",
+        "readBoundedJsonFile",
+        "reviewEpochFromFile",
+        "recheckReviewEpochCandidate",
+        "compareComment",
+        "closingIssueNumbers",
+        "parsePaginatedJson",
+        "readGhPages",
+        "readLivePullHead",
+        "recheckLivePullHead",
+        "excludedWithoutActivity",
+        "readSelectedActivity",
+        "graphqlConnection",
+        "readGhActivityPage",
+        "readOverflowActivity",
+        "activityItemNumber",
+        "appendBoundedActivity",
+        "readGhSearchPullNumbers",
+        "readGhRestOpenActivity",
+        "graphqlAccount",
+        "graphqlComment",
+        "graphqlReview",
+        "readGraphqlActivityNodes",
+        "createGhCommandBudget",
+        "readGhAuthenticatedIdentity",
+        "fileSystemErrorCode",
+        "assertLiveReportPrivatePath",
+        "processIsRunning",
+        "hashProcessIdentity",
+        "readLiveReportProcessIdentity",
+        "readProcessLease",
+        "processLeaseIsActive",
+        "defaultLiveReportLockRoot",
+        "ensureLiveReportLockRoot",
+        "readLiveReportLockOwner",
+        "liveReportCommandDirectory",
+        "readLiveReportCommandLease",
+        "liveReportCommandIsActive",
+        "liveReportHasActiveCommand",
+        "assertLiveReportLockDirectory",
+        "withLiveReportLockTransition",
+        "prepareLiveReportLockCandidate",
+        "liveReportLockKey",
+        "writeLiveReportCommandLease",
+        "spawnLockedGh",
+        "acquireLiveReportLock",
+        "readLockedGhRequest",
+        "collectBoundedGhChild",
+        "writeProcessDescriptor",
+        "runLockedGhCommand",
+        "rateResource",
+        "readGhGraphqlRateLimit",
+        "readGhRateLimits",
+        "readGhOpenActivity",
+        "parseModelDisclosure",
+        "isBotAccount",
+        "isKnownHumanAccount",
+        "normalizeComment",
+        "normalizeComments",
+        "normalizeReview",
+        "normalizeReviews",
+        "auditCommentDisclosures",
+        "extractEvidenceRows",
+        "boundEvidenceRow",
+        "extractUrls",
+        "isUserAttachment",
+        "namesRepository",
+        "isAllowedRepositoryArtifact",
+        "isAllowedDomainArtifact",
+        "hasAllowedEvidenceUrl",
+        "backendLogLikeLine",
+        "frontendLogLikeLine",
+        "substantiveLogContent",
+        "hasSubstantiveInlineLogs",
+        "hasSpecificNotApplicableReason",
+        "auditPrEvidence",
+        "itemSummary",
+        "claimReasons",
+        "requestedReviewTargets",
+        "reviewRequestStatus",
+        "currentHeadReviewStatus",
+        "issueCommentsEndpoint",
+        "pullReviewsEndpoint",
+        "pullReviewCommentsEndpoint",
+        "listCommentsWhenPresent",
+        "collectLiveReport",
+        "markdownItems",
+        "renderMarkdown",
+        "parseCliArguments",
+        "usage",
+        "retryChangedLiveInventory",
+        "main"
+      ]
+    },
+    {
+      "path": "skills/project-contributor-template/scripts/skill-authority.mjs",
+      "sha256": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
+      "models": ["skill_source_authority"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "configured_github_token",
+        "require_sha",
+        "canonical_relative_path",
+        "origin_identity",
+        "__init__",
+        "redirect_request",
+        "rate_limit_detail",
+        "fetch_bytes_once",
+        "fetch_bytes",
+        "decode_json",
+        "api_json",
+        "git_blob_digest",
+        "list_remote_skill_files",
+        "remote_skill_bytes",
+        "valid_integration_branch",
+        "branch_code",
+        "generated_skill_role",
+        "generated_skill_name",
+        "require_registry_binding",
+        "registry_manifest",
+        "render_project_skill",
+        "require_project_open",
+        "expected_skill_bytes",
+        "pythonRuntimeProbe"
+      ]
+    },
+    {
+      "path": "skills/project-contributor-template/scripts/terms-preflight.mjs",
+      "sha256": "3e112ab4204a3e5d374045207cc6d4691417ea99516bf8f89d349beb3e3bd818",
+      "models": ["contributor_terms_preflight"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "fail",
+        "exact",
+        "digest",
+        "cacheRoot",
+        "immutableCachePath",
+        "cachedVerifiedBytes",
+        "pruneCache",
+        "publishCache",
+        "rawUrl",
+        "allowedRemoteSource",
+        "boundedResponseBytes",
+        "verifiedBytes",
+        "preflight"
+      ]
+    },
+    {
+      "path": "skills/project-contributor-template/scripts/wallet-claim.mjs",
+      "sha256": "970b46dc1b21c8848b0dffa3913b47522d60e89ce220479d01906203eb2dd32f",
+      "models": ["contributor_wallet_cli"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "decodeBase58",
+        "isSolanaAddress",
+        "usage",
+        "argumentsFor",
+        "responseJson",
+        "claim",
+        "authenticate",
+        "registerWalletClaim",
+        "main"
+      ]
+    },
+    {
+      "path": "src/lib/allocation-funding-basis.mjs",
+      "sha256": "fd029374e2b45e0cf4ec8ee02a9ca45fbaedd71e925bbdfaa7a758a45ae17d3f",
+      "models": ["allocation_funding"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "assertAllocationFundingBasis",
+        "deriveAllocationFundingBasis"
+      ]
+    },
+    {
+      "path": "src/lib/allocation-funding.ts",
+      "sha256": "66e41405b80b1b4bfb68c2aadf5b0f7fa4e19145b5b9a3b4870bd8d43b72533e",
+      "models": ["allocation_funding"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "allocationFundingMinor",
+        "assertFundingAmounts",
+        "projectPromotionEligible"
+      ]
+    },
+    {
+      "path": "src/lib/base-units.mjs",
+      "sha256": "de14cd23fcb84d5ae07a830ef40f8b99a7d0460ee6ee44b6341f61b2acd476b2",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["formatBaseUnits", "decimalBaseUnits"]
+    },
+    {
+      "path": "src/lib/contributor-allocation.ts",
+      "sha256": "7bf67c817f0b04e8a1aa2111a9101a0f1b8e0dd466421b0376bca5bde4f087df",
+      "models": ["contributor_allocation", "ui_contributor_allocation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "contributorAllocation",
+        "contributorAllocationState"
+      ]
+    },
+    {
+      "path": "src/lib/escrow-policy.mjs",
+      "sha256": "a15a1232702612a082cddf96150759fc975122405c0c06538814b7d61e329345",
+      "models": ["escrow_policy_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isNativeAssetAddress",
+        "isBaseUnits",
+        "network",
+        "paymentDeploymentRecord",
+        "isMaxNativeCostWei",
+        "isEscrowChain",
+        "chainFamily",
+        "maxBaseUnitsForChain",
+        "keys",
+        "assertEscrowPolicy",
+        "assertSecurityEscrowPolicy",
+        "validateEscrowPolicy",
+        "implementationReview",
+        "assertEvmUpgradeHistory",
+        "assertEscrowTransition"
+      ]
+    },
+    {
+      "path": "src/lib/evm-vault-actions.ts",
+      "sha256": "30e3fb68c1006efc4fc5029333fb361f4b01f419d3525a7625226f46ad6f6623",
+      "models": ["evm_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "balanceOf",
+        "allowance",
+        "approve",
+        "walletVaultConfig",
+        "assertVaultWalletAccount",
+        "reviewVaultAction",
+        "sendVaultAction",
+        "checkVaultAction",
+        "readFinalizedWalletTransaction"
+      ]
+    },
+    {
+      "path": "src/lib/funding-address.mjs",
+      "sha256": "ca294142b27e37bbbb195dc2b8fa124063f0439c48df5352d51f9dba46ad676a",
+      "models": ["funding_routes"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "decodedBase58Length",
+        "bech32Polymod",
+        "validBitcoinAddress",
+        "fundingAssetForNetwork",
+        "isFundingAddress",
+        "isSolanaTransactionId",
+        "assertFundingAddresses"
+      ]
+    },
+    {
+      "path": "src/lib/funding-reminders.ts",
+      "sha256": "e452b827723a6d9e6a1fc8a293f32f2c01e59c8bf76df2fcd2457d9fbf8454f7",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["cycleSettlementReminder"]
+    },
+    {
+      "path": "src/lib/funding-review-data.ts",
+      "sha256": "2188053f564edb3be0615b1ef46c44047a139dad10040c70c50f6369be8a15cd",
+      "models": ["monthly_allocation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "exactRecord",
+        "text",
+        "count",
+        "date",
+        "wallet",
+        "assertFundingPreparation",
+        "allocateFundingReview",
+        "createFundingReview"
+      ]
+    },
+    {
+      "path": "src/lib/monthly-commitment-actions.ts",
+      "sha256": "fd724e13e340f0851635599ab9c961fc6014b9b2b96765e20445f5455a86c5e9",
+      "models": ["solana_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "vaultMonthlyCap",
+        "monthlyTarget",
+        "reviewEvmMonthlySetting",
+        "sendEvmMonthlySetting",
+        "checkEvmMonthlySetting",
+        "solanaDeployment",
+        "verifySolanaMonthlyPlan",
+        "solanaRequest",
+        "reviewSolanaMonthlySetting",
+        "sendSolanaMonthlySetting",
+        "checkSolanaMonthlySetting"
+      ]
+    },
+    {
+      "path": "src/lib/monthly-release-actions.ts",
+      "sha256": "954a0e5c1caab7930f59aeaf0973e179349a69cfd04992126736052721259864",
+      "models": ["solana_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "requestMonthlyRelease",
+        "solanaReleaseMessage",
+        "sendMonthlyRelease"
+      ]
+    },
+    {
+      "path": "src/lib/owner-commitment-actions.ts",
+      "sha256": "011cef42a5fb3a48242408d0194a91982c19d699b19b2b675b2542a5ed2241ee",
+      "models": ["allocation_funding"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "requestOwnerCommitment",
+        "evmCommitmentIntent",
+        "reviewEvmCommitment",
+        "consumedSources",
+        "sendEvmCommitment",
+        "checkEvmCommitment"
+      ]
+    },
+    {
+      "path": "src/lib/payments/contracts.ts",
+      "sha256": "6448f7c3cdf4e031ab3a1a05e1924a2e9d889e18c3a4eb1b7272daa5f78d080f",
+      "models": ["escrow_balances", "ordinary_fee"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "payoutFee",
+        "ordinaryFee",
+        "acceptsPayoutFee",
+        "isAssetDecimals",
+        "knownAssetSymbol",
+        "assetLabel",
+        "formatAssetAmount",
+        "reservedGross",
+        "transactionUrl"
+      ]
+    },
+    {
+      "path": "src/lib/payments/escrow-cycle.ts",
+      "sha256": "6dfc30ca3bb8737b8247b1a194a7f19510cb03c6984ec5943f0ed00d6df0a186",
+      "models": ["source_import"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "escrowAwardOrigin",
+        "buildEscrowCycle",
+        "validateEscrowCycle"
+      ]
+    },
+    {
+      "path": "src/lib/payments/escrow-review.ts",
+      "sha256": "d93a64052cd43c45ca78f5b9509de0e59085dd98607eb2fc00eb58c650c4f6ff",
+      "models": ["historical_reward"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "exact",
+        "assertEscrowDecisions",
+        "assertEscrowFinancialPolicy"
+      ]
+    },
+    {
+      "path": "src/lib/payments/monthly-allocation.ts",
+      "sha256": "6b80057fcba3276320388381c9497585fa92d996c8b4e733d3cc8ea30f0929e1",
+      "models": ["monthly_coordinator"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "parseMonthlySchedule",
+        "assertPeriod",
+        "periodEnd",
+        "monthlyCutoff",
+        "currentAllocations",
+        "assertAllocationChange",
+        "buildExecutionSnapshot"
+      ]
+    },
+    {
+      "path": "src/lib/payments/vault-amount.ts",
+      "sha256": "db8a88751de77e722a38f1855fc33632a642bb0f30a051335ef8668667d2b707",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["parseVaultAmount"],
+      "reason": "Pure decimal-string to bounded base-unit parsing. No mutable lifecycle; transaction amount and asset identities remain governed by their payment models."
+    },
+    {
+      "path": "src/lib/payout-points.ts",
+      "sha256": "ff64a916ef83140f6afc0604a7b449ab20f9795382e3741618e23b6cb3399eb8",
+      "models": ["points_journal"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["payoutPointAwards"]
+    },
+    {
+      "path": "src/lib/penalty-guide.ts",
+      "sha256": "b0205b9fc0c7de7e5a62723f83e5ca79c060e986c45bfe2159c3d214a3449265",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [],
+      "reason": "Static guide rows derived from the canonical Slopbot penalty table. This projection has no state transition; penalty application, reversal and funded-award preservation remain modeled elsewhere."
+    },
+    {
+      "path": "src/lib/points-summary.ts",
+      "sha256": "d76e32eb79853776299155aa7b78fd18041091ee2dae10eb321625bc11a7d276",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["isPointsSummary"],
+      "reason": "Pure structural and total/order validation of a supplied summary object; no publication or journal mutation. Points journal and source publication state remain separate models."
+    },
+    {
+      "path": "src/lib/points.ts",
+      "sha256": "e8faa55c9f124cd18f197ef6aacd1f2168348ae1d8ab67f9456e462805efacc0",
+      "models": ["points_journal"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "iso",
+        "exact",
+        "pointRevisionId",
+        "assertJournalHeader",
+        "assertRevisionChain",
+        "assertJournalCoverage",
+        "assertPointsJournal",
+        "assertAppendedRevisions",
+        "pointKey",
+        "pointsForScore",
+        "awardForScore",
+        "latestPoints",
+        "appendPointAwards",
+        "appendPointAward",
+        "retainedBatchOwnedKeys",
+        "reconcilePointPenalties",
+        "applyPointsSnapshot",
+        "canonicalReviewIdentity",
+        "pointMembers",
+        "emptyPointsJournal",
+        "assemblePoints"
+      ]
+    },
+    {
+      "path": "src/lib/project-contracts.ts",
+      "sha256": "13ba85f93d980366cb676c9a50df621f309fc807339f4c44d8046a41d5b70151",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "slopbotInstallScopeNote",
+        "parseRepositoryIdentity",
+        "validRepositoryPath"
+      ]
+    },
+    {
+      "path": "src/lib/project-reward-summary.ts",
+      "sha256": "cdd2275a9f75bae570a964d69442aee2028cdbf5ce6193ab5e8ec55bacc301db",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "compactWhole",
+        "securityBountyAmountLabel",
+        "projectRewardSummaries"
+      ],
+      "reason": "Pure presentation projection of supplied registry reward/bounty fields; no storage or asynchronous work. Project lifecycle and payment state are not established by this display helper."
+    },
+    {
+      "path": "src/lib/received-totals.ts",
+      "sha256": "92c5c4ea0f68d0e0894c913670a5f239ac1e700c555f4609b2ee305004f1026f",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["isReceivedTotals", "isUsdMicroAsset"]
+    },
+    {
+      "path": "src/lib/referral-claims.ts",
+      "sha256": "22d987f01e76e454b47fb4fc1dca8fd67675f9efd9ed82aabe38a2eac0b5bf8f",
+      "models": ["referral_claim_review"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "token",
+        "paused",
+        "claimed",
+        "currentRoot",
+        "claim",
+        "referralResponse",
+        "reviewReferralClaim",
+        "sendReferralClaim"
+      ]
+    },
+    {
+      "path": "src/lib/reward-amount.ts",
+      "sha256": "877287d16dc38ff0898bd5e1ba265bf935aed0900f6276a13d72c66c8b1dc8af",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "formatMicroUsdc",
+        "formatRewardMinor",
+        "monthlyPoolUnfunded",
+        "monthlyPoolLabel"
+      ],
+      "reason": "Pure amount formatting and funded/unfunded labels from supplied fields; no stored state, I/O or transition. Input funding truth is owned by the allocation/registry flow, and formatting is not a proof of funding."
+    },
+    {
+      "path": "src/lib/reward-asset.mjs",
+      "sha256": "8c61a441cc24d53a7721ca3c4744ae437777e05050d539e9be0c443347d768d4",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "rewardNetwork",
+        "canonicalRewardAssetAddress",
+        "rewardAssetChoice",
+        "assertRewardAsset",
+        "sameRewardAsset"
+      ],
+      "reason": "Pure reward-asset choice construction, schema validation and same-object comparison. No I/O or persistent state. Authoritative asset verification and activation remain registry/chain state transitions and are not exempted here."
+    },
+    {
+      "path": "src/lib/reward-cap.mjs",
+      "sha256": "f19153ad0785f3236bdd362174a4a89c2b5d76dca516e7b4a61b06e329dc2031",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["resolveRewardCapMinor"],
+      "reason": "Pure lookup of a supplied project's exact cycle cap override; no mutation or rollover state. Cap enforcement remains in monthly allocation and vault models."
+    },
+    {
+      "path": "src/lib/reward-cycle.ts",
+      "sha256": "54734184db5320303a9ed41b702543846e3e2b3616db322c2bf83ef9bf0fa02b",
+      "models": ["historical_reward"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "resolvedWallet",
+        "allocateReviewBudgetMinor",
+        "additiveReviewBudgetWeights",
+        "intentComponent",
+        "ensureCompleteCycle",
+        "createRewardCycleProposal"
+      ]
+    },
+    {
+      "path": "src/lib/reward-finalization.ts",
+      "sha256": "553ab47365c771bd30ac00a6b59fcd9954097839448c49a40ed450deddc697e1",
+      "models": ["historical_reward"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["finalizeRewardAllocation"]
+    },
+    {
+      "path": "src/lib/rewards.ts",
+      "sha256": "f162c89e3f6530cdee2dfcddfbe4c7ae84bfff6ca31647fca3212c7ebd269fa5",
+      "models": ["historical_reward"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "exactUtcMilliseconds",
+        "iso",
+        "minor",
+        "sha256",
+        "array",
+        "unique",
+        "sumMinor",
+        "feeForPrincipal",
+        "assertActor",
+        "assertEvidenceIds",
+        "assertWallet",
+        "sameWalletObservation",
+        "isSafeSuccessorWallet",
+        "assertUnsafeDestinationReport",
+        "unsafeDestinationReportMessage",
+        "assertAllocation",
+        "assertRewardAllocationManifest",
+        "assertExternalContributionShareManifest"
+      ]
+    },
+    {
+      "path": "src/lib/run-receipts.ts",
+      "sha256": "897264274e92bc00f3b02e934d092af63e9f1ac2ce14a6a6a0a9fc5df98a0a18",
+      "models": ["skill_run_local"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "assertRunReceiptPolicyJoin",
+        "assertProjectRunReceipt",
+        "isoTimestamp",
+        "identifier",
+        "declaredIdentity",
+        "digest",
+        "optionalDigest",
+        "base64url",
+        "minorUnits",
+        "assertRunReceiptMarker",
+        "runReceiptMarker",
+        "runReceiptSigningPayload"
+      ]
+    },
+    {
+      "path": "src/lib/score-penalties.ts",
+      "sha256": "1e2459cf5e3187799da53f9ace5efeca86c2b0113c4c1645bdc3df361828eccd",
+      "models": ["points_journal"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "on",
+        "assertPenaltyHistory",
+        "eventThirds",
+        "penaltyDeductions"
+      ]
+    },
+    {
+      "path": "src/lib/score-records.ts",
+      "sha256": "bce4f40c19001cba9cad6ac58d71c25e8e7486fbe772ab507834ec60c8c868f4",
+      "models": ["points_journal"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "object",
+        "assertScoreRatificationRecord",
+        "parseScoreRatificationBlock",
+        "parseScoreApprovalBlock",
+        "assertScoreApprovalRecord",
+        "assertScoreRatificationContext"
+      ]
+    },
+    {
+      "path": "src/lib/scoring-policy.ts",
+      "sha256": "c92ada9e60ca56b6ad33570cdb5233da17edf4ae858e6022af58b3b9d4f532c9",
+      "models": ["review_credit", "ui_review_pool"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "assertValueScoringPolicy",
+        "valueScoringPolicy",
+        "reviewCreditPoolThirds",
+        "allocateReviewCredit",
+        "compareReviewTime",
+        "allocatePullRequestReviewCredit"
+      ]
+    },
+    {
+      "path": "src/lib/security-bounty-proposal.ts",
+      "sha256": "29d972bc17b339a943b74df110f23cf9d5320811835a9eb876b4f76ffd3e586c",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "bountyAmountFields",
+        "bountyAmountPreview",
+        "privateBountyTerms"
+      ],
+      "reason": "Pure construction and preview of an unverified bounty proposal from form inputs. No submission, approval, funding or payment occurs in this module; those state transitions remain API and bounty model responsibilities."
+    },
+    {
+      "path": "src/lib/security-bounty.mjs",
+      "sha256": "c53b7147ff1755f22aa200bc47b148c0bd705b637d4be04676b572d3e0ef3665",
+      "models": ["bounty_terms"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isFullAwardSplit",
+        "fail",
+        "text",
+        "integer",
+        "timestamp",
+        "list",
+        "securityBountySplit",
+        "formatSecurityAmount",
+        "validateApprovers",
+        "assertSecurityBountyTerms",
+        "assertSecurityBountyTransition"
+      ]
+    },
+    {
+      "path": "src/lib/solana-commitment-actions.ts",
+      "sha256": "ef7ddad0fcd11ccb6477294a042fb7c0b55c00061f117edadbc4409fe7c8e818",
+      "models": ["solana_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "verifySolanaCommitmentPlan",
+        "request",
+        "reviewSolanaCommitment",
+        "sendSolanaCommitment",
+        "checkSolanaOwnerCommitment"
+      ]
+    },
+    {
+      "path": "src/lib/solana-signature.ts",
+      "sha256": "6b8f1c63b7bcdbd58971cd4d70f2d0d9571de167383a9cc409134aea9a7bff2d",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["decodeSolanaSignature"]
+    },
+    {
+      "path": "src/lib/solana-vault-actions.ts",
+      "sha256": "a5162d0931e0f6dc42043c176457fbf206dabc2045489ff99304f11ee7af6647",
+      "models": ["solana_owner_action"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "fundingConfig",
+        "planMessage",
+        "request",
+        "reviewSolanaVaultAction",
+        "sendSolanaVaultAction",
+        "sendSolanaWalletTransaction",
+        "checkSolanaVaultAction"
+      ]
+    },
+    {
+      "path": "src/lib/use-payout-wallets.ts",
+      "sha256": "20b19c38549dab4b35a68558455a3411552d099c6ab9822077b252ede2384493",
+      "models": ["ui_wallet_choice"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "evmWallet",
+        "legacyEvmName",
+        "legacySolanaName",
+        "usePayoutWallets",
+        "update",
+        "announce"
+      ]
+    },
+    {
+      "path": "src/lib/vault-setup.ts",
+      "sha256": "5b1728c03318a4f85bf684db47451cc04ab183e86ebcece23fae94cd5c045b8f",
+      "models": ["vault_creation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isVaultCreationId",
+        "solanaVaultCreationMessage",
+        "checkedVaultSetupReview"
+      ]
+    },
+    {
+      "path": "src/lib/verified-money.ts",
+      "sha256": "e9685a5edd074cf71cc555ce4bd481cb74be475098fec46eb393d429312fc775",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "weightedShare",
+        "ordinaryFeeAmount",
+        "ordinaryFeeMatches",
+        "bountyFeeAmount"
+      ]
+    },
+    {
+      "path": "src/lib/wallet-possession.ts",
+      "sha256": "a9ab1c39b9f06b6709cb85d6f6a2b2927d3b6779a42663e2e79e84b5b17620d3",
+      "models": ["api_wallet_claims"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "object",
+        "timestamp",
+        "isSignableSolanaAddress",
+        "assertWalletPossessionChallenge",
+        "walletPossessionMessage",
+        "decodeSignature",
+        "verifyWalletPossession",
+        "walletPossessionState"
+      ]
+    },
+    {
+      "path": "src/lib/wallet-proof.ts",
+      "sha256": "219c366df1ab771d17a0dd66f65780de73919907b6e05a18bcd2deb17af4f676",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [],
+      "reason": "Type declarations only for immutable wallet evidence; emitted JavaScript has no runtime state or transitions."
+    },
+    {
+      "path": "src/lib/wallets.ts",
+      "sha256": "62efa3086e17fe626fcd6d5b444933ca56492d15d9e4f2a8d7ccd149b2f5fecb",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "isWalletChain",
+        "isSolanaAddress",
+        "solanaAddressBytes",
+        "isBaseAddress",
+        "shortAddress",
+        "sameWalletAddress",
+        "isWalletAddress"
+      ],
+      "reason": "Pure address validation, equality, byte conversion and shortened display. No claim storage, consent or authorization mutation; actual wallet registration/binding remains modeled and is not exempted."
+    },
+    {
+      "path": "workers/fee-converter/config.ts",
+      "sha256": "18190bc13deee2495de51165a22ca3f376cd6621ab56c3a6372b00afc87042f3",
+      "models": ["fee_conversion", "fee_quote_policy", "fee_wallet_handoff"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "isTokenAddress",
+        "integer",
+        "bps",
+        "parseConfig",
+        "networkKey"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/core.ts",
+      "sha256": "fd36fcabe916a351376f91e97e3566586a6424b3ffb29fba2ac1a79576fa82f5",
+      "models": [
+        "fee_conversion",
+        "fee_lease_journal",
+        "fee_nonce_reuse",
+        "fee_quote_policy",
+        "fee_wallet_handoff",
+        "signed_send"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "message",
+        "impactWithin",
+        "slippageWithin",
+        "exactQuoteMicro",
+        "reconcile",
+        "replaceSend",
+        "nonceFloor",
+        "emptyRecords",
+        "runNetwork",
+        "claimVaultFees",
+        "convert"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/direct-fees-fixture.ts",
+      "sha256": "4ca1c37ffe237703fcfdbede62b7ac4aa03367d27357b9210b4216dc1ce15fe9",
+      "models": ["earned_fee_history"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["directFeeScenario"]
+    },
+    {
+      "path": "workers/fee-converter/dry-run.ts",
+      "sha256": "261a077dcc61f96c5e84cc4cebb9cbabb067874ee2098999156d68177473801b",
+      "models": ["fee_conversion"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/fee-converter/evm.ts",
+      "sha256": "e283956e19b63ee6a3ca84bf9bd9bd27ba89cb3c498aa6ab5f33e25cf3da07e9",
+      "models": [
+        "fee_conversion",
+        "fee_lease_journal",
+        "fee_nonce_reuse",
+        "fee_wallet_handoff",
+        "signed_send"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "assertNonceFree",
+        "usdMicro",
+        "createEvmClient",
+        "kyber",
+        "assertRecordedClaim",
+        "boundedApproval",
+        "sendRaw",
+        "waitForReceipt",
+        "baseFee",
+        "signIntent",
+        "signAndSend",
+        "verifiedVault",
+        "claimReceipt",
+        "receiptNativeCost",
+        "recordedIntent"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/index.ts",
+      "sha256": "acfd505b2ab888f6a5cc74972dbe447532db85bf878e608ce3e7ddd96cd76e7b",
+      "models": ["fee_wallet_handoff", "payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "triggerAt",
+        "chainClient",
+        "storedAddress",
+        "runOnce"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/jupiter-route-schema.ts",
+      "sha256": "bc57d3e27a71e4acd95c7c898b27be6561a3db3ee594ba39504c56dbf4c206e1",
+      "models": ["solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/fee-converter/jupiter-route.ts",
+      "sha256": "0aac229ce00958581f3a6681ae334cfa9d7a32a40fce48a76f71aa5450d2f344",
+      "models": ["fee_quote_policy", "solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["assertJupiterRoute"]
+    },
+    {
+      "path": "workers/fee-converter/jupiter-wire.ts",
+      "sha256": "2538c10df170baec6fc7e4a2839fe33d0494423328da900906a37db3bd0e401c",
+      "models": ["solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["decodeJupiterRoute"]
+    },
+    {
+      "path": "workers/fee-converter/native-gas.ts",
+      "sha256": "6dfe91d0967ddecebca1664858758366285d948eb47cf1c0851eb47f8eeedd97",
+      "models": [
+        "fee_lease_journal",
+        "fee_nonce_reuse",
+        "native_budget",
+        "solana_expiry"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["nativeInteger", "validateNativeLimits"]
+    },
+    {
+      "path": "workers/fee-converter/solana-accounts.ts",
+      "sha256": "c50140b05e42518a80fd4d53dd0880cd6e2f4c5f56fcf8bca756ada2b5bfa068",
+      "models": ["solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "publicKey",
+        "verifySolanaAccountProof",
+        "retainedRouteExpectation",
+        "resolveSolanaAccounts",
+        "associatedAccountCreations"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/solana-expiry.ts",
+      "sha256": "afc3c37d0eb2de066e2947e86a0702651f64d489858ff429afff99d1be049904",
+      "models": ["solana_expiry"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "matchingCompletedCoverage",
+        "digest",
+        "completeBlock",
+        "recoveryOperator",
+        "slot",
+        "proveSolanaExpiry"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/solana-native-route.ts",
+      "sha256": "280b69d9abdef4329741cc78c6928e812d71217dd416465ae0ea804cc0dd3813",
+      "models": ["solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["short", "wrapNativeRoute", "assertNativeWrap"]
+    },
+    {
+      "path": "workers/fee-converter/solana-route-accounts.ts",
+      "sha256": "b5be97005c51a34727ed5429e939c8e270b549564b02ed9b03224d3afb780c03",
+      "models": ["solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "publicKey",
+        "accountState",
+        "holding",
+        "isWritable",
+        "reviewSolanaRouteAccounts",
+        "assertSolanaRouteSimulation"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/solana-route-receipt.ts",
+      "sha256": "34e798fdccf46793827312d44526bebe12d6d287bbb253639384bf6390640638",
+      "models": ["solana_route"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["finalizedRouteCredit"]
+    },
+    {
+      "path": "workers/fee-converter/solana.ts",
+      "sha256": "6c9885fd42a67ef9dc41e09461e73ed82a82e73deff72337b16d862bf0fb80f8",
+      "models": ["fee_conversion", "fee_lease_journal", "fee_wallet_handoff"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "solanaEscrowConfig",
+        "compactLength",
+        "parseTransaction",
+        "decimalBps",
+        "signedMinimumOutput",
+        "nativeInteger",
+        "solanaNativeCost",
+        "createSolanaClient",
+        "rpc",
+        "jupiter",
+        "admittedMint",
+        "reserveNative",
+        "reconcileNative",
+        "fetchQuote",
+        "tokenAccountBalance",
+        "simulatedCredit",
+        "broadcast",
+        "verifiedVault",
+        "confirmedAccrued",
+        "claimReceipt"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/store.ts",
+      "sha256": "c62ed119ed2b6c572c9f95893c95f2a4e392575e358729d69d6e2af7510972e5",
+      "models": ["earned_fee_history", "fee_lease_journal", "native_budget"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["fromRow", "projectRewardTokens", "projectVaults"]
+    },
+    {
+      "path": "workers/fee-converter/verified-arithmetic.ts",
+      "sha256": "12e1bba981940a783508ef470cf90f6f2a95d54c52ccfbaf75446ab110d33029",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": [
+        "roundedDivision",
+        "minimumOutput",
+        "acceptableMinimum",
+        "remainingBudget",
+        "rescaleInput",
+        "spendableNative",
+        "rentIncrease",
+        "greaterAmount",
+        "priceImpactCeiling",
+        "ceilPercent"
+      ]
+    },
+    {
+      "path": "workers/fee-converter/wrangler.staging.toml",
+      "sha256": "ebe0218b77250b53c1a6bc8c54ee06918d728ccef48cba5b71fc55c748a541dc",
+      "models": ["payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/fee-converter/wrangler.toml",
+      "sha256": "cf549e97806d66ed6a3b0c320a43bacd23b765475a33effa7d75ae53b0f60cec",
+      "models": ["payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/operator-keeper/index.ts",
+      "sha256": "4ae322244318e22e4d233adcd5183464e9be1eaa4a1d628ac1c2e00926414fb3",
+      "models": ["operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["mode", "configuration"]
+    },
+    {
+      "path": "workers/operator-keeper/storage.ts",
+      "sha256": "df4a4af5f015790d922ea44e3bed0e3ee364c2a0d818a536a45825b4dfdaf652",
+      "models": ["native_budget", "operator_keeper"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["bindings", "openOperatorKeeperStore"]
+    },
+    {
+      "path": "workers/operator-keeper/wrangler.toml",
+      "sha256": "8b197fad39d6559f5f377d042a53a67ba1bf06e8d5b49def2ed8690224550c1d",
+      "models": ["payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/payment-executor/assert-fresh-test-stack.mjs",
+      "sha256": "86dd39bd3a7679ce1f56c32678a474773b04b07dd40ed8c099286730bf1f80cb",
+      "models": ["fresh_stack_admission"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/payment-executor/binding-recovery.ts",
+      "sha256": "46e375574df060f44c36678e755714ba4675d4f6c99c24ed18470ebd8b5b7e19",
+      "models": ["binding_cancellation", "signed_send"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["isBindingRecoveryInput", "reconcileBindingWinner"]
+    },
+    {
+      "path": "workers/payment-executor/bootstrap-workflow.mjs",
+      "sha256": "707242679a4a7429e78fbf2169696ab41b523f5ee7450e19c87e830b527fc516",
+      "models": ["inactive_attester"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/payment-executor/configure.mjs",
+      "sha256": "1dae5843a1b1109dc004719c12414e0f37618e94ae652727ced8ad870014478c",
+      "models": ["deployment_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["paymentStack", "main"]
+    },
+    {
+      "path": "workers/payment-executor/core.ts",
+      "sha256": "bc3de9cb72a85db80e504d06b3acc85a738e5f8b9f65f08507b58098835c1769",
+      "models": [
+        "authority_rotation",
+        "binding_cancellation",
+        "binding_consent_renewal",
+        "monthly_execution_recovery",
+        "payment_binding",
+        "signed_send"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "assertEvmNativeCost",
+        "assertSignedNativeCost",
+        "hex",
+        "digest",
+        "transactionHash",
+        "words",
+        "word",
+        "call",
+        "same",
+        "authorizeRegistry",
+        "selectDeployment",
+        "selectReviewedEvmDeployment",
+        "preflightEvmDeployment",
+        "assertEvmMonthlySources",
+        "authorize",
+        "obligation",
+        "binding",
+        "assertPayable",
+        "retireRevertedAttempt",
+        "assertBindingNonceBudget",
+        "reserveBindingNonceBudget",
+        "bindingConsentIdentity",
+        "assertBindingConsentBudget",
+        "assertBindingConsentCandidate",
+        "unusedBindingConsent",
+        "reserveBindingConsentBudget",
+        "signAndSubmit",
+        "observedEvmTransaction",
+        "broadcast",
+        "signedTransactionIds",
+        "nextReplacementFees",
+        "verifiedReplacements",
+        "replaceUnderpricedAttempt",
+        "sendJournaledUntilMined",
+        "submitEvmMonthly",
+        "submitEvmMonthlyReserve",
+        "preparePermissionlessEvmPayment",
+        "readPermissionlessEvmPayment",
+        "submitPermissionlessEvmPayment",
+        "assertIdentitySigner",
+        "authorizeBindingVersion",
+        "storedBindingCalldata",
+        "createEvmAttester",
+        "bindingCandidates",
+        "bindStoredDestination",
+        "bindDestination",
+        "storedBindingIntent",
+        "authorizeStoredBindingBroadcast",
+        "cancelObsoleteStoredBinding",
+        "reconcileStoredBinding",
+        "pendingStoredBindings",
+        "runStoredBindings",
+        "logBindingFailure",
+        "createEvmExecutor",
+        "lookupAttempt",
+        "requireWalletAuthorization",
+        "authorizeWalletRotation",
+        "retireUnsignedAttempt"
+      ]
+    },
+    {
+      "path": "workers/payment-executor/entrypoint.ts",
+      "sha256": "331682fd24f4da18573910de610f8752b475c97556224feee0228991a3dd6c57",
+      "models": ["payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/payment-executor/index.ts",
+      "sha256": "c06068dedf97c2755a661743b4df0fb2ff3e70a8df20cb3f4fd48bb19db0f40f",
+      "models": ["binding_cancellation"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "runMonthlyAttester",
+        "runDestinationBindings",
+        "testBindingNonceLimit",
+        "scheduledBindings",
+        "evmAccount",
+        "evmSigner",
+        "solanaSigner",
+        "signDigest",
+        "logRejected",
+        "privateScopeJournal",
+        "privateAttesterEnvironment"
+      ]
+    },
+    {
+      "path": "workers/payment-executor/mainnet-execution.mjs",
+      "sha256": "fc7ba1aa1977a92005517ddcd7d937c8f50225a18255903d718947f8e2edc7a5",
+      "models": ["deployment_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["mainnetExecutionEnabled"]
+    },
+    {
+      "path": "workers/payment-executor/monthly-release.ts",
+      "sha256": "6f2a46aca8c8c08a06c6e03bc0fed6f9e0aba5f0450a08b0e3fe97675411256a",
+      "models": ["monthly_release"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "prepareMonthlyReserveRelease",
+        "unchanged",
+        "sign",
+        "retainReleasePlan",
+        "checkMonthlyReserveRelease"
+      ]
+    },
+    {
+      "path": "workers/payment-executor/monthly.ts",
+      "sha256": "2120de16090bbf27c5ee2e1143823043686df366aba7401c986c83deee9b9956",
+      "models": ["monthly_execution_recovery", "monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["signMonthlyAllocation"]
+    },
+    {
+      "path": "workers/payment-executor/release-mainnets.mjs",
+      "sha256": "55e2622eb7768f777475edc1fa9c1757b867cdfcd0d64e5f8c6bfb73fc129801",
+      "models": ["deployment_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "readSecretInventory",
+        "prepareMainnetRelease",
+        "readPlan",
+        "publishMainnetRelease",
+        "assembleMainnetBindings"
+      ]
+    },
+    {
+      "path": "workers/payment-executor/release-plan.mjs",
+      "sha256": "d782319639762bc66f866d09bbfc627efe8cabe9b5337d5b6423f3b67cbd8819",
+      "models": ["deployment_plan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["mainnetReleasePlan"]
+    },
+    {
+      "path": "workers/payment-executor/release-staging.mjs",
+      "sha256": "4bb89df6392e982b5d38f43d6c1d98a2b9d39842a981cfe9746c85b093a95c7a",
+      "models": ["staging_attester_release"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "runStagingWrangler",
+        "readSecretInventory",
+        "stagingReleasePlan",
+        "releaseStagingPayments",
+        "stagingBindingNoncePolicy"
+      ]
+    },
+    {
+      "path": "workers/payment-executor/signer-stacks.mjs",
+      "sha256": "86e4e010c4f304c2baf2f0f97daa3ae833ed5e1b0bf727f0650e350c931aeb69",
+      "models": ["deployment_plan", "payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["signerStack", "stackServesNetwork"]
+    },
+    {
+      "path": "workers/payment-executor/solana-monthly.ts",
+      "sha256": "6111da7861892665fbe755441773d4849ec492a338eb0dac43c39e1e813e6391",
+      "models": ["monthly_execution_recovery", "monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "u32",
+        "submit",
+        "readFinalized",
+        "freezeSolanaMonthly",
+        "submitSolanaMonthly"
+      ]
+    },
+    {
+      "path": "workers/payment-executor/solana.ts",
+      "sha256": "fb9400eff63250ae519c475f80d90251b77ec78ce68c907b5f04772b0d078c0b",
+      "models": ["payment_binding"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "preflightSolanaDeployment",
+        "readSolanaAccount",
+        "authorized",
+        "readAward",
+        "send",
+        "solanaTransactionStatus",
+        "observedTransaction",
+        "broadcastSolanaTransaction",
+        "completeSolanaBinding",
+        "createSolanaAttester",
+        "confirmedChainTime",
+        "createSolanaExecutor",
+        "payBoundAward",
+        "preparePermissionlessSolanaPayment",
+        "submitPermissionlessSolanaPayment"
+      ]
+    },
+    {
+      "path": "workers/payments/deployments.ts",
+      "sha256": "aab9208729df7febd9c693c7a80faa562ed1a6238bd74a5c44eb9b797f8af9e2",
+      "models": ["payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "parsePaymentNetworks",
+        "loadRegistryPaymentDeployments"
+      ]
+    },
+    {
+      "path": "workers/payments/index.ts",
+      "sha256": "de800905d20787573bba1ee03621f9170eecfdd3cf29fda8dd86ca0fb27ecaec",
+      "models": ["monthly_reserve"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "registryDeployments",
+        "recoverUncertainAttempts",
+        "executor",
+        "runPaymentDispatch",
+        "runMonthlyCoordinator",
+        "runMonthlyCommitments",
+        "ingestPaymentEvent",
+        "readDeploymentVaultTotals",
+        "syncRegistryVaults"
+      ]
+    },
+    {
+      "path": "workers/payments/reconcile.ts",
+      "sha256": "469b4fc463c93d0a0cf725210c72c8d68e1525df5a81a0a4daabbbd5b26f9a7e",
+      "models": ["payment_dispatch"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["finalizedEvmRevert", "reconcileFailedAttempts"]
+    },
+    {
+      "path": "workers/payments/registry-database.mjs",
+      "sha256": "36fdf5e44a5c4fc4360ce5fb925351c7507d790a072134b6e232b7115c7a4733",
+      "models": ["payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "parseRegistryDatabase",
+        "readRegistryDatabase",
+        "parseMonthlySchedule",
+        "readMonthlySchedule"
+      ]
+    },
+    {
+      "path": "workers/payments/scanner.ts",
+      "sha256": "c2156e0c29e3858a5bdb1af12c8a38cc37f48ee7cba832f3441f1a362595f169",
+      "models": [
+        "chain_range_scan",
+        "evm_scan_checkpoint",
+        "payment_dispatch",
+        "solana_scan_checkpoint"
+      ],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["scanEvmPayments", "scanSolanaPayments"]
+    },
+    {
+      "path": "workers/referral-accrual/chain-logs.ts",
+      "sha256": "e679fc39fa5669c229db06bf1de3b043d2be569de1aae67b94a3511b6371dbff",
+      "models": ["chain_range_scan"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["scanReferralLogs"]
+    },
+    {
+      "path": "workers/referral-accrual/config.ts",
+      "sha256": "b51f6491d58103058ac1df9493bfa56007cddf65f0f137ae320f4f5b6c0a885f",
+      "models": ["referral_accrual"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "integer",
+        "ids",
+        "isPeriod",
+        "address",
+        "parsePoster",
+        "parseConfig",
+        "posterKey"
+      ]
+    },
+    {
+      "path": "workers/referral-accrual/core.ts",
+      "sha256": "08ba97e99e1b6a19f847b39a2469b89b524c7348e904780e793370ca1848c9ea",
+      "models": ["referral_accrual", "referral_posting"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "message",
+        "periodBounds",
+        "nextPeriod",
+        "pendingPeriods",
+        "windowEnd",
+        "eligibleAsset",
+        "totalsOf",
+        "add",
+        "judge",
+        "buildFile",
+        "runAccrual",
+        "reconcilePosts",
+        "postNextRoot",
+        "postWithinGasBudget"
+      ]
+    },
+    {
+      "path": "workers/referral-accrual/dry-run.ts",
+      "sha256": "083b162addfb02f43c12ea90f77c66328b1ae198bebaeb1d0f2118b7de466d8d",
+      "models": ["referral_accrual"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/referral-accrual/gas.ts",
+      "sha256": "69021fb05d9f63ab83b4f88e1733d55da42cb96f122fee2fbed5d67abae74fb5",
+      "models": ["native_budget"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "gasInteger",
+        "validateGasLimits",
+        "validateGasCost"
+      ]
+    },
+    {
+      "path": "workers/referral-accrual/index.ts",
+      "sha256": "7a45a78a3bec536ab5d2f64e73eab28b27bd56bca4a39bd0e90f3d0ba542f787",
+      "models": ["referral_claim_cache"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["runOnce"]
+    },
+    {
+      "path": "workers/referral-accrual/merkle.ts",
+      "sha256": "3e024edff1742646a193c4a6b62e6b75c07c09eedc6c16f80cdada6220205b42",
+      "models": [],
+      "status": "stateless-reviewed",
+      "functionCandidates": ["leafHash", "pair", "buildTree", "verifyProof"],
+      "reason": "Pure deterministic Merkle leaf/tree/proof calculation over supplied amounts and addresses; no external state or root posting. This classification does not claim cryptographic correctness or replace the distributor state machine."
+    },
+    {
+      "path": "workers/referral-accrual/poster.ts",
+      "sha256": "3607efca70251004aa8b2dd49104de202c38699a375f5eb8ec17e0e11bac46c3",
+      "models": ["referral_distribution", "referral_posting", "signed_send"],
+      "status": "partial-model-mapping",
+      "functionCandidates": [
+        "token",
+        "poster",
+        "paused",
+        "epochCap",
+        "totalClaimed",
+        "nextEpoch",
+        "hasPendingRoot",
+        "epochAt",
+        "postRoot",
+        "createEvmPoster"
+      ]
+    },
+    {
+      "path": "workers/referral-accrual/store.ts",
+      "sha256": "11da9478feccdbdb77e5a4eec3e8bba7153441b2ee2d0999693f257710b9dec0",
+      "models": ["referral_accrual", "referral_posting"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["budgetValues", "postFromRow"]
+    },
+    {
+      "path": "workers/referral-accrual/wrangler.toml",
+      "sha256": "c9a01390b4ea5af19d44a6033e8e0537ec9c943b7de2c7c8c99d548c5f264e0f",
+      "models": ["payment_worker_run"],
+      "status": "partial-model-mapping",
+      "functionCandidates": []
+    },
+    {
+      "path": "workers/security-payments/index.ts",
+      "sha256": "2dd7131815e150a50b996cdfc7d9509e1f69e38ad0286521c89f1b1796449af1",
+      "models": ["payment_dispatch"],
+      "status": "partial-model-mapping",
+      "functionCandidates": ["privateEnvironment"]
+    }
+  ]
+}

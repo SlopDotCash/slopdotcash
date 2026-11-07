@@ -57,6 +57,7 @@ import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
+import { useUtcDay } from "./lib/use-time-boundary";
 import {
   Avatar,
   DataNotice,
@@ -200,6 +201,7 @@ export function PointsProvider({
   children: ReactNode;
   enabled: boolean;
 }) {
+  const utcMonth = useUtcDay().slice(0, 7);
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
   const [session, setSession] = useState<"loading" | "ready" | "error">(
@@ -227,16 +229,20 @@ export function PointsProvider({
     if (!shouldLoad) return;
     const loaded = loadedAttempt.current;
     const age = loaded ? Date.now() - loaded.completedAt : -1;
-    if (loaded?.attempt === attempt && age >= 0 && age < 60_000) return;
+    if (loaded?.attempt === attempt && age >= 0 && age < 60_000) {
+      setState((current) =>
+        current.status === "ready"
+          ? { ...current, members: pointMembers(current.journal, utcMonth) }
+          : current,
+      );
+      return;
+    }
     const controller = new AbortController();
     setState({ status: "loading" });
     void loadPoints(controller.signal)
       .then((value) => {
         if (controller.signal.aborted) return;
-        const members = pointMembers(
-          value,
-          new Date().toISOString().slice(0, 7),
-        );
+        const members = pointMembers(value, utcMonth);
         verifiedJournal.current = value;
         loadedAttempt.current = { attempt, completedAt: Date.now() };
         setState({
@@ -252,10 +258,7 @@ export function PointsProvider({
           setState({
             status: "ready",
             journal,
-            members: pointMembers(
-              journal,
-              new Date().toISOString().slice(0, 7),
-            ),
+            members: pointMembers(journal, utcMonth),
             stale: true,
           });
         else
@@ -265,7 +268,7 @@ export function PointsProvider({
           });
       });
     return () => controller.abort();
-  }, [shouldLoad, attempt, sessionAttempt]);
+  }, [shouldLoad, attempt, sessionAttempt, utcMonth]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionAttempt retries a failed identity read.
   useEffect(() => {
     const controller = new AbortController();

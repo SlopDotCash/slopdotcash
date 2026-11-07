@@ -3,6 +3,7 @@
 // boundary, separate from the review itself: advisory review stays broad.
 import { currentRepositoryPath } from "../../backend/projects/setup";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import { closureAllowed } from "../verified-policy";
 import type { Exemption } from "./github";
 import type { D1Database } from "./persistence";
 
@@ -27,6 +28,18 @@ export type ClosureEligibility =
 export function closureEligibility(
   evidence: ClosureEvidence,
 ): ClosureEligibility {
+  if (
+    closureAllowed(
+      evidence.itemKind,
+      evidence.exemption,
+      evidence.member,
+      evidence.recordedSkillRun,
+    )
+  )
+    return {
+      eligible: true,
+      why: "verified member with a recorded Slop run for this pull request",
+    };
   if (evidence.exemption === "exempt")
     return { eligible: false, why: "maintainers are never closed by Slopbot" };
   if (evidence.exemption !== "not-exempt")
@@ -42,14 +55,9 @@ export function closureEligibility(
       eligible: false,
       why: "author is not a verified slop.cash member",
     };
-  if (!evidence.recordedSkillRun)
-    return {
-      eligible: false,
-      why: "no recorded Slop run for this pull request",
-    };
   return {
-    eligible: true,
-    why: "verified member with a recorded Slop run for this pull request",
+    eligible: false,
+    why: "no recorded Slop run for this pull request",
   };
 }
 
@@ -58,7 +66,9 @@ export async function isMember(
   githubId: number,
 ): Promise<boolean> {
   const row = await db
-    .prepare("SELECT 1 AS ok FROM points_members WHERE github_id = ?")
+    .prepare(
+      "SELECT 1 AS ok FROM points_members WHERE github_id = ? AND closed_at IS NULL",
+    )
     .bind(String(githubId))
     .first();
   return row !== null;

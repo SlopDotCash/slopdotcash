@@ -11,6 +11,7 @@ import type {
   ProjectSetupStatus,
 } from "./project-contracts";
 import type { ProjectDefinition } from "./projects.mjs";
+import { isRecord } from "./record-validation.mjs";
 
 export type {
   AdminProject,
@@ -129,12 +130,30 @@ export async function projectApiRequest<T>(
 
 /** Resolves null when the visitor is not signed in. */
 export async function currentProjectSession(): Promise<ProjectSession | null> {
-  return (
-    await projectApiRequest<{ session: ProjectSession | null }>(
-      "GET",
-      "project-session",
-    )
-  ).session;
+  const body = await projectApiRequest<unknown>("GET", "project-session");
+  const session = isRecord(body) ? body.session : undefined;
+  if (session === null) return null;
+  if (
+    !isRecord(session) ||
+    typeof session.githubId !== "string" ||
+    !/^[1-9][0-9]*$/u.test(session.githubId) ||
+    typeof session.githubLogin !== "string" ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u.test(
+      session.githubLogin,
+    ) ||
+    (session.admin !== undefined && typeof session.admin !== "boolean")
+  ) {
+    throw new ProjectApiError(
+      200,
+      "invalid_response",
+      "The server returned an invalid project session. Retry sign-in.",
+    );
+  }
+  return {
+    githubId: session.githubId,
+    githubLogin: session.githubLogin,
+    admin: session.admin === true,
+  };
 }
 
 export type ProjectSummary = {
@@ -238,7 +257,7 @@ export type ProjectSessionState =
   | { status: "error"; message: string }
   | { status: "signed-in"; session: ProjectSession };
 
-/** Reads the site session on mount and when the caller needs fresh identity. */
+/** Revalidate on mount, caller revision, tab return and restored history. */
 export function useProjectSession(
   revision: number | string = 0,
   enabled = true,
@@ -250,19 +269,23 @@ export function useProjectSession(
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    currentProjectSession().then(
-      (session) => {
-        if (!active) return;
-        setSnapshot({
-          revision,
-          state:
-            session === null
-              ? { status: "signed-out" }
-              : { status: "signed-in", session },
-        });
-      },
-      (error: unknown) => {
-        if (active)
+    let generation = 0;
+    const refresh = () => {
+      const current = ++generation;
+      setSnapshot({ revision, state: { status: "checking" } });
+      currentProjectSession().then(
+        (session) => {
+          if (!active || current !== generation) return;
+          setSnapshot({
+            revision,
+            state:
+              session === null
+                ? { status: "signed-out" }
+                : { status: "signed-in", session },
+          });
+        },
+        (error: unknown) => {
+          if (!active || current !== generation) return;
           setSnapshot({
             revision,
             state: {
@@ -273,10 +296,25 @@ export function useProjectSession(
                   : "Something went wrong.",
             },
           });
-      },
-    );
+        },
+      );
+    };
+    const visible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) refresh();
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
+    window.addEventListener("pageshow", restored);
     return () => {
       active = false;
+      generation += 1;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("pageshow", restored);
     };
   }, [revision, enabled]);
   // Never show the old actor while a requested identity check is pending.

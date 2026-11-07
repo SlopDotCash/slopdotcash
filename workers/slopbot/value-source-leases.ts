@@ -2,7 +2,7 @@ import type { D1Database } from "./persistence";
 import type { ValueClaim } from "./value-processing";
 
 type Source = { repositoryDatabaseId: number; pullRequestNumber: number };
-function scopeKeys(sources: readonly Source[]) {
+export function valueSourceScopeKeys(sources: readonly Source[]) {
   if (
     !sources.length ||
     sources.some(
@@ -30,7 +30,7 @@ export async function claimValueSources(
   sources: readonly Source[],
   at = new Date(),
 ) {
-  const keys = scopeKeys(sources);
+  const keys = valueSourceScopeKeys(sources);
   const stamp = at.toISOString();
   await db
     .prepare(`INSERT INTO slopbot_value_source_leases(scope_key,delivery_id,claim_token,lease_until)
@@ -60,7 +60,12 @@ export async function ownsValueSources(
     JOIN json_each(?1) wanted ON wanted.value=held.scope_key
     JOIN slopbot_value_processing owner ON owner.delivery_id=held.delivery_id AND owner.claim_token=held.claim_token
     WHERE owner.delivery_id=?2 AND owner.claim_token=?3 AND owner.state='running' AND owner.lease_until>?4 AND held.lease_until>?4`)
-    .bind(scopeKeys(sources), claim.deliveryId, claim.token, at.toISOString())
+    .bind(
+      valueSourceScopeKeys(sources),
+      claim.deliveryId,
+      claim.token,
+      at.toISOString(),
+    )
     .first<{ n: number }>();
   return row?.n === sources.length;
 }

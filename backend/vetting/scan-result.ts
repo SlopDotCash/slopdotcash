@@ -13,6 +13,7 @@ import {
   VETTING_DISPOSITIONS,
   type VettingDisposition,
 } from "../../src/lib/vetting-contracts";
+import { scanNeedsSpecialist } from "../../workers/verified-policy";
 import { PROJECT_ID } from "../http";
 import {
   ARTIFACT_ANALYSES,
@@ -479,16 +480,16 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
  */
 export function specialistRequired(result: VettingScanResult): boolean {
   const primary = result.primaryReview;
-  return (
-    primary.verdict !== "no-findings" ||
-    primary.risk !== "low" ||
-    SCAN_THREATS.some((threat) => result.checks[threat] === "flagged") ||
+  return scanNeedsSpecialist(
+    primary.verdict,
+    primary.risk,
+    SCAN_THREATS.some((threat) => result.checks[threat] === "flagged"),
     result.findings.some((finding) =>
       ["medium", "high", "critical"].includes(finding.severity),
-    ) ||
+    ),
     // A binary or download that is not yet released after a clean analysis
     // needs a specialist to analyze it.
-    result.artifacts.some((artifact) => artifact.state !== "released")
+    result.artifacts.some((artifact) => artifact.state !== "released"),
   );
 }
 

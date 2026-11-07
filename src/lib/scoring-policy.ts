@@ -10,6 +10,7 @@
  */
 import { isExactUtc } from "./record-validation.mjs";
 import { VALUE_RUBRIC_VERSION } from "./value-assessment";
+import { weightedShare } from "./verified-money";
 
 export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
 
@@ -120,8 +121,11 @@ export function allocateReviewCredit(
     );
   const pool = BigInt(poolThirds);
   const total = weights.reduce((sum, weight) => sum + BigInt(weight), 0n);
-  const shares = weights.map((weight) => (pool * BigInt(weight)) / total);
-  const remainders = weights.map((weight) => (pool * BigInt(weight)) % total);
+  const terms = weights.map((weight) =>
+    weightedShare(pool, BigInt(weight), total),
+  );
+  const shares = terms.map((term) => term.amount);
+  const remainders = terms.map((term) => term.remainder);
   let left = pool - shares.reduce((sum, share) => sum + share, 0n);
   const order = weights
     .map((_, index) => index)

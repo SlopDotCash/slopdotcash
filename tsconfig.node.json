@@ -10,6 +10,7 @@
     "types": ["node", "bun-types"]
   },
   "include": [
+    "src/lib/verified-*.ts",
     "tests/*.ts",
     "src/lib/payments/**/*.ts",
     "contracts/evm/adapter.ts",
@@ -56,6 +57,7 @@
     "src/lib/referral-claims.ts",
     "src/lib/contributor-allocation.ts",
     "src/lib/use-payout-wallets.ts",
+    "src/lib/use-time-boundary.ts",
     "src/lib/notifications.ts",
     "src/lib/incomplete-assessments.ts",
     "src/lib/github-actor.ts",
@@ -109,7 +111,8 @@
     "src/lib/reviewer-leaders.ts",
     "src/lib/profiles.ts",
     "src/lib/model-outcomes.ts",
-    "src/lib/deployment.ts"
+    "src/lib/deployment.ts",
+    "formal/tests/**/*.ts"
   ],
   "exclude": ["tests/registry-preload.ts"]
 }

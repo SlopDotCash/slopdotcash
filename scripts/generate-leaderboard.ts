@@ -2311,10 +2311,15 @@ export async function collectSearchReferences(
   const references = [...firstPage.nodes];
   const expectedCount = firstPage.totalCount;
   let pageInfo = firstPage.pageInfo;
+  const visitedCursors = new Set<string>();
   while (pageInfo.hasNextPage) {
     if (!pageInfo.endCursor) {
       throw new Error("GitHub Search reported another page without a cursor");
     }
+    if (visitedCursors.has(pageInfo.endCursor)) {
+      throw new Error("GitHub Search cursor did not advance");
+    }
+    visitedCursors.add(pageInfo.endCursor);
     const data = await client.execute(SEARCH_REFERENCES_QUERY, {
       searchQuery,
       after: pageInfo.endCursor,
@@ -2502,6 +2507,7 @@ async function collectOpenReferences(
   let after: string | null = null;
   let expectedCount: number | null = null;
   let repositoryId: string | null = null;
+  const visitedCursors = new Set<string>();
   do {
     const data = await client.execute(document, {
       owner: targetRepository.owner,
@@ -2525,6 +2531,12 @@ async function collectOpenReferences(
     references.push(...result.page.nodes);
     if (result.page.pageInfo.hasNextPage && !result.page.pageInfo.endCursor) {
       throw new Error(`${field} reported another page without a cursor`);
+    }
+    if (result.page.pageInfo.hasNextPage && result.page.pageInfo.endCursor) {
+      if (visitedCursors.has(result.page.pageInfo.endCursor)) {
+        throw new Error(`Open ${field} cursor did not advance`);
+      }
+      visitedCursors.add(result.page.pageInfo.endCursor);
     }
     after = result.page.pageInfo.hasNextPage
       ? result.page.pageInfo.endCursor

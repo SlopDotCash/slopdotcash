@@ -249,3 +249,128 @@ test("retains edits typed while a project revision is being published", async ({
   );
   await expectAccessible(page);
 });
+
+test("discarding an old project draft cancels its pending image decode", async ({
+  page,
+}, info) => {
+  const registered = PROJECTS.find((project) => project.id === "eliza");
+  if (!registered) throw new Error("Missing project fixture");
+  const api = await projectImageApiFixture({
+    ...registered,
+    image: undefined,
+    contribution: { ...CONTRIBUTION },
+    skill: {
+      ...registered.skill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.contributor,
+      publishAtRoot: false,
+    },
+    reviewSkill: {
+      ...registered.reviewSkill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.reviewer,
+    },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "slop:project-update:v2:eliza",
+      JSON.stringify({
+        baseRevision: 0,
+        headline: "An old draft that the owner will discard",
+      }),
+    );
+    const decode = window.createImageBitmap.bind(window);
+    let release: () => void = () => {};
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const state = window as unknown as {
+      releaseImage: () => void;
+      imageDecodeFinished: boolean;
+    };
+    state.releaseImage = release;
+    state.imageDecodeFinished = false;
+    window.createImageBitmap = (async (
+      ...args: Parameters<typeof createImageBitmap>
+    ) => {
+      await wait;
+      const result = await decode(...args);
+      state.imageDecodeFinished = true;
+      return result;
+    }) as typeof createImageBitmap;
+  });
+  await page.route(
+    /\/api\/v1\/(?:projects\/eliza(?:\?.*)?|project-setup\/eliza(?:\/check)?|project-session)$/u,
+    async (route) => {
+      const request = route.request();
+      const response = await api.fetch(
+        new Request(request.url(), {
+          method: request.method(),
+          headers: request.headers(),
+          ...(request.method() === "GET" ? {} : { body: request.postData() }),
+        }),
+      );
+      await route.fulfill({
+        status: response.status,
+        headers: Object.fromEntries(response.headers),
+        body: await response.text(),
+      });
+    },
+  );
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    await expect(
+      page.getByRole("button", { name: "Discard draft", exact: true }),
+    ).toBeVisible();
+    const png = await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 8;
+      canvas.height = 8;
+      return canvas.toDataURL("image/png");
+    });
+    await page
+      .getByLabel("Project image (optional)", { exact: true })
+      .setInputFiles({
+        name: "discarded.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(png.split(",")[1], "base64"),
+      });
+    await expect(
+      page.getByText("Preparing image…", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Discard draft", exact: true })
+      .click();
+    await expect(page.getByLabel("Short description")).toHaveValue(
+      registered.headline,
+    );
+    await page.evaluate(() =>
+      (window as unknown as { releaseImage: () => void }).releaseImage(),
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { imageDecodeFinished: boolean })
+              .imageDecodeFinished,
+        ),
+      )
+      .toBe(true);
+    await expect(
+      page.getByText("Preparing image…", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("img", { name: "Project avatar preview", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem("slop:project-update:v2:eliza"),
+      ),
+    ).toBeNull();
+  } finally {
+    if (!page.isClosed())
+      await page.screenshot({
+        path: info.outputPath("discarded-image-decode.png"),
+        fullPage: true,
+      });
+    await api.dispose();
+  }
+});

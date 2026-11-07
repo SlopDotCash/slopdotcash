@@ -601,6 +601,17 @@ credentials.
 
 ## Working rules
 
+Every explicit and implicit application state transition requires a reviewed
+Quint model under [PRD section 12](docs/slop-product-requirements.md#12-state-correctness-and-quint-verification).
+Maintain source mappings, assumptions, reachable scenarios and implementation
+conformance evidence in `formal/`. Cover UI/UX, APIs, workers, storage, queues,
+scheduled jobs, contributor tools, contracts and release workflows, including
+failure, retry, expiry, cancellation, concurrency, interruption and recovery.
+Run `bun run formal:check` and `bun run formal:verify` with the existing required
+checks. Fix model/code discrepancies without weakening product policy. Report
+finite bounds and unresolved gaps; model simulation alone proves neither source
+refinement nor the absence of every application state error.
+
 - Preserve unrelated user changes and untracked files.
 - Use a scoped branch from current `origin/development`; rebase before final
   review.

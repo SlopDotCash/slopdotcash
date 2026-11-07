@@ -3,7 +3,12 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
 const pr = event.pull_request;
-const full = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+// A trusted main push can deploy. It needs every release gate even though a
+// push event has no pull-request changed-file list to drive selective checks.
+const full =
+  process.env.GITHUB_EVENT_NAME === "workflow_dispatch" ||
+  (process.env.GITHUB_EVENT_NAME === "push" &&
+    process.env.GITHUB_REF === "refs/heads/main");
 const promotion =
   pr?.base.ref === "main" &&
   pr.head.ref === "development" &&

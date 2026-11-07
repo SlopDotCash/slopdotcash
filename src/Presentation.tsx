@@ -19,7 +19,7 @@ import {
   monthlyPoolLabel,
   monthlyPoolUnfunded,
 } from "./lib/reward-amount";
-import type { DataState } from "./lib/use-snapshot";
+import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
 
@@ -280,7 +280,9 @@ export function DataNotice({
 export function stale(
   snapshot: Pick<LeaderboardSnapshot, "generatedAt">,
 ): boolean {
-  return Date.now() - Date.parse(snapshot.generatedAt) > 8 * 60 * 60 * 1_000;
+  return (
+    Date.now() - Date.parse(snapshot.generatedAt) > SNAPSHOT_STALE_AFTER_MS
+  );
 }
 
 /** Date and time in UTC, for timestamps shown beside formatDate values. */

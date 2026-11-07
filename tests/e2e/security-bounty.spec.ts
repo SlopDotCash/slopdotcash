@@ -4668,6 +4668,11 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   request,
   diagnostics,
 }) => {
+  // The real SPA navigation deliberately leaves Home while its public Points
+  // shards may still be loading. Their aborts are the expected cleanup.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
   test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
   test.setTimeout(120_000);
   const id = `inbox-draft-${projectSuffix()}`;
@@ -4870,4 +4875,84 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   } finally {
     release();
   }
+});
+
+test("an Inbox focus recheck clears the account changed in another tab @registry @private-intake", async ({
+  page,
+  context,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
+  const id = `tab-account-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  const first: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-b"
+    : "reporter-a";
+  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+  await listProject(request, TOKENS.security, repository, id, {});
+  await setIntake(request, repository, "disabled");
+  const summary = `Synthetic first-tab report ${id}`;
+  const description = `Synthetic confidential first-tab detail ${id}, created only in local test storage.`;
+  const received = await api(
+    request,
+    "POST",
+    "security-submissions",
+    TOKENS[first],
+    {
+      projectId: id,
+      idempotencyKey: key(),
+      origin: "slop",
+      report: {
+        summary,
+        description,
+        cvssVectorString: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      },
+    },
+  );
+  expect(received.status, JSON.stringify(received.body)).toBe(201);
+  const submission = received.body.submission as { id: string };
+  await signIn(page, TOKENS[first]);
+  await page.goto(`/inbox?submission=${submission.id}`, {
+    waitUntil: "networkidle",
+  });
+  await page.getByText("Read private report", { exact: true }).click();
+  await expect(page.getByText(description, { exact: true })).toBeVisible();
+  const secondPage = await context.newPage();
+  await secondPage.bringToFront();
+  await signIn(secondPage, TOKENS[second]);
+  await secondPage.getByRole("heading", { level: 1 }).click();
+  await test.info().attach("cross-tab-before-return", {
+    body: JSON.stringify({
+      firstFocused: await page.evaluate(() => document.hasFocus()),
+      secondFocused: await secondPage.evaluate(() => document.hasFocus()),
+    }),
+    contentType: "application/json",
+  });
+  const rechecked = page.waitForResponse(async (response) => {
+    if (new URL(response.url()).pathname !== "/api/v1/notifications")
+      return false;
+    if (response.status() !== 200) return false;
+    return (
+      (await response.json()).recipientGithubId === account(second).githubId
+    );
+  });
+  await page.bringToFront();
+  await page.getByRole("heading", { name: "Inbox", exact: true }).click();
+  // Automated Chromium marks both tabs focused, even in headed mode. The
+  // account change above uses a real shared cookie; deliver its return signal
+  // explicitly instead of claiming to test the operating system's tab focus.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await rechecked;
+  await expect(page.getByText(description, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(summary, { exact: true })).toHaveCount(0);
+  await page.screenshot({
+    path: test.info().outputPath("inbox-after-cross-tab-account.png"),
+    fullPage: true,
+  });
+  await secondPage.close();
 });

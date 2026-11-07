@@ -423,7 +423,7 @@ const retryable = (failure: string | undefined) =>
     failure === "response-unreadable" ||
     /^provider-http-(?:429|5\d\d)(?:-|$)/u.test(failure));
 
-/** The retried call's evidence, carrying the usage and cost of every attempt. */
+/** A completed call's total, or a failed call's observed accounting subtotal. */
 function withEarlierAttempts(
   last: ScannerEvidence,
   earlier: ScannerEvidence[],
@@ -436,7 +436,12 @@ function withEarlierAttempts(
   let output = 0;
   let costBasis: NonNullable<ScannerEvidence["cost"]> | null = null;
   let nanoUsd = 0n;
-  for (const attempt of [...earlier, last]) {
+  const attempts = [...earlier, last];
+  // A failed review exposes diagnostics only and is neither cached nor
+  // published. Keep its known subtotal even when another attempt was silent.
+  // A completed review can expose a total only when every attempt is known.
+  const failed = last.review.status === "failed";
+  for (const attempt of attempts) {
     if (attempt.usage) {
       hasUsage = true;
       uncachedInput += attempt.usage.uncachedInput;
@@ -451,10 +456,16 @@ function withEarlierAttempts(
   }
   return {
     ...last,
-    usage: hasUsage
-      ? { uncachedInput, cachedInput, cacheCreation, output }
-      : null,
-    cost: costBasis ? { ...costBasis, nanoUsd: nanoUsd.toString() } : null,
+    usage:
+      hasUsage &&
+      (failed || attempts.every((attempt) => attempt.usage !== null))
+        ? { uncachedInput, cachedInput, cacheCreation, output }
+        : null,
+    cost:
+      costBasis &&
+      (failed || attempts.every((attempt) => attempt.cost !== null))
+        ? { ...costBasis, nanoUsd: nanoUsd.toString() }
+        : null,
   };
 }
 

@@ -1,0 +1,9 @@
+{
+  "backend/d1.ts": "D1 interfaces and pure exception classification; owns no data, counters, cache, timer or transition. The DB writes are covered at their callers.",
+  "backend/github.ts": "Pure URL/header/Link parsing and cryptographic JWT construction from explicit inputs. No cached credential or persisted OAuth flow is held here; token validity and use belong to identity callers.",
+  "functions/[[path]].ts": "Re-exports the stateless response middleware; no independent transition.",
+  "functions/index.ts": "Transforms one successful HTML response by request host and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests.",
+  "workers/notify/cloudflare-email.d.ts": "Compile-time declaration of the Cloudflare email type; no runtime behavior.",
+  "backend/vetting/summary.ts": "Pure mapping from supplied assessment artifacts/findings to safe location and fixed user-facing text; no state, I/O, current time, authority or persistence. Disposition and admission gates remain in separate models.",
+  "workers/verified-policy.ts": "Four pure policy predicates/arithmetic functions with Lemma annotations. They read only explicit arguments and hold no mutable state, I/O, clock or authorization cache. Closure, penalty, specialist and referral callers retain state and evidence gates in their own models."
+}

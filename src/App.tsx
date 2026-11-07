@@ -1475,6 +1475,7 @@ function ProjectPage({
               projectId={project.id}
               scoreState={state}
               retryScore={retry}
+              showDataNotice
               compact
             />
           </div>

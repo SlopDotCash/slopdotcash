@@ -36,6 +36,7 @@ import {
   type WalletProof,
 } from "./rewards";
 import { eventThirds } from "./score-penalties";
+import { weightedShare } from "./verified-money";
 
 type RewardCycleProposal =
   | ExternalContributionShareManifest
@@ -109,10 +110,13 @@ export function allocateReviewBudgetMinor(
   );
   const allocations = new Map<string, bigint>();
   const remainders = eligible.map((contributor) => {
-    const numerator = totalMinor * BigInt(contributor.scoreThirds);
-    const amount = numerator / totalWeight;
+    const { amount, remainder } = weightedShare(
+      totalMinor,
+      BigInt(contributor.scoreThirds),
+      totalWeight,
+    );
     allocations.set(contributor.actorId, amount);
-    return { actorId: contributor.actorId, remainder: numerator % totalWeight };
+    return { actorId: contributor.actorId, remainder };
   });
   let unallocated =
     totalMinor -

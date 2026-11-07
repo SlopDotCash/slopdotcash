@@ -2975,3 +2975,47 @@ test("a steward who is also a moderator cannot decide the appeal they filed", as
   expect(independent.status).toBe(409);
   expect(independent.body).toMatchObject({ error: "revision_pending" });
 });
+
+test("both project revision routes reject overlapping aliases of one excluded GitHub account", async () => {
+  const { persistence, call, create } = registry();
+  await create("exclusion-alias", "example/exclusion-alias");
+  const nodeBytes = Buffer.alloc(7);
+  nodeBytes[0] = 0x92;
+  nodeBytes[1] = 0;
+  nodeBytes[2] = 0xce;
+  nodeBytes.writeUInt32BE(Number(OTHER), 3);
+  const modern = `U_${nodeBytes.toString("base64url")}`;
+  for (const [path, actor] of [
+    ["projects/exclusion-alias", OWNER],
+    ["admin/projects/exclusion-alias/manifest", ADMIN],
+  ]) {
+    const current = await persistence.getProject("exclusion-alias");
+    if (!current) throw new Error("project expected");
+    const exclusion = {
+      actorId: OTHER,
+      login: "other",
+      relationship: "funded-employee",
+      fromCycle: "2026-11",
+      untilCycle: null,
+    };
+    const response = await call("PUT", path, actor, {
+      manifest: {
+        ...current.manifest,
+        reward: {
+          ...current.manifest.reward,
+          payoutExclusions: [
+            { ...exclusion, nodeId: btoa(`04:User${OTHER}`) },
+            { ...exclusion, nodeId: modern, relationship: "related-party" },
+          ],
+        },
+      },
+      expectedRevision: current.revision,
+      reason: "Reject overlapping aliases of one excluded account",
+    });
+    expect(response.status).toBe(422);
+    expect(response.body.error).toBe("invalid_manifest");
+    expect((await persistence.getProject("exclusion-alias"))?.revision).toBe(
+      current.revision,
+    );
+  }
+});

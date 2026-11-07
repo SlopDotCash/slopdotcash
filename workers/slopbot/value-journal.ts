@@ -25,6 +25,11 @@ import {
   valueResultProducerIdentity,
 } from "./value-producer";
 import {
+  VALUE_PUBLICATION_FENCE_SQL,
+  type ValuePublicationFence,
+  valuePublicationFenceValues,
+} from "./value-publication-fence";
+import {
   type ValueAssessmentResult,
   validateEvidenceAssessment,
   valueSourceDigest,
@@ -172,6 +177,7 @@ export async function appendValueRecord(
   db: D1Database,
   prepared: Awaited<ReturnType<typeof prepareValueRecord>>,
   installationId: number | null = null,
+  fence?: ValuePublicationFence,
 ): Promise<StoredValueRecord> {
   const { record, recordJson, recordDigest, assessmentKey } = prepared;
   if (
@@ -180,6 +186,11 @@ export async function appendValueRecord(
     (await valueAssessmentKey(record)) !== assessmentKey
   )
     throw new Error("Value journal bytes do not match their digest");
+  if (
+    installationId !== null &&
+    (!fence || fence.projectId !== record.projectId)
+  )
+    throw new Error("Value publication requires its live registry fence");
   await db
     .prepare(`INSERT INTO slopbot_value_journal
     (record_digest, assessment_key, repository_node_id, pull_request_node_id,
@@ -188,6 +199,7 @@ export async function appendValueRecord(
     WHERE NOT EXISTS (SELECT 1 FROM slopbot_value_journal WHERE assessment_key = ?)
       AND (? IS NULL OR EXISTS (SELECT 1 FROM slopbot_installations
         WHERE installation_id = ? AND removed_at IS NULL AND suspended_at IS NULL))
+      AND ${VALUE_PUBLICATION_FENCE_SQL}
     ON CONFLICT(assessment_key) DO NOTHING`)
     .bind(
       recordDigest,
@@ -202,6 +214,7 @@ export async function appendValueRecord(
       assessmentKey,
       installationId,
       installationId,
+      ...valuePublicationFenceValues(fence),
     )
     .run();
   const stored = await db

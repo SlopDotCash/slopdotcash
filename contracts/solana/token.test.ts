@@ -79,6 +79,12 @@ test("maintainer token submission admits a synthetic mint from raw state but can
   const reader = rpcTokenMetadataReader(
     (async (_url, init) => {
       const request = JSON.parse(String(init?.body));
+      if (request.method === "getGenesisHash")
+        return Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          result: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+        });
       expect(request.method).toBe("getAccountInfo");
       expect(request.params).toEqual([
         mint,

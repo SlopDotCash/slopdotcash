@@ -4,6 +4,7 @@ import { deriveAllocationFundingBasis } from "./allocation-funding";
 import type { CycleWalletProof } from "./cycle-index";
 import type { ActorRef } from "./leaderboard-types";
 import { findProject } from "./projects.mjs";
+import { weightedShare } from "./verified-money";
 import {
   isWalletAddress,
   isWalletChain,
@@ -264,8 +265,9 @@ function allocateFundingReview(
   if (total < 0n) throw new TypeError("Negative allocation");
   const ranked = rows.map((r) => ({
     r,
-    amount: sum ? (total * BigInt(r.weight)) / sum : 0n,
-    remainder: sum ? (total * BigInt(r.weight)) % sum : 0n,
+    ...(sum
+      ? weightedShare(total, BigInt(r.weight), sum)
+      : { amount: 0n, remainder: 0n }),
   }));
   ranked.sort(
     (a, b) =>

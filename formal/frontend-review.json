@@ -1,0 +1,966 @@
+{
+  "schemaVersion": 1,
+  "sourceBase": "e3d7dea64",
+  "limits": "Source-to-model review is manual; mappings are not refinement proofs. See frontend-audit.md.",
+  "files": [
+    {
+      "path": "src/Admin.tsx",
+      "lines": 1267,
+      "models": ["ui_admin_review.qnt", "ui_focus_session.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/AdminProjectEnforcement.tsx",
+      "lines": 465,
+      "models": ["ui_admin_review.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/AdminVetting.tsx",
+      "lines": 923,
+      "models": ["ui_admin_review.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/App.tsx",
+      "lines": 1651,
+      "models": ["ui_navigation.qnt", "ui_hash_navigation.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/AutomaticMonthlyPayment.tsx",
+      "lines": 451,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/BountySubmittedPayments.tsx",
+      "lines": 152,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ChainIcon.tsx",
+      "lines": 66,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure rendering of network/icon props. No local state, lifecycle effect, storage, or request.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ContributorAllocation.tsx",
+      "lines": 132,
+      "models": ["ui_contributor_allocation.qnt", "ui_time_boundary.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/CyclePages.tsx",
+      "lines": 626,
+      "models": [
+        "ui_record_display.qnt",
+        "ui_cycle_publication.qnt",
+        "ui_record_deadlines.qnt"
+      ],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/DirectBountyPayment.tsx",
+      "lines": 350,
+      "models": ["ui_transaction.qnt", "ui_tab_scope.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Earnings.tsx",
+      "lines": 867,
+      "models": ["ui_wallet_choice.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ErrorBoundary.tsx",
+      "lines": 47,
+      "models": ["ui_boot.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/EscrowFunding.tsx",
+      "lines": 399,
+      "models": ["ui_resources.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/FundingStatus.tsx",
+      "lines": 30,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure funding-status label from props. Domain funding transitions belong to backend/contract models.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/GeneratedSkillPreview.tsx",
+      "lines": 191,
+      "models": ["ui_artifacts.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/HomeStandings.tsx",
+      "lines": 118,
+      "models": ["ui_resources.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Inbox.tsx",
+      "lines": 563,
+      "models": ["ui_inbox.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/InboxEmail.tsx",
+      "lines": 839,
+      "models": ["ui_email.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/IncompleteAssessments.tsx",
+      "lines": 150,
+      "models": ["ui_inbox.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Link.tsx",
+      "lines": 172,
+      "models": ["ui_navigation.qnt", "ui_hash_navigation.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Logo.tsx",
+      "lines": 52,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure SVG and wordmark rendering. No application state or external side effect.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Operations.tsx",
+      "lines": 87,
+      "models": ["ui_navigation.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/OwnerAwards.tsx",
+      "lines": 748,
+      "models": [
+        "ui_transaction.qnt",
+        "ui_owner_awards.qnt",
+        "ui_time_boundary.qnt",
+        "ui_calendar_views.qnt"
+      ],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/OwnerBountyVault.tsx",
+      "lines": 205,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/OwnerCommitment.tsx",
+      "lines": 391,
+      "models": ["ui_transaction.qnt", "ui_tab_scope.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/OwnerPresentation.tsx",
+      "lines": 60,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Controlled change-review/recovery/pending presentation. State and actions are owned by the calling wallet machine.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/OwnerReserveRelease.tsx",
+      "lines": 246,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/OwnerVaultSetup.tsx",
+      "lines": 634,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PaymentRecords.tsx",
+      "lines": 82,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure rendering of existing direct-transfer or vault-payment records. Does not submit or mutate records.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PayoutConsent.tsx",
+      "lines": 319,
+      "models": ["ui_payout_consent.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PayoutRows.tsx",
+      "lines": 244,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure payment-row/amount rendering with actions delegated to stateful parent/consent components.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PendingProjectApplications.tsx",
+      "lines": 184,
+      "models": ["ui_project_setup.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Points.tsx",
+      "lines": 1597,
+      "models": ["ui_session.qnt", "ui_calendar_views.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PointsDisputes.tsx",
+      "lines": 342,
+      "models": ["ui_inbox.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PointsRules.tsx",
+      "lines": 81,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure display of imported approved scoring/penalty tables. No state or mutation.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Presentation.tsx",
+      "lines": 790,
+      "models": ["ui_navigation.qnt", "ui_record_deadlines.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PrivateReportForm.tsx",
+      "lines": 343,
+      "models": ["ui_private_intake.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PrivateReportSummary.tsx",
+      "lines": 165,
+      "models": ["ui_private_intake.qnt", "ui_record_deadlines.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ProfilePage.tsx",
+      "lines": 448,
+      "models": ["ui_resources.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/Profiles.tsx",
+      "lines": 471,
+      "models": ["ui_resources.qnt", "ui_calendar_views.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ProjectFormFields.tsx",
+      "lines": 156,
+      "models": ["ui_project_setup.qnt"],
+      "statelessReason": "Controlled form field presentation; values and event handling belong to the parent draft machine.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ProjectImageField.tsx",
+      "lines": 157,
+      "models": ["ui_artifacts.qnt", "ui_image_decode.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ProjectLeaderboard.tsx",
+      "lines": 200,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure rendering of the supplied cycle allocation and reviewer rows. Scoring/projection math has separate domain coverage.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ProjectProposalPage.tsx",
+      "lines": 2641,
+      "models": [
+        "ui_project_setup.qnt",
+        "ui_project_draft.qnt",
+        "ui_image_decode.qnt",
+        "ui_calendar_views.qnt",
+        "ui_focus_session.qnt"
+      ],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ProjectRiskFlag.tsx",
+      "lines": 243,
+      "models": ["ui_risk_flag.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "No import/mount in current application. Model covers retained component source only."
+    },
+    {
+      "path": "src/ProjectSecuritySettings.tsx",
+      "lines": 189,
+      "models": ["ui_project_setup.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ProjectSetupStatus.tsx",
+      "lines": 356,
+      "models": ["ui_project_setup.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/PublicPages.tsx",
+      "lines": 623,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/ReferralClaims.tsx",
+      "lines": 375,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/RewardAssetFields.tsx",
+      "lines": 113,
+      "models": ["ui_project_setup.qnt"],
+      "statelessReason": "Controlled network/asset fields; chosen values are owned by parent forms, with no independent persistence or request.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/SecurityBounty.tsx",
+      "lines": 4519,
+      "models": [
+        "ui_inbox.qnt",
+        "ui_private_intake.qnt",
+        "ui_record_deadlines.qnt"
+      ],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/SecurityOffer.tsx",
+      "lines": 64,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": "Pure rendering of supplied bounty terms and amounts. No action or independent state.",
+      "status": "reviewed-stateless",
+      "refinementProved": false
+    },
+    {
+      "path": "src/SecurityProgramEditor.tsx",
+      "lines": 586,
+      "models": ["ui_project_setup.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/SolanaBountyPayment.tsx",
+      "lines": 224,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/SolanaBountyRecovery.tsx",
+      "lines": 117,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/VaultActions.tsx",
+      "lines": 580,
+      "models": ["ui_transaction.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/VaultPaymentHistory.tsx",
+      "lines": 54,
+      "models": ["ui_record_display.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/VettingEvidence.tsx",
+      "lines": 425,
+      "models": ["ui_artifacts.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/browser-deployment.ts",
+      "lines": 29,
+      "models": ["ui_boot.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "Source-specific startup/identity policy projection; nested encoding and registry grammar remain finite input predicates."
+    },
+    {
+      "path": "src/lib/browser-json.ts",
+      "lines": 102,
+      "models": ["ui_transport.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/commit-credit.ts",
+      "lines": 16,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure immutable actor-ID/kind eligibility predicate; no retained state or I/O. Accepted-source lifecycle is owned by the ledger.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/contribution-fields.ts",
+      "lines": 60,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Static labels and derived field arrays; no retained state, events, requests or mutations.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/copy-text.ts",
+      "lines": 5,
+      "models": ["ui_navigation.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/cycle-index.ts",
+      "lines": 1006,
+      "models": ["ui_cycle_publication.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/deployment.ts",
+      "lines": 37,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure deployment-tier/origin selection and local-origin predicate; no runtime effect or transition.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/evaluator-awards.ts",
+      "lines": 484,
+      "models": ["ui_review_admission.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/external-sources.ts",
+      "lines": 330,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure canonical URL, archive, identity and evidence validation. External award admission owns the state transition; archive retrieval and content truth are not established by this parser.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/funding-reminders.ts",
+      "lines": 41,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure label predicate over supplied time, cycle state and amount; no retained state or independent lifecycle.",
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/github-actor.ts",
+      "lines": 91,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure canonical node-ID decoding and stable actor sorting. No retained state or I/O; format equivalence is consumed by exclusion/admission models.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/github-work.ts",
+      "lines": 38,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure canonical work-key derivation from validated repository records and URL; no state mutation or I/O.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/global-leaderboard.ts",
+      "lines": 189,
+      "models": ["ui_history_projection.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/home-projects.ts",
+      "lines": 28,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure filters over the immutable runtime registry and bounty status. Registry transitions are owned by project policy/boot models.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/identity-flow.ts",
+      "lines": 160,
+      "models": ["ui_session.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/incomplete-assessments.ts",
+      "lines": 45,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure bounded metadata response parser; no retained state, request or mutation.",
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/intake-drafts.ts",
+      "lines": 159,
+      "models": ["ui_private_intake.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/leaderboard-types.ts",
+      "lines": 775,
+      "models": [],
+      "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions.",
+      "status": "reviewed-stateless",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/leaderboard.ts",
+      "lines": 8083,
+      "models": [
+        "ui_score_selection.qnt",
+        "ui_score_ledger.qnt",
+        "ui_snapshot_contract.qnt",
+        "ui_review_pool.qnt"
+      ],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/model-outcomes.ts",
+      "lines": 451,
+      "models": ["ui_model_outcomes.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/notifications.ts",
+      "lines": 287,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state.",
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/payout-exclusions.mjs",
+      "lines": 143,
+      "models": ["ui_exclusion_identity.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "Source-specific startup/identity policy projection; nested encoding and registry grammar remain finite input predicates."
+    },
+    {
+      "path": "src/lib/platform-fee-recipients.mjs",
+      "lines": 7,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "One immutable configured recipient constant; no state transition.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/points.ts",
+      "lines": 1224,
+      "models": ["ui_review_pool.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "Review-pool ordering/allocation and outside-window Points continuity only; other ledger state belongs to existing financial/backend models."
+    },
+    {
+      "path": "src/lib/profile-activity.ts",
+      "lines": 39,
+      "models": [],
+      "statelessReason": "Pure UTC-day bucketing and summed Point amounts from arguments; no retained state, I/O, lifecycle or mutation.",
+      "status": "reviewed-stateless",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/profiles.ts",
+      "lines": 332,
+      "models": ["ui_profile_history.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/project-api.ts",
+      "lines": 388,
+      "models": ["ui_transport.qnt", "ui_session.qnt", "ui_focus_session.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/project-capabilities.mjs",
+      "lines": 73,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure capability/reason projection from supplied registration, restriction, funding and retired facts. No authority-grant mutation; owning API gates are modeled separately.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/project-image.mjs",
+      "lines": 25,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure bounded data-URL and file-signature validation; no retained state, I/O or mutation.",
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/project-policy.mjs",
+      "lines": 292,
+      "models": ["ui_project_policy.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/project-proposal.ts",
+      "lines": 321,
+      "models": ["ui_project_setup.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/project-registry-boot.ts",
+      "lines": 111,
+      "models": ["ui_boot.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/project-registry.ingested.mjs",
+      "lines": 8,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Static re-export of the build-time registry input, distinct from runtime registry; no independent state or effect.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/project-revision-changes.ts",
+      "lines": 114,
+      "models": ["ui_project_policy.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/project-schema.mjs",
+      "lines": 1518,
+      "models": ["ui_project_policy.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/projects.mjs",
+      "lines": 244,
+      "models": ["ui_boot.qnt", "ui_project_policy.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "Source-specific startup/identity policy projection; nested encoding and registry grammar remain finite input predicates."
+    },
+    {
+      "path": "src/lib/record-validation.mjs",
+      "lines": 55,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure record/key/string/integer/time validation primitives; no retained state or I/O.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/repositories.mjs",
+      "lines": 93,
+      "models": ["ui_project_policy.qnt"],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false,
+      "notes": "See parser-review.md for specific coverage and pending refinements."
+    },
+    {
+      "path": "src/lib/review-records.ts",
+      "lines": 396,
+      "models": ["ui_review_admission.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/reviewer-leaders.ts",
+      "lines": 63,
+      "models": ["ui_history_projection.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/lib/scoring-policy.ts",
+      "lines": 247,
+      "models": ["ui_review_pool.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "Review-pool ordering/allocation and outside-window Points continuity only; other ledger state belongs to existing financial/backend models."
+    },
+    {
+      "path": "src/lib/security-program-draft.ts",
+      "lines": 21,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Pure preservation of existing security terms/default split while rebuilding form fields; state is owned by the editor.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/site-routes.ts",
+      "lines": 30,
+      "models": ["ui_navigation.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-action.ts",
+      "lines": 31,
+      "models": ["ui_transaction.qnt", "ui_inbox.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-cycle-index.ts",
+      "lines": 16,
+      "models": ["ui_resources.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-direct-transfers.ts",
+      "lines": 146,
+      "models": ["ui_resources.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-payout-wallets.ts",
+      "lines": 512,
+      "models": ["ui_wallet_choice.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-public-resource.ts",
+      "lines": 91,
+      "models": ["ui_resources.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-snapshot.ts",
+      "lines": 238,
+      "models": ["ui_resources.qnt", "ui_time_boundary.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-time-boundary.ts",
+      "lines": 30,
+      "models": [
+        "ui_time_boundary.qnt",
+        "ui_calendar_views.qnt",
+        "ui_record_deadlines.qnt"
+      ],
+      "status": "modeled-abstraction",
+      "statelessReason": null,
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/use-vault-payments.ts",
+      "lines": 127,
+      "models": ["ui_resources.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/verified-frontend.ts",
+      "lines": 109,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Seven pure argument-to-result decisions with explicit preconditions/postconditions; no retained state, request, timer, storage or mutation. Caller workflows remain in the corresponding UI models.",
+      "refinementProved": false,
+      "notes": "Local LemmaScript contracts are separately checked; caller preconditions and runtime refinement remain outside the pure helper proof."
+    },
+    {
+      "path": "src/lib/vetting-contracts.ts",
+      "lines": 118,
+      "models": [],
+      "status": "reviewed-stateless",
+      "statelessReason": "Only types and literal status arrays for assessment/clearance/journal records. No runtime transition or I/O.",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/who-builds.ts",
+      "lines": 187,
+      "models": ["ui_history_projection.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false,
+      "notes": "See scoring-projection-audit.md for reviewed contracts and explicit pending refinements."
+    },
+    {
+      "path": "src/main.tsx",
+      "lines": 99,
+      "models": ["ui_boot.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    }
+  ]
+}

@@ -85,6 +85,7 @@ import {
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
+import { useTimeBoundary } from "./lib/use-time-boundary";
 import { CopyButton, CopyIdentifier } from "./Operations";
 import {
   ExternalLinkAnchor,
@@ -1238,6 +1239,7 @@ const EVENT_LABELS: Record<string, string> = {
   triage: "Triage state changed",
   "next-action": "Next action set",
   "request-information": "Owner asked for information",
+  "report-revised": "Reporter revised the report",
   decide: "Finding decided",
   award: "Award decided",
   remediation: "Remediation state changed",
@@ -1694,6 +1696,11 @@ function SubmissionCard({
   onOpenCase: (caseId: string) => void;
 }) {
   const privateRequest = usePrivateRequest();
+  useTimeBoundary(
+    submission.state === "uncertain" && submission.reconcileAfter
+      ? Date.parse(submission.reconcileAfter)
+      : null,
+  );
   const [draft, setDraft] = useState<ReportDraft>(
     () => loadDraft(submission.id) ?? EMPTY_DRAFT,
   );

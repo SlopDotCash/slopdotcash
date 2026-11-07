@@ -297,13 +297,16 @@ at most one `submitted` or `unknown` row per network and token. Reconciliation
 decides each unresolved row:
 
 - **EVM.** A finalized receipt with verified token movement settles the row.
-  A swap can fail when its nonce was consumed or its router deadline passed.
-  A claim with missing hash lookups stays pending even when its nonce was
-  consumed: the missing claim could be the transaction that consumed it.
+  A swap can fail after its router deadline when its nonce is still unused.
+  A send with missing hash lookups stays pending when its nonce was consumed:
+  that send could itself be the transaction that consumed the nonce.
   Only the node's "not found" answer counts as no receipt or transaction.
   A failed lookup logs `fee_conversion_reconcile_error` and leaves the row
   open. A valid unsent claim uses the recorded bytes after a fresh deployment
   check.
+  A retained send for another configured fee wallet stays open and blocks a
+  new send for that token. Recover it under its original wallet configuration;
+  changing the configuration does not change its recorded recipient or nonce.
 - **Solana.** A finalized signature with a verified receipt settles the row.
   A swap with no status fails after its recorded `lastValidBlockHeight`.
   A claim with no status remains pending after expiry, because expiry does not

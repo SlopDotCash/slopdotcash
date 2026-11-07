@@ -51,5 +51,10 @@ export function childEnvironment(source = process.env, overrides = {}) {
     }
     environment[name] = value;
   }
+  // Wrangler's banner starts an npm update request that can keep a completed
+  // local migration alive after its timeout. Local checks use pinned tools;
+  // neither update discovery nor CLI telemetry is an input to their result.
+  environment.WRANGLER_HIDE_BANNER = "true";
+  environment.WRANGLER_SEND_METRICS = "false";
   return environment;
 }

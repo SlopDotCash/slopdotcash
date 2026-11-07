@@ -79,6 +79,7 @@ import {
   PRIVATE_BOUNTY_TESTING,
   privateBountyTerms,
 } from "./lib/security-bounty-proposal";
+import { useUtcDay } from "./lib/use-time-boundary";
 import { ChangeReview } from "./OwnerPresentation";
 import { PendingProjectApplications } from "./PendingProjectApplications";
 import {
@@ -749,6 +750,8 @@ function FundingFields({
 }
 
 export default function ProjectProposalPage() {
+  useUtcDay();
+  const [imageRevision, setImageRevision] = useState(0);
   const [sessionRevision, setSessionRevision] = useState(0);
   const projectSession = useProjectSession(sessionRevision);
   const [proposal, setProposal] = useState<Proposal>(
@@ -1075,7 +1078,7 @@ export default function ProjectProposalPage() {
             ?.native.symbol ?? REWARD_ASSET_NETWORKS.base.native.symbol)
         : (REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
             ?.stablecoin.symbol ?? "USDC");
-  const manifest = useMemo(() => {
+  const manifest = (() => {
     const now = new Date();
     const repository = p.repository || "owner/repository";
     const bounty =
@@ -1242,7 +1245,7 @@ export default function ProjectProposalPage() {
         issues: `https://github.com/${repository}/issues`,
       },
     };
-  }, [p, slug, funding, projectSession, valid]);
+  })();
   const bounty = manifest.securityBounty;
   const bountyAmounts = bounty
     ? bountyAmountPreview(bounty.amount, p.monthlyPool, bounty.split)
@@ -1331,6 +1334,7 @@ export default function ProjectProposalPage() {
     if (submission.status === "submitting") return;
     lookupController.current?.abort();
     setProposal(EMPTY_PROPOSAL);
+    setImageRevision((revision) => revision + 1);
     setExtraRuleFields([]);
     setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
@@ -1505,6 +1509,7 @@ export default function ProjectProposalPage() {
           <>
             <div className="setup-project-identity">
               <ProjectImageField
+                key={imageRevision}
                 compact
                 ownerLogin={p.stewardLogin}
                 value={p.image}
@@ -1938,6 +1943,8 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
 }
 
 function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
+  useUtcDay();
+  const [imageRevision, setImageRevision] = useState(0);
   const session = useProjectSession();
   const [base, setBase] = useState<{
     revision: number;
@@ -2378,7 +2385,11 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
       >
         <details className="proposal-advanced" open>
           <summary>Project listing</summary>
-          <ProjectImageField value={value.image} onChange={set("image")} />
+          <ProjectImageField
+            key={imageRevision}
+            value={value.image}
+            onChange={set("image")}
+          />
           <TextField
             error={shown("headline")}
             label="Short description"
@@ -2498,6 +2509,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
               className="button secondary-button"
               onClick={() => {
                 setDraft(null);
+                setImageRevision((revision) => revision + 1);
                 setDraftRevision(null);
                 setAttempted(false);
                 setSubmission({ state: "idle" });

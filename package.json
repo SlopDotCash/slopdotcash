@@ -26,9 +26,9 @@
     "protocol:check": "node scripts/protocol-identity.mjs",
     "rewards:propose-month": "bun scripts/prepare-monthly-rewards.ts",
     "audit:dependencies": "bun audit",
-    "verify": "bun run verify:contracts && bun run cycles:check && bun run audit:dependencies && bun run verify:code && bun run build",
+    "verify": "bun run lemmascript:check && bun run verify:contracts && bun run cycles:check && bun run audit:dependencies && bun run verify:code && bun run build",
     "typecheck": "tsc -b",
-    "test": "bun test --timeout 30000 ./scripts ./workers ./backend ./contracts",
+    "test": "bun test --timeout 30000 ./scripts ./workers ./backend ./contracts ./formal/tests",
     "test:integration": "node scripts/run-integration.mjs",
     "test:slopbot": "bun test --timeout 30000 ./workers/slopbot",
     "test:notify": "bun test --timeout 30000 ./workers/notify",
@@ -56,7 +56,7 @@
     "points:backfill": "bun scripts/backfill-points.ts",
     "profiles:generate": "bun scripts/generate-profiles.ts --live",
     "verify:contracts": "bun run brand:check && bun run projects:check && bun run evaluations:check && bun run disclosures:check && bun run quality:check && bun run protocol:check",
-    "verify:code": "bun run typecheck && bun run lint:check && bun run test && bun run test:integration",
+    "verify:code": "bun run typecheck && bun run formal:check && bun run lint:check && bun run test && bun run test:integration",
     "payments:deployments": "bun scripts/prepare-payment-deployments.ts",
     "payments:readiness": "bun scripts/check-payout-readiness.ts",
     "test:contracts:evm": "bun contracts/evm/adapter.integration.ts && bun contracts/evm/monthly-reserve.integration.ts && bun scripts/payment-keeper/evm.integration.ts",
@@ -69,8 +69,17 @@
     "test:vetting:sandbox": "bun workers/vetting-sandbox/workflow.ts",
     "test:vetting:flags": "node workers/vetting-flags/run-workflow.mjs",
     "test:vetting:recovery": "node workers/vetting-backup/qualification-workflow.mjs",
-    "formal:check": "node scripts/check-formal.mjs",
-    "formal:verify": "node scripts/check-formal.mjs --verify"
+    "formal:check": "bun run formal:coverage && bun run formal:states && node scripts/check-formal.mjs",
+    "formal:verify": "node scripts/check-formal.mjs --verify",
+    "formal:inventory": "node scripts/formal-inventory.mjs",
+    "formal:inventory:update": "node scripts/formal-inventory.mjs --write && node scripts/formal-state-catalog.mjs --write",
+    "formal:coverage": "node scripts/formal-inventory.mjs --require-mapped",
+    "lemmascript:setup": "bash scripts/setup-lemmascript.sh",
+    "lemmascript:inventory": "node scripts/lemmascript-inventory.mjs --check",
+    "lemmascript:inventory:update": "node scripts/lemmascript-inventory.mjs --write",
+    "lemmascript:check": "bun run lemmascript:inventory && node scripts/check-lemmascript.mjs",
+    "formal:states": "node scripts/formal-state-catalog.mjs",
+    "formal:states:update": "node scripts/formal-state-catalog.mjs --write"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.126.0",
@@ -90,6 +99,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "2.5.6",
+    "@informalsystems/quint": "0.33.1",
     "@noble/curves": "2.4.0",
     "@playwright/test": "^1.61.0",
     "@types/node": "^24.0.0",
@@ -102,13 +112,14 @@
     "playwright": "^1.61.0",
     "vite": "8.2.4",
     "wrangler": "4.129.1",
-    "@informalsystems/quint": "0.33.1"
+    "lemmascript": "0.6.6"
   },
   "overrides": {
     "nanoid": "3.3.18",
     "sharp": "0.35.5",
     "source-map-js": "1.2.2",
-    "undici": "7.30.1"
+    "undici": "7.30.1",
+    "minimatch": "11.0.5"
   },
   "packageManager": "bun@1.3.14",
   "engines": {

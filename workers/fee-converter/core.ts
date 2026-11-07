@@ -14,6 +14,12 @@ import { FeeCapTooLowError } from "viem";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
 import { LOCK_MS } from "./store";
+import {
+  acceptableMinimum,
+  remainingBudget,
+  rescaleInput,
+  spendableNative,
+} from "./verified-arithmetic";
 
 export type ConversionState =
   | "quoted"
@@ -340,12 +346,10 @@ export function impactWithin(quote: Quote, limits: Limits): boolean {
 
 /** The aggregator minimum must stay within the configured slippage of its quote. */
 export function slippageWithin(quote: Quote, limits: Limits): boolean {
-  const floor =
-    (quote.amountOut * BigInt(10_000 - limits.maxSlippageBps)) / 10_000n;
-  return (
-    quote.amountOut > 0n &&
-    quote.minAmountOut >= floor &&
-    quote.minAmountOut <= quote.amountOut
+  return acceptableMinimum(
+    quote.amountOut,
+    quote.minAmountOut,
+    BigInt(limits.maxSlippageBps),
   );
 }
 
@@ -660,6 +664,16 @@ export async function runNetwork(
     // signatures require live mode and a freshly checked network lease.
     for (const row of await deps.store.openRows(config.network)) {
       try {
+        // A wallet change is not authority to reinterpret a retained send's
+        // recipient or nonce. Keep its business record open for recovery
+        // under the original wallet; native liabilities remain independently
+        // accounted for before this loop.
+        const sameWallet =
+          config.definition.family === "evm"
+            ? row.feeWallet.toLowerCase() === config.feeWallet.toLowerCase()
+            : row.feeWallet === config.feeWallet;
+        if (!sameWallet)
+          throw new Error("Recorded fee wallet differs from configuration");
         if (await reconcile(row, client, deps, runId, assertLease))
           result.reconciled += 1;
         else blocked.add(row.token);
@@ -727,7 +741,7 @@ export async function runNetwork(
           // Pay the next send's worst-case cost from earned fees as well;
           // a wallet gas top-up never increases the amount sold.
           const reserve = BigInt(config.nativeBudget?.perTransaction ?? "0");
-          const available = received > reserve ? received - reserve : 0n;
+          const available = spendableNative(received, reserve);
           if (available < balance) balance = available;
         }
         if (balance === 0n) continue;
@@ -993,11 +1007,12 @@ async function convert(
 
   // Fit the order inside the remaining run and day caps by scaling the input
   // once and quoting again; never exceed either cap.
-  const remaining = (() => {
-    const run = limits.runCapMicro - budget.runValue;
-    const day = limits.dailyCapMicro - budget.dayValue;
-    return run < day ? run : day;
-  })();
+  const remaining = remainingBudget(
+    limits.runCapMicro,
+    budget.runValue,
+    limits.dailyCapMicro,
+    budget.dayValue,
+  );
   let amount = balance;
   // Output is not linear in input for a large order, so rescale toward 98%
   // of the remaining cap a bounded number of times.
@@ -1008,7 +1023,7 @@ async function convert(
     remaining > 0n;
     attempt++
   ) {
-    const scaled = (amount * remaining * 98n) / (quoted.amountOut * 100n);
+    const scaled = rescaleInput(amount, remaining, quoted.amountOut);
     if (scaled <= 0n) break;
     amount = scaled;
     const requoted = await client.quote(token, amount);

@@ -1,6 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   encodeAbiParameters,
   encodeEventTopics,
@@ -27,11 +31,43 @@ const ONE = 10n ** 18n;
 const DISTRIBUTOR = `0x${"d".repeat(40)}`;
 const TOKEN = `0x${"7".repeat(40)}`;
 // Public Anvil account 1; never a deployed account or a credential.
-const TEST_ACCOUNT = privateKeyToAccount(
-  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-);
+const TEST_KEY =
+  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+const TEST_ACCOUNT = privateKeyToAccount(TEST_KEY);
 const SIGNER = TEST_ACCOUNT.address.toLowerCase();
 const ROOT_A = `0x${"a".repeat(64)}`;
+
+function canonicalVoidTrace(): { row: string; result: string }[] {
+  const directory = mkdtempSync(join(tmpdir(), "slop-referral-trace-"));
+  try {
+    execFileSync(
+      "node",
+      [
+        resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
+        "test",
+        "formal/models/referral_posting.qnt",
+        "--backend=typescript",
+        "--seed=1",
+        "--match=^canonicalVoidAfterFinalizedTest$",
+        `--out-itf=${join(directory, "trace-{test}-{seq}.json")}`,
+      ],
+      { stdio: "pipe" },
+    );
+    const trace = JSON.parse(
+      readFileSync(
+        join(directory, "trace-canonicalVoidAfterFinalizedTest-0.json"),
+        "utf8",
+      ),
+    ) as {
+      states: { s: { row: string; result: string } }[];
+    };
+    return trace.states
+      .slice(3)
+      .map(({ s }) => ({ row: s.row, result: s.result }));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 const POSTER: PosterConfig = {
   network: "robinhood-testnet",
@@ -342,7 +378,11 @@ async function receiptHarness() {
     } else throw new Error(`Unexpected fixture method ${method}`);
     return Response.json({ jsonrpc: "2.0", id, result });
   }) as typeof fetch;
-  const client = createEvmPoster({ config: POSTER, fetch: fetchRpc });
+  const client = createEvmPoster({
+    config: POSTER,
+    fetch: fetchRpc,
+    privateKey: TEST_KEY,
+  });
   const deps = { ...h.deps, client };
   return {
     ...h,
@@ -399,21 +439,29 @@ describe("canonical poster journal through actual client", () => {
   test("nonfinal void holds, disappears safely, and only canonical final void is permanent", async () => {
     const h = await receiptHarness();
     try {
-      await postNextRoot(h.deps);
+      const expected = canonicalVoidTrace();
+      const actual = [{ row: h.posts()[0].state, result: "posted" }];
+      const record = async (deps = h.deps) => {
+        const result = await postNextRoot(deps);
+        actual.push({ row: h.posts()[0].state, result: result.status });
+        return result;
+      };
+      await record();
       expect(h.posts()[0].state).toBe("finalized");
       h.setFault("nonfinal_void");
       expect(
-        await postNextRoot({ ...h.deps, store: new D1AccrualStore(h.db) }),
+        await record({ ...h.deps, store: new D1AccrualStore(h.db) }),
       ).toMatchObject({ status: "in_flight" });
       expect(h.posts()[0].state).toBe("finalized");
       h.setFault("valid");
-      await postNextRoot(h.deps);
+      await record();
       expect(h.posts()[0].state).toBe("finalized");
       h.setFault("final_void");
-      expect(await postNextRoot(h.deps)).toMatchObject({
+      expect(await record()).toMatchObject({
         status: "halted_after_void",
       });
       expect(h.posts()[0].state).toBe("voided");
+      expect(actual).toEqual(expected);
     } finally {
       h.sqlite.close();
     }

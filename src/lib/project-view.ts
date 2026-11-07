@@ -41,6 +41,7 @@ import {
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 import { eventThirds, penaltyDeductions } from "./score-penalties";
+import { weightedShare } from "./verified-money";
 
 const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
 const SHARE_PARTS_PER_MILLION = 1_000_000;
@@ -257,13 +258,16 @@ export function allocateIntegerTotal(
   }> = [];
   let allocated = 0n;
   for (const contributor of contributors) {
-    const numerator = total * BigInt(contributor.adjustedWeight);
-    const amount = numerator / totalWeight;
+    const { amount, remainder } = weightedShare(
+      total,
+      BigInt(contributor.adjustedWeight),
+      totalWeight,
+    );
     allocated += amount;
     result.set(contributor.actor.id, amount);
     remainders.push({
       actor: contributor.actor,
-      remainder: numerator % totalWeight,
+      remainder,
     });
   }
   remainders.sort(

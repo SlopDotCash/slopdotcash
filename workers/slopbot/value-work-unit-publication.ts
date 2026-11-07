@@ -4,15 +4,21 @@ import {
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
-import { registeredProject, requireRegisteredRepository } from "./registry";
+import { requireRegisteredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
 import { latestValueRecord } from "./value-journal";
+import type { ValueClaim } from "./value-processing";
+import { isSubscriptionProvenance } from "./value-producer";
 import {
   assertValueInstallation,
   assertValueInstallationRepositories,
   type ValueClient,
   verifyCurrentValueSource,
 } from "./value-publication";
+import {
+  fenceValueClaim,
+  registeredValuePublication,
+} from "./value-publication-fence";
 import {
   prepareWorkUnitEvidence,
   type WorkUnitEvidence,
@@ -88,7 +94,13 @@ export async function publishWorkUnitAssessment(
   supersedes: readonly string[],
   legacyPredecessors: readonly string[],
   revisionReason: string | null,
+  claim?: ValueClaim,
 ) {
+  if (
+    !claim &&
+    !isSubscriptionProvenance("provenance" in result ? result.provenance : null)
+  )
+    throw new Error("API joint publication requires its processing claim");
   if (
     job.itemKind !== "pull_request" ||
     !evidence.sources.some(
@@ -100,9 +112,14 @@ export async function publishWorkUnitAssessment(
     )
   )
     throw new Error("Joint publication job does not match a source member");
-  const project = await registeredProject(env.SLOPBOT_DB, job);
-  if (!project)
+  const registration = await registeredValuePublication(
+    env.SLOPBOT_DB,
+    job,
+    evidence.sources.map(({ evidence: source }) => source.repository),
+  );
+  if (!registration)
     throw new Error("Repository is not active in the Slop project registry");
+  const { project, fence } = registration;
   const repositories = collectTargetRepositories([project]);
   for (const { evidence: source } of evidence.sources) {
     const [owner, repo] = source.repository.split("/");
@@ -184,5 +201,17 @@ export async function publishWorkUnitAssessment(
     });
   }
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
-  return appendWorkUnitRecord(env.SLOPBOT_DB, prepared, job.installationId);
+  return appendWorkUnitRecord(
+    env.SLOPBOT_DB,
+    prepared,
+    job.installationId,
+    fenceValueClaim(
+      fence,
+      claim,
+      evidence.sources.map(({ evidence: source }) => ({
+        repositoryDatabaseId: source.repositoryDatabaseId,
+        pullRequestNumber: source.pull.number,
+      })),
+    ),
+  );
 }

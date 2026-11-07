@@ -16,9 +16,12 @@ import {
   projectCycleHasOpened,
 } from "./project-view";
 import { PROJECTS } from "./projects.mjs";
+import { useTimeBoundary } from "./use-time-boundary";
+import { freshCacheAge } from "./verified-frontend";
 
 const SNAPSHOT_RETRIES = 1;
 const SNAPSHOT_CACHE_MS = 60_000;
+export const SNAPSHOT_STALE_AFTER_MS = 8 * 60 * 60 * 1_000;
 export type DataState =
   | { status: "loading" }
   | { status: "error"; message: string }
@@ -55,7 +58,7 @@ let pending: SnapshotRead | null = null;
 function cachedSnapshot(): ReadySnapshot | null {
   if (!cached || cached.projects !== PROJECTS) return null;
   const age = Date.now() - cached.completedAt;
-  return age >= 0 && age < SNAPSHOT_CACHE_MS ? cached.value : null;
+  return freshCacheAge(age, SNAPSHOT_CACHE_MS) ? cached.value : null;
 }
 
 async function loadSnapshot(
@@ -224,6 +227,12 @@ export function useSnapshot(enabled: boolean): [DataState, () => void] {
       request.release();
     };
   }, [attempt, enabled]);
+
+  useTimeBoundary(
+    enabled && state.status === "ready"
+      ? Date.parse(state.snapshot.generatedAt) + SNAPSHOT_STALE_AFTER_MS + 1
+      : null,
+  );
 
   return [state, useCallback(() => setAttempt((value) => value + 1), [])];
 }

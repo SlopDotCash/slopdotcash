@@ -11,6 +11,46 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const selector = resolve("scripts/ci-scope.mjs");
+
+test("a main push selects the complete release browser, installer and sandbox gates", () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-main-release-scope-"));
+  try {
+    const event = join(directory, "event.json");
+    const output = join(directory, "output");
+    writeFileSync(event, JSON.stringify({ ref: "refs/heads/main" }));
+    execFileSync("node", [selector], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: "push",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_EVENT_PATH: event,
+        GITHUB_OUTPUT: output,
+      },
+    });
+    const values = Object.fromEntries(
+      readFileSync(output, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+    );
+    expect(
+      JSON.parse(values.browser_matrix).include.map(
+        (lane: { lane: string }) => lane.lane,
+      ),
+    ).toEqual(["preview-1", "preview-2", "pages", "registry-1", "registry-2"]);
+    expect(values.installer).toBe("true");
+    expect(values.sandbox).toBe("true");
+    expect(values.evm).toBe("true");
+    expect(values.solana).toBe("true");
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 for (const path of [
   "skills/slop/SKILL.md",
   "src/lib/project-skill.mjs",

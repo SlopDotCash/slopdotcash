@@ -1,0 +1,7 @@
+# Actual production sources. The check refuses an empty manifest.
+src/lib/verified-money.ts
+
+src/lib/verified-frontend.ts
+workers/fee-converter/verified-arithmetic.ts
+
+workers/verified-policy.ts

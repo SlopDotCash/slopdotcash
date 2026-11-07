@@ -277,6 +277,7 @@ export async function consumeValueRequest(
         supersedes.length || legacyPredecessors.length
           ? "Source group changed; automatic provisional reassessment"
           : null,
+        claim,
       );
       return await finish("published", true);
     }
@@ -303,6 +304,7 @@ export async function consumeValueRequest(
       current.latestDigest
         ? "Source changed; automatic provisional reassessment"
         : null,
+      claim,
     );
     return await finish("published", true);
   } catch (error) {
