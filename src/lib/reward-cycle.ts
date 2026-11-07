@@ -80,6 +80,16 @@ function resolvedWallet(
     : null;
 }
 
+/**
+ * Actor-ID tie order for the largest-remainder unit. GitHub node IDs are
+ * mixed-case base64, so the default host locale can reverse an i/I pair
+ * (Turkish) and pay a tied leftover unit to a different reviewer. English
+ * collation keeps the order, and the recipient, the same on every host.
+ */
+function compareActorIds(left: string, right: string): number {
+  return left.localeCompare(right, "en");
+}
+
 export function allocateReviewBudgetMinor(
   totalMinor: bigint,
   contributors: readonly { actorId: string; scoreThirds: number }[],
@@ -101,7 +111,7 @@ export function allocateReviewBudgetMinor(
     .filter(
       ({ scoreThirds }) => Number.isSafeInteger(scoreThirds) && scoreThirds > 0,
     )
-    .sort((left, right) => left.actorId.localeCompare(right.actorId));
+    .sort((left, right) => compareActorIds(left.actorId, right.actorId));
   if (eligible.length === 0 || totalMinor === 0n) return new Map();
   const totalWeight = eligible.reduce(
     (total, contributor) => total + BigInt(contributor.scoreThirds),
@@ -119,7 +129,7 @@ export function allocateReviewBudgetMinor(
     [...allocations.values()].reduce((total, amount) => total + amount, 0n);
   remainders.sort((left, right) =>
     left.remainder === right.remainder
-      ? left.actorId.localeCompare(right.actorId)
+      ? compareActorIds(left.actorId, right.actorId)
       : left.remainder > right.remainder
         ? -1
         : 1,
