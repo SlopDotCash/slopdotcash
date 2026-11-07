@@ -46,6 +46,14 @@ describe("admin enforcement actions", () => {
     ).toEqual(["ban"]);
   });
 
+  test("a payload without sourceProjectId is not treated as inherited", () => {
+    const missing = state();
+    delete (missing as Partial<ProjectEnforcementState>).sourceProjectId;
+    expect(availableActions("open-registry", missing)).toEqual([
+      "request_reinstatement",
+    ]);
+  });
+
   test("an inherited restriction with an open appeal offers no decision", () => {
     expect(
       availableActions(

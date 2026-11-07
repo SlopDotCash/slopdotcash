@@ -73,7 +73,9 @@ export function ProjectEnforcementPanel({
 }) {
   const enforcement = project.enforcement;
   const actions = availableActions(project.id, enforcement);
-  const inherited = enforcement.sourceProjectId !== project.id;
+  const inherited =
+    enforcement.sourceProjectId !== undefined &&
+    enforcement.sourceProjectId !== project.id;
   const [action, setAction] = useState<EnforcementAction>(actions[0]);
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState("");

@@ -51,7 +51,10 @@ export function availableActions(
   }
   // The restriction in force is recorded on another project: withhold the
   // actions that would post against this row's own records and fail there.
-  if (enforcement.sourceProjectId !== projectId)
+  if (
+    enforcement.sourceProjectId !== undefined &&
+    enforcement.sourceProjectId !== projectId
+  )
     return actions.filter((action) => !RESTRICTION_ACTIONS.includes(action));
   return actions;
 }
