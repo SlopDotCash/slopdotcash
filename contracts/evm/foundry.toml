@@ -7,6 +7,7 @@ evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 bytecode_hash = "none"
+extra_output = ["storageLayout"]
 
 # Pinned so the fuzz and invariant campaign in CI is reproducible
 # (docs/security/escrow-ai-review-2026-10-12.md, section 2).

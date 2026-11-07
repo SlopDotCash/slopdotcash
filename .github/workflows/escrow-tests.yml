@@ -130,6 +130,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -164,6 +165,7 @@ jobs:
 
       - run: forge fmt --root contracts/evm --check
       - run: forge build --root contracts/evm --sizes
+      - run: bun run test:upgrade-preflight
       - run: forge test --root contracts/evm
       - run: bun run test:contracts:evm
         if: github.event_name != 'pull_request'

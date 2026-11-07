@@ -285,6 +285,7 @@ export function expectedImplementation(evmRoot: string, contract: string) {
   return {
     predicted,
     creationCode,
+    runtimeCode: `0x${code.toString("hex")}` as `0x${string}`,
     digest: sha256Hex(code.toString("hex")),
   };
 }

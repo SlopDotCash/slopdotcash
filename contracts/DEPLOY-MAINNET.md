@@ -1279,14 +1279,41 @@ NEW_FACTORY=0x9f27aec70559D8f4CA1A62398e673A25B1cE3e2f
 4. Read the creation logs again and upgrade any old-logic vault created before
    the new template was selected. Creation is permissionless.
 
-Build the unsigned calldata:
+Build the unsigned calldata only through the fail-closed preflight. The reviewed
+schema-v2 approval file is a separate input that pins the contract role, both the
+outgoing and replacement source commits and provenance, complete storage-layout
+digests, CREATE2 implementation addresses and runtime SHA-256 values. The command
+rebuilds both the replacement and outgoing implementations from detached worktrees
+of their exact approved commits (never from mutable checkout bytes). It resolves one
+canonical RPC block hash and number, pins the proxy slot, both runtime reads and the
+UUID call to that same block, and rejects a reorg or inconsistent block response. It
+then proves that the proxy's implementation is the approved outgoing vault or factory
+by exact runtime-byte comparison, compares the complete storage rows and recursively
+referenced types and struct members, compares the deployed replacement runtime with
+canonical even-length RPC hex, calls `proxiableUUID()`, and only then prints an
+owner-signable zero-value transaction package. The package records the pinned block,
+outgoing implementation and outgoing runtime digest, plus a mandatory pre-broadcast
+revalidation instruction: immediately before broadcast, rerun the preflight and
+require an identical snapshot and transaction payload. The current production UUPS
+ABI cannot atomically assert the outgoing implementation on-chain, so this procedure
+reduces but does not eliminate the execution-time race; never describe the package as
+on-chain atomic protection:
 
 ```sh
-UPGRADE_VAULT=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_VAULT" 0x)
-UPGRADE_FACTORY=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_FACTORY" 0x)
-SELECT_VAULT=$(cast calldata 'setVaultImplementation(address)' "$NEW_VAULT")
-ATOMIC_FACTORY=$(cast calldata 'upgradeToAndCall(address,bytes)' "$NEW_FACTORY" "$SELECT_VAULT")
+bun contracts/evm/prepare-upgrade.ts \
+  --approval "$REVIEWED_APPROVAL" \
+  --rpc "$RPC" \
+  --proxy "$VAULT_OR_FACTORY_PROXY" \
+  > prepared-upgrade.json
 ```
+
+Run it once for every vault and once for the factory. For the factory transaction
+that also selects the new vault implementation, review and simulate the nested
+`setVaultImplementation` call separately after both plain preflights pass. Never
+replace this command with a UUID-only `cast calldata` check: a hostile contract can
+return the expected UUID and still brick or steal from the proxy. Any source,
+Foundry settings, contract kind, storage layout, address, runtime, or provenance
+mismatch refuses before calldata is emitted.
 
 All proxy changes have value zero and use the upgrade authority. Simulate
 against the correct preceding state before signing. The rehearsal covers the
