@@ -25,6 +25,7 @@ import {
 import {
   carriedSecurityTerms,
   initialSecuritySplit,
+  securityScopeListProblem,
 } from "./lib/security-program-draft";
 import { useAction } from "./lib/use-action";
 
@@ -224,6 +225,10 @@ export function SecurityProgramEditor({
     if (!preview) throw new TypeError("Check the award amount and asset.");
     if (BigInt(parseAssetAmount(amount, program.amount.decimals)) === 0n)
       throw new TypeError("Enter an award greater than zero.");
+    // The scope lists are bounded per entry by the API, not by the
+    // textareas' whole-box limit; check them on every publish path.
+    const listProblem = securityScopeListProblem(program.scope);
+    if (listProblem) throw new TypeError(listProblem);
     // Unverified choices are validated by the API after it reads metadata.
     if (!existing || assetChanged) return;
     assertSecurityBountyTerms(
