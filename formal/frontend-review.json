@@ -421,7 +421,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "lines": 4519,
+      "lines": 4520,
       "models": [
         "ui_inbox.qnt",
         "ui_private_intake.qnt",

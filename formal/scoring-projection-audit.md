@@ -73,3 +73,11 @@ that current sources receive the modeled shares and previously recorded
 out-of-window sources keep their positive Points. Existing qualification and
 receipt tests remain responsible for upstream admission and signatures. No
 production scoring change was justified by this comparison.
+
+
+Pinned conformance completed 100 traces with 1,568 assertions. It also seeds an
+older award for an actor now wholly outside the allocation window: that actor
+takes no current slot and the previous positive Points remain. Model types,
+six named scenarios and 500 seeded traces of 60 steps passed. Finite TLC
+explored 16,513 distinct states without a counterexample; a source-stability
+receipt is repeated after the global model set freezes.

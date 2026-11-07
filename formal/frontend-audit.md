@@ -282,6 +282,7 @@ That limitation is retained rather than misreported as an application defect.
 
 Screenshots, videos, console/network diagnostics and per-source SHA-256 records
 are under ignored `evidence/formal/ui/pinned-72`, `pinned-cross-tab`, and
-`pinned-source-hashes.json`. The captured frontend source hashes still match the
-working tree after the run. The desktop Admin and mobile owner signed-out views
+`pinned-source-hashes.json`. The hashes identify the tested frontend source. The later display-only
+`report-revised` history label is covered by the full-suite run rather than
+these earlier captures. The desktop Admin and mobile owner signed-out views
 were visually inspected. Earlier failed fixture runs are not counted as passes.
