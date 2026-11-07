@@ -720,7 +720,9 @@ async function reusableResult(
     result.policyVersion !== config.policyVersion ||
     recordedResultProblems(result).length > 0
   )
-    throw new Error("Scan reuse response does not match the queued inventory");
+    throw new Error(
+      `Scan reuse response does not match the queued inventory (project=${assessment.projectId}, revision=${assessment.revision}, inventory=${inventorySha256.slice(0, 12)}...)`,
+    );
   return result;
 }
 
