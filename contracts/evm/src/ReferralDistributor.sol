@@ -37,6 +37,7 @@ contract ReferralDistributor {
     address public pendingOwner;
     address public poster;
     bool public paused;
+    bool private entered;
     /// @dev A successful claim after the latest post permanently seals that root against voiding.
     bool private latestRootClaimed;
 
@@ -89,6 +90,7 @@ contract ReferralDistributor {
     error TotalExceeded();
     error RescueTooEarly(uint64 earliest);
     error TransferFailed();
+    error ReentrantCall();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -100,10 +102,17 @@ contract ReferralDistributor {
         _;
     }
 
+    modifier nonReentrant() {
+        if (entered) revert ReentrantCall();
+        entered = true;
+        _;
+        entered = false;
+    }
+
     constructor(IReferralToken token_, address owner_, address poster_, uint256 epochCap_, uint64 postSpacing_) {
         if (
-            address(token_) == address(0) || owner_ == address(0) || poster_ == address(0) || owner_ == poster_
-                || epochCap_ == 0 || postSpacing_ > RESCUE_DELAY
+            address(token_) == address(0) || address(token_).code.length == 0 || owner_ == address(0)
+                || poster_ == address(0) || owner_ == poster_ || epochCap_ == 0 || postSpacing_ > RESCUE_DELAY
         ) {
             revert InvalidInput();
         }
@@ -282,14 +291,18 @@ contract ReferralDistributor {
 
     /// @notice Sweeps the whole balance, unclaimed amounts included, once RESCUE_DELAY has passed with no root
     /// going live and no unpause. Refused while paused, so claimants always had the full rescue delay to claim. This ends the program: later claims fail for lack of balance.
-    function rescue(address to) external onlyOwner whenNotPaused {
+    function rescue(address to) external nonReentrant onlyOwner whenNotPaused {
         if (to == address(0)) revert InvalidInput();
         activate();
         uint64 earliest = rescueAvailableAt();
         if (block.timestamp < earliest) revert RescueTooEarly(earliest);
         uint256 amount = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(to);
         emit Rescued(to, amount);
-        if (amount > 0 && !token.transfer(to, amount)) revert TransferFailed();
+        if (amount > 0) safeTransfer(to, amount);
+        if (token.balanceOf(address(this)) != 0 || token.balanceOf(to) != recipientBefore + amount) {
+            revert TransferFailed();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -298,7 +311,7 @@ contract ReferralDistributor {
 
     /// @notice Pays msg.sender `cumulative` minus what it already claimed, against the active root. The sum of
     /// all claims never exceeds the active root's declared total.
-    function claim(uint256 cumulative, bytes32[] calldata proof) external whenNotPaused {
+    function claim(uint256 cumulative, bytes32[] calldata proof) external nonReentrant whenNotPaused {
         activate();
         if (activeRoot == bytes32(0)) revert NoActiveRoot();
         if (!verify(proof, activeRoot, leaf(msg.sender, cumulative))) revert InvalidProof();
@@ -310,7 +323,30 @@ contract ReferralDistributor {
         totalClaimed += amount;
         latestRootClaimed = true;
         emit Claimed(msg.sender, activeIndex, amount, cumulative);
-        if (!token.transfer(msg.sender, amount)) revert TransferFailed();
+        uint256 senderBefore = token.balanceOf(address(this));
+        uint256 recipientBefore = token.balanceOf(msg.sender);
+        safeTransfer(msg.sender, amount);
+        if (
+            token.balanceOf(address(this)) != senderBefore - amount
+                || token.balanceOf(msg.sender) != recipientBefore + amount
+        ) revert TransferFailed();
+    }
+
+    /// @dev Accepts ERC-20 transfers that return no data, and otherwise requires exactly canonical boolean true.
+    /// The fixed output buffer prevents an untrusted token from forcing an unbounded returndata copy.
+    function safeTransfer(address to, uint256 amount) internal {
+        address target = address(token);
+        bytes memory data = abi.encodeCall(IReferralToken.transfer, (to, amount));
+        bool ok;
+        uint256 resultSize;
+        uint256 result;
+        assembly ("memory-safe") {
+            mstore(0, 0)
+            ok := call(gas(), target, 0, add(data, 0x20), mload(data), 0, 0x20)
+            resultSize := returndatasize()
+            result := mload(0)
+        }
+        if (!ok || (resultSize != 0 && (resultSize != 32 || result != 1))) revert TransferFailed();
     }
 
     /// @dev Promotes the latest non-voided epoch, or clears a voided root. Idempotent.

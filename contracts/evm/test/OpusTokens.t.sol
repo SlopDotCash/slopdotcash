@@ -39,12 +39,16 @@ contract OpusOddToken {
         balanceOf[t] += got;
         if (mode == 4 && reenterTarget != address(0)) {
             (bool ok, bytes memory r) = reenterTarget.call(reenterData);
-            if (!ok) assembly { revert(add(r, 32), mload(r)) }
+            if (!ok) {
+                assembly { revert(add(r, 32), mload(r)) }
+            }
         }
     }
 
     function _ret() internal view {
-        if (mode == 0 || mode == 3 || mode == 4) assembly { return(0, 0) }
+        if (mode == 0 || mode == 3 || mode == 4) {
+            assembly { return(0, 0) }
+        }
         if (mode == 1) {
             assembly {
                 mstore(0, 0)

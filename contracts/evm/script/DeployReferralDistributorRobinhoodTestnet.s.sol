@@ -41,7 +41,7 @@ contract DeployReferralDistributorRobinhoodTestnet {
         uint256 supply = vm.envOr("REFERRAL_MOCK_SUPPLY", 2_000_000 ether);
         // Least time between two live posts; the off-chain job files monthly, so 27 days leaves room for a
         // late run without allowing two posts in one month. Rehearsals may set it lower.
-        uint64 postSpacing = uint64(vm.envOr("REFERRAL_POST_SPACING", uint256(27 days)));
+        uint64 postSpacing = checkedPostSpacing(vm.envOr("REFERRAL_POST_SPACING", uint256(27 days)));
         require(owner != poster, "owner and poster must differ");
         vm.startBroadcast();
         token = new MockReferralToken();
@@ -51,5 +51,10 @@ contract DeployReferralDistributorRobinhoodTestnet {
         emit ReferralDistributorDeployed(
             block.chainid, address(distributor), address(token), owner, poster, epochCap, postSpacing
         );
+    }
+
+    function checkedPostSpacing(uint256 value) public pure returns (uint64) {
+        require(value <= type(uint64).max, "post spacing overflow");
+        return uint64(value);
     }
 }
