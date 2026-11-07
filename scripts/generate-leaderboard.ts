@@ -20,7 +20,7 @@ import { resolveGitHubToken } from "./github-token";
 export { resolveGitHubToken } from "./github-token";
 
 import { readFileSync } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type DeploymentTier, deploymentTier } from "../src/lib/deployment";
@@ -4592,16 +4592,105 @@ export async function writeLeaderboardAtomically(
   outputPath = DEFAULT_OUTPUT_PATH,
 ): Promise<void> {
   assertPublishableLeaderboardSnapshot(snapshot);
-  await mkdir(dirname(outputPath), { recursive: true });
-  const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+  // Publication never moves backwards. A run that started earlier can finish
+  // after a newer snapshot already reached this path; renaming over it would
+  // silently regress every consumer until the next run. Republishing older
+  // bytes on purpose goes through the download restore path, never this
+  // writer. An existing file that is not a readable snapshot does not block
+  // publication: replacing it is the recovery path.
+  //
+  // The check-then-rename below is not atomic on its own: the check can
+  // predate a newer publication by the whole stringify/write of this run.
+  // Writers for the same path therefore serialize in-process, so the check,
+  // write and rename of one run never interleave with another's; the check
+  // is repeated just before the rename to also catch a newer file published
+  // by another process (or the download restore path) mid-write.
+  await withLeaderboardWriteLock(outputPath, async () => {
+    await assertNoNewerSnapshotPublished(snapshot, outputPath);
+    await mkdir(dirname(outputPath), { recursive: true });
+    // The counter keeps the temporary path unique per call in this process:
+    // pid + Date.now() alone collide for overlapping calls in the same
+    // millisecond, and under a frozen clock every call would share one path.
+    writeLeaderboardSequence += 1;
+    const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.${writeLeaderboardSequence}.tmp`;
+    try {
+      // The two review bases must fit Pages' 25 MiB per-file limit. Whitespace
+      // alone adds over 5 MiB to the complete October publication.
+      await Bun.write(temporaryPath, `${JSON.stringify(snapshot)}\n`);
+      // Re-check immediately before the rename: no await sits between this
+      // check and issuing the rename, so no other writer in this process can
+      // publish in between.
+      await assertNoNewerSnapshotPublished(snapshot, outputPath);
+      await rename(temporaryPath, outputPath);
+    } finally {
+      // error-policy:J6 a failed atomic write may leave only its unique temporary file.
+      await rm(temporaryPath, { force: true });
+    }
+  });
+}
+
+/** Per-path promise chains serializing `writeLeaderboardAtomically` calls. */
+const leaderboardWriteQueues = new Map<string, Promise<void>>();
+
+/**
+ * Runs `run` holding the in-process write lock for `outputPath`: the next
+ * caller waits until this run's check, write and rename have all finished,
+ * so concurrent runs can never interleave a stale check with a newer rename.
+ */
+async function withLeaderboardWriteLock<T>(
+  outputPath: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = leaderboardWriteQueues.get(outputPath) ?? Promise.resolve();
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(() => turn);
+  leaderboardWriteQueues.set(outputPath, chained);
+  await previous.catch(() => {});
   try {
-    // The two review bases must fit Pages' 25 MiB per-file limit. Whitespace
-    // alone adds over 5 MiB to the complete October publication.
-    await Bun.write(temporaryPath, `${JSON.stringify(snapshot)}\n`);
-    await rename(temporaryPath, outputPath);
+    return await run();
   } finally {
-    // error-policy:J6 a failed atomic write may leave only its unique temporary file.
-    await rm(temporaryPath, { force: true });
+    release();
+    if (leaderboardWriteQueues.get(outputPath) === chained) {
+      leaderboardWriteQueues.delete(outputPath);
+    }
+  }
+}
+
+/** Counts `writeLeaderboardAtomically` calls so concurrent temporary paths never collide. */
+let writeLeaderboardSequence = 0;
+
+/**
+ * Throws when a snapshot newer than `snapshot` is already published at
+ * `outputPath`. Callers check before writing and again just before the
+ * rename, so a run that started earlier can never overwrite a newer
+ * publication that landed while it was still serializing.
+ */
+async function assertNoNewerSnapshotPublished(
+  snapshot: LeaderboardSnapshot,
+  outputPath: string,
+): Promise<void> {
+  const existing = await readFile(outputPath, "utf8").catch(() => null);
+  if (existing === null) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(existing);
+  } catch {
+    parsed = undefined;
+  }
+  const existingGeneratedAt =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as { generatedAt?: unknown }).generatedAt
+      : undefined;
+  if (
+    typeof existingGeneratedAt === "string" &&
+    Date.parse(existingGeneratedAt) > Date.parse(snapshot.generatedAt)
+  ) {
+    throw new Error(
+      `a newer snapshot (${existingGeneratedAt}) is already published at ${outputPath}; refusing to replace it with an older snapshot (${snapshot.generatedAt})`,
+    );
   }
 }
 
