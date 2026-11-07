@@ -1947,6 +1947,7 @@ async function listAdminProjects(
       enforcement: adminEnforcement(
         project,
         projectRestriction(project.id, records),
+        publicRestrictionOf(project, records),
         moderation,
       ),
     })),
@@ -2189,22 +2190,30 @@ function assertMaintainerNotBanned(
 function adminEnforcement(
   project: ProjectRecord,
   restriction: ProjectRestriction,
+  effective: ProjectRestriction,
   moderation: ProjectEnforcementState["moderation"],
 ): ProjectEnforcementState {
   return {
-    state: restriction.state,
-    appeal: restriction.appeal,
-    projectAppeal: projectAppealState(restriction),
-    since: restriction.since,
-    restrictedBy: restriction.restrictedBy,
+    // The classification is the restriction in force on the project: its
+    // own, or one held by another project on a repository it claims, which
+    // closes its public routes the same way (ADM-06). The record fields
+    // below stay the project's own: its history, its next sequence, and the
+    // moderator decision, which is recorded on the project whose records
+    // hold an undecided malicious ban.
+    state: effective.state,
+    appeal: effective.appeal,
+    projectAppeal: projectAppealState(effective),
+    since: effective.since,
+    restrictedBy: effective.restrictedBy,
     nextSequence: restriction.nextSequence,
     // The matching revision has not landed while a restricted manifest is
     // still listed or active; public routes stay closed meanwhile.
     revisionPending:
-      restriction.state !== "clear" && !enforcedManifest(project.manifest),
+      effective.state !== "clear" && !enforcedManifest(project.manifest),
     moderation,
     decisionRequired: awaitsMaliciousDecision(restriction),
-    bannedMaintainers: restriction.bannedMaintainers,
+    bannedMaintainers: effective.bannedMaintainers,
+    sourceProjectId: effective.sourceProjectId,
     records: restriction.records,
   };
 }

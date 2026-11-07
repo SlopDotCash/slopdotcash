@@ -41,6 +41,7 @@ for (const retryStatus of [200, 401, 403]) {
         moderation: "unconfigured",
         decisionRequired: false,
         bannedMaintainers: [],
+        sourceProjectId: project.id,
         records: [],
       },
     });

@@ -1357,6 +1357,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
               moderation: "unconfigured",
               decisionRequired: false,
               bannedMaintainers: [],
+              sourceProjectId: project.id,
               records: [],
             },
           },

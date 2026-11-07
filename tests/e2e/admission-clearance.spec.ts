@@ -54,6 +54,7 @@ test("admin distinguishes retained admission from the current revision and can r
               moderation: "unconfigured",
               decisionRequired: false,
               bannedMaintainers: [],
+              sourceProjectId: project.id,
               records: [],
             },
           },

@@ -65,6 +65,7 @@ test("owner-approved admission exemption requires confirmation and retains revoc
               moderation: "unconfigured",
               decisionRequired: false,
               bannedMaintainers: [],
+              sourceProjectId: project.id,
               records: [],
             },
           },
