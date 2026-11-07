@@ -71,20 +71,53 @@ export async function handlePointsDisputes(
     if (work) deps.waitUntil?.(work);
   };
   if (!key && request.method === "GET") {
-    const cursor = url.searchParams.get("before") ?? "0";
-    if (
-      !/^(0|[1-9][0-9]*)$/u.test(cursor) ||
-      !Number.isSafeInteger(Number(cursor))
-    )
-      fail(400, "invalid_cursor", "Invalid Points page.");
+    // Journal reads are pinned to one completed batch (protocol/points-v1.md):
+    // a walk reads the revision prefix that ended at its first page, so a
+    // correction appended mid-walk cannot make a pending record vanish (its
+    // old revision filtered out as superseded, its successor above the
+    // cursor). The cursor carries that ceiling beside the position; a plain
+    // numeric cursor from an older client keeps the previous live behaviour.
+    const raw = url.searchParams.get("before");
+    let ceiling: number | null = null;
+    let position = 0;
+    if (raw !== null && raw !== "0") {
+      const pinned = /^([1-9][0-9]*):([1-9][0-9]*)$/u.exec(raw);
+      if (pinned) {
+        ceiling = Number(pinned[1]);
+        position = Number(pinned[2]);
+        if (
+          !Number.isSafeInteger(ceiling) ||
+          !Number.isSafeInteger(position) ||
+          position > ceiling
+        )
+          fail(400, "invalid_cursor", "Invalid Points page.");
+      } else if (
+        /^(0|[1-9][0-9]*)$/u.test(raw) &&
+        Number.isSafeInteger(Number(raw))
+      ) {
+        position = Number(raw);
+      } else {
+        fail(400, "invalid_cursor", "Invalid Points page.");
+      }
+    }
+    if (ceiling === null) {
+      // Revisions enter only as one atomic completed batch, so the current
+      // end of the table is always a completed-batch boundary.
+      const top = await deps.db
+        .prepare(
+          "SELECT COALESCE(MAX(rowid),0) AS ceiling FROM points_revisions",
+        )
+        .first<{ ceiling: number }>();
+      ceiling = top?.ceiling ?? 0;
+    }
     const rows = await deps.db
       .prepare(`SELECT json_group_array(json_object('cursor',cursor,'id',id,'payload',payload,'disputeId',disputeId)) AS rows FROM (SELECT r.rowid AS cursor,r.id,r.payload,d.appeal_key AS disputeId
       FROM points_revisions r JOIN points_members m ON m.actor_id=json_extract(r.payload,'$.award.actor.id')
       LEFT JOIN points_disputes d ON d.revision_id=r.id AND d.appellant_github_id=m.github_id
-      WHERE m.github_id=? AND (?=0 OR r.rowid<?)
-        AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)
+      WHERE m.github_id=? AND r.rowid<=? AND (?=0 OR r.rowid<?)
+        AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid AND newer.rowid<=?)
       ORDER BY r.rowid DESC LIMIT 26)`)
-      .bind(actor.githubId, Number(cursor), Number(cursor))
+      .bind(actor.githubId, ceiling, position, position, ceiling)
       .first<{ rows: string }>();
     const records = JSON.parse(rows?.rows ?? "[]") as {
       cursor: number;
@@ -99,7 +132,7 @@ export async function handlePointsDisputes(
     }));
     return json(200, {
       awards,
-      next: records.length > 25 ? String(records[24].cursor) : null,
+      next: records.length > 25 ? `${ceiling}:${records[24].cursor}` : null,
     });
   }
   if (!key && request.method === "POST") {
