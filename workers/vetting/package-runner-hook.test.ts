@@ -23,7 +23,12 @@ test("a runner that installs and runs a package in an install hook fires", () =>
     ],
     ["package.json", '{"scripts":{"prepare":"pnpm dlx some-cli"}}\n'],
     ["package.json", '{"scripts":{"prepare":"yarn dlx some-cli"}}\n'],
+    ["package.json", '{"scripts":{"prepare":"bunx some-cli"}}\n'],
+    ["package.json", '{"scripts":{"prepare":"bun x some-cli"}}\n'],
+    ["package.json", '{"scripts":{"prepare":"npm exec --yes -- some-cli"}}\n'],
+    ["package.json", '{"scripts":{"prepare":"npx -q -y some-cli"}}\n'],
     ["setup.sh", "#!/bin/sh\nnpx -y some-cli\n"],
+    ["setup.sh", "#!/bin/sh\nbun x --bun some-cli\n"],
   ] as const)
     expect({ path, text, categories: categories(path, text) }).toEqual({
       path,
@@ -36,7 +41,10 @@ test("a runner over a declared package and an install-free run stay clean", () =
   for (const [path, text] of [
     ["package.json", '{"scripts":{"prepare":"npx tsc -p ."}}\n'],
     ["package.json", '{"scripts":{"prepare":"npx --no-install eslint ."}}\n'],
+    ["package.json", '{"scripts":{"prepare":"npm exec --no -- eslint ."}}\n'],
     ["package.json", '{"scripts":{"build":"vite build"}}\n'],
+    ["setup.sh", "#!/bin/sh\nbunx --version\n"],
+    ["setup.sh", "#!/bin/sh\nbun run build\n"],
     ["setup.sh", "#!/bin/sh\npnpm install --frozen-lockfile\n"],
   ] as const)
     expect({ path, text, categories: categories(path, text) }).toEqual({

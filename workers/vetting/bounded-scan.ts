@@ -533,11 +533,14 @@ const RULES: Rule[] = [
     severity: "high",
     // A package runner fetches a package from the registry and runs its binary
     // with no declaration in the project. `npx -y` and `pnpx -y` answer the
-    // install prompt, and `dlx` is pnpm's and yarn's spelling of the same act,
-    // so each of these is a download followed by an execution at install time.
-    // A bare `npx`/`bunx` over a package the project already declares stays
+    // install prompt, `bunx` and `bun x` are Bun's spellings and never ask, and
+    // `dlx` is pnpm's and yarn's spelling of the same act, so each of these is
+    // a download followed by an execution at install time. The yes flag may sit
+    // behind other flags (`npx -q -y`), and `npm exec` needs it to skip the
+    // prompt. A bare `npx` over a package the project already declares stays
     // out, and so does `--no-install`, which never reaches the network.
-    pattern: /\b(?:npx|pnpx)\s+(?:-y|--yes)\b|\b(?:pnpm|yarn)\s+dlx\b/iu,
+    pattern:
+      /\b(?:npx|pnpx)\b[^\n;|&]*?(?<![\w-])(?:-y|--yes)(?=\s+(?:--package(?:=|\s+)\S+\s+)?(?!--?)[A-Za-z0-9@._/-])|\bnpm\s+exec\b[^\n;|&]*?(?<![\w-])(?:-y|--yes)(?=\s+(?:--\s+|--package(?:=|\s+)\S+\s+)?(?!--?)[A-Za-z0-9@._/-])|\bbunx\s+(?:-[^\s]+\s+)*(?!--?)[A-Za-z0-9@._/-]|\bbun\s+x\s+(?:-[^\s]+\s+)*(?!--?)[A-Za-z0-9@._/-]|\b(?:pnpm|yarn)\s+dlx\b/iu,
     summary: "Installs and runs a package that the project does not declare",
   },
 ];
