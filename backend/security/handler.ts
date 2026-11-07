@@ -713,14 +713,22 @@ function allowedActions(row: CaseRow, roles: Set<Role>): string[] {
     )
       actions.push("appeal");
   }
+  // A case decided against the finding — rejected, a duplicate of another
+  // case, or out of scope — has no fix of its own to record: the duplicate's
+  // fix belongs to the original case, and a rejected or out-of-scope report
+  // must not gain a "fix merged" record next to the decision against it.
+  const decidedAgainst = ["rejected", "duplicate", "out-of-scope"].includes(
+    row.receipt_state,
+  );
   if (roles.has("security-maintainer")) {
     if (open) actions.push("request-information", "decide");
     if (awardOpen(row)) actions.push("award");
-    actions.push("remediation", "disclosure", "assign-triager");
+    if (!decidedAgainst) actions.push("remediation");
+    actions.push("disclosure", "assign-triager");
     actions.push("revoke-triager");
   } else if (roles.has("triager")) {
     if (open) actions.push("request-information");
-    actions.push("remediation");
+    if (!decidedAgainst) actions.push("remediation");
   }
   if (
     (roles.has("security-maintainer") || roles.has("financial")) &&

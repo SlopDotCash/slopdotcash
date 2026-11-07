@@ -1958,3 +1958,96 @@ for (const fault of ["failed", "missing", "partial"] as const)
     ]);
     env.sqlite.close();
   });
+
+describe("remediation recording", () => {
+  const remediate = (
+    env: ReturnType<typeof open>,
+    as: Account,
+    id: string,
+    remediationState: string,
+    extra: Record<string, unknown> = {},
+  ) => env.act(as, id, { action: "remediation", remediationState, ...extra });
+
+  test("a rejected or out-of-scope case takes no remediation record", async () => {
+    const env = open();
+    for (const outcome of ["rejected", "out-of-scope"] as const) {
+      const id = await env.receive(
+        REPORTER,
+        outcome === "rejected"
+          ? "2026-10-19T08:00:00.000Z"
+          : "2026-10-19T08:05:00.000Z",
+      );
+      const decided = await env.decide(id, `root-${outcome}`, {
+        outcome,
+        severity: "unresolved",
+        loss: "not-verified",
+        inScope: false,
+        rootCauseKey: undefined,
+      });
+      expect(decided.status).toBe(200);
+      const view = await env.call(MAINTAINER, "GET", `security-cases/${id}`);
+      expect(view.body.case.allowedActions).not.toContain("remediation");
+      const attempt = await remediate(env, MAINTAINER, id, "resolved", {
+        evidenceReference: "private exact-head test log 1",
+      });
+      expect(attempt.status).toBe(409);
+      expect(attempt.body.error).toBe("action_not_allowed");
+      const after = await env.call(REPORTER, "GET", `security-cases/${id}`);
+      expect(after.body.case).toMatchObject({
+        receiptState: outcome,
+        remediationState: "not-started",
+      });
+    }
+    env.sqlite.close();
+  });
+
+  test("the fix record belongs to the original case, not its duplicate", async () => {
+    const env = open();
+    const original = await env.receive(REPORTER, "2026-10-19T08:00:00.000Z");
+    expect((await env.decide(original, "vault-share-rounding")).status).toBe(
+      200,
+    );
+    const dupe = await env.receive(REPORTER, "2026-10-19T08:30:00.000Z");
+    const decided = await env.decide(dupe, "vault-share-rounding", {
+      outcome: "duplicate",
+      duplicateOf: original,
+      severity: "unresolved",
+      loss: "not-verified",
+    });
+    expect(decided.status).toBe(200);
+    const attempt = await remediate(env, MAINTAINER, dupe, "resolved", {
+      evidenceReference: "private exact-head test log 1",
+    });
+    expect(attempt.status).toBe(409);
+    expect(attempt.body.error).toBe("action_not_allowed");
+    // The original case still records the fix.
+    const recorded = await remediate(env, MAINTAINER, original, "resolved", {
+      evidenceReference: "private exact-head test log 1",
+    });
+    expect(recorded.status).toBe(200);
+    expect(recorded.body.case).toMatchObject({
+      remediationState: "resolved",
+    });
+    env.sqlite.close();
+  });
+
+  test("remediation stays open before and after a confirming decision", async () => {
+    const env = open();
+    const id = await env.receive(REPORTER, "2026-10-19T08:00:00.000Z");
+    // Investigation starts while the report is still undecided.
+    expect((await remediate(env, MAINTAINER, id, "investigating")).status).toBe(
+      200,
+    );
+    expect((await env.decide(id, "vault-share-rounding")).status).toBe(200);
+    expect((await remediate(env, MAINTAINER, id, "fixing")).status).toBe(200);
+    const resolved = await remediate(env, MAINTAINER, id, "resolved", {
+      evidenceReference: "private exact-head test log 1",
+    });
+    expect(resolved.status).toBe(200);
+    expect(resolved.body.case).toMatchObject({
+      receiptState: "confirmed",
+      remediationState: "resolved",
+    });
+    env.sqlite.close();
+  });
+});
