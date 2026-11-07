@@ -627,6 +627,9 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
       </div>
       <div className="project-card-content">
         <p className="project-summary">{project.description}</p>
+        {chainAssetLine(project) ? (
+          <p className="project-chain-line">{chainAssetLine(project)}</p>
+        ) : null}
         <p className="project-bounty">
           <strong>{amount}</strong>
           {bounty ? (
@@ -1330,7 +1333,17 @@ function ProjectFundsAndAwards({
   );
 }
 
+function chainAssetLine(project: ProjectDefinition): string | null {
+  const chain = project.reward.chain;
+  const currency = project.reward.currency;
+  if (!chain && !currency) return null;
+  if (chain && currency) return `Pays in ${currency} on ${chain}`;
+  if (currency) return `Pays in ${currency}`;
+  return `Settles on ${chain}`;
+}
+
 function ProjectHeader({ project }: { project: ProjectDefinition }) {
+  const chainLine = chainAssetLine(project);
   return (
     <RoutePageHeader
       title={project.name}
@@ -1349,6 +1362,7 @@ function ProjectHeader({ project }: { project: ProjectDefinition }) {
       icon={<ProjectImage key={project.id} project={project} />}
       lead={project.description}
     />
+      {chainLine ? <p className="project-chain-line">{chainLine}</p> : null}
   );
 }
 
