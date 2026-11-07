@@ -344,6 +344,22 @@ contract FableEscrowTest is FableBase {
         vault.bindDestination(1, CONTRIBUTOR, 1, keccak256("c"), uint64(block.timestamp), ""); // wrong expected version
     }
 
+    function test_sound_staleBindingVersionCannotOverwriteCurrentDestination() public {
+        bind(1, CONTRIBUTOR, 0);
+
+        bytes32 claim = keccak256(abi.encode(uint64(1), ATTACKER, uint64(0)));
+        uint64 expiresAt = uint64(block.timestamp + 1 hours);
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(ATTACKER_KEY, vault.bindingDigest(1, ATTACKER, 0, claim, expiresAt));
+        vm.prank(AUTHORITY);
+        vm.expectRevert(ProjectEscrow.InvalidBinding.selector);
+        vault.bindDestination(1, ATTACKER, 0, claim, expiresAt, abi.encodePacked(r, s, v));
+
+        (address destination, uint64 version,, uint64 activatesAt, bool cancelled) = vault.bindings(1);
+        require(destination == CONTRIBUTOR, "current destination overwritten");
+        require(version == 1 && activatesAt == block.timestamp && !cancelled, "current binding changed");
+    }
+
     function test_sound_blockedDestinationLeavesReserve() public {
         depositAs(1_000e6);
         bytes32 id = commit(keccak256("src-b"), 31, 100e6);
