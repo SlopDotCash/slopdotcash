@@ -1143,6 +1143,145 @@ describe("private intake: recorded repository rename", () => {
     });
 });
 
+describe("private intake: rename recorded mid-flight", () => {
+  const RENAMED = "example/renamed";
+  /** Publishes the recorded rename of REPO as project revision 2. */
+  function recordRename(t: ReturnType<typeof setup>) {
+    const row = t.sqlite
+      .query("SELECT manifest FROM projects WHERE id = ?")
+      .get(PROJECT) as { manifest: string };
+    const manifest = JSON.parse(row.manifest) as Record<string, unknown>;
+    manifest.repositories = [
+      {
+        id: REPO,
+        aliases: [RENAMED],
+        displayName: RENAMED,
+        githubUrl: `https://github.com/${RENAMED}`,
+      },
+    ];
+    const text = JSON.stringify(manifest);
+    const digest = createHash("sha256").update(text).digest("hex");
+    t.sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at, actor_github_id, actor_github_login) VALUES (?, 2, ?, ?, 'rename', ?, ?, ?)",
+      )
+      .run(
+        PROJECT,
+        text,
+        digest,
+        START,
+        MAINTAINER.githubId,
+        MAINTAINER.githubLogin,
+      );
+    t.sqlite
+      .query(
+        "UPDATE projects SET revision = 2, manifest = ?, manifest_sha256 = ? WHERE id = ?",
+      )
+      .run(text, digest, PROJECT);
+    t.github.rename(REPO, 700000001);
+    t.github.install(RENAMED);
+  }
+
+  test("a draft created before the rename is sent to the renamed repository and verified", async () => {
+    const t = setup();
+    await t.refresh();
+    const submission = await t.ready();
+    expect(t.row(submission.id).repository).toBe(REPO);
+    recordRename(t);
+    await t.refresh();
+    const sent = await t.send(submission.id, 1);
+    expect(sent.status).toBe(200);
+    expect(sent.body.submission?.state).toBe("receipt-verified");
+    expect(t.github.advisories.map((entry) => entry.repository)).toEqual([
+      RENAMED,
+    ]);
+    const [verified] = t.cases();
+    expect(verified).toMatchObject({
+      project_id: PROJECT,
+      advisory_repository: RENAMED,
+      submission_state: "verified",
+    });
+  });
+
+  test("a report filed before the rename is reconciled and verified after it", async () => {
+    const t = setup();
+    await t.refresh();
+    const submission = await t.ready();
+    t.github.faults.create = "timeout-after-create";
+    const sent = await t.send(submission.id, 1);
+    expect(sent.status).toBe(202);
+    expect(t.row(submission.id).state).toBe("uncertain");
+    expect(t.github.advisories).toHaveLength(1);
+    recordRename(t);
+    await t.refresh();
+    // GitHub now serves the same advisory under the repository's new name.
+    const [filed] = t.github.advisories;
+    filed.repository = RENAMED;
+    filed.advisory.html_url = `https://github.com/${RENAMED}/security/advisories/${filed.advisory.ghsa_id}`;
+    t.advance(6 * 60 * 1000);
+    const reconciled = await t.reconcile(
+      submission.id,
+      Number(t.row(submission.id).revision),
+    );
+    expect(reconciled.status).toBe(200);
+    expect(t.row(submission.id).state).toBe("receipt-verified");
+    const [verified] = t.cases();
+    expect(verified).toMatchObject({
+      project_id: PROJECT,
+      advisory_repository: RENAMED,
+      submission_state: "verified",
+    });
+  });
+
+  test("an intake moved to another registered repository still refuses the send", async () => {
+    const t = setup();
+    await t.refresh();
+    const submission = await t.ready();
+    // Revision 2 keeps REPO registered but points the program's intake at
+    // the project's other registered repository: a genuine intake change,
+    // not a rename of the submission's repository.
+    const row = t.sqlite
+      .query("SELECT manifest FROM projects WHERE id = ?")
+      .get(PROJECT) as { manifest: string };
+    const manifest = JSON.parse(row.manifest) as {
+      repositories: unknown[];
+      securityBounty: { intake: { repository: string } };
+    };
+    manifest.repositories = [
+      { id: REPO, githubUrl: `https://github.com/${REPO}` },
+      {
+        id: "example/second",
+        githubUrl: "https://github.com/example/second",
+      },
+    ];
+    manifest.securityBounty.intake.repository = "example/second";
+    const text = JSON.stringify(manifest);
+    const digest = createHash("sha256").update(text).digest("hex");
+    t.sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at, actor_github_id, actor_github_login) VALUES (?, 2, ?, ?, 'intake', ?, ?, ?)",
+      )
+      .run(
+        PROJECT,
+        text,
+        digest,
+        START,
+        MAINTAINER.githubId,
+        MAINTAINER.githubLogin,
+      );
+    t.sqlite
+      .query(
+        "UPDATE projects SET revision = 2, manifest = ?, manifest_sha256 = ? WHERE id = ?",
+      )
+      .run(text, digest, PROJECT);
+    const sent = await t.send(submission.id, 1);
+    expect(sent.status).toBe(409);
+    expect(sent.body.error).toBe("intake_changed");
+    expect(t.github.advisories).toHaveLength(0);
+    expect(t.cases()).toHaveLength(0);
+  });
+});
+
 describe("private intake: send outcomes", () => {
   test("a report is filed as the reporter and its receipt is verified with GitHub", async () => {
     const t = setup();
