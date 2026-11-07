@@ -323,6 +323,46 @@ const INTERPRETER_COMMAND = commandToken(
   String.raw`(?:python(?:3(?:\.\d+)?)?|perl|ruby|node(?:js)?|php|lua)`,
 );
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
+// A block comment wherever the sink and its decoder call meet does not change
+// the act, so the gap between them tolerates one. It is one optional comment,
+// never a repeat: a repeated lazy comment group is exponentially ambiguous
+// once the whole match fails, and the first version of this shape took 17 s on
+// 625 bytes of `eval`, a run of block comments, then a call that decodes
+// nothing. The rule stays textual, so a comment that itself spells a
+// sink-into-decoder example is matched as well.
+const COMMENT = String.raw`/\*(?:[^*]|\*(?!/))*\*/`;
+const COMMENT_GAP = String.raw`(?:\s*` + COMMENT + String.raw`)*(?:\s*)`;
+/**
+ * The calls that turn an encoded payload back into code. Every execution
+ * sink below shares this one list, so the same act cannot escape by
+ * renaming the decoder or by swapping the sink that runs it.
+ */
+// `window.atob`, `globalThis.Buffer.from`, `foo.atob`: a qualifier is static
+// member access, not a computed name (`window["atob"]`), so it stays the
+// same act. Extra parentheses around the decoder (`(base64.b64decode)(x)`)
+// and a tagged template (`atob` + backtick) are calls too.
+const DECODER_QUALIFIER = String.raw`(?:[A-Za-z_$][\w$]*\s*\.\s*)*`;
+const DECODER_NAME =
+  String.raw`(?:atob|unescape|decodeURIComponent|Buffer\s*\.\s*from` +
+  String.raw`|base64\s*\.\s*(?:urlsafe_)?b(?:16|32|64|85)decode|bytes\s*\.\s*fromhex` +
+  String.raw`|codecs\s*\.\s*decode|binascii\s*\.\s*unhexlify|(?:zlib|gzip|bz2|lzma)\s*\.\s*decompress` +
+  String.raw`|marshal\s*\.\s*loads|pickle\s*\.\s*loads)`;
+// `[(` + backtick (as \x60 to keep the raw template readable) is the call
+// opener: a normal call `atob(...)` or a tagged template `atob` + backtick.
+const DECODER_CALL =
+  String.raw`${DECODER_QUALIFIER}(?:\(\s*)?${DECODER_NAME}(?:\s*\))?\s*` +
+  COMMENT_GAP +
+  String.raw`[(\x60]`;
+
+/**
+ * `compile(payload, "<string>", "exec")` is the usual Python wrapper around a
+ * decoded payload: the decoded bytes still run, so nesting the decoder inside
+ * it is the same act, not a different one.
+ */
+const DECODER_WRAPPER =
+  String.raw`(?:${DECODER_QUALIFIER}compile\s*` +
+  COMMENT_GAP +
+  String.raw`\(\s*)?`;
 
 /**
  * Deterministic indicators. A match is a reason to look closer, never a
@@ -406,8 +446,39 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
-    pattern:
-      /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
+    // Decoding an obfuscated payload and running it is the same act whatever
+    // the decoder or the sink is called. The sink branches share one decoder
+    // list (DECODER_CALL), so rewriting `exec` as `eval`, or `runInContext`
+    // as `runInThisContext`, cannot change the verdict. `setTimeout` and
+    // `setInterval` execute a string first argument exactly like `eval`, and
+    // Python's `compile(...)` is the usual wrapper that hands the decoded
+    // payload to `exec`/`eval` unchanged, so both are the same family. Hex
+    // decoders (`bytes.fromhex`, `codecs.decode`, `binascii.unhexlify`) and
+    // the Node `vm` entry points are the same family: the decoded bytes run.
+    pattern: new RegExp(
+      String.raw`\b(?:eval|exec)\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*` +
+        DECODER_WRAPPER +
+        DECODER_CALL +
+        String.raw`|\b(?:setTimeout|setInterval)\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*` +
+        DECODER_CALL +
+        String.raw`|\b(?:new\s+)?Function\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*(?:[^()\n]{0,40}?,\s*)?` +
+        DECODER_CALL +
+        String.raw`|\bvm\s*` +
+        COMMENT_GAP +
+        String.raw`\.\s*` +
+        COMMENT_GAP +
+        String.raw`(?:runIn(?:This|New)?Context|Script)\s*` +
+        COMMENT_GAP +
+        String.raw`\(\s*` +
+        DECODER_CALL,
+      "iu",
+    ),
     summary: "Executes decoded or obfuscated code",
   },
   {
