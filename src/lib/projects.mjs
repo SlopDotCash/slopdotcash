@@ -41,7 +41,7 @@ function buildRegistry(rawDefinitions) {
           // cannot move the primary leaderboard repository.
           Number(right.skill.publishAtRoot === true) -
             Number(left.skill.publishAtRoot === true) ||
-          left.id.localeCompare(right.id),
+          left.id.localeCompare(right.id, "en"),
       )
       .map(freezeTree),
   );
@@ -237,6 +237,7 @@ export function findProjectByRepositoryId(repositoryId) {
 }
 
 export {
+  buildRegistry,
   HISTORICAL_PROJECTS,
   INGESTED_HISTORICAL_PROJECTS,
   INGESTED_PROJECTS,

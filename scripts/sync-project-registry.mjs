@@ -63,7 +63,7 @@ function assertSyncedAt(value) {
 export async function renderProjectRegistry(values, syncedAt = null) {
   assertSyncedAt(syncedAt);
   const definitions = [...assertProjectRegistry(values)].sort((left, right) =>
-    left.id.localeCompare(right.id),
+    left.id.localeCompare(right.id, "en"),
   );
   assertActiveSkillContent(definitions);
   const encodedDefinitions = JSON.stringify(definitions)

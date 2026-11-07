@@ -244,6 +244,13 @@ export interface ProjectDefinition {
 
 export declare const PROJECTS: readonly ProjectDefinition[];
 export declare const HISTORICAL_PROJECTS: readonly ProjectDefinition[];
+/** Sorts and freezes one registry; retired manifests only resolve history. */
+export declare function buildRegistry(
+  rawDefinitions: readonly ProjectDefinition[],
+): {
+  readonly historical: readonly ProjectDefinition[];
+  readonly listed: readonly ProjectDefinition[];
+};
 /** The committed snapshot build-time ingestion collected from. */
 export declare const INGESTED_PROJECTS: readonly ProjectDefinition[];
 export declare const INGESTED_HISTORICAL_PROJECTS: readonly ProjectDefinition[];
