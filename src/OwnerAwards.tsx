@@ -1,6 +1,12 @@
 import "./owner-review.css";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
@@ -10,7 +16,7 @@ import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
 import { PRD_MONTHLY_SCHEDULE } from "./lib/payments/monthly-allocation";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
-import { apiRequest } from "./lib/project-api";
+import { apiRequest, ProjectApiError } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
@@ -54,6 +60,20 @@ function baseUnitsOf(value: string, decimals: number | null) {
     return trimmed;
   }
   return parseVaultAmount(trimmed, decimals).toString();
+}
+/**
+ * Whether a failed monthly read may keep the awards already on screen.
+ * Only a request that never received an authoritative answer is
+ * transient: a network failure (ProjectApiError status 0, or a
+ * status-less fetch failure) or a 5xx. An authorization failure
+ * (401/403) — like every other HTTP status — is an answer the owner
+ * must see in full, so the retained awards are dropped. This mirrors
+ * the retention policy in lib/use-public-resource.ts.
+ */
+function isTransientFailure(error: unknown): boolean {
+  if (error instanceof ProjectApiError)
+    return error.status === 0 || error.status >= 500;
+  return true;
 }
 /** A release this browser submitted must stay visible until it settles. */
 function hasSubmittedRelease(projectId: string) {
@@ -123,6 +143,13 @@ export default function OwnerAwards({
     Record<string, Record<string, { value: string; base: string }>>
   >({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
+  // The awards currently on screen, so a same-month refresh can keep
+  // them across a transient failure. A different month never inherits
+  // them: the toolbar already names the new month.
+  const loadedView = useRef<MonthlyOwnerView | null>(null);
+  useEffect(() => {
+    loadedView.current = view;
+  }, [view]);
   const {
     busy: actionBusy,
     error: actionError,
@@ -201,21 +228,29 @@ export default function OwnerAwards({
         return null;
       }
       if (!response.ok)
-        throw new Error(body.message ?? "Awards are unavailable. Retry.");
+        throw new ProjectApiError(
+          response.status,
+          "request_failed",
+          body.message ?? "Awards are unavailable. Retry.",
+        );
       return body;
     },
     [base],
   );
   useEffect(() => {
     if (!opened) return;
-    setView(null);
-    setSelectedActor(null);
+    const month = monthRequest.period;
+    const current = loadedView.current;
+    const retained = current && current.period === month ? current : null;
+    if (!retained) {
+      setView(null);
+      setSelectedActor(null);
+    }
     setLoadError(null);
     setActionError(null);
     setNotice("");
     setSignedOut(false);
     setLoading(false);
-    const month = monthRequest.period;
     if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)) {
       setLoadError("Choose a valid contribution month.");
       return;
@@ -229,12 +264,22 @@ export default function OwnerAwards({
       controller.signal,
     )
       .then((body) => {
-        if (!controller.signal.aborted && body)
-          accept(body as unknown as MonthlyOwnerView, month);
+        if (controller.signal.aborted) return;
+        if (body) accept(body as unknown as MonthlyOwnerView, month);
+        // A null body is the 401 path in call(): the session ended, so
+        // the retained private awards leave the screen with it.
+        else setView(null);
       })
       .catch((reason) => {
-        if (!controller.signal.aborted)
-          setLoadError(errorMessage(reason, "Awards are unavailable."));
+        if (controller.signal.aborted) return;
+        if (retained && isTransientFailure(reason)) {
+          setLoadError(
+            `${errorMessage(reason, "Awards are unavailable.")} Showing the last loaded awards.`,
+          );
+          return;
+        }
+        if (retained) setView(null);
+        setLoadError(errorMessage(reason, "Awards are unavailable."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
