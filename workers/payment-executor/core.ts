@@ -1287,11 +1287,12 @@ async function replaceUnderpricedAttempt(
 /**
  * A monthly step that another sender completed can still have this signer's
  * journaled transaction, which holds its nonce. Every later send of this signer
- * waits behind that nonce. Until the signer's mined nonce passes it, send the
- * same journaled bytes again. They cannot commit the step a second time.
- * Returns true once no journaled nonce of this step remains unmined.
+ * waits behind that nonce. Until the signer's finalized nonce passes it, keep
+ * offering the journaled bytes. A latest-block nonce can disappear in a reorg;
+ * advancing the durable monthly cursor then would abandon its retry forever.
+ * Returns true once every journaled nonce of this step is finalized.
  */
-async function sendJournaledUntilMined(
+async function sendJournaledUntilFinalized(
   env: PublicEvmExecutorEnvironment,
   config: Deployment,
   key: string,
@@ -1306,7 +1307,15 @@ async function sendJournaledUntilMined(
     env.SIGNER.address,
     "latest",
   ]);
-  if (BigInt(mined as string) > BigInt(nonce)) return true;
+  if (BigInt(mined as string) > BigInt(nonce)) {
+    // Wait without rebroadcasting a transaction already included in latest;
+    // its receipt may be a revert because another keeper completed the step.
+    const finalized = await rpc(config, "eth_getTransactionCount", [
+      env.SIGNER.address,
+      "finalized",
+    ]);
+    return BigInt(finalized as string) > BigInt(nonce);
+  }
   await signAndSubmit(env, config, key, attempt.fingerprint, "", {
     network: attempt.network,
     vault: attempt.vault,
@@ -1391,7 +1400,7 @@ export async function submitEvmMonthly(
   const key = `monthly:${target.network}:${target.vault.toLowerCase()}:${plan.request.period}`;
   if (BigInt(`0x${currentRoot}`) !== 0n) {
     // Another sender may have committed this month after this signer journaled its own commit.
-    const settled = await sendJournaledUntilMined(
+    const settled = await sendJournaledUntilFinalized(
       env,
       deployment,
       key,
@@ -1399,7 +1408,7 @@ export async function submitEvmMonthly(
     );
     if (`0x${currentRoot}` !== root)
       throw new Error("Another monthly root is already committed");
-    // Not complete while this signer's journaled nonce is unmined.
+    // Not complete while this signer's journaled nonce is unfinalized.
     return {
       transactionId: null,
       alreadyCommitted: true,
@@ -1502,7 +1511,7 @@ async function submitEvmMonthlyReserve(
   if (BigInt(state.root) !== 0n)
     for (const journaled of [legacyKey, key])
       rootSettled =
-        (await sendJournaledUntilMined(
+        (await sendJournaledUntilFinalized(
           env,
           deployment,
           journaled,
@@ -1648,7 +1657,7 @@ async function submitEvmMonthlyReserve(
     for (; index < plan.entries.length && index < cursor + maxLeaves; ++index) {
       const leafKey = `${key}:${tree.hash}:leaf:${index}`;
       if (
-        !(await sendJournaledUntilMined(
+        !(await sendJournaledUntilFinalized(
           env,
           deployment,
           leafKey,
@@ -1658,7 +1667,7 @@ async function submitEvmMonthlyReserve(
         break;
       await env.JOURNAL.put(cursorKey, index + 1);
     }
-    // Complete only after every journaled nonce of this month is mined.
+    // Complete only after every journaled nonce of this month is finalized.
     return {
       transactionId: null,
       alreadyCommitted: true,
@@ -1687,7 +1696,7 @@ async function submitEvmMonthlyReserve(
         );
       // Another sender may have committed this leaf after this signer journaled its own leaf.
       // The cursor passes it only after the signer's mined nonce passes those bytes.
-      const settled = await sendJournaledUntilMined(
+      const settled = await sendJournaledUntilFinalized(
         env,
         deployment,
         leafKey,
