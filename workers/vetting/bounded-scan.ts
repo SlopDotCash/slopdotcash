@@ -284,6 +284,11 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    // SE-0135 versioned manifests: SwiftPM picks
+    // `Package@swift-<MAJOR>[.<MINOR>[.<PATCH>]].swift` for the matching
+    // toolchain, so the versioned spelling executes exactly like
+    // `Package.swift` and must classify the same way.
+    /^package@swift-\d+(?:\.\d+){0,2}\.swift$/u.test(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
