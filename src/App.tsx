@@ -18,10 +18,10 @@ import { EscrowFunding } from "./EscrowFunding";
 import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import {
+  bountyFundingLabel,
   projectRewardSummaries,
   securityBountyAmountLabel,
 } from "./lib/project-reward-summary";
-import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -600,10 +600,6 @@ function compactPrizeLabel(label: string): string {
       .format(BigInt(digits.replaceAll(",", "")))
       .toLowerCase(),
   );
-}
-
-function bountyFundingLabel(terms: SecurityBountyTerms): string {
-  return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
 }
 
 function ProjectCard({ project }: { project: ProjectDefinition }) {

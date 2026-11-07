@@ -31,6 +31,13 @@ function compactWhole(value: string): string {
     .toLowerCase();
 }
 
+/** A bounty offer is pledged until its funding is verified available. */
+export function bountyFundingLabel(
+  terms: Pick<SecurityBountyTerms, "funding">,
+): string {
+  return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
+}
+
 export function securityBountyAmountLabel(
   bounty: Pick<SecurityBountyTerms, "amount">,
 ): string {

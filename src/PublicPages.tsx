@@ -11,6 +11,12 @@ import {
 } from "lucide-react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
+import { hasBountyOverview } from "./lib/home-projects";
+import {
+  bountyFundingLabel,
+  securityBountyAmountLabel,
+} from "./lib/project-reward-summary";
+import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
@@ -33,6 +39,7 @@ import {
   PaymentLifecycle,
   RoutePageHeader,
   reviewBudgetLabel,
+  StatusBadge,
 } from "./Presentation";
 
 export function HowItWorksPage() {
@@ -270,6 +277,30 @@ function sponsorPoolLabel(project: ProjectDefinition): string {
   return monthlyPoolLabel(reward, project.rewardAsset);
 }
 
+/**
+ * A bounty-only project has no monthly pool (PRD section 8): its card names
+ * the bounty offer itself, in the words the project page uses for it, so a
+ * closed or paused program never reads as an open one.
+ */
+function sponsorBountyLabel(terms: SecurityBountyTerms): string {
+  const amount = `${securityBountyAmountLabel(terms)} / ${
+    terms.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"
+  }`;
+  return terms.status === "open"
+    ? amount
+    : `${amount} · bounty ${terms.status}`;
+}
+
+/**
+ * Only an open program with verified funds reads as verified funding: a
+ * closed or paused program names its closure instead, so it never wears
+ * the green "success" badge for money nobody can claim.
+ */
+function sponsorBountyStatusLabel(terms: SecurityBountyTerms): string {
+  if (terms.status !== "open") return `Bounty ${terms.status}`;
+  return bountyFundingLabel(terms);
+}
+
 function WhoBuildsOnSlop({
   state,
   retry,
@@ -498,25 +529,61 @@ export function SponsorsPage({
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
           {PROJECTS.map((project) => {
+            // A separate-mode bounty with no monthly pool is the bounty
+            // offer, not a pool: name it instead of "$0 monthly · not
+            // funded". A funded pool keeps its pool display.
+            const bounty =
+              project.securityBounty &&
+              (hasBountyOverview(project) ||
+                (project.reward.kind !== "external-prize-share" &&
+                  BigInt(project.reward.monthlyCapMinor) === 0n))
+                ? project.securityBounty
+                : undefined;
+            const chain = bounty ? bounty.amount.network : project.reward.chain;
+            // A bounty-only page has no #funding section until the bounty
+            // has a vault deployment, so link to the security program page
+            // that always names the offer.
+            const cardHref =
+              hasBountyOverview(project) &&
+              !(bounty?.settlement?.deployments.length ?? 0)
+                ? `/projects/${project.slug}/security`
+                : `/projects/${project.slug}/funding`;
             return (
               <li className="route-sponsor-card" key={project.id}>
-                <Link
-                  className="route-sponsor-link"
-                  href={`/projects/${project.slug}/funding`}
-                >
+                <Link className="route-sponsor-link" href={cardHref}>
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project)}</p>
-                {project.reward.chain ? (
-                  <NetworkName chain={project.reward.chain}>
-                    {NETWORK_NAMES[project.reward.chain]}
+                <p>
+                  {bounty
+                    ? sponsorBountyLabel(bounty)
+                    : sponsorPoolLabel(project)}
+                </p>
+                {chain ? (
+                  <NetworkName chain={chain}>
+                    {NETWORK_NAMES[chain as keyof typeof NETWORK_NAMES] ??
+                      chain}
                   </NetworkName>
                 ) : null}
-                <FundingStatus
-                  project={project}
-                  className="route-sponsor-status"
-                />
+                {bounty ? (
+                  <div className="route-sponsor-status">
+                    <StatusBadge
+                      tone={
+                        bounty.status === "open" &&
+                        bounty.funding.state === "verified-available"
+                          ? "success"
+                          : "neutral"
+                      }
+                    >
+                      {sponsorBountyStatusLabel(bounty)}
+                    </StatusBadge>
+                  </div>
+                ) : (
+                  <FundingStatus
+                    project={project}
+                    className="route-sponsor-status"
+                  />
+                )}
                 {hasReviewBudget ? (
                   project.reward.reviewBudget ? (
                     <small>
