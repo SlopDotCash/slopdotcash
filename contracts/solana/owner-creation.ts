@@ -1,4 +1,5 @@
 /** Owner-signed creation, checked against a current reviewed deployment. */
+import { registryProjectDigest } from "../../src/lib/vault-setup";
 import {
   type SolanaProgramConfig,
   solanaMintDetails,
@@ -19,7 +20,15 @@ import {
 
 export class SolanaVaultCreationFailed extends SolanaWalletActionError {}
 
-function candidate(template: SolanaProgramConfig, input: SolanaVaultCreation) {
+function candidate(
+  template: SolanaProgramConfig,
+  projectId: string,
+  input: SolanaVaultCreation,
+) {
+  if (input.projectDigest !== registryProjectDigest(projectId))
+    throw new SolanaWalletActionError(
+      "The project digest does not match the registry project.",
+    );
   if (
     input.programId !== template.programId ||
     input.networkDomain !== template.networkDomain ||
@@ -37,7 +46,7 @@ function candidate(template: SolanaProgramConfig, input: SolanaVaultCreation) {
     config: {
       ...template,
       payoutPolicy: input.payoutPolicy ?? "ordinary",
-      projectId: input.projectDigest,
+      projectId,
       projectPda: plan.projectPda,
       vault: plan.vault,
       owner: input.owner,
@@ -54,12 +63,13 @@ function object(value: unknown): Record<string, unknown> {
 /** No signature or broadcast; the owner reviews fees and signs in their wallet. */
 export async function prepareSolanaVaultCreation(
   template: SolanaProgramConfig,
+  projectId: string,
   input: SolanaVaultCreation,
   registrationOnly = false,
 ) {
   await verifySolanaProgram(template);
   const mint = await solanaMintDetails(template, input.mint);
-  const { plan, config } = candidate(template, {
+  const { plan, config } = candidate(template, projectId, {
     ...input,
     tokenProgram: mint.tokenProgram,
   });
@@ -72,7 +82,7 @@ export async function prepareSolanaVaultCreation(
   ).value;
   if (existing !== null) {
     try {
-      await verifySolanaDeployment(config, input.projectDigest);
+      await verifySolanaDeployment(config);
     } catch (error) {
       // The reviewed program and Config passed above; a failure now is the project account itself.
       if (
@@ -115,12 +125,13 @@ export async function prepareSolanaVaultCreation(
 /** Recover by signature alone; the finalized transaction supplies its blockhash. */
 export async function verifySolanaVaultCreation(
   template: SolanaProgramConfig,
+  projectId: string,
   input: SolanaVaultCreation,
   transactionId: string,
 ) {
   await verifySolanaProgram(template);
   const mint = await solanaMintDetails(template, input.mint);
-  const { plan, config } = candidate(template, {
+  const { plan, config } = candidate(template, projectId, {
     ...input,
     tokenProgram: mint.tokenProgram,
   });
@@ -150,6 +161,6 @@ export async function verifySolanaVaultCreation(
     );
   // The exact finalized message above set the reviewed monthly policy atomically.
   // A later owner change to that setting does not block registration.
-  await verifySolanaDeployment(config, input.projectDigest);
+  await verifySolanaDeployment(config);
   return { projectPda: plan.projectPda, vault: plan.vault };
 }

@@ -230,6 +230,17 @@ export interface ScenarioEvidence {
   vaults: Record<string, string>;
   steps: Record<string, StepRecord>;
   checks: Record<string, unknown>;
+  /** Canonical registry/on-chain identity for every Solana project in this scenario. */
+  projects?: Record<string, ScenarioProjectEvidence>;
+}
+export interface ScenarioProjectEvidence {
+  projectId: string;
+  onchainProjectId: string;
+  projectPda: string;
+  vault: string;
+  asset: string;
+  purpose: 0 | 1;
+  deployment: Record<string, string | 1 | null>;
 }
 export interface Evidence {
   schema: typeof EVIDENCE_SCHEMA;

@@ -1097,6 +1097,7 @@ async function ownerSetupWorkflow(
     expect(
       await verifySolanaVaultCreation(
         config,
+        project.id,
         reviewed.review.creation,
         solanaBase58(new Uint8Array(64)),
       ),
@@ -1311,15 +1312,13 @@ async function ownerSetupWorkflow(
       vault: retainedPlan.vault,
       deploymentTransaction: retainedSignature,
     };
-    await verifySolanaDeployment(
-      {
-        ...config,
-        projectPda: retainedPlan.projectPda,
-        vault: retainedPlan.vault,
-        payoutPolicy: "ordinary",
-      },
-      retainedCreation.projectDigest,
-    );
+    await verifySolanaDeployment({
+      ...config,
+      projectId: other.id,
+      projectPda: retainedPlan.projectPda,
+      vault: retainedPlan.vault,
+      payoutPolicy: "ordinary",
+    });
     const retainedProject = {
       ...other,
       reward: project.reward,
@@ -1394,27 +1393,33 @@ async function ownerSetupWorkflow(
         ? ("security-bounty" as const)
         : ("ordinary" as const),
     };
-    const digest = registryProjectDigest(project.id);
     await expect(
-      verifySolanaDeployment(createdConfig, "f".repeat(64)),
+      verifySolanaDeployment({
+        ...createdConfig,
+        projectPda: retainedPlan.projectPda,
+        vault: retainedPlan.vault,
+      }),
     ).rejects.toThrow("different registry project");
     await expect(
-      verifySolanaDeployment(
-        { ...createdConfig, projectPda: deployment.projectPda },
-        digest,
-      ),
+      verifySolanaDeployment({ ...createdConfig, projectId: "wrong-project" }),
     ).rejects.toThrow("different registry project");
     await expect(
-      verifySolanaDeployment(
-        { ...createdConfig, owner: owner.publicKey.toBase58() },
-        digest,
-      ),
+      verifySolanaDeployment({
+        ...createdConfig,
+        projectPda: deployment.projectPda,
+      }),
+    ).rejects.toThrow("different registry project");
+    await expect(
+      verifySolanaDeployment({
+        ...createdConfig,
+        owner: owner.publicKey.toBase58(),
+      }),
     ).rejects.toThrow();
     await expect(
-      verifySolanaDeployment(
-        { ...createdConfig, mint: owner.publicKey.toBase58() },
-        digest,
-      ),
+      verifySolanaDeployment({
+        ...createdConfig,
+        mint: owner.publicKey.toBase58(),
+      }),
     ).rejects.toThrow("asset mismatch");
     // A real duplicate initialize fails. Only its exact signed message qualifies as failed.
     const duplicatePlan = buildInitializeVaultInstructions(
@@ -1458,6 +1463,7 @@ async function ownerSetupWorkflow(
     await expect(
       verifySolanaVaultCreation(
         config,
+        project.id,
         reviewed.review.creation,
         failedCreation,
       ),

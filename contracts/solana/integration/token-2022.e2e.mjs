@@ -55,19 +55,20 @@ const bn = (value) => new BN(value.toString());
 
 test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reserved Token-2022 funds", async () => {
   await ensureConfig(program);
-  const projectId = digest(`metadata:${Date.now()}`),
+  const projectId = `token-2022-metadata-${Date.now()}`,
+    projectDigest = digest(`slop-project:${projectId}`),
     network = digest("solana:localnet");
   const project = pda(
     Buffer.from("project"),
     payer.publicKey.toBuffer(),
-    projectId,
+    projectDigest,
     Buffer.of(0),
   );
   const vault = pda(Buffer.from("vault"), project.toBuffer());
   const initialize = (selectedProgram) =>
     program.methods
       .initialize(
-        [...projectId],
+        [...projectDigest],
         [...network],
         configIdentity.publicKey,
         configFees.publicKey,
@@ -97,7 +98,7 @@ test("synthetic metadata mint state: owner deposit/withdraw/claim preserve reser
     rpcUrl: provider.connection.rpcEndpoint,
     genesisHash: await provider.connection.getGenesisHash(),
     network: "solana-localnet",
-    projectId: projectId.toString("hex"),
+    projectId,
     programId: program.programId.toBase58(),
     projectPda: project.toBase58(),
     vault: vault.toBase58(),

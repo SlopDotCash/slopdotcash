@@ -1,14 +1,21 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { registryProjectDigest } from "../../src/lib/vault-setup";
 import {
+  CONFIG_DISCRIMINATOR,
+  CONFIG_SIZE,
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
   readVaultTotals,
   solanaBase58,
   solanaConfigAddress,
+  solanaDigest,
   solanaMintDecimals,
   solanaMintDetails,
   solanaVaultAddress,
+  verifySolanaDeployment,
 } from "./adapter";
+import { buildInitializeVaultInstructions } from "./owner-instructions";
 
 const PROGRAM = "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ";
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -18,6 +25,14 @@ const PROJECT = solanaBase58(PROJECT_BYTES);
 const MINT_BYTES = new Uint8Array(32).fill(9);
 const MINT = solanaBase58(MINT_BYTES);
 const VAULT = solanaVaultAddress(PROGRAM, PROJECT);
+const OWNER_BYTES = new Uint8Array(32).fill(2);
+const OWNER = solanaBase58(OWNER_BYTES);
+const IDENTITY_BYTES = new Uint8Array(32).fill(3);
+const IDENTITY = solanaBase58(IDENTITY_BYTES);
+const FEES_BYTES = new Uint8Array(32).fill(4);
+const FEES = solanaBase58(FEES_BYTES);
+const ROTATION_BYTES = new Uint8Array(32).fill(5);
+const ROTATION = solanaBase58(ROTATION_BYTES);
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -177,6 +192,80 @@ const config = {
   projectPda: PROJECT,
   programId: PROGRAM,
 };
+
+test("deployment verification rejects another valid project's PDA and vault", async () => {
+  const projectId = "registry-project-a";
+  const otherDigest = registryProjectDigest("registry-project-b");
+  const networkDomain = "ab".repeat(32);
+  const plan = buildInitializeVaultInstructions({
+    programId: PROGRAM,
+    owner: OWNER,
+    mint: MINT,
+    projectDigest: otherDigest,
+    networkDomain,
+    identityAuthority: IDENTITY,
+    feeRecipient: FEES,
+    bindingDelaySeconds: "3600",
+    rotationDelaySeconds: "604800",
+    monthlyCap: "1",
+    automaticMonthly: false,
+  });
+  const code = new Uint8Array([1, 2, 3]);
+  const escrowConfig = new Uint8Array(CONFIG_SIZE);
+  escrowConfig.set(Buffer.from(CONFIG_DISCRIMINATOR, "hex"));
+  escrowConfig.set(IDENTITY_BYTES, 8);
+  escrowConfig.set(FEES_BYTES, 40);
+  escrowConfig.set(ROTATION_BYTES, 72);
+  const project = projectAccount(base);
+  project.set(OWNER_BYTES, 8);
+  project.set(solanaDigest(otherDigest), 40);
+  project.set(solanaDigest(networkDomain), 72);
+  project.set(IDENTITY_BYTES, 104);
+  project.set(FEES_BYTES, 136);
+  const accounts = new Map([
+    [
+      PROGRAM,
+      {
+        owner: "BPFLoader2111111111111111111111111111111111",
+        executable: true,
+        lamports: 1,
+        data: [Buffer.from(code).toString("base64"), "base64"],
+      },
+    ],
+    [solanaConfigAddress(PROGRAM), encoded(PROGRAM, escrowConfig)],
+    [plan.projectPda, encoded(PROGRAM, project)],
+  ]);
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    const result =
+      body.method === "getGenesisHash"
+        ? "local-genesis"
+        : { value: accounts.get(body.params[0]) ?? null };
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  }) as typeof fetch;
+
+  await expect(
+    verifySolanaDeployment({
+      rpcUrl: "https://rpc.invalid",
+      genesisHash: "local-genesis",
+      programId: PROGRAM,
+      projectPda: plan.projectPda,
+      projectId,
+      network: "solana-localnet",
+      networkDomain,
+      vault: plan.vault,
+      mint: MINT,
+      owner: OWNER,
+      identityAuthority: IDENTITY,
+      feeRecipient: FEES,
+      rotationAuthority: ROTATION,
+      codeSha256: Buffer.from(sha256(code)).toString("hex"),
+      upgradeAuthority: null,
+      bindingDelaySeconds: "3600",
+      rotationDelaySeconds: "604800",
+    }),
+  ).rejects.toThrow("different registry project");
+});
 
 describe("readVaultTotals", () => {
   test("reads counters and decimals from one finalized slot", async () => {

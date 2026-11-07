@@ -34,6 +34,8 @@
     "contracts/solana/commitment.ts",
     "contracts/solana/monthly-commitment.ts",
     "contracts/solana/monthly-reserve.ts",
+    "contracts/solana/scripts/acceptance.ts",
+    "contracts/solana/scripts/acceptance-extended.ts",
     "contracts/vault-totals.ts",
     "src/lib/base58.ts",
     "src/lib/security-program-draft.ts",

@@ -71,7 +71,8 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
       ),
     ),
   );
-  const projectDigest = hash("native-sol-integration-project");
+  const projectId = "native-sol-integration-project";
+  const projectDigest = hash(`slop-project:${projectId}`);
   const networkDomain = hash("native-sol-integration-domain");
   const infra = {
     ...expectedDeployment,
@@ -93,7 +94,7 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
     monthlyCap: "100000000",
     automaticMonthly: false,
   };
-  const plan = await prepareSolanaVaultCreation(infra, input);
+  const plan = await prepareSolanaVaultCreation(infra, projectId, input);
   assert.equal(plan.decimals, 9);
   assert.equal(plan.tokenProgram, SOLANA_NATIVE_ASSET);
   const sendWire = async (wire, signer = owner) => {
@@ -104,15 +105,18 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
     return signature;
   };
   const created = await sendWire(plan.transaction.transaction);
-  assert.deepEqual(await verifySolanaVaultCreation(infra, input, created), {
-    projectPda: plan.projectPda,
-    vault: plan.vault,
-  });
+  assert.deepEqual(
+    await verifySolanaVaultCreation(infra, projectId, input, created),
+    {
+      projectPda: plan.projectPda,
+      vault: plan.vault,
+    },
+  );
   const project = new PublicKey(plan.projectPda),
     vault = new PublicKey(plan.vault);
   const config = {
     ...infra,
-    projectId: projectDigest,
+    projectId,
     projectPda: plan.projectPda,
     vault: plan.vault,
     mint: SOLANA_NATIVE_ASSET,
