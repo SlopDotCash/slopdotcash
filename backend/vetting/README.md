@@ -140,8 +140,15 @@ Each service request carries:
 
 - `x-slop-vetting-key`: lowercase SHA-256 of the raw 32-byte Ed25519 public key;
 - `x-slop-vetting-timestamp`: ISO UTC time within 5 minutes of the server;
+- `x-slop-vetting-nonce`: 32 lowercase hexadecimal characters (128 random bits);
 - `x-slop-vetting-signature`: base64 Ed25519 signature of the UTF-8 text
-  `slop-vetting:v1\n<METHOD>\n<path and query>\n<timestamp>\n<SHA-256 hex of the body>`.
+  `slop-vetting:v1\n<METHOD>\n<path and query>\n<timestamp>\n<nonce>\n<SHA-256 hex of the body>`.
+
+The private sandbox POST atomically consumes `(signing key, nonce)` in D1
+before forwarding. The first request runs. An exact retry returns HTTP 409
+`replayed_request`, including after an upstream failure, because the sandbox
+response is not retained safely enough for idempotent replay. Consumed nonces
+are retained beyond the signature window.
 
 The Pages variable `VETTING_RESULT_PUBLIC_KEYS` lists the accepted public keys
 as comma-separated base64. Slop holds only public keys. A malformed list is

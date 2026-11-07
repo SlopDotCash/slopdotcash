@@ -193,6 +193,7 @@ export async function signedVettingHeaders(
   pathAndQuery: string,
   body: string | Uint8Array,
   at = new Date(),
+  nonce = "0123456789abcdef0123456789abcdef",
 ): Promise<Record<string, string>> {
   const timestamp = at.toISOString();
   const signature = new Uint8Array(
@@ -203,6 +204,7 @@ export async function signedVettingHeaders(
         method,
         pathAndQuery,
         timestamp,
+        nonce,
         await hex(
           typeof body === "string" ? new TextEncoder().encode(body) : body,
         ),
@@ -212,6 +214,7 @@ export async function signedVettingHeaders(
   return {
     "x-slop-vetting-key": await hex(publicKeyRaw),
     "x-slop-vetting-timestamp": timestamp,
+    "x-slop-vetting-nonce": nonce,
     "x-slop-vetting-signature": btoa(String.fromCharCode(...signature)),
   };
 }

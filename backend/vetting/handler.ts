@@ -164,6 +164,7 @@ export function vettingSignedMessage(
   method: string,
   pathAndQuery: string,
   timestamp: string,
+  nonce: string,
   bodySha256: string,
 ): Uint8Array {
   return new TextEncoder().encode(
@@ -172,6 +173,7 @@ export function vettingSignedMessage(
       method,
       pathAndQuery,
       timestamp,
+      nonce,
       bodySha256,
     ].join("\n"),
   );
@@ -182,11 +184,12 @@ export async function signedVettingRequest(
   request: Request,
   deps: Pick<VettingApiDependencies, "resultPublicKeys" | "now">,
   maximum = MAX_VETTING_RESULT_BYTES,
-): Promise<{ body: Uint8Array; keySha256: string }> {
+): Promise<{ body: Uint8Array; keySha256: string; nonce: string }> {
   const keys = await serviceKeys(deps.resultPublicKeys);
   if (keys.length === 0)
     fail(503, "vetting_unavailable", "The vetting service is not configured");
   const timestamp = request.headers.get("x-slop-vetting-timestamp") ?? "";
+  const nonce = request.headers.get("x-slop-vetting-nonce") ?? "";
   const keyId = request.headers.get("x-slop-vetting-key") ?? "";
   const signature = base64Bytes(
     request.headers.get("x-slop-vetting-signature") ?? "",
@@ -198,6 +201,8 @@ export async function signedVettingRequest(
     Math.abs(deps.now().getTime() - at) > SIGNATURE_WINDOW_MS
   )
     fail(401, "invalid_signature", "The signed timestamp is missing or stale");
+  if (!/^[0-9a-f]{32}$/u.test(nonce))
+    fail(401, "invalid_signature", "The signed nonce is not valid");
   const key = keys.find((candidate) => candidate.sha256 === keyId);
   if (key === undefined || signature === null || signature.length !== 64)
     fail(401, "invalid_signature", "The vetting signature is not valid");
@@ -211,12 +216,13 @@ export async function signedVettingRequest(
       request.method,
       `${url.pathname}${url.search}`,
       timestamp,
+      nonce,
       await sha256Hex(body),
     ) as Uint8Array<ArrayBuffer>,
   );
   if (!valid)
     fail(401, "invalid_signature", "The vetting signature is not valid");
-  return { body, keySha256: key.sha256 };
+  return { body, keySha256: key.sha256, nonce };
 }
 
 async function requireAdmin(
@@ -1220,6 +1226,19 @@ export async function handleVettingApi(
             503,
             "sandbox_unavailable",
             "The isolated runner is not configured",
+          );
+        if (
+          request.method === "POST" &&
+          !(await deps.vetting.consumeSignedRequestNonce(
+            signed.keySha256,
+            signed.nonce,
+            deps.now().toISOString(),
+          ))
+        )
+          fail(
+            409,
+            "replayed_request",
+            "This signed sandbox request was already consumed",
           );
         const response = await deps.sandbox.fetch(
           new Request(

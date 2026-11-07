@@ -109,6 +109,7 @@ export async function signedServiceHeaders(input: {
   pathAndQuery: string;
   body: Uint8Array;
   at?: Date;
+  nonce?: string;
 }): Promise<Record<string, string>> {
   const path = new URL(input.pathAndQuery, "https://signer.invalid");
   if (
@@ -118,6 +119,11 @@ export async function signedServiceHeaders(input: {
   )
     throw new Error("Invalid vetting service path");
   const timestamp = (input.at ?? new Date()).toISOString();
+  const nonce =
+    input.nonce ??
+    [...crypto.getRandomValues(new Uint8Array(16))]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
   const rawKey = new Uint8Array(
     await crypto.subtle.exportKey("raw", input.signer.publicKey),
   );
@@ -129,6 +135,7 @@ export async function signedServiceHeaders(input: {
         input.method,
         input.pathAndQuery,
         timestamp,
+        nonce,
         await sha256Hex(input.body),
       ) as Uint8Array<ArrayBuffer>,
     ),
@@ -136,6 +143,7 @@ export async function signedServiceHeaders(input: {
   return {
     "x-slop-vetting-key": await sha256Hex(rawKey),
     "x-slop-vetting-timestamp": timestamp,
+    "x-slop-vetting-nonce": nonce,
     "x-slop-vetting-signature": btoa(String.fromCharCode(...signature)),
   };
 }
