@@ -3997,9 +3997,10 @@ export async function generateLeaderboardFromGitHub(
     const unavailable: string[] = [];
     for (const batch of chunks([...ids], REVIEW_DETAIL_BATCH_SIZE)) {
       try {
-        const data = await client.execute(
+        const data = await executeNodeBatch(
+          client,
           "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
-          { ids: batch },
+          batch,
         );
         const nodes = asArray(data.nodes, "source availability.nodes");
         if (

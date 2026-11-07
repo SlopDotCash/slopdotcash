@@ -1345,3 +1345,52 @@ test("canonical merged file recovery binds to the census repository when no alia
     await rm(source.directory, { recursive: true, force: true });
   }
 });
+
+// The joint-hold probe re-checks the identities that failed the discarded first
+// attempt, REVIEW_DETAIL_BATCH_SIZE at a time. A gateway that refuses that whole
+// batch (502/503/504 with a non-JSON body) must split it like the other
+// nodes(ids:) callers in the generator instead of failing the run.
+test("a gateway failure on the joint-hold availability batch splits instead of failing the run", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("healthy");
+  const fixtureFetch = globalThis.fetch;
+  const availabilityBatchSizes: number[] = [];
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const body = typeof init?.body === "string" ? init.body : "";
+    if (body.includes("LeaderboardSourceAvailability")) {
+      const ids =
+        (JSON.parse(body) as { variables?: { ids?: string[] } }).variables
+          ?.ids ?? [];
+      availabilityBatchSizes.push(ids.length);
+      if (ids.length > 1)
+        return new Response("<html>gateway unavailable</html>", {
+          status: 504,
+          headers: { "content-type": "text/html" },
+        });
+    }
+    return fixtureFetch(input, init);
+  }) as typeof fetch;
+  const client = new GitHubGraphqlClient("fixture-token", transport, {
+    retryBaseDelayMs: 0,
+  });
+  try {
+    const snapshot = await generateLeaderboardFromGitHub(client, {
+      now: new Date(GENERATED_AT),
+      actualNow: new Date(GENERATED_AT),
+      evidenceToken: "fixture-token",
+      sourceRecovery: {
+        unavailableSources: [retained.id, unaffected.id].map((nodeId) => ({
+          nodeId,
+          reason: "NOT_FOUND" as const,
+        })),
+        allowJointHolds: true,
+      },
+    });
+    // The joint batch is refused, then re-requested one id at a time.
+    expect(availabilityBatchSizes[0]).toBe(2);
+    expect(availabilityBatchSizes.filter((size) => size === 1)).toHaveLength(2);
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  } finally {
+    await f.close();
+  }
+});
