@@ -402,15 +402,52 @@ function normalizeLabel(value: string): string {
 }
 
 /**
- * Whether a line opens an HTML comment that nothing later on the same line
- * closes. Comment markers inside a same-line code span are literal text, so
- * paired single-backtick spans are removed before looking; a self-contained
+ * Index of the `<!--` that opens an HTML comment nothing later on the same
+ * line closes, or -1 when there is none. Comment markers inside a code span
+ * are literal text, so a backtick run and its closing run of the same length
+ * (CommonMark section 6.1) are skipped before looking; a self-contained
  * comment (the attribution marker line is one) opens nothing.
  */
-function opensUnclosedHtmlComment(line: string): boolean {
-  const visible = line.replace(/`[^`]*`/g, "");
-  const open = visible.lastIndexOf("<!--");
-  return open !== -1 && !visible.includes("-->", open + 4);
+function unclosedHtmlCommentOpenerIndex(line: string): number {
+  let open = -1;
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] === "`") {
+      let end = index;
+      while (end < line.length && line[end] === "`") end++;
+      const runLength = end - index;
+      let close = -1;
+      let scan = end;
+      while (scan < line.length) {
+        if (line[scan] !== "`") {
+          scan++;
+          continue;
+        }
+        let runEnd = scan;
+        while (runEnd < line.length && line[runEnd] === "`") runEnd++;
+        if (runEnd - scan === runLength) {
+          close = runEnd;
+          break;
+        }
+        scan = runEnd;
+      }
+      if (close === -1) return open;
+      index = close;
+      continue;
+    }
+    if (line.startsWith("<!--", index)) {
+      open = index;
+      index += 4;
+      continue;
+    }
+    if (line.startsWith("-->", index)) {
+      open = -1;
+      index += 3;
+      continue;
+    }
+    index++;
+  }
+  return open;
 }
 
 function attributionDeclarationLineRecords(
@@ -424,17 +461,22 @@ function attributionDeclarationLineRecords(
     const newline = body.indexOf("\n", offset);
     const physicalEnd = newline === -1 ? body.length : newline;
     const raw = body.slice(offset, physicalEnd);
-    const sourceLine = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    let sourceLine = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    let lineStart = offset;
     if (comment) {
       // An HTML comment is not rendered, so its lines cannot carry a
       // visible declaration, and a fence marker inside it toggles no
-      // fence. The comment runs until a line containing `-->`.
-      if (sourceLine.includes("-->")) {
-        comment = false;
+      // fence. The comment runs until a line containing `-->`, and the
+      // visible text after that close is parsed as a normal line.
+      const closeIndex = sourceLine.indexOf("-->");
+      if (closeIndex === -1) {
+        if (newline === -1) break;
+        offset = newline + 1;
+        continue;
       }
-      if (newline === -1) break;
-      offset = newline + 1;
-      continue;
+      comment = false;
+      lineStart = offset + closeIndex + 3;
+      sourceLine = sourceLine.slice(closeIndex + 3);
     }
     const fenceMatch = sourceLine.match(
       /^\s{0,3}(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/,
@@ -464,20 +506,24 @@ function attributionDeclarationLineRecords(
       offset = newline + 1;
       continue;
     }
-    if (opensUnclosedHtmlComment(sourceLine)) {
+    const commentOpen = unclosedHtmlCommentOpenerIndex(sourceLine);
+    if (commentOpen !== -1) {
       comment = true;
+      // Only the text before `<!--` is visible: an identifier after the
+      // opener on the same line is inside the comment, not a declaration.
+      sourceLine = sourceLine.slice(0, commentOpen);
     }
     const line = sourceLine
       .trim()
       .replace(/^(?:[-*+]|\d+[.)])\s+/, "")
       .replaceAll("**", "")
       .replaceAll("__", "");
-    if (!line.startsWith("`")) {
+    if (line.length > 0 && !line.startsWith("`")) {
       records.push({
-        end: offset + sourceLine.length,
+        end: lineStart + sourceLine.length,
         normalized: line,
         raw: sourceLine,
-        start: offset,
+        start: lineStart,
       });
     }
     if (newline === -1) break;

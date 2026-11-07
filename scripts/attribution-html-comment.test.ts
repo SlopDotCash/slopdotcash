@@ -100,6 +100,40 @@ describe("attribution declarations and HTML comments", () => {
     ).toBe(true);
   });
 
+  test("an identifier after <!-- on the opening line is not a declaration", () => {
+    expect(identifiers("Models used: <!-- openai/gpt-5\n-->")).toEqual([]);
+  });
+
+  test("an identifier smuggled into a comment is not counted beside a visible footer", () => {
+    expect(
+      identifiers(
+        `Models used: <!-- anthropic/claude-sonnet-4-5\n-->\n\n${footer}`,
+      ),
+    ).toEqual(["openai/gpt-5"]);
+  });
+
+  test("a footer hidden by a comment reopened on the closing line stays hidden", () => {
+    expect(identifiers(`<!--\nnote\n--> <!--\n${footer}\n-->`)).toEqual([]);
+  });
+
+  test("a declaration after --> on the closing line is visible again", () => {
+    expect(
+      identifiers("<!--\nnote\n--> AI provider/model: openai / gpt-5"),
+    ).toEqual(["openai/gpt-5"]);
+  });
+
+  test("a <!-- inside a double-backtick code span opens no comment", () => {
+    expect(identifiers(`\`\` <!-- \`\`\n\n${footer}`)).toEqual([
+      "openai/gpt-5",
+    ]);
+  });
+
+  test("a <!-- inside a code span with an inner single backtick opens no comment", () => {
+    expect(identifiers("``a ` b ` <!-- c``\n\n" + footer)).toEqual([
+      "openai/gpt-5",
+    ]);
+  });
+
   test("the ordinary single-line marker comment still validates", () => {
     const result = assessModelAttribution([source(markerBody)], {
       requireEverySource: true,
