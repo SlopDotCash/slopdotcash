@@ -287,6 +287,21 @@ async function checkedWalletGuards(
   return actual.keys;
 }
 
+async function signatureStatus(
+  config: { rpcUrl: string },
+  transactionId: string,
+) {
+  const response = object(
+    await solanaRpc(config, "getSignatureStatuses", [
+      [transactionId],
+      { searchTransactionHistory: true },
+    ]),
+  );
+  if (!Array.isArray(response.value) || response.value.length !== 1)
+    throw new SolanaWalletActionError("Invalid transaction status response.");
+  return response.value[0];
+}
+
 async function checkTransaction(
   config: { rpcUrl: string },
   wallet: string,
@@ -306,19 +321,13 @@ async function checkTransaction(
     throw new SolanaWalletActionError(
       "This transaction does not match the pending wallet action. Check its signature in your wallet.",
     );
-  const response = object(
-    await solanaRpc(config, "getSignatureStatuses", [
-      [transactionId],
-      { searchTransactionHistory: true },
-    ]),
-  );
-  if (!Array.isArray(response.value) || response.value.length !== 1)
-    throw new SolanaWalletActionError("Invalid transaction status response.");
-  if (response.value[0] === null) {
-    if (!exactSignature) throw mismatch();
-    return { status: "pending" as const, meta: null };
+  let statusEntry = await signatureStatus(config, transactionId);
+  if (statusEntry === null) {
+    if (exactSignature) return { status: "pending" as const, meta: null };
+    statusEntry = await signatureStatus(config, transactionId);
+    if (statusEntry === null) throw mismatch();
   }
-  const status = object(response.value[0]);
+  const status = object(statusEntry);
   if (status.confirmationStatus !== "finalized")
     return { status: "pending" as const, meta: null };
   const raw = await solanaRpc(config, "getTransaction", [

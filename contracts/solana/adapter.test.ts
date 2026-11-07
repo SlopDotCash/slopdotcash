@@ -367,7 +367,7 @@ describe("program addresses", () => {
 });
 
 describe("checkSolanaFunding", () => {
-  test("rejects an unindexed mismatched deposit signature while keeping an exact signature pending", async () => {
+  test("rejects an unindexed mismatched deposit signature while keeping exact and newly indexed guarded signatures pending", async () => {
     const ownerBytes = new Uint8Array(32).fill(3);
     const feeBytes = new Uint8Array(32).fill(4);
     const identityBytes = new Uint8Array(32).fill(5);
@@ -402,6 +402,21 @@ describe("checkSolanaFunding", () => {
       bindingDelaySeconds: "3600",
       rotationDelaySeconds: "604800",
     };
+    const intent = {
+      operation: "deposit" as const,
+      wallet: solanaBase58(donorBytes),
+      gross: "1000000",
+      blockhash: solanaBase58(new Uint8Array(32).fill(12)),
+    };
+    const msg = solanaFundingMessage(
+      { ...escrowConfig, tokenProgram: SOLANA_NATIVE_ASSET },
+      intent,
+    );
+    const exactSignature = solanaBase58(ed25519.sign(msg, donorSeed));
+    const guardedMsg = Uint8Array.from(msg);
+    guardedMsg[guardedMsg.length - 1] ^= 1;
+    const guardedSignature = solanaBase58(ed25519.sign(guardedMsg, donorSeed));
+    const statusReads = new Map<string, number>();
     const configPda = solanaConfigAddress(PROGRAM);
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
@@ -432,28 +447,34 @@ describe("checkSolanaFunding", () => {
           };
         } else throw new Error(`Unexpected account ${address}`);
       } else if (body.method === "getSignatureStatuses") {
-        result = { context: { slot: 1 }, value: [null] };
+        const sig = String(body.params[0][0]);
+        const count = (statusReads.get(sig) ?? 0) + 1;
+        statusReads.set(sig, count);
+        result = {
+          context: { slot: 1 },
+          value: [
+            sig === guardedSignature && count >= 2
+              ? { confirmationStatus: "confirmed", slot: 1, err: null }
+              : null,
+          ],
+        };
       } else throw new Error(`Unexpected RPC ${body.method}`);
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
     }) as typeof fetch;
-    const intent = {
-      operation: "deposit" as const,
-      wallet: solanaBase58(donorBytes),
-      gross: "1000000",
-      blockhash: solanaBase58(new Uint8Array(32).fill(12)),
-    };
-    const msg = solanaFundingMessage(
-      { ...escrowConfig, tokenProgram: SOLANA_NATIVE_ASSET },
-      intent,
-    );
-    const exactSignature = solanaBase58(ed25519.sign(msg, donorSeed));
     expect(await checkSolanaFunding(escrowConfig, intent, exactSignature)).toBe(
       "pending",
     );
+    expect(statusReads.get(exactSignature)).toBe(1);
+    expect(
+      await checkSolanaFunding(escrowConfig, intent, guardedSignature),
+    ).toBe("pending");
+    expect(statusReads.get(guardedSignature)).toBe(2);
+    const garbageSignature = "1".repeat(64);
     await expect(
-      checkSolanaFunding(escrowConfig, intent, "1".repeat(64)),
+      checkSolanaFunding(escrowConfig, intent, garbageSignature),
     ).rejects.toThrow(
       "This transaction does not match the pending wallet action. Check its signature in your wallet.",
     );
+    expect(statusReads.get(garbageSignature)).toBe(2);
   });
 });
