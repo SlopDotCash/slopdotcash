@@ -58,7 +58,12 @@ test("a Haskell custom-setup script is an install surface", () => {
   // setup.py, extconf.rb and build.rs, so its bytes must reach the review.
   // The Cabal User Guide spells the same script `Setup.hs` or `Setup.lhs`,
   // so both spellings and any directory depth must be covered.
-  for (const path of ["Setup.hs", "Setup.lhs", "nested/Setup.lhs", "SETUP.LHS"]) {
+  for (const path of [
+    "Setup.hs",
+    "Setup.lhs",
+    "nested/Setup.lhs",
+    "SETUP.LHS",
+  ]) {
     const inspection = inspected(path, `${PAYLOAD}\n`);
 
     expect({ path, surfaces: surfacesOf(path) }).toEqual({
