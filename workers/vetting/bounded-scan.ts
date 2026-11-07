@@ -312,8 +312,27 @@ function commandToken(name: string): string {
   return String.raw`(?:"${word}"|'${word}'|${word})(?:\\\r?\n)*(?=$|[\s|;&<>()'"])`;
 }
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
-const ENV_COMMAND = commandToken("env");
-const SUDO_COMMAND = commandToken("sudo");
+/** An option value: a bare word or a quoted string that is not an option. */
+const OPERAND = String.raw`(?:"(?!-)[^"\n]{1,256}"|'(?!-)[^'\n]{1,256}'|[^\s|;&<>()'"-][^\s|;&<>()'"]*)`;
+/**
+ * `env` options and assignments that still run the command that follows
+ * (GNU and BSD `env`): `-`, `--`, `-i`, `-v`, `-u NAME`, `-C DIR`, `-P PATH`,
+ * an unquoted `-S`, and `NAME=value`. Option letters are case-sensitive.
+ * Options and quoted values are bounded so a chain of `env -u env -u …`
+ * cannot make the scan quadratic.
+ */
+const ENV_COMMAND = String.raw`${commandToken("env")}(?:\s+(?:(?-i:-(?:[iv]+|[iv]*[uCP]\s*${OPERAND}|S)|--(?:ignore-environment|debug|(?:unset|chdir|split-string)(?:=|\s+)${OPERAND})?|-)(?=$|[\s|;&<>()])|[A-Za-z_]\w*=(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\s|;&<>()'"]*))){0,16}`;
+/**
+ * `sudo` options that still run the command that follows, alone or
+ * clustered (`-Eu root`), with their long forms and `--`. `-s` and `-i` pass
+ * a following command to a shell's `-c`, so they run it too. `-e`, `-l`,
+ * `-v`, `-V`, `-K` and `-U` never run the command and are not matched.
+ * Option letters are case-sensitive: `-E` runs the command, `-e` edits it.
+ */
+const SUDO_FLAG = "[ABbEHikNnPSs]";
+const SUDO_COMMAND = String.raw`${commandToken("sudo")}(?:\s+(?-i:-(?:${SUDO_FLAG}+|${SUDO_FLAG}*[aCcDghpRrTtu]\s*${OPERAND})|--(?:askpass|bell|background|preserve-env(?:=${OPERAND})?|set-home|login|reset-timestamp|no-update|non-interactive|preserve-groups|stdin|shell|(?:auth-type|login-class|close-from|chdir|group|host|prompt|chroot|role|type|command-timeout|user)(?:=|\s+)${OPERAND})?)(?=$|[\s|;&<>()])){0,16}`;
+/** `sudo -s` or `sudo -i` with no command starts a shell that reads standard input. */
+const SUDO_STDIN_SHELL = String.raw`(?=${commandToken("sudo")}(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|(?!\s--(?=$|\s))[^\n|;&<>()'"])*?\s(?-i:-${SUDO_FLAG}*[is]|--(?:shell|login)(?=$|[\s|;&<>()])))${SUDO_COMMAND}(?=\s*(?:$|[|;&<>()]|\d+[<>]))`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
@@ -387,6 +406,17 @@ const RULES: Rule[] = [
       "iu",
     ),
     summary: "Runs a remote download in a shell",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // `sudo -s` or `sudo -i` with no command starts the target user's shell,
+    // and that shell reads the downloaded script from the pipe.
+    pattern: new RegExp(
+      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*${SUDO_STDIN_SHELL}`,
+      "iu",
+    ),
+    summary: "Runs a remote download in a sudo shell",
   },
   {
     threat: "unsafe-execution",
