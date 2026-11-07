@@ -4,9 +4,9 @@ import { inspectRepository } from "./bounded-scan";
 const enc = (text: string) => new TextEncoder().encode(text);
 
 function categories(path: string, text: string): string[] {
-  return inspectRepository({ files: [{ path, bytes: enc(text) }] }).findings.map(
-    (finding) => finding.category,
-  );
+  return inspectRepository({
+    files: [{ path, bytes: enc(text) }],
+  }).findings.map((finding) => finding.category);
 }
 
 /**
@@ -17,7 +17,10 @@ function categories(path: string, text: string): string[] {
 test("a runner that installs and runs a package in an install hook fires", () => {
   for (const [path, text] of [
     ["package.json", '{"scripts":{"prepare":"npx -y some-cli"}}\n'],
-    ["package.json", '{"scripts":{"postinstall":"npx --yes some-cli --init"}}\n'],
+    [
+      "package.json",
+      '{"scripts":{"postinstall":"npx --yes some-cli --init"}}\n',
+    ],
     ["package.json", '{"scripts":{"prepare":"pnpm dlx some-cli"}}\n'],
     ["package.json", '{"scripts":{"prepare":"yarn dlx some-cli"}}\n'],
     ["setup.sh", "#!/bin/sh\nnpx -y some-cli\n"],
