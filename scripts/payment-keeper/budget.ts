@@ -2,7 +2,7 @@ import { type Hex, keccak256, serializeTransaction } from "viem";
 import { PROJECT_SIZE, solanaBase58 } from "../../contracts/solana/adapter";
 import type { Signer } from "../../workers/payment-executor/core";
 import type { SolanaSigner } from "../../workers/payment-executor/solana";
-import type { KeeperStore } from "./storage";
+import { GAS_OVERRUN, type KeeperStore } from "./storage";
 
 export interface GasBudget {
   /** Native base units, selected by the operator. No default economic policy. */
@@ -46,10 +46,10 @@ export function validateBudget(value: GasBudget) {
 }
 /** Same-nonce EVM fee replacements share one liability: only one of them can land. */
 const nonceGroup = (id: string) => id.replace(/:r[1-9][0-9]*$/, "");
-// Durable Object SQLite limits LIKE pattern length, so compare the exact prefix.
-const SAME_NONCE = "id=? OR substr(id,1,?)=?";
+// A B-tree range matches the replacement prefix without a full-history scan.
+const SAME_NONCE = "id=? OR (id>=? AND id<?)";
 const sameNonce = (group: string) =>
-  [group, group.length + 2, `${group}:r`] as [string, number, string];
+  [group, `${group}:r`, `${group}:s`] as [string, string, string];
 
 function reserve(
   store: KeeperStore,
@@ -70,9 +70,13 @@ function reserve(
         actual: string | null;
         expiry_evidence: string | null;
       },
-      []
-    >("SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas")
-    .all();
+      [string, string]
+    >(`SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas WHERE actual IS NULL AND expiry_evidence IS NULL
+       UNION ALL
+       SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas WHERE settled_day=? AND (actual IS NOT NULL OR expiry_evidence IS NOT NULL)
+       UNION ALL
+       SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas WHERE actual IS NOT NULL AND ${GAS_OVERRUN} AND settled_day IS NOT ?`)
+    .all(day, day);
   let committed = 0n;
   // Unresolved same-nonce attempts reserve their largest worst-case charge once.
   const unresolved = new Map<string, bigint>();
@@ -150,7 +154,7 @@ export function budgetEvmSigner(
     // its own row in the nonce's group. Any other second signature is refused.
     const group = `${input.chainId}:${signer.address.toLowerCase()}:${input.nonce}`;
     const prior = store.db
-      .query<{ n: number }, [string, number, string]>(
+      .query<{ n: number }, [string, string, string]>(
         `SELECT count(*) n FROM gas WHERE ${SAME_NONCE}`,
       )
       .get(...sameNonce(group));
