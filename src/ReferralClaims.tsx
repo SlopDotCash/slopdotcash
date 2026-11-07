@@ -65,6 +65,32 @@ export function ReferralClaims() {
     key: string;
     value: Pending | null | undefined;
   } | null>(null);
+  const reviewTriggerId = useRef<string | null>(null);
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const pendingAction = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  const reviewWasOpen = useRef(false);
+  // The review replaces the buttons that opened it, so focus moves to its
+  // heading when it opens and back to the opening button when it closes.
+  // When a submitted claim keeps those buttons away, focus lands on the
+  // pending record's next action instead of the page body. This mirrors
+  // the focus handling of the Earnings wallet change and the Admin
+  // delist confirmation.
+  useEffect(() => {
+    if (review) {
+      if (!reviewWasOpen.current) reviewHeading.current?.focus();
+      reviewWasOpen.current = true;
+      return;
+    }
+    reviewWasOpen.current = false;
+    if (busy || !returnFocus.current) return;
+    returnFocus.current = false;
+    const trigger = reviewTriggerId.current
+      ? document.getElementById(`referral-review-${reviewTriggerId.current}`)
+      : null;
+    if (trigger) trigger.focus();
+    else pendingAction.current?.focus();
+  }, [review, busy]);
   const [message, setMessage] = useState("");
   const rememberPending = (
     account: ReferralAccount,
@@ -162,6 +188,7 @@ export function ReferralClaims() {
       await reviewReferralClaim(data, wallet);
       setReview({ data, wallet });
     } catch (e) {
+      returnFocus.current = true;
       setError(errorMessage(e, "The claim could not be reviewed."));
     } finally {
       setBusy(false);
@@ -204,6 +231,7 @@ export function ReferralClaims() {
             : errorMessage(e, "The claim could not be sent."),
         );
     } finally {
+      returnFocus.current = true;
       setBusy(false);
       setReview(null);
     }
@@ -265,6 +293,7 @@ export function ReferralClaims() {
           </p>
           <button
             type="button"
+            ref={pendingAction}
             disabled={busy}
             onClick={() => {
               if (!writePending(data, null)) {
@@ -297,10 +326,14 @@ export function ReferralClaims() {
           wallets.map((wallet) => (
             <button
               className="button primary-button"
+              id={`referral-review-${wallet.id}`}
               key={wallet.id}
               type="button"
               disabled={busy}
-              onClick={() => void connect(wallet)}
+              onClick={() => {
+                reviewTriggerId.current = wallet.id;
+                void connect(wallet);
+              }}
             >
               Review with {wallet.name}
             </button>
@@ -314,7 +347,9 @@ export function ReferralClaims() {
           className="referral-claim-review"
           aria-label="Review referral claim"
         >
-          <h3>Review your claim</h3>
+          <h3 tabIndex={-1} ref={reviewHeading}>
+            Review your claim
+          </h3>
           <p>
             Receive {amount(review.data.claimableBase)} on{" "}
             {networkLabel(review.data.program?.network ?? "")}.
@@ -344,7 +379,10 @@ export function ReferralClaims() {
             <button
               type="button"
               disabled={busy}
-              onClick={() => setReview(null)}
+              onClick={() => {
+                returnFocus.current = true;
+                setReview(null);
+              }}
             >
               Cancel
             </button>

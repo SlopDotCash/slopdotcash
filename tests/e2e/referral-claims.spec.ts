@@ -336,6 +336,56 @@ test("an unreadable pending marker does not hide amounts or permit an unchecked 
   expect(h.calls.filter((m) => m === "eth_sendTransaction")).toHaveLength(1);
 });
 
+test("reviewing a claim moves focus into the review and cancelling returns it to the review button", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const reviewButton = page.getByRole("button", {
+    name: "Review with MetaMask",
+  });
+  await reviewButton.focus();
+  await page.keyboard.press("Enter");
+  const region = page.getByRole("region", { name: "Review referral claim" });
+  await expect(region).toBeVisible();
+  // The review buttons unmount while the review is shown, so focus must
+  // move into the review instead of dropping to the page body.
+  await expect(
+    region.getByRole("heading", { name: "Review your claim" }),
+  ).toBeFocused();
+  await region.getByRole("button", { name: "Cancel" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(region).toHaveCount(0);
+  await expect(reviewButton).toBeFocused();
+});
+
+test("confirming a claim leaves focus on the pending claim's next action", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const reviewButton = page.getByRole("button", {
+    name: "Review with MetaMask",
+  });
+  await reviewButton.focus();
+  await page.keyboard.press("Enter");
+  const region = page.getByRole("region", { name: "Review referral claim" });
+  await expect(region).toBeVisible();
+  await region.getByRole("button", { name: "Confirm claim in wallet" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("region", { name: "Referral rewards" }),
+  ).toContainText("Claim submitted");
+  await expect(region).toHaveCount(0);
+  // The review buttons do not return once a claim is pending, so focus
+  // lands on the pending record's own next action instead of the body.
+  await expect(
+    page.getByRole("button", {
+      name: "I checked wallet activity. Review again",
+    }),
+  ).toBeFocused();
+});
+
 test("an older stored claim cannot confirm the newer request on this page", async ({
   page,
 }) => {
