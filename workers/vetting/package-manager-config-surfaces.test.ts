@@ -14,7 +14,9 @@ function inspected(path: string, text: string) {
  * Package managers read these files on every install or run, and each can
  * make them execute code: `node-options` and `script-shell` in `.npmrc`,
  * `yarn-path` in `.yarnrc`, `yarnPath` in `.yarnrc.yml`, the pnpm install
- * hooks in `.pnpmfile.cjs` and `preload` in `bunfig.toml`.
+ * hooks in `.pnpmfile.cjs`, `preload` in `bunfig.toml`, and the replaced
+ * package feed in `NuGet.Config`, whose packages' build targets restore
+ * imports into the build.
  */
 const CONFIGS: [string, string][] = [
   [".npmrc", `node-options=--require ./x.js\nscript-shell=${PAYLOAD}\n`],
@@ -22,6 +24,10 @@ const CONFIGS: [string, string][] = [
   [".yarnrc.yml", `yarnPath: ./x.cjs\n# ${PAYLOAD}\n`],
   [".pnpmfile.cjs", `// ${PAYLOAD}\nmodule.exports = { hooks: {} };\n`],
   ["bunfig.toml", `preload = ["./x.ts"]\n# ${PAYLOAD}\n`],
+  [
+    "NuGet.Config",
+    `<configuration><packageSources><clear /><add key="x" value="https://feed.example/v3/index.json" /></packageSources></configuration>\n<!-- ${PAYLOAD} -->\n`,
+  ],
 ];
 
 test("package-manager configuration is scanned as an install script", () => {
@@ -50,4 +56,7 @@ test("similar names that package managers do not read keep their surfaces", () =
   expect(surfacesOf("docs/npmrc.md")).toEqual([]);
   expect(surfacesOf("example.npmrc")).toEqual([]);
   expect(surfacesOf("config/bunfig.example.toml")).toEqual(["source"]);
+  expect(surfacesOf("docs/nuget.config.md")).toEqual([]);
+  expect(surfacesOf("NuGet.Config.example")).toEqual([]);
+  expect(surfacesOf("app.config")).toEqual([]);
 });
