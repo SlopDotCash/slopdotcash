@@ -1145,6 +1145,21 @@ export function pointMembers(
     (a, b) => b.total - a.total || a.actor.id.localeCompare(b.actor.id),
   );
 }
+/**
+ * The actor record to show for a signed-in member. The membership row keeps
+ * the login captured when the member last signed in, while the journal's
+ * latest record for the same permanent actor ID carries the account's
+ * current login (pointMembers selects it by recordedAt). Displays that name
+ * the signed-in person follow the current record, so a renamed account is
+ * not shown under its previous handle (PRD: use the permanent actor ID
+ * through renames). Members with no journal record keep the stored actor.
+ */
+export function currentMemberActor(
+  actor: PointAward["actor"],
+  members: readonly PointsMember[],
+): PointAward["actor"] {
+  return members.find((member) => member.actor.id === actor.id)?.actor ?? actor;
+}
 export function emptyPointsJournal(at: string): PointsJournal {
   return {
     schemaVersion: "1",

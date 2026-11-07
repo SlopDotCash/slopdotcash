@@ -45,6 +45,7 @@ import {
 import { loginReturnPath } from "./lib/login-return";
 import {
   assemblePoints,
+  currentMemberActor,
   POINTS_NOTICE,
   type PointsIndex,
   type PointsJournal,
@@ -365,12 +366,21 @@ export function PointsNav() {
       window.removeEventListener("popstate", close);
     };
   }, [open]);
+  const selfMember =
+    state.status === "ready" && me
+      ? state.members.find((m) => m.actor.id === me.actor.id)
+      : undefined;
   const total =
     state.status === "ready" && me
-      ? (state.members.find((m) => m.actor.id === me.actor.id)?.total ?? 0) +
-        me.welcome +
-        (me.socialPoints ?? 0)
+      ? (selfMember?.total ?? 0) + me.welcome + (me.socialPoints ?? 0)
       : null;
+  // The membership row keeps the login from the last sign-in; the journal
+  // record for the same permanent actor ID carries the current login, so a
+  // renamed account is named and linked under its current handle.
+  const displayLogin =
+    me && state.status === "ready"
+      ? currentMemberActor(me.actor, state.members).login
+      : me?.actor.login;
   const signedIn = me !== null;
   useEffect(() => {
     if (signedIn) requestPoints();
@@ -420,7 +430,8 @@ export function PointsNav() {
         Log in
       </a>
     );
-  const avatar = `https://avatars.githubusercontent.com/${encodeURIComponent(me.actor.login)}?size=80`;
+  const login = displayLogin ?? me.actor.login;
+  const avatar = `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?size=80`;
   return (
     <div className="account-control" ref={root}>
       <button
@@ -436,9 +447,7 @@ export function PointsNav() {
         }}
       >
         {failedImage === avatar ? (
-          <span aria-hidden="true">
-            {me.actor.login.slice(0, 2).toUpperCase()}
-          </span>
+          <span aria-hidden="true">{login.slice(0, 2).toUpperCase()}</span>
         ) : (
           <img
             src={avatar}
@@ -459,7 +468,7 @@ export function PointsNav() {
           id={panelId}
           aria-label="Your account details"
         >
-          <strong>@{me.actor.login}</strong>
+          <strong>@{login}</strong>
           {total === null ? (
             <p role="status">
               {state.status === "error"
@@ -473,7 +482,7 @@ export function PointsNav() {
             </button>
           ) : null}
           <a
-            href={`/contributors/${encodeURIComponent(me.actor.login)}`}
+            href={`/contributors/${encodeURIComponent(login)}`}
             onClick={navigate}
           >
             View profile

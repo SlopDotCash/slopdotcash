@@ -9,6 +9,7 @@ import { isFundingAddress } from "./lib/funding-address.mjs";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { createGlobalLeaders, openMonthScores } from "./lib/global-leaderboard";
 import { type GitHubActor, penaltyProjectOf } from "./lib/leaderboard";
+import { currentProfileActor } from "./lib/profile-actor";
 import { findProject } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 import { ProfilePoints, useProfileMembership } from "./Points";
@@ -261,78 +262,6 @@ function UnknownContributor({ login }: { login: string }) {
       </p>
     </NotFound>
   );
-}
-
-function currentProfileActor(
-  state: DataState,
-  login: string,
-  profiles: ReturnType<typeof useProfiles>["state"],
-  membership: ReturnType<typeof useProfileMembership>,
-): GitHubActor | undefined {
-  if (state.status !== "ready") return;
-  const normalizedLogin = login.toLowerCase();
-  const matchesLogin = (actor: { login: string }) =>
-    actor.login.toLowerCase() === normalizedLogin;
-  const asActor = (actor: {
-    id: string;
-    login: string;
-    avatarUrl?: string;
-  }): GitHubActor => ({
-    id: actor.id,
-    login: actor.login,
-    avatarUrl:
-      actor.avatarUrl ??
-      `https://avatars.githubusercontent.com/${encodeURIComponent(actor.login)}?size=160`,
-    url: `https://github.com/${encodeURIComponent(actor.login)}`,
-    kind: "User",
-  });
-  const actors: Array<{ id: string; login: string; avatarUrl?: string }> = [
-    ...(membership.signedInActor ? [membership.signedInActor] : []),
-    ...state.snapshot.leaders.map((leader) => leader.actor),
-    ...(state.snapshot.reviewExclusions ?? []).flatMap((exclusion) =>
-      exclusion.reviewer?.kind === "User" ? [exclusion.reviewer] : [],
-    ),
-    ...state.views.flatMap((view) => [
-      ...view.leaders.map((leader) => leader.actor),
-      ...view.opportunities.map((opportunity) => opportunity.actor),
-    ]),
-  ];
-  const conflictsWith = (candidate: { id: string }) =>
-    actors.some((actor) =>
-      actor.id === candidate.id ? !matchesLogin(actor) : matchesLogin(actor),
-    );
-  // Every identity source can veto a stale login. Wait for the session,
-  // membership and directory before selecting the actor for wallet/history reads.
-  if (
-    profiles.status !== "ready" ||
-    membership.sessionStatus === "loading" ||
-    (!membership.own && membership.joinStatus === "loading")
-  )
-    return;
-  const directoryConflict = (candidate: { id: string }) =>
-    profiles.index.people.some((person) =>
-      person.id === candidate.id ? !matchesLogin(person) : matchesLogin(person),
-    );
-  const member = membership.own ?? membership.joined;
-  if (member)
-    return matchesLogin(member.actor) &&
-      !conflictsWith(member.actor) &&
-      !directoryConflict(member.actor)
-      ? asActor(member.actor)
-      : undefined;
-  const current = actors.find(matchesLogin);
-  if (current) {
-    if (conflictsWith(current) || directoryConflict(current)) return;
-    return asActor(current);
-  }
-  // The directory can resolve an inactive actor, but cannot override a known rename.
-  const candidates = profiles.index.people.filter(
-    (person) =>
-      matchesLogin(person) &&
-      !actors.some((actor) => actor.id === person.id && !matchesLogin(actor)),
-  );
-  if (candidates.length !== 1) return;
-  return asActor(candidates[0]);
 }
 
 function shortAddress(address: string): string {
