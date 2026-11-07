@@ -56,22 +56,38 @@ test("a build definition of a recognized build system is an install surface", ()
 test("a Haskell custom-setup script is an install surface", () => {
   // Cabal runs Setup.hs itself during `cabal install`, exactly like
   // setup.py, extconf.rb and build.rs, so its bytes must reach the review.
-  const path = "Setup.hs";
-  const inspection = inspected(path, `${PAYLOAD}\n`);
+  // The Cabal User Guide spells the same script `Setup.hs` or `Setup.lhs`,
+  // so both spellings and any directory depth must be covered.
+  for (const path of ["Setup.hs", "Setup.lhs", "nested/Setup.lhs", "SETUP.LHS"]) {
+    const inspection = inspected(path, `${PAYLOAD}\n`);
 
-  expect(surfacesOf(path)).toEqual(["installScripts", "source"]);
-  expect(inspection.coverage.installScripts).toEqual({
-    state: "complete",
-    items: 1,
-  });
-  expect(inspection.findings).toContainEqual(
-    expect.objectContaining({
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
       path,
-      category: "unsafe-execution",
-      severity: "high",
-    }),
-  );
-  expect(inspection.downloads).toContain("https://evil.example/install.sh");
+      surfaces: ["installScripts", "source"],
+    });
+    expect({ path, coverage: inspection.coverage.installScripts }).toEqual({
+      path,
+      coverage: { state: "complete", items: 1 },
+    });
+    expect({
+      path,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({ path, findings: [`${path}:unsafe-execution:high`] });
+    expect({ path, downloads: inspection.downloads }).toEqual({
+      path,
+      downloads: ["https://evil.example/install.sh"],
+    });
+  }
+
+  // Ordinary Haskell modules and near-miss names stay source-only.
+  for (const path of ["Main.hs", "Main.lhs", "Setup.lhs.bak", "Setup.hs.txt"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: [],
+    });
+  }
 });
 
 // biome-ignore format: Keep this regression consistent with the contributor instruction.
