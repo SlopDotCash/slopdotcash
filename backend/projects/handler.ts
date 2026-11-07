@@ -1764,9 +1764,10 @@ async function listSetup(
   deps: ProjectApiDependencies,
 ): Promise<Response> {
   const session = await requireSession(request, deps);
-  const [projects, applications] = await Promise.all([
+  const [projects, applications, registry] = await Promise.all([
     deps.persistence.listOwnedProjects(session.githubId),
     deps.persistence.listApplicantApplications(session.githubId),
+    deps.persistence.listProjects(),
   ]);
   return json(200, {
     projects: projects.map((project) => ({
@@ -1782,7 +1783,9 @@ async function listSetup(
         applications
           .filter((application) => application.status === "pending")
           .map(async (application) =>
-            (await isPublishable(deps, application)) ? [application] : [],
+            (await isPublishable(deps, application, registry))
+              ? [application]
+              : [],
           ),
       )
     )
@@ -1794,15 +1797,36 @@ async function listSetup(
 /**
  * A stored update publishes only against its own base revision. Once another
  * revision is published it can never succeed, so setup stops offering it;
- * the owner makes the change again from the project's settings.
+ * the owner makes the change again from the project's settings. A stored
+ * application for a new project is likewise not offered once the registry
+ * permanently conflicts with it: projects are never removed, so a listed
+ * project holding its id, a skill id or a repository makes publishing
+ * answer a registry conflict forever.
  */
 async function isPublishable(
   deps: ProjectApiDependencies,
   application: ProjectApplication,
+  registry: ProjectRecord[],
 ): Promise<boolean> {
-  if (application.expectedRevision === undefined) return true;
-  const project = await deps.persistence.getProject(application.projectId);
-  return project?.revision === application.expectedRevision;
+  if (application.expectedRevision !== undefined) {
+    const project = await deps.persistence.getProject(application.projectId);
+    return project?.revision === application.expectedRevision;
+  }
+  try {
+    assertProjectRegistry([
+      ...registry.map((project) => project.manifest),
+      application.manifest,
+    ]);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof TypeError &&
+      (error.message.startsWith("project registry contains duplicate") ||
+        error.message.includes("contributor history keeps it under id"))
+    )
+      return false;
+    return true;
+  }
 }
 
 async function checkSetup(
