@@ -104,11 +104,13 @@ export type ScannerEvidence = {
 
 /**
  * The fixed vocabulary of a failed review. Only these strings, an HTTP status
- * number, and allowlisted provider stop reasons can appear, so the category
- * is safe to log beside a retry.
+ * number, allowlisted provider stop reasons and a `providerErrorDetail` (a
+ * snake_case error type or digit-only token counts) can appear, so the
+ * category is safe to log beside a retry.
  */
 export type ReviewFailureCategory =
   | `provider-http-${number}`
+  | `provider-http-${number}-${string}`
   | "timeout"
   | "network"
   | "response-unreadable"
@@ -239,10 +241,56 @@ export function validateProfile(profile: ScannerProfile) {
     if (!/^[0-9]{1,12}$/u.test(profile.rateCard[key]))
       throw new Error("Explicit rate card required");
 }
+/**
+ * The safe part of a provider error body: its error type when it is a plain
+ * snake_case word, or `input-too-long` with only the token counts the message
+ * states. The message itself is never kept, so no provider or source text can
+ * reach the category.
+ */
+export function providerErrorDetail(body: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const error =
+    parsed !== null && typeof parsed === "object"
+      ? (parsed as { error?: unknown }).error
+      : undefined;
+  if (error === null || typeof error !== "object") return null;
+  const { type, message } = error as { type?: unknown; message?: unknown };
+  if (
+    typeof message === "string" &&
+    /prompt is too long|exceeds? (?:the )?context|context (?:length|window|limit)|too many (?:input )?tokens/iu.test(
+      message,
+    )
+  ) {
+    const digits = (value: string) => value.replace(/,/gu, "");
+    const sum = /(\d[\d,]*) \+ (\d[\d,]*) > (\d[\d,]*)/u.exec(message);
+    if (sum)
+      return `input-too-long-${digits(sum[1])}-plus-${digits(sum[2])}-over-${digits(sum[3])}`;
+    const over = /(\d[\d,]*) tokens? > (\d[\d,]*)/u.exec(message);
+    return over
+      ? `input-too-long-${digits(over[1])}-over-${digits(over[2])}`
+      : "input-too-long";
+  }
+  return typeof type === "string" && /^[a-z][a-z_]{0,47}$/u.test(type)
+    ? type
+    : null;
+}
 async function limitedResponse(response: Response): Promise<string> {
   if (!response.ok) {
-    await response.body?.cancel();
-    throw new ReviewFailure(`provider-http-${response.status}`);
+    // Up to 16 KiB of the error body, only to derive `providerErrorDetail`.
+    const detail = await readBoundedText(response, 16 * 1024, "Provider error")
+      .then(providerErrorDetail)
+      .catch(() => null);
+    await response.body?.cancel().catch(() => undefined);
+    throw new ReviewFailure(
+      detail === null
+        ? `provider-http-${response.status}`
+        : `provider-http-${response.status}-${detail}`,
+    );
   }
   try {
     return await readBoundedText(response, 1024 * 1024, "Provider response");
