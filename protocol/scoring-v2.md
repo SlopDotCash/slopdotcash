@@ -160,8 +160,9 @@ Approved by the repository owner on 2026-10-08 in response to issue #506
 integration branch is shared among its pull-request author and every distinct
 non-bot GitHub user that GitHub links as a commit author. Unlinked commit
 emails, `[bot]` app logins, the vendor coding-agent accounts `claude`, `codex`,
-and `cursoragent` (pinned by node ID), and `Co-authored-by` trailers do not
-count. A commit SHA gives credit
+and `cursoragent`, the account that GitHub links to the placeholder identity
+`x <x@x>` (`xxxxxxxxxxxxx`) (all pinned by node ID), and `Co-authored-by`
+trailers do not count. A commit SHA gives credit
 only in the earliest merged pull request that lists it, so a consolidation or
 promotion pull request cannot score it again. Collect every commit page before
 scoring. Above GitHub's 250-commit pull-request listing limit, paginate the
