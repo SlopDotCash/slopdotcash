@@ -9,7 +9,9 @@ import {
   emptyPointsJournal,
   type PointsIndex,
   pointKey,
+  pointMembers,
 } from "../../src/lib/points";
+import { publishedPointsMembers } from "../../src/lib/points-members";
 import { expect, test } from "./fixtures";
 
 const actor = {
@@ -60,7 +62,12 @@ function pointsFixture() {
     })),
   };
   assemblePoints(index, parts);
-  return { index, parts };
+  const members = publishedPointsMembers(
+    journal,
+    pointMembers(journal),
+    createHash("sha256").update(JSON.stringify(index)).digest("hex"),
+  );
+  return { index, parts, members };
 }
 
 /** All product APIs are local read-only fixtures; no identity or chain service. */
@@ -71,6 +78,8 @@ async function servePointsSite(page: Page) {
   const points = pointsFixture();
   let unavailable = false;
   let reads = 0;
+  let journalAnswer: Promise<void> | null = null;
+  let answerJournal = () => {};
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -100,11 +109,25 @@ async function servePointsSite(page: Page) {
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"/>',
       });
     if (url.origin !== deployment.site) return route.abort();
-    if (url.pathname === "/data/points.json") {
+    // The profile reads the member record; the leaderboard reads the journal.
+    if (url.pathname === "/data/points-members.json") {
       reads++;
       return unavailable
         ? route.fulfill({ status: 503, body: "Points temporarily unavailable" })
-        : route.fulfill({ json: points.index });
+        : route.fulfill({ json: points.members });
+    }
+    if (url.pathname === "/data/points.json") {
+      reads++;
+      if (journalAnswer) await journalAnswer;
+      // A held read may already be cancelled when it answers.
+      return (
+        unavailable
+          ? route.fulfill({
+              status: 503,
+              body: "Points temporarily unavailable",
+            })
+          : route.fulfill({ json: points.index })
+      ).catch(() => {});
     }
     const shard = /^\/data\/points\/([0-9a-f])\.json$/u.exec(url.pathname);
     if (shard)
@@ -136,6 +159,13 @@ async function servePointsSite(page: Page) {
     fail: () => (unavailable = true),
     recover: () => (unavailable = false),
     reads: () => reads,
+    /** The journal index does not answer until released. */
+    hold: () => {
+      journalAnswer = new Promise<void>((resolve) => {
+        answerJournal = resolve;
+      });
+    },
+    release: () => answerJournal(),
   };
 }
 
@@ -145,7 +175,7 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
 }, info) => {
   const fixture = await servePointsSite(page);
   diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points\.json$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points(?:-members)?\.json$/u,
   );
   await page.clock.install({ time: new Date(at) });
   await page.goto(`${fixture.site}/contributors/${actor.login}`, {
@@ -203,6 +233,42 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
     table.getByRole("row").filter({ hasText: actor.login }),
   ).toContainText("10");
   expect(fixture.reads()).toBe(readsBeforeRetry + 1);
+});
+
+test("returning from a cancelled leaderboard read keeps the profile's verified Points", async ({
+  diagnostics,
+  page,
+}) => {
+  const fixture = await servePointsSite(page);
+  // Leaving the leaderboard before its journal answers cancels that read.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET https?:\/\/[^ ]+\/data\/points\.json$/u,
+  );
+  await page.goto(`${fixture.site}/contributors/${actor.login}`, {
+    waitUntil: "networkidle",
+  });
+  const total = page.locator(".profile-totals strong").last();
+  await expect(total).toHaveText("10");
+  expect(fixture.reads()).toBe(1);
+  fixture.hold();
+  await page
+    .getByRole("banner")
+    .getByRole("link", { name: "Slop home", exact: true })
+    .click();
+  await page
+    .getByRole("link", { name: "View leaderboard", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loading points…" }),
+  ).toBeVisible();
+  expect(fixture.reads()).toBe(2);
+  await page.goBack();
+  await page.goBack();
+  await expect(page).toHaveURL(`${fixture.site}/contributors/${actor.login}`);
+  // The member record read a moment ago still covers the profile.
+  await expect(total).toHaveText("10");
+  expect(fixture.reads()).toBe(2);
+  fixture.release();
 });
 
 test("an initial Points failure remains unavailable without a verified journal", async ({

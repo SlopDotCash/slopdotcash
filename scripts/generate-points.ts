@@ -26,6 +26,11 @@ import {
   reconcilePointPenalties,
   retainedBatchOwnedKeys,
 } from "../src/lib/points";
+import {
+  assertPublishedPointsMembers,
+  MAX_POINTS_MEMBERS_BYTES,
+  publishedPointsMembers,
+} from "../src/lib/points-members";
 import type { PointsSummary } from "../src/lib/points-summary";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
@@ -632,6 +637,21 @@ export async function generatePoints(
   await rename(
     "public/data/points-summary.json.tmp",
     "public/data/points-summary.json",
+  );
+  // The contributor and project pages read each member's daily and monthly
+  // points from this record instead of the sixteen journal shards.
+  const membersRecord = `${JSON.stringify(
+    publishedPointsMembers(journal, members, hash(JSON.stringify(index))),
+  )}\n`;
+  if (Buffer.byteLength(membersRecord) > MAX_POINTS_MEMBERS_BYTES)
+    throw new Error("Published points members exceed their size limit");
+  // The pages refuse anything this validator refuses, so a publication that
+  // cannot be read stops here instead of on every profile and project page.
+  assertPublishedPointsMembers(JSON.parse(membersRecord));
+  await writeFile("public/data/points-members.json.tmp", membersRecord);
+  await rename(
+    "public/data/points-members.json.tmp",
+    "public/data/points-members.json",
   );
   await writeFile(
     ".points-build/report.json",
