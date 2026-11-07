@@ -528,6 +528,18 @@ const RULES: Rule[] = [
     ),
     summary: "Executes a file staged by an earlier download in the same file",
   },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A package runner fetches a package from the registry and runs its binary
+    // with no declaration in the project. `npx -y` and `pnpx -y` answer the
+    // install prompt, and `dlx` is pnpm's and yarn's spelling of the same act,
+    // so each of these is a download followed by an execution at install time.
+    // A bare `npx`/`bunx` over a package the project already declares stays
+    // out, and so does `--no-install`, which never reaches the network.
+    pattern: /\b(?:npx|pnpx)\s+(?:-y|--yes)\b|\b(?:pnpm|yarn)\s+dlx\b/iu,
+    summary: "Installs and runs a package that the project does not declare",
+  },
 ];
 
 // Rule text reaches the reviewer. Bind it, matching semantics, scope and order
