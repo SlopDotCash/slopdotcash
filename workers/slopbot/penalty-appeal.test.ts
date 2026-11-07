@@ -3864,3 +3864,74 @@ test("reverting the branch to the appealed head after a later head's close never
     ]);
   });
 });
+
+test("a maintainer reopen of a pushed head also settles the appeal opened on the closed revision", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    // The author pushes a new head while the appeal is open, and the
+    // maintainer reopens the item at that head. The reopen reverses the
+    // debit, so it also settles the appeal that debit belongs to: nothing
+    // may escalate to a moderator afterwards.
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60 * 60 * 1000));
+    expect(await run.deliver(await run.reopen())).toBe("human_reopen");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "maintainer_reopen",
+      },
+    ]);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "deny",
+        escalated: 0,
+        resolution: "upheld",
+        resolved_by: "maintainer",
+      },
+    ]);
+    const start = Date.now();
+    setSystemTime(new Date(start + 7 * day + 60_000));
+    expect(await run.tick()).toEqual([]);
+  });
+});
+
+test("a maintainer reopen does not settle an appeal opened after it, on another revision", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    const reopened = await run.reopen(MAINTAINER, CLOSED_AT);
+    // The reopen has happened on GitHub, but its job is still queued when
+    // the author pushes and appeals the current head. That appeal opened
+    // after the reopen and names another revision, so the queued reopen
+    // does not decide it.
+    run.head("d".repeat(40));
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 60 * 60 * 1000));
+    await run.deliver(run.job("appeal", { senderId: AUTHOR }));
+    expect(run.sql(APPEAL)).toHaveLength(1);
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "spam",
+        debit_thirds: 3,
+        moderator_review: 0,
+        reversal: "maintainer_reopen",
+      },
+    ]);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "deny",
+        escalated: 0,
+        resolution: null,
+        resolved_by: null,
+      },
+    ]);
+  });
+});

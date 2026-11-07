@@ -19,6 +19,7 @@ import {
   openAppeal,
   recordDraft,
   resolveAppeal,
+  unresolvedAppealsFor,
 } from "./appeals";
 import { activeBudgetBlock, recordBudgetBlock } from "./budget-blocks";
 import {
@@ -105,7 +106,7 @@ import type { ValueMergeVerifier } from "./value-merge-profile";
 
 export type ReviewEnv = ModelEnv &
   QualityTrust & {
-    SLOPBOT_DB: store.D1TransactionalDatabase;
+    SLOPBOT_DB: store.D1TransactionalDatabase<store.D1QueryStatement>;
     VALUE_MERGE_VERIFIER?: ValueMergeVerifier;
     SLOPBOT_APP_ID: string;
     SLOPBOT_APP_PRIVATE_KEY: string;
@@ -2261,8 +2262,20 @@ export async function recordHumanSignal(
           }
         : undefined,
     );
-    const appeal = await appealByKey(db, `appeal:${issue.node_id}:${decided}`);
-    if (appeal !== null) {
+    // The reopen also settles the finding appeals it covers, not only the
+    // one keyed by the reopened revision: an appeal opened on the closed
+    // revision stays open when the author pushed before the reopen, yet the
+    // reversal above already settled its debit. Left open it would escalate
+    // to a moderator after 7 days and could be denied on the item even
+    // though the maintainer reopen always wins. An appeal opened after the
+    // reopen keeps its own path unless it names the reopened revision.
+    const reopenedAt = source ? Date.parse(source.occurredAt) : Number.NaN;
+    for (const appeal of await unresolvedAppealsFor(db, issue.node_id)) {
+      if (
+        appeal.appeal_key !== `appeal:${issue.node_id}:${decided}` &&
+        !(Date.parse(appeal.opened_at) <= reopenedAt)
+      )
+        continue;
       await resolveAppeal(db, appeal.appeal_key, "upheld", "maintainer");
       const current = await appealByKey(db, appeal.appeal_key);
       if (

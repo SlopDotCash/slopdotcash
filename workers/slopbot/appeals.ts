@@ -8,7 +8,11 @@ import { PARTICIPATION_BAN_QUERY } from "../../backend/projects/account-bans";
 import { githubIdSet } from "../../src/lib/github-ids";
 import { type Category, CLOSE_CONFIDENCE, type Job } from "./contracts";
 import { dispatchDueJobs } from "./maintainer-holds";
-import type { D1Database, D1TransactionalDatabase } from "./persistence";
+import type {
+  D1Database,
+  D1QueryStatement,
+  D1TransactionalDatabase,
+} from "./persistence";
 
 export const APPEAL_RESOLUTION_DAYS = 7;
 export const ESCALATION_DEBIT_THIRDS = 24;
@@ -130,6 +134,24 @@ export async function latestAppealFor(
     )
     .bind(itemNodeId)
     .first<Appeal>();
+}
+
+/** Every unresolved finding appeal for an item, oldest first. A value
+ * dispute is excluded: it is selected only by its exact key, and a
+ * maintainer reopen never decides one. */
+export async function unresolvedAppealsFor(
+  db: D1Database<D1QueryStatement>,
+  itemNodeId: string,
+): Promise<Appeal[]> {
+  const rows = await db
+    .prepare(
+      `SELECT ${COLUMNS} FROM slopbot_appeals WHERE item_node_id = ?
+         AND appeal_key NOT LIKE 'value-appeal:%' AND resolved_at IS NULL
+       ORDER BY opened_at, appeal_key`,
+    )
+    .bind(itemNodeId)
+    .all<Appeal>();
+  return rows.results ?? [];
 }
 
 /** Stores the first draft only; a retry keeps it. */
