@@ -160,6 +160,12 @@ function browserLanes(files: Record<string, string>) {
   return (include as { lane: string }[]).map(({ lane }) => lane);
 }
 
+test("the nested Solana audit script selects the Solana CI gates", () => {
+  expect(
+    scopeFor({ "scripts/audit-solana-dependencies.mjs": "fixture\n" }).solana,
+  ).toBe("true");
+});
+
 for (const path of [
   "workers/fee-converter/evm.ts",
   "backend/fee-conversions/handler.ts",

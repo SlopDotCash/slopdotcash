@@ -11,8 +11,31 @@ sudo apt-get update
 sudo apt-get install --no-install-recommends -y libudev-dev
 install_dir="$RUNNER_TEMP/slop-solana-tools"
 mkdir -p "$install_dir"
-curl --fail --location --retry 3 --output "$install_dir/solana.tar.bz2" https://github.com/anza-xyz/agave/releases/download/v2.1.21/solana-release-x86_64-unknown-linux-gnu.tar.bz2
-tar -xjf "$install_dir/solana.tar.bz2" -C "$install_dir"
+archive="$install_dir/solana.tar.bz2"
+archive_size=298782636
+archive_sha256=5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397
+curl \
+  --fail \
+  --location \
+  --connect-timeout 10 \
+  --max-time 600 \
+  --max-filesize "$archive_size" \
+  --retry 5 \
+  --retry-delay 2 \
+  --retry-all-errors \
+  --speed-limit 1024 \
+  --speed-time 60 \
+  --output "$archive" \
+  https://github.com/anza-xyz/agave/releases/download/v2.1.21/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+[[ "$(stat -c '%s' "$archive")" == "$archive_size" ]] || {
+  echo 'Agave archive size mismatch' >&2
+  exit 1
+}
+printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum --check --status || {
+  echo 'Agave archive checksum mismatch' >&2
+  exit 1
+}
+tar -xjf "$archive" -C "$install_dir"
 export PATH="$install_dir/solana-release/bin:$PATH"
 printf '%s\n' "$install_dir/solana-release/bin" >> "$GITHUB_PATH"
 [[ "$(solana --version)" == solana-cli\ 2.1.21* ]]
