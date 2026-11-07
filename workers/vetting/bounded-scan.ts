@@ -325,6 +325,52 @@ const INTERPRETER_COMMAND = commandToken(
 const INTERPRETER_PIPE_TARGET = String.raw`(?:${INTERPRETER_COMMAND}(?:\s+-)?|${commandToken(String.raw`python(?:3(?:\.\d+)?)?`)}\s+-u(?:\s+-)?)`;
 
 /**
+ * A store path is assembled one argument at a time, as
+ * `os.path.join(home, ".aws", "credentials")` does, and then no separator is
+ * written anywhere. Two spellings assemble it: a comma-separated call, and
+ * Python's `pathlib` `/` operator.
+ *
+ * The first component of the call spelling is anchored to an argument list: it
+ * either follows a comma (any argument after the first) or a call opener
+ * immediately before it (the first argument). A list, tuple or set that merely
+ * names the components - `[".aws", "credentials"]`, `(".kube", "config")` -
+ * therefore reads as data, not as a store read, while every call form the
+ * suite pins (`join(home, ...)`, `os.path.join(str(home), ...)`, a call split
+ * across lines) is still read. Anchoring it as a call would cost several times
+ * more on files dense in call syntax, so the anchor is a bounded lookbehind
+ * guarded by a lookahead: it is evaluated only where a quoted component
+ * begins, and no quantifier in it is unbounded.
+ */
+const CALL_OR_ARG = String.raw`(?=["'\x60])(?:(?<=,\s{0,4})|(?<=[A-Za-z_$][\w$.]{0,40}\(\s{0,4}))`;
+function joinedPath(...components: string[]): string {
+  const quoted = components.map((component) => `["'\x60]${component}["'\x60]`);
+  return (
+    CALL_OR_ARG +
+    quoted.join(String.raw`\s*,\s*(?:[A-Za-z_$][\w$.]{0,15}\s*,\s*)?`)
+  );
+}
+
+/** The same stores assembled with Python's `pathlib` `/` operator. */
+function slashJoinedPath(...components: string[]): string {
+  const quoted = components.map((component) => `["'\x60]${component}["'\x60]`);
+  return quoted.join(String.raw`\s*\/\s*`);
+}
+
+/** A file name component, as it appears quoted inside an assembled path. */
+const FILE_COMPONENT = String.raw`[^"'\x60]{1,40}`;
+/**
+ * A store whose name is a single component, so there is no separator to key
+ * on: `join(home, ".npmrc")` names it in an argument position and
+ * `Path.home() / ".npmrc"` puts the pathlib operator in front of it. Both are
+ * evidence of assembly; a bare quoted name (a list of store names, a prose
+ * mention) is not, so neither form matches one.
+ */
+function singleComponentPath(component: string): string {
+  const quoted = `["'\x60]${component}["'\x60]`;
+  return `${CALL_OR_ARG}${quoted}` + String.raw`|\s*\/\s*` + quoted;
+}
+
+/**
  * Deterministic indicators. A match is a reason to look closer, never a
  * confirmation: it escalates the result to a specialist review.
  */
@@ -336,8 +382,14 @@ const RULES: Rule[] = [
     // slash, backslash, or closing brace is immediately on the left, in any
     // case. A closing quote is not required. A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
-    pattern:
-      /\.config\/solana\/id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'`/\\}])Local Extension Settings\b|\.ethereum\/keystore/iu,
+    pattern: new RegExp(
+      String.raw`\.config[/\\]+solana[/\\]+id\.json|wallet\.dat|nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|(?<=["'\x60/\\}])Local Extension Settings\b|\.ethereum[/\\]+keystore` +
+        `|${joinedPath("\\.config", "solana", "id\\.json")}` +
+        `|${joinedPath("\\.ethereum", "keystore")}` +
+        `|${slashJoinedPath("\\.config", "solana", "id\\.json")}` +
+        `|${slashJoinedPath("\\.ethereum", "keystore")}`,
+      "iu",
+    ),
     summary: "Reads a wallet key file or browser wallet extension store",
   },
   {
@@ -350,18 +402,42 @@ const RULES: Rule[] = [
   {
     threat: "credential-theft",
     severity: "high",
+    // A store path is written with any directory prefix: `~`, `$HOME`,
+    // `/home/<user>`, `%USERPROFILE%` or a drive letter. The prefix is not
+    // part of the store's name, so only the separator before it is required,
+    // and the literal `~` this alternation used to name alone refused every
+    // other one.
     // "Login Data" is Chromium's password-file name. Match when a quote,
     // slash, backslash, or closing brace is immediately on the left, in any
     // case, including "Login Data For Account". A bare phrase is ordinary
     // English, and a high finding stays open after specialist review.
-    pattern:
-      /~\/\.ssh\/|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws\/credentials|\.git-credentials|\.netrc\b|\.config\/gh\/hosts\.yml|(?<=["'`/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b/iu,
+    pattern: new RegExp(
+      String.raw`[/\\]+\.ssh[/\\]+|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[/\\]+credentials|\.git-credentials|\.netrc\b|\.config[/\\]+gh[/\\]+hosts\.yml|(?<=["'\x60/\\}])Login Data\b|security find-(?:generic|internet)-password|\bgh auth token\b` +
+        `|${joinedPath("\\.aws", "credentials")}` +
+        `|${joinedPath("\\.config", "gh", "hosts\\.yml")}` +
+        `|${joinedPath("\\.ssh", FILE_COMPONENT)}` +
+        `|${slashJoinedPath("\\.aws", "credentials")}` +
+        `|${slashJoinedPath("\\.config", "gh", "hosts\\.yml")}` +
+        `|${slashJoinedPath("\\.ssh", FILE_COMPONENT)}`,
+      "iu",
+    ),
     summary: "Reads a stored credential, key or password store",
   },
   {
     threat: "credential-theft",
     severity: "medium",
-    pattern: /~\/\.npmrc|\.pypirc|\.docker\/config\.json|\.kube\/config/iu,
+    // Same prefix rule as the high store rule above: the registry token file
+    // is named relatively or through any home expansion, and only the
+    // separator before it is required.
+    pattern: new RegExp(
+      String.raw`[/\\]+\.npmrc|\.pypirc|\.docker[/\\]+config\.json|\.kube[/\\]+config` +
+        `|${singleComponentPath("\\.npmrc")}` +
+        `|${joinedPath("\\.docker", "config\\.json")}` +
+        `|${joinedPath("\\.kube", "config")}` +
+        `|${slashJoinedPath("\\.docker", "config\\.json")}` +
+        `|${slashJoinedPath("\\.kube", "config")}`,
+      "iu",
+    ),
     summary: "Reads a package-registry or cluster credential file",
   },
   {
