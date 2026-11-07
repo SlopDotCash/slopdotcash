@@ -1027,7 +1027,13 @@ export async function listStoredSubmissions(
         rows.push({
           createdAt: candidate.created_at,
           submission: decorateStoredSubmission(
-            candidate,
+            // A case authority's list applies the same time-based moves as
+            // the reporter's own rows above: an interrupted forward becomes
+            // uncertain and an unverifiable one fails here too, instead of
+            // showing as still sending or confirming until the reporter
+            // happens to read first. A failed settle shows the row as
+            // stored; the next read retries it.
+            await settle(deps, candidate).catch(() => candidate),
             stored,
             record,
             roles,
