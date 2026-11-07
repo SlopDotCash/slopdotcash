@@ -408,7 +408,12 @@ try {
     "straggler-resumed",
   );
   assert.equal(resumed.exit, 0, resumed.stdout);
-  const finished = await Bun.file(join(out, "upgrade/upgrade.json")).json();
+  const finished = (await Bun.file(
+    join(out, "upgrade/upgrade.json"),
+  ).json()) as {
+    before: unknown;
+    steps: Record<string, { block: string | number; transactionId?: string }>;
+  };
   assert.equal(
     finished.steps[`upgrade-vault:${straggler}`].transactionId,
     signature,
@@ -441,7 +446,7 @@ try {
   assert.equal(healthy.exit, 0, healthy.stderr);
   results.validUpgrade = { exit: healthy.exit };
   const preservationBlock = Math.max(
-    ...Object.values(finished.steps).map((step: any) => Number(step.block)),
+    ...Object.values(finished.steps).map((step) => Number(step.block)),
   ).toString();
   const frozen = JSON.stringify({
     before: finished.before,
