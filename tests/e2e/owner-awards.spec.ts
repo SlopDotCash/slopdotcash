@@ -858,16 +858,23 @@ test("a transient refresh failure keeps the loaded monthly awards", async ({
     }),
   );
   let status = 200;
+  let bodyMode: "json" | "html" | "wrong-period" = "json";
   await page.route(
     "**/api/v1/payments/projects/eliza/monthly/2026-11",
-    (route) =>
-      route.fulfill({
+    (route) => {
+      if (bodyMode === "html")
+        return route.fulfill({
+          status,
+          body: "<html><body>Forbidden</body></html>",
+          contentType: "text/html",
+        });
+      return route.fulfill({
         status,
         json:
           status === 200
             ? {
                 projectId: "eliza",
-                period: "2026-11",
+                period: bodyMode === "wrong-period" ? "2026-10" : "2026-11",
                 manifestSha256: "a".repeat(64),
                 automatic: true,
                 cutoffAt: "2026-12-04T00:00:00.000Z",
@@ -906,7 +913,8 @@ test("a transient refresh failure keeps the loaded monthly awards", async ({
                     ? "Awards are unavailable. Retry."
                     : "Current GitHub maintainer authority could not be verified.",
               },
-      }),
+      });
+    },
   );
   await openMonthlyAwards(page);
   const awards = page.getByRole("region", { name: "Monthly awards" });
@@ -940,4 +948,24 @@ test("a transient refresh failure keeps the loaded monthly awards", async ({
   await refresh.click();
   await expect(awards).toContainText("first-contributor");
   await expect(awards).toContainText("second-contributor");
+  // An authorization answer with an unreadable body (an intermediary
+  // error page) is still authoritative: the private awards leave the
+  // screen instead of being kept as a stale view.
+  status = 403;
+  bodyMode = "html";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("invalid JSON");
+  await expect(awards).not.toContainText("first-contributor");
+  // A later successful refresh loads the awards again.
+  status = 200;
+  bodyMode = "json";
+  await refresh.click();
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards).toContainText("second-contributor");
+  // A 200 body that fails verification is invalid, not transient: the
+  // retained awards leave the screen.
+  bodyMode = "wrong-period";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("could not be verified");
+  await expect(awards).not.toContainText("first-contributor");
 });

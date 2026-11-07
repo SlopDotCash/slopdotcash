@@ -179,7 +179,14 @@ export default function OwnerAwards({
         (body.proposal !== null && !Array.isArray(body.proposal.allocations)) ||
         (body.run !== null && !Array.isArray(body.run.awards))
       )
-        throw new Error("The award response could not be verified.");
+        // A 200 body that fails verification is an invalid answer, not a
+        // transient failure: carry its status so the refresh drops the
+        // retained awards instead of showing them as stale-but-fine.
+        throw new ProjectApiError(
+          200,
+          "invalid_response",
+          "The award response could not be verified.",
+        );
       setView(body);
       setDrafts((previous) => {
         const rows = new Map(
@@ -217,16 +224,32 @@ export default function OwnerAwards({
         (response.status === 401 || response.status === 403)
       )
         setDrafts({});
-      const body = (await readBoundedJson(
-        response,
-        8 * 1024 * 1024,
-        label,
-      )) as Record<string, unknown> & { message?: string };
-      if (signal?.aborted) return null;
-      if (response.status === 401) {
+      // A 401 is an authoritative session-ended answer, not a body to
+      // parse: an unreadable body must not keep the private awards on
+      // screen or hide the sign-in prompt.
+      if (!signal?.aborted && response.status === 401) {
         setSignedOut(true);
         return null;
       }
+      let body: Record<string, unknown> & { message?: string };
+      try {
+        body = (await readBoundedJson(
+          response,
+          8 * 1024 * 1024,
+          label,
+        )) as Record<string, unknown> & { message?: string };
+      } catch (error) {
+        // Keep the known status on an unreadable body (an intermediary
+        // error page, an empty body, an oversize body): without it the
+        // refresh treats an authoritative answer as a transient failure
+        // and keeps the private awards on screen.
+        throw new ProjectApiError(
+          response.status,
+          "invalid_response",
+          errorMessage(error, "Awards are unavailable. Retry."),
+        );
+      }
+      if (signal?.aborted) return null;
       if (!response.ok)
         throw new ProjectApiError(
           response.status,
