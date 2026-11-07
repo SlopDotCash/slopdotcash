@@ -91,8 +91,15 @@ function iso(value: unknown): value is string {
   );
 }
 function exact(value: object, keys: string[]) {
-  if (Object.keys(value).sort().join() !== keys.sort().join())
+  // Membership compare instead of sorting both key lists on every call:
+  // Object.keys are unique and the lengths are equal, so every actual key
+  // being expected is the same check the sorted joins performed.
+  const actual = Object.keys(value);
+  if (actual.length !== keys.length)
     throw new Error("Unexpected points fields");
+  const expected = new Set(keys);
+  for (const key of actual)
+    if (!expected.has(key)) throw new Error("Unexpected points fields");
 }
 export function pointRevisionId(revision: Omit<PointRevision, "id">): string {
   return sha256Hex(JSON.stringify(revision));
