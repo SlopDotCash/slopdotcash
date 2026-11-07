@@ -812,3 +812,185 @@ test("a stale public cycle does not lock the review month or discard its draft",
     fullPage: true,
   });
 });
+
+test("a transient refresh failure keeps the loaded monthly awards", async ({
+  page,
+  diagnostics,
+}, info) => {
+  // The two failed refreshes below are caused on purpose.
+  diagnostics.allowResponse(
+    500,
+    "GET",
+    "/api/v1/payments/projects/eliza/monthly/2026-11",
+  );
+  diagnostics.allowResponse(
+    403,
+    "GET",
+    "/api/v1/payments/projects/eliza/monthly/2026-11",
+  );
+  const project = projectWithVault();
+  await page.clock.setFixedTime(new Date("2026-12-02T12:00:00.000Z"));
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/api/v1/points/session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+  await page.route("**/data/cycles/index.json*", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        generatedAt: "2026-12-02T00:00:00.000Z",
+        cycles: [],
+      },
+    }),
+  );
+  let status = 200;
+  let bodyMode: "json" | "html" | "wrong-period" | "null" = "json";
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-11",
+    (route) => {
+      if (bodyMode === "html")
+        return route.fulfill({
+          status,
+          body: "<html><body>Forbidden</body></html>",
+          contentType: "text/html",
+        });
+      if (bodyMode === "null")
+        return route.fulfill({
+          status,
+          body: "null",
+          contentType: "application/json",
+        });
+      return route.fulfill({
+        status,
+        json:
+          status === 200
+            ? {
+                projectId: "eliza",
+                period: bodyMode === "wrong-period" ? "2026-10" : "2026-11",
+                manifestSha256: "a".repeat(64),
+                automatic: true,
+                cutoffAt: "2026-12-04T00:00:00.000Z",
+                deployment: null,
+                asset: {
+                  network: "base-sepolia",
+                  assetAddress: `0x${"1".repeat(40)}`,
+                  assetDecimals: 9,
+                  symbol: "TEST",
+                },
+                proposal: {
+                  capBase: "5000000000",
+                  allocationSequence: 0,
+                  allocations: [
+                    {
+                      githubUserId: "1",
+                      login: "first-contributor",
+                      grossBase: "1234567890",
+                      proposedGrossBase: "1234567890",
+                      sourceDigest: "1".repeat(64),
+                    },
+                    {
+                      githubUserId: "2",
+                      login: "second-contributor",
+                      grossBase: "2000000000",
+                      proposedGrossBase: "2000000000",
+                      sourceDigest: "2".repeat(64),
+                    },
+                  ],
+                },
+                run: null,
+              }
+            : {
+                message:
+                  status === 500
+                    ? "Awards are unavailable. Retry."
+                    : "Current GitHub maintainer authority could not be verified.",
+              },
+      });
+    },
+  );
+  await openMonthlyAwards(page);
+  const awards = page.getByRole("region", { name: "Monthly awards" });
+  await expect(awards).toContainText("first-contributor");
+  const refresh = page.getByRole("button", {
+    name: "Refresh awards",
+    exact: true,
+  });
+  // A transient failure keeps the loaded awards on screen, with the
+  // failure riding above them instead of replacing them.
+  status = 500;
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Showing the last loaded awards.",
+  );
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards).toContainText("second-contributor");
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("owner-awards-refresh-retained.png"),
+    fullPage: true,
+  });
+  // An authorization answer is not transient: the private awards leave
+  // the screen and only the refusal remains.
+  status = 403;
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("maintainer authority");
+  await expect(awards).not.toContainText("first-contributor");
+  // A later successful refresh loads the awards again.
+  status = 200;
+  await refresh.click();
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards).toContainText("second-contributor");
+  // An authorization answer with an unreadable body (an intermediary
+  // error page) is still authoritative: the private awards leave the
+  // screen instead of being kept as a stale view.
+  status = 403;
+  bodyMode = "html";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("invalid JSON");
+  await expect(awards).not.toContainText("first-contributor");
+  // A later successful refresh loads the awards again.
+  status = 200;
+  bodyMode = "json";
+  await refresh.click();
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards).toContainText("second-contributor");
+  // A 200 body that fails verification is invalid, not transient: the
+  // retained awards leave the screen.
+  bodyMode = "wrong-period";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("could not be verified");
+  await expect(awards).not.toContainText("first-contributor");
+  // A 403 with a scalar JSON body (`null`) is still authoritative: the
+  // private awards leave the screen instead of being kept as a stale view.
+  status = 403;
+  bodyMode = "null";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("invalid JSON");
+  await expect(awards).not.toContainText("first-contributor");
+  // A later successful refresh loads the awards again.
+  status = 200;
+  bodyMode = "json";
+  await refresh.click();
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards).toContainText("second-contributor");
+  // A 200 with a scalar JSON body (`null`) is invalid, not a silent
+  // clear: the retained awards leave the screen with an error shown.
+  bodyMode = "null";
+  await refresh.click();
+  await expect(page.getByRole("alert")).toContainText("invalid JSON");
+  await expect(awards).not.toContainText("first-contributor");
+});
