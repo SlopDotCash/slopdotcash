@@ -169,6 +169,37 @@ function assertRepositoryTransition(previousRepositories, nextRepositories) {
 }
 
 /**
+ * The project links name the primary repository: they are derived from it
+ * when the project is created, and the project page's GitHub link and the
+ * security page's "View in GitHub" link publish `links.repository`. A
+ * transfer of the primary repository must therefore move `links.repository`
+ * and `links.issues` to the appended alias in the same revision, exactly as
+ * it must move `githubUrl` and `displayName`; otherwise the public pages
+ * keep publishing the pre-transfer path after the registry stops treating
+ * it as the repository's current path. Revisions that record no transfer
+ * keep the owner's presentation freedom over links.
+ */
+function assertTransferLinks(previous, next) {
+  const previousRepository = previous.repositories[0];
+  const nextRepository = next.repositories[0];
+  if (!previousRepository || !nextRepository) return;
+  const previousAliases = previousRepository.aliases ?? [];
+  const nextAliases = nextRepository.aliases ?? [];
+  if (nextAliases.length !== previousAliases.length + 1) return;
+  const alias = nextAliases.at(-1).toLowerCase();
+  const pathOf = (value) =>
+    new URL(value).pathname.replace(/\/$/u, "").toLowerCase();
+  if (
+    pathOf(next.links.repository) !== `/${alias}` ||
+    pathOf(next.links.issues) !== `/${alias}/issues`
+  ) {
+    throw new TypeError(
+      "a repository transfer must publish its appended alias in the project links",
+    );
+  }
+}
+
+/**
  * Refuses identity drift and silent material-policy edits. Historical records
  * remain valid because callers receive a new revision rather than mutating an
  * old acknowledgement.
@@ -206,6 +237,7 @@ export function assertProjectPolicyTransition(previousValue, nextValue) {
     );
   }
   assertRepositoryTransition(previous.repositories, next.repositories);
+  assertTransferLinks(previous, next);
   const previousReceiptPolicy = previous.terms.receiptPolicy;
   const nextReceiptPolicy = next.terms.receiptPolicy;
   const initialReceiptActivation =
