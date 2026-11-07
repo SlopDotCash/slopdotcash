@@ -218,7 +218,7 @@ const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
-  /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
+  /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|jl|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
   /\.(?:node|wasm|so|dylib|dll|exe|jar|pyc|class|bin|a|o)$/iu;
 const ARCHIVES = /\.(?:zip|tar|tgz|gz|bz2|xz|7z|rar|whl|gem|crate)$/iu;

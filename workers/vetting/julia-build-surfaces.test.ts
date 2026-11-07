@@ -10,6 +10,21 @@ function inspected(path: string, text: string) {
   });
 }
 
+function inspectedMany(entries: Array<{ path: string; text: string }>) {
+  return inspectRepository({
+    files: entries.map((entry) => ({
+      path: entry.path,
+      bytes: new TextEncoder().encode(entry.text),
+    })),
+  });
+}
+
+function findingPaths(inspection: ReturnType<typeof inspected>) {
+  return inspection.findings.map(
+    (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+  );
+}
+
 test("a Julia package build script is an install surface", () => {
   // Pkg runs deps/build.jl as Julia while building a package after it is
   // added or updated, the same install-time execution build.rs and
@@ -57,4 +72,58 @@ test("an ordinary build.jl keeps no finding", () => {
   );
   expect(inspection.findings).toEqual([]);
   expect(inspection.downloads).toEqual([]);
+});
+
+test("a Julia source file has a source surface", () => {
+  // build.jl's include() evaluates the target file when the package
+  // builds, so a .jl file is executable content even when it is not
+  // deps/build.jl itself. Before the source-surface fix, .jl files had
+  // no surface at all and inspectRepository skipped them entirely.
+  for (const path of ["deps/payload.jl", "src/foo.jl"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["source"],
+    });
+  }
+});
+
+test("an include() in build.jl does not hide a payload in the included file", () => {
+  // The same payload that build.jl itself is flagged for must be
+  // flagged when it lives in the file build.jl includes: include()
+  // evaluates the target when the package builds.
+  const inspection = inspectedMany([
+    { path: "deps/build.jl", text: 'include("payload.jl")\n' },
+    { path: "deps/payload.jl", text: `# ${PAYLOAD}\n` },
+  ]);
+  expect(findingPaths(inspection)).toEqual([
+    "deps/payload.jl:unsafe-execution:high",
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+});
+
+test("an include chain in build.jl does not hide a payload in the leaf file", () => {
+  const inspection = inspectedMany([
+    { path: "deps/build.jl", text: 'include(joinpath(@__DIR__, "a.jl"))\n' },
+    { path: "deps/a.jl", text: 'include("sub/b.jl")\n' },
+    { path: "deps/sub/b.jl", text: `# ${PAYLOAD}\n` },
+  ]);
+  expect(findingPaths(inspection)).toEqual([
+    "deps/sub/b.jl:unsafe-execution:high",
+  ]);
+});
+
+test("a fetched-code payload inside an included .jl file is flagged", () => {
+  // The download-and-execute form: the fetched body is piped to a shell
+  // from the file build.jl includes, so the finding must land on the
+  // included file rather than staying silent.
+  const inspection = inspectedMany([
+    { path: "deps/build.jl", text: 'include("payload.jl")\n' },
+    { path: "deps/payload.jl", text: `${PAYLOAD}\n` },
+  ]);
+  expect(findingPaths(inspection)).toEqual([
+    "deps/payload.jl:unsafe-execution:high",
+  ]);
 });
