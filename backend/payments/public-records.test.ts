@@ -92,6 +92,66 @@ function fixture() {
   return { sqlite, database, payment, read };
 }
 
+function settled(
+  f: ReturnType<typeof fixture>,
+  input: {
+    id: string;
+    actor: string;
+    gross: string;
+    fee: string;
+    digest: string;
+  },
+) {
+  const transaction = `0x${input.digest}`;
+  const net = (BigInt(input.gross) - BigInt(input.fee)).toString();
+  f.sqlite
+    .query(`INSERT INTO payment_obligations
+      (id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,
+       gross_base,fee_base,source_digest,state,created_at,paid_transaction)
+      VALUES(?,?,?,?,'base',?,?,6,?,?,?,'paid',?,?)`)
+    .run(
+      input.id,
+      "project",
+      input.actor,
+      "base-mainnet",
+      vault,
+      asset,
+      input.gross,
+      input.fee,
+      input.digest,
+      when,
+      transaction,
+    );
+  f.sqlite
+    .query(
+      `INSERT INTO payment_events VALUES(?,?,0,'finalized-block','paid',?,?,?)`,
+    )
+    .run(
+      "base-mainnet",
+      transaction,
+      input.id,
+      JSON.stringify({
+        kind: "paid",
+        transactionId: transaction,
+        eventIndex: 0,
+        obligationId: input.id,
+        projectId: "project",
+        network: "base-mainnet",
+        chain: "base",
+        vault,
+        githubUserId: input.actor,
+        sourceDigest: input.digest,
+        grossMicro: input.gross,
+        feeMicro: input.fee,
+        netMicro: net,
+        assetAddress: asset,
+        assetDecimals: 6,
+      }),
+      when,
+    );
+  return { transaction, digest: input.digest };
+}
+
 test("public vault payments retain the recorded work month and net asset amount without exposing private or unpaid records", async () => {
   const f = fixture();
   try {
@@ -156,6 +216,77 @@ test("public vault payments retain the recorded work month and net asset amount 
     expect(
       (await f.read("projects/unpaid/vault-payments")).body.payments,
     ).toEqual([]);
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("a paid month stays linked when the chain fee is the legacy floor and the monthly row rounded up", async () => {
+  const f = fixture();
+  try {
+    // 349 base units: floor(349/50) is 6, ceil is 7. A vault that reserved the
+    // award before fees rounded up holds 6; a month frozen now records 7.
+    // Those are the same award, so the settlement record keeps its month.
+    const legacy = settled(f, {
+      id: "award-floor",
+      actor: "123",
+      gross: "349",
+      fee: "6",
+      digest: "c".repeat(64),
+    });
+    const unrelated = settled(f, {
+      id: "award-other",
+      actor: "456",
+      gross: "349",
+      fee: "7",
+      digest: "d".repeat(64),
+    });
+    f.sqlite
+      .query(
+        "INSERT INTO monthly_reward_bases VALUES('project','2026-11','{}',?,?, '698',2,?)",
+      )
+      .run("a".repeat(64), "b".repeat(64), when);
+    f.sqlite
+      .query(
+        "INSERT INTO monthly_payment_runs VALUES('project','2026-11','automatic',NULL,0,'{}',?,'base-mainnet',?,'698',?,?)",
+      )
+      .run("e".repeat(64), vault, when, when);
+    f.sqlite
+      .query(
+        "INSERT INTO monthly_payment_obligations VALUES('project','2026-11',?,?,'349',?,?, 'base-mainnet',?,?)",
+      )
+      .run("123", "contributor", "7", legacy.digest, vault, when);
+    f.sqlite
+      .query(
+        "INSERT INTO monthly_payment_obligations VALUES('project','2026-11',?,?,'349',?,?, 'base-mainnet',?,?)",
+      )
+      .run("456", "other", "5", unrelated.digest, vault, when);
+    const result = await f.read();
+    expect(result.status).toBe(200);
+    expect(
+      result.body.payments.map(
+        (payment: {
+          transactionId: string;
+          contributionMonth: string | null;
+          netBase: string;
+        }) => ({
+          transactionId: payment.transactionId,
+          contributionMonth: payment.contributionMonth,
+          netBase: payment.netBase,
+        }),
+      ),
+    ).toEqual([
+      {
+        transactionId: legacy.transaction,
+        contributionMonth: "2026-11",
+        netBase: "343",
+      },
+      {
+        transactionId: unrelated.transaction,
+        contributionMonth: null,
+        netBase: "342",
+      },
+    ]);
   } finally {
     f.sqlite.close();
   }
