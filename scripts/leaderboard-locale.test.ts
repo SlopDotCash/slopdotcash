@@ -168,3 +168,68 @@ test("Turkish generation keeps expand-review opportunity on English-first review
     expect(expand?.map((entry) => entry.source.id)).toEqual([englishFirst]);
   });
 });
+
+test("Turkish generation keeps resolved-issue credit on the English-first closing pull request", () => {
+  // Resolved-issue credit scores only before Score v2 takes effect, so this
+  // case stays in the July 2026 legacy window.
+  const generatedAt = "2026-07-20T00:00:00.000Z";
+  const closedAt = "2026-07-15T12:00:00.000Z";
+  setSystemTime(new Date(generatedAt));
+  const input = penaltyScoreInput([], generatedAt);
+  input.mergedPullRequests = [];
+  input.mergedPullRequestOutcomes = [];
+  input.closedUnmergedPullRequests = [];
+  input.detailEligibleMergedPullRequestIds = [];
+  input.sourceUpdatedAt = generatedAt;
+  input.valuePolicy = undefined;
+  input.valueDecisions = undefined;
+  input.closedIssueCount = 1;
+  input.resolvedIssues = [
+    {
+      id: "I_locale_issue",
+      number: 99,
+      title: "Defect fixed by two same-time merges",
+      url: "https://github.com/SlopDotCash/asi/issues/99",
+      body: "A defect.",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: closedAt,
+      closedAt,
+      stateReason: "COMPLETED",
+      author: PROJECT_OWNER,
+      assignees: [],
+      labels: [],
+      comments: [],
+      closedByPullRequests: [
+        {
+          id: ids[1],
+          number: 52,
+          url: "https://github.com/SlopDotCash/asi/pull/52",
+          mergedAt: closedAt,
+          body: "Fixes a defect.",
+          createdAt: "2026-07-14T00:00:00.000Z",
+          updatedAt: closedAt,
+          author: PROJECT_OWNER,
+        },
+        {
+          id: ids[0],
+          number: 51,
+          url: "https://github.com/SlopDotCash/asi/pull/51",
+          mergedAt: closedAt,
+          body: "Fixes a defect.",
+          createdAt: "2026-07-14T00:00:00.000Z",
+          updatedAt: closedAt,
+          author: PENALIZED_AUTHOR,
+        },
+      ],
+    },
+  ];
+  const resolvedCredit = () =>
+    createLeaderboardSnapshot(input)
+      .ledger.filter((entry) => entry.category === "resolved-issue")
+      .map((entry) => `${entry.id} by ${entry.actor.login}`);
+  const expected = [`I_locale_issue:resolved-by:${ids[0]} by author`];
+  expect(resolvedCredit()).toEqual(expected);
+  withTurkishLocale(() => {
+    expect(resolvedCredit()).toEqual(expected);
+  });
+});

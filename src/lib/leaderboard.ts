@@ -2095,7 +2095,7 @@ function resolvedIssueContributor(
         (left, right) =>
           parseIsoTime(right.mergedAt ?? "") -
             parseIsoTime(left.mergedAt ?? "") ||
-          left.id.localeCompare(right.id),
+          left.id.localeCompare(right.id, "en"),
       )[0] ?? null
   );
 }
