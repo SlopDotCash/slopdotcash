@@ -7,6 +7,8 @@
 // One recorded monthly-setting request, one wallet, and four evidence classes:
 // empty, nonexistent, matching, finalized mismatch. Storage is synchronous.
 // A returned wallet hash is fixed; user/legacy evidence stays editable.
+// A missing arbitrary receipt represents EVM; Solana first checks the exact
+// retained-message signature. These adapter predicates are not interchangeable.
 // Chain identity, transaction bytes and finality are external predicates.
 // Authored by source inspection only; no check was run for this revision.
 module ui_monthly_setting_recovery {

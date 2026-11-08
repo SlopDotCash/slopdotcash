@@ -21,6 +21,11 @@ account/network and hash-syntax checks, a null receipt returns `pending`.
 only `pending`, `failed` or `finalized`. Therefore a syntactically valid entered
 identifier that receives `pending` can reach the hidden-input state. This is
 source-path evidence, not a newly executed wallet or browser reproduction.
+An independent source review confirmed that Solana first verifies the signature
+against the retained message and blockhash. An arbitrary nonexistent Solana
+signature does not therefore share the EVM missing-receipt path. The model's
+nonexistent-identifier class represents that EVM path; the Solana signature
+predicate remains an explicit adapter boundary.
 
 ## Correction and preserved boundaries
 
