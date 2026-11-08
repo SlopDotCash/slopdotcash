@@ -6,6 +6,7 @@
 // and proves the exact atomic wrap and USDC swap without spending gas topups.
 // Requires a local Docker/Podman context with the reviewed image from
 // scripts/local-solana-validator.mjs already installed. No image is pulled here.
+// The selected TMPDIR must be shared with that local container runtime.
 //   bun workers/fee-converter/solana-local.integration.ts
 
 import { createHash } from "node:crypto";
@@ -330,6 +331,8 @@ const stderr = openSync(join(dir, "validator.stderr.log"), "w", 0o600);
 let validator:
   | Awaited<ReturnType<typeof startLocalSolanaValidator>>
   | undefined;
+let primaryFailure: { error: unknown } | undefined;
+const cleanupFailures: unknown[] = [];
 try {
   validator = await startLocalSolanaValidator({
     args: [
@@ -671,11 +674,29 @@ try {
   console.log(
     `PASS: ${selected} Solana local live cycle (${parsed.legacy ? "legacy" : "v0"}, ${proof.tables.length} lookup tables)`,
   );
+} catch (error) {
+  primaryFailure = { error };
 } finally {
   try {
     await validator?.close();
-  } finally {
-    closeSync(stdout);
-    closeSync(stderr);
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  for (const descriptor of [stdout, stderr]) {
+    try {
+      closeSync(descriptor);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
   }
 }
+if (cleanupFailures.length > 0)
+  throw new AggregateError(
+    primaryFailure
+      ? [primaryFailure.error, ...cleanupFailures]
+      : cleanupFailures,
+    primaryFailure
+      ? "Fee conversion and validator cleanup failed"
+      : "Validator cleanup failed",
+  );
+if (primaryFailure) throw primaryFailure.error;
