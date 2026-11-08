@@ -36,6 +36,11 @@ const drivers = [
   ],
   ["security-inbox-list", "node", ["backend/security/inbox-list.workflow.mjs"]],
   [
+    "incomplete-assessments",
+    "node",
+    ["backend/notifications/incomplete-assessments.workflow.mjs"],
+  ],
+  [
     "reporting-readiness",
     "node",
     ["backend/security/reporting-readiness.workflow.mjs"],
