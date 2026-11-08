@@ -1605,12 +1605,14 @@ function PrivateReportDetail({
               </button>
             </p>
           ) : null}
-          <h4>{detail.value.report.summary}</h4>
+          <h4 id={`report-summary-${submission.id}`}>
+            {detail.value.report.summary}
+          </h4>
           {/* biome-ignore lint/a11y/useSemanticElements: This named scroll region must preserve the report's preformatted text. */}
           <pre
             className="security-report-text"
             role="region"
-            aria-label="Private report text"
+            aria-labelledby={`submission-${submission.id} report-summary-${submission.id}`}
             // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the complete private report.
             tabIndex={0}
           >

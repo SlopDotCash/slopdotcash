@@ -3366,7 +3366,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       afterTextResize.viewport,
     );
     const reportText = report.getByRole("region", {
-      name: "Private report text",
+      name: new RegExp(summary, "u"),
     });
     await reportText.focus();
     await expect(reportText).toBeFocused();
@@ -4926,24 +4926,25 @@ test("an Inbox focus recheck clears the account changed in another tab @registry
   await setIntake(request, repository, "disabled");
   const summary = `Synthetic first-tab report ${id}`;
   const description = `Synthetic confidential first-tab detail ${id}, created only in local test storage.`;
-  const received = await api(
-    request,
-    "POST",
-    "security-submissions",
-    TOKENS[first],
-    {
+  const companionSummary = `${summary} companion`;
+  const companionDescription = `${description} Distinct companion evidence.`;
+  const createReport = (reportSummary: string, reportDescription: string) =>
+    api(request, "POST", "security-submissions", TOKENS[first], {
       projectId: id,
       idempotencyKey: key(),
       origin: "slop",
       report: {
-        summary,
-        description,
+        summary: reportSummary,
+        description: reportDescription,
         cvssVectorString: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
       },
-    },
-  );
+    });
+  const received = await createReport(summary, description);
+  const companion = await createReport(companionSummary, companionDescription);
   expect(received.status, JSON.stringify(received.body)).toBe(201);
+  expect(companion.status, JSON.stringify(companion.body)).toBe(201);
   const submission = received.body.submission as { id: string };
+  const companionSubmission = companion.body.submission as { id: string };
   await signIn(page, TOKENS[first]);
   await page.goto(`/inbox?submission=${submission.id}`, {
     waitUntil: "networkidle",
@@ -4953,6 +4954,38 @@ test("an Inbox focus recheck clears the account changed in another tab @registry
   );
   await report.getByText("Read private report", { exact: true }).click();
   await expect(report.getByText(description, { exact: true })).toBeVisible();
+  const companionReport = page.locator(
+    `[aria-labelledby="submission-${companionSubmission.id}"]`,
+  );
+  const companionDetails = companionReport.locator(":scope > details");
+  if (
+    !(await companionDetails.evaluate(
+      (element) => (element as HTMLDetailsElement).open,
+    ))
+  )
+    await companionDetails.locator(":scope > summary").click();
+  await companionReport
+    .getByText("Read private report", { exact: true })
+    .click();
+  await expect(
+    companionReport.getByText(companionDescription, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("region", { name: new RegExp(summary, "u") }),
+  ).toBeVisible();
+  await expect(
+    companionReport.getByRole("region", {
+      name: new RegExp(companionSummary, "u"),
+    }),
+  ).toBeVisible();
+  await expectAccessible(page, {
+    include: ".security-report-text",
+    everyRule: true,
+  });
+  await page.screenshot({
+    path: test.info().outputPath("two-private-report-regions.png"),
+    fullPage: true,
+  });
   const secondPage = await context.newPage();
   await secondPage.bringToFront();
   await signIn(secondPage, TOKENS[second]);
@@ -4964,6 +4997,11 @@ test("an Inbox focus recheck clears the account changed in another tab @registry
     }),
     contentType: "application/json",
   });
+  await page.bringToFront();
+  await page.getByRole("heading", { name: "Inbox", exact: true }).click();
+  // Let the browser's automatic focus refresh finish before observing the
+  // explicit recheck below, so its canceled response cannot win the waiter.
+  await page.waitForLoadState("networkidle");
   const rechecked = page.waitForResponse(async (response) => {
     if (new URL(response.url()).pathname !== "/api/v1/notifications")
       return false;
@@ -4972,8 +5010,6 @@ test("an Inbox focus recheck clears the account changed in another tab @registry
       (await response.json()).recipientGithubId === account(second).githubId
     );
   });
-  await page.bringToFront();
-  await page.getByRole("heading", { name: "Inbox", exact: true }).click();
   // Automated Chromium marks both tabs focused, even in headed mode. The
   // account change above uses a real shared cookie; deliver its return signal
   // explicitly instead of claiming to test the operating system's tab focus.
@@ -4981,6 +5017,12 @@ test("an Inbox focus recheck clears the account changed in another tab @registry
   await rechecked;
   await expect(page.getByText(description, { exact: true })).toHaveCount(0);
   await expect(page.getByText(summary, { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText(companionDescription, { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText(companionSummary, { exact: true })).toHaveCount(
+    0,
+  );
   await page.screenshot({
     path: test.info().outputPath("inbox-after-cross-tab-account.png"),
     fullPage: true,

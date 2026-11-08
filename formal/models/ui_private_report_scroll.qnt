@@ -8,13 +8,13 @@ module ui_private_report_scroll {
   var visible: bool
   var overflowing: bool
   var focused: bool
-  var atBottom: bool
+  var scrolledFromTop: bool
 
   action init = all {
     visible' = false,
     overflowing' = false,
     focused' = false,
-    atBottom' = false,
+    scrolledFromTop' = false,
   }
 
   action open = all {
@@ -22,7 +22,7 @@ module ui_private_report_scroll {
     visible' = true,
     overflowing' = false,
     focused' = false,
-    atBottom' = false,
+    scrolledFromTop' = false,
   }
 
   action enlargeLongReport = all {
@@ -30,7 +30,7 @@ module ui_private_report_scroll {
     overflowing' = true,
     visible' = visible,
     focused' = focused,
-    atBottom' = atBottom,
+    scrolledFromTop' = scrolledFromTop,
   }
 
   action focusReport = all {
@@ -38,12 +38,12 @@ module ui_private_report_scroll {
     focused' = true,
     visible' = visible,
     overflowing' = overflowing,
-    atBottom' = atBottom,
+    scrolledFromTop' = scrolledFromTop,
   }
 
   action pageDown = all {
     visible, focused, overflowing,
-    atBottom' = true,
+    scrolledFromTop' = true,
     visible' = visible,
     overflowing' = overflowing,
     focused' = focused,
@@ -51,7 +51,7 @@ module ui_private_report_scroll {
 
   action home = all {
     visible, focused,
-    atBottom' = false,
+    scrolledFromTop' = false,
     visible' = visible,
     overflowing' = overflowing,
     focused' = focused,
@@ -62,12 +62,12 @@ module ui_private_report_scroll {
     focused' = false,
     visible' = visible,
     overflowing' = overflowing,
-    atBottom' = atBottom,
+    scrolledFromTop' = scrolledFromTop,
   }
 
   action pointerScroll = all {
     visible, overflowing,
-    atBottom' = true,
+    scrolledFromTop' = true,
     visible' = visible,
     overflowing' = overflowing,
     focused' = focused,
@@ -76,7 +76,7 @@ module ui_private_report_scroll {
   action resizeToFit = all {
     visible,
     overflowing' = false,
-    atBottom' = false,
+    scrolledFromTop' = false,
     visible' = visible,
     focused' = focused,
   }
@@ -86,31 +86,31 @@ module ui_private_report_scroll {
     visible' = false,
     overflowing' = false,
     focused' = false,
-    atBottom' = false,
+    scrolledFromTop' = false,
   }
 
   action step = any {
     open, enlargeLongReport, focusReport, pageDown, home,
     tabAway, pointerScroll, resizeToFit, collapseOrAccountChange,
     all { visible' = visible, overflowing' = overflowing,
-      focused' = focused, atBottom' = atBottom },
+      focused' = focused, scrolledFromTop' = scrolledFromTop },
   }
 
   val invariant = all {
     focused implies visible,
-    atBottom implies (visible and overflowing),
-    not(visible) implies not(overflowing or focused or atBottom),
+    scrolledFromTop implies (visible and overflowing),
+    not(visible) implies not(overflowing or focused or scrolledFromTop),
   }
 
-  run keyboardReadsOverflowingReportTest = init.then(open)
+  run keyboardScrollsOverflowingReportTest = init.then(open)
     .then(enlargeLongReport).then(focusReport).then(pageDown)
-    .expect(visible and focused and atBottom)
+    .expect(visible and focused and scrolledFromTop)
   run returnToStartTest = init.then(open).then(enlargeLongReport)
-    .then(focusReport).then(pageDown).then(home).expect(not(atBottom))
+    .then(focusReport).then(pageDown).then(home).expect(not(scrolledFromTop))
   run blurPreservesScrollTest = init.then(open).then(enlargeLongReport)
     .then(focusReport).then(pageDown).then(tabAway)
-    .expect(not(focused) and atBottom)
+    .expect(not(focused) and scrolledFromTop)
   run collapseClearsFocusTest = init.then(open).then(enlargeLongReport)
     .then(focusReport).then(pageDown).then(collapseOrAccountChange)
-    .expect(not(visible or focused or atBottom))
+    .expect(not(visible or focused or scrolledFromTop))
 }

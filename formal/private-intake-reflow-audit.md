@@ -16,7 +16,7 @@ and a test locator defect. The report and payment state transitions are unchange
   shared-cookie switch and private-content removal assertions are unchanged.
 
 `ui_private_report_scroll.qnt` models the loaded report's open/closed state,
-focus and blur, fit/overflow, bounded scroll position, and collapse/account
+focus and blur, fit/overflow, whether it is scrolled away from the top, and collapse/account
 change. Four named scenarios and 1,000 traces of 30 steps pass. Browser layout,
 keyboard event delivery, and pixels are external assumptions; this model does
 not prove those browser implementations. The real browser assertions supply
@@ -39,3 +39,37 @@ local-chain cases are skipped here and run separately in the disposable
 Anvil/Solana browser payment lanes. Raw traces,
 session material, and synthetic signing material stay local; only reviewed
 synthetic videos, screenshots, and safe receipts may be published.
+
+
+## Two open reports
+
+A separate reachable check opened two stored reports in one Inbox. The initial
+static region name produced an axe `landmark-unique` failure. Each region now
+references its own immutable submission card heading and summary heading.
+`ui_private_report_identity.qnt` models two open IDs, disjoint heading references,
+closing one card, and clearing both on account change. Its three named scenarios
+and 1,000 traces of 30 steps pass. Reference separation is the model property;
+browser-computed accessible names remain a real axe check.
+
+The existing cross-tab journey now creates and opens two reports, checks the
+region names and all axe rules within those regions, and verifies both private
+bodies disappear after account change. The first follow-up run passed both
+intake cases and the desktop two-report case. The mobile case passed its two-
+report accessibility check, then exposed a test response-body race: the waiter
+selected an automatic focus response that a later navigation invalidated.
+The waiter now starts after the automatic refresh is idle and observes the
+explicit focus recheck. Its response-recipient and private-content assertions
+remain intact. The separate after-probe's local sign-in navigation timeout is
+also retained; it is not used as passing evidence.
+
+The scroll model's boolean means a positive scroll offset, not arrival at the
+bottom. The browser checks that one PageDown makes progress. The modeled Home
+transition uses browser semantics; the current conformance assertion does not
+separately prove Home resets the offset.
+
+The final two-report desktop and mobile journeys pass with no retry. Both
+regions have distinct names, the scoped all-rule axe check passes, and both
+private bodies disappear after the shared-cookie account change. The intake
+keyboard/reflow journeys passed in the preceding four-case run against these
+same production bytes; the final adjustment changes only response observation
+ordering in the cross-tab test.
