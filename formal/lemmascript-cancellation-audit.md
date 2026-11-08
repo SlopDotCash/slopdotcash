@@ -1,8 +1,9 @@
 # LemmaScript checker cancellation
 
 This separate follow-up starts from `a8b0f8226`. It was prepared by source
-inspection. The parent-signal orphan was not reproduced, and no parser,
-tests, prover or process probes were run for this change.
+inspection without parser, test, prover or process execution in this root
+lane. Later independent caller evidence is recorded below. The old checker's
+post-exit orphan behavior has not been separately measured.
 
 The earlier `check-lemmascript.mjs` started every command in a detached POSIX
 process group and killed that group on its own timer/output limit. It had no
@@ -45,11 +46,33 @@ SIGKILL, OOM or host death cannot run a JavaScript signal handler. Processes
 that escape the owned group remain outside the supervisor's cleanup promise.
 This change does not repair or classify the separate Jupiter prover crash.
 
-Three unexecuted subprocess regressions in
+Three subprocess regressions were initially authored in
 `scripts/lemmascript-cancellation.test.ts` exercise the actual Node checker
 with a controlled long-running version command and its real descendant
 server. Each signal must produce a canceled failure receipt, release the
 server port and prevent later checker commands. The stand-in proves process
 lifetime behavior only; it performs no theorem verification. Windows does
 not receive these POSIX signal cases and retains the supervisor's separate
-native process-tree tests.
+native process-tree tests. Their later execution is recorded below.
+
+## Independent caller regression
+
+The three signal cases were subsequently executed independently on
+`124f672d4b4deb94ed7d13e36fa6ed2cadf3653c`: all three pass, with 30 assertions.
+Each exercises the actual Node checker and inherited descendant server,
+observes a reusable port after cancellation, and reads the failed/canceled
+receipt. The controlled command runs no theorem.
+
+An isolated comparison replaced only the checker with its parent version.
+All three cases then fail at natural signal exit codes 130, 143 and 129,
+before the expected receipt assertions. That comparison does not independently
+measure post-exit orphan survival; its cleanup still stops owned fixture groups.
+An earlier accidental fixed-source control was retained as a redundant run,
+not counted as a failing baseline.
+
+The receipt is `evidence/lemma-cancellation-validation/result.json`, SHA-256
+`e219e912ae79572ee6b703eced1dbe1bf32b33f09c6f37050c2f7f70192bee44`.
+Its checker/test hashes match this branch. Shared-supervisor deadline/output
+and earlier-failure probes, full prover execution under this caller, and
+finite model checks remain separate requirements. This root lane only read
+the independent evidence; it ran no checks.
