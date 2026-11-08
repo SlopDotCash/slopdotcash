@@ -1,5 +1,6 @@
 // @source src/lib/scoring-policy.ts
 // @source src/lib/verified-allocation.ts
+// @source src/lib/verified-selection.ts
 // @source src/lib/leaderboard.ts
 // @source src/lib/points.ts
 // Seven formal reviews, six actors, one optional repeated review. Two equal-time review

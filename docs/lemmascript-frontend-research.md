@@ -206,3 +206,18 @@ same uint128 boundary and refusal messages; a proved early whole-length check
 avoids unnecessary parsing of an oversized paste. The theorem covers numeric
 composition, not locale/Intl formatting or wallet authority. Node 24.15.0,
 typecheck, and the existing project/amount/monthly workflows passed.
+
+## Review-pool and source selection extension
+
+The current review-credit caller uses `cappedTotal` for its minimum/size-bounded
+pool. The proof caps every intermediate addition and does not require the sum
+of all supplied safe integer bands to fit a number. The existing policy minimum
+is passed from its one canonical constant. `firstMaximumIndex` selects the first
+highest band after the original chronological sort; repeated equal-band reviews
+keep the same source object and order. Duplicate-source rejection, timestamp
+validation, actor grouping and the first-five eligibility rule remain unchanged
+and outside these two numerical/sequence contracts.
+
+Penalty aggregation remains unproved. A scalar subtraction proof alone would
+not establish the safe integer domain of the accumulated actor/project/month
+buckets. No new assertion about the entire penalty journal is made.

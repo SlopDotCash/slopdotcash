@@ -39,7 +39,7 @@ implementation does not verify the production function.
 | 2 | `src/lib/payments/monthly-allocation.ts:monthlyCutoff`, `currentAllocations`, `assertAllocationChange`, `buildExecutionSnapshot`; `backend/payments/monthly.ts` | UTC cutoff is 72 hours after month end; allocations fit funded amount; disabled or underfunded months create no obligation; frozen snapshot identity is stable | Date parsing, D1 state, owner authority, reserve creation, root publication and payment execution are separate obligations. PRD section 6. |
 | 2 | `src/lib/payments/contracts.ts:reservedGross`; `backend/payments/vault-snapshots.ts`; `contracts/vault-totals.ts` | Preserve null/unavailable counters; combine reserve principal and fee exactly; never add unrelated assets | Missing data differs from zero. Chain snapshots must remain tied to one finalized observation. |
 | 2 | `workers/referral-accrual/core.ts:totalsOf`, `judge`; `workers/referral-accrual/merkle.ts` | Accrual bounded by project and total caps; cumulative amount never decreases; proof ordering is deterministic | The scalar cap is implemented in `cappedReferralAccrual`. `verified-allocation.sumAmounts` proves the general finite-array sum used by the monetary callers listed in the implementation ledger. Referral-specific grouping, hashes, root authority and publishing remain unproved. Program activation is unchanged. PRD section 11. |
-| 2 | `scripts/select-pages-deployment.mjs:selectSuccessfulProductionDeployment`; `src/lib/deployment.ts` | Candidate is a clean successful exact-SHA deployment from the required branch after the boundary | Read current release branch policy from current source. Provider parsing, URL checks and latest-candidate choice remain separate. |
+| 2 | `scripts/select-pages-deployment.mjs:selectSuccessfulProductionDeployment`; `src/lib/deployment.ts` | Candidate is a clean successful exact-SHA deployment from the required branch after the boundary | Read current release branch policy from current source. The latest matching timestamp now uses the proved first-maximum selector. Provider parsing, eligibility checks and URL checks remain separate. |
 | 2 | `scripts/generate-leaderboard.ts`, `generate-points.ts`, `prepare-pr-ledger.ts`, `prepare-points-import.ts` | Complete input coverage, immutable identity deduplication, deterministic score conversion and publication | Pagination, GitHub churn, journal writing and failed ingestion need model and integration evidence. A helper proof does not prove the importer. |
 | 3 | `contracts/solana/token-extensions.ts:extensionRecords`, `readTokenMint`, `readTokenAccount`; `workers/fee-converter/jupiter-wire.ts:decodeJupiterRoute` | Exact bounds before byte reads; only allowed extensions; no trailing or ambiguous data | Deeper parser targets. Preserve native-token identities and metadata-only Token-2022 policy. Cryptographic and on-chain semantics remain separate. |
 | 3 | `src/lib/install-command.ts`; `scripts/dist-manifest.mjs`, `prepare-site.mjs`, `prepare-publication.mjs`, `evidence-contract.mjs` | Canonical paths, exact bytes, immutable authority, correct evidence mode, atomic activation | Generated shell/Python, filesystem effects, URLs and cryptography prevent whole-function TypeScript proofs. Retain real installation and publication workflow evidence. |
@@ -160,3 +160,13 @@ allocation, native-contract and external-effect work remains explicit.
 - [Toolchain design and trust boundary](https://docs.lemmascript.org/design/)
 - [LemmaScript source and specifications](https://github.com/midspiral/LemmaScript)
 - [Official Dafny 4.11.0 release](https://github.com/dafny-lang/dafny/releases/tag/v4.11.0)
+
+## Stable deployment selection extension
+
+`selectSuccessfulProductionDeployment` retains every original eligibility and
+URL check, then selects the first maximum timestamp through
+`verified-selection.firstMaximumIndex`. Its proof establishes a valid selected
+index, maximal timestamp and earliest input position among equal maxima. Empty
+matches still produce `undefined`. This replaces a full descending sort without
+changing tie behavior. A successful selector result does not prove deployment,
+provider truth or the independently checked deployed bytes.

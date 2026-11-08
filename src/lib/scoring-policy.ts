@@ -11,6 +11,7 @@
 import { isExactUtc } from "./record-validation.mjs";
 import { VALUE_RUBRIC_VERSION } from "./value-assessment";
 import { allocateWeighted } from "./verified-allocation";
+import { cappedTotal, firstMaximumIndex } from "./verified-selection";
 
 /** PRD section 7: up to the first five distinct qualifying reviewers. */
 export const MAX_CREDITED_REVIEWERS = 5 as const;
@@ -93,10 +94,10 @@ function reviewCreditPoolThirds(
 ): number {
   if (!Number.isSafeInteger(assessedSizeThirds) || assessedSizeThirds < 0)
     throw new RangeError("Assessed size must be a non-negative integer");
-  const bands = creditedBands.reduce((sum, band) => sum + band, 0);
-  return Math.max(
+  return cappedTotal(
+    [...creditedBands],
+    assessedSizeThirds,
     MIN_REVIEW_CREDIT_POOL_THIRDS,
-    Math.min(bands, assessedSizeThirds),
   );
 }
 
@@ -195,9 +196,9 @@ export function allocatePullRequestReviewCredit<Actor extends { id: string }>(
     .map((list) => {
       const ordered = [...list].sort(compareReviewTime);
       const first = ordered[0] as QualifyingReview<Actor>;
-      const source = ordered.reduce((best, review) =>
-        review.thirds > best.thirds ? review : best,
-      );
+      const source = ordered[
+        firstMaximumIndex(ordered.map((review) => review.thirds))
+      ] as QualifyingReview<Actor>;
       return { first, source, ordered };
     })
     .sort(
