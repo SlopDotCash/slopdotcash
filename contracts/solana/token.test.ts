@@ -10,6 +10,7 @@ import {
   inspectTokenAccount,
   TOKEN_2022_PROGRAM,
 } from "./token";
+import { readTokenAccount, readTokenMint } from "./token-extensions";
 
 const mint = "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh";
 const fixture = new Uint8Array(
@@ -72,6 +73,45 @@ test("ImmutableOwner token accounts preserve program identity and refuse unrelat
   expect(() =>
     inspectTokenAccount(account(memo), TOKEN_2022_PROGRAM),
   ).toThrow();
+});
+
+test("Token-2022 metadata keeps full payload extents and admits large zero padding", () => {
+  const padded = new Uint8Array(fixture.length + 2 * 1024 * 1024);
+  padded.set(fixture);
+  const reading = readTokenMint(account(padded));
+  expect(reading.extensions).toEqual([18, 19]);
+  expect(reading.decimals).toBe(6);
+  expect(reading.raw).toEqual(padded);
+  // A byte after the zero padding is an extension attempt, not ignored data.
+  padded[padded.length - 1] = 1;
+  expect(() => readTokenMint(account(padded))).toThrow(
+    "Unsupported Token-2022 extension 0",
+  );
+});
+
+test("Token-2022 refuses the first invalid TLV with the original diagnostic priority", () => {
+  const bytes = new Uint8Array(170);
+  bytes[165] = 2;
+  const view = new DataView(bytes.buffer);
+  view.setUint16(166, 8, true);
+  view.setUint16(168, 65535, true);
+  // The unknown type wins even when its declared payload is truncated.
+  expect(() => readTokenAccount(account(bytes))).toThrow(
+    "Unsupported Token-2022 extension 8",
+  );
+  view.setUint16(166, 7, true);
+  expect(() => readTokenAccount(account(bytes))).toThrow(
+    "Truncated Token-2022 extension",
+  );
+  view.setUint16(168, 0, true);
+  const repeated = new Uint8Array(174);
+  repeated.set(bytes);
+  repeated[170] = 7;
+  repeated[172] = 255;
+  // The duplicate wins before the repeated record's invalid payload length.
+  expect(() => readTokenAccount(account(repeated))).toThrow(
+    "Duplicate Token-2022 extension 7",
+  );
 });
 
 test("maintainer token submission admits a synthetic mint from raw state but cannot hide a transfer hook in JSON parsing", async () => {
