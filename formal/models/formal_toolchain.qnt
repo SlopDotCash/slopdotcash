@@ -32,12 +32,13 @@ module formal_toolchain {
     not(s.assumptions),s.selected.contains(id),
     s'=s.with("checked",s.checked.union(Set(id))).with("failed",s.failed or not(passed))}
   action inputsChange = all {not(s.publishedResult),s'=s.with("inputsStable",false)}
-  action publish = all {s.phase=="prepared",s.selected.subseteq(s.checked),
+  action cancel = all {s.phase=="prepared",s'=s.with("failed",true)}
+  action publish = all {s.phase=="prepared",s.selected.subseteq(s.checked) or s.failed,
     s'=s.with("phase","reported").with("publishedResult",true)
       .with("checkPassed",s.inputsStable and not(s.failed))}
   action step = {nondet a=Set(false,true).oneOf() nondet b=Set(false,true).oneOf()
     nondet c=Set(false,true).oneOf() nondet id=Set(1,2).oneOf()
-    any {prepare(a,b,c),check(id,a),inputsChange,publish,s'=s}}
+    any {prepare(a,b,c),check(id,a),inputsChange,cancel,publish,s'=s}}
   val invariant = all {
     s.checkPassed implies (s.toolsPinned and s.inputsStable and s.bodyMatches and not(s.assumptions) and not(s.failed)),
     s.checkPassed implies s.selected.subseteq(s.checked),s.pending==2,
@@ -50,4 +51,8 @@ module formal_toolchain {
   run changedBodyCannotVerifyTest = init.then(prepare(true,false,false)).then(check(1,true).fail())
   run failedCheckCannotBecomeSuccessTest = init.then(prepare(true,true,false)).then(check(1,false))
     .then(check(2,true)).then(publish).expect(not(s.checkPassed))
+  run canceledPartialRunReportsFailureTest = init.then(prepare(true,true,false)).then(check(1,true))
+    .then(cancel).then(publish).expect(s.publishedResult and not(s.checkPassed) and s.checked==Set(1))
+  run failedPartialRunReportsFailureTest = init.then(prepare(true,true,false)).then(check(1,false))
+    .then(publish).expect(s.publishedResult and not(s.checkPassed) and s.checked==Set(1))
 }

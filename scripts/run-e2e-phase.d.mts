@@ -9,4 +9,5 @@ export function runE2ePhase(options: {
   interruptSignal?: NodeJS.Signals;
   onStdout?: (text: string) => void;
   onStderr?: (text: string) => void;
+  onExit?: (status: number | null, signal: NodeJS.Signals | null) => void;
 }): Promise<number>;
