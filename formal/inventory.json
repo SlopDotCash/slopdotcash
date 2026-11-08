@@ -4102,12 +4102,13 @@
     },
     {
       "path": "src/BountySubmittedPayments.tsx",
-      "sha256": "2c930de239b298b0e5a58d4a1f1d9a68e9265c1c95c75c3533fbaa153ee7bed3",
+      "sha256": "d8b463f29aa4778f91175ec68ee2c7569a0a00bfc004a5d3d9c1bbceb4a01c42",
       "models": [
+        "formal/models/ui_submitted_candidate_ownership.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt",
         "formal/models/ui_transaction.qnt"
       ],
-      "candidateLines": [1, 29, 30, 32],
+      "candidateLines": [1, 33, 34, 36, 127],
       "review": "mapped-abstraction"
     },
     {
@@ -4150,6 +4151,7 @@
       "models": [
         "formal/models/direct_bounty_journal.qnt",
         "formal/models/ui_bounty_payment_parent.qnt",
+        "formal/models/ui_submitted_candidate_ownership.qnt",
         "formal/models/ui_tab_scope.qnt",
         "formal/models/ui_transaction.qnt"
       ],
@@ -4695,6 +4697,7 @@
       "models": [
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
+        "formal/models/ui_submitted_candidate_ownership.qnt",
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [
@@ -5645,6 +5648,7 @@
         "formal/models/ui_inbox_mutation_focus.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_candidate_ownership.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt",
         "formal/models/ui_transaction.qnt"
       ],
@@ -11966,6 +11970,29 @@
         "terminalFailureHasNoResendTest",
         "uncertainUsesReconcileNotResendTest",
         "unsavedLegacyDraftCannotLeaveForGithubTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_submitted_candidate_ownership.qnt",
+      "sha256": "56cdea5a975a6f12c3bdfaff65437de90aca084d1948c32606fe20b161e0b586",
+      "sources": [
+        "src/BountySubmittedPayments.tsx",
+        "src/DirectBountyPayment.tsx",
+        "src/SolanaBountyPayment.tsx",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "authorityRefusalLeavesStorageAloneTest",
+        "candidateBeforeWalletHashIsPreservedTest",
+        "declinedRowCannotBeRecreatedTest",
+        "editingDuringAuthorizationKeepsCapturedSubmissionTest",
+        "explicitEmptyDoesNotStartTest",
+        "failedStorageCanRetryWithoutPhantomAcknowledgementTest",
+        "independentNonceRemainsIntactTest",
+        "newerCandidateInvalidatesOldSnapshotTest",
+        "replacementRequestCannotReceiveOldCandidateTest",
+        "returnedWalletHashInvalidatesOldSnapshotTest",
+        "successfulStorageIsAcknowledgedForEditedRetryTest"
       ]
     },
     {

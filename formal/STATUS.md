@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 317 finite models and 1,555 named scenarios, with zero
+839 production sources, 318 finite models and 1,566 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -329,3 +329,14 @@ writes; the unchanged paused-project case passes on both. This is local
 SQLite evidence, not deployed D1 or GitHub-provider acceptance. The ignored
 runtime acceptance ledger separately records the exact-source limits of
 earlier payment, Inbox and owner browser/API evidence.
+
+## Separate submitted-candidate ownership follow-up
+
+This branch follows the frozen observation checkpoint `a8b0f8226`. Its extra
+source correction is not part of that earlier candidate: the submitted-payment
+fallback now requires its captured storage record to remain present and equal
+before saving a candidate. It cannot recreate a nonce removed by a returning
+wallet decline or overwrite newer evidence. Successful writes acknowledge
+their own bytes for an edited retry. See `submitted-candidate-ownership-audit.md`.
+The focused model and extended browser regression are authored but unexecuted;
+this branch is separate from the active corrective PR and its validation.
