@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "95456529084e23b28ac446a88358c47605209bd22b1e723a695403ae517e6fce",
+  "inventorySha256": "32d9ddcdb0f3e059414e08002c796917956a9d05706266d86633978037609ac0",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -21,9 +21,12 @@
       "values": ["opened", "resolved"],
       "models": [
         "formal/models/api_inbox.qnt",
-        "formal/models/api_mail_delivery.qnt"
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/points_dispute_decision.qnt",
+        "formal/models/points_dispute_intake.qnt",
+        "formal/models/points_dispute_lease.qnt"
       ],
-      "lexicallyUnmentionedValues": ["opened", "resolved"],
+      "lexicallyUnmentionedValues": ["opened"],
       "review": "candidate-only"
     },
     {
@@ -83,12 +86,12 @@
     },
     {
       "path": "backend/points/x.ts",
-      "line": 26,
+      "line": 27,
       "name": "status",
       "kind": "string-union",
       "values": ["cancelled", "connected", "failed"],
       "models": ["formal/models/api_x_connection.qnt"],
-      "lexicallyUnmentionedValues": ["cancelled", "failed"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1995,6 +1998,7 @@
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt"
@@ -2013,6 +2017,7 @@
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt"
@@ -2031,6 +2036,7 @@
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt"
@@ -2154,7 +2160,10 @@
       "name": "state",
       "kind": "string-union",
       "values": ["resolved", "review", "triage"],
-      "models": ["formal/models/ui_inbox.qnt"],
+      "models": [
+        "formal/models/ui_inbox.qnt",
+        "formal/models/ui_points_disputes.qnt"
+      ],
       "lexicallyUnmentionedValues": ["resolved", "review", "triage"],
       "review": "candidate-only"
     },

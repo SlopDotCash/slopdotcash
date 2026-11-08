@@ -1,5 +1,27 @@
 # State review status
 
+## Assembled follow-up candidate
+
+This branch combines the frozen `a8b0f8226` observation candidate with the
+previously separate completion fixes. The preserved source heads are:
+
+| Area | Source head |
+| --- | --- |
+| Submitted candidate ownership | `d65bee7d8` |
+| Browser evidence retention | `7370945cd` |
+| X cookie ownership and cleanup | `f6166c425` |
+| Checker cancellation | `a9ae7aad6` |
+| Points intake, lease and decisions | `918a3756f` |
+| Private Points UI | `08a837c84` |
+
+The assembly is based on corrective head `22b0fd511`, not the later
+`d528a8b00` development cleanup. Final alignment waits for the reviewer's
+corrective integration and handoff. All earlier standalone branches remain
+available. No application, parser, simulation, verifier or browser checks ran
+in this lane; regenerated inventories and source comparisons do not prove
+this combined candidate works. Independent evidence below retains its exact
+source boundary.
+
 ## Current delivery and acceptance boundary
 
 The goal is active and incomplete. PR
@@ -372,10 +394,13 @@ start from cookie delivery. The nineteen added handler/SQLite cases and all
 
 This branch follows frozen `a8b0f8226`. The proof checker now forwards parent
 signals through the existing process-group supervisor and retains canceled
-failure receipts. The missing parent-signal path predates corrective22b and
-has not been runtime-reproduced here. Model scenarios and subprocess tests
-are authored but unexecuted; see `lemmascript-cancellation-audit.md`. This
-source is not part of the active corrective PR.
+failure receipts. The missing parent-signal path predates corrective22b.
+Independent controlled-command probes reproduce all three orphaned-listener
+outcomes on the old caller and pass all three fixed signal cases. They do
+not execute a theorem; shared-supervisor and full-caller gates remain
+separate. The two model scenarios remain unexecuted here; see
+`lemmascript-cancellation-audit.md`. This source is not part of the active
+corrective PR.
 
 ## Separate Points dispute lease model
 
@@ -401,6 +426,6 @@ This branch follows frozen `a8b0f8226`. Points requests now recheck the session
 on both success and failure. Identity loss, an unavailable session or an
 access refusal clears cached private lists, details and input before the
 parent refreshes. A departed callback cannot update the replacement parent.
-`ui_points_disputes` adds26unexecuted scenarios; the extended real-browser
+`ui_points_disputes` adds 26 unexecuted scenarios; the extended real-browser
 workflow is also unexecuted. See `points-dispute-ui-audit.md`. Exact-source
 browser, accessibility and walkthrough evidence remain required.
