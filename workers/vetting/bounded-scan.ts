@@ -165,6 +165,7 @@ const INSTALL_FILES = new Set([
   "rakefile",
   "fastfile",
   "fastfile.swift",
+  "pluginfile",
   "brewfile",
   "procfile",
   "cmakelists.txt",
