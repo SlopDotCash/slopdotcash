@@ -71,7 +71,19 @@ TypeScript and Biome. All 14 named scenarios and 500 samples of up to 60 steps
 pass at seed 20261107. Quint 0.33.1 with the server-free Apalache 0.62.4 / Java 21
 translator explores 12,185 distinct states (59,971 generated), with no invariant
 violation and unchanged model/source hashes. The fresh-ELF native section 21
-run remains in progress; no passing native result is claimed here. No local result is public-devnet, production-registry, deployment, or
+run was stopped at the user's request to skip remaining checks and focus on
+pushing. On commit `00ff32498`, ELF SHA-256
+`4331645f37edfbe260c182bad3fc6a02930ce71980ab8746a9986366f9af6eed`
+passed the full 6-decimal asset workflow, including both payments, replay,
+withdrawal, fee claim and finalized reconciliation. The 9-decimal registered
+payment passed; its walletless payment and remaining checks were pending.
+The run reproduced the new waiting/resume transition with no recorded error.
+The owned validator reported `stopped`; its container and processes were
+absent after cleanup. Raw evidence remains under ignored
+`evidence/validator-callers/acceptance-finality-fixed/`, with a separate
+`interruption.json` so the interrupted `running` record cannot be mistaken for
+a complete pass. The earlier pre-fix failure and exact null-account RPC stack
+remain under `acceptance-fresh-rpc/`. No full native pass is claimed. No local result is public-devnet, production-registry, deployment, or
 live settlement evidence. RPC identity may change after a read; the actual
 executor and chain adapters retain their own fresh checks. An arbitrary injected executor implementation or concurrent mutation of the
 environment is not constrained by this harness; its owned service wiring uses
