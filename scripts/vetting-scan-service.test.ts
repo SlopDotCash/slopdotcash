@@ -123,6 +123,8 @@ let reviewedItems: { id: string; text: string }[] = [];
 let githubName = "example/open-registry";
 /** True when GitHub reports the registered repository missing (404). */
 let githubMissing = false;
+/** True when GitHub redirects the registered repository's path (301). */
+let githubMoved = false;
 /** What the synthetic Surplus provider answers on each transport. */
 let provider: {
   up: boolean;
@@ -350,6 +352,11 @@ function github(url: URL): Response {
   const path = url.pathname;
   // Only the current name answers: GitHub redirects a former name, and
   // acquisition follows no redirects.
+  if (path === `/repos/${githubName}` && githubMoved)
+    return new Response(null, {
+      status: 301,
+      headers: { location: "https://api.github.com/repositories/123456789" },
+    });
   if (path === `/repos/${githubName}` && !githubMissing)
     return Response.json({
       id: 123456789,
@@ -507,6 +514,7 @@ beforeEach(async () => {
   clock = NOW;
   githubName = "example/open-registry";
   githubMissing = false;
+  githubMoved = false;
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
   await mkdir(repository);
@@ -1903,6 +1911,30 @@ test("a registered repository GitHub reports missing completes as incomplete ins
   const result = await recordedResult(assessmentId);
   expect(result.visibilityGaps).toEqual([
     "Acquisition refused before inspection: Repository not found on GitHub",
+  ]);
+  expect(result.primaryReview.status).toBe("not-started");
+  expect((await runScanPass(config)).assessments).toEqual([]);
+});
+
+test("a registered repository GitHub redirects completes as incomplete instead of retrying every pass", async () => {
+  githubMoved = true;
+  const pass = await runScanPass(config);
+  const [{ assessmentId }] = pass.assessments;
+  expect(pass.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "incomplete",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  expect(provider.calls).toEqual([]);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("incomplete");
+  const result = await recordedResult(assessmentId);
+  expect(result.visibilityGaps).toEqual([
+    "Acquisition refused before inspection: Repository moved on GitHub",
   ]);
   expect(result.primaryReview.status).toBe("not-started");
   expect((await runScanPass(config)).assessments).toEqual([]);

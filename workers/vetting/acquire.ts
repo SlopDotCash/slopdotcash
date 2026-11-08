@@ -45,6 +45,7 @@ export type AcquisitionRefusalReason =
   | "Unsupported repository inventory"
   | "Immutable repository identity mismatch"
   | "Repository not found on GitHub"
+  | "Repository moved on GitHub"
   | "Template acquisition size limit"
   | "Input response size limit exceeded";
 

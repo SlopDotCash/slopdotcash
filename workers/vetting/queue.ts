@@ -157,7 +157,9 @@ export async function acquireQueuedAssessment(
     return baseFetch(input, {
       ...init,
       headers: Object.fromEntries(headers),
-      redirect: "error",
+      // No read follows a redirect. The repository identity read alone asks
+      // for the redirect response itself, to refuse a moved repository.
+      redirect: init?.redirect === "manual" ? "manual" : "error",
       signal: AbortSignal.any([
         deadline,
         ...(init?.signal ? [init.signal] : []),
@@ -210,7 +212,7 @@ export async function acquireQueuedAssessment(
         "x-github-api-version": "2022-11-28",
         "user-agent": "slop-vetting-acquisition",
       },
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(15_000),
     },
   );
@@ -220,6 +222,13 @@ export async function acquireQueuedAssessment(
   if (identityResponse.status === 404) {
     await identityResponse.body?.cancel();
     throw refusal(new AcquisitionRefusal("Repository not found on GitHub"));
+  }
+  // GitHub redirects a renamed or transferred repository. The manifest still
+  // names the old path, so the pinned source is not acquired until a revision
+  // records the current one; the same pin is redirected on every pass.
+  if (identityResponse.status >= 300 && identityResponse.status < 400) {
+    await identityResponse.body?.cancel();
+    throw refusal(new AcquisitionRefusal("Repository moved on GitHub"));
   }
   const repositoryIdentity = json(await pinnedBytes(identityResponse));
   if (
