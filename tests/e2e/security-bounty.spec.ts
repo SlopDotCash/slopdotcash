@@ -4918,10 +4918,9 @@ test("an Inbox focus recheck clears the account changed in another tab @registry
   );
   const id = `tab-account-${projectSuffix()}`;
   const repository = `e2e-security/${id}`;
-  const first: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+  const mobile = test.info().project.name.endsWith("-mobile");
+  const first: Role = mobile ? "inbox-focus-mobile" : "inbox-focus-desktop";
+  const second: Role = mobile ? "reporter-a" : "reporter-b";
   await listProject(request, TOKENS.security, repository, id, {});
   await setIntake(request, repository, "disabled");
   const summary = `Synthetic first-tab report ${id}`;
