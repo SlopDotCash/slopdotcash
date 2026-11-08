@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "386a8d84c57240b456dbf08d043975649560d6bb6c7e6e1bdd5e913f77b1cd8d",
+  "inventorySha256": "49d13cb84a7471ef89b1abf58a0d06ec3653fe38179c30a5426ef97233e33a37",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -85,7 +85,8 @@
       "models": [
         "formal/models/api_project_registry.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
-        "formal/models/referrer_attribution.qnt"
+        "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_owner_bounty_funds.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
@@ -99,7 +100,8 @@
       "models": [
         "formal/models/api_project_registry.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
-        "formal/models/referrer_attribution.qnt"
+        "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_owner_bounty_funds.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
@@ -1970,6 +1972,7 @@
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
+        "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt"
       ],
@@ -1986,6 +1989,7 @@
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
+        "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt"
       ],
@@ -2002,6 +2006,7 @@
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
+        "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt"
       ],

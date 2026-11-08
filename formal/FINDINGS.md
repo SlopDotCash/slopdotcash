@@ -12,7 +12,7 @@ claim that all application state errors have been eliminated.
 
 | Boundary | Incorrect transition | Corrected behavior / regression |
 | --- | --- | --- |
-| Account closure | Retained closed membership still authorized member-only bot behavior | Require active membership while retaining history; `workers/slopbot/closure-eligibility.test.ts` |
+| Account closure | Retained closed membership still authorized automatic closure; removing all participation also blocked advisory review | Require active membership for closure while retaining recorded participation for advisory routing; `workers/slopbot/closure-eligibility.test.ts` |
 | Identity expiry | Delayed OAuth completion or persistence outlived its authorization | Check expiry at completion and persistence; `workers/identity/expiry-boundary.test.ts` |
 | Local migrations | Schema commit could survive without its migration marker | Schema, foreign-key check and marker commit together; `scripts/dev-migrations.test.ts` |
 | Independent API configuration | Malformed payment configuration broke unrelated account requests | Parse payment configuration at the payment boundary; `scripts/api-config-isolation.test.ts` |
@@ -69,6 +69,8 @@ claim that all application state errors have been eliminated.
 | Live fixture wallet writes | A second runtime changed wallet rows while Pages had the same local D1 database open | Seed before Pages starts and use the real registration/challenge/authorization API afterward; `formal/fixture-wallet-audit.md` |
 | Fixture calendar | Wallet workflows assumed the default month still selected September 2026 | Select the retained fixture month through the actual calendar controls before commitment checks; `tests/e2e/award-month.ts` |
 | Release proof gate | The newly added standalone proof jobs did not block the publish workflow's quality result | Require both same-SHA proof jobs in that workflow's dependency graph and quality result; `formal/release-proof-gate-audit.md` |
+| Referral history | Voiding a lower latest root lost an earlier higher live total and incorrectly tightened later posting capacity | Restore the per-epoch prior maximum; `formal/referral-control-audit.md` |
+| Local acceptance finality | A confirmed project was read as finalized and the local acceptance run failed before dispatch | Wait resumably for the commit to finalize; `formal/local-solana-acceptance-audit.md` |
 
 The forwarded-report and payout corrections reuse
 [PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and

@@ -8,7 +8,7 @@ The goal remains active and incomplete. Work targets `origin/development` in
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-806 production sources, 296 finite models and 1,245 named scenarios, with zero
+806 production sources, 301 finite models and 1,311 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 235 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -101,3 +101,35 @@ Private-report composition adds screening/routing/GitHub and redirect models;
 its new browser fixture is still being completed. The release quality gate
 now requires both same-commit proof jobs; hosted execution of that new graph
 remains required. No production deployment or activation was performed.
+
+## Coordinated push and requested validation stop
+
+The user requested coordination with the concurrent PR review, then asked to
+skip further checks and focus on pushing. That review's private authorization
+models, prover setup instructions and distinction between recorded participation
+and active closure authority are preserved. The latest additions model factory
+authority and template changes, binding cancellation budgets, private bounty
+funding composition, referral control/history and local acceptance finality.
+
+Voiding a lower referral root could incorrectly lower the retained historical
+maximum. A private per-epoch maximum now restores the earlier cap without adding
+a full-history scan. Local Solana acceptance now waits for its project commits
+to finalize before the finalized deployment read, retaining the resumable run.
+
+Before the requested stop, the combined application test run passed 1,874 tests
+and 22,234 assertions, with six explicit skips. The three gated TLC translator
+regressions passed separately. The corrected private-report composition suite
+passed ten desktop/mobile cases; the corrected bounty workflows passed four.
+Both native SOL and JUP fee-conversion workflows passed on local chain clones
+with finalized balance/cost evidence and stopped owned validators. These results
+predate the final combined commit and do not certify its full validation.
+
+The full 295-model runs and the remaining integration/native runs were stopped
+as requested; their partial results remain incomplete. The fresh native escrow
+suite passed its first three lifecycle cases before cancellation. The local
+acceptance run passed the six-decimal asset and part of the nine-decimal asset,
+then stopped with cleanup. Final factory TLC and binding-veto verification also
+remain incomplete. The binding model's last added scenario was not rerun.
+No final whole-head verification, full repeated wallet matrix, merge, production
+deployment or activation is claimed. The original state-correctness goal remains
+open; passing finite models does not prove absence of all application errors.
