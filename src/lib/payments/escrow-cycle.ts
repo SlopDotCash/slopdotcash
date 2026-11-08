@@ -2,6 +2,7 @@ import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
+import { githubUserIdFromNodeId } from "../github-actor";
 import { assertLeaderboardSnapshot } from "../leaderboard";
 import { assertProjectDefinition } from "../project-schema.mjs";
 import {
@@ -44,7 +45,7 @@ export function buildEscrowCycle(
     generatedAt: string;
   },
   bytes: Uint8Array,
-  identityBytes: Uint8Array,
+  identityBytes: Uint8Array | null,
   policyBytes: Uint8Array,
 ) {
   const project = assertProjectDefinition(JSON.parse(text(policyBytes)));
@@ -105,7 +106,29 @@ export function buildEscrowCycle(
     ),
   );
   const allocations = allocateIntegerTotal(cap, view.leaders);
-  const identities = JSON.parse(text(identityBytes)) as EscrowIdentity[];
+  // Monthly proposals derive identities from this already computed view.
+  // Archive reconstruction still uses its exact retained identity bytes.
+  const resolvedIdentityBytes =
+    identityBytes ??
+    new TextEncoder().encode(
+      JSON.stringify(
+        view.leaders.map((leader) => {
+          const githubUserId = githubUserIdFromNodeId(leader.actor.id);
+          if (!githubUserId)
+            throw new Error(
+              `No numeric GitHub identity for ${leader.actor.login}`,
+            );
+          return {
+            nodeId: leader.actor.id,
+            githubUserId,
+            login: leader.actor.login,
+          };
+        }),
+      ),
+    );
+  const identities = JSON.parse(
+    text(resolvedIdentityBytes),
+  ) as EscrowIdentity[];
   if (
     !Array.isArray(identities) ||
     identities.length !== view.leaders.length ||
@@ -153,7 +176,7 @@ export function buildEscrowCycle(
       Date.parse(generatedAt) + 14 * 86400000,
     ).toISOString(),
     sourceSnapshotSha256,
-    githubIdentitiesSha256: digest(identityBytes),
+    githubIdentitiesSha256: digest(resolvedIdentityBytes),
     projectPolicySha256: digest(policyBytes),
     scoringRuleVersion: snapshot.ruleVersion,
     contributionWindow: { from: view.cycle.from, to: view.cycle.to },

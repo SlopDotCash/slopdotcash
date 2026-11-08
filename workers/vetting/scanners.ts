@@ -68,6 +68,8 @@ export type ReviewPass = {
   responseSha256: string | null;
   usage: ScannerEvidence["usage"];
   cached: boolean;
+  /** Provider calls this pass made, counting retried attempts. */
+  attempts?: number;
 };
 export type ScannerEvidence = {
   review: ModelReview;
@@ -92,7 +94,49 @@ export type ScannerEvidence = {
   visibilityGaps: string[];
   /** Every call of a batched review; absent for a single-call review. */
   passes?: ReviewPass[];
+  /**
+   * Why a failed review failed, as one fixed category (`ReviewFailureCategory`,
+   * prefixed `batch:` or `synthesis:` in a batched review). It never carries
+   * provider text. Absent when the review completed.
+   */
+  failure?: string;
 };
+
+/**
+ * The fixed vocabulary of a failed review. Only these strings, an HTTP status
+ * number, allowlisted provider stop reasons and a `providerErrorDetail` (a
+ * snake_case error type or digit-only token counts) can appear, so the
+ * category is safe to log beside a retry.
+ */
+export type ReviewFailureCategory =
+  | `provider-http-${number}`
+  | `provider-http-${number}-${string}`
+  | "timeout"
+  | "network"
+  | "response-unreadable"
+  | "truncated"
+  | "model-mismatch"
+  | `stop-${"max_tokens" | "pause_turn" | "refusal" | "tool_use" | "stop_sequence" | "other"}`
+  | `incomplete-${"max_output_tokens" | "content_filter" | "other"}`
+  | "invalid-response"
+  | "invalid-review";
+const STOP_REASONS = new Set([
+  "max_tokens",
+  "pause_turn",
+  "refusal",
+  "tool_use",
+  "stop_sequence",
+]);
+const INCOMPLETE_REASONS = new Set(["max_output_tokens", "content_filter"]);
+class ReviewFailure extends Error {
+  constructor(readonly category: ReviewFailureCategory) {
+    super(category);
+    this.name = "ReviewFailure";
+  }
+}
+const isTimeout = (error: unknown) =>
+  error instanceof Error &&
+  (error.name === "TimeoutError" || error.name === "AbortError");
 const record = (value: unknown) => readRecord(value, "Record");
 function text(value: unknown, maximum = 1000): string {
   if (typeof value !== "string" || !value.trim() || value.length > maximum)
@@ -197,12 +241,62 @@ export function validateProfile(profile: ScannerProfile) {
     if (!/^[0-9]{1,12}$/u.test(profile.rateCard[key]))
       throw new Error("Explicit rate card required");
 }
+/**
+ * The safe part of a provider error body: its error type when it is a plain
+ * snake_case word, or `input-too-long` with only the token counts the message
+ * states. The message itself is never kept, so no provider or source text can
+ * reach the category.
+ */
+export function providerErrorDetail(body: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const error =
+    parsed !== null && typeof parsed === "object"
+      ? (parsed as { error?: unknown }).error
+      : undefined;
+  if (error === null || typeof error !== "object") return null;
+  const { type, message } = error as { type?: unknown; message?: unknown };
+  if (
+    typeof message === "string" &&
+    /prompt is too long|exceeds? (?:the )?context|context (?:length|window|limit)|too many (?:input )?tokens/iu.test(
+      message,
+    )
+  ) {
+    const digits = (value: string) => value.replace(/,/gu, "");
+    const sum = /(\d[\d,]*) \+ (\d[\d,]*) > (\d[\d,]*)/u.exec(message);
+    if (sum)
+      return `input-too-long-${digits(sum[1])}-plus-${digits(sum[2])}-over-${digits(sum[3])}`;
+    const over = /(\d[\d,]*) tokens? > (\d[\d,]*)/u.exec(message);
+    return over
+      ? `input-too-long-${digits(over[1])}-over-${digits(over[2])}`
+      : "input-too-long";
+  }
+  return typeof type === "string" && /^[a-z][a-z_]{0,47}$/u.test(type)
+    ? type
+    : null;
+}
 async function limitedResponse(response: Response): Promise<string> {
   if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error("Provider unavailable");
+    // Up to 16 KiB of the error body, only to derive `providerErrorDetail`.
+    const detail = await readBoundedText(response, 16 * 1024, "Provider error")
+      .then(providerErrorDetail)
+      .catch(() => null);
+    await response.body?.cancel().catch(() => undefined);
+    throw new ReviewFailure(
+      detail === null
+        ? `provider-http-${response.status}`
+        : `provider-http-${response.status}-${detail}`,
+    );
   }
-  return readBoundedText(response, 1024 * 1024, "Provider response");
+  try {
+    return await readBoundedText(response, 1024 * 1024, "Provider response");
+  } catch (error) {
+    throw isTimeout(error) ? error : new ReviewFailure("response-unreadable");
+  }
 }
 async function reviewOne(
   profile: ScannerProfile,
@@ -239,6 +333,10 @@ async function reviewOne(
     cost: null,
     visibilityGaps: [...bundle.visibilityGaps],
   };
+  // Anything that fails before the review text is read is a malformed
+  // provider response; anything after it is a review that broke its contract.
+  let phase: "invalid-response" | "invalid-review" = "invalid-response";
+  let truncated = false;
   try {
     const openai = profile.transport === "openai-responses";
     const response = await fetcher(profile.endpoint, {
@@ -269,10 +367,12 @@ async function reviewOne(
               max_tokens: profile.maxOutputTokens,
             },
       ),
+    }).catch((error: unknown) => {
+      throw isTimeout(error) ? error : new ReviewFailure("network");
     });
     // Surplus marks a response that its deadline cut short; the JSON and
     // stop reason can still look complete.
-    const truncated = response.headers.get("x-si-truncated") === "1";
+    truncated = response.headers.get("x-si-truncated") === "1";
     const raw = await limitedResponse(response);
     result.responseSha256 = digest(raw);
     const body = record(JSON.parse(raw));
@@ -307,16 +407,31 @@ async function reviewOne(
         nanoUsd: nanoUsd.toString(),
         rateCardSha256: digest(JSON.stringify(rates)),
       };
-    if (
-      truncated ||
-      body.model !== profile.model ||
-      (openai
-        ? body.status !== "completed" ||
-          body.error != null ||
-          body.incomplete_details != null
-        : body.stop_reason !== "end_turn" || body.stop_details != null)
-    )
-      throw new Error("Provider identity or completion mismatch");
+    if (truncated) throw new ReviewFailure("truncated");
+    if (body.model !== profile.model) throw new ReviewFailure("model-mismatch");
+    if (openai) {
+      if (
+        body.status !== "completed" ||
+        body.error != null ||
+        body.incomplete_details != null
+      ) {
+        const reason = String(
+          (body.incomplete_details as { reason?: unknown } | null)?.reason,
+        );
+        throw new ReviewFailure(
+          INCOMPLETE_REASONS.has(reason)
+            ? (`incomplete-${reason}` as ReviewFailureCategory)
+            : "incomplete-other",
+        );
+      }
+    } else if (body.stop_reason !== "end_turn" || body.stop_details != null) {
+      const reason = String(body.stop_reason);
+      throw new ReviewFailure(
+        STOP_REASONS.has(reason)
+          ? (`stop-${reason}` as ReviewFailureCategory)
+          : "stop-other",
+      );
+    }
     let output: string;
     if (openai) {
       if (!Array.isArray(body.output))
@@ -358,6 +473,7 @@ async function reviewOne(
         throw new Error("Unexpected provider output");
       output = text(answers[0].text, 1024 * 1024);
     }
+    phase = "invalid-review";
     // Some completed model replies wrap the single JSON answer in a code
     // fence. Accept only that whole-answer wrapper, never surrounding prose.
     const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u.exec(output.trim());
@@ -412,8 +528,18 @@ async function reviewOne(
         result.visibilityGaps.push(
           `${profile.reviewer}:${area}:${coverage[area]}`,
         );
-  } catch {
-    // No provider error body, secret, source or output escapes through an exception.
+  } catch (error) {
+    // No provider error body, secret, source or output escapes through an
+    // exception: only a fixed category is kept.
+    result.failure =
+      error instanceof ReviewFailure
+        ? error.category
+        : isTimeout(error)
+          ? "timeout"
+          : // A cut-short reply often cannot even be parsed.
+            truncated
+            ? "truncated"
+            : phase;
     result.visibilityGaps.push(
       `${profile.reviewer}:review-failed-or-unavailable`,
     );

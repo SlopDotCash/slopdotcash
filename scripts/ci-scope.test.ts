@@ -182,6 +182,11 @@ for (const path of [
   "workers/payment-executor/solana.ts",
   "scripts/payment-keeper/budget.ts",
   "backend/payments/monthly.ts",
+  "workers/operator-keeper/index.ts",
+  "workers/security-payments/index.ts",
+  "workers/fee-converter/solana.ts",
+  "workers/fee-converter/jupiter-route.ts",
+  "workers/fee-converter/core.ts",
 ]) {
   test(`both escrow rails qualify payment execution changes in ${path}`, () => {
     const scope = scopeFor({ [path]: "export {};\n" });

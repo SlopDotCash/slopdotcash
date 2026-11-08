@@ -78,7 +78,10 @@ import {
 import { verifyRunReceiptSignature } from "./run-receipt-crypto";
 
 export const SEARCH_SAFE_RESULT_LIMIT = 950;
-export const MINIMUM_SEARCH_SLICE_MS = 60_000;
+// Search ranges are second-precise (`searchRange`, `midpoint`), so a burst is
+// split down to one second; only a single second over the cap still refuses.
+// A one-minute floor refused a 1,072-merge bulk merge in 45 s (6 Nov 2026).
+export const MINIMUM_SEARCH_SLICE_MS = 1_000;
 export const GRAPHQL_PAGE_SIZE = 100;
 export const MINIMUM_GRAPHQL_PAGE_SIZE = 1;
 export const DETAIL_BATCH_SIZE = 25;
@@ -2333,7 +2336,7 @@ export async function collectSearchReferences(
   if (deduped.length !== expectedCount) {
     // Discard the incomplete cursor result and query narrower ranges. Each
     // child and the deduplicated union must reconcile to the parent's count.
-    // The one-minute split floor and client's request/rate budgets still bound
+    // The one-second split floor and client's request/rate budgets still bound
     // recovery. No missing record can become a successful partial snapshot.
     return collectSplitRange();
   }
@@ -3994,9 +3997,10 @@ export async function generateLeaderboardFromGitHub(
     const unavailable: string[] = [];
     for (const batch of chunks([...ids], REVIEW_DETAIL_BATCH_SIZE)) {
       try {
-        const data = await client.execute(
+        const data = await executeNodeBatch(
+          client,
           "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
-          { ids: batch },
+          batch,
         );
         const nodes = asArray(data.nodes, "source availability.nodes");
         if (
