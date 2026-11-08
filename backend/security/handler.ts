@@ -2977,6 +2977,9 @@ async function planChange(
         evidenceReference: null,
         detail: recovery.detail,
         set: {},
+        requireSql: recovery.requireSql,
+        requireValues: recovery.requireValues,
+        unmet: recovery.unmet,
         after: recovery.after,
       };
     }

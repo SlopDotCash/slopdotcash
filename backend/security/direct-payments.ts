@@ -1166,8 +1166,47 @@ export async function recoverDirectIntent(
         "payment_consent_required",
         "The reporter must consent to the successor wallet first",
       );
-    await directRecoveryConsent(db, input.caseId, c.reporterId, config);
+    const current = await directRecoveryConsent(
+      db,
+      input.caseId,
+      c.reporterId,
+      config,
+    );
+    if (JSON.stringify(current) !== JSON.stringify(c.marker))
+      fail(
+        409,
+        "payment_recovery_changed",
+        "The payment or reporter wallet changed. Review recovery again.",
+      );
   }
+  // Chain reads below can outlive another wallet registration. Fence the
+  // case update and successor insertion in the same transaction, not only
+  // the earlier read. A paid researcher leg keeps its original destination;
+  // fee-only recovery must not depend on that actor's later wallet changes.
+  const predicates = [
+    "EXISTS(SELECT 1 FROM security_direct_current_payments WHERE case_id=? AND generation=?)",
+  ];
+  const values: unknown[] = [input.caseId, c.generation];
+  if (legIndex === 0) {
+    predicates.push(
+      "EXISTS(SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.record_sha256=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry')",
+    );
+    values.push(c.target.id, c.target.digest, c.reporterId, c.intent.chain);
+    if (c.target.id !== c.intent.recipient.id) {
+      predicates.push(
+        "EXISTS(SELECT 1 FROM security_payment_consents WHERE case_id=? AND reporter_github_id=? AND deployment=?)",
+      );
+      values.push(input.caseId, c.reporterId, JSON.stringify(c.marker));
+    }
+  }
+  const completionFence = {
+    requireSql: predicates.join(" AND "),
+    requireValues: values,
+    unmet: {
+      code: "payment_recovery_changed",
+      message: "The payment or reporter wallet changed. Review recovery again.",
+    },
+  };
   const original =
     legIndex === 1 ||
     sameAssetAddress(
@@ -1267,6 +1306,7 @@ export async function recoverDirectIntent(
     }
     if (result.state !== "retired")
       return {
+        ...completionFence,
         after: [] as D1QueryStatement[],
         detail: {
           generation: c.generation,
@@ -1371,6 +1411,7 @@ export async function recoverDirectIntent(
     retirement = { ...(retirement as Record<string, unknown>), legIndex };
   }
   return {
+    ...completionFence,
     detail: {
       generation: c.generation + 1,
       legIndex,
@@ -1384,7 +1425,7 @@ export async function recoverDirectIntent(
     after: [
       db
         .prepare(
-          "INSERT INTO security_direct_payment_revisions(case_id,generation,prior_generation,intent,retirement,actor_github_id,created_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM security_case_events WHERE case_id=? AND case_revision=? AND idempotency_key=? AND kind='recover-payment')",
+          `INSERT INTO security_direct_payment_revisions(case_id,generation,prior_generation,intent,retirement,actor_github_id,created_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM security_case_events WHERE case_id=? AND case_revision=? AND idempotency_key=? AND kind='recover-payment' AND actor_github_id=?) AND ${completionFence.requireSql}`,
         )
         .bind(
           input.caseId,
@@ -1397,6 +1438,8 @@ export async function recoverDirectIntent(
           input.caseId,
           input.revision,
           input.key,
+          input.payerId,
+          ...completionFence.requireValues,
         ),
     ],
   };
