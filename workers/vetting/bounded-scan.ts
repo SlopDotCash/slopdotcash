@@ -395,10 +395,12 @@ const RULES: Rule[] = [
     // A container run pulls the image and executes it, usually with the
     // repository mounted, so the install executes bytes the scan never
     // acquires. `docker build` and `docker compose up` run definitions that
-    // are already an install surface, so they stay out. `container run` is
-    // the long spelling of the same command; podman takes the same flags.
+    // are already an install surface, so they stay out. `container run` and
+    // `compose run` are the long spellings of the same command, and the CLI
+    // takes global flags before the subcommand, so the flag gap is skipped on
+    // both sides of it. podman and nerdctl take the same shapes.
     pattern: new RegExp(
-      String.raw`(?:^|[\s;|&()'"\x60])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?["']?(?:[^\s;|&()'"\x60]*\/)?(?:docker|podman)(?:\.exe)?(?:-compose)?["']?\s+(?:container\s+)?run\b`,
+      String.raw`(?:^|[\s;|&()'"\x60])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?["']?(?:[^\s;|&()'"\x60]*\/)?(?:docker|podman|nerdctl)(?:\.exe)?(?:-compose)?["']?(?:\s+(?:(?:container|compose)\b|-{1,2}[^\s;|&()'"\x60]+(?:\s+[^\s;|&()'"\x60]+)?))*\s+run\b`,
       "iu",
     ),
     summary: "Pulls a container image and runs it during install",

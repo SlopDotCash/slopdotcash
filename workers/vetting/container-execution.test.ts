@@ -49,8 +49,36 @@ describe("a container image run during install", () => {
       '"docker" run --rm img:1 ./install\n',
       "docker.exe run --rm img:1 ./install\n",
       "docker-compose run web ./install\n",
+      // Compose V2 spells the same act with a space, and nerdctl is a third
+      // Docker-compatible CLI with the same shapes.
+      "docker compose run web ./install\n",
+      "podman compose run web ./install\n",
+      "nerdctl run --rm img:1 ./install\n",
+      "nerdctl compose run web ./install\n",
     ])
       expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([RUNS]);
+  });
+
+  // The CLI takes global flags before the subcommand, and a flag may carry a
+  // value. One flag in between must not hide the run.
+  test("global flags between the binary and the subcommand are skipped", () => {
+    for (const line of [
+      "docker -D run --rm img:1 ./install\n",
+      "docker --log-level debug run --rm img:1 ./install\n",
+      "docker --config /tmp/cfg run --rm img:1 ./install\n",
+      "docker -H unix:///var/run/docker.sock run --rm img:1 ./install\n",
+      "docker compose --profile x run web ./install\n",
+    ])
+      expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([RUNS]);
+  });
+
+  // `--config` takes a value, and here the value is spelled `run`. The bare
+  // command runs nothing, but the rule has no way to tell the value from the
+  // subcommand, so it reports and lets the reader look.
+  test("a value spelled like the subcommand is still reported", () => {
+    expect(findingsOf("setup.sh", "#!/bin/sh\ndocker --config run\n")).toEqual([
+      RUNS,
+    ]);
   });
 
   test("sudo and an environment assignment do not hide it", () => {
@@ -78,8 +106,11 @@ describe("container commands that stay clean", () => {
     for (const line of [
       "docker build -t app .\n",
       "docker compose up -d\n",
+      "docker compose down\n",
+      "docker compose config\n",
       "docker ps\n",
       "docker --version\n",
+      "docker --debug ps\n",
       "docker system prune -f\n",
     ])
       expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([]);
