@@ -40,3 +40,11 @@ Their complete mutation protocols were not changed. The existing
 `ui_admin_review` model still covers revision refusal and `ui_focus_session`
 covers session-check visibility; neither previously represented this draft
 slot and save-response lifetime composition. Layout and styles are unchanged.
+
+Two unexecuted browser regressions are now in
+`tests/e2e/admin-editor-lifetime.spec.ts`. They hold the submitted PUT while
+focus-driven session checking remounts the editor, or while the original
+editor receives newer text. The assertions distinguish the submitted payload
+from the retained draft and check navigation, storage and busy feedback. They
+use the existing controlled Admin API fixture; they are not live registry or
+identity acceptance. No browser or test run was performed in this lane.

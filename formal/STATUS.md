@@ -9,18 +9,21 @@ production deployment or completion of the application-wide state review.
 The older dirty `/Users/shawwalters/slopdotcash` checkout is preserved.
 
 The review chat owns the remaining published batch. PR 1873 merged at
-`5acc3c47e9a29fc2b55fb756964944eb0a976213`. PR 2427 was then rebased and
-published on a `development` base at
-`1bcf755b0645e05a611d288825bf8c4de0696c0c`; its checks remain separate from
-this follow-up. PR 2426 remains held at
-`bd4d58ef66b326a4e85b1728b972e9bf6e56fd65`. These are recorded checkpoints,
+`5acc3c47e9a29fc2b55fb756964944eb0a976213`. PR 2427 then merged at
+`5d8b2402e070ec6cc6adf069e5e4f68ce41fcd96`, from reviewed head
+`1bcf755b0645e05a611d288825bf8c4de0696c0c`. Its unfinished Quint job was
+cancelled when the PR closed; the other non-skipped jobs passed. The review
+chat owns the replacement exact-source verification. PR 2426 merged at
+`25cf670075eb89993f3f83ca3e52d13efecefdfe` into the earlier feature branch,
+not into `development`. Its proof changes still require the corrective
+integration being prepared by the review chat. These are recorded checkpoints,
 not mutable-branch completion claims. Later commits must be assessed against
 their own source and model hashes.
 
-The frozen local `codex/quint-observation-fixes` branch holds the newer
-completion-race corrections below. `codex/quint-observation-current-base`
-integrates them on the pushed `1bcf755b` dependency while retaining the reviewed
-runner and model fixes. Final rebasing onto the completed dependency batch is
+The frozen local `codex/quint-observation-fixes` branch retains the earlier
+observation checkpoint. `codex/quint-observation-current-base` integrates it
+and the later completion-race corrections on `1bcf755b`, while retaining the
+reviewed runner and model fixes. Final rebasing onto the completed dependency batch is
 still required. Do not replace the held published heads with this branch
 during the review batch. Preserve the broader 168-target,
 33-module proof manifest when integrating; this local branch still has the
@@ -34,7 +37,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-809 production sources, 313 finite models and 1,499 named scenarios, with zero
+809 production sources, 316 finite models and 1,542 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 235 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -279,6 +282,17 @@ published review batch and have no complete combined-head validation:
   persistence retains usable local evidence, and an explicitly empty recovery
   input cannot silently resubmit the stored candidate. See
   `direct-bounty-journal-audit.md`.
+- Solana candidate writes compare the captured stored record before changing
+  it. A late candidate cannot erase a returned signature, and a departed
+  preflight cannot start a wallet prompt. Failed signature persistence retains
+  its in-memory recovery path. See `solana-payment-pending-audit.md`.
+- An Admin editor save clears only its submitted draft bytes. A departed
+  completion cannot close a remounted editor, and newer edits stay open with
+  accurate saved-versus-unsaved feedback. See `admin-editor-lifetime-audit.md`.
+- Monthly allocation and automatic-setting writes require the same registry
+  revision and manifest digest that supplied their authority. The SQL checks
+  this when the write executes; existing opt-out and paused-project policy is
+  retained. See `monthly-owner-completion-audit.md`.
 
 Source review also preserves the parent PR's terminal refusal scenarios in
 the startup-rejection model. Independent validation found and corrected the
@@ -301,3 +315,9 @@ remain incomplete. The journal model's corrected names and factored choices
 also pass normal checks, while its finite checks still time out. These are
 open verification obligations; see the composition and journal audits. This
 chat has not run checks on the combined integration branch.
+
+The latest Solana, Admin and monthly source/model revisions are unexecuted.
+Their focused regressions are authored for later independent execution; an
+existing workflow name is not a passing receipt. The ignored runtime acceptance
+ledger separately records the exact-source limits of earlier payment, Inbox
+and owner browser/API evidence.

@@ -76,6 +76,11 @@ automatic/owner finalization preserving a pause before its freeze write;
 enable versus a later opt-out; allocation cutoff/execution-time and frozen
 month cases; and reserve release refusing a changed project revision. Those
 references explain the retained boundaries, but no prior run proves the new
-two-INSERT predicate. No runtime regression was added or run under the active
-instruction to skip checks. Exact-source API/SQLite before/after evidence is
-still required for the newly fenced owner/steward-change orders.
+two-INSERT predicate. Four unexecuted regressions were subsequently added to
+that file. Three hold the bound allocation/enable/disable INSERT, append a
+real SQLite registry revision that changes the individual steward, then
+release the write and require refusal without new financial records. The
+fourth retains opt-out and allocation changes for an unchanged paused
+project. GitHub authority is controlled by the existing test fixture. No test
+was run in this lane. Exact-source API/SQLite before/after evidence is still
+required for the newly fenced owner/steward-change orders.
