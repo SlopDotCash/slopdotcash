@@ -279,7 +279,10 @@ Inbox model's missing return type; its 13 scenarios and finite TLC exploration
 passed in that isolated worktree. The expanded 23-scenario owner model also
 passed independent finite checks. The initial-preparation fix subsequently
 passed the five isolated API/Anvil asset workflows and 15 concurrent-change
-regressions described in its audit. These results do not prove browser behavior
-or the combined application. Newer case-projection and journal models and all
+regressions described in its audit. A separate paired browser run now covers
+Inbox focus, reserve-release late readback and commitment late decline: all six
+controlled pre-fix desktop/mobile cases fail at their intended assertions, and
+all six corrected cases pass. See the Inbox and owner-recovery audits for the
+fixture and source limits. Newer case-projection and journal models and all
 combined runtime behavior still require their exact-source evidence. Keep
 original parsing failures and failed runs.

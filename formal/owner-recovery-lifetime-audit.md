@@ -161,3 +161,31 @@ replacement ends ownership of a slot; a later wallet result cannot recreate
 it, and no additional history storage is introduced. Old client versions,
 separate tabs, malicious storage mutation, and unbounded retries remain outside
 this finite source-level argument.
+
+## Independent browser regressions
+
+The later test commit `5e8e21e9d0a55797af74d11347a026ed199156b3` extends the
+existing owner-awards and vault-actions workflows. A held reserve-release
+readback is delivered after a remounted view saves a newer hash; the newer
+record must survive. A held wallet decline is delivered after a remounted
+commitment view records a new real Anvil submission; that new marker must
+survive. Both tests failed at those assertions on the controlled pre-fix source
+and passed on the corrected source in desktop and mobile Chromium.
+
+Together with the Inbox test, all six corrected cases passed with no skips,
+failures or flaky cases, and all six identical pre-fix cases failed at their
+intended regressions. Only Inbox, OwnerCommitment and OwnerReserveRelease
+runtime files were restored for the pre-fix comparison. Their corrected bytes
+match this integration branch. This is not an all-file baseline comparison.
+The commitment workflow uses a real local Anvil vault. Reserve-release and
+notification replies use controlled API protocols; they do not prove live
+backend, wallet or provider availability.
+
+The aggregate and recordings remain under
+`slopdotcash-browser-financial-final/evidence/financial-completion/`.
+The corrected receipt SHA-256 is
+`4be0d0e65af27ea1329f283d6767d774041c2544b9b673f318e845f4b12ee4e4`;
+the controlled pre-fix receipt SHA-256 is
+`82e660cfdf5de34951aba40110477936bdd320abbf3adcf00fc7b8a3d14c34b8`.
+These cases do not establish every VaultActions/AutomaticMonthlyPayment or
+storage-failure path. Final combined-head acceptance is still required.

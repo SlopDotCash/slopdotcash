@@ -92,3 +92,20 @@ remains two actors, two cursors, four live epochs and one departure epoch;
 process scheduling, API authority and exact receipt validation remain outside
 this finite model. No browser run or runtime edit is claimed. The original
 parse failure and corrected receipts remain outside committed source.
+
+## Independent browser regression
+
+The later regression in `tests/e2e/inbox-response-owner.spec.ts` holds the
+mark-read POST, dispatches a window-focus event, and then releases the write.
+The controlled pre-fix source leaves the unread view on screen. The corrected
+source displays the completed readback and confirmation, removes the read
+button, and makes only the initial and final notification reads.
+
+The identical test failed before and passed after on desktop and mobile
+Chromium. It runs the actual React view with controlled session and notification
+HTTP responses; it does not prove backend notification or identity behavior.
+The tested Inbox source is byte-identical in this integration branch.
+Test commit `5e8e21e9d0a55797af74d11347a026ed199156b3` and the aggregate in
+`slopdotcash-browser-financial-final/evidence/financial-completion/final-result.json`
+retain the paired results. The six-case aggregate also includes the separate
+owner commitment and reserve-release regressions.
