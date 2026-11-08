@@ -2837,12 +2837,13 @@
     },
     {
       "path": "scripts/check-lemmascript.mjs",
-      "sha256": "045e6de0afc3098c913b7b1f12819e7435672a431fa2b97fa894d44b7d3d45af",
+      "sha256": "243928fdbaad898b59bc65759bb66c28f336e63841181a739d782eebbfb5b57c",
       "models": [
+        "formal/models/formal_process.qnt",
         "formal/models/formal_toolchain.qnt",
         "formal/models/jupiter_generation.qnt"
       ],
-      "candidateLines": [35, 89, 104, 107, 115, 122, 297],
+      "candidateLines": [47, 104, 105, 107, 123, 303],
       "review": "mapped-abstraction"
     },
     {
@@ -3696,15 +3697,15 @@
     },
     {
       "path": "scripts/run-e2e-phase.mjs",
-      "sha256": "334d111167598bb2865410f3087984e2b7a3476c0cb29b8c3b37f118ce28324f",
+      "sha256": "d662a1f916f4aa53864d3f6c0e208b1e2041be0db5439e280ec7d471d48a9ea4",
       "models": [
         "formal/models/evidence_capture.qnt",
         "formal/models/formal_process.qnt",
         "formal/models/integration_pipeline.qnt"
       ],
       "candidateLines": [
-        26, 29, 36, 39, 40, 44, 76, 84, 101, 103, 120, 127, 145, 166, 169, 171,
-        173, 180, 184, 191, 196
+        26, 29, 36, 39, 40, 44, 77, 85, 102, 104, 121, 128, 146, 167, 168, 171,
+        173, 175, 182, 186, 193, 198
       ],
       "review": "mapped-abstraction"
     },
@@ -9558,9 +9559,10 @@
     },
     {
       "path": "formal/models/formal_process.qnt",
-      "sha256": "25e0905a51ea37a0a84985eb4937c1ac071070da7eb7f93feecb67bee878a77c",
+      "sha256": "6cce23f9d6d3932e693d004afa5eaea301c24cebc00effeb4ebdf1ccbaf604a4",
       "sources": [
         "scripts/check-formal.mjs",
+        "scripts/check-lemmascript.mjs",
         "scripts/run-e2e-phase.mjs",
         "scripts/run-e2e.mjs"
       ],
@@ -9595,7 +9597,7 @@
     },
     {
       "path": "formal/models/formal_toolchain.qnt",
-      "sha256": "dfa71c916a040a1de6e59c9ce35d491beb8c113639ce03059ee0af9ecb8631ed",
+      "sha256": "4d855c65700cf4e891cb3a4539694eeb14bb783b8089efe43ee5d07d04c0f054",
       "sources": [
         ".github/workflows/formal.yml",
         ".github/workflows/lemmascript.yml",
@@ -9614,9 +9616,11 @@
       ],
       "scenarios": [
         "assumptionCannotVerifyTest",
+        "canceledPartialRunReportsFailureTest",
         "changedBodyCannotVerifyTest",
         "changedSourceFailsRunTest",
         "failedCheckCannotBecomeSuccessTest",
+        "failedPartialRunReportsFailureTest",
         "selectedSuccessIsNotFullCoverageTest"
       ]
     },

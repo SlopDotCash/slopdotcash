@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 319 finite models and 1,599 named scenarios, with zero
+839 production sources, 319 finite models and 1,601 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -367,3 +367,12 @@ name, with an expiring legacy fallback. This corrects both delayed callback
 cleanup and reversed start-response arrival. Its model now separates the D1
 start from cookie delivery. The nineteen added handler/SQLite cases and all
 29 X scenarios remain unexecuted in this lane; the active core PR is unchanged.
+
+## Separate LemmaScript cancellation follow-up
+
+This branch follows frozen `a8b0f8226`. The proof checker now forwards parent
+signals through the existing process-group supervisor and retains canceled
+failure receipts. The missing parent-signal path predates corrective22b and
+has not been runtime-reproduced here. Model scenarios and subprocess tests
+are authored but unexecuted; see `lemmascript-cancellation-audit.md`. This
+source is not part of the active corrective PR.
