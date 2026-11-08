@@ -54,6 +54,11 @@ const DOWNLOADS: Record<string, [string, string, string]> = {
     "from urllib.request import urlretrieve\nurlretrieve('https://example.com/asset.zip', 'asset.zip')\n",
     "https://example.com/asset.zip",
   ],
+  "urlretrieve with keyword url argument in a Python install script": [
+    "setup.py",
+    "import urllib.request\nurllib.request.urlretrieve(url='https://example.com/keyword-tool.tar.gz')\n",
+    "https://example.com/keyword-tool.tar.gz",
+  ],
 };
 
 test("install-time downloads from the named tools are collected", () => {
