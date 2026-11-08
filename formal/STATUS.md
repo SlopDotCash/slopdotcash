@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 317 finite models and 1,555 named scenarios, with zero
+839 production sources, 318 finite models and 1,570 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -329,3 +329,13 @@ writes; the unchanged paused-project case passes on both. This is local
 SQLite evidence, not deployed D1 or GitHub-provider acceptance. The ignored
 runtime acceptance ledger separately records the exact-source limits of
 earlier payment, Inbox and owner browser/API evidence.
+
+## Separate Points dispute lease model
+
+This branch follows frozen `a8b0f8226`. `points_dispute_lease` adds fifteen
+unexecuted scenarios for two worker claims, expiry and takeover, returned
+provider costs, immutable drafts, independent resolution and token-matched
+cleanup. The original intake model remains. No application code changed;
+`points-dispute-lease-audit.md` records the source mapping, existing runtime
+references and outstanding conformance. This model is outside the active
+corrective PR.

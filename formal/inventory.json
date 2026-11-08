@@ -201,7 +201,8 @@
       "sha256": "1453c3f9f4f4adfc434737d41a02dae175e2a49d67f9ad309dbcad32a37da78a",
       "models": [
         "formal/models/api_inbox.qnt",
-        "formal/models/api_mail_delivery.qnt"
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/points_dispute_lease.qnt"
       ],
       "candidateLines": [
         15, 27, 100, 108, 109, 135, 138, 147, 153, 166, 221, 250, 258, 267, 276,
@@ -396,7 +397,10 @@
     {
       "path": "backend/points/disputes.ts",
       "sha256": "deeed15066a2a88aff6a959b49d481fe258d0ddcf7587cb8543996737f75722a",
-      "models": ["formal/models/api_points_disputes.qnt"],
+      "models": [
+        "formal/models/api_points_disputes.qnt",
+        "formal/models/points_dispute_lease.qnt"
+      ],
       "candidateLines": [49, 131, 198, 218],
       "review": "mapped-abstraction"
     },
@@ -2732,7 +2736,10 @@
     {
       "path": "migrations/0114_points_dispute_intake.sql",
       "sha256": "bbaed8641ab21f7652df9d8a4284d4ab60a588794cdbb11970a6c81f70a6287c",
-      "models": ["formal/models/api_points_disputes.qnt"],
+      "models": [
+        "formal/models/api_points_disputes.qnt",
+        "formal/models/points_dispute_lease.qnt"
+      ],
       "candidateLines": [2, 31, 39],
       "review": "mapped-abstraction"
     },
@@ -6668,7 +6675,10 @@
     {
       "path": "workers/slopbot/appeals.ts",
       "sha256": "d825b1a32837758276633372f6138e4ed76e9e2ca2e1309373d9e54e9622d64f",
-      "models": ["formal/models/bot_appeal.qnt"],
+      "models": [
+        "formal/models/bot_appeal.qnt",
+        "formal/models/points_dispute_lease.qnt"
+      ],
       "candidateLines": [1, 84, 118, 135, 149, 181, 215],
       "review": "mapped-abstraction"
     },
@@ -6795,7 +6805,10 @@
     {
       "path": "workers/slopbot/points-disputes.ts",
       "sha256": "94de389076be6e0386647ea8f19906d3b431d5d16bcd6df749a06ecc52e63089",
-      "models": ["formal/models/api_points_disputes.qnt"],
+      "models": [
+        "formal/models/api_points_disputes.qnt",
+        "formal/models/points_dispute_lease.qnt"
+      ],
       "candidateLines": [41, 71, 72, 181, 208],
       "review": "mapped-abstraction"
     },
@@ -10229,6 +10242,34 @@
         "exactProbeReadyTest",
         "wrongChainRefusedTest",
         "wrongRegistryRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points_dispute_lease.qnt",
+      "sha256": "4b4d72f1176bc83662f3ee7078a77e33d932c53f3978d7480e6e0ba30f6f6c97",
+      "sources": [
+        "backend/notifications/events.ts",
+        "backend/points/disputes.ts",
+        "migrations/0114_points_dispute_intake.sql",
+        "workers/slopbot/appeals.ts",
+        "workers/slopbot/points-disputes.ts"
+      ],
+      "scenarios": [
+        "completedDraftEscalationNeedsNoNewLeaseTest",
+        "deniedInferenceEscalatesTest",
+        "expiredClaimCanBeReplacedTest",
+        "expiredWorkerCannotDraftTest",
+        "failedCostWriteDoesNotEscalateTest",
+        "firstResolutionIsPermanentTest",
+        "liveClaimRefusesConcurrentWorkerTest",
+        "resolvedDisputeStopsOldWorkerTest",
+        "returnedDraftCannotResolveTest",
+        "savedDraftResumesWithoutSecondCallTest",
+        "selfResolutionRefusesTest",
+        "sourceRestrictionBeforeSendEscalatesTest",
+        "staleCleanupKeepsReplacementTest",
+        "staleReturnedCallStillHasCostRecordTest",
+        "unavailableProjectEscalatesWithoutCallTest"
       ]
     },
     {
