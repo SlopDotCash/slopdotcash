@@ -17,6 +17,7 @@
 import {
   decodeTokenExtensions,
   type ExtensionRecord,
+  metadataPayloadValid,
 } from "./verified-token-extensions";
 
 export const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -163,24 +164,7 @@ export function readTokenMint(
       throw new Error("Malformed token metadata");
     if (expectedMint && !equal(payload.subarray(32, 64), expectedMint))
       throw new Error("Token metadata does not embed the mint");
-    let at = 64;
-    for (let i = 0; i < 3; i++) {
-      const length = uint32(payload, at);
-      at += 4 + length;
-      if (at > payload.length) throw new Error("Malformed token metadata");
-    }
-    // The additional-metadata vector: a u32 entry count, then two u32-length strings
-    // per entry. Each entry needs at least eight bytes, so the count is bounded.
-    const count = uint32(payload, at);
-    at += 4;
-    if (count > payload.length / 8) throw new Error("Malformed token metadata");
-    for (let i = 0; i < count; i++)
-      for (let field = 0; field < 2; field++) {
-        const length = uint32(payload, at);
-        at += 4 + length;
-        if (at > payload.length) throw new Error("Malformed token metadata");
-      }
-    if (payload.subarray(at).some((byte) => byte !== 0))
+    if (!metadataPayloadValid(payload))
       throw new Error("Malformed token metadata");
   }
   return {
@@ -217,17 +201,5 @@ function equal(left: Uint8Array, right: Uint8Array): boolean {
   return (
     left.length === right.length &&
     left.every((byte, index) => byte === right[index])
-  );
-}
-
-/** Reads a little-endian u32 that must be fully present. */
-function uint32(bytes: Uint8Array, offset: number): number {
-  if (offset + 4 > bytes.length) throw new Error("Malformed token metadata");
-  return (
-    (bytes[offset] |
-      (bytes[offset + 1] << 8) |
-      (bytes[offset + 2] << 16) |
-      (bytes[offset + 3] << 24)) >>>
-    0
   );
 }

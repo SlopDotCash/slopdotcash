@@ -23,6 +23,24 @@ lemma littleEndian16_ensures(bytes: seq<int>, at: int)
 {
 }
 
+function littleEndian32(bytes: seq<int>, at: int): int
+  requires (0 <= at)
+  requires ((at + 3) < |bytes|)
+  requires forall i: int :: ((0 <= i) ==> (i < |bytes|) ==> ((0 <= bytes[i]) && (bytes[i] <= 255)))
+{
+  (((bytes[at] + (bytes[(at + 1)] * 256)) + (bytes[(at + 2)] * 65536)) + (bytes[(at + 3)] * 16777216))
+}
+
+lemma littleEndian32_ensures(bytes: seq<int>, at: int)
+  requires (0 <= at)
+  requires ((at + 3) < |bytes|)
+  requires forall i: int :: ((0 <= i) ==> (i < |bytes|) ==> ((0 <= bytes[i]) && (bytes[i] <= 255)))
+  ensures (littleEndian32(bytes, at) == U32(bytes, at))
+  ensures (0 <= littleEndian32(bytes, at))
+  ensures (littleEndian32(bytes, at) <= 4294967295)
+{
+}
+
 method zeroSuffix(bytes: seq<int>, at: int) returns (res: bool)
   requires (0 <= at)
   requires (at <= |bytes|)
@@ -113,6 +131,66 @@ method decodeTokenExtensions(bytes: seq<int>, accountType: int, expected: seq<in
   return ExtensionScan(0, at, 0, records);
 }
 
+method metadataPayloadValid(bytes: seq<int>) returns (res: bool)
+  requires (|bytes| <= 9007199254740991)
+  requires forall i: int :: ((0 <= i) ==> (i < |bytes|) ==> ((0 <= bytes[i]) && (bytes[i] <= 255)))
+  ensures (res <==> MetadataValid(bytes))
+{
+  if (|bytes| < 72) {
+    return false;
+  }
+  var at := 64;
+  var i := 0;
+  while (i < 3)
+    invariant (0 <= i)
+    invariant (i <= 3)
+    invariant (64 <= at)
+    invariant (at <= |bytes|)
+    invariant (WalkFields(bytes, 64, 3) == WalkFields(bytes, at, (3 - i)))
+  {
+    if ((|bytes| - at) < 4) {
+      return false;
+    }
+    var length := (((bytes[at] + (bytes[(at + 1)] * 256)) + (bytes[(at + 2)] * 65536)) + (bytes[(at + 3)] * 16777216));
+    if (length > ((|bytes| - at) - 4)) {
+      return false;
+    }
+    at := (at + (4 + length));
+    i := (i + 1);
+  }
+  if ((|bytes| - at) < 4) {
+    return false;
+  }
+  var i_t4 := littleEndian32(bytes, at);
+  var count := i_t4;
+  at := (at + 4);
+  if ((count as real) > ((|bytes| as real) / (8 as real))) {
+    return false;
+  }
+  ghost var start: int := at;
+  var fields := (count * 2);
+  i := 0;
+  while (i < fields)
+    invariant (0 <= i)
+    invariant (i <= fields)
+    invariant (start <= at)
+    invariant (at <= |bytes|)
+    invariant (WalkFields(bytes, start, fields) == WalkFields(bytes, at, (fields - i)))
+  {
+    if ((|bytes| - at) < 4) {
+      return false;
+    }
+    var length := (((bytes[at] + (bytes[(at + 1)] * 256)) + (bytes[(at + 2)] * 65536)) + (bytes[(at + 3)] * 16777216));
+    if (length > ((|bytes| - at) - 4)) {
+      return false;
+    }
+    at := (at + (4 + length));
+    i := (i + 1);
+  }
+  var i_t5 := zeroSuffix(bytes, at);
+  return i_t5;
+}
+
 predicate ZeroTail(bytes: seq<int>, at: int) {
   0 <= at <= |bytes| && forall i :: at <= i < |bytes| ==> bytes[i] == 0
 }
@@ -154,4 +232,51 @@ predicate CompleteScan(bytes: seq<int>, accountType: int, expected: seq<int>, re
         else
           result.error == 3 &&
           result.at + 4 + bytes[result.at+2] + bytes[result.at+3]*256 > |bytes|
+}
+
+predicate ByteValues(bytes: seq<int>) {
+  forall i :: 0 <= i < |bytes| ==> 0 <= bytes[i] <= 255
+}
+
+function U32(bytes: seq<int>, at: int): int
+  requires ByteValues(bytes)
+  requires 0 <= at && at + 3 < |bytes|
+  ensures 0 <= U32(bytes, at) <= 4294967295
+{
+  bytes[at] + bytes[at+1]*256 + bytes[at+2]*65536 + bytes[at+3]*16777216
+}
+
+function NextField(bytes: seq<int>, at: int): int
+  requires ByteValues(bytes)
+  requires -1 <= at <= |bytes|
+  ensures NextField(bytes, at) == -1 || at + 4 <= NextField(bytes, at) <= |bytes|
+{
+  if at < 0 || |bytes|-at < 4 then -1
+  else var length := U32(bytes, at);
+    if length > |bytes|-at-4 then -1 else at+4+length
+}
+
+/** Exact end after count complete length-prefixed fields; failure is absorbing. */
+function WalkFields(bytes: seq<int>, at: int, count: int): int
+  requires ByteValues(bytes)
+  requires -1 <= at <= |bytes| && count >= 0
+  ensures WalkFields(bytes, at, count) == -1 || at <= WalkFields(bytes, at, count) <= |bytes|
+  decreases count
+{
+  if count == 0 then at
+  else var next := NextField(bytes, at);
+    if next < 0 then -1 else WalkFields(bytes, next, count-1)
+}
+
+/** Three strings, a count, two strings per entry, and only zero trailing bytes. */
+predicate MetadataValid(bytes: seq<int>)
+  requires ByteValues(bytes)
+{
+  if |bytes| < 72 then false
+  else var stringsEnd := WalkFields(bytes, 64, 3);
+    if stringsEnd < 0 || |bytes|-stringsEnd < 4 then false
+    else var count := U32(bytes, stringsEnd);
+      if count*8 > |bytes| then false
+      else var end := WalkFields(bytes, stringsEnd+4, count*2);
+        end >= 0 && ZeroTail(bytes, end)
 }

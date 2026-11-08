@@ -18,7 +18,7 @@ incomplete header, unsupported type, duplicate type, incomplete payload. It
 still accepts a zero-only suffix as padding. It imposes no total account-size
 cap. It never copies a remaining suffix or the complete input byte buffer.
 
-Four actual runtime functions have contracts: `littleEndian16`, `zeroSuffix`,
+Four TLV runtime functions have contracts: `littleEndian16`, `zeroSuffix`,
 `hasType` and `decodeTokenExtensions`. Generated definitions are unchanged in
 the proof file; only fully defined predicates are added. There are no axioms,
 assumptions, external-function stubs or disabled verification obligations.
@@ -87,16 +87,16 @@ reader regressions cover a 2 MiB padding suffix and ambiguous malformed-record
 diagnostic precedence. These are local deterministic workflows, not a live
 mainnet transaction or proof of RPC truth.
 
-The standalone Dafny run verifies 12 declarations with zero errors. The strict
+The TLV-only standalone Dafny run verifies 12 declarations with zero errors. The strict
 repository gate additionally regenerates the source, checks immutable generated
-definitions and verifies each assertion separately. The final strict run passes
+definitions and verifies each assertion separately. The TLV-only checkpoint passes
 463 obligations for this parser and 1,898 across all ten modules, containing
 47 selected runtime functions. Its receipt at
 `evidence/lemmascript/1794152342792-47512/result.json` is the authority for those
 counts and exact input hashes; `evidence/token-tlv/summary.json` binds the
 workflow and benchmark results to the source bytes.
 
-## Measured performance
+## TLV-only checkpoint performance
 
 Eleven paired rounds alternate the old/new order after warmup. The same input,
 iteration count, Bun version and process are used. Median elapsed times are:
@@ -114,14 +114,82 @@ scan materially improves the large-padding case. Raw paired samples, including
 an earlier noisier run, remain in local evidence; these measurements are not a
 guarantee for every engine or input.
 
+## TokenMetadata cursor follow-up
+
+The follow-up on this branch also verifies `littleEndian32` and
+`metadataPayloadValid`, used directly by `readTokenMint`. It removes the former
+unproved `uint32` reader and metadata cursor loop. The 64-byte authority/mint
+prefix and existing address checks remain in the caller.
+
+The complete `MetadataValid` equivalence covers three length-prefixed fields,
+the additional-metadata u32 count, two length-prefixed fields for every entry,
+the existing count-versus-payload bound, and a zero-only final suffix.
+`WalkFields` defines the exact cursor after a specified number of complete
+fields; a missing header or payload yields failure. The runtime loops maintain
+equality with that complete walk, not only cursor bounds. Every byte access is
+proved in range. Lengths with the top bit set retain their unsigned u32 meaning.
+
+Metadata contents remain arbitrary bytes, as before. The parser does not add
+UTF-8, string-content, alignment, or account-size policy. The public reader
+still throws `Malformed token metadata` for the same malformed inputs.
+
+This portion uses the same no-copy Uint8Array mapping. Its low-byte shifts are
+only by 8 and 16 bits; the byte bounds ensure their results remain nonnegative
+and below the signed 32-bit limit, where the extractor's arithmetic shift model
+matches JavaScript. The high byte uses exact multiplication to avoid an
+unmodeled signed shift/unsigned-shift round trip. Field reads remain inline in
+the hot loops rather than adding a function call for every cursor advance.
+
+A differential run against the preceding `6bdfa02ee` implementation compares
+19,053 public reader outcomes. It covers missing and truncated headers/fields,
+large unsigned length words, vector counts, raw non-UTF8 bytes, padding and
+expected-mint mismatches. All results and error class/messages match. The
+generator seed is `0x89abcdef`. The 22 affected token/adapter/route workflow
+tests pass with 231 assertions. Evidence for this portion is retained under
+`evidence/token-metadata/`.
+
+An initial extra per-field cursor helper caused measurable overhead and was
+removed. All unfavorable measurements are retained. A focused final hot-loop
+comparison uses 15 paired rounds after warmup: minimal and long-string cursor
+walks are faster, while 8,181 empty key/value pairs take 20.791 ms versus
+21.758 ms for 1,000 validations.
+
+The final whole-reader comparison uses seven alternating pairs of fresh
+processes with one fixed function callsite, after warmup. Its baseline is the
+TLV-only commit `6bdfa02ee4076734a34088b6a86f3cef63cb7cee`; the after version
+also verifies the metadata cursor. It measures:
+
+| Metadata payload | Calls per process | Before / after median | After / before | Change per call |
+| --- | ---: | ---: | ---: | ---: |
+| Minimal 80 bytes | 30,000 | 300.064 / 374.823 ms | 1.249 | +0.002492 ms |
+| 65,080-byte long string | 300 | 481.732 / 616.749 ms | 1.280 | +0.450056 ms |
+| 65,528 bytes, 8,181 key/value pairs | 300 | 730.886 / 673.173 ms | 0.921 | -0.192375 ms |
+
+This batch shows a measured overhead for the first two whole-reader cases,
+despite the faster isolated cursor loop. Earlier same-process paired runs were
+variable under host contention; they are also retained. The useful result is a
+complete executable cursor contract and removed duplicate validation code,
+not a general speed improvement. Integration must weigh the observed overhead;
+no input cap, copy or policy change was added to conceal it.
+The earlier TLV-only speed measurements are a separate checkpoint and do not
+describe the final reader with metadata validation extracted.
+
+The final metadata follow-up passes the strict repository proof gate:
+631 isolated obligations for the combined TLV/metadata module and 2,066 across
+the ten modules in this worktree, covering 49 selected runtime functions.
+The exact-source receipt is
+`evidence/lemmascript/1794153049323-87982/result.json`. The final 19,053-outcome
+differential run, 22 workflow tests, typecheck and benchmark source hashes are
+recorded by `evidence/token-metadata/summary.json`.
+
 ## Remaining boundaries
 
 The proof does not verify base64, expected-mint decoding, token authorities,
-account ownership, metadata string/vector contents, RPC finality or signing.
-Those remain in the existing callers and workflow tests. In particular, the
-metadata `uint32` reader is not represented as proved merely because its input
-extent comes from the verified TLV parser. Full Jupiter recursion, base58 and
-metadata contents remain separate candidates.
+account ownership, semantic metadata contents, RPC finality or signing. Those
+remain in the existing callers and workflow tests. Metadata length words and
+string/vector cursor bounds are covered by the follow-up above; UTF-8 validity
+is deliberately not part of current behavior. Full Jupiter recursion, base58
+and metadata meaning remain separate candidates.
 
 Integration must add the new file to the shared source/state inventory and
 retain the token-admission model mapping. This prototype does not regenerate
