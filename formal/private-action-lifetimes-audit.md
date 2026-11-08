@@ -1,8 +1,8 @@
 # Ordering private case action responses
 
 This source-only pass starts at `6f5aee920874`. No tests, browser, typechecker,
-formatter, simulation or prover were run. The defect below is established by
-the source path; the correction and seven authored scenarios are unverified.
+formatter, simulation or prover were run. The defects below are established by
+the source paths; the corrections and eleven authored scenarios are unverified.
 No held branch, generated registry, proof inventory or global status changed.
 
 ## Reachable response ordering
@@ -40,10 +40,9 @@ The ref is not mutated inside a React state updater. A refused older response
 returns before changing the read generation, so it cannot cancel a newer GET.
 An accepted response retains the existing generation fence.
 
-Equal revisions remain accepted. Chain observations and related projections
-can change without a case revision, so the case revision alone cannot order
-them. An old equal-revision projection can still replace a newer one; this is
-an explicit limit, not a claim that every displayed field is monotonic.
+The first revision of this correction accepted equal case revisions. The
+follow-up below replaces that policy with a fresh read, because a case
+revision does not order all of its related projections.
 
 The case key still creates a new detail instance for another selected case;
 the enclosing private provider still handles actor changes and performs its
@@ -55,12 +54,13 @@ notes remain observations of those actions, not versioned authority.
 ## Model and adjacent review
 
 `ui_private_case_revisions` bounds one case/actor, revisions 1–3, two action
-requests, three reads, and two independent projection values. It distinguishes
+requests, three reads, and two wallet projection values. It distinguishes
 accepted state from painted state, expected-revision mutation acceptance,
 queued action responses and read generations. Named scenarios cover delayed
 older action refusal, refusal before paint, keeping a newer GET active, old
 GET success/error after an accepted action, stale mutation refusal, departure,
-and the equal-revision projection limit. The existing parent-payment model
+same-revision wallet changes, joining an active read, retry after read failure,
+explicit reload and cleanup. The existing parent-payment model
 now explicitly treats its replacement action as an already accepted value.
 
 The source pass also reviewed the new Inbox action ref, its explicit identity
@@ -68,3 +68,54 @@ reload, the private provider's current-session checks, and selected-case keys.
 No additional source-confirmed change was made in those paths. Full browser
 scheduling, provider responses, current-role decisions and implementation
 refinement remain outside this unexecuted model pass.
+
+## Equal-revision wallet and payment projections
+
+`registerPaymentWallet` appends a successor claim through `insertWalletClaim`;
+neither operation changes `security_cases.revision`.
+`backend/security/direct-payments.ts` computes `CURRENT_RECIPIENT` from the
+effective claim and authorization. `directView` uses that result for
+`walletReviewRequired`, the held notice and the remaining owner request.
+`caseView` then selects `nextStep` and the visible payment controls from those
+fields.
+
+This makes the following equal-revision sequence real: a prepare-payment or
+other case-action response is captured while the old recipient is current;
+the reporter registers a new wallet; a fresh case GET shows the held/recovery
+view at the same case revision; the older action response then arrives. The
+first revision guard allowed it to restore the obsolete send controls. The
+send preflight still refused the obsolete request, so this was incorrect
+presentation rather than a demonstrated signing-authority bypass.
+
+Private vault payment projections have a separate source too. The security
+payment worker uses `securityPaymentDatabase` to update the private obligation,
+queue and attempt tables. `settlementView` reads those tables for held,
+uncertain and paid status without changing the case revision. Paid ledger
+evidence is distinct from a current wallet/queue/role projection. Direct-payment
+receipt insertion, by contrast, is guarded by the case-action event in its
+atomic action batch. None of these facts makes the whole case response an
+immutable, monotonically ordered snapshot.
+
+The current replacement rule is therefore: reject lower case revisions,
+accept higher revisions, and retain the accepted projection while refreshing
+an equal revision. A ref tracks only the latest active GET. An equal callback
+joins that request instead of invalidating it; if none is current, it uses the
+existing loader. Matching success/error, an accepted replacement and effect
+cleanup clear the active-read ref. Old callbacks cannot clear a newer read.
+Ordinary explicit Reload/Retry still starts a new generation. Non-case hook
+consumers retain their existing behavior, and no ref is mutated inside a React
+state updater.
+
+The wallet model's first projection means the original recipient is current;
+the second means a successor claim makes it held. A delayed equal action can
+no longer restore the first projection in the model. The model also checks
+that a current read is not restarted and that failure/cleanup release the
+coalescing state. Its three-read cutoff excludes transitions requiring a
+fourth read; it is not a claim about unbounded retries.
+
+Fresh reads are still point-in-time observations. This change does not add
+server timestamps, establish a globally atomic case/ledger snapshot, merge
+fields using presumed monotonicity, or guarantee that an external wallet or
+role cannot change after a read. Higher-revision response handling and current
+action preflights keep their existing contracts. The new source and model
+remain untested under the instruction to skip checks.

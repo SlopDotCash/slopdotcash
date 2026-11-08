@@ -1121,15 +1121,17 @@ function useSecurityData<T>(
 ): [
   Loaded<T>,
   () => void,
-  (value: T, accept?: (previous: T) => boolean) => void,
+  (value: T, accept?: (previous: T) => boolean | "refresh") => void,
 ] {
   const privateRequest = usePrivateRequest();
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
   const generation = useRef(0);
+  const activeRead = useRef<number | null>(null);
   const accepted = useRef<{ value: T } | null>(null);
   const load = useCallback(() => {
     if (path === null) return;
     const current = ++generation.current;
+    activeRead.current = current;
     // A refresh keeps the loaded view, so an open case stays mounted.
     setState((previous) =>
       previous.status === "ready" ? previous : { status: "loading" },
@@ -1137,12 +1139,14 @@ function useSecurityData<T>(
     privateRequest<T>("GET", path).then(
       (value) => {
         if (generation.current === current) {
+          activeRead.current = null;
           accepted.current = { value };
           setState({ status: "ready", value });
         }
       },
       (error: unknown) => {
         if (generation.current !== current) return;
+        activeRead.current = null;
         if (error instanceof ProjectApiError && error.status === 401) {
           setState({ status: "signed-out" });
           return;
@@ -1163,18 +1167,29 @@ function useSecurityData<T>(
     load();
     return () => {
       generation.current += 1;
+      activeRead.current = null;
     };
   }, [load]);
   const replace = useCallback(
-    (value: T, accept?: (previous: T) => boolean) => {
-      if (accepted.current !== null && accept && !accept(accepted.current.value))
+    (value: T, accept?: (previous: T) => boolean | "refresh") => {
+      const decision =
+        accepted.current !== null && accept
+          ? accept(accepted.current.value)
+          : true;
+      if (decision === "refresh") {
+        // Keep current projections until a fresh read answers. An existing
+        // current read already owns that work; do not cancel it and start over.
+        if (activeRead.current !== generation.current) load();
         return;
+      }
+      if (!decision) return;
       // An action result supersedes every read started before it.
       generation.current += 1;
+      activeRead.current = null;
       accepted.current = { value };
       setState({ status: "ready", value });
     },
-    [],
+    [load],
   );
   return [state, load, replace];
 }
@@ -3353,7 +3368,10 @@ function CaseDetail({
     (value: { case: SecurityCase }) =>
       replaceData(
         value,
-        (previous) => value.case.revision >= previous.case.revision,
+        (previous) =>
+          value.case.revision === previous.case.revision
+            ? "refresh"
+            : value.case.revision > previous.case.revision,
       ),
     [replaceData],
   );
