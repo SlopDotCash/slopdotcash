@@ -83,7 +83,7 @@ the account, recovery and calculation changes merged by
 Additional local-tool fixes keep Wrangler's update request from hanging test
 setup, serve deterministic local avatar fixtures, and exclude generated native
 validator/dependency trees from the proof source walk while still refusing
-symbolic links in actual source. See `docs/lemmascript-validation.md`.
+symbolic links in actual source. See [the archived validation record](https://github.com/SlopDotCash/slopdotcash/blob/22b0fd511aa8cc8c8e5810fdb979b40a03c5a5f9/docs/lemmascript-validation.md).
 
 The source inventory and area audits also include reviewed transitions that
 needed no implementation change. They remain bounded abstractions unless an

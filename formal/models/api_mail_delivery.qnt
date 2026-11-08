@@ -2,6 +2,7 @@
 // @source migrations/0033_optional_notification_email.sql
 // @source workers/notify/security.ts
 // @source workers/notify/activity.ts
+// @source workers/notify/verified-delivery.ts
 // @source workers/notify/handler.ts
 // @source workers/notify/index.ts
 // @source backend/notifications/events.ts

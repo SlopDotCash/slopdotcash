@@ -14,6 +14,12 @@
  * the live approved mint and one of its token accounts on Solana mainnet.
  */
 
+import {
+  decodeTokenExtensions,
+  type ExtensionRecord,
+  metadataPayloadValid,
+} from "./verified-token-extensions";
+
 export const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
@@ -23,9 +29,6 @@ export const MINT_SIZE = 82;
 export const ACCOUNT_SIZE = 165;
 /** Account-type byte of any Token-2022 account longer than the base. */
 const ACCOUNT_TYPE_OFFSET = ACCOUNT_SIZE;
-/** First extension record of a Token-2022 account. */
-const TLV_OFFSET = ACCOUNT_TYPE_OFFSET + 1;
-const TYPE_AND_LENGTH = 4;
 const MINT_ACCOUNT_TYPE = 1;
 const TOKEN_ACCOUNT_TYPE = 2;
 /** Admitted Token-2022 mint extensions. */
@@ -90,30 +93,21 @@ function extensionRecords(
   bytes: Uint8Array,
   accountType: number,
   expected: readonly number[],
-): number[] {
-  if (bytes.length <= ACCOUNT_SIZE)
-    throw new Error("Truncated Token-2022 account");
-  if (bytes[ACCOUNT_TYPE_OFFSET] !== accountType)
-    throw new Error("Token-2022 account type mismatch");
-  const found: number[] = [];
-  let at = TLV_OFFSET;
-  while (at < bytes.length) {
-    const rest = bytes.subarray(at);
-    if (rest.every((byte) => byte === 0)) break;
-    if (rest.length < TYPE_AND_LENGTH)
+): ExtensionRecord[] {
+  const result = decodeTokenExtensions(bytes, accountType, expected);
+  switch (result.error) {
+    case 1:
+      throw new Error("Truncated Token-2022 account");
+    case 2:
+      throw new Error("Token-2022 account type mismatch");
+    case 3:
       throw new Error("Truncated Token-2022 extension");
-    const type = rest[0] | (rest[1] << 8);
-    const length = rest[2] | (rest[3] << 8);
-    if (!expected.includes(type))
-      throw new Error(`Unsupported Token-2022 extension ${type}`);
-    if (found.includes(type))
-      throw new Error(`Duplicate Token-2022 extension ${type}`);
-    if (TYPE_AND_LENGTH + length > rest.length)
-      throw new Error("Truncated Token-2022 extension");
-    found.push(type);
-    at += TYPE_AND_LENGTH + length;
+    case 4:
+      throw new Error(`Unsupported Token-2022 extension ${result.type}`);
+    case 5:
+      throw new Error(`Duplicate Token-2022 extension ${result.type}`);
   }
-  return found;
+  return result.records;
 }
 
 /**
@@ -153,14 +147,13 @@ export function readTokenMint(
   // The base is padded to the account size before the account-type byte.
   if (bytes.subarray(MINT_SIZE, ACCOUNT_TYPE_OFFSET).some((byte) => byte !== 0))
     throw new Error("Unexpected Token-2022 base padding");
-  const extensions = extensionRecords(bytes, MINT_ACCOUNT_TYPE, [
+  const records = extensionRecords(bytes, MINT_ACCOUNT_TYPE, [
     METADATA_POINTER,
     TOKEN_METADATA,
   ]);
-  for (const type of extensions) {
-    const record = extensionPayload(bytes, type);
+  for (const record of records) {
     const payload = bytes.subarray(record.start, record.start + record.length);
-    if (type === METADATA_POINTER) {
+    if (record.type === METADATA_POINTER) {
       if (payload.length !== METADATA_POINTER_LENGTH)
         throw new Error("Malformed metadata pointer");
       if (expectedMint && !equal(payload.subarray(32, 64), expectedMint))
@@ -171,27 +164,15 @@ export function readTokenMint(
       throw new Error("Malformed token metadata");
     if (expectedMint && !equal(payload.subarray(32, 64), expectedMint))
       throw new Error("Token metadata does not embed the mint");
-    let at = 64;
-    for (let i = 0; i < 3; i++) {
-      const length = uint32(payload, at);
-      at += 4 + length;
-      if (at > payload.length) throw new Error("Malformed token metadata");
-    }
-    // The additional-metadata vector: a u32 entry count, then two u32-length strings
-    // per entry. Each entry needs at least eight bytes, so the count is bounded.
-    const count = uint32(payload, at);
-    at += 4;
-    if (count > payload.length / 8) throw new Error("Malformed token metadata");
-    for (let i = 0; i < count; i++)
-      for (let field = 0; field < 2; field++) {
-        const length = uint32(payload, at);
-        at += 4 + length;
-        if (at > payload.length) throw new Error("Malformed token metadata");
-      }
-    if (payload.subarray(at).some((byte) => byte !== 0))
+    if (!metadataPayloadValid(payload))
       throw new Error("Malformed token metadata");
   }
-  return { program, raw: bytes, decimals: bytes[44], extensions };
+  return {
+    program,
+    raw: bytes,
+    decimals: bytes[44],
+    extensions: records.map((record) => record.type),
+  };
 }
 
 /** Reads a token account, admitting ImmutableOwner or no extension on Token-2022. */
@@ -203,46 +184,22 @@ export function readTokenAccount(value: unknown): TokenAccountReading {
     return { program, raw: bytes, extensions: [] };
   if (program === TOKEN_PROGRAM)
     throw new Error("Classic token account layout mismatch");
-  const extensions = extensionRecords(bytes, TOKEN_ACCOUNT_TYPE, [
+  const records = extensionRecords(bytes, TOKEN_ACCOUNT_TYPE, [
     IMMUTABLE_OWNER,
   ]);
-  if (extensions.includes(IMMUTABLE_OWNER)) {
-    const record = extensionPayload(bytes, IMMUTABLE_OWNER);
-    if (record.length !== 0) throw new Error("Malformed ImmutableOwner");
-  }
-  return { program, raw: bytes, extensions };
-}
-
-/** Position of one extension record in the account data. */
-function extensionPayload(
-  bytes: Uint8Array,
-  wanted: number,
-): { start: number; length: number } {
-  let at = TLV_OFFSET;
-  while (at + TYPE_AND_LENGTH <= bytes.length) {
-    const type = bytes[at] | (bytes[at + 1] << 8);
-    const length = bytes[at + 2] | (bytes[at + 3] << 8);
-    if (type === wanted) return { start: at + TYPE_AND_LENGTH, length };
-    at += TYPE_AND_LENGTH + length;
-  }
-  throw new Error(`Missing Token-2022 extension ${wanted}`);
+  for (const record of records)
+    if (record.type === IMMUTABLE_OWNER && record.length !== 0)
+      throw new Error("Malformed ImmutableOwner");
+  return {
+    program,
+    raw: bytes,
+    extensions: records.map((record) => record.type),
+  };
 }
 
 function equal(left: Uint8Array, right: Uint8Array): boolean {
   return (
     left.length === right.length &&
     left.every((byte, index) => byte === right[index])
-  );
-}
-
-/** Reads a little-endian u32 that must be fully present. */
-function uint32(bytes: Uint8Array, offset: number): number {
-  if (offset + 4 > bytes.length) throw new Error("Malformed token metadata");
-  return (
-    (bytes[offset] |
-      (bytes[offset + 1] << 8) |
-      (bytes[offset + 2] << 16) |
-      (bytes[offset + 3] << 24)) >>>
-    0
   );
 }

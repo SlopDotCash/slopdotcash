@@ -1,5 +1,6 @@
 // @source backend/security/submissions.ts
 // @source backend/security/report-intake.ts
+// @source backend/security/verified-intake.ts
 // @source migrations/0059_private_security_submissions.sql
 // @source migrations/0101_durable_security_intake.sql
 // Optional GitHub forwarding after admission/consent. Two send attempts and

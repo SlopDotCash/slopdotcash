@@ -13,6 +13,9 @@ export function parseVaultAmount(value: string, decimals: number): bigint {
   const [whole, fraction = ""] = value.split(".");
   if (fraction.length > decimals)
     throw new Error(`This token supports at most ${decimals} decimal places.`);
+  // A canonical 40-digit whole part exceeds uint128 before decimal scaling.
+  if (whole.length > 39)
+    throw new Error("The amount is outside the vault's supported range.");
   const amount = decimalBaseUnits(whole, fraction, decimals);
   if (amount <= 0n || amount >= 1n << 128n)
     throw new Error("The amount is outside the vault's supported range.");

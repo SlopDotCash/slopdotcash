@@ -3,6 +3,7 @@
 // @source scripts/prepare-site.mjs
 // @source scripts/dist-manifest.mjs
 // @source scripts/select-pages-deployment.mjs
+// @source src/lib/verified-selection.ts
 // @source scripts/verify-staging-deployment.mjs
 // @source scripts/release-notify.mjs
 // Source advancement before service writes supersedes; advancement afterward

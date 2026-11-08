@@ -1,3 +1,6 @@
+// @source workers/vetting/verified-text-parts.ts
+// @source workers/vetting/verified-review-batches.ts
+// @source workers/verified-budget.ts
 // @source workers/vetting/review-plan.ts
 // @source workers/vetting/scanners.ts
 // Three batches and a synthesis; two attempts abstract the actual maximum

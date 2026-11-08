@@ -37,6 +37,10 @@ import {
   type VettingArtifact,
   type VettingResult,
 } from "./result";
+import {
+  type ReuseScanEvidence,
+  reusableSourceInventory,
+} from "./verified-reuse";
 
 export const VETTING_SCAN_SCHEMA = "slop-vetting-result-v2";
 /** Template inputs are scanned apart from repository paths. */
@@ -573,12 +577,20 @@ export function isScanResult(
 
 /** Legacy native results lack a retained pre-execution binding and cannot reuse. */
 export function scanSourceInventory(result: VettingScanResult): string | null {
-  return (
-    result.assessed.sourceInventorySha256 ??
-    (result.execution === null && result.artifacts.length === 0
-      ? result.assessed.inputManifestSha256
-      : null)
-  );
+  return reusableSourceInventory(scanSourceInventoryInput(result));
+}
+
+/** Keep absent source bindings distinct from native execution or artifacts. */
+export function scanSourceInventoryInput(
+  result: VettingScanResult,
+): ReuseScanEvidence {
+  return {
+    assessed: result.assessed,
+    hasExecution: result.execution !== null,
+    artifacts: result.artifacts,
+    policyVersion: result.policyVersion,
+    scan: result.scan,
+  };
 }
 
 /** The disposition rules of the result's own schema. */
