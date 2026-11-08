@@ -239,6 +239,7 @@ export default defineConfig({
         "**/evidence-download.spec.ts",
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
+        "**/project-draft-storage.spec.ts",
       ],
       use: {
         ...devices["Desktop Firefox"],
@@ -250,6 +251,7 @@ export default defineConfig({
       testMatch: [
         "**/email-preferences.spec.ts",
         "**/bounty-full-flow.spec.ts",
+        "**/project-draft-storage.spec.ts",
       ],
       use: {
         ...devices["Desktop Firefox"],

@@ -3,6 +3,7 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { projectImageApiFixture } from "../project-image-api-fixture.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
+import { readProjectDraft } from "./project-draft-fixture";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/.well-known/slop/projects.json", (route) =>
@@ -361,9 +362,7 @@ test("discarding an old project draft cancels its pending image decode", async (
       page.getByRole("img", { name: "Project avatar preview", exact: true }),
     ).toHaveCount(0);
     expect(
-      await page.evaluate(() =>
-        localStorage.getItem("slop:project-update:v2:eliza"),
-      ),
+      await readProjectDraft(page, "slop:project-update:v2:eliza"),
     ).toBeNull();
   } finally {
     if (!page.isClosed())

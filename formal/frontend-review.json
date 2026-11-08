@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "sourceBase": "e3d7dea64",
-  "limits": "Source-to-model review is manual; mappings are not refinement proofs. See frontend-audit.md.",
+  "limits": "Historical manual review index begun at sourceBase; line counts belong to each review checkpoint, not the current whole-tree revision. Draft-storage follow-up is based on b073742d347fe2a82d7b07ef9ca3524ce63346ed. Global formal/inventory.json is the current source-hash authority. Mappings are not refinement proofs; see frontend-audit.md and draft-storage-audit.md.",
   "files": [
     {
       "path": "src/Admin.tsx",
@@ -146,7 +146,7 @@
     {
       "path": "src/InboxEmail.tsx",
       "lines": 839,
-      "models": ["ui_email.qnt"],
+      "models": ["ui_email.qnt", "ui_email_actions.qnt"],
       "statelessReason": null,
       "status": "modeled-abstraction",
       "refinementProved": false
@@ -358,13 +358,16 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "lines": 2641,
+      "lines": 2686,
       "models": [
         "ui_project_setup.qnt",
         "ui_project_draft.qnt",
         "ui_image_decode.qnt",
         "ui_calendar_views.qnt",
-        "ui_focus_session.qnt"
+        "ui_focus_session.qnt",
+        "ui_draft_slots.qnt",
+        "ui_repository_lookup.qnt",
+        "ui_draft_save_progress.qnt"
       ],
       "statelessReason": null,
       "status": "modeled-abstraction",
@@ -903,7 +906,11 @@
     {
       "path": "src/lib/use-snapshot.ts",
       "lines": 238,
-      "models": ["ui_resources.qnt", "ui_time_boundary.qnt"],
+      "models": [
+        "ui_resources.qnt",
+        "ui_time_boundary.qnt",
+        "ui_snapshot_cache.qnt"
+      ],
       "statelessReason": null,
       "status": "modeled-abstraction",
       "refinementProved": false
@@ -958,6 +965,14 @@
       "path": "src/main.tsx",
       "lines": 99,
       "models": ["ui_boot.qnt"],
+      "statelessReason": null,
+      "status": "modeled-abstraction",
+      "refinementProved": false
+    },
+    {
+      "path": "src/lib/project-draft-store.ts",
+      "lines": 232,
+      "models": ["ui_draft_slots.qnt", "ui_draft_save_progress.qnt"],
       "statelessReason": null,
       "status": "modeled-abstraction",
       "refinementProved": false

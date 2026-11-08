@@ -1,13 +1,19 @@
-# Current-development frontend state audit
+# Frontend state review checkpoints
 
-Authoritative source base: `e3d7dea64` on `codex/quint-state-review`, with the
-current working-tree corrections. This audit does not describe the older dirty
-checkout at `/Users/shawwalters/slopdotcash`.
+The initial review began at `e3d7dea64` on `codex/quint-state-review`. Later
+sections record subsequent checkpoints; the draft-storage follow-up begins at
+`b073742d347fe2a82d7b07ef9ca3524ce63346ed`. These are historical manual
+review records. `formal/inventory.json` is the current source-hash authority.
+This audit does not describe the older dirty checkout at
+`/Users/shawwalters/slopdotcash`.
 
 ## Scope and traceability
 
-`frontend-review.json` lists every current `src/*.tsx` file and the client
-hooks/transport/identity/draft entry points: 113 source paths, including the follow-up scoring/projection and parser reviews. The current frontend model set has 37 modules and 148 named scenarios. Each row names its
+`frontend-review.json` is a manual index of the reviewed `src/*.tsx` files and
+client hooks/transport/identity/draft entry points: 114 source paths after the
+draft-storage follow-up, including scoring/projection and parser reviews.
+At this follow-up the frontend model set has 42 modules and 179 named
+scenarios. Counts describe this checkpoint, not future repository state. Each row names its
 Quint model or explains its reviewed stateless behavior.
 `frontend-stateless.json` supplies the reviewed pure-rendering exclusions.
 Each model's `@source` lines bind it to actual implementation paths.
@@ -286,3 +292,15 @@ are under ignored `evidence/formal/ui/pinned-72`, `pinned-cross-tab`, and
 `report-revised` history label is covered by the full-suite run rather than
 these earlier captures. The desktop Admin and mobile owner signed-out views
 were visually inspected. Earlier failed fixture runs are not counted as passes.
+
+## Independent completion pass: draft ownership
+
+The follow-up at `b073742d3` reproduced a two-tab local draft loss that the
+one-editor `ui_project_draft` abstraction did not cover. A delayed successful
+publish in one owner editor deleted a newer draft saved by another editor.
+`draft-storage-audit.md` records the slot ownership correction, browser
+evidence, platform assumptions and the new `ui_draft_slots` model. It also
+records the source-specific repository lookup, replacement email action and
+shared snapshot cache refinements. The additional source/model mappings do
+not change the earlier distinction between a bounded model and proof of the
+whole implementation.

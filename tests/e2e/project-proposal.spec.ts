@@ -20,6 +20,7 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { REWARD_ASSET_NETWORKS } from "../../src/lib/reward-asset.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
+import { patchProposalDraft, readProposalDraft } from "./project-draft-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -332,11 +333,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     "main",
     "trunk",
   ]);
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "123456789",
     repositoryNodeId: "R_fixture",
   });
@@ -347,11 +344,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(branch).toHaveValue("development");
   await enterRepository(page, "example/another-repository");
   await expect(page.getByLabel("Integration branch")).toBeDisabled();
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "",
     repositoryNodeId: "",
     integrationBranch: "main",
@@ -644,9 +637,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(page.getByLabel("GitHub repository")).toHaveValue(
     "example/open-protein",
   );
-  const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-  );
+  const stored = await readProposalDraft(page);
   expect(stored.name).toBe("Open Protein");
   expect(stored.integrationBranch).toBe("trunk");
   await expect(branch).toHaveValue("trunk");
@@ -654,13 +645,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     Object.keys(stored).some((key) => /token|secret|key$/iu.test(key)),
   ).toBe(false);
   // A branch removed since a draft was saved needs a new explicit choice.
-  await page.evaluate(() => {
-    const draft = JSON.parse(
-      localStorage.getItem("slop:project-proposal:v1") ?? "{}",
-    );
-    draft.integrationBranch = "retired-branch";
-    localStorage.setItem("slop:project-proposal:v1", JSON.stringify(draft));
-  });
+  await patchProposalDraft(page, { integrationBranch: "retired-branch" });
   await page.reload();
   await expect(branch).toHaveValue("");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
@@ -687,13 +672,7 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
   await enterRepository(page, "example/open-protein");
   await expect(page.locator("#field-repository-error")).toBeVisible();
   await expect(page.getByLabel("Integration branch")).toBeDisabled();
-  expect(
-    await page.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-          .repositoryNumericId,
-    ),
-  ).toBe("");
+  expect((await readProposalDraft(page)).repositoryNumericId).toBe("");
 
   await page.unrouteAll();
   await routeGitHub(page, { repository: 403 });
@@ -707,23 +686,13 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
   await (await rateLimitedLookup).finished();
   await expect(page.locator("#field-repository-error")).toBeVisible();
   await expect(page.getByLabel("Integration branch")).toBeDisabled();
-  expect(
-    await page.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-          .repositoryNumericId,
-    ),
-  ).toBe("");
+  expect((await readProposalDraft(page)).repositoryNumericId).toBe("");
 
   await page.unrouteAll();
   await routeGitHub(page, { licensePath: "LICENSE.md" });
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "123456789",
     repositoryNodeId: "R_fixture",
     licenseSpdx: "",
@@ -759,13 +728,7 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
     await page.waitForLoadState("networkidle");
     const expected = action === "clear" ? "" : "example/new-project";
     await expect(page.getByLabel("GitHub repository")).toHaveValue(expected);
-    expect(
-      await page.evaluate(
-        () =>
-          JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-            .repository,
-      ),
-    ).toBe(expected);
+    expect((await readProposalDraft(page)).repository).toBe(expected);
   }
 });
 
@@ -948,14 +911,7 @@ test("a saved native reward with an unknown network stays editable until correct
     .getByRole("radio", { name: "ETH", exact: true })
     .check();
   await page.getByLabel("Monthly amount (ETH)").fill("1");
-  await page.evaluate(() => {
-    const key = "slop:project-proposal:v1";
-    const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
-    localStorage.setItem(
-      key,
-      JSON.stringify({ ...saved, settlementChain: "retired-network" }),
-    );
-  });
+  await patchProposalDraft(page, { settlementChain: "retired-network" });
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", { name: "Add a project", exact: true }),
@@ -967,13 +923,9 @@ test("a saved native reward with an unknown network stays editable until correct
   ).toHaveCount(0);
   const networks = page.getByRole("group", { name: "Network", exact: true });
   await expect(networks.locator("input:checked")).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-          .settlementChain,
-    ),
-  ).toBe("retired-network");
+  expect((await readProposalDraft(page)).settlementChain).toBe(
+    "retired-network",
+  );
   await page.screenshot({
     path: test.info().outputPath("saved-native-network-error.png"),
     fullPage: true,
@@ -1131,11 +1083,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(page.getByLabel("GitHub repository")).toHaveValue(
     "example/open-protein",
   );
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "123456789",
     repositoryNodeId: "R_fixture",
   });
@@ -1143,11 +1091,10 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(page.getByLabel("Short description")).toHaveValue(description);
   await expect(page.getByLabel("Goal")).toHaveValue(description);
   // Fresh projects retain Unknown terms without asking for legal evidence.
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({ copyrightModel: "unknown", inboundMode: "unknown" });
+  expect(await readProposalDraft(page)).toMatchObject({
+    copyrightModel: "unknown",
+    inboundMode: "unknown",
+  });
   // The maintainer's own words survive a later lookup of the same repository.
   await page.getByLabel("Project name").fill("Open Protein");
   await enterRepository(page, "");
