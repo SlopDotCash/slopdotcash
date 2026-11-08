@@ -525,6 +525,52 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
 }
 
 describe("automatic private intake", () => {
+  test("private case reads and actions follow the current reporter, maintainer and finance roles", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      expect(
+        (await env.call(OTHER, "GET", `security-cases/${id}`)).status,
+      ).toBe(404);
+      const reporter = await env.call(REPORTER, "GET", `security-cases/${id}`);
+      expect(reporter.status).toBe(200);
+      expect(reporter.body.case.viewerRoles).toEqual(["reporter"]);
+      expect(
+        (await env.call(DISPUTE, "GET", `security-cases/${id}`)).status,
+      ).toBe(404);
+      expect(
+        (await env.call(FINANCE, "GET", `security-cases/${id}`)).status,
+      ).toBe(404);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "decide",
+            outcome: "confirmed",
+            severity: "critical",
+            loss: "verified-potential",
+            inScope: true,
+            relatedParty: false,
+            rootCauseKey: "role-matrix",
+            reason: "The reporter cannot decide their own report.",
+          })
+        ).status,
+      ).toBe(403);
+      expect((await env.decide(id, "role-matrix")).status).toBe(200);
+      expect(
+        (await env.call(FINANCE, "GET", `security-cases/${id}`)).status,
+      ).toBe(404);
+      expect((await env.award(id, "1000000")).status).toBe(200);
+      const finance = await env.call(FINANCE, "GET", `security-cases/${id}`);
+      expect(finance.status).toBe(200);
+      expect(finance.body.case.viewerRoles).toEqual(["financial"]);
+      expect(
+        (await env.call(OTHER, "GET", `security-cases/${id}`)).status,
+      ).toBe(404);
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
   test("only a maintainer can verify or reject a claimed private report", async () => {
     const env = open();
     env.setAnalyzerConfigured(false);

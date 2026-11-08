@@ -14,8 +14,11 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   closureEligibility,
   hasRecordedSkillRun,
+  isActiveMember,
   isMember,
 } from "./closure-eligibility";
+import { labelOnlyConfig } from "./contracts";
+import { route } from "./routing";
 
 const NOW = "2026-10-30T14:00:00.000Z";
 const databases: { close(): void }[] = [];
@@ -123,7 +126,7 @@ test("closing an account removes automatic-closure membership without deleting i
     },
   );
   expect(response.status).toBe(200);
-  const member = await isMember(db, Number(ME.github));
+  const member = await isActiveMember(db, Number(ME.github));
   expect(member).toBe(false);
   expect(
     closureEligibility({
@@ -133,6 +136,34 @@ test("closing an account removes automatic-closure membership without deleting i
       recordedSkillRun: true,
     }).eligible,
   ).toBe(false);
+  expect(await isMember(db, Number(ME.github))).toBe(true);
+  expect(
+    route({
+      config: { ...labelOnlyConfig(), audience: "participants" },
+      itemKind: "pull_request",
+      itemOpen: true,
+      draft: false,
+      merged: false,
+      authorType: "User",
+      authorIsSelf: false,
+      scope: "contributor",
+      exemption: "not-exempt",
+      markerPresent: false,
+      participant: await isMember(db, Number(ME.github)),
+      closure: closureEligibility({
+        itemKind: "pull_request",
+        exemption: "not-exempt",
+        member,
+        recordedSkillRun: true,
+      }),
+      humanReopenedThisRevision: false,
+      authorCapReached: false,
+    }),
+  ).toMatchObject({
+    review: true,
+    mayClose: false,
+    penaltyEligible: false,
+  });
   expect(await isMember(db, Number(OTHER.github))).toBe(true);
   expect(
     sqlite

@@ -34,6 +34,7 @@ import {
   type ClosureEligibility,
   closureEligibility,
   hasRecordedSkillRun,
+  isActiveMember,
   isMember,
 } from "./closure-eligibility";
 import {
@@ -841,7 +842,6 @@ async function closureEligibilityFor(
   job: Extract<Job, { kind: "review" }>,
   context: Context,
   exemption: Exemption,
-  member?: boolean,
 ): Promise<ClosureEligibility> {
   const evidence = {
     itemKind: job.itemKind,
@@ -851,7 +851,7 @@ async function closureEligibilityFor(
   };
   const structural = closureEligibility(evidence);
   if (!structural.eligible) return structural;
-  evidence.member = member ?? (await isMember(db, context.issue.user.id));
+  evidence.member = await isActiveMember(db, context.issue.user.id);
   evidence.recordedSkillRun =
     evidence.member &&
     (await hasRecordedSkillRun(db, {
@@ -1311,7 +1311,7 @@ export async function reviewItem(
     participant,
     closure:
       registration.scope === "contributor"
-        ? await closureEligibilityFor(db, job, context, exemption, participant)
+        ? await closureEligibilityFor(db, job, context, exemption)
         : { eligible: false, why: "security review only" },
     humanReopenedThisRevision: humanReopened > 0,
     authorCapReached,
