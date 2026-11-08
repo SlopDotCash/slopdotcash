@@ -711,6 +711,23 @@ export async function reviewInventory(input: {
     attempts: outcome.attempts,
   });
   const done = outcomes.filter((outcome) => outcome !== null);
+  const batchPasses = () =>
+    outcomes.flatMap((outcome, index) =>
+      outcome ? [pass("batch", index + 1, plan.batches[index], outcome)] : [],
+    );
+  // A failed review of the whole inventory, like a completed one: it names
+  // the assessed inventory and every call that ran, never one batch's input.
+  const failedReview = (
+    evidence: ScannerEvidence,
+    passes: ReviewPass[],
+  ): ScannerEvidence => ({
+    ...evidence,
+    review: {
+      ...evidence.review,
+      inputManifestSha256: inspection.inventorySha256,
+    },
+    passes,
+  });
   if (failed) {
     const at = outcomes.findIndex(
       (o) => o !== null && o.evidence.review.status !== "completed",
@@ -719,9 +736,12 @@ export async function reviewInventory(input: {
     return {
       plan,
       evidence: first
-        ? labelFailure(
-            first.evidence,
-            `batch-${at + 1}-of-${plan.batches.length}`,
+        ? failedReview(
+            labelFailure(
+              first.evidence,
+              `batch-${at + 1}-of-${plan.batches.length}`,
+            ),
+            batchPasses(),
           )
         : null,
     };
@@ -739,7 +759,13 @@ export async function reviewInventory(input: {
   const final = await run(synthesis, "synthesis");
   if (!final) return { plan, evidence: null };
   if (final.evidence.review.status !== "completed")
-    return { plan, evidence: labelFailure(final.evidence, "synthesis") };
+    return {
+      plan,
+      evidence: failedReview(labelFailure(final.evidence, "synthesis"), [
+        ...batchPasses(),
+        pass("synthesis", plan.batches.length + 1, synthesis, final),
+      ]),
+    };
   return {
     plan,
     evidence: combine(

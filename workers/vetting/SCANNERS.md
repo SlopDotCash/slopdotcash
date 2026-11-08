@@ -67,7 +67,9 @@ credential, prompt or response text is returned in an exception.
 Calls have a 120-second timeout plus 1 ms per estimated input token (at most
 10 minutes) and a 1 MiB response limit. Model refusal,
 truncation, unexpected tools, identity mismatch, invalid evidence references
-and provider errors fail the review. The API key stays in its request header;
+and provider errors fail the review. The scan service records a
+declined review as an incomplete scan instead of retrying it
+(`README.md`). The API key stays in its request header;
 it does not enter the review prompt or evidence record. Keep all returned
 records private. The worker has no signing key and no result-publication route.
 
