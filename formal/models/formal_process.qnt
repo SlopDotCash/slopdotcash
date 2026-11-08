@@ -14,8 +14,9 @@ module formal_process {
     .with("launcher",false).with("failed",not(ok))}
   action cancel = all {Set("running","cleanup").contains(s.phase),
     s'=s.with("phase","cleanup").with("failed",true)}
-  // Playwright owns web servers in separate process groups. Its SIGINT handler
-  // closes these before exiting; a bounded fallback must not claim they closed.
+  // Playwright owns web servers in separate process groups. On cancellation or
+  // timeout its SIGINT handler closes these before exiting; a bounded fallback
+  // must not claim they closed.
   action managedServer = all {s.phase=="running",s'=s.with("external",true)}
   action managedServerClosed = all {s.external,s'=s.with("external",false)}
   action interrupt = all {s.phase=="running",s'=s.with("phase","interrupting").with("failed",true)}
