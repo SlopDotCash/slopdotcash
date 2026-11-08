@@ -190,8 +190,17 @@ function proofDeclarations(tokens) {
     brackets = 0;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i].text;
-    if (!braces && !parens && !brackets && declarationKinds.includes(t))
-      starts.push(i);
+    if (!braces && !parens && !brackets) {
+      if (t === "opaque") {
+        if (!["function", "predicate"].includes(tokens[i + 1]?.text))
+          throw Error("Unsupported opaque declaration");
+        starts.push(i);
+      } else if (
+        declarationKinds.includes(t) &&
+        tokens[i - 1]?.text !== "opaque"
+      )
+        starts.push(i);
+    }
     if (t === "{") braces++;
     if (t === "}") braces--;
     if (t === "(") parens++;
@@ -227,9 +236,10 @@ function proofDeclarations(tokens) {
       lastOpen >= 0 && lastClose === all.length - 1
         ? all.slice(lastOpen + 1, lastClose)
         : null;
+    const modifier = all[0] === "opaque" ? 1 : 0;
     return {
-      kind: all[0],
-      name: all[1],
+      kind: all[modifier],
+      name: all[modifier + 1],
       header: body ? all.slice(0, lastOpen) : all,
       body,
     };
