@@ -4863,9 +4863,9 @@
     },
     {
       "path": "src/lib/global-leaderboard.ts",
-      "sha256": "e9bc3d26593762e6ea0e6f5180b2aa9281a18979f2d17606184651e30739023d",
+      "sha256": "23deb359a46ddc9af987bf4a4b60c1b17b65d8c534aa850b63f6a9748f8e8601",
       "models": ["formal/models/ui_history_projection.qnt"],
-      "candidateLines": [129],
+      "candidateLines": [178],
       "review": "mapped-abstraction"
     },
     {
@@ -5067,9 +5067,9 @@
     },
     {
       "path": "src/lib/payout-points.ts",
-      "sha256": "ff64a916ef83140f6afc0604a7b449ab20f9795382e3741618e23b6cb3399eb8",
+      "sha256": "28545f0a617b2f14dfcf5e63ca97b79214fc3fe72eaec1f7352b0967dd99a184",
       "models": ["formal/models/points_journal.qnt"],
-      "candidateLines": [11, 17],
+      "candidateLines": [13, 21, 24, 26],
       "review": "mapped-abstraction"
     },
     {
@@ -5614,6 +5614,16 @@
       ],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Seven pure argument-to-result decisions with explicit preconditions/postconditions; no retained state, request, timer, storage or mutation. Caller workflows remain in the corresponding UI models."
+    },
+    {
+      "path": "src/lib/verified-global-joins.ts",
+      "sha256": "ebee20fb603d1987ae2d874f427e80bf15d2b0f6b903b860af5e764ae3972b2e",
+      "models": [
+        "formal/models/points_journal.qnt",
+        "formal/models/ui_history_projection.qnt"
+      ],
+      "candidateLines": [135, 155],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/verified-money.ts",
@@ -9779,14 +9789,15 @@
     },
     {
       "path": "formal/models/points_journal.qnt",
-      "sha256": "9ec159e08951e6fc3ddf373ed26626f137fa928c59980e4095deaa8d984c871a",
+      "sha256": "a842f62be069a7e83f67916cb439753f89d0a5973349cebf8575e2e099a0a054",
       "sources": [
         "scripts/generate-points.ts",
         "src/lib/payout-points.ts",
         "src/lib/points.ts",
         "src/lib/score-penalties.ts",
         "src/lib/score-records.ts",
-        "src/lib/verified-aggregation.ts"
+        "src/lib/verified-aggregation.ts",
+        "src/lib/verified-global-joins.ts"
       ],
       "scenarios": [
         "penaltyKeepsFundedTest",
@@ -10754,10 +10765,11 @@
     },
     {
       "path": "formal/models/ui_history_projection.qnt",
-      "sha256": "5581a52b9868c0224d276a33e3428f007c3e42b3a2fcbc7493610d03f45a8e42",
+      "sha256": "07b4953a3b7c210b2bf8071f3a14f688d5b5fdd9187626422e6c5f4b6295de20",
       "sources": [
         "src/lib/global-leaderboard.ts",
         "src/lib/reviewer-leaders.ts",
+        "src/lib/verified-global-joins.ts",
         "src/lib/who-builds.ts"
       ],
       "scenarios": [

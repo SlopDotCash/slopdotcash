@@ -1,4 +1,5 @@
 // @source src/lib/global-leaderboard.ts
+// @source src/lib/verified-global-joins.ts
 // @source src/lib/reviewer-leaders.ts
 // @source src/lib/who-builds.ts
 // Closed cycle records replace rolling events for that project/month. Tokens
