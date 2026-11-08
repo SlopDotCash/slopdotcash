@@ -19,10 +19,10 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The completed combined proof checkpoint contains sixteen modules and 65
+The completed combined proof checkpoint contains eighteen modules and 67
 selected runtime functions. Dafny's `--isolate-assertions` option proves every
 assertion in a separate obligation; it does not filter assertions. The run
-completed 2,721 obligations with zero errors:
+completed 2,914 obligations with zero errors:
 
 | Runtime module | Functions | Obligations |
 | --- | ---: | ---: |
@@ -42,6 +42,8 @@ completed 2,721 obligations with zero errors:
 | Token-2022 headers and metadata | 6 | 631 |
 | Monthly award replacement | 2 | 85 |
 | Original clean-scan reuse | 4 | 64 |
+| Native daily liability | 1 | 150 |
+| Retained expiry agreement | 1 | 43 |
 
 These counts cannot be compared directly with the earlier 60 declaration
 checks because the proof splitting changed. Neither count is a function
@@ -365,8 +367,10 @@ The follow-up at `d543fa204` passed all nine strict source/proof modules:
 43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
 correction requires the final combined source gate to run again.
 The latest combined proof receipt is
-`evidence/lemmascript/1794154072241-99176/result.json`; all sixteen modules pass
-2,721 obligations with stable source hashes, and the combined typecheck passes. The rebased
+`evidence/lemmascript/1794154515134-35053/result.json`; all eighteen modules pass
+2,914 obligations after the rebase onto Quint parent
+`1f0dafd45aa172ca5b65bb22fb16da99e35fbb1a`. Source hashes are stable; combined
+typecheck, lint and format checks pass. The rebased
 server-free translator's 14 gated regression tests also pass, including a real
 TLC counterexample for the false literal invariant. The four changed monthly
 and vetting models pass all type, scenario and simulation stages.
