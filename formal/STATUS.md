@@ -70,7 +70,7 @@ Those results do not certify this branch's additional models or runtime fixes.
   all-rule accessibility check and removal of both bodies on account change.
   Final combined whole-head checks remain in progress.
 - The prior six selected LemmaScript modules passed together: 29 functions and
-  855 proof obligations. The current census finds 9,601 runtime functions;
+  855 proof obligations. That checkpoint's census found 9,601 runtime functions;
   unselected functions remain unproved. Broader proof-only research is isolated.
 - The earlier Solana run passed two production-delay and 25 lifecycle cases;
   all 17 rebuilt JavaScript bundles matched. Local fixtures and build-tool
@@ -245,3 +245,38 @@ partial or complete file bytes left after write failure. These ten scenarios
 are unexecuted. No registry output or application behavior changed. See
 `registry-snapshot-completion-audit.md`; it explicitly excludes concurrent
 local writers and does not claim atomic publication.
+
+## Continued source review
+
+The resumed review added these local corrections. They remain outside the
+published review batch and have no complete combined-head validation:
+
+- Initial direct-payment preparation now checks captured payer and reporter
+  claims and exact consent again in the case transaction. A wallet replacement
+  during RPC planning can no longer publish that stale initial intent. See
+  `direct-preparation-completion-audit.md`.
+- Case-detail responses are ordered against the latest accepted revision,
+  including responses arriving before React paints. Equal revisions retain
+  the current projection and join or start a fresh GET because wallet and
+  payment-ledger state can change without a case revision. Departed callbacks
+  cannot start new reads. See `private-action-lifetimes-audit.md`.
+- VaultActions and AutomaticMonthlyPayment now use the same owned-attempt
+  boundary as the owner commitment and reserve-release flows. All four retain
+  the actual stored snapshot separately from an in-memory hash, so a failed
+  hash write does not prevent later verification from clearing its own record.
+  Departed preflights stop before a new wallet request. See
+  `owner-recovery-lifetime-audit.md`.
+- Direct-payment journal writes merge one owned nonce into the latest stored
+  journal instead of replacing other legs with an old copy. Failed hash
+  persistence retains usable local evidence, and an explicitly empty recovery
+  input cannot silently resubmit the stored candidate. See
+  `direct-bounty-journal-audit.md`.
+
+Source review also preserves the parent PR's terminal refusal scenarios in
+the startup-rejection model. Independent validation found and corrected the
+Inbox model's missing return type; its 13 scenarios and finite TLC exploration
+passed in that isolated worktree. The expanded 23-scenario owner model also
+passed independent finite checks. These model results do not prove browser
+behavior or the combined application. Newer case-projection and journal models,
+the initial-preparation fix, and all combined runtime behavior still require
+their exact-source evidence. Keep original parsing failures and failed runs.

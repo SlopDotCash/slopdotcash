@@ -65,3 +65,5 @@ extracts EVM recovery planning into `verified-direct-recovery.ts`. The
 completion-fence code matches by source comparison, but this is not a byte-for-
 byte whole-file or whole-branch validation claim. Preserve the extracted proof
 implementation when rebasing and repeat the combined-head checks separately.
+The later initial-preparation fence has its own source audit and is not covered
+by this earlier recovery receipt.
