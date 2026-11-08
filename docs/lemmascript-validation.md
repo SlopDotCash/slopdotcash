@@ -358,18 +358,26 @@ proof obligations. The original API/SQLite/Worker workflows passed 37 tests and
 [the notification report](lemmascript-notification-prototype.md). It preserves
 the distinction between no preference, unset security preference, unavailable
 pilot destination and a registered destination with its own pinned version.
-These contracts pass in the combined fourteen-module run. The complete repository
+These contracts pass in the combined sixteen-module run. The complete repository
 gate and browser checks remain separate requirements.
 
 The follow-up at `d543fa204` passed all nine strict source/proof modules:
 43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
 correction requires the final combined source gate to run again.
 The latest combined proof receipt is
-`evidence/lemmascript/1794153356857-19224/result.json`; all fourteen modules pass
-with stable source hashes, and the combined typecheck passes. The rebased
+`evidence/lemmascript/1794154072241-99176/result.json`; all sixteen modules pass
+2,721 obligations with stable source hashes, and the combined typecheck passes. The rebased
 server-free translator's 14 gated regression tests also pass, including a real
-TLC counterexample for the false literal invariant. These results do not turn
-the interrupted whole-repository run below into a pass.
+TLC counterexample for the false literal invariant. The four changed monthly
+and vetting models pass all type, scenario and simulation stages.
+
+The repository test checkpoint at `54be5f519` passed 1,848 tests and 21,746
+assertions with zero failures in 629.74 seconds. Six platform/opt-in cases were
+skipped; the real TLC translator tests passed separately. This checkpoint
+predates monthly replacement and scan reuse. Its log and source revision are
+recorded in `evidence/lemmascript-selection/combined-59-test-receipt.json`.
+It is not a final combined `verify`, browser or deployment result, and does not
+change the status of the earlier interrupted run described below.
 
 The complete browser attempt at `3649142e0` was not green. The Pages lane
 passed six checks. Preview passed 343 checks before its 35-minute limit, with
