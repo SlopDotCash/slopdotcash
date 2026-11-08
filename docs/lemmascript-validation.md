@@ -306,6 +306,14 @@ production release nor complete application refinement.
 
 ## Combined checkpoint still under review
 
+The notification extension adds three actual dispatch functions and 41 isolated
+proof obligations. The original API/SQLite/Worker workflows passed 37 tests and
+275 assertions on the extension. Its exact domain and caller obligations are in
+[the notification report](lemmascript-notification-prototype.md). It preserves
+the distinction between no preference, unset security preference, unavailable
+pilot destination and a registered destination with its own pinned version.
+These additional contracts require the final complete proof run after integration.
+
 The follow-up at `d543fa204` passed all nine strict source/proof modules:
 43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
 correction requires the final combined source gate to run again.
