@@ -707,6 +707,8 @@ export default {
             string,
             string
           >,
+          undefined,
+          parsePaymentNetworks(env.PAYMENT_NETWORKS),
         ),
       () => runMonthlyCoordinator(env),
       () => runMonthlyCommitments(env),
