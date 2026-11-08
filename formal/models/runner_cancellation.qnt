@@ -18,6 +18,12 @@ module runner_cancellation {
   action startupReturns(id:int):bool = all {s.preparing.contains(id),
     s'=s.with("preparing",s.preparing.exclude(Set(id))).with("ready",s.ready.union(Set(id)))
       .with("pendingCleanup",s.pendingCleanup.union(Set(id)))}
+  // No resource handle was returned. This settles the rejected job, not any
+  // unreturned resource hidden inside an opaque startup implementation.
+  action rejectStartup(id:int,code:int):bool = all {s.preparing.contains(id),code!=0,
+    s'=s.with("preparing",s.preparing.exclude(Set(id))).with("finished",s.finished.union(Set(id)))
+      .with("canceled",true).with("canceledLaunches",if(s.canceled)s.canceledLaunches else s.launches)
+      .with("first",primary(code))}
   action launch(id:int):bool = all {not(s.canceled),s.ready.contains(id),
     s'=s.with("ready",s.ready.exclude(Set(id))).with("live",s.live.union(Set(id)))
       .with("launches",s.launches+1)}
@@ -38,7 +44,7 @@ module runner_cancellation {
     s'=s.with("result",if(s.first==0)"passed" else "failed")}
   action step = {
     nondet id=Set(1,2,3).oneOf()
-    any {begin,startupReturns(id),launch(id),settle(id,0),settle(id,1),
+    any {begin,startupReturns(id),rejectStartup(id,1),launch(id),settle(id,0),settle(id,1),
       interrupt(130),interrupt(143),interrupt(129),discardReady(id),
       closeResource(id,true),closeResource(id,false),complete,s'=s}
   }
@@ -74,4 +80,10 @@ module runner_cancellation {
   run lateStartupResourceStillClosesTest = init.then(begin).then(interrupt(143))
     .then(startupReturns(1)).then(discardReady(1)).then(closeResource(1,true)).then(complete)
     .expect(s.first==143 and s.launches==0)
+  run rejectedStartupDrainsLateSiblingTest = init.then(begin).then(begin).then(rejectStartup(1,1))
+    .then(begin.fail()).then(startupReturns(2)).then(launch(2).fail()).then(discardReady(2))
+    .then(complete.fail()).then(closeResource(2,true)).then(complete)
+    .expect(s.first==1 and s.launches==0 and s.finished==Set(1,2) and s.result=="failed")
+  run rejectedStartupPreservesEarlierSignalTest = init.then(begin).then(interrupt(143)).then(rejectStartup(1,1))
+    .then(complete).expect(s.first==143 and s.result=="failed")
 }
