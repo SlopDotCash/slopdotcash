@@ -11,6 +11,7 @@
   },
   "include": [
     "src/lib/verified-*.ts",
+    "src/lib/weighted-allocation.ts",
     "tests/*.ts",
     "src/lib/payments/**/*.ts",
     "contracts/evm/adapter.ts",

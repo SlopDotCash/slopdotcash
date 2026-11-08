@@ -158,10 +158,10 @@ Review of the shared monetary extraction found no changed fee behavior.
 bounty kernel. `acceptsPayoutFee` still runs that validator before checking the
 legacy ordinary fee. The project, review-budget, quality and funding-review call sites preserve
 their division/remainder arithmetic and tie ordering. Their whole-list
-conservation and caller contracts remain outside the per-term proof. The
-review-credit caller now uses a complete loop proof for its existing maximum
-of five reviewers; conservation, quota and tie order are proved for that
-algorithm. Reviewer identity and eligibility remain separate caller obligations.
+conservation and caller contracts remain outside the per-term proof. All five allocation callers now use the complete numerical loop proof for
+arbitrary finite lists. Review credit retains its existing five-reviewer
+input cap; conservation, quota and supplied ordinal tie order are proved by
+the shared algorithm. Reviewer identity and eligibility remain separate caller obligations.
 
 The existing allocation-locale, quality-allocation-locale,
 funding-review-allocation-locale, joint-value-scoring, monthly-reward preparation,
@@ -173,3 +173,36 @@ Browser regressions already exist for 503 retention followed by 401/403 removal
 (`security-draft-signout`) and contributor allocation state. Their live browser
 results must be recorded by the integration run; source inspection alone is not
 a passing browser result.
+
+## Exact collection-total extension
+
+The unbounded `sumAmounts` loop now computes monetary weight and allocation
+totals in project, quality, funding-review, review-budget, monthly-change,
+frozen-execution and received-money paths. It proves exactly the sum of the
+supplied BigInt array, including zero for an empty array and nonnegativity for
+nonnegative inputs. It does not establish which actor or record belongs in
+that array. The existing schemas, identity checks, order and fee policy remain
+responsible for those inputs. The numerical sum, sort and residual-award loop now form one complete
+allocation proof. Its grouping/actor-collation adapter and caller identity
+checks still require independent refinement evidence.
+
+## Complete allocation integration
+
+`verified-allocation.ts` replaces the earlier separate sum, sort and bounded
+reviewer files. It proves the full numerical algorithm for any finite list,
+including empty/all-zero weights and zero totals. Five actual allocation
+callers use it while preserving their input guards, map insertion order and
+actor tie policy. The five-reviewer restriction remains only in the review-
+credit caller. Actor grouping, ICU collation and upstream source identity are
+not proved by the numerical contract.
+
+## Decimal input integration
+
+The shared `decimalBaseUnits` entry point now calls the proved ASCII digit and
+power-of-ten implementation. Its explicit component and precision guards
+protect the proof preconditions. Project amounts, private bounty input and
+vault amounts retain their existing outer grammars. Vault amounts retain the
+same uint128 boundary and refusal messages; a proved early whole-length check
+avoids unnecessary parsing of an oversized paste. The theorem covers numeric
+composition, not locale/Intl formatting or wallet authority. Node 24.15.0,
+typecheck, and the existing project/amount/monthly workflows passed.

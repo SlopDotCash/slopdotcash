@@ -128,3 +128,19 @@ export function priceImpactCeiling(
 export function ceilPercent(value: bigint, percent: bigint): bigint {
   return (value * percent + 99n) / 100n;
 }
+
+/** Preserve transaction/rent charges while excluding the intended principal. */
+//@ verify
+//@ requires fee >= 0 && rent >= 0 && before >= 0 && after >= 0 && principal >= 0
+//@ ensures \result >= fee + rent && \result >= before - after - principal
+//@ ensures \result == fee + rent || \result == before - after - principal
+//@ ensures before - after - principal <= fee + rent ==> \result == fee + rent
+export function solanaNativeFee(
+  fee: bigint,
+  rent: bigint,
+  before: bigint,
+  after: bigint,
+  principal: bigint,
+): bigint {
+  return greaterAmount(fee + rent, before - after - principal);
+}

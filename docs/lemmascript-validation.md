@@ -2,8 +2,10 @@
 
 ## Reproduction
 
-The original proof branch started from development
-`e3d7dea64f1171f5761033069b98de4fd5cc1e77`. Runtime contracts and proof
+The initial research started from development commit
+`e3d7dea64f1171f5761033069b98de4fd5cc1e77`. Follow-up commits track the
+coordinated Quint integration branch; each final review must use current
+`origin/development`. Runtime contracts and proof
 artifacts are listed in `LemmaScript-files.txt`; their exact source hashes,
 command output and current results are written to ignored
 `evidence/lemmascript/<run>/result.json`. These receipts, not the static counts
@@ -17,50 +19,160 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The earlier five proof modules contained 27 selected runtime functions. The check
-uses Dafny's `--isolate-assertions` option, which proves every assertion in a
-separate obligation. It does not filter or skip assertions. The completed run
-reported 700 verified obligations: 96 money, 40 frontend, 202 fee-converter,
-26 worker policy, and 336 review-allocation obligations, with zero errors.
-These counts cannot be compared directly with the earlier 60 declaration
-checks because the proof splitting changed. Neither count is a function
-coverage percentage.
-
-The November 8 integrated run adds exact bucket aggregation and ordered
-consumption. All six modules passed: 29 selected functions and 855 obligations
-(the earlier 700 plus 155 aggregation obligations). The receipt is
-`evidence/lemmascript/1794152627151-66843/result.json`. Unselected functions
-remain unproved; subsequent source changes require fresh combined validation.
+The eight proof modules contain 41 selected runtime functions. The check uses
+Dafny's `--isolate-assertions` option, which proves every assertion in a separate
+obligation. It does not filter or skip assertions. The completed run reports
+1,364 verified obligations: 142 money, 40 frontend, 231 fee-converter, 26 worker
+policy, 65 evidence-partition, 5 budget/timeout, 662 complete-allocation and 193
+decimal-parsing obligations, with zero errors. These counts cannot be compared directly with
+the earlier 60 declaration checks because the proof splitting changed.
+Neither count is a function coverage percentage.
 
 The default timeout is 30 seconds per prover obligation; the runner also
 bounds each subprocess and kills the subprocess group on timeout. Explicit
 nonnegative quotient assertions were added to two existing division lemmas
 so their proofs do not depend on facts from another assertion group.
 
-### Complete review-credit allocation
+### Complete numerical allocation
 
-`allocateReviewCredit` now calls the verified `allocateReviewShares` runtime
-function. The existing input guards and refusal messages are unchanged. The
-proof covers every positive weight list of length one through five and every
-nonnegative BigInt pool: exact conservation, nonnegative bounded amounts,
-floor-or-ceiling quotas, largest-remainder priority, and original-index ties.
-The public wrapper requires a positive safe-integer pool and positive
-safe-integer weights. Every output is bounded by the pool, so its conversion
-back to a JavaScript number is exact within that domain.
+`verified-allocation.ts` contains the executable sum, merge sort and full
+largest-remainder algorithm. All four functions are verified together without
+imported-method or native-sort axioms. The proof applies to every finite array
+of nonnegative BigInt weights and every nonnegative BigInt total. Positive
+weight sum gives exact conservation; empty or all-zero weights give zero.
+The result preserves the array length, bounds every share by the total, gives
+floor-or-ceiling quotas, and applies exact remainder and ordinal tie order.
+The returned order contains each input index exactly once.
 
-The five-entry bound is the existing published reviewer cap. This proof does
-not apply to the separate project/funding/quality allocators, which accept
-larger lists. The scan algorithm does at most five passes over five entries;
-it preserves the previous sort's result without changing reviewer selection.
+The project, quality, funding-review and review-budget callers share an adapter
+that retains their original actor comparisons only within equal-remainder
+groups. Review credit uses its existing ordered weights directly. Its five-
+reviewer cap, safe-integer checks and errors are unchanged. The new module
+supersedes the initial bounded reviewer proof and separate sum/sort files.
+The adapter's grouping, identity and collation remain outside the numerical
+proof; this is not a complete implementation-refinement claim.
 
-Against the prior implementation, 140,904 valid-input comparisons matched,
-including equal remainders and maximum-safe-integer pools and weights. Nine
-invalid-input cases retained the exact error class and message. The existing
-Quint-generated review-pool replay, joint scoring, review eligibility,
-review deduplication and self-review workflows passed: 16 tests, zero failures,
-1,604 assertions. Typecheck and the strict regenerated-source/proof-integrity
-gate also passed. These local results are separate from the combined PR's
-final current-head CI and browser evidence.
+Before integration, 3,030 direct numerical cases matched the reference result,
+including empty/all-zero weights, zero pools and 256-bit totals. Another 1,010
+adapter cases covered identity ties. A further 3,000 comparisons exercised the
+actual five callers against the earlier integration baseline, including map
+insertion order, zero cases, Unicode/case ties and large supported caps. All
+matched. The current production extraction passes the strict source/proof
+integrity check: 662 allocation obligations, zero errors.
+
+The existing allocation, monthly attestation, history, Points, review-pool and
+integrity regressions passed 103 tests and 3,366 assertions before the final
+empty/all-zero extension. The final exact-head record must include the repeated
+pinned-runtime workflows and full repository gates before merge.
+
+### Evidence partition and budget follow-up
+
+`chunkLayout` uses `partitionCount` and `partitionSize` after its existing
+safe-integer and array checks. The proof covers positive total and chunk width,
+with no bound on either magnitude or the number of parts. It proves a positive
+part count, full-sized nonfinal parts, a positive bounded final part, contiguous
+offsets and `(count - 1) * width + finalPart = total`. The caller still checks
+every record's exact index, keys, digest and size. Cryptographic content identity,
+object storage and actor access remain separate workflow obligations.
+
+Fee conversion, the referral poster and the payment keeper now use shared
+verified predicates for their existing transaction/day limits. The keeper's
+same-nonce grouping, outstanding-reserve accumulation and SQL transaction are
+not proved by these scalar predicates. `callTimeoutMs` uses the exact existing
+120-second-plus-token estimate capped at ten minutes. Its number theorem
+applies to finite integer estimates, not IEEE exceptional values.
+
+The initial host-runtime private-evidence API, native-gas, referral-poster
+and review-plan suites passed 81 tests and 1,861 assertions. They include
+real migrated D1/SQLite and R2-compatible storage,
+large multi-part evidence, stale evidence refusal, concurrent native reservations
+and receipt-day accounting. The actual local Anvil/SQLite/public-HTTP keeper
+integration passed all 19 scenarios, including budget refusal before signing,
+pending replacement liability, restart recovery and midnight accounting.
+These local-chain results do not establish mainnet settlement or provider
+availability. All seven exact-source proof modules and typecheck passed.
+
+### Exact aggregation and performance
+
+The proved sum is reused for monthly owner-change and frozen-execution totals,
+received-money validation and the allocation algorithm itself. A frozen
+execution total is calculated from its exact emitted award rows. Grouping,
+recipient identity and authority remain caller responsibilities.
+
+The initial sort adapter compared every actor in advance. A benchmark exposed
+needless work for distinct remainders; the adapter now compares identities
+only within equal-remainder groups. Against the earlier production quality
+allocator on this host, final median times were about 0.71 ms versus 0.41 ms
+for 1,000 distinct-weight rows, and 8.15 ms versus 3.51 ms for 10,000 rows.
+Equal-weight cases were close (about 401 ms versus 392 ms at 10,000 rows).
+These are local comparative measurements, not production latency guarantees.
+The extra numerical merge and array preparation buy an executable proof; the
+change is not presented as a speed improvement.
+
+### Native receipt accounting
+
+The money module now proves the gas-used/gas-price product, the sum of the
+execution, blob, L1-data and operator components, and Solana's payer-only fee
+normalization. The fee-converter arithmetic module proves the final cost is
+the greater of fee-plus-rent and the wallet debit after removing intended
+principal. All inputs remain exact BigInts. Existing receipt identity, missing
+component refusals, safe-integer balance checks and journal authority remain
+outside these scalar proofs and in their current callers.
+
+The affected converter and Solana-adapter suites passed 119 tests and 750
+assertions. An actual local Anvil flow reconciled 13 signed receipt costs.
+An actual local Solana validator run cloned the public route, finalized the
+native conversion, and reconciled 4,083,560 lamports of native cost against a
+5,000,000-lamport reserve, including the 5,000-lamport network fee. It excluded
+the 100,000,000-lamport transfer principal. These are local test balances, not
+mainnet payments. The run reused the existing test ELF and IDL after checking
+that their Rust source tree matched; it is not a fresh release-build claim.
+The dependency install used the committed Solana package lock with lifecycle
+scripts disabled.
+
+The first concurrent Anvil/proof run exposed a source-walker bug: Foundry's
+`contracts/evm/cache/solidity-files-cache.json` was being hashed as production
+source and changed during compilation. The shared walker now excludes that
+specific generated directory, as it already excludes target/build trees.
+Actual contract source remains included, and the strict proof rerun passes.
+
+### Exact decimal input
+
+`verified-decimal.ts` parses ASCII digit components and scales them with a
+proved power-of-ten loop. Its contract gives exact whole/fraction composition,
+nonnegative output and the fractional interval. It uses no `BigInt(string)`
+parser assumption. The shared `decimalBaseUnits` entry point checks its
+unsigned-digit, precision and fractional-length contract before calling it;
+all three production callers already use decimal grammars and asset precision.
+Unsupported direct helper inputs such as signs, hexadecimal strings and
+noninteger/out-of-range precision are refused rather than passed to a partial
+arithmetic function. Public vault-amount refusal messages remain unchanged.
+
+The vault parser now rejects a canonical whole part longer than 39 digits
+before arithmetic. The checked `VaultWholePartOverflow` lemma establishes
+that a nonzero 40-digit whole part cannot fit uint128 at any allowed precision,
+so this preserves the existing range refusal. This also bounds the parser's
+work for pasted oversized amounts; other callers already bound the whole part
+to 13 or 16 digits.
+
+There were 7,597 successful comparisons with the previous supported behavior,
+including every precision from 0 through 36, fractional zeros, maximum uint128,
+invalid vault input and error messages. An oversized 100,000-digit input kept
+the same refusal; one local comparison measured about 65 ms before and 0.05 ms
+after the early range check. This is not a production latency guarantee.
+The five affected project/amount/monthly suites passed 121 tests and 1,211
+assertions. The actual production entry points also passed under Node 24.15.0,
+including its MJS-to-TypeScript module loading.
+
+### Runtime evidence correction
+
+An initial PATH prefix pointed at an npm cache containing Windows `bun.exe`
+files rather than a runnable macOS Bun. That command fell back to the host's
+Bun 1.4.2. Those test results remain host-runtime results. The corrected runs
+use the explicitly checked executable
+`slopdotcash-quint/.tools/bun-1.3.14/bin/bun` and Node 24.15.0. The final
+combined follow-up receipt supersedes the preliminary runtime label; neither
+passing tests nor package metadata is used as proof of the executing version.
 
 ## Local publication inputs
 

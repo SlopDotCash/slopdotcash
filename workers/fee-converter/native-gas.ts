@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { positiveBudgetFits } from "../verified-budget";
 import type { Network } from "./config";
 import type { SolanaAccountProof } from "./solana-accounts";
 import {
@@ -23,7 +24,7 @@ export function validateNativeLimits(limits: NativeGasLimits) {
   const transaction = nativeInteger(limits.perTransaction);
   const day = nativeInteger(limits.perDay);
   const additional = nativeInteger(limits.additionalFeeReserve);
-  if (transaction === 0n || day < transaction || additional >= transaction)
+  if (!positiveBudgetFits(transaction, day) || additional >= transaction)
     throw new Error(
       "Native daily budget must cover one positive transaction limit and its additional fees",
     );

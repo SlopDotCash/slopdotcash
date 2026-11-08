@@ -93,6 +93,63 @@ lemma bountyFeeAmount_ensures(gross: int)
   ensures ((gross - bountyFeeAmount(gross)) == (3 * bountyFeeAmount(gross)))
 {
 }
+
+function executionGasCost(gasUsed: int, gasPrice: int): int
+  requires (gasUsed >= 0)
+  requires (gasPrice >= 0)
+{
+  (gasUsed * gasPrice)
+}
+
+lemma executionGasCost_ensures(gasUsed: int, gasPrice: int)
+  requires (gasUsed >= 0)
+  requires (gasPrice >= 0)
+  ensures (executionGasCost(gasUsed, gasPrice) == (gasUsed * gasPrice))
+  ensures (executionGasCost(gasUsed, gasPrice) >= 0)
+  ensures (((gasUsed == 0) || (gasPrice == 0)) ==> (executionGasCost(gasUsed, gasPrice) == 0))
+{
+}
+
+function nativeFeeTotal(execution: int, blob: int, data: int, operator: int): int
+  requires (execution >= 0)
+  requires (blob >= 0)
+  requires (data >= 0)
+  requires (operator >= 0)
+{
+  (((execution + blob) + data) + operator)
+}
+
+lemma nativeFeeTotal_ensures(execution: int, blob: int, data: int, operator: int)
+  requires (execution >= 0)
+  requires (blob >= 0)
+  requires (data >= 0)
+  requires (operator >= 0)
+  ensures (nativeFeeTotal(execution, blob, data, operator) == (((execution + blob) + data) + operator))
+  ensures (nativeFeeTotal(execution, blob, data, operator) >= execution)
+  ensures (nativeFeeTotal(execution, blob, data, operator) >= blob)
+  ensures (nativeFeeTotal(execution, blob, data, operator) >= data)
+  ensures (nativeFeeTotal(execution, blob, data, operator) >= operator)
+{
+}
+
+function normalizedNativeDelta(before: int, after: int, fee: int, payer: bool): int
+  requires (before >= 0)
+  requires (after >= 0)
+  requires (fee >= 0)
+{
+  ((after - before) + (if payer then fee else 0))
+}
+
+lemma normalizedNativeDelta_ensures(before: int, after: int, fee: int, payer: bool)
+  requires (before >= 0)
+  requires (after >= 0)
+  requires (fee >= 0)
+  ensures ((normalizedNativeDelta(before, after, fee, payer) + before) == (after + (if payer then fee else 0)))
+  ensures (!(payer) ==> (normalizedNativeDelta(before, after, fee, payer) == (after - before)))
+  ensures (payer ==> (normalizedNativeDelta(before, after, fee, payer) == ((after - before) + fee)))
+{
+}
+
 lemma MultiplyMonotone(lower: int, upper: int, factor: int)
   requires lower <= upper
   requires factor >= 0

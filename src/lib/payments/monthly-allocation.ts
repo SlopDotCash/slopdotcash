@@ -7,6 +7,7 @@
  */
 import { isBaseUnits } from "../escrow-policy.mjs";
 import { sha256Hex } from "../sha256";
+import { sumAmounts } from "../verified-allocation";
 import { ordinaryFee } from "./contracts";
 
 const PERIOD = /^\d{4}-(?:0[1-9]|1[0-2])$/;
@@ -157,13 +158,10 @@ export function assertAllocationChange(
     throw new MonthlyAllocationError(
       "This person has no allocation this month.",
     );
-  const total = allocations.reduce(
-    (sum, row) =>
-      sum +
-      (row.githubUserId === change.githubUserId
-        ? amount
-        : BigInt(row.grossBase)),
-    0n,
+  const total = sumAmounts(
+    allocations.map((row) =>
+      row.githubUserId === change.githubUserId ? amount : BigInt(row.grossBase),
+    ),
   );
   if (total > BigInt(capBase))
     throw new MonthlyAllocationError(
@@ -214,12 +212,10 @@ export function buildExecutionSnapshot(input: {
 }): { snapshot: MonthlyExecutionSnapshot; text: string; sha256: string } {
   const feeOf = (gross: bigint) =>
     input.legacyFloorFee ? gross / 50n : ordinaryFee(gross);
-  let total = 0n;
   const awards: MonthlyExecutionAward[] = [];
   for (const row of input.allocations) {
     const gross = BigInt(row.grossBase);
     if (gross === 0n) continue;
-    total += gross;
     awards.push({
       githubUserId: row.githubUserId,
       login: row.login,
@@ -229,6 +225,7 @@ export function buildExecutionSnapshot(input: {
       sourceDigest: row.sourceDigest,
     });
   }
+  const total = sumAmounts(awards.map((award) => BigInt(award.grossBase)));
   if (total > BigInt(input.base.capBase))
     throw new MonthlyAllocationError(
       "The month's allocations exceed its monthly amount.",

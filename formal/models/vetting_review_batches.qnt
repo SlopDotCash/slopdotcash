@@ -1,3 +1,4 @@
+// @source workers/verified-budget.ts
 // @source workers/vetting/review-plan.ts
 // @source workers/vetting/scanners.ts
 // Three batches and a synthesis; two attempts abstract the actual maximum
