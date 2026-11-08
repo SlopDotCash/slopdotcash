@@ -29,9 +29,12 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "68879c3d4de72ff25e1cb46d2625f565f98eacc9ae16043f9719477f17a7ecf8",
-      "models": ["formal/models/ci_coverage.qnt"],
-      "candidateLines": [181],
+      "sha256": "bff5cd2c8dd05f5cd8929714eb0f7448e3f6e84492a6aa36aada234bb671ac2d",
+      "models": [
+        "formal/models/ci_coverage.qnt",
+        "formal/models/solana_container_lifecycle.qnt"
+      ],
+      "candidateLines": [184],
       "review": "mapped-abstraction"
     },
     {
@@ -261,6 +264,7 @@
       "path": "backend/payments/handler.ts",
       "sha256": "6926d8210f6cb1012f0891eb1f8b59f8fef40ab9edafc5692f2f9c2d207a0fba",
       "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/binding_consent_renewal.qnt",
         "formal/models/effective_wallet_history.qnt",
         "formal/models/payment_history.qnt"
@@ -326,7 +330,10 @@
     {
       "path": "backend/payments/possession.ts",
       "sha256": "08d9d2fc2272dfb9146032559babe2e35679d444afae276b7ee3e11e01ea7908",
-      "models": ["formal/models/payment_binding.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/payment_binding.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -355,6 +362,7 @@
       "path": "backend/payments/wallet-registration.ts",
       "sha256": "597181cfccedaf7057b67258e18d1b0b3f1264e1b14ad919459bb45b307ed2bc",
       "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/effective_wallet_history.qnt",
         "formal/models/payment_binding.qnt",
         "formal/models/pr_review_identities.qnt"
@@ -604,7 +612,8 @@
       "models": [
         "formal/models/api_award_recovery.qnt",
         "formal/models/bounty_payment.qnt",
-        "formal/models/direct_payment_recovery.qnt"
+        "formal/models/direct_payment_recovery.qnt",
+        "formal/models/direct_solana_retirement.qnt"
       ],
       "candidateLines": [
         271, 334, 392, 441, 489, 492, 494, 602, 741, 746, 795, 810, 824, 943,
@@ -617,7 +626,10 @@
     {
       "path": "backend/security/direct-solana-recovery.ts",
       "sha256": "b7409b0c874f8a64eae14776177b12ea2da528afdc6913ea9377bd7969983799",
-      "models": ["formal/models/api_award_recovery.qnt"],
+      "models": [
+        "formal/models/api_award_recovery.qnt",
+        "formal/models/direct_solana_retirement.qnt"
+      ],
       "candidateLines": [
         91, 93, 95, 98, 99, 120, 126, 131, 138, 144, 147, 154, 156, 160, 179,
         214, 215, 223, 228, 230, 231, 233, 234, 235, 245, 247, 261, 264, 266,
@@ -796,6 +808,7 @@
       "path": "backend/trace/cloudflare-persistence.ts",
       "sha256": "d40607d1d94f188ba74b9fe7b916c426bf2255f81c83043c761b5a2b2ce1318e",
       "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/api_trace.qnt",
         "formal/models/api_wallet_claims.qnt",
         "formal/models/operator_intake_renewal.qnt"
@@ -1487,9 +1500,12 @@
     },
     {
       "path": "contracts/solana/scripts/test-e2e.sh",
-      "sha256": "adb4235a637a350bdadaca73292f83def6fc8c0ecce57a0976f73364cba30dca",
-      "models": ["formal/models/deployment_artifact.qnt"],
-      "candidateLines": [],
+      "sha256": "8ee02b34f9ad23a08d6b1a2ed6a85b85f394058f5d31e6eb9b0ecf4c39d0f5f4",
+      "models": [
+        "formal/models/deployment_artifact.qnt",
+        "formal/models/solana_validator_callers.qnt"
+      ],
+      "candidateLines": [17, 21, 23, 29, 32, 36, 38, 62],
       "review": "mapped-abstraction"
     },
     {
@@ -1516,7 +1532,10 @@
     {
       "path": "contracts/solana/wallet-transactions.ts",
       "sha256": "d110816135d832f7b07311789e369f40657f53f8f3a1d264e42a5ca0d00ded0d",
-      "models": ["formal/models/chain_evidence.qnt"],
+      "models": [
+        "formal/models/chain_evidence.qnt",
+        "formal/models/ui_vault_recovery.qnt"
+      ],
       "candidateLines": [
         32, 48, 58, 72, 87, 104, 120, 174, 263, 307, 316, 318, 319, 320, 321,
         326, 330, 334, 340, 352, 371, 372, 374, 376
@@ -1635,7 +1654,10 @@
     {
       "path": "migrations/0011_payments.sql",
       "sha256": "076232ab09dc40e5656850985b441d696c4903b50d847912cfea27eeb9c601f3",
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
       "candidateLines": [
         1, 7, 10, 17, 18, 26, 32, 40, 41, 43, 44, 48, 50, 59, 61, 63, 75, 77
       ],
@@ -1794,7 +1816,12 @@
     {
       "path": "migrations/0030_security_notification_outbox.sql",
       "sha256": "29f79f88a2a680b78bf65d9795b863113704fe7db320f5d209bb3845c91865f6",
-      "models": ["formal/models/api_mail_delivery.qnt"],
+      "models": [
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_delivery.qnt",
+        "formal/models/notification_escalation.qnt",
+        "formal/models/notification_schema_upgrade.qnt"
+      ],
       "candidateLines": [1, 9, 23, 27, 34, 36, 38, 41],
       "review": "mapped-abstraction"
     },
@@ -1817,7 +1844,9 @@
       "sha256": "2510d6fda237b36e7465a95caf81c981b5bf953963ed9744e18b115f85f467ed",
       "models": [
         "formal/models/api_email_consent.qnt",
-        "formal/models/api_mail_delivery.qnt"
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_delivery.qnt",
+        "formal/models/notification_schema_upgrade.qnt"
       ],
       "candidateLines": [16, 26, 30, 37, 39, 41, 46, 53, 56, 57],
       "review": "mapped-abstraction"
@@ -2101,7 +2130,9 @@
       "sha256": "893e5d11e5b43bef1bb261bdfc0187dfe187269abb2f26352dae6d4eacb80db0",
       "models": [
         "formal/models/api_accounts.qnt",
-        "formal/models/api_inbox.qnt"
+        "formal/models/api_inbox.qnt",
+        "formal/models/notification_escalation.qnt",
+        "formal/models/notification_schema_upgrade.qnt"
       ],
       "candidateLines": [
         14, 15, 22, 23, 37, 43, 85, 98, 99, 100, 111, 112, 121, 124, 132, 137
@@ -2118,7 +2149,10 @@
     {
       "path": "migrations/0065_slopbot_appeal_notifications.sql",
       "sha256": "66cb598b4e801a94eabe09aa0b7e1c6a9bce097a0fbe53f6ee0bad0d30704a40",
-      "models": ["formal/models/api_inbox.qnt"],
+      "models": [
+        "formal/models/api_inbox.qnt",
+        "formal/models/notification_schema_upgrade.qnt"
+      ],
       "candidateLines": [7, 49, 62, 63, 64, 75, 76, 85, 88, 96, 101],
       "review": "mapped-abstraction"
     },
@@ -2244,7 +2278,10 @@
     {
       "path": "migrations/0079_slopbot_scam_review_notifications.sql",
       "sha256": "1096500931de6691e82d213089e5dce5b8844a753b0eb4bf2186b4155bd502e7",
-      "models": ["formal/models/api_inbox.qnt"],
+      "models": [
+        "formal/models/api_inbox.qnt",
+        "formal/models/notification_schema_upgrade.qnt"
+      ],
       "candidateLines": [9, 52, 65, 66, 67, 78, 79, 88, 91, 99, 104],
       "review": "mapped-abstraction"
     },
@@ -2431,7 +2468,10 @@
     {
       "path": "migrations/0100_effective_payment_wallets.sql",
       "sha256": "c7d4482cb21971396657db276ffcd476228f2cb55e71db634d9fe3e2a29b1a11",
-      "models": ["formal/models/effective_wallet_history.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/effective_wallet_history.qnt"
+      ],
       "candidateLines": [2],
       "review": "mapped-abstraction"
     },
@@ -2540,7 +2580,10 @@
     {
       "path": "migrations/0111_verified_notification_email.sql",
       "sha256": "6f5f04d2c40e078215d5e444e59bcbfa2bc2a94f5a7d19fe3725e329ef11dc0b",
-      "models": ["formal/models/api_email_consent.qnt"],
+      "models": [
+        "formal/models/api_email_consent.qnt",
+        "formal/models/notification_schema_upgrade.qnt"
+      ],
       "candidateLines": [22, 40, 42, 46, 48, 55, 58, 59, 60, 61, 63, 66],
       "review": "mapped-abstraction"
     },
@@ -2598,7 +2641,7 @@
     },
     {
       "path": "playwright.config.ts",
-      "sha256": "cf5e3afe734262cd4681c71710245bb039b4043c2547d4f724f618f3274801f0",
+      "sha256": "8f3a3e52452961ea9e663e585788089f68b9175fe46c594192be10810b00b7d2",
       "models": [
         "formal/models/ci_browser_runtime.qnt",
         "formal/models/dev_server_lifecycle.qnt"
@@ -2708,15 +2751,15 @@
     },
     {
       "path": "scripts/child-environment.mjs",
-      "sha256": "a9914e969024a6ac131cc83a477a98504909c93bcd19208942e0e6985b353026",
-      "models": [],
-      "candidateLines": [43, 54, 56],
-      "review": "reviewed-no-independent-state",
+      "sha256": "4f9ca5ede116387430cfd37919920c777a742bab25f9ce07bc1dc624a0b5be62",
+      "models": ["formal/models/solana_container_lifecycle.qnt"],
+      "candidateLines": [44, 55, 57],
+      "review": "mapped-abstraction",
       "statelessReason": "Per-invocation environment projection with explicit overrides. It neither launches a process nor changes the parent environment; process authority belongs to callers."
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "a138ee007882785649e5d258cd1e055732ade7a2b0cc969f39ede23382ae0c0a",
+      "sha256": "c891d017dad0f01a8f0f6c6fe658a6792ecba5e3f123bdf369722b09b0356039",
       "models": [
         "formal/models/ci_browser_runtime.qnt",
         "formal/models/ci_coverage.qnt"
@@ -2927,10 +2970,14 @@
     },
     {
       "path": "scripts/escrow-acceptance/local.ts",
-      "sha256": "b9bcb4ddad56b61efa55dc101adb0f0ddffb835b257bc274a8986e0f03e03831",
-      "models": ["formal/models/acceptance_run.qnt"],
+      "sha256": "d1731f98ad25fd80a706b374f7edc7954f31ebaf42589aa0e9aedf8032353092",
+      "models": [
+        "formal/models/acceptance_run.qnt",
+        "formal/models/solana_validator_callers.qnt"
+      ],
       "candidateLines": [
-        6, 121, 122, 128, 136, 156, 157, 386, 425, 431, 437, 449
+        6, 122, 123, 129, 137, 157, 158, 389, 410, 412, 421, 426, 442, 448, 454,
+        466
       ],
       "review": "mapped-abstraction"
     },
@@ -3103,6 +3150,21 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Static excluded-directory names shared by proof snapshot and inventory scanners; no updates or cross-call state transition."
+    },
+    {
+      "path": "scripts/local-solana-validator.mjs",
+      "sha256": "3988d60df9628adec8267669dc11ff51c412e07ec62e25f2d82ccef995987e7e",
+      "models": [
+        "formal/models/solana_container_lifecycle.qnt",
+        "formal/models/solana_direct_fixture.qnt",
+        "formal/models/solana_validator_callers.qnt",
+        "formal/models/solana_vault_fixture.qnt"
+      ],
+      "candidateLines": [
+        4, 25, 37, 49, 159, 167, 170, 240, 253, 265, 276, 278, 282, 302, 307,
+        310, 337, 372, 394, 406
+      ],
+      "review": "mapped-abstraction"
     },
     {
       "path": "scripts/path-containment.ts",
@@ -3491,10 +3553,14 @@
     },
     {
       "path": "scripts/run-e2e.mjs",
-      "sha256": "1699911690300c141259a2c7fbf483886eb8f8a1d502efe1c6d90f3674e04ef4",
-      "models": ["formal/models/evidence_capture.qnt"],
+      "sha256": "f6f079fe3acde2648d15fd6bc0cbf78f43eaf4604d7d34cbfe8b4983d6511516",
+      "models": [
+        "formal/models/evidence_capture.qnt",
+        "formal/models/fixture_wallet_runtime.qnt"
+      ],
       "candidateLines": [
-        56, 58, 179, 253, 277, 279, 414, 439, 508, 509, 522, 537, 543, 560, 604
+        56, 58, 179, 253, 293, 295, 394, 447, 472, 541, 542, 555, 570, 576, 593,
+        637
       ],
       "review": "mapped-abstraction"
     },
@@ -3826,7 +3892,10 @@
       "sha256": "306bdeaafa5a5cd308a963c0b79ab4ec9748f13caef021d3ff6728e3f806149d",
       "models": [
         "formal/models/ui_hash_navigation.qnt",
-        "formal/models/ui_navigation.qnt"
+        "formal/models/ui_hero_animation.qnt",
+        "formal/models/ui_navigation.qnt",
+        "formal/models/ui_project_discovery.qnt",
+        "formal/models/ui_project_images.qnt"
       ],
       "candidateLines": [
         13, 15, 282, 292, 302, 313, 322, 323, 324, 325, 326, 328, 329, 388, 443,
@@ -3971,19 +4040,20 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "sha256": "53ee7ac4a984061e0552d33827087c793d81a345240a0ed73a36eb0ed7aa0055",
+      "sha256": "66ba04d6eecc6027f6e8283b8d330ad3ab685dc8759532f3301b0c3d353b2968",
       "models": [
         "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt"
+        "formal/models/ui_email_actions.qnt",
+        "formal/models/ui_email_parent.qnt"
       ],
       "candidateLines": [
-        6, 8, 19, 25, 34, 35, 36, 37, 47, 48, 49, 50, 51, 53, 56, 73, 74, 78,
-        79, 80, 103, 105, 114, 119, 130, 144, 145, 148, 149, 163, 169, 173, 179,
-        188, 206, 207, 210, 215, 220, 221, 225, 227, 258, 259, 262, 264, 266,
-        273, 284, 289, 299, 301, 302, 305, 306, 315, 316, 345, 360, 362, 364,
-        370, 375, 381, 386, 388, 389, 404, 421, 423, 424, 463, 465, 466, 468,
-        470, 473, 555, 566, 603, 644, 645, 646, 649, 667, 697, 740, 761, 770,
-        787, 801, 804
+        6, 8, 19, 25, 34, 35, 36, 37, 47, 48, 49, 50, 51, 53, 56, 85, 86, 90,
+        91, 92, 121, 123, 132, 137, 149, 156, 170, 172, 175, 177, 191, 196, 200,
+        206, 215, 233, 234, 238, 244, 249, 250, 254, 256, 287, 289, 292, 295,
+        297, 304, 315, 320, 330, 332, 333, 336, 337, 346, 347, 370, 372, 382,
+        397, 399, 401, 408, 414, 421, 429, 431, 432, 447, 464, 466, 467, 508,
+        510, 511, 513, 515, 518, 600, 614, 651, 692, 693, 694, 697, 715, 745,
+        788, 809, 818, 835, 849, 852
       ],
       "review": "mapped-abstraction"
     },
@@ -4126,25 +4196,28 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "4a0978a61680eb3a30c32e6ecade5b7ba0c8a4ef22671383d767a2faaaf28f76",
+      "sha256": "1eade5fdacc7e637fb1a5c0f53afadacc667ddc83b61019500b1020ea54ee976",
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_email_parent.qnt",
         "formal/models/ui_session.qnt"
       ],
       "candidateLines": [
-        14, 18, 82, 97, 98, 99, 101, 107, 116, 125, 128, 136, 137, 139, 140,
-        156, 158, 205, 206, 207, 210, 211, 212, 228, 234, 241, 249, 259, 266,
-        273, 287, 307, 324, 341, 342, 343, 348, 372, 373, 378, 381, 382, 383,
-        384, 385, 387, 388, 404, 410, 467, 468, 473, 475, 505, 506, 507, 509,
-        511, 514, 523, 525, 527, 529, 531, 534, 535, 539, 541, 543, 553, 554,
-        559, 561, 573, 574, 604, 608, 609, 619, 620, 631, 633, 640, 644, 649,
-        650, 674, 680, 732, 733, 734, 735, 737, 738, 750, 824, 837, 842, 851,
-        921, 959, 965, 975, 988, 989, 992, 993, 994, 995, 997, 998, 1001, 1002,
-        1013, 1022, 1060, 1061, 1062, 1071, 1155, 1165, 1170, 1188, 1190, 1192,
-        1195, 1196, 1197, 1199, 1267, 1271, 1373, 1374, 1375, 1405, 1406, 1445,
-        1447, 1448, 1449, 1451, 1458, 1460, 1464, 1466, 1468, 1477, 1478, 1484,
-        1490, 1495, 1504, 1505, 1506, 1507, 1509, 1510, 1513, 1514, 1516, 1517,
-        1521, 1529, 1530, 1531, 1532, 1535, 1539, 1550, 1551, 1556
+        14, 18, 83, 98, 99, 100, 102, 108, 118, 127, 130, 138, 139, 141, 142,
+        158, 160, 207, 208, 209, 212, 213, 214, 215, 232, 238, 245, 253, 263,
+        270, 277, 291, 311, 328, 346, 347, 348, 353, 377, 378, 383, 386, 387,
+        388, 389, 390, 392, 393, 409, 415, 472, 473, 478, 480, 510, 511, 512,
+        514, 516, 519, 528, 530, 532, 534, 536, 539, 540, 544, 546, 548, 558,
+        559, 564, 566, 578, 579, 609, 613, 614, 624, 625, 636, 638, 645, 649,
+        654, 655, 679, 685, 737, 738, 739, 740, 742, 743, 755, 829, 842, 847,
+        856, 926, 964, 970, 980, 989, 994, 996, 999, 1005, 1006, 1017, 1026,
+        1034, 1036, 1037, 1045, 1048, 1049, 1050, 1051, 1053, 1054, 1057, 1058,
+        1069, 1078, 1102, 1106, 1115, 1137, 1138, 1139, 1148, 1232, 1242, 1247,
+        1265, 1267, 1269, 1272, 1273, 1274, 1276, 1344, 1348, 1450, 1451, 1452,
+        1482, 1483, 1522, 1524, 1525, 1526, 1528, 1535, 1537, 1541, 1543, 1545,
+        1554, 1555, 1561, 1567, 1572, 1581, 1582, 1583, 1584, 1586, 1587, 1590,
+        1591, 1593, 1594, 1598, 1606, 1607, 1608, 1609, 1612, 1616, 1627, 1628,
+        1633
       ],
       "review": "mapped-abstraction"
     },
@@ -4345,11 +4418,13 @@
       "sha256": "845b1bd1c6cef0bb5d440fa26c42008d0db28a106f32458ce22b7f75b785f287",
       "models": [
         "formal/models/ui_inbox.qnt",
+        "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt"
+        "formal/models/ui_record_display.qnt",
+        "formal/models/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
         27, 31, 137, 222, 229, 252, 254, 261, 274, 275, 277, 284, 288, 302, 305,
@@ -4407,19 +4482,22 @@
     {
       "path": "src/SolanaBountyRecovery.tsx",
       "sha256": "ae68fdf73391bfad31eb7bc8ff4ed7ff8741f9631facf7d3185713859cb40ad2",
-      "models": ["formal/models/ui_transaction.qnt"],
+      "models": ["formal/models/ui_solana_history_recovery.qnt"],
       "candidateLines": [1, 32, 34],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "6f19a669db2d2ba199fe47058418421967aa3b4ec4a840d71bc1f5fd2db5b443",
-      "models": ["formal/models/ui_transaction.qnt"],
+      "sha256": "9dda3f1500e3ba9f1d3753fbd1d986ea3c9e5f85a4d6284ec34fce688c49a02e",
+      "models": [
+        "formal/models/ui_transaction.qnt",
+        "formal/models/ui_vault_recovery.qnt"
+      ],
       "candidateLines": [
-        2, 40, 52, 55, 100, 102, 105, 110, 111, 112, 115, 116, 118, 119, 120,
-        121, 127, 142, 144, 148, 186, 208, 272, 273, 279, 280, 281, 288, 289,
-        291, 294, 295, 296, 303, 311, 324, 338, 365, 386, 391, 394, 395, 401,
-        426, 577
+        2, 40, 53, 56, 104, 106, 109, 114, 115, 116, 119, 120, 122, 123, 124,
+        125, 131, 146, 148, 152, 190, 212, 253, 277, 281, 288, 289, 290, 297,
+        298, 300, 303, 304, 305, 306, 321, 322, 323, 332, 340, 353, 367, 394,
+        415, 420, 423, 424, 430, 434, 440, 459, 610
       ],
       "review": "mapped-abstraction"
     },
@@ -4661,7 +4739,10 @@
     {
       "path": "src/lib/github-actor.ts",
       "sha256": "0865c01c45cb01928f2e09ca9db87316e154bf612032ecd4c9cd04a5fb6d5728",
-      "models": ["formal/models/ui_exclusion_identity.qnt"],
+      "models": [
+        "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_exclusion_identity.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure canonical node-ID decoding and stable actor sorting. No retained state or I/O; format equivalence is consumed by exclusion/admission models."
@@ -4957,6 +5038,7 @@
       "path": "src/lib/project-api.ts",
       "sha256": "5f5a8f66c2c9b80d7e4d37fff3df81882d53b7308e3cd0d475f4b079afca90ac",
       "models": [
+        "formal/models/ui_email_parent.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_session.qnt",
         "formal/models/ui_transport.qnt"
@@ -5286,7 +5368,10 @@
     {
       "path": "src/lib/solana-vault-actions.ts",
       "sha256": "a5162d0931e0f6dc42043c176457fbf206dabc2045489ff99304f11ee7af6647",
-      "models": ["formal/models/solana_owner_action.qnt"],
+      "models": [
+        "formal/models/solana_owner_action.qnt",
+        "formal/models/ui_vault_recovery.qnt"
+      ],
       "candidateLines": [96, 99, 235, 236, 237, 239, 240],
       "review": "mapped-abstraction"
     },
@@ -5303,6 +5388,7 @@
       "sha256": "2ab920b0a8d22dcea44e6a544556775a44559d81989788fcf2a407f01e1dae64",
       "models": [
         "formal/models/ui_inbox.qnt",
+        "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [1, 5, 10, 11],
@@ -5760,7 +5846,10 @@
     {
       "path": "workers/notify/activity.ts",
       "sha256": "0aa7d3bb8c66c4a5f422c514d8782c24cceba99f170be59c2d471e4de121910f",
-      "models": ["formal/models/api_mail_delivery.qnt"],
+      "models": [
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_delivery.qnt"
+      ],
       "candidateLines": [271, 298, 303, 309, 320],
       "review": "mapped-abstraction"
     },
@@ -5795,7 +5884,11 @@
     {
       "path": "workers/notify/security.ts",
       "sha256": "108cebb38a1e07b69e1f9a343420e6029c4594eb39f76904b31485c920dc631b",
-      "models": ["formal/models/api_mail_delivery.qnt"],
+      "models": [
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_delivery.qnt",
+        "formal/models/notification_escalation.qnt"
+      ],
       "candidateLines": [
         51, 146, 147, 150, 152, 156, 160, 161, 204, 212, 214, 217, 219, 224,
         235, 238, 247, 248, 312, 324, 399, 400, 406, 413, 423, 424, 425, 429,
@@ -7255,6 +7348,37 @@
       "scenarios": ["ambiguousTest", "deliveredTest", "optOutTest"]
     },
     {
+      "path": "formal/models/api_payment_wallet_protocol.qnt",
+      "sha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "sources": [
+        "backend/payments/handler.ts",
+        "backend/payments/possession.ts",
+        "backend/payments/wallet-registration.ts",
+        "backend/trace/cloudflare-persistence.ts",
+        "migrations/0011_payments.sql",
+        "migrations/0100_effective_payment_wallets.sql"
+      ],
+      "scenarios": [
+        "completedReplayIsRefusedTest",
+        "consumedBeforeAuthorizationTest",
+        "exactExpiryRefusesNewRequestTest",
+        "failedBatchRequiresFreshChallengeTest",
+        "foreignActorCannotRegisterOrUseChallengeTest",
+        "lostResponseRetainsAuthorizationTest",
+        "newConsentCannotRewriteFirstAuthorizationTest",
+        "oldClaimAndMismatchedChallengeRefusedTest",
+        "replacementAfterReadStillConsumesButCannotAuthorizeTest",
+        "replacementDuringConsumedGapCannotAuthorizeOldClaimTest",
+        "replacementRetainsClaimHistoryTest",
+        "requestUsesCapturedTimeAcrossAwaitTest",
+        "sameWalletRegistrationIsIdempotentTest",
+        "signedSuccessorBecomesEffectiveWithoutErasingHistoryTest",
+        "simultaneousReplayHasOneConsumptionWinnerTest",
+        "unsignedSuccessorRetainsAuthorizedDestinationTest",
+        "wrongWalletAndAlteredMessageDoNotConsumeTest"
+      ]
+    },
+    {
       "path": "formal/models/api_points_disputes.qnt",
       "sha256": "598538e2b3e95735ad744983c58e0916aae8c825b64ba9151844d936d8b397ab",
       "sources": [
@@ -8133,7 +8257,7 @@
     },
     {
       "path": "formal/models/ci_coverage.qnt",
-      "sha256": "68769a23f3d38184de0b5e37aab3cae29122eec098435cd5870bb9c8abaed97d",
+      "sha256": "053baacb14cf23b21f6680d99e3671060d2b084d71ef35bcf769dc7f9c692b4f",
       "sources": [
         ".github/workflows/deploy.yml",
         ".github/workflows/escrow-tests.yml",
@@ -8141,7 +8265,7 @@
         ".github/workflows/windows-installer.yml",
         "scripts/ci-scope.mjs"
       ],
-      "scenarios": ["releaseCoverageTest"]
+      "scenarios": ["fixtureSelectsChainCoverageTest", "releaseCoverageTest"]
     },
     {
       "path": "formal/models/contract_build_profile.qnt",
@@ -8357,6 +8481,22 @@
         "lowerNonceBlocksTest",
         "safeReplacementTest",
         "successorNeedsFreshGenerationTest"
+      ]
+    },
+    {
+      "path": "formal/models/direct_solana_retirement.qnt",
+      "sha256": "5c6eefa51bb06557248ec6fa77b7e9a0290471e091ffca62fa0b2f00132e5881",
+      "sources": [
+        "backend/security/direct-payments.ts",
+        "backend/security/direct-solana-recovery.ts"
+      ],
+      "scenarios": [
+        "challengeThenRetainedAbsenceTest",
+        "foundWinsOverIncompleteCoverageTest",
+        "malformedRpcOverridesFoundTest",
+        "matchingFailuresRetireTest",
+        "oneLiveMessageBlocksChallengeTest",
+        "providerDisagreementHoldsTest"
       ]
     },
     {
@@ -8637,6 +8777,22 @@
         "blockedTransferFromRefusedTest",
         "falseTransferLeavesFundsTest",
         "reentryRejectedTest"
+      ]
+    },
+    {
+      "path": "formal/models/fixture_wallet_runtime.qnt",
+      "sha256": "4d9cbf2581021dea18614acf1a59f58428b0680a8a77cb24e2906fe99df1b86a",
+      "sources": ["scripts/run-e2e.mjs"],
+      "scenarios": [
+        "completedWalletFlowCleansOwnedResourcesTest",
+        "databaseSetupFailureStillRemovesDirectoryTest",
+        "failedChainCloseRemainsAnErrorTest",
+        "failedDirectoryRemovalCannotPassTest",
+        "failedSeedSetupClosesChainTest",
+        "lostResponseDoesNotClaimRefusalTest",
+        "pendingRequestDoesNotKeepPagesAliveTest",
+        "refusedWalletCannotFallBackToDirectWriteTest",
+        "seedPrecedesEveryServingTimeChangeTest"
       ]
     },
     {
@@ -9044,6 +9200,64 @@
         "contracts/solana/integration/fee-converter-native-fixture.mjs"
       ],
       "scenarios": ["claimRequiresAccrualTest", "claimsFeesNotPrincipalTest"]
+    },
+    {
+      "path": "formal/models/notification_delivery.qnt",
+      "sha256": "65046bd13db93d49b040792a121dd4461a487d4af53b42923879bce4d5d06d19",
+      "sources": [
+        "migrations/0030_security_notification_outbox.sql",
+        "migrations/0033_optional_notification_email.sql",
+        "workers/notify/activity.ts",
+        "workers/notify/security.ts"
+      ],
+      "scenarios": [
+        "acceptedCanBeRejectedTest",
+        "ambiguityCanBeDeliveredTest",
+        "competingReceiptsCommitOnceTest",
+        "fiveAttemptsExhaustTest",
+        "lostWorkerCannotOverwriteTest",
+        "staleAttemptCannotReconcileTest"
+      ]
+    },
+    {
+      "path": "formal/models/notification_escalation.qnt",
+      "sha256": "5879a2bdd5808f3030024813527c77323a21417c67463cf3fb0110c12d0e91b0",
+      "sources": [
+        "migrations/0030_security_notification_outbox.sql",
+        "migrations/0063_account_closure_notification_events.sql",
+        "workers/notify/security.ts"
+      ],
+      "scenarios": [
+        "failedReceiptEscalatesTest",
+        "oneBackupOnlyTest",
+        "readIsNotAcknowledgeTest",
+        "receiptDoesNotEscalateForTimeTest",
+        "restoredRoleDoesNotRearmWithheldMailTest",
+        "revokedBackupCannotReceiveTest",
+        "withheldMailDoesNotEscalateTest"
+      ]
+    },
+    {
+      "path": "formal/models/notification_schema_upgrade.qnt",
+      "sha256": "073157c5ad2c3bf3644ed8c9e100ffe589faa35ad6c4d93ad0de9a2600579c07",
+      "sources": [
+        "migrations/0030_security_notification_outbox.sql",
+        "migrations/0033_optional_notification_email.sql",
+        "migrations/0063_account_closure_notification_events.sql",
+        "migrations/0065_slopbot_appeal_notifications.sql",
+        "migrations/0079_slopbot_scam_review_notifications.sql",
+        "migrations/0111_verified_notification_email.sql"
+      ],
+      "scenarios": [
+        "copyBackDoesNotEnqueueHistoryTest",
+        "duplicateNewEventStillHasOneQueueRowTest",
+        "kindsWidenOnlyAtTheirSchemaStepTest",
+        "onlyLaterBoundNoticeCanSendTest",
+        "outboxActivationDoesNotReplayHistoryTest",
+        "populatedRowsAndEvidenceSurviveAllRebuildsTest",
+        "priorReadStateIsPreservedTest",
+        "verifiedAddressDoesNotBindOldQueueTest"
+      ]
     },
     {
       "path": "formal/models/operator_appeal_recovery.qnt",
@@ -9651,6 +9865,36 @@
       ]
     },
     {
+      "path": "formal/models/solana_container_lifecycle.qnt",
+      "sha256": "0ad38199c76be3bd6ab74d4274a099994cead15c4404e50c9e1a5e564a021b38",
+      "sources": [
+        ".github/workflows/escrow-tests.yml",
+        "scripts/child-environment.mjs",
+        "scripts/local-solana-validator.mjs"
+      ],
+      "scenarios": [
+        "abruptExitRetainsOwnershipTest",
+        "cancellationAwaitsCreateTest",
+        "cancellationAwaitsStartTest",
+        "cancellationDuringReadyWriteTest",
+        "pinnedReadyTest",
+        "portRefusalStopsOwnedTest",
+        "receiptFailureStillRemovesTest",
+        "unknownCreateCannotClaimStoppedTest"
+      ]
+    },
+    {
+      "path": "formal/models/solana_direct_fixture.qnt",
+      "sha256": "734c5926823649dcab418546382d15791f6043c8560bbf2ff68a3d3501d59954",
+      "sources": ["scripts/local-solana-validator.mjs"],
+      "scenarios": [
+        "apiFailureStillClosesValidatorTest",
+        "directAssetCasesThenOwnedCleanupTest",
+        "startupFailureClosesProxyAndLogTest",
+        "unknownEngineStateCannotClaimStoppedTest"
+      ]
+    },
+    {
       "path": "formal/models/solana_expiry.qnt",
       "sha256": "6b1d85b7fc4d87d11f9ba8c1e7d7215f308f4c3559dc559f0fea51200dfbc5c1",
       "sources": [
@@ -9754,6 +9998,39 @@
         "laterArrivalOutsideIntervalTest",
         "restartKeepsVerifiedPrefixTest",
         "staleCheckpointCannotRewindTest"
+      ]
+    },
+    {
+      "path": "formal/models/solana_validator_callers.qnt",
+      "sha256": "52fca3e9a8e0f09aa01b7a6afe99af0677e31919b7b588a20b94259a96d13358",
+      "sources": [
+        "contracts/solana/scripts/test-e2e.sh",
+        "scripts/escrow-acceptance/local.ts",
+        "scripts/local-solana-validator.mjs"
+      ],
+      "scenarios": [
+        "acceptanceRemovesLedgerOnlyAfterConfirmedStopTest",
+        "badExitCannotPassWithStoppedReceiptTest",
+        "canceledStartupStillWaitsForOwnedStopTest",
+        "cleanupFailureCannotPassTest",
+        "foreignRpcCannotAdmitTestsTest",
+        "lateReadyIsNotAStopReceiptTest",
+        "oldStoppedReceiptCannotAdmitSecondStageTest",
+        "primaryFailureSurvivesCleanupFailureTest",
+        "receiptDoesNotReplaceAwaitedStopTest",
+        "twoIndependentStagesRequireTwoCurrentReceiptsTest"
+      ]
+    },
+    {
+      "path": "formal/models/solana_vault_fixture.qnt",
+      "sha256": "30c0a269a238c1f673655643359ac6fa23dab7198d38d64b760898a25dc063ae",
+      "sources": ["scripts/local-solana-validator.mjs"],
+      "scenarios": [
+        "cannotRemoveWhileLaunchPendingTest",
+        "configuredScenarioAndCleanupTest",
+        "setupFailureClosesOwnedValidatorTest",
+        "startupFailureRetainsInputsWithoutHandleTest",
+        "uncertainCleanupRetainsInputsTest"
       ]
     },
     {
@@ -10017,6 +10294,34 @@
       ]
     },
     {
+      "path": "formal/models/ui_email_parent.qnt",
+      "sha256": "5fbeaf93927efaee733a1663718fba5b3b1abce09c1550297343f58c753587ea",
+      "sources": [
+        "src/InboxEmail.tsx",
+        "src/Points.tsx",
+        "src/lib/github-actor.ts",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "childMismatchWaitsForNewParentBindingTest",
+        "childSignoutCannotRestoreItsOldDraftTest",
+        "failureRetainsDraftUntilSameActorRetryTest",
+        "failureRetryDifferentActorClearsDraftTest",
+        "knownOtherActorClearsOldDraftTest",
+        "knownSignoutClearsDraftTest",
+        "laterMatchingPointsRestoresFreshEditorTest",
+        "localSignoutClearsBeforeParentReadTest",
+        "parentPendingBlocksBeforeChildRefreshTest",
+        "pointsActorCanRefuseRetainedParentTest",
+        "sameActorPendingKeepsEditableDraftTest",
+        "samePointsActorKeepsDraftTest",
+        "unauthorizedResponseCannotRestoreItsOldDraftTest",
+        "unboundFailureHasRecoveryWithoutEditorTest",
+        "unchangedUnknownMemberRetainsOnlyItsConfirmedDraftTest",
+        "unknownMemberIdChangeDoesNotRetainDraftTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_exclusion_identity.qnt",
       "sha256": "d83a937e161d4e022ad7239ffc7d9537128e2063dbd2db52d1952ca95e8f4d53",
       "sources": ["src/lib/github-actor.ts", "src/lib/payout-exclusions.mjs"],
@@ -10050,6 +10355,18 @@
         "readerStopsObserverTest",
         "restoreReaderPositionTest",
         "settleTimeoutTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_hero_animation.qnt",
+      "sha256": "8becd9c4d72866f72c143719b4292455e9daa00ce9fc21015c925a853400841c",
+      "sources": ["src/App.tsx"],
+      "scenarios": [
+        "deleteBeforeChangingWordTest",
+        "departedTimerCannotRemainTest",
+        "finishTypingBeforeHoldingTest",
+        "initialReducedMotionDoesNotScheduleTest",
+        "pendingTimerMayFinishAfterMediaChangeTest"
       ]
     },
     {
@@ -10096,6 +10413,22 @@
         "duplicateMarkTest",
         "pagingTest",
         "sameActorOutageTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_intake_handoff.qnt",
+      "sha256": "c649a6d34047341de7e39b1ad3874a741f16888d3d584d32eb393eadaf2baac3",
+      "sources": ["src/SecurityBounty.tsx"],
+      "scenarios": [
+        "expiryHidesOnlyGitHubLinkTest",
+        "failedRecheckRetainsStoredRouteTest",
+        "githubWithoutStoredIntakeTest",
+        "independentStoredIntakeTest",
+        "initialFailureHasRetryTest",
+        "recheckRetainsDraftAndStaleObservationTest",
+        "staleReadyResponseCannotShowLinkTest",
+        "successfulRecheckRestoresFreshLinkTest",
+        "unmountClearsTimerAndIgnoresLateReplyTest"
       ]
     },
     {
@@ -10187,6 +10520,19 @@
       ]
     },
     {
+      "path": "formal/models/ui_project_discovery.qnt",
+      "sha256": "f065fa727720ac8a4a3e97fa50a2f324c63438330145abab20c7a11e6c81bcb7",
+      "sources": ["src/App.tsx"],
+      "scenarios": [
+        "absentProjectUsesGenericPromptTest",
+        "checkedProjectGetsSpecificPromptTest",
+        "departedReplyCannotGrantCurrentPromptTest",
+        "keyedNavigationResetsBeforeSecondReadTest",
+        "unavailableUsesGenericPromptTest",
+        "unmountedReplyCannotRestorePromptTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_project_draft.qnt",
       "sha256": "f3234edda74ce5d6cf9cdc66aaedb7ea788a12612f880bc01ab22b043a989ee4",
       "sources": ["src/ProjectProposalPage.tsx"],
@@ -10196,6 +10542,18 @@
         "editsDuringSaveTest",
         "failedStorageRetainsFormTest",
         "restoreStaleDraftTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_project_images.qnt",
+      "sha256": "36d984324f683993357029d320414f316d13d2d2c17f0751b10ae6c717c7e5a8",
+      "sources": ["src/App.tsx"],
+      "scenarios": [
+        "customFailureFallsBackToOwnerTest",
+        "differentCustomUrlCanLoadTest",
+        "ownerFailureUsesInitialTest",
+        "priorCustomFailureIsRetainedTest",
+        "projectReplacementResetsErrorsTest"
       ]
     },
     {
@@ -10403,6 +10761,30 @@
       ]
     },
     {
+      "path": "formal/models/ui_solana_history_recovery.qnt",
+      "sha256": "907f4d0243f9f051cdac8efd1eb11e78455cff2d90372c7d9b0f80af163d6397",
+      "sources": [
+        "src/SecurityBounty.tsx",
+        "src/SolanaBountyRecovery.tsx",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "actorChangeAfterCaptureRefusesPromptTest",
+        "alteredMessageCacheCannotAvoidSigningTest",
+        "foreignCacheCannotAvoidSigningTest",
+        "generationChangeBeforeFinalAuthorizeRefusesRequestTest",
+        "malformedCacheStopsBeforePromptTest",
+        "matchingCacheNeedsNoWalletPromptTest",
+        "partialCacheSurvivesSecondPromptRefusalTest",
+        "revisionChangeAfterAuthorizationStillNeedsServerCheckTest",
+        "signThenCacheFailureIsVisibleTest",
+        "unmountDuringPromptMayCacheButCannotVerifyTest",
+        "validOriginalPayerConnectsTest",
+        "verificationFailureKeepsCacheForRetryTest",
+        "wrongPayerCannotConnectTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_tab_scope.qnt",
       "sha256": "bdeb39b0b1528bbc17a2597e8e136289aca4d786b3f48bdc1851058beeb59ab9",
       "sources": ["src/DirectBountyPayment.tsx", "src/OwnerCommitment.tsx"],
@@ -10430,7 +10812,7 @@
     },
     {
       "path": "formal/models/ui_transaction.qnt",
-      "sha256": "a169f2b3d5cdd9fe1451f086a508a53e9d4b2247cd193d88303a56396848fd26",
+      "sha256": "222c43b4de0e6b6ede2c1368e86ab80501562ab70ad397758359afe34a2cdcad",
       "sources": [
         "src/AutomaticMonthlyPayment.tsx",
         "src/BountySubmittedPayments.tsx",
@@ -10442,7 +10824,6 @@
         "src/OwnerVaultSetup.tsx",
         "src/ReferralClaims.tsx",
         "src/SolanaBountyPayment.tsx",
-        "src/SolanaBountyRecovery.tsx",
         "src/VaultActions.tsx",
         "src/lib/use-action.ts"
       ],
@@ -10458,6 +10839,25 @@
       "sha256": "81ac338b14423f7e132db94de0f5716bccfde4f3223d04416b8215e153f82a48",
       "sources": ["src/lib/browser-json.ts", "src/lib/project-api.ts"],
       "scenarios": ["bodyTimeoutTest", "invalidTest", "validTest"]
+    },
+    {
+      "path": "formal/models/ui_vault_recovery.qnt",
+      "sha256": "adecefa7ec975b7d94f6ef27c4c777dab5975978476e603ef64262181422ab89",
+      "sources": [
+        "contracts/solana/wallet-transactions.ts",
+        "src/VaultActions.tsx",
+        "src/lib/solana-vault-actions.ts"
+      ],
+      "scenarios": [
+        "corruptMarkerFailsClosedTest",
+        "failedStorageClearCannotEnableAnotherSendTest",
+        "failedWriteRetainsMemoryFenceTest",
+        "legacyEvidenceCanBeCorrectedTest",
+        "transientCheckFailureKeepsEvidenceTest",
+        "unknownCandidateStaysEditableAfterReloadTest",
+        "unrelatedEvidenceRefusedBeforeMatchingFinalityTest",
+        "walletReturnedEvidenceCannotBeEditedTest"
+      ]
     },
     {
       "path": "formal/models/ui_wallet_choice.qnt",

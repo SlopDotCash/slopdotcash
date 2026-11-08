@@ -4,7 +4,7 @@
 // @source backend/trace/cloudflare-persistence.ts
 // @source migrations/0011_payments.sql
 // @source migrations/0100_effective_payment_wallets.sql
-// @source tests/authorize-fixture-wallet.ts
+// @evidence tests/authorize-fixture-wallet.ts
 // One actor/chain partition, a foreign caller, two wallet addresses, two
 // immutable claim/challenge slots, two concurrent requests, and time 0..2.
 // Signature validity abstracts the exact server message and cryptography.
