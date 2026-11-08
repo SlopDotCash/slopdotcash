@@ -10,6 +10,13 @@ import {
   notifyAwardReserved,
   notifyPaymentPaid,
 } from "../notifications/events";
+import {
+  type PaymentEvidenceFacts,
+  paymentAssetMatches,
+  paymentEvidenceMatches,
+  paymentObligationDecision,
+  type StoredPaymentAsset,
+} from "./verified-evidence";
 
 export interface FinalizedPaymentEvent {
   kind: "reserved" | "paid";
@@ -30,8 +37,24 @@ export interface FinalizedPaymentEvent {
   destination?: string;
 }
 /** The facts of a stored finalized event, compared field by field. */
-function evidenceFacts(value: Record<string, unknown>) {
-  return JSON.stringify([
+function evidenceFacts(value: Record<string, unknown>): PaymentEvidenceFacts {
+  const [
+    kind,
+    transactionId,
+    eventIndex,
+    blockId,
+    obligationId,
+    projectId,
+    network,
+    chain,
+    vault,
+    githubUserId,
+    grossMicro,
+    netMicro,
+    feeMicro,
+    sourceDigest,
+    destination,
+  ] = [
     value.kind,
     value.transactionId,
     value.eventIndex,
@@ -47,7 +70,26 @@ function evidenceFacts(value: Record<string, unknown>) {
     value.feeMicro,
     value.sourceDigest,
     value.destination ?? null,
-  ]);
+  ].map((fact) => JSON.stringify([fact]));
+  // Array-slot JSON encoding preserves missing/null and malformed legacy
+  // JSON values without converting a string, number or object into an ID.
+  return {
+    kind,
+    transactionId,
+    eventIndex,
+    blockId,
+    obligationId,
+    projectId,
+    network,
+    chain,
+    vault,
+    githubUserId,
+    grossMicro,
+    netMicro,
+    feeMicro,
+    sourceDigest,
+    destination,
+  };
 }
 /** Adapters must independently fetch canonical finalized chain evidence. */
 export interface PaymentChainAdapter {
@@ -155,25 +197,26 @@ export async function indexPaymentEvent(
       state: string;
       paid_transaction: string | null;
     }>();
-  if (
-    existing &&
-    (existing.project_id !== event.projectId ||
-      existing.network !== event.network ||
-      existing.vault !== event.vault ||
-      existing.asset_address !== asset.asset_address ||
-      existing.asset_decimals !== asset.asset_decimals ||
-      existing.github_user_id !== event.githubUserId ||
-      existing.gross_base !== event.grossMicro ||
-      existing.fee_base !== event.feeMicro ||
-      existing.source_digest !== event.sourceDigest)
-  )
+  const obligation = paymentObligationDecision(
+    existing
+      ? {
+          kind: "stored",
+          record: existing,
+          paid:
+            existing.paid_transaction === null
+              ? { kind: "missing" }
+              : {
+                  kind: "recorded",
+                  transactionId: existing.paid_transaction,
+                },
+        }
+      : { kind: "missing" },
+    event,
+    asset,
+  );
+  if (obligation === "immutable-mismatch")
     throw new Error("Immutable obligation mismatch");
-  if (
-    event.kind === "paid" &&
-    (!existing ||
-      (existing.state === "paid" &&
-        existing.paid_transaction !== event.transactionId))
-  )
+  if (obligation === "payout-mismatch")
     throw new Error("Unknown or duplicate payout");
   // A payout to a wallet the contributor never authorized means the identity
   // authority was misused. Fail closed so it is investigated, not recorded.
@@ -210,12 +253,24 @@ export async function indexPaymentEvent(
   if (prior) {
     const stored = JSON.parse(prior.evidence_json) as Record<string, unknown>;
     if (
-      evidenceFacts(stored) !==
-        evidenceFacts(event as unknown as Record<string, unknown>) ||
-      (stored.assetAddress !== undefined &&
-        (stored.assetAddress !== asset.asset_address ||
-          stored.assetDecimals !== asset.asset_decimals))
+      !paymentEvidenceMatches(
+        evidenceFacts(stored),
+        evidenceFacts(event as unknown as Record<string, unknown>),
+      )
     )
+      throw new Error("Conflicting finalized event");
+    const storedAsset: StoredPaymentAsset =
+      stored.assetAddress === undefined
+        ? { kind: "legacy" }
+        : typeof stored.assetAddress === "string" &&
+            typeof stored.assetDecimals === "number"
+          ? {
+              kind: "bound",
+              address: stored.assetAddress,
+              decimals: stored.assetDecimals,
+            }
+          : { kind: "incompatible" };
+    if (!paymentAssetMatches(storedAsset, asset))
       throw new Error("Conflicting finalized event");
     return;
   }
