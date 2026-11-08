@@ -151,6 +151,13 @@ rows and gas rows, plus one direct receipt:
 
 The projections add temporary arrays and local work. These measurements
 record that cost; they are not a speedup claim or a live SQL latency bound.
+An independent follow-up used four alternating separate processes with
+1,000 warmup calls and five groups of 1,000 measured calls each. For the
+1,000-row case, per-process medians were 0.607 and 0.461 ms before, and
+0.930 and 0.948 ms after. All returned the same 472,600 base units. These
+longer measurements still ran under substantial prover load; they support
+added local projection cost, but not a stable eleven-fold slowdown inferred
+from the first short-run medians. Both sets of raw samples are retained.
 The algorithm remains linear in rows and buckets. Captured logs, versions,
 source hashes, comparisons and the commit receipt remain under ignored
 `evidence/native-fees/`.
