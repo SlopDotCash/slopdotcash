@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import {
+  currentProjectSession,
   ProjectApiError,
   projectApiRequest,
   useProjectMaintainer,
@@ -94,6 +95,7 @@ function ExistingBountyVault({
     | { status: "error"; message: string }
     | {
         status: "ready";
+        actorId: string;
         funds: PrivateFunds | null;
         canSetup: boolean;
         refreshError?: string;
@@ -108,26 +110,68 @@ function ExistingBountyVault({
     setState((previous) =>
       previous.status === "ready" ? previous : { status: "loading" },
     );
-    projectApiRequest<{ funds: PrivateFunds | null; canSetup: boolean }>(
-      "GET",
-      `project-vaults/${project.id}?purpose=security-bounty`,
-    ).then(
-      (result) => {
-        if (active) setState({ status: "ready", ...result });
-      },
-      (error: unknown) => {
+    const load = async () => {
+      let actorId: string | null = null;
+      let identityVerified = false;
+      try {
+        const session = await currentProjectSession();
+        if (!active) return;
+        if (!session) throw new Error("Sign in to view private bounty funds.");
+        actorId = session.githubId;
+        setState((previous) =>
+          previous.status === "ready" && previous.actorId === actorId
+            ? previous
+            : { status: "loading" },
+        );
+        let result: { funds: PrivateFunds | null; canSetup: boolean } | undefined;
+        let failure: unknown;
+        let failed = false;
+        try {
+          result = await projectApiRequest<{
+            funds: PrivateFunds | null;
+            canSetup: boolean;
+          }>(
+            "GET",
+            `project-vaults/${project.id}?purpose=security-bounty`,
+            undefined,
+            { expectedActorGithubId: actorId },
+          );
+        } catch (cause) {
+          failed = true;
+          failure = cause;
+          if (
+            active &&
+            cause instanceof ProjectApiError &&
+            [401, 403, 404, 410].includes(cause.status)
+          )
+            setState({ status: "error", message: errorMessage(cause) });
+        }
+        if (!active) return;
+        const current = await currentProjectSession();
+        if (!active) return;
+        if (current?.githubId !== actorId)
+          throw new Error("Your account changed. Refresh private bounty funds.");
+        identityVerified = true;
+        if (failed) throw failure;
+        if (!result) throw new Error("Bounty funds could not load.");
+        setState({ status: "ready", ...result, actorId });
+      } catch (error: unknown) {
         if (!active) return;
         const message = errorMessage(error, "Bounty funds could not load.");
         const temporary =
+          identityVerified &&
           error instanceof ProjectApiError &&
           (error.status === 0 || error.status >= 500);
         setState((previous) =>
-          temporary && previous.status === "ready"
+          temporary &&
+          previous.status === "ready" &&
+          previous.actorId === actorId
             ? { ...previous, canSetup: false, refreshError: message }
             : { status: "error", message },
         );
-      },
-    );
+      }
+    };
+    void load();
     return () => {
       active = false;
     };

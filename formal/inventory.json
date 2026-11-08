@@ -166,6 +166,7 @@
       "models": [
         "formal/models/api_request_composition.qnt",
         "formal/models/ui_earnings_actor_binding.qnt",
+        "formal/models/ui_owner_private_requests.qnt",
         "formal/models/vetting_evidence_access.qnt"
       ],
       "candidateLines": [
@@ -506,7 +507,8 @@
         "formal/models/api_project_registry.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt"
+        "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_pending_applications.qnt"
       ],
       "candidateLines": [
         155, 160, 170, 174, 232, 257, 262, 289, 290, 292, 294, 343, 427, 434,
@@ -995,15 +997,15 @@
     },
     {
       "path": "backend/vetting/flags.ts",
-      "sha256": "330edd700538980bd3d15c8bc9635af9c350e2100a5518a79dc6d5dd7b1427f7",
+      "sha256": "0d565c1c7a508905857311948a693a0b464ae684510f8f754d6f08624286583b",
       "models": [
         "formal/models/vetting_flag_admission.qnt",
         "formal/models/vetting_flag_reinstatement.qnt"
       ],
       "candidateLines": [
-        85, 101, 108, 123, 170, 183, 217, 218, 219, 224, 245, 252, 262, 271,
-        291, 343, 344, 345, 350, 351, 353, 387, 388, 405, 477, 483, 520, 568,
-        601
+        85, 101, 108, 123, 170, 183, 217, 218, 219, 224, 248, 255, 265, 274,
+        294, 346, 347, 348, 353, 354, 356, 390, 391, 408, 480, 486, 523, 571,
+        604
       ],
       "review": "mapped-abstraction"
     },
@@ -1012,6 +1014,7 @@
       "sha256": "d7a2239228cdb702b7c46c19a42817739ea120a295d074b1b4c7460a6f63bb3d",
       "models": [
         "formal/models/vetting_admission_lineage.qnt",
+        "formal/models/vetting_flag_reinstatement.qnt",
         "formal/models/vetting_result_atomic.qnt",
         "formal/models/vetting_scan_reuse.qnt",
         "formal/models/vetting_service_auth.qnt"
@@ -2346,7 +2349,10 @@
     {
       "path": "migrations/0072_account_reinstatements.sql",
       "sha256": "9e3f13150d549f9ec36827f5f16422255d023b1e02114ad6a6a4c3b265bfdad7",
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": [
+        "formal/models/api_project_enforcement.qnt",
+        "formal/models/vetting_flag_reinstatement.qnt"
+      ],
       "candidateLines": [
         15, 121, 142, 143, 152, 153, 158, 159, 167, 168, 173, 180, 181, 185,
         188, 207, 208, 211, 212, 214, 234, 249, 250, 265, 266, 270, 271
@@ -4317,31 +4323,33 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "d4cbd8b8fd351dc20414bb299919110e18dad8a23980ed7a893f242cea4ed9ea",
+      "sha256": "86aa1da2e695f1b7cd1dfdff7843293a334e8a67f0a30d0c5fcf1bf8b4eab914",
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_owner_awards.qnt",
+        "formal/models/ui_owner_private_requests.qnt",
         "formal/models/ui_time_boundary.qnt",
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [
-        3, 69, 102, 104, 107, 114, 115, 123, 124, 127, 134, 135, 138, 139, 192,
-        201, 206, 211, 280, 299, 344, 366, 376, 432, 455, 502, 619, 620, 647,
-        648, 652, 657, 663, 680
+        3, 68, 101, 103, 106, 113, 114, 122, 123, 127, 134, 137, 138, 139, 140,
+        141, 144, 145, 241, 243, 251, 269, 362, 387, 434, 456, 466, 522, 545,
+        592, 709, 710, 737, 738, 742, 747, 753, 770
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/OwnerBountyVault.tsx",
-      "sha256": "fbae26e4841add3098fa7032a18d279fc177cc56f0dd1b9dfad02c3342a41489",
+      "sha256": "d0f49fa776a21ca1436d0da51b56bf9c6f3a72276507abdf864c262802ac77dd",
       "models": [
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_owner_private_requests.qnt",
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 92, 93, 94, 96, 101, 102, 104, 107, 109, 116, 123, 125, 127, 141,
-        142, 144, 145, 147, 149, 150, 156, 164, 169, 170, 172, 175, 176, 180,
-        188, 197
+        1, 93, 94, 95, 97, 103, 104, 106, 109, 111, 122, 124, 145, 147, 157,
+        164, 167, 170, 185, 186, 188, 189, 191, 193, 194, 200, 208, 213, 214,
+        216, 219, 220, 224, 232, 241
       ],
       "review": "mapped-abstraction"
     },
@@ -4426,12 +4434,15 @@
     },
     {
       "path": "src/PendingProjectApplications.tsx",
-      "sha256": "e4e9531916d4406268e5002ebfc05ed745d5cc3ddc7459ec9a3cad00e6e87177",
-      "models": ["formal/models/ui_project_setup.qnt"],
+      "sha256": "aa0e777ddc7c64140c9c6d0baff68dbab3ae457a183533dc610227927b4340db",
+      "models": [
+        "formal/models/ui_pending_applications.qnt",
+        "formal/models/ui_project_setup.qnt"
+      ],
       "candidateLines": [
-        1, 14, 15, 17, 26, 27, 34, 37, 40, 54, 55, 56, 58, 59, 66, 70, 73, 77,
-        78, 85, 98, 111, 112, 113, 114, 115, 116, 118, 120, 125, 127, 134, 144,
-        145, 150, 151, 153, 163, 181
+        1, 15, 16, 18, 34, 47, 48, 52, 62, 70, 96, 110, 111, 112, 114, 115, 122,
+        126, 129, 133, 134, 141, 154, 167, 168, 169, 170, 171, 172, 174, 176,
+        183, 185, 192, 201, 202, 207, 208, 210, 220, 230, 245
       ],
       "review": "mapped-abstraction"
     },
@@ -5347,21 +5358,22 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "5f5a8f66c2c9b80d7e4d37fff3df81882d53b7308e3cd0d475f4b079afca90ac",
+      "sha256": "88d1aaac6438d29e1e679b92b93a16e6a7a1de706be6bb929054402d720cfc86",
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_session.qnt",
         "formal/models/ui_transport.qnt",
         "formal/models/ui_vetting_inventory.qnt",
         "formal/models/ui_vetting_reader.qnt"
       ],
       "candidateLines": [
-        6, 25, 111, 121, 125, 149, 163, 168, 225, 255, 256, 257, 258, 265, 267,
-        268, 269, 275, 281, 283, 284, 291, 292, 320, 322, 323, 328, 330, 331,
-        337, 339, 342, 361, 367, 379, 385
+        6, 25, 111, 121, 125, 149, 163, 168, 229, 259, 260, 261, 262, 269, 271,
+        272, 273, 279, 285, 287, 288, 295, 296, 324, 326, 327, 332, 334, 335,
+        341, 343, 346, 365, 371, 383, 389
       ],
       "review": "mapped-abstraction"
     },
@@ -11720,7 +11732,7 @@
     },
     {
       "path": "formal/models/ui_owner_awards.qnt",
-      "sha256": "ed98adc9a95d504e8250577aef355a0948c3d606238c6adcf7a703c48e599f90",
+      "sha256": "983f6f7741d9601de71c7f50aefe576a8c0f6ffa550f78e06d36b6e3449347c7",
       "sources": ["src/OwnerAwards.tsx", "src/lib/use-time-boundary.ts"],
       "scenarios": [
         "cutoffTest",
@@ -11731,7 +11743,7 @@
     },
     {
       "path": "formal/models/ui_owner_bounty_funds.qnt",
-      "sha256": "a6ea79ce4ceba94c5c2f910b84ca3f2e3c2f10290f62948a5906d0060e04a157",
+      "sha256": "b09639584d07e86e5bcbe16e45274bb6c75201f5801b67408a0cfb17d4f29a97",
       "sources": [
         "backend/projects/handler.ts",
         "backend/security/program-funds.ts",
@@ -11759,6 +11771,34 @@
         "successfulRefreshRestoresWithoutRemountingTest",
         "temporaryNullBalanceKeepsVaultInformationTest",
         "temporaryRefreshKeepsPendingChildAndDisablesDepositsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_owner_private_requests.qnt",
+      "sha256": "1491d3cf8c982971b1ecd9ceb6a3313505cfa808e5453238a548ceae1d0faaaf",
+      "sources": [
+        "backend/http.ts",
+        "src/OwnerAwards.tsx",
+        "src/OwnerBountyVault.tsx"
+      ],
+      "scenarios": [
+        "acceptedWriteSurvivesChangedActorTest",
+        "detachedAcceptedWriteCannotPublishTest",
+        "fundsChangedActorCannotPublishOldResponseTest",
+        "fundsMalformedResponseDoesNotRetainBalanceTest",
+        "fundsRefusalRemovesChildBeforeRecheckTest",
+        "fundsSameActorOutageRetainsChildTest",
+        "fundsUnknownSessionCannotRetainStaleDataTest",
+        "mutationErrorRechecksChangedActorTest",
+        "mutationRefusalClearsBeforeRecheckTest",
+        "newReadActorDropsOldDraftTest",
+        "sameActorMutationOutageRetainsDraftTest",
+        "supersededReadCannotPublishTest",
+        "swapAfterDispatchKeepsOriginalAdmissionTest",
+        "swapBeforeDispatchFailsAdmissionTest",
+        "transportFailureBeforeAdmissionRetainsOwnDraftTest",
+        "unknownSessionClearsOldPrivateDataTest",
+        "wrongActorBeforeWriteStartsNoRequestTest"
       ]
     },
     {
@@ -11832,6 +11872,36 @@
       "sha256": "e8b60bb1f1b267de75f4a722e69e5bbcb81064ac244e78d6a7ba0b4e14a43948",
       "sources": ["src/PayoutConsent.tsx", "src/lib/payout-consent.ts"],
       "scenarios": ["changedAccountTest", "consentTest"]
+    },
+    {
+      "path": "formal/models/ui_pending_applications.qnt",
+      "sha256": "df16d31d470a4bd16796d7434bab52adc11877f62f09ecb565498e3c4549d64c",
+      "sources": [
+        "backend/projects/handler.ts",
+        "src/PendingProjectApplications.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "changedActorAfterAcceptedWriteTest",
+        "changedActorAfterRefusalClearsListTest",
+        "changedActorAtLoadAdmissionTest",
+        "changedActorAtLoadDeliveryTest",
+        "changedActorBeforePublishTest",
+        "departedAfterCheckDoesNotDispatchTest",
+        "departedPreflightCannotIssueWriteTest",
+        "departedReplyKeepsAcceptedFactTest",
+        "duplicateClickCannotIssueTwoWritesTest",
+        "emptyInventoryIsOrdinaryTest",
+        "failedLoadCanRetryTest",
+        "headerCatchesPostCheckSwapTest",
+        "lostAcceptedReplyDoesNotUndoWriteTest",
+        "oldReplyCannotChangeNewViewTest",
+        "remountedPublishedApplicationIsAbsentTest",
+        "sameActorPublicationTest",
+        "sameActorRefusalKeepsRetryTest",
+        "unknownIdentityDoesNotPublishListTest",
+        "unknownPublishIdentityClearsListTest"
+      ]
     },
     {
       "path": "formal/models/ui_points_disputes.qnt",
@@ -12786,32 +12856,44 @@
     },
     {
       "path": "formal/models/vetting_flag_admission.qnt",
-      "sha256": "30bce00527ffb33e7d556b5d5962df93ebb32a5da7c237931b9cd338eddae11a",
+      "sha256": "a9362a67f7eee2aaf90b7b11306731c2f2bda838d6d5d58e4fd48378038bdfd0",
       "sources": [
         "backend/vetting/flagger-standing.ts",
         "backend/vetting/flags.ts"
       ],
       "scenarios": [
         "banBetweenCheckAndWriteTest",
+        "changedOwnerCannotRefreshStandingTest",
+        "changedProjectCannotUseOldStandingTest",
+        "recheckedNonOwnerCanFileNewRevisionTest",
         "twoMembersPauseThenExpireTest"
       ]
     },
     {
       "path": "formal/models/vetting_flag_reinstatement.qnt",
-      "sha256": "bbbaa37db58e31b44d19ac365732374a2d54828a1d2fbaa299c5fa497e56c8e1",
+      "sha256": "a7109077424f7ffbdd1afb4a1ff0ae4a49e20a14d949a554b1bda0af7c1e247c",
       "sources": [
         "backend/projects/enforcement.ts",
         "backend/projects/verified-enforcement.ts",
         "backend/vetting/flags.ts",
+        "backend/vetting/handler.ts",
         "backend/vetting/persistence.ts",
-        "migrations/0060_contributor_flags.sql"
+        "migrations/0060_contributor_flags.sql",
+        "migrations/0072_account_reinstatements.sql"
       ],
       "scenarios": [
+        "changedContentCannotReinstateTest",
+        "changedRevisionDefersRecordedRetryTest",
         "cleanScanDoesNotUndoBanTest",
         "duplicateReporterTest",
         "exemptionDoesNotOverrideRestrictionTest",
+        "expiredFlagHistorySurvivesRefileTest",
         "freshScanReinstatesTest",
         "newFlagPreventsReinstatementTest",
+        "presentationRevisionKeepsContentClearanceTest",
+        "sameReporterRefileHasNewIdentityTest",
+        "stalePinStillResolvesCapturedFlagsTest",
+        "unavailablePinDefersOnlyReinstatementTest",
         "withdrawalDoesNotReinstateTest"
       ]
     },

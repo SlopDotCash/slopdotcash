@@ -209,3 +209,20 @@ Four new models contain 64 unexecuted scenarios. New or extended browser and
 handler workflows are also unexecuted. These are source-confirmed corrections,
 not passing runtime reproductions or a complete application-state proof.
 The four area audits describe their finite bounds and remaining acceptance.
+
+## Further private-view and flag-state corrections
+
+Owner award mutation refusals retained the earlier private proposal after
+clearing only drafts. Owner bounty-funds reads and pending-application reads
+also lacked a response-time actor check. The corrected paths bind requests
+to their initiating account, recheck identity, and remove private views on
+known access loss. Departed callbacks cannot publish into another view.
+Accepted writes remain backend facts even when their responses arrive late.
+
+Flag admission used eligibility from a captured project but inserted against
+the latest revision. The insertion now requires that captured revision and
+manifest hash. A concurrent change returns the existing retry response.
+Source review also corrected the reinstatement model: a withdrawn reporter's
+new flag has a new immutable ID, and a clean scan resolves captured flags
+even if it cannot reinstate the project. New model and regression definitions
+remain unexecuted. The linked area audits retain these bounds and limits.

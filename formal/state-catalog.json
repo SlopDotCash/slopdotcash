@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "8eeff2aa011b40ba0ff441f040d104f98b160c33ab9a046aa461d613ede76dd3",
+  "inventorySha256": "b7d8f87c17bd4fb733ae3539a4cd95c1a27e74751f65fce2b8868efce31e7c72",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,8 @@
         "formal/models/api_project_registry.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt"
+        "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_pending_applications.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
@@ -122,7 +123,8 @@
         "formal/models/api_project_registry.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt"
+        "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_pending_applications.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
@@ -398,7 +400,7 @@
         "formal/models/vetting_flag_admission.qnt",
         "formal/models/vetting_flag_reinstatement.qnt"
       ],
-      "lexicallyUnmentionedValues": ["expired", "resolved", "withdrawn"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1071,12 +1073,7 @@
       "kind": "sql-check",
       "values": ["active", "expired", "resolved", "withdrawn"],
       "models": ["formal/models/vetting_flag_reinstatement.qnt"],
-      "lexicallyUnmentionedValues": [
-        "active",
-        "expired",
-        "resolved",
-        "withdrawn"
-      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1167,7 +1164,10 @@
       "name": "state_after",
       "kind": "sql-check",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": [
+        "formal/models/api_project_enforcement.qnt",
+        "formal/models/vetting_flag_reinstatement.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1182,7 +1182,10 @@
         "owner-request",
         "standing-rule"
       ],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": [
+        "formal/models/api_project_enforcement.qnt",
+        "formal/models/vetting_flag_reinstatement.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "account-request",
         "admin-panel",
@@ -1197,7 +1200,10 @@
       "name": "result",
       "kind": "sql-check",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": [
+        "formal/models/api_project_enforcement.qnt",
+        "formal/models/vetting_flag_reinstatement.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -2113,12 +2119,15 @@
     },
     {
       "path": "src/PendingProjectApplications.tsx",
-      "line": 14,
+      "line": 15,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
-      "models": ["formal/models/ui_project_setup.qnt"],
-      "lexicallyUnmentionedValues": ["idle", "submitting"],
+      "models": [
+        "formal/models/ui_pending_applications.qnt",
+        "formal/models/ui_project_setup.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["submitting"],
       "review": "candidate-only"
     },
     {

@@ -200,21 +200,25 @@ export function checkProjectSetup(
 }
 
 /** The signed-in account's projects and its stored applications. */
-export function listProjectSetup(): Promise<{
+export function listProjectSetup(expectedActorGithubId?: string): Promise<{
   projects: ProjectSummary[];
   applications: ProjectApplication[];
 }> {
-  return projectApiRequest("GET", "project-setup");
+  return projectApiRequest("GET", "project-setup", undefined, {
+    expectedActorGithubId,
+  });
 }
 
 /** Publishes an application stored before self-service setup. */
 export function publishStoredApplication(
   applicationId: string,
+  expectedActorGithubId?: string,
 ): Promise<{ project: { id: string }; setup: ProjectSetupStatus }> {
   return projectApiRequest(
     "POST",
     `project-applications/${encodeURIComponent(applicationId)}/publish`,
     {},
+    { expectedActorGithubId },
   );
 }
 

@@ -61,11 +61,11 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 330 finite models and 1,791 named scenarios, with zero
+839 production sources, 332 finite models and 1,837 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
-The latest source-only batch adds four models and 64 unexecuted scenarios.
+The wallet source-only batch adds four models and 64 unexecuted scenarios.
 Earnings now stops departed wallet continuations, binds each wallet action to
 its initiating account, and sends that expected actor to the payments API.
 Owner vault setup retains only its own pending creation and registration
@@ -74,8 +74,15 @@ and compare saved records before replacing or clearing them. The authored
 browser and handler regressions have not run. See
 `earnings-wallet-lifetime-audit.md`, `earnings-actor-binding-audit.md`,
 `owner-vault-setup-audit.md`, and `referral-claim-lifetime-audit.md`.
-The regenerated function inventory lists 9,886 bodies in 684 files and the
-same 168 selected contracts; it does not prove the remaining bodies.
+The next source-only batch adds two models and 46 scenarios across new and
+refined models. It binds pending-application and owner private requests to
+their actors, clears refused private views, and fences flag eligibility to
+the project revision that was checked. The reinstatement model now tracks
+immutable flag IDs and separates resolving flags from reinstating a project.
+These models and the added browser/handler regressions are unexecuted. See
+`pending-application-state-audit.md`, `owner-private-requests-audit.md`, and
+`risk-flag-state-audit.md`. The function inventory still selects 168 contracts;
+it does not prove the remaining bodies.
 
 ## Integrated corrections
 

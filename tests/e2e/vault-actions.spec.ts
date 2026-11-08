@@ -2340,6 +2340,48 @@ test("owner registers a separate bounty vault through the API and funds it priva
     );
     expect(failed).toEqual([`503 ${privateUrl}`, `403 ${privateUrl}`]);
     expect(expectedPrivateErrors).toBe(2);
+    let releasePrivateRead = () => {},
+      privateReadStarted = () => {};
+    const privateReadWaiting = new Promise<void>((resolve) => {
+      privateReadStarted = resolve;
+    });
+    const privateReadRelease = new Promise<void>((resolve) => {
+      releasePrivateRead = resolve;
+    });
+    await page.route(privateUrl, async (route) => {
+      const response = await route.fetch();
+      privateReadStarted();
+      await privateReadRelease;
+      await route.fulfill({ response });
+    });
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await privateReadWaiting;
+    try {
+      // The private read was accepted for A. Change the next real UI session
+      // observation to B without a focus/navigation event before delivery.
+      await page.route("**/api/v1/project-session", (route) =>
+        route.fulfill({
+          json: {
+            session: {
+              githubId: "900000999",
+              githubLogin: "other-owner",
+              admin: false,
+            },
+          },
+        }),
+      );
+    } finally {
+      releasePrivateRead();
+    }
+    await expect(bountyFunds.getByRole("alert")).toContainText(
+      "account changed",
+    );
+    await expect(bountyFunds).not.toContainText(
+      "Available for new awards: 10 USDC",
+    );
+    await expect(funding).toHaveCount(0);
+    await page.unroute(privateUrl);
+    await page.unroute("**/api/v1/project-session");
   } finally {
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
