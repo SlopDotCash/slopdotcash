@@ -19,17 +19,32 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The completed combined proof checkpoint contains twelve modules and 52
-selected runtime functions, including the notification, bucket and token-parser
-extensions below. The check uses
-Dafny's `--isolate-assertions` option, which proves every assertion in a separate
-obligation. It does not filter or skip assertions. The completed run reports
-2,094 verified obligations: 142 money, 40 frontend, 231 fee-converter, 26 worker
-policy, 65 evidence-partition, 5 budget/timeout, 662 complete-allocation, 193
-decimal-parsing, 71 bounded-selection, 155 bucket-aggregation, 41 notification
-and 463 token-parser obligations, with zero errors. These counts cannot be compared directly with
-the earlier 60 declaration checks because the proof splitting changed.
-Neither count is a function coverage percentage.
+The completed combined proof checkpoint contains fourteen modules and 59
+selected runtime functions. Dafny's `--isolate-assertions` option proves every
+assertion in a separate obligation; it does not filter assertions. The run
+completed 2,572 obligations with zero errors:
+
+| Runtime module | Functions | Obligations |
+| --- | ---: | ---: |
+| Money and monthly frozen awards | 8 | 256 |
+| Frontend state decisions | 7 | 40 |
+| Fee-converter arithmetic | 11 | 231 |
+| Worker policy | 4 | 26 |
+| Evidence partition | 2 | 65 |
+| Budgets and timeout | 3 | 5 |
+| Complete numerical allocation | 4 | 662 |
+| Decimal parsing | 3 | 193 |
+| Bounded totals and maximum selection | 2 | 71 |
+| Signed bucket aggregation | 2 | 155 |
+| Complete reviewer selection | 1 | 164 |
+| Notification consent | 3 | 41 |
+| Private intake decisions | 3 | 32 |
+| Token-2022 headers and metadata | 6 | 631 |
+
+These counts cannot be compared directly with the earlier 60 declaration
+checks because the proof splitting changed. Neither count is a function
+coverage percentage. A proof check does not replace the complete repository
+or browser gates.
 
 The default timeout is 30 seconds per prover obligation; the runner also
 bounds each subprocess and kills the subprocess group on timeout. Explicit
@@ -341,14 +356,14 @@ proof obligations. The original API/SQLite/Worker workflows passed 37 tests and
 [the notification report](lemmascript-notification-prototype.md). It preserves
 the distinction between no preference, unset security preference, unavailable
 pilot destination and a registered destination with its own pinned version.
-These contracts pass in the combined twelve-module run. The complete repository
+These contracts pass in the combined fourteen-module run. The complete repository
 gate and browser checks remain separate requirements.
 
 The follow-up at `d543fa204` passed all nine strict source/proof modules:
 43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
 correction requires the final combined source gate to run again.
-The later combined proof receipt is
-`evidence/lemmascript/1794152588788-64929/result.json`; all twelve modules pass
+The latest combined proof receipt is
+`evidence/lemmascript/1794153356857-19224/result.json`; all fourteen modules pass
 with stable source hashes, and the combined typecheck passes. The rebased
 server-free translator's 14 gated regression tests also pass, including a real
 TLC counterexample for the false literal invariant. These results do not turn
