@@ -115,6 +115,54 @@ opaque predicate positive(x: int) { x > 0 }
     ).toThrow();
   });
 
+  it("allows only defined ghost functions and predicates with unchanged generated tokens", () => {
+    const added = `${generated}
+ghost function sumMeaning(x: int): int { x + 1 }
+ghost predicate closed(values: seq<bool>) { forall i: int :: 0 <= i < |values| ==> values[i] }
+`;
+    expect(() => requireProofIntegrity(generated, added)).not.toThrow();
+    expect(() => requireProofIntegrity(added, added)).not.toThrow();
+    for (const [from, to] of [
+      [
+        "sumMeaning(x: int): int { x + 1 }",
+        "sumMeaning(x: int): int { x + 2 }",
+      ],
+      ["sumMeaning(x: int)", "sumMeaning(x: nat)"],
+      ["ghost function sumMeaning", "function sumMeaning"],
+      ["ghost predicate closed", "predicate closed"],
+      ["{ x + 1 }", "{ assume false; x + 1 }"],
+      ["ghost predicate closed", "ghost predicate {:verify false} closed"],
+    ]) {
+      expect(() =>
+        requireProofIntegrity(added, added.replace(from, to)),
+      ).toThrow();
+    }
+    for (const extra of [
+      "ghost function missing(x: int): int",
+      "ghost predicate missing(x: int)",
+      "ghost method missing() { }",
+      "ghost lemma missing() { }",
+      "ghost ghost function missing(): int { 0 }",
+      "ghost opaque function missing(): int { 0 }",
+      "opaque ghost predicate missing() { true }",
+      "ghost function increment(x: int): int { 0 }",
+      "ghost predicate hidden() { assume false; true }",
+      'ghost predicate hidden() { include "external.dfy"; true }',
+      "ghost function {:axiom} hidden(): int { 0 }",
+      "ghost function {:verify false} hidden(): int { 0 }",
+    ]) {
+      expect(() =>
+        requireProofIntegrity(generated, `${generated}\n${extra}`),
+      ).toThrow();
+    }
+    expect(() =>
+      requireProofIntegrity(
+        generated,
+        generated.replace("function increment", "ghost function increment"),
+      ),
+    ).toThrow();
+  });
+
   it("finds compiler-supported body-header contracts and rejects nested targets", () => {
     const source = `export function increment(x: bigint): bigint {
       //@ verify
