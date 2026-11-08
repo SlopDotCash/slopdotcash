@@ -11,10 +11,11 @@
 // This model covers parent/keyed-child lifetime, not wallet signing/finality.
 // Authored by source inspection only; no check was run for this revision.
 module ui_bounty_payment_parent {
-  var s:{actor:int,phase:str,reads:int,active:int,pending:Set[int],warning:bool,
+  type State = {actor:int,phase:str,reads:int,active:int,pending:Set[int],warning:bool,
     generation:int,message:int,plan:int,mode:int,epoch:int,identityChecks:int,storageReady:bool,storagePending:bool,
     journal:bool,journalPlan:int,preflight:bool,walletOpen:bool,promptEpoch:int,promptKey:int,promptPlan:int,
     savedKeys:Set[int],hashKeys:Set[int]}
+  var s: State
   action init=s'={actor:1,phase:"loading",reads:0,active:0,pending:Set(),warning:false,
     generation:0,message:0,plan:0,mode:0,epoch:0,identityChecks:0,storageReady:false,storagePending:false,journal:false,journalPlan:0,preflight:false,walletOpen:false,promptEpoch:0,promptKey:0,promptPlan:0,savedKeys:Set(),hashKeys:Set()}
   val storageKey=if(s.mode==2)200+s.generation*10+s.message*2+s.actor else 100+s.generation*10+s.actor
@@ -23,10 +24,14 @@ module ui_bounty_payment_parent {
   // One representative transfer. Partial multi-transfer journals and nonce
   // ordering remain in DirectBountyPayment and the financial models.
   val sendPresented=sendChild and s.storageReady and not(s.journal) and not(mismatched)
+  // These fields represent one live async invocation, not durable component
+  // state. Its closure is gone after refusal, decline, or a wallet result.
+  def finishedPrompt(state:State):State=state.with("preflight",false).with("walletOpen",false)
+    .with("promptEpoch",0).with("promptKey",0).with("promptPlan",0)
   def changedKey(mode:int,generation:int,message:int):bool=
     mode!=s.mode or ((mode==1 or mode==2) and generation!=s.generation) or
       (mode==2 and message!=s.message)
-  def received(mode:int,generation:int,message:int,plan:int)=
+  def received(mode:int,generation:int,message:int,plan:int): State =
     s.with("phase","ready").with("warning",false).with("active",0)
       .with("mode",mode).with("generation",generation).with("message",message).with("plan",plan)
       .with("epoch",if(changedKey(mode,generation,message))s.epoch+1 else s.epoch)
@@ -68,7 +73,7 @@ module ui_bounty_payment_parent {
   action reviewBeforePrompt=all{sendPresented,not(s.preflight),not(s.walletOpen),
     s'=s.with("preflight",true).with("promptEpoch",s.epoch)
       .with("promptKey",storageKey).with("promptPlan",s.plan)}
-  action preflightRefused=all{s.preflight,s'=s.with("preflight",false)}
+  action preflightRefused=all{s.preflight,s'=finishedPrompt(s)}
   action recordBeforePrompt=all{s.preflight,not(s.walletOpen),
     s'=s.with("preflight",false).with("walletOpen",true)
       .with("journal",if(s.promptEpoch==s.epoch)true else s.journal)
@@ -77,21 +82,26 @@ module ui_bounty_payment_parent {
   // The promise retains the old storage key after its component unmounts.
   // A returned hash is durable evidence to check, not proof of payment.
   action walletReturns(storageWrites:bool):bool=all{s.walletOpen,
-    s'=s.with("walletOpen",false)
-      .with("hashKeys",if(storageWrites)s.hashKeys.union(Set(s.promptKey)) else s.hashKeys)}
-  action walletUnknown=all{s.walletOpen,s'=s.with("walletOpen",false)}
+    s'=finishedPrompt(s.with("hashKeys",if(storageWrites)s.hashKeys.union(Set(s.promptKey)) else s.hashKeys))}
+  action walletUnknown=all{s.walletOpen,s'=finishedPrompt(s)}
   action walletDeclined(storageClears:bool):bool=all{s.walletOpen,
-    s'=if(storageClears)s.with("walletOpen",false).with("savedKeys",s.savedKeys.exclude(Set(s.promptKey)))
+    s'=if(storageClears)finishedPrompt(s.with("savedKeys",s.savedKeys.exclude(Set(s.promptKey)))
       .with("hashKeys",s.hashKeys.exclude(Set(s.promptKey)))
       .with("journal",if(s.promptEpoch==s.epoch)false else s.journal)
-      .with("journalPlan",if(s.promptEpoch==s.epoch)0 else s.journalPlan)
-      else s.with("walletOpen",false)}
-  action step={nondet id=1.to(3).oneOf() nondet mode=0.to(3).oneOf()
+      .with("journalPlan",if(s.promptEpoch==s.epoch)0 else s.journalPlan))
+      else finishedPrompt(s)}
+  action chooseCaseReply={nondet id=1.to(3).oneOf() nondet mode=0.to(3).oneOf()
     nondet generation=1.to(2).oneOf() nondet message=1.to(2).oneOf()
-    nondet plan=1.to(2).oneOf() nondet epoch=0.to(5).oneOf()
-    any{readCase,caseReply(id,mode,generation,message,plan),failedRead(id),
-      hidePrivateView,confirmActor(1),confirmActor(2),storageReply(epoch,true,plan),
-      storageReply(epoch,false,plan),reviewBeforePrompt,preflightRefused,recordBeforePrompt,walletReturns(true),walletReturns(false),walletUnknown,walletDeclined(true),walletDeclined(false),s'=s}}
+    nondet plan=1.to(2).oneOf()
+    caseReply(id,mode,generation,message,plan)}
+  action chooseFailedRead={nondet id=1.to(3).oneOf() failedRead(id)}
+  action chooseStorageReply={nondet epoch=0.to(5).oneOf() nondet plan=1.to(2).oneOf()
+    any{storageReply(epoch,true,plan),storageReply(epoch,false,plan)}}
+  // Keep each finite choice with its own transition. Hoisting all choices
+  // over this disjunction repeats unrelated successors without adding states.
+  action step=any{readCase,chooseCaseReply,chooseFailedRead,
+    hidePrivateView,confirmActor(1),confirmActor(2),chooseStorageReply,
+    reviewBeforePrompt,preflightRefused,recordBeforePrompt,walletReturns(true),walletReturns(false),walletUnknown,walletDeclined(true),walletDeclined(false),s'=s}
   val invariant=all{s.reads<=3,s.identityChecks<=2,s.epoch<=5,s.actor>=0,s.actor<=2,
     s.mode>0 implies(s.phase=="ready" and s.actor>0),
     s.storageReady implies sendChild,

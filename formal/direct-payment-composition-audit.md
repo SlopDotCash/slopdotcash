@@ -1,9 +1,9 @@
 # Direct-payment parent and recovery composition
 
-This source-only review starts at `120c7a22a121`. It adds two focused models;
-it changes no production code. The user directed the team to skip checks and
-focus on pushing. No tests, browser sessions, typechecker, simulation or prover
-were run. Both models and their 25 named scenarios remain unverified.
+This source-only review started at `120c7a22a121`. It adds two focused models;
+it changes no production code. The user initially directed the team to skip
+checks and focus on pushing, so that first checkpoint had no execution
+evidence. The independent review below records the later scoped checks.
 
 ## Parent selection and identity
 
@@ -110,6 +110,13 @@ server acceptance distinct from delivery to the current private view.
 two generations, two rows and two dependency-triggered storage reads. It
 models both preflights, partial candidate writes, captured versus edited
 inputs, confirmation filtering, cookie changes and both departure boundaries.
+Its finite `step` now explores at most two verification invocations and two
+distinct nonzero identifier representatives, plus empty/invalid input. These
+are verifier bounds, not limits on application retries or submitted hashes.
+The separate `unboundedStep` keeps repeated invocations and all three original
+identifier representatives for seeded simulation. The finite result does not
+prove an unbounded retry history. A named failure-then-success scenario keeps
+the retry path inside the finite two-invocation scope.
 Hash grammar, local-storage key enumeration, receipt cryptography, backend
 atomicity and the exact chain status are external predicates. It is not a
 model of payment broadcasting.
@@ -123,3 +130,42 @@ Backend `direct-payments.ts` / `handler.ts` and their protocol models retain
 authority over intent, generation, receipt and settlement rules. Those are
 references for future conformance checks; no earlier pass certifies these new
 models. Model-to-source mapping is not proof of refinement or completion.
+
+## Independent model review
+
+The PR review found two authoring errors before model execution: a list used
+the set-only `filter` operator, and the typed `received` function lacked its
+required return type. The correction uses list `select` and a shared state
+type. Neither correction changes a production component.
+
+The first finite runs reached their 180-second limit. Moving nondeterministic
+choices into their own parameterized branches removes repeated successors
+without changing their domains or transition union. A second review identified
+another unnecessary source of state: captured arguments were kept after their
+async calls had returned. The models now clear completed prompt/check captures,
+and completed storage-read actor/generation cells. They preserve durable
+journals, row state, request-list lengths, all still-pending reads, and every
+capture used by a live call. The storage response projects its actor and
+generation into the row before clearing the completed request cell. A separate
+reviewer checked those uses against the guards and named scenarios.
+
+The bounded parent model retains six behavior dimensions: two actors, two
+generations, two messages, two plan classes, three reads and two identity
+rechecks. Its 13 named scenarios and 500 seeded traces of at most 60 steps pass
+with Quint 0.33.1 and seed `20261107`. Finite TLC completes in 146.8 seconds:
+1,217,185 distinct states, 94,451,565 generated states, depth 23, empty queue.
+The original unnormalized run was incomplete at 180 seconds; it is not a pass.
+At that first cutoff, it had reached 35,615 distinct states with a nonempty
+queue. The completed run above uses the same actor/read/message/plan bounds
+and clears only expired invocation captures. Intermediate representations of
+the submitted-recovery model also reached the 180-second deadline; none are
+counted as successful verification.
+
+The submitted-recovery model passes 13 named scenarios and 500 seeded traces
+of at most 60 steps through each of `step` and `unboundedStep`, seed
+`20261107`. Its final finite attempt uses the two-invocation, two-identifier
+scope above, but still reaches the configured 180-second limit: 6,615,547
+distinct states, 77,352,325 generated states, depth 15 and a nonempty queue.
+No violation was reported before termination. This is **incomplete finite
+verification**, not a pass. The wider three-identifier, uncapped-invocation
+simulation is also not proof for arbitrary retry histories.

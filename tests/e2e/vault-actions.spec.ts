@@ -986,13 +986,44 @@ test("owner turns automatic monthly payment on by default, then opts out", async
       .locator(".vault-contract-details")
       .getByText(owner, { exact: true }),
   ).toBeVisible();
-  await monthly.getByLabel("Transaction hash from your wallet").fill(sends[0]);
+  const recoveryHash = monthly.getByLabel("Transaction hash from your wallet");
+  const unrelatedHash = `0x${"d".repeat(64)}`;
+  await recoveryHash.fill(unrelatedHash);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect(monthly.getByRole("status")).toContainText(
     "Waiting for finalized",
   );
+  await expect(recoveryHash).toBeEditable();
+  await expect(recoveryHash).toHaveValue(unrelatedHash);
+  await expect(turnOn).toHaveCount(0);
+  expect(sends).toHaveLength(1);
+  await page.screenshot({
+    path: info.outputPath("monthly-entered-hash-pending.png"),
+    fullPage: true,
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(recoveryHash).toBeEditable();
+  await expect(recoveryHash).toHaveValue(unrelatedHash);
+  await recoveryHash.fill(sends[0]);
+  await monthly
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Waiting for finalized",
+  );
+  await expect(recoveryHash).toBeEditable();
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(recoveryHash).toHaveValue(sends[0]);
+  await expect(turnOn).toHaveCount(0);
+  expect(sends).toHaveLength(1);
   await rpc("anvil_mine", ["0x40"]);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
@@ -1020,6 +1051,23 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     })
     .click();
   await expect.poll(() => sends.length).toBe(2);
+  await expect(recoveryHash).toHaveCount(0);
+  await expect(
+    monthly.getByRole("link", {
+      name: "View submitted transaction",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", new RegExp(sends[1]));
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(recoveryHash).toHaveCount(0);
+  await page.screenshot({
+    path: info.outputPath("monthly-wallet-returned-hash-fixed.png"),
+    fullPage: true,
+  });
+  expect(sends).toHaveLength(2);
   await rpc("anvil_mine", ["0x40"]);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })

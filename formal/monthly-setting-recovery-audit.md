@@ -1,9 +1,9 @@
 # Monthly-setting transaction evidence
 
-This source-only follow-up starts at `120c7a22a121`. The user directed the team
-to skip checks and focus on pushing. No typechecker, test, browser, simulation
-or prover was run for this change. The model is authored but unverified. There
-is no new runtime reproduction, screenshot or walkthrough for this revision.
+The original source-only follow-up started at `120c7a22a121`, under the user's
+instruction to skip checks and focus on pushing. The first authored revision
+had no execution evidence. The independent PR review below records the later
+reproduction and bounded checks; it does not certify the rest of the PR.
 
 ## Source-confirmed path
 
@@ -74,7 +74,7 @@ clear/reload scenarios supplement the original ten; none were executed.
 The model treats account/network/intent/finality validation as predicates
 supplied by the unchanged adapters. It does not prove cryptography, arbitrary
 storage failures, wallet extensions, React scheduling or backend refinement.
-All model execution remains pending because of the instruction to skip checks.
+All model execution was pending at that source-only checkpoint.
 Existing EVM and Solana wallet workflow files are linked as conformance
 references; their earlier results do not certify this new source revision.
 
@@ -88,3 +88,29 @@ their complete parent/child composition. In particular, fallback submitted
 payment recovery has asynchronous actor/storage loading not represented by
 the generic `ui_transaction` model. That remains a model gap, not a demonstrated
 authorization bypass or runtime defect.
+
+## Independent PR review
+
+The existing browser-to-Anvil monthly-setting workflow now checks an unrelated
+entered hash before correcting it to the actual transaction. With the earlier
+`120c7a22a121` component, the test fails because the pending lookup removes the
+recovery input. With the proposed component, Chromium desktop and 320 px
+viewport both pass. The entered hash remains editable after a pending result
+and reload; the actual transaction then passes the unchanged finality and
+event checks. A second owner-approved transaction turns automatic payment off.
+Its wallet-returned hash remains fixed after reload. The workflow asserts only
+two sends, and reads the actual vault's cap and enabled flag after both changes.
+The cap is 1,000,000,000 token base units at six decimals in this local fixture.
+
+The browser run uses documented frozen-data overlays and local Anvil contracts
+with synthetic wallets and funds. It does not establish live wallet/provider
+availability or production authorization. The before run has one expected
+failure; the after run has two passes, zero skips and zero flaky cases. Raw
+recordings, screenshots and a short explanation remain outside the source tree.
+
+The unchanged monthly recovery model passes its 14 named scenarios and 500
+seeded traces of at most 60 steps, seed `20261107`, using Quint 0.33.1. Finite
+TLC verification completes with 3,075 distinct states, 66,853 generated states,
+depth 17 and an empty queue. It retains the one-request, one-wallet and four
+identifier-class bounds described above. TypeScript and the focused formatter
+check pass. These checks do not prove general implementation refinement.
