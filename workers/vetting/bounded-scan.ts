@@ -392,6 +392,20 @@ const RULES: Rule[] = [
   {
     threat: "unsafe-execution",
     severity: "high",
+    // A container run pulls the image and executes it, usually with the
+    // repository mounted, so the install executes bytes the scan never
+    // acquires. `docker build` and `docker compose up` run definitions that
+    // are already an install surface, so they stay out. `container run` is
+    // the long spelling of the same command; podman takes the same flags.
+    pattern: new RegExp(
+      String.raw`(?:^|[\s;|&()'"\x60])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?["']?(?:[^\s;|&()'"\x60]*\/)?(?:docker|podman)(?:\.exe)?(?:-compose)?["']?\s+(?:container\s+)?run\b`,
+      "iu",
+    ),
+    summary: "Pulls a container image and runs it during install",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
     // Process substitution hands a remote download to a shell without a
     // pipe: `bash <(curl ...)`, `sh <(curl ...)`, `source <(curl ...)`
     // and `. <(curl ...)` are the same act. Shell flags can select stdin
