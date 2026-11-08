@@ -417,11 +417,11 @@
     },
     {
       "path": "backend/points/x.ts",
-      "sha256": "9a048e6426ac9b02d030bcbd7d83134bd93e6fda1d8eb9219ba0c19d4ec20e25",
+      "sha256": "6fc6edf791d173291a7f823341611ab5f6d51e338ed38f8539e316108e140fc2",
       "models": ["formal/models/api_x_connection.qnt"],
       "candidateLines": [
-        17, 18, 26, 28, 30, 61, 98, 103, 104, 111, 119, 122, 159, 178, 198, 211,
-        232, 279, 281, 291, 295, 314, 325, 328, 343
+        17, 18, 27, 31, 38, 65, 102, 103, 104, 114, 115, 130, 133, 170, 189,
+        209, 222, 243, 290, 292, 302, 306, 325, 330, 336, 339, 354
       ],
       "review": "mapped-abstraction"
     },
@@ -8150,13 +8150,14 @@
     },
     {
       "path": "formal/models/api_x_connection.qnt",
-      "sha256": "2d84f2d5fc97f006656c12e169909729fdc42f303da076d101193a7a79529c81",
+      "sha256": "1d638d6e7847aebf2f8d76b42f6a08e8f319f8ab837df6cba9109140eeb093b5",
       "sources": ["backend/points/x.ts", "migrations/0009_points_social.sql"],
       "scenarios": [
         "cancellationCleanupFailureReportsErrorTest",
         "cleanupFailureDoesNotUndoCommittedLinkTest",
         "databaseFailureDoesNotReserveIdentityTest",
         "disconnectDuringProviderWaitRefusesLateLinkTest",
+        "expiredCookieCannotClaimPendingFlowTest",
         "expiredPendingCallbackRefusesTest",
         "failedReconnectPreservesPriorLinkTest",
         "failedRevokeDoesNotHideCleanupFailureTest",
@@ -8164,10 +8165,16 @@
         "identityFailureRevokesTemporaryTokenTest",
         "invalidCallbackLeavesPendingFlowTest",
         "invalidCodeCleansClaimTest",
+        "malformedCallbackRetainsCurrentCookieTest",
         "newerFlowCanFinishAfterOldCallbackRefusalTest",
+        "oldCallbackFailureClearsOnlyItsCookieTest",
+        "oldCancellationRetainsNewCookieTest",
+        "oneCookieExpiryDoesNotExpireNewFlowTest",
         "processingFlowCanFinishAfterFlowExpiryTest",
+        "reorderedStartResponsesKeepNewFlowCookieTest",
         "replayCannotDeleteClaimedFlowTest",
         "reservationTest",
+        "retainedCookieCannotReplayConsumedFlowTest",
         "revokeFailureDoesNotUndoVerifiedLinkTest",
         "sessionExpiryBeforePersistenceRefusesTest",
         "signoutRaceTest",

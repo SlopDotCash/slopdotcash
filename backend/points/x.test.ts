@@ -242,6 +242,7 @@ async function xLifecycleFixture() {
     };
   };
   return {
+    db,
     sqlite,
     call,
     start,
@@ -391,6 +392,9 @@ test("a superseded X callback leaves the newer flow available", async () => {
       first.cookie,
     );
     expect(old.headers.get("location")).toBe("/points?x=failed");
+    expect(old.headers.get("set-cookie")).toStartWith(
+      `${first.cookie.split("=")[0]}=;`,
+    );
     expect(
       fixture.sqlite.prepare("SELECT status FROM points_x_flows").all(),
     ).toEqual([
@@ -588,3 +592,114 @@ for (const revokeFails of [false, true]) {
     }
   });
 }
+
+test("invalid X callback leaves a newer browser cookie usable", async () => {
+  const fixture = await xLifecycleFixture();
+  try {
+    const flow = await fixture.start();
+    const refused = await fixture.call(
+      "x/callback?state=invalid&code=fixture",
+      undefined,
+      flow.cookie,
+    );
+    expect(refused.headers.get("location")).toBe("/points?x=failed");
+    expect(refused.headers.has("set-cookie")).toBe(false);
+    const current = await fixture.call(
+      `x/callback?state=${flow.state}&code=fixture`,
+      undefined,
+      flow.cookie,
+    );
+    expect(current.headers.get("location")).toBe("/points?x=connected");
+  } finally {
+    fixture.sqlite.close();
+  }
+});
+
+test("a used X browser cookie cannot replay its consumed flow", async () => {
+  const fixture = await xLifecycleFixture();
+  try {
+    const flow = await fixture.start();
+    const path = `x/callback?state=${flow.state}&code=fixture`;
+    const connected = await fixture.call(path, undefined, flow.cookie);
+    expect(connected.headers.get("location")).toBe("/points?x=connected");
+    expect(connected.headers.get("set-cookie")).toStartWith(
+      `${flow.cookie.split("=")[0]}=;`,
+    );
+    const replay = await fixture.call(path, undefined, flow.cookie);
+    expect(replay.headers.get("location")).toBe("/points?x=failed");
+    expect(replay.headers.get("set-cookie")).toStartWith(
+      `${flow.cookie.split("=")[0]}=;`,
+    );
+    expect(
+      fixture.providerPaths.filter((value) => value === "/2/oauth2/token"),
+    ).toHaveLength(1);
+    expect(
+      fixture.sqlite.prepare("SELECT x_id FROM points_x_links").all(),
+    ).toEqual([{ x_id: "987654321" }]);
+  } finally {
+    fixture.sqlite.close();
+  }
+});
+
+test("out-of-order X start responses keep distinct browser cookies", async () => {
+  const fixture = await xLifecycleFixture();
+  let release = () => {};
+  let reached = () => {};
+  const firstCommitted = new Promise<void>((resolve) => { reached = resolve; });
+  const firstRelease = new Promise<void>((resolve) => { release = resolve; });
+  let first: ReturnType<typeof fixture.start> | undefined;
+  try {
+    const batch = fixture.db.batch.bind(fixture.db);
+    let holdFirst = true;
+    fixture.db.batch = async (statements) => {
+      const result = await batch(statements);
+      if (holdFirst) {
+        holdFirst = false;
+        reached();
+        await firstRelease;
+      }
+      return result;
+    };
+    first = fixture.start();
+    await Promise.race([
+      firstCommitted,
+      first.then(() => { throw new Error("First start returned before its hold"); }),
+    ]);
+    const second = await fixture.start();
+    release();
+    const earlier = await first;
+    expect(earlier.cookie.split("=")[0]).not.toBe(second.cookie.split("=")[0]);
+    // Apply B then A as response order. Distinct names coexist in the browser.
+    const cookies = `${second.cookie}; ${earlier.cookie}`;
+    const old = await fixture.call(
+      `x/callback?state=${earlier.state}&code=fixture`, undefined, cookies,
+    );
+    expect(old.headers.get("location")).toBe("/points?x=failed");
+    expect(old.headers.get("set-cookie")).toStartWith(`${earlier.cookie.split("=")[0]}=;`);
+    const current = await fixture.call(
+      `x/callback?state=${second.state}&code=fixture`, undefined, second.cookie,
+    );
+    expect(current.headers.get("location")).toBe("/points?x=connected");
+  } finally {
+    release();
+    await first?.catch(() => {});
+    fixture.sqlite.close();
+  }
+});
+
+test("an already-started legacy X flow can complete without clearing its shared cookie", async () => {
+  const fixture = await xLifecycleFixture();
+  try {
+    const flow = await fixture.start();
+    const cap = flow.cookie.slice(flow.cookie.indexOf("=") + 1);
+    const response = await fixture.call(
+      `x/callback?state=${flow.state}&code=fixture`,
+      undefined,
+      `__Host-slop_x_flow=${cap}`,
+    );
+    expect(response.headers.get("location")).toBe("/points?x=connected");
+    expect(response.headers.get("set-cookie")).toStartWith(`__Host-slop_x_flow_${flow.state}=;`);
+  } finally {
+    fixture.sqlite.close();
+  }
+});
