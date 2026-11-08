@@ -10,8 +10,8 @@ produce a false pass. This is a test-method correction; product CSS is unchanged
 
 The probes now reuse `enlargeText` for 200% typography at their actual viewport.
 The helper waits two animation frames after changing or restoring styles.
-The nine existing explicit reset points still restore the exact original
-inline styles. Other probes keep their previous navigation/context teardown
+The nine existing explicit reset points restore the original font-size and
+line-height declarations and priorities. Other probes keep their previous navigation/context teardown
 boundaries. Geometry and accessibility assertions remain; the private-settlement
 probe's former 640-pixel allowance is tightened to the actual viewport.
 Screenshots identify text enlargement. Two wallet-picker loops retain their
@@ -40,3 +40,14 @@ lanes. Their source compiles, but the static preview fixture cannot validate
 those operations. Their geometry and accessibility checks were not removed.
 Logs, JSON results and screenshots are retained under ignored
 `evidence/formal/browser-probes-*` and `browser-probe-reflow-*`.
+
+The real full-stack Anvil lane subsequently exposed CSP errors during restore:
+writing the entire `style` attribute was blocked by `style-src-attr`, so the
+old declaration was not restored. The helper now restores only its two changed
+CSSOM properties, preserves their priorities, and retains unrelated declarations
+added while the probe ran. An empty newly introduced style attribute is removed
+only if no declaration remains. A native Firefox HTTP/CSP reproduction retains
+the original `17px !important` value and emits no CSP error after this change;
+the original helper emitted two errors and lost the original size. This fixes
+the test probe, not the application's CSP. Full chain-lane acceptance remains
+separate from this focused reproduction.
