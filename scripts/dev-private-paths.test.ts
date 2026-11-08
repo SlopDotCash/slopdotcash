@@ -4,17 +4,11 @@
 // slash. Vite strips exactly "/@fs", so on a Windows checkout the guard must
 // strip that form too, or Vite serves private data from outside the root.
 import { afterAll, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdtempSync,
-  rmdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { privateDevRequest } from "./dev-private-paths";
+import { removeDirectoryAlias } from "./directory-alias";
 
 const root = resolve(import.meta.dir, "..");
 const privateDirectory = mkdtempSync(
@@ -26,9 +20,7 @@ writeFileSync(join(privateDirectory, ".dev.vars"), "SECRET=local");
 // repository root, so the fixture mirrors the driver's alias.
 const aliasTarget = resolve(import.meta.dir, ".private-paths-alias-test");
 function removeAlias() {
-  if (process.platform === "win32") {
-    if (existsSync(aliasTarget)) rmdirSync(aliasTarget);
-  } else rmSync(aliasTarget, { force: true });
+  removeDirectoryAlias(aliasTarget);
 }
 removeAlias();
 symlinkSync(

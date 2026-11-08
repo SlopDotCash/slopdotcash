@@ -8,7 +8,6 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
-  rmdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -20,6 +19,7 @@ import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
 import { childEnvironment } from "./child-environment.mjs";
+import { removeDirectoryAlias } from "./directory-alias";
 
 const root = resolve(import.meta.dir, "..");
 if (
@@ -368,8 +368,7 @@ try {
 } finally {
   await stop(site);
   await stop(api);
-  if (process.platform === "win32") rmdirSync(alias);
-  else rmSync(alias, { force: true });
+  removeDirectoryAlias(alias);
   rmSync(fixtureDirectory, { recursive: true, force: true });
   rmSync(directory, { recursive: true, force: true });
 }
