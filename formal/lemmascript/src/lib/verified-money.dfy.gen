@@ -17,6 +17,12 @@ function JSTruncDiv(a: int, b: int): int
 
 datatype WeightedShare = WeightedShare(amount: int, remainder: int)
 
+datatype MonthlyAmountRow = MonthlyAmountRow(githubUserId: string, login: string, gross: int, sourceDigest: string)
+
+datatype FrozenAmountAward = FrozenAmountAward(fee: int, net: int, githubUserId: string, login: string, gross: int, sourceDigest: string)
+
+datatype FrozenAmounts = FrozenAmounts(awards: seq<FrozenAmountAward>, total: int)
+
 function weightedShare(total: int, weight: int, totalWeight: int): WeightedShare
   requires (total >= 0)
   requires (weight >= 0)
@@ -140,4 +146,39 @@ lemma normalizedNativeDelta_ensures(before: int, after: int, fee: int, payer: bo
   ensures (!(payer) ==> (normalizedNativeDelta(before, after, fee, payer) == (after - before)))
   ensures (payer ==> (normalizedNativeDelta(before, after, fee, payer) == ((after - before) + fee)))
 {
+}
+
+method freezeMonthlyAmounts(rows: seq<MonthlyAmountRow>, legacyFloorFee: bool) returns (res: FrozenAmounts)
+  ensures (res.awards == FrozenRows(rows, legacyFloorFee))
+  ensures (res.total == RowTotal(rows))
+  ensures (res.total == AwardTotal(res.awards))
+  ensures (res.total == (AwardNetTotal(res.awards) + AwardFeeTotal(res.awards)))
+  ensures (|res.awards| == NonzeroRows(rows))
+  ensures forall i: int :: ((0 <= i) ==> (i < |res.awards|) ==> (((res.awards[i].gross != 0) && (res.awards[i].fee == FrozenFee(res.awards[i].gross, legacyFloorFee))) && (res.awards[i].gross == (res.awards[i].fee + res.awards[i].net))))
+  ensures forall i: int :: ((0 <= i) ==> (i < |res.awards|) ==> (res.awards[i].gross > 0) ==> (((0 <= res.awards[i].fee) && (res.awards[i].fee <= res.awards[i].gross)) && (res.awards[i].net >= 0)))
+{
+  var awards: seq<FrozenAmountAward> := [];
+  var total := 0;
+  var i := 0;
+  while (i < |rows|)
+    invariant (0 <= i)
+    invariant (i <= |rows|)
+    invariant (awards == FrozenRows(rows[0..i], legacyFloorFee))
+    invariant (total == RowTotal(rows[0..i]))
+    invariant (total == AwardTotal(awards))
+    invariant (total == (AwardNetTotal(awards) + AwardFeeTotal(awards)))
+    invariant (|awards| == NonzeroRows(rows[0..i]))
+    invariant forall k: int :: ((0 <= k) ==> (k < |awards|) ==> (((awards[k].gross != 0) && (awards[k].fee == FrozenFee(awards[k].gross, legacyFloorFee))) && (awards[k].gross == (awards[k].fee + awards[k].net))))
+    invariant forall k: int :: ((0 <= k) ==> (k < |awards|) ==> (awards[k].gross > 0) ==> (((0 <= awards[k].fee) && (awards[k].fee <= awards[k].gross)) && (awards[k].net >= 0)))
+  {
+    var row := rows[i];
+    if (row.gross != 0) {
+      var i_t0 := ordinaryFeeAmount(row.gross);
+      var fee := (if legacyFloorFee then JSTruncDiv(row.gross, 50) else i_t0);
+      awards := (awards + [FrozenAmountAward(fee, (row.gross - fee), row.githubUserId, row.login, row.gross, row.sourceDigest)]);
+      total := (total + row.gross);
+    }
+    i := (i + 1);
+  }
+  return FrozenAmounts(awards, total);
 }
