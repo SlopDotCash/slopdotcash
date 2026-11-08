@@ -5,6 +5,10 @@ datatype CompletedCoverageFields = CompletedCoverageFields(complete: bool, block
 
 datatype RetainedExpiryCoverage = missing | present(history: CompletedCoverageFields)
 
+datatype TraversalBlock = TraversalBlock(blockhash: string, previousBlockhash: string, parentSlot: int, signatures: seq<string>)
+
+datatype TraversalStep = TraversalStep(kind: string, nextSlot: int, expectedHash: string)
+
 function matchingExpiryCoverage(a: RetainedExpiryCoverage, b: RetainedExpiryCoverage): bool
 {
   (((((((((((a.present? && b.present?) && !(!(a.history.complete))) && !(!(b.history.complete))) && (a.history.blocks > 0)) && (a.history.txId == b.history.txId)) && (a.history.blockhash == b.history.blockhash)) && (a.history.blockhashSlot == b.history.blockhashSlot)) && (a.history.tipSlot == b.history.tipSlot)) && (a.history.tipHash == b.history.tipHash)) && (a.history.blocks == b.history.blocks)) && (a.history.digest == b.history.digest))
@@ -14,4 +18,47 @@ lemma matchingExpiryCoverage_ensures(a: RetainedExpiryCoverage, b: RetainedExpir
   ensures (matchingExpiryCoverage(a, b) <==> (((((((((((a.present? && b.present?) && a.history.complete) && b.history.complete) && (a.history.blocks > 0)) && (a.history.txId == b.history.txId)) && (a.history.blockhash == b.history.blockhash)) && (a.history.blockhashSlot == b.history.blockhashSlot)) && (a.history.tipSlot == b.history.tipSlot)) && (a.history.tipHash == b.history.tipHash)) && (a.history.blocks == b.history.blocks)) && (a.history.digest == b.history.digest)))
   ensures (matchingExpiryCoverage(a, b) ==> ((((a.history.blocks > 0) && (b.history.blocks > 0)) && a.history.complete) && b.history.complete))
 {
+}
+
+method containsExpirySignature(signatures: seq<string>, txId: string) returns (res: bool)
+  ensures (res <==> exists i: int :: (((0 <= i) && (i < |signatures|)) && (signatures[i] == txId)))
+{
+  var index := 0;
+  while (index < |signatures|)
+    invariant (0 <= index)
+    invariant (index <= |signatures|)
+    invariant forall i: int :: ((0 <= i) ==> (i < index) ==> (signatures[i] != txId))
+    decreases (|signatures| - index)
+  {
+    if (signatures[index] == txId) {
+      return true;
+    }
+    index := (index + 1);
+  }
+  return false;
+}
+
+method expiryTraversalStep(txId: string, anchorHash: string, anchorSlot: int, current: int, expectedHash: string, block: TraversalBlock) returns (res: TraversalStep)
+  ensures (((res.kind == "refused") || (res.kind == "complete")) || (res.kind == "advance"))
+  ensures ((res.kind == "refused") <==> (((((block.blockhash != expectedHash) || (current < anchorSlot)) || exists i: int :: (((0 <= i) && (i < |block.signatures|)) && (block.signatures[i] == txId))) || ((current == anchorSlot) && (block.blockhash != anchorHash))) || ((current != anchorSlot) && ((block.parentSlot >= current) || (block.parentSlot < anchorSlot)))))
+  ensures ((res.kind == "complete") ==> (((current == anchorSlot) && (block.blockhash == anchorHash)) && (block.blockhash == expectedHash)))
+  ensures ((res.kind == "advance") ==> ((((anchorSlot <= res.nextSlot) && (res.nextSlot < current)) && (res.nextSlot == block.parentSlot)) && (res.expectedHash == block.previousBlockhash)))
+  ensures ((res.kind != "advance") ==> ((res.nextSlot == current) && (res.expectedHash == expectedHash)))
+  ensures ((res.kind != "refused") ==> forall i: int :: ((0 <= i) ==> (i < |block.signatures|) ==> (block.signatures[i] != txId)))
+  ensures ((res.kind != "refused") ==> ((res.kind == "complete") <==> (current == anchorSlot)))
+{
+  var i_t0 := containsExpirySignature(block.signatures, txId);
+  if (((block.blockhash != expectedHash) || (current < anchorSlot)) || i_t0) {
+    return TraversalStep("refused", current, expectedHash);
+  }
+  if (current == anchorSlot) {
+    if (block.blockhash != anchorHash) {
+      return TraversalStep("refused", current, expectedHash);
+    }
+    return TraversalStep("complete", current, expectedHash);
+  }
+  if ((block.parentSlot >= current) || (block.parentSlot < anchorSlot)) {
+    return TraversalStep("refused", current, expectedHash);
+  }
+  return TraversalStep("advance", block.parentSlot, block.previousBlockhash);
 }
