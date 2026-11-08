@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MonthlyCommitmentInput } from "../backend/payments/monthly";
 import { decodeBase58Bytes } from "./lib/base58";
 import { errorMessage } from "./lib/errors";
@@ -15,6 +15,13 @@ import {
 } from "./lib/owner-commitment-actions";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import {
+  clearPendingAttempt,
+  createPendingAttempt,
+  type PendingAttempt,
+  updatePendingAttempt,
+  validPendingAttemptId,
+} from "./lib/pending-attempt";
+import {
   checkSolanaOwnerCommitment,
   reviewSolanaCommitment,
   type SolanaCommitmentPlan,
@@ -30,7 +37,7 @@ import {
 } from "./OwnerPresentation";
 import { NoWalletFound, WalletConnection } from "./Presentation";
 
-type Pending = {
+type Pending = PendingAttempt & {
   plan: OwnerCommitmentPlan;
   wallet: string;
   hash: string | null;
@@ -46,6 +53,7 @@ export function recoverOwnerCommitments(projectId: string) {
     const plan = stored?.plan;
     if (
       !plan ||
+      !validPendingAttemptId(stored.attemptId) ||
       plan.projectId !== projectId ||
       !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(plan.cycleId) ||
       ![plan.manifestSha256, plan.snapshotSha256].every((value) =>
@@ -83,12 +91,21 @@ export default function OwnerCommitment({
     ESCROW_NETWORKS[expected.network as keyof typeof ESCROW_NETWORKS]?.family;
   const solana = family === "solana";
   const key = `slop:award-commitment:v2:${projectId}:${cycleId}:${expected.network}:${expected.githubUserId}`;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [saved] = useState(() => {
+    let raw: string | null = null;
     try {
-      const raw = sessionStorage.getItem(key);
-      if (!raw) return { pending: null, error: "" };
+      raw = sessionStorage.getItem(key);
+      if (raw === null) return { pending: null, error: "", raw };
       const value = JSON.parse(raw) as Pending;
       if (
+        !validPendingAttemptId(value.attemptId) ||
         value.plan.projectId !== projectId ||
         value.plan.cycleId !== cycleId ||
         value.plan.deployment.network !== expected.network ||
@@ -109,10 +126,11 @@ export default function OwnerCommitment({
         if (!value.solanaPlan) throw new Error();
         verifySolanaCommitmentPlan(value.plan, value.solanaPlan, value.wallet);
       } else evmCommitmentIntent(value.plan);
-      return { pending: value, error: "" };
+      return { pending: value, error: "", raw };
     } catch {
       return {
         pending: null,
+        raw,
         error:
           "The saved commitment cannot be read. Check wallet activity before clearing it.",
       };
@@ -129,10 +147,20 @@ export default function OwnerCommitment({
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState("");
   const wallets = usePayoutWallets().filter((entry) => entry.family === family);
-  const remember = (value: Pending | null) => {
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
-    else sessionStorage.removeItem(key);
-    setPending(value);
+  const remember = (value: Pending, previous?: Pending) => {
+    const stored = previous
+      ? updatePendingAttempt(key, previous, value)
+      : createPendingAttempt(key, value);
+    if (!stored) return false;
+    if (mounted.current) setPending(value);
+    return true;
+  };
+  const clear = (value: Pending) => {
+    if (!mounted.current) return false;
+    if (!clearPendingAttempt(key, value))
+      throw new Error("The saved request changed. Reload before continuing.");
+    setPending(null);
+    return true;
   };
   const { busy, error, run: act } = useAction(saved.error);
   const run = (action: () => Promise<void>) => {
@@ -148,6 +176,7 @@ export default function OwnerCommitment({
       const state = solana
         ? await reviewSolanaCommitment(plan, wallet)
         : await reviewEvmCommitment(plan, wallet);
+      if (!mounted.current) return;
       setReview({
         plan,
         decimals: state.decimals,
@@ -171,6 +200,7 @@ export default function OwnerCommitment({
         ? await reviewSolanaCommitment(current, wallet)
         : undefined;
       const intent: Pending = {
+        attemptId: crypto.randomUUID(),
         plan: current,
         wallet: wallet.address,
         hash: null,
@@ -180,25 +210,36 @@ export default function OwnerCommitment({
       let requested = false;
       try {
         const beforeSend = () => {
-          remember(intent);
+          if (!remember(intent))
+            throw new Error(
+              "The saved request changed. Reload before continuing.",
+            );
           requested = true;
         };
         const hash = solanaPlan
           ? await sendSolanaCommitment(current, wallet, solanaPlan, beforeSend)
           : await sendEvmCommitment(current, wallet, beforeSend);
         const submitted = { ...intent, hash };
-        setPending(submitted);
-        setReview(null);
+        if (mounted.current) setReview(null);
         try {
-          remember(submitted);
+          if (!remember(submitted, intent) && mounted.current)
+            setNotice(
+              `Submitted: ${hash}. The saved request was cleared or replaced. Keep this hash with your wallet activity.`,
+            );
         } catch {
-          setNotice(
-            `Submitted: ${hash}. Save this hash; browser storage could not save it.`,
-          );
+          if (mounted.current) {
+            setPending(submitted);
+            setNotice(
+              `Submitted: ${hash}. Save this hash; browser storage could not save it.`,
+            );
+          }
         }
       } catch (reason) {
         if ((reason as { code?: unknown } | null)?.code === 4001) {
-          remember(null);
+          if (requested) {
+            if (mounted.current) clear(intent);
+            else clearPendingAttempt(key, intent);
+          }
           throw new Error("You declined the wallet request. Nothing was sent.");
         }
         if (requested)
@@ -222,11 +263,12 @@ export default function OwnerCommitment({
             hash,
           )
         : await checkEvmCommitment(pending.plan, wallet, hash);
+      if (!mounted.current) return;
       if (status === "pending") {
         setNotice("The commitment is not finalized yet. Check again later.");
         return;
       }
-      remember(null);
+      clear(pending);
       setReview(null);
       setNotice(
         status === "failed"
@@ -250,6 +292,11 @@ export default function OwnerCommitment({
           disabled={busy}
           onClick={() =>
             void run(async () => {
+              if (!mounted.current) return;
+              if (sessionStorage.getItem(key) !== saved.raw)
+                throw new Error(
+                  "The saved request changed. Reload before continuing.",
+                );
               sessionStorage.removeItem(key);
               setStorageError(false);
             })
@@ -269,6 +316,7 @@ export default function OwnerCommitment({
         onConnect={(provider) =>
           void run(async () => {
             const connection = await provider.connect();
+            if (!mounted.current) return;
             if (
               pending &&
               (solana
@@ -316,7 +364,7 @@ export default function OwnerCommitment({
               disabled={busy}
               onClear={() =>
                 void run(async () => {
-                  remember(null);
+                  clear(pending);
                   setReview(null);
                 })
               }
