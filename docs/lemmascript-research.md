@@ -29,6 +29,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Backend and Worker boundaries](lemmascript-backend-research.md)
 - [Tooling, money, publication, Slopbot, vetting and referrals](lemmascript-tooling-research.md)
 - [Exact score/Points aggregation](lemmascript-aggregation-research.md)
+- [Global leaderboard, archive and payout selection](lemmascript-global-joins.md)
 - [Complete reviewer selection](lemmascript-reviewer-selection.md)
 - [Activity notification consent](lemmascript-notification-prototype.md)
 - [Token-2022 byte parser](lemmascript-token-extensions-research.md)
@@ -145,6 +146,7 @@ maintenance surface without improving the selected acceptance result.
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
 | Activity mail consent | `workers/notify/verified-delivery`; real activity dispatch | Exact retry/suppress/send selection from missing, pilot or registered destination, essential notice, explicit preferences and pinned versions; optional mail requires matching consent and registered essential mail requires security consent |
 | Score and Points buckets | `verified-aggregation`; score debits, Points reconciliation and displayed totals | Exact signed accumulation and ordered per-bucket debit conservation; safe conversion back to the public number schema, including negative-total overflow refusal |
+| Global joins and payout selection | `verified-global-joins`; global leaders, open-month sources and payout Points | Complete stable actor grouping, metadata precedence, distinct memberships, archive exclusion and paid-recipient selection; native Number arithmetic, Date parsing, key mapping and final sort remain separate |
 | Token-2022 extension parsing | `contracts/solana/verified-token-extensions`; mint and token-account readers | Complete header/payload and metadata field/vector traversal with bounded reads, allowed unique types, exact error precedence and zero-only trailing padding; preserves original bytes without copying |
 | Monthly frozen records | `verified-money.freezeMonthlyAmounts`; monthly snapshot builder | Complete ordered nonzero award records, exact recipient/source strings, both fee modes and gross/net/fee total conservation; JSON/hash and authority remain caller responsibilities |
 | Monthly replacements | `verified-monthly-replacement`; current allocation and change validation | Ordered last replacement, exact metadata preservation, first unknown recipient, self-change and excluded-positive refusals; native recipient mapping and sort remain explicit |
