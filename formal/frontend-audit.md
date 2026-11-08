@@ -7,6 +7,11 @@ review records. `formal/inventory.json` is the current source-hash authority.
 This audit does not describe the older dirty checkout at
 `/Users/shawwalters/slopdotcash`.
 
+The later [App view state follow-up](app-shell-audit.md) corrects a coverage gap
+in this initial index: navigation mappings did not cover the same file's hero,
+image fallback and project-discovery state. The global inventory includes those
+additional models; the checkpoint counts below remain historical.
+
 ## Scope and traceability
 
 `frontend-review.json` is a manual index of the reviewed `src/*.tsx` files and
