@@ -4,19 +4,19 @@
 // @source src/lib/use-action.ts
 // @evidence tests/e2e/bounty-full-flow.spec.ts
 // @evidence tests/e2e/bounty-solana-flow.spec.ts
-// One selected case, two actors, three case reads, two payment generations,
+// One selected case, two actors, three case reads, two replacements, two payment generations,
 // message IDs and plan byte classes. Mode 1=EVM, 2=Solana, 3=submitted recovery.
 // Mode is the projection of a structurally valid backend case, not a parser
 // proof. The backend supplies one chain family and role-filtered ownerRequest.
 // This model covers parent/keyed-child lifetime, not wallet signing/finality.
 // Authored by source inspection only; no check was run for this revision.
 module ui_bounty_payment_parent {
-  type State = {actor:int,phase:str,reads:int,active:int,pending:Set[int],warning:bool,
+  type State = {actor:int,phase:str,reads:int,replacements:int,active:int,pending:Set[int],warning:bool,
     generation:int,message:int,plan:int,mode:int,epoch:int,identityChecks:int,storageReady:bool,storagePending:bool,
     journal:bool,journalPlan:int,preflight:bool,walletOpen:bool,promptEpoch:int,promptKey:int,promptPlan:int,
     savedKeys:Set[int],hashKeys:Set[int]}
   var s: State
-  action init=s'={actor:1,phase:"loading",reads:0,active:0,pending:Set(),warning:false,
+  action init=s'={actor:1,phase:"loading",reads:0,replacements:0,active:0,pending:Set(),warning:false,
     generation:0,message:0,plan:0,mode:0,epoch:0,identityChecks:0,storageReady:false,storagePending:false,journal:false,journalPlan:0,preflight:false,walletOpen:false,promptEpoch:0,promptKey:0,promptPlan:0,savedKeys:Set(),hashKeys:Set()}
   val storageKey=if(s.mode==2)200+s.generation*10+s.message*2+s.actor else 100+s.generation*10+s.actor
   val sendChild=s.mode==1 or s.mode==2
@@ -47,6 +47,12 @@ module ui_bounty_payment_parent {
     s'=if(id==s.active and s.actor>0)
       received(mode,generation,message,plan).with("pending",s.pending.exclude(Set(id)))
       else s.with("pending",s.pending.exclude(Set(id)))}
+  // A local action result supersedes every in-flight observation. The
+  // implementation increments the read generation before replacing state.
+  // This action is an accepted replacement projection. Numeric revision
+  // refusal is modeled separately in ui_private_case_revisions.
+  action replaceCase(mode:int,generation:int,message:int,plan:int):bool=all{s.actor>0,s.replacements<2,
+    s'=received(mode,generation,message,plan).with("replacements",s.replacements+1)}
   action failedRead(id:int):bool=all{s.pending.contains(id),
     s'=if(id==s.active and s.actor>0)
       s.with("active",0).with("pending",s.pending.exclude(Set(id)))
@@ -94,15 +100,19 @@ module ui_bounty_payment_parent {
     nondet generation=1.to(2).oneOf() nondet message=1.to(2).oneOf()
     nondet plan=1.to(2).oneOf()
     caseReply(id,mode,generation,message,plan)}
+  action chooseCaseReplacement={nondet mode=0.to(3).oneOf()
+    nondet generation=1.to(2).oneOf() nondet message=1.to(2).oneOf()
+    nondet plan=1.to(2).oneOf()
+    replaceCase(mode,generation,message,plan)}
   action chooseFailedRead={nondet id=1.to(3).oneOf() failedRead(id)}
-  action chooseStorageReply={nondet epoch=0.to(5).oneOf() nondet plan=1.to(2).oneOf()
+  action chooseStorageReply={nondet epoch=0.to(7).oneOf() nondet plan=1.to(2).oneOf()
     any{storageReply(epoch,true,plan),storageReply(epoch,false,plan)}}
   // Keep each finite choice with its own transition. Hoisting all choices
   // over this disjunction repeats unrelated successors without adding states.
-  action step=any{readCase,chooseCaseReply,chooseFailedRead,
+  action step=any{readCase,chooseCaseReply,chooseCaseReplacement,chooseFailedRead,
     hidePrivateView,confirmActor(1),confirmActor(2),chooseStorageReply,
     reviewBeforePrompt,preflightRefused,recordBeforePrompt,walletReturns(true),walletReturns(false),walletUnknown,walletDeclined(true),walletDeclined(false),s'=s}
-  val invariant=all{s.reads<=3,s.identityChecks<=2,s.epoch<=5,s.actor>=0,s.actor<=2,
+  val invariant=all{s.reads<=3,s.replacements<=2,s.identityChecks<=2,s.epoch<=7,s.actor>=0,s.actor<=2,
     s.mode>0 implies(s.phase=="ready" and s.actor>0),
     s.storageReady implies sendChild,
     mismatched implies not(sendPresented),
@@ -148,4 +158,10 @@ module ui_bounty_payment_parent {
   run declinedRequestWithStorageFailureRetainsMarkerTest=init.then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(walletDeclined(false))
     .expect(s.journal and s.savedKeys.contains(111) and not(sendPresented))
+  run actionReplacementRejectsEarlierReadSuccessTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+    .then(readCase).then(replaceCase(2,2,2,2)).then(caseReply(2,1,1,1,1))
+    .expect(s.mode==2 and s.generation==2 and s.message==2)
+  run actionReplacementRejectsEarlierReadErrorTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+    .then(readCase).then(replaceCase(2,2,2,2)).then(failedRead(2))
+    .expect(s.mode==2 and s.generation==2 and not(s.warning) and s.phase=="ready")
 }
