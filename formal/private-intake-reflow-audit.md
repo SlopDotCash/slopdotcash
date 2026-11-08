@@ -73,3 +73,17 @@ private bodies disappear after the shared-cookie account change. The intake
 keyboard/reflow journeys passed in the preceding four-case run against these
 same production bytes; the final adjustment changes only response observation
 ordering in the cross-tab test.
+
+## Report filter and payment view
+
+The separate contained Solana browser lane reached finalized payment on desktop
+and mobile. Desktop passed; mobile's final 200% text check exposed a second
+native-select sizing issue. Replaying the exact captured DOM and CSS measured
+document width 414 at viewport 320: the top-level `Show reports` filter forced
+the main grid track to 400 pixels. The payment panel was clipped as a result.
+Constraining only the label left the select overflowing. Reusing the existing
+grid-label and bounded-select rules for this direct child reduced the document
+to 320 and the grid/select to 292, with no content removed. The filter's state
+and choices are unchanged; pixel geometry is browser evidence, not a new claim
+of Quint refinement. The real chain workflow rerun supplies the final runtime
+and accessibility evidence separately from the captured-DOM reproduction.
