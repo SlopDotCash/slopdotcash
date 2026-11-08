@@ -8150,9 +8150,30 @@
     },
     {
       "path": "formal/models/api_x_connection.qnt",
-      "sha256": "2379d65201c651727aacd08f2c9e7f48e1bcea5e413332700e9eed367a1eb78d",
+      "sha256": "f7502e11c6a7bea2c2a720df64863e8c2bac491ff9c2ff688158f52d691459dc",
       "sources": ["backend/points/x.ts", "migrations/0009_points_social.sql"],
-      "scenarios": ["reservationTest", "signoutRaceTest"]
+      "scenarios": [
+        "cleanupFailureDoesNotUndoCommittedLinkTest",
+        "databaseFailureDoesNotReserveIdentityTest",
+        "disconnectDuringProviderWaitRefusesLateLinkTest",
+        "expiredPendingCallbackRefusesTest",
+        "failedReconnectPreservesPriorLinkTest",
+        "foreignIdentityClaimCannotBeReassignedTest",
+        "identityFailureRevokesTemporaryTokenTest",
+        "invalidCallbackLeavesPendingFlowTest",
+        "invalidCodeCleansClaimTest",
+        "newerFlowCanFinishAfterOldCallbackRefusalTest",
+        "processingFlowCanFinishAfterFlowExpiryTest",
+        "replayCannotDeleteClaimedFlowTest",
+        "reservationTest",
+        "revokeFailureDoesNotUndoVerifiedLinkTest",
+        "sessionExpiryBeforePersistenceRefusesTest",
+        "signoutRaceTest",
+        "supersededCallbackLeavesNewFlowTest",
+        "timeAfterSqlBindingIsNotAnotherSessionReadTest",
+        "tokenFailureCleansWithoutLinkTest",
+        "userCancellationCleansWithoutTokenTest"
+      ]
     },
     {
       "path": "formal/models/artifact_transport.qnt",

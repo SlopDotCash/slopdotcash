@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 317 finite models and 1,555 named scenarios, with zero
+839 production sources, 317 finite models and 1,573 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -329,3 +329,13 @@ writes; the unchanged paused-project case passes on both. This is local
 SQLite evidence, not deployed D1 or GitHub-provider acceptance. The ignored
 runtime acceptance ledger separately records the exact-source limits of
 earlier payment, Inbox and owner browser/API evidence.
+
+## Separate X connection model refinement
+
+This branch follows frozen `a8b0f8226` and refines `api_x_connection` without
+changing application code. Twenty unexecuted scenarios now represent replay,
+provider failure, callback expiry, supersession, permanent claims, disconnect,
+and cleanup/revocation outcomes. The model preserves the source's current
+callback and SQL-bound-time semantics. See `x-connection-lifecycle-audit.md`;
+it does not imply runtime conformance or acceptance of the broader identity
+flows. This refinement is not part of the active corrective PR.
