@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "cfd4935073e5b808ceb81e2c565b7ea92f7ba0450b70db8c031e4ea4f9abef38",
+  "inventorySha256": "be526bda0f1a072592e2a59ffaf9d8854d813500b865611ff456eb999f401814",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -45,6 +45,7 @@
       "models": [
         "formal/models/monthly_coordinator.qnt",
         "formal/models/monthly_cutoff_queue.qnt",
+        "formal/models/monthly_owner_completion.qnt",
         "formal/models/monthly_reserve.qnt",
         "formal/models/monthly_source_conflict.qnt"
       ],
@@ -53,13 +54,14 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1278,
+      "line": 1312,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
         "formal/models/monthly_coordinator.qnt",
         "formal/models/monthly_cutoff_queue.qnt",
+        "formal/models/monthly_owner_completion.qnt",
         "formal/models/monthly_reserve.qnt",
         "formal/models/monthly_source_conflict.qnt"
       ],
@@ -261,7 +263,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "line": 173,
+      "line": 174,
       "name": "submission_state",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -270,14 +272,17 @@
         "formal/models/api_private_case.qnt",
         "formal/models/api_private_case_roles.qnt",
         "formal/models/api_private_case_transaction.qnt",
-        "formal/models/security_payment_projection.qnt"
+        "formal/models/direct_preparation_completion.qnt",
+        "formal/models/direct_recovery_completion.qnt",
+        "formal/models/security_payment_projection.qnt",
+        "formal/models/ui_private_case_revisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/handler.ts",
-      "line": 3979,
+      "line": 3993,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -286,7 +291,10 @@
         "formal/models/api_private_case.qnt",
         "formal/models/api_private_case_roles.qnt",
         "formal/models/api_private_case_transaction.qnt",
-        "formal/models/security_payment_projection.qnt"
+        "formal/models/direct_preparation_completion.qnt",
+        "formal/models/direct_recovery_completion.qnt",
+        "formal/models/security_payment_projection.qnt",
+        "formal/models/ui_private_case_revisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden"],
       "review": "candidate-only"
@@ -1944,11 +1952,12 @@
     },
     {
       "path": "src/Admin.tsx",
-      "line": 1086,
+      "line": 1120,
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
       "models": [
+        "formal/models/ui_admin_editor_lifetime.qnt",
         "formal/models/ui_admin_review.qnt",
         "formal/models/ui_focus_session.qnt"
       ],
@@ -2283,6 +2292,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2290,6 +2300,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
@@ -2306,6 +2317,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2313,6 +2325,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
@@ -2329,6 +2342,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2336,6 +2350,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
@@ -2352,6 +2367,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2359,6 +2375,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
@@ -2375,6 +2392,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2382,6 +2400,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
@@ -2412,6 +2431,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2419,6 +2439,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
@@ -2441,7 +2462,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1309,
+      "line": 1342,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -2449,6 +2470,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2456,6 +2478,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
@@ -2464,7 +2487,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1577,
+      "line": 1610,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -2472,6 +2495,7 @@
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
+        "formal/models/ui_private_case_revisions.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
         "formal/models/ui_private_report_projection.qnt",
@@ -2479,6 +2503,7 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],

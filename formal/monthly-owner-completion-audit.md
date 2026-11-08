@@ -84,3 +84,21 @@ fourth retains opt-out and allocation changes for an unchanged paused
 project. GitHub authority is controlled by the existing test fixture. No test
 was run in this lane. Exact-source API/SQLite before/after evidence is still
 required for the newly fenced owner/steward-change orders.
+
+## Independent SQLite regression evidence
+
+The independent run at test commit
+`a193bacab2ead0b4065fdd768d514aae9d62b493` passes all 66 monthly tests and
+540 assertions. A controlled comparison replaces only `monthly.ts` with its
+pre-fix source: each of the three queued allocation/enable/disable cases then
+fails because the stale-authority write succeeds. The unchanged paused-project
+case still passes. These results preserve the actual SQLite migrations,
+registry append operation and delayed bound INSERT; GitHub remains controlled.
+
+The receipt is
+`slopdotcash-lemma-monthly-authority-validation/evidence/monthly-authority/result.json`,
+SHA-256 `469342dfa324ed8270006c902630ec870f9c2bd860ea944dc729796c0d5f8e84`.
+Its runtime-source and test hashes match the prepared proof-base branch.
+This lane only read the existing receipt and compared file bytes; it did not
+run checks. The finite model remains a separate unverified obligation, and
+this receipt does not establish deployed D1 or public-provider acceptance.

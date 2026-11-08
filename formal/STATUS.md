@@ -21,13 +21,15 @@ not mutable-branch completion claims. Later commits must be assessed against
 their own source and model hashes.
 
 The frozen local `codex/quint-observation-fixes` branch retains the earlier
-observation checkpoint. `codex/quint-observation-current-base` integrates it
-and the later completion-race corrections on `1bcf755b`, while retaining the
-reviewed runner and model fixes. Final rebasing onto the completed dependency batch is
-still required. Do not replace the held published heads with this branch
-during the review batch. Preserve the broader 168-target,
-33-module proof manifest when integrating; this local branch still has the
-earlier proof selection. Regenerate the combined inventories after rebasing.
+observation checkpoint, and `codex/quint-observation-current-base` retains
+the later corrections at `bde5f518`. The prepared
+`codex/quint-observation-proof-base` branch rebases those corrections onto
+the corrective PR 2429 head `22b0fd511aa8cc8c8e5810fdb979b40a03c5a5f9`.
+It preserves the reviewed runner changes, 168 selected proof targets in 33
+modules, extracted helpers and all proof-side model source links. The combined
+inventories are regenerated. Final alignment with the completed development
+merge remains required. Keep this follow-up separate from the held published
+head until the corrective integration is complete.
 
 The user resumed the goal after requesting that this chat skip checks and
 focus on pushing. That constraint remains in effect: no new checks are run
@@ -37,8 +39,8 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-809 production sources, 316 finite models and 1,542 named scenarios, with zero
-unmapped sources. The separate lexical catalog lists 235 declared lifecycle
+839 production sources, 317 finite models and 1,553 named scenarios, with zero
+unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
 ## Integrated corrections
@@ -316,8 +318,11 @@ also pass normal checks, while its finite checks still time out. These are
 open verification obligations; see the composition and journal audits. This
 chat has not run checks on the combined integration branch.
 
-The latest Solana, Admin and monthly source/model revisions are unexecuted.
-Their focused regressions are authored for later independent execution; an
-existing workflow name is not a passing receipt. The ignored runtime acceptance
-ledger separately records the exact-source limits of earlier payment, Inbox
-and owner browser/API evidence.
+The latest Solana and Admin runtime revisions and the three new finite models
+still require their complete evidence. The independent monthly SQLite run
+passes 66 tests and 540 assertions on source bytes matching this branch. Its
+controlled prior-source comparison reproduces all three queued unauthorized
+writes; the unchanged paused-project case passes on both. This is local
+SQLite evidence, not deployed D1 or GitHub-provider acceptance. The ignored
+runtime acceptance ledger separately records the exact-source limits of
+earlier payment, Inbox and owner browser/API evidence.
