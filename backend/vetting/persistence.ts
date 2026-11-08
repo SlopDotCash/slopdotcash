@@ -358,9 +358,12 @@ export class CloudflareVettingPersistence {
   }
 
   async listAssessments(): Promise<VettingAssessment[]> {
+    // Insertion order, not requested_at: the queue serves by MAX(rowid) and
+    // requested_at is caller-supplied, so only rowid order agrees with which
+    // pending request is live (see assessmentHistoryStateText).
     const rows = await this.db
       .prepare(
-        `SELECT ${COLUMNS} FROM vetting_assessments ORDER BY requested_at DESC, rowid DESC LIMIT 500`,
+        `SELECT ${COLUMNS} FROM vetting_assessments ORDER BY rowid DESC LIMIT 500`,
       )
       .all<AssessmentRow>();
     return (rows.results ?? []).map(fromRow);
