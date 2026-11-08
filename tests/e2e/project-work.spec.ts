@@ -13,6 +13,11 @@ async function serve(page: Page, snapshot = snapshotFixture()) {
   await page.route("**/data/cycles/index.json?**", (route) =>
     route.fulfill({ json: cycleIndexFixture() }),
   );
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({
+      json: { schemaVersion: "1", projects: [{ project_id: "eliza" }] },
+    }),
+  );
   await page.route("https://avatars.githubusercontent.com/**", (route) =>
     route.fulfill({
       contentType: "image/svg+xml",
@@ -41,7 +46,13 @@ test("project exposes eligible work with GitHub targets and keyboard access", as
   excluded.labels.push("blocked");
   excluded.actionability = "blocked";
   excluded.selection = { status: "excluded", reasons: ["blocked"] };
-  snapshot.workQueue.issues.push(excluded);
+  const otherProject = structuredClone(snapshot.workQueue.issues[0]);
+  otherProject.id = "I_other_project";
+  otherProject.repository = snapshot.repositories[1].id;
+  otherProject.url = `https://github.com/${otherProject.repository}/issues/17325`;
+  otherProject.number = 17325;
+  otherProject.title = "Work in a different project";
+  snapshot.workQueue.issues.push(otherProject, excluded);
   snapshot.source.counts.openIssues = snapshot.workQueue.issues.length;
   await serve(page, snapshot);
   await page.goto("/projects/eliza");
@@ -68,6 +79,7 @@ test("project exposes eligible work with GitHub targets and keyboard access", as
   );
   await expect(work.getByRole("link")).toHaveCount(2);
   await expect(work).not.toContainText(excluded.title);
+  await expect(work).not.toContainText(otherProject.title);
   await expect(work).not.toContainText("Proximity");
   for (
     let step = 0;
@@ -164,7 +176,13 @@ test("suggestions stay bounded and long titles reflow", async ({
       ),
     )
     .toBe(true);
+  await page.addStyleTag({ content: "html { font-size: 200%; }" });
   await expectAccessible(page, { include: ".project-work" });
+  expect(
+    await work.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
   await page.screenshot({
     path: test.info().outputPath("project-work-reflow.png"),
     fullPage: true,
@@ -209,4 +227,26 @@ test("loading and failed work can recover through Retry", async ({
   expect(calls).toBeGreaterThanOrEqual(3);
   expect(diagnostics.count(canceledCycle)).toBeLessThanOrEqual(2);
   await expectAccessible(page, { include: ".project-work" });
+});
+
+test("a paused project does not advertise snapshot work", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  await serve(page);
+  await page.route("**/data/fixture-project-registry.json", async (route) => {
+    const response = await route.fetch();
+    const registry = await response.json();
+    registry.projects = registry.projects.map(
+      (project: { id: string; status: string }) =>
+        project.id === "eliza" ? { ...project, status: "paused" } : project,
+    );
+    await route.fulfill({ json: registry });
+  });
+  await page.goto("/projects/eliza");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
+  await expect(
+    page.getByRole("region", { name: "Suggested work" }),
+  ).toHaveCount(0);
 });

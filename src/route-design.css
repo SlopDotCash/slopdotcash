@@ -404,22 +404,6 @@
 .project-work .muted {
   color: var(--muted);
 }
-.project-work-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  margin-bottom: 0.75rem;
-}
-.route-project .project-work-heading h2,
-.route-project .project-work-heading p {
-  margin: 0;
-}
-.route-project .project-work-heading h2 {
-  font-size: 1.4rem;
-}
-.route-project .project-work-heading p,
 .project-work-list .muted {
   font-size: 0.8rem;
 }

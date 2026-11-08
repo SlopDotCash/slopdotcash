@@ -1,4 +1,5 @@
 import { CircleDot, GitPullRequest } from "lucide-react";
+import type { ProjectView } from "./lib/project-view";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 import { ExternalLinkAnchor, formatDateTime, stale } from "./Presentation";
@@ -7,35 +8,29 @@ import { ExternalLinkAnchor, formatDateTime, stale } from "./Presentation";
 export function ProjectWork({
   project,
   state,
+  view,
   retry,
 }: {
   project: ProjectDefinition;
   state: DataState;
+  view: ProjectView | undefined;
   retry: () => void;
 }) {
   if (project.status !== "active") return null;
-  const repositories = new Set(project.repositories.map(({ id }) => id));
   const items =
-    state.status === "ready"
-      ? [
-          state.snapshot.workQueue.issues,
-          state.snapshot.workQueue.pullRequests,
-        ].flatMap((queue) =>
+    state.status === "ready" && view
+      ? [view.workQueue.issues, view.workQueue.pullRequests].flatMap((queue) =>
           queue
-            .filter(
-              (item) =>
-                repositories.has(item.repository) &&
-                item.selection.status === "candidate",
-            )
+            .filter((item) => item.selection.status === "candidate")
             .slice(0, 3),
         )
       : [];
   return (
     <section className="section project-work" aria-label="Suggested work">
-      <div className="project-work-heading">
+      <div className="section-heading">
         <h2>Suggested work</h2>
         {state.status === "ready" ? (
-          <p className="muted">
+          <p className="data-freshness">
             {state.refreshError || stale(state.snapshot)
               ? "May be outdated · "
               : "Updated "}
