@@ -47,6 +47,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [EVM direct-payment recovery](lemmascript-direct-recovery.md)
 - [Review grouping and JSON string sizing](lemmascript-review-batching.md)
 - [Complete restriction and appeal folds](lemmascript-enforcement-research.md)
+- [Complete enforcement action planning](lemmascript-enforcement-plans.md)
 - [Complete text byte partitioning](lemmascript-text-parts.md)
 - [Accepted source selection and ownership operations](lemmascript-source-ownership.md)
 - [Signed Solana wire parser](lemmascript-solana-wire-research.md)
@@ -125,6 +126,7 @@ maintenance surface without improving the selected acceptance result.
 | Reviewer grouping | `verified-reviewers`; review-credit caller | Complete distinct first-occurrence order, first highest-band source per actor, and first-five count; validated date sorting and immutable actor-to-index mapping remain explicit adapter obligations |
 | Review grouping | `verified-review-batches`; complete review planner | Exact JSON string byte size, longest fitting alias prefix, complete ordered greedy groups and outside-alias binding; native object serialization, hashing and source ordering remain boundaries |
 | Restrictions and appeals | `backend/projects/verified-enforcement`; actual project restriction derivation | Complete chronological episode, exact active-ban pairs, pending project/account appeals and final status/appeal composition; source order and authority remain external |
+| Enforcement actions | `backend/projects/verified-enforcement`; action and scan planners | Complete six-action acceptance/refusal, moderator/account independence, revision intent and flag-only scan reinstatement; native schema transitions and current authority remain separate |
 | Repository setup | `backend/projects/verified-setup`; access parsing and setup/flagger callers | Complete header result/refusal partition and authority state/message; native shape/role syntax and live GitHub authority remain separate, original lazy identity comparison retained |
 | Text byte partitioning | `verified-text-parts`; inventory and review splitting | Exact newline/continuation cut policy, increasing bounded ends and complete byte coverage; native UTF-8 conversion remains explicit |
 | Source selection and ownership | `verified-source-ownership`; Slopbot discovery and history reads | Complete accepted-commit index order and exact per-record refusal/retire/remove/set operations; native maps, paging, hashes and final ancestry remain boundaries |
