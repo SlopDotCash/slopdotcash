@@ -52,7 +52,7 @@ import {
   pointMembers,
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
-import { profileCounts } from "./lib/profiles";
+import { peopleMergedCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
@@ -1467,28 +1467,16 @@ function People({ query }: { query: string }) {
     return () => c.abort();
   }, [attempt, me]);
   const people = useMemo(() => {
-    const byId = new Map<
-      string,
-      { id: string; login: string; merged: number | null; member?: Person }
-    >();
-    if (census.state.status === "ready")
-      for (const p of census.state.index.people)
-        byId.set(p.id, {
-          id: p.id,
-          login: p.login,
-          merged: profileCounts(p).merged,
-        });
-    if (members.status === "ready")
-      for (const p of members.people) {
-        const known = byId.get(p.actor.id);
-        byId.set(p.actor.id, {
-          id: p.actor.id,
-          login: known?.login ?? p.actor.login,
-          merged: known?.merged ?? (census.state.status === "ready" ? 0 : null),
-          member: p,
-        });
-      }
-    return [...byId.values()].sort((a, b) => a.login.localeCompare(b.login));
+    const counts = peopleMergedCounts(
+      census.state.status === "ready" ? census.state.index.people : null,
+      members.status === "ready" ? members.people.map((p) => p.actor) : [],
+    );
+    const memberById = new Map(
+      members.status === "ready"
+        ? members.people.map((p) => [p.actor.id, p] as const)
+        : [],
+    );
+    return counts.map((c) => ({ ...c, member: memberById.get(c.id) }));
   }, [census.state, members]);
   const matches = people.filter((p) =>
     p.login.toLowerCase().includes(query.trim().toLowerCase()),
