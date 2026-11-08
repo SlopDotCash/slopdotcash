@@ -189,3 +189,14 @@ runner model includes rejected startup and late sibling cleanup.
 These changes are committed locally and are being held outside the published
 PR heads during the coordinated review batch. No new checks were run. They do
 not close the outstanding runtime, browser or model-verification requirements.
+
+The next source pass also corrected three pre-existing completion races locally:
+Inbox focus reads no longer supersede an active mutation's final read; direct
+recovery completion is fenced to its observed authorized wallet, consent and
+generation in the case transaction; and owner commitment/release verification
+can clear only the captured pending attempt. Wallet-returned evidence can still
+update its owned attempt after unmount, but cannot overwrite a retry. Optional
+attempt IDs preserve legacy records. Cleared/replaced late hashes remain in
+wallet activity, not a new local history store. These revisions and their
+authored models have no new execution evidence. Published PR heads remain
+unchanged during the coordinated review batch.

@@ -112,3 +112,16 @@ a newer action response because `useSecurityData.replace` did not advance its
 read generation. The correction advances that generation. Its runtime evidence
 is still pending; this is a source-confirmed pre-existing race, not a newly
 executed reproduction. See `direct-payment-composition-audit.md`.
+
+The same unvalidated local follow-up also addresses:
+
+- Inbox focus reads could supersede a pending mutation and suppress its final
+  readback; see `inbox-mutation-focus-audit.md`.
+- Direct recovery could commit a captured successor wallet after a later wallet
+  replacement; see `direct-recovery-completion-audit.md`. The prior result was
+  stale recovery metadata, not a demonstrated unauthorized payment.
+- A departed owner verification could clear a newer retry's marker; see
+  `owner-recovery-lifetime-audit.md`. New attempt identity and exact-value
+  removal preserve the newer marker and retain the existing user-reset boundary.
+
+These are source-confirmed paths, not passing runtime regressions.
