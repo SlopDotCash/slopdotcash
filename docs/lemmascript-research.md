@@ -37,6 +37,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Monthly award replacement](lemmascript-monthly-replacement-research.md)
 - [Original clean-scan reuse](lemmascript-scan-reuse.md)
 - [Jupiter decoder research](lemmascript-jupiter-research.md)
+- [Native liability and retained expiry agreement](lemmascript-native-liability.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
 The inventory enumerates first-party JavaScript and TypeScript function bodies
@@ -105,6 +106,8 @@ maintenance surface without improving the selected acceptance result.
 | Review pool and deployment selection | `verified-selection`; review credit and Pages deployment selection | Exact bounded sum without unsafe intermediate totals; first maximum preserves deployment tie behavior |
 | Reviewer grouping | `verified-reviewers`; review-credit caller | Complete distinct first-occurrence order, first highest-band source per actor, and first-five count; validated date sorting and immutable actor-to-index mapping remain explicit adapter obligations |
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
+| Native daily liabilities | `verified-native-liability`; real gas reservation | Today's recorded costs plus the largest unresolved maximum per exact wallet/nonce bucket, including the proposed attempt; preserves liabilities across midnight |
+| Retained expiry agreement | `verified-expiry`; Solana recovery and gas journal | Both histories complete and positive, with exact transaction, anchor, horizon, count and digest agreement; provider truth and completeness remain separate |
 | Native budgets and review timeout | `verified-budget`; fee converter, referral poster, payment keeper and vetting review plan | Exact existing positive/daily-budget acceptance and capped review-call timeout |
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
 | Activity mail consent | `workers/notify/verified-delivery`; real activity dispatch | Exact retry/suppress/send selection from missing, pilot or registered destination, essential notice, explicit preferences and pinned versions; optional mail requires matching consent and registered essential mail requires security consent |

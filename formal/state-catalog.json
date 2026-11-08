@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "41da63d41bb1aca601c4997c78c4c84cf531f325b6fa081c2bdcd5253fa48be4",
+  "inventorySha256": "a49b6e0f4d125f2a07fab60552ef9b4c7f8ebca47dbf997287ac042ddef228cf",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1664,6 +1664,19 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0117_slopbot_close_attempts.sql",
+      "line": 13,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["confirmed", "pending", "rejected"],
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["pending"],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -1967,7 +1980,10 @@
       "name": "state",
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
-      "models": ["formal/models/ui_email.qnt"],
+      "models": [
+        "formal/models/ui_email.qnt",
+        "formal/models/ui_email_actions.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "expired",
         "queued",
@@ -1983,7 +1999,10 @@
       "name": "availability",
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
-      "models": ["formal/models/ui_email.qnt"],
+      "models": [
+        "formal/models/ui_email.qnt",
+        "formal/models/ui_email_actions.qnt"
+      ],
       "lexicallyUnmentionedValues": ["unavailable", "unverified"],
       "review": "candidate-only"
     },
@@ -1993,7 +2012,10 @@
       "name": "status",
       "kind": "string-union",
       "values": ["loading", "signed-out"],
-      "models": ["formal/models/ui_email.qnt"],
+      "models": [
+        "formal/models/ui_email.qnt",
+        "formal/models/ui_email_actions.qnt"
+      ],
       "lexicallyUnmentionedValues": ["loading", "signed-out"],
       "review": "candidate-only"
     },
@@ -2150,48 +2172,57 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 790,
+      "line": 814,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_draft_save_progress.qnt",
+        "formal/models/ui_draft_slots.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_image_decode.qnt",
         "formal/models/ui_project_draft.qnt",
-        "formal/models/ui_project_setup.qnt"
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_repository_lookup.qnt"
       ],
-      "lexicallyUnmentionedValues": ["done", "loading"],
+      "lexicallyUnmentionedValues": ["done"],
       "review": "candidate-only"
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1254,
+      "line": 1281,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_draft_save_progress.qnt",
+        "formal/models/ui_draft_slots.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_image_decode.qnt",
         "formal/models/ui_project_draft.qnt",
-        "formal/models/ui_project_setup.qnt"
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_repository_lookup.qnt"
       ],
       "lexicallyUnmentionedValues": ["submitting"],
       "review": "candidate-only"
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1962,
+      "line": 2009,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_draft_save_progress.qnt",
+        "formal/models/ui_draft_slots.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_image_decode.qnt",
         "formal/models/ui_project_draft.qnt",
-        "formal/models/ui_project_setup.qnt"
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_repository_lookup.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2205,6 +2236,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2220,6 +2253,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2235,6 +2270,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2250,6 +2287,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2265,6 +2304,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2294,6 +2335,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2323,6 +2366,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2338,6 +2383,8 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -2717,7 +2764,10 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["monthly", "none"],
-      "models": ["formal/models/ui_project_setup.qnt"],
+      "models": [
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_repository_lookup.qnt"
+      ],
       "lexicallyUnmentionedValues": ["monthly", "none"],
       "review": "candidate-only"
     },
@@ -2895,7 +2945,7 @@
     },
     {
       "path": "workers/fee-converter/native-gas.ts",
-      "line": 39,
+      "line": 43,
       "name": "state",
       "kind": "string-union",
       "values": ["abandoned", "reserved", "signed"],
@@ -3110,12 +3160,29 @@
       "review": "candidate-only"
     },
     {
+      "path": "workers/slopbot/close-attempts.ts",
+      "line": 45,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["confirmed", "pending", "rejected"],
+      "models": [
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_close_recovery_claim.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["pending"],
+      "review": "candidate-only"
+    },
+    {
       "path": "workers/slopbot/contracts.ts",
       "line": 36,
       "name": "CategoryMode",
       "kind": "string-union",
       "values": ["close", "label", "off"],
-      "models": ["formal/models/bot_review_admission.qnt"],
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_review_admission.qnt"
+      ],
       "lexicallyUnmentionedValues": ["label", "off"],
       "review": "candidate-only"
     },
@@ -3203,6 +3270,8 @@
       "kind": "string-union",
       "values": ["active", "removed", "suspended"],
       "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_recovery_claim.qnt",
         "formal/models/bot_installation_lifecycle.qnt",
         "formal/models/bot_provider_cost_history.qnt",
         "formal/models/bot_review_lease.qnt",
@@ -3213,11 +3282,13 @@
     },
     {
       "path": "workers/slopbot/persistence.ts",
-      "line": 376,
+      "line": 396,
       "name": "status",
       "kind": "string-union",
       "values": ["completed", "failed", "skipped"],
       "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_recovery_claim.qnt",
         "formal/models/bot_installation_lifecycle.qnt",
         "formal/models/bot_provider_cost_history.qnt",
         "formal/models/bot_review_lease.qnt",
@@ -3228,31 +3299,46 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2599,
+      "line": 2759,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
-      "models": ["formal/models/bot_moderation.qnt"],
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_close_recovery_claim.qnt",
+        "formal/models/bot_moderation.qnt"
+      ],
       "lexicallyUnmentionedValues": ["category", "confidence"],
       "review": "candidate-only"
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2673,
+      "line": 2833,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
-      "models": ["formal/models/bot_moderation.qnt"],
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_close_recovery_claim.qnt",
+        "formal/models/bot_moderation.qnt"
+      ],
       "lexicallyUnmentionedValues": ["draft", "escalation", "resolution"],
       "review": "candidate-only"
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2736,
+      "line": 2896,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
-      "models": ["formal/models/bot_moderation.qnt"],
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_close_recovery_claim.qnt",
+        "formal/models/bot_moderation.qnt"
+      ],
       "lexicallyUnmentionedValues": ["draft", "escalation", "resolution"],
       "review": "candidate-only"
     },
@@ -3321,7 +3407,10 @@
         "Unsupported repository inventory",
         "Unsupported source tree entry"
       ],
-      "models": ["formal/models/vetting_acquisition.qnt"],
+      "models": [
+        "formal/models/vetting_acquisition.qnt",
+        "formal/models/vetting_terminal_outcomes.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "An exact repository and commit SHA are required",
         "Immutable repository identity mismatch",
@@ -3384,7 +3473,10 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "rejected", "unknown"],
-      "models": ["formal/models/vetting_acquisition.qnt"],
+      "models": [
+        "formal/models/vetting_acquisition.qnt",
+        "formal/models/vetting_terminal_outcomes.qnt"
+      ],
       "lexicallyUnmentionedValues": ["accepted", "rejected", "unknown"],
       "review": "candidate-only"
     },
@@ -3394,7 +3486,10 @@
       "name": "phase",
       "kind": "string-union",
       "values": ["invalid-response", "invalid-review"],
-      "models": ["formal/models/vetting_review_batches.qnt"],
+      "models": [
+        "formal/models/vetting_review_batches.qnt",
+        "formal/models/vetting_terminal_outcomes.qnt"
+      ],
       "lexicallyUnmentionedValues": ["invalid-response", "invalid-review"],
       "review": "candidate-only"
     }
