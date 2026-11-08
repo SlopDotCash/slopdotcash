@@ -21,6 +21,7 @@ import {
 } from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
+import { completeClaimPartition } from "./verified-work-unit";
 
 export interface WorkUnitSource {
   evidence: ValueEvidence;
@@ -495,14 +496,11 @@ export function validateWorkUnitPartition(
   units: readonly { claimIds: readonly string[] }[],
 ): boolean {
   if (evidence.limitations.length > 0) return false;
-  const available = new Set(evidence.claims.map((claim) => claim.id));
-  const consumed = new Set<string>();
-  for (const unit of units) {
-    if (unit.claimIds.length === 0) return false;
-    for (const id of unit.claimIds) {
-      if (!available.has(id) || consumed.has(id)) return false;
-      consumed.add(id);
-    }
-  }
-  return consumed.size === available.size;
+  const available = new Map<string, number>();
+  for (const claim of evidence.claims)
+    if (!available.has(claim.id)) available.set(claim.id, available.size);
+  return completeClaimPartition(
+    available.size,
+    units.map((unit) => unit.claimIds.map((id) => available.get(id) ?? -1)),
+  );
 }
