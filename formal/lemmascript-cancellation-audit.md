@@ -2,8 +2,8 @@
 
 This separate follow-up starts from `a8b0f8226`. It was prepared by source
 inspection without parser, test, prover or process execution in this root
-lane. Later independent caller evidence is recorded below. The old checker's
-post-exit orphan behavior has not been separately measured.
+lane. Later independent caller evidence and a controlled reproduction of the
+old checker's post-exit orphan behavior are recorded below.
 
 The earlier `check-lemmascript.mjs` started every command in a detached POSIX
 process group and killed that group on its own timer/output limit. It had no
@@ -65,13 +65,18 @@ receipt. The controlled command runs no theorem.
 
 An isolated comparison replaced only the checker with its parent version.
 All three cases then fail at natural signal exit codes 130, 143 and 129,
-before the expected receipt assertions. That comparison does not independently
-measure post-exit orphan survival; its cleanup still stops owned fixture groups.
-An earlier accidental fixed-source control was retained as a redundant run,
-not counted as a failing baseline.
+before the expected receipt assertions. A later diagnostic copy added a
+read-only port probe immediately after each old checker exited, before the
+unchanged status assertion and harness cleanup. All three probes found the
+controlled descendant still listening (`EADDRINUSE`). Harness cleanup then
+released each port and confirmed the captured processes were absent. This is
+a bounded reproduction with a controlled command, not a claim about an actual
+Dafny process or uncatchable signals. An earlier accidental fixed-source
+control was retained as a redundant run, not counted as a failing baseline.
 
-The receipt is `evidence/lemma-cancellation-validation/result.json`, SHA-256
-`e219e912ae79572ee6b703eced1dbe1bf32b33f09c6f37050c2f7f70192bee44`.
+The retained receipt snapshot is
+`evidence/lemma-cancellation-validation/result-caller-and-before-observation.json`,
+SHA-256 `289669fd0da48f5e00ad3bc6fd04f1245dad4d2e9465900c4ffeeb759b21c904`.
 Its checker/test hashes match this branch. Shared-supervisor deadline/output
 and earlier-failure probes, full prover execution under this caller, and
 finite model checks remain separate requirements. This root lane only read
