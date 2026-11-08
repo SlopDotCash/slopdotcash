@@ -70,3 +70,32 @@ than proving it.
   not an ordering between simultaneous kernel events before callbacks run.
 - Removing the nested coordinator and changing setup subprocess execution
   require real browser and cancellation regression evidence when checks resume.
+
+## Independent review and executable checks
+
+Review found that directly killing Playwright still left its separately managed
+Vite server alive. The first cancellation probe reproduced this with the real
+preview runner. The browser phase now sends SIGINT to Playwright, whose installed
+handler closes its managed web server. The shared supervisor allows five seconds
+for this cleanup, then retains the existing process-group kill fallback. Other
+commands keep their original direct cleanup. Windows retains task-tree cleanup.
+This is not a guarantee for an uncooperative process outside the owned group.
+
+The integration runner now reuses the same cancellation helper. It preserves an
+already observed failed result when a later signal arrives, instead of replacing
+that result with an interrupt code. Ordinary failed checks still let later
+checks run.
+
+Real SIGTERM probes then passed for all three entry points: integration observed
+nine descendants, security payments observed 53, and browser preview observed
+22. Each returned 143 and left no observed live descendant. The browser probe
+also removed the prepared fixture directory. The first failed browser probe and
+passing rerun are retained separately outside the repository.
+
+The existing eight subprocess/fixture lifecycle regressions passed. The extended
+`formal_process` model passed nine scenarios, 500 seeded traces of at most 60
+steps, and finite TLC verification (56 distinct states, 433 generated, depth
+eight, empty queue). It represents cooperative browser cleanup, the deadline
+fallback, and the distinction between a failed cleanup report and proof that an
+external process disappeared. These checks do not prove general process-tree
+refinement or live provider behavior.

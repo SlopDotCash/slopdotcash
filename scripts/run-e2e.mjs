@@ -97,6 +97,7 @@ async function runPhase(
       ...(workers ? { SLOP_E2E_WORKERS: workers } : {}),
     },
     signal: cancellation.signal,
+    interruptSignal: "SIGINT",
   });
   cancellation.record(status);
   return status;
@@ -589,7 +590,7 @@ async function runRegistryPhase() {
         if (!walletBridge?.listening) return;
         walletBridge.closeAllConnections();
         return new Promise((resolve, reject) =>
-          walletBridge.close((error) => error ? reject(error) : resolve()),
+          walletBridge.close((error) => (error ? reject(error) : resolve())),
         );
       }),
       Promise.resolve().then(() => solana?.close()),
@@ -733,7 +734,9 @@ try {
     if (process.env.SLOP_E2E_PREBUILT !== "1")
       await runCommand("bun", ["run", "build"]);
     await runCommand("node", [
-      "scripts/dist-manifest.mjs", "verify-local", "dist",
+      "scripts/dist-manifest.mjs",
+      "verify-local",
+      "dist",
     ]);
   }
   if (insideFixture) {
@@ -745,9 +748,11 @@ try {
   } else {
     await Promise.all([
       ...(lane === undefined || lane === "registry"
-        ? [runTask(runRegistryPhase)] : []),
+        ? [runTask(runRegistryPhase)]
+        : []),
       ...(lane === undefined || lane !== "registry"
-        ? [runTask(runFixturePhases)] : []),
+        ? [runTask(runFixturePhases)]
+        : []),
     ]);
   }
 } catch (error) {

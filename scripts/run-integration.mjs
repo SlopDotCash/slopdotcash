@@ -7,23 +7,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { childEnvironment } from "./child-environment.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
+import { createRunnerCancellation } from "./runner-cancellation.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const cancellation = new AbortController();
-let interruptedExitCode = 0;
-const signalHandlers = new Map();
-for (const [signal, code] of [
-  ["SIGINT", 130],
-  ["SIGTERM", 143],
-  ["SIGHUP", 129],
-]) {
-  const handle = () => {
-    interruptedExitCode ||= code;
-    cancellation.abort();
-  };
-  signalHandlers.set(signal, handle);
-  process.on(signal, handle);
-}
+const cancellation = createRunnerCancellation();
 const drivers = [
   [
     "dev-private-flow",
@@ -102,17 +89,23 @@ const runDriver = ([label, command, args, env = process.env]) =>
 const statuses = [];
 try {
   for (const driver of drivers) {
-    if (cancellation.signal.aborted) break;
-    statuses.push(await runDriver(driver));
+    await cancellation.checkpoint();
+    const status = await runDriver(driver);
+    statuses.push(status);
+    cancellation.record(status === 0 ? 0 : 1);
   }
+} catch (error) {
+  if (!cancellation.signal.aborted) console.error(error);
+  cancellation.abort(1);
 } finally {
-  for (const [signal, handle] of signalHandlers) process.off(signal, handle);
+  cancellation.dispose();
 }
-if (cancellation.signal.aborted) process.exit(interruptedExitCode || 1);
-const failed = drivers.filter((_, index) => statuses[index] !== 0);
+const failed = drivers
+  .slice(0, statuses.length)
+  .filter((_, index) => statuses[index] !== 0);
 if (failed.length > 0) {
   process.stderr.write(
     `Failed: ${failed.map(([label]) => label).join(", ")}\n`,
   );
-  process.exit(1);
 }
+process.exitCode = cancellation.exitCode;
