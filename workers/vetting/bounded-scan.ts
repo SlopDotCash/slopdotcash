@@ -164,6 +164,7 @@ const INSTALL_FILES = new Set([
   "vagrantfile",
   "rakefile",
   "fastfile",
+  "fastfile.swift",
   "brewfile",
   "procfile",
   "cmakelists.txt",

