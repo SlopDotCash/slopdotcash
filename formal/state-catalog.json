@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "49d13cb84a7471ef89b1abf58a0d06ec3653fe38179c30a5426ef97233e33a37",
+  "inventorySha256": "1576d3e1e49b82d9b7953741d23d1a2ea8f7ed8397675624b0c4e64cf1da99a2",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2264,6 +2264,7 @@
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2273,7 +2274,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden"],
       "review": "candidate-only"
@@ -2285,6 +2287,7 @@
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2294,7 +2297,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["complete"],
       "review": "candidate-only"
@@ -2306,6 +2310,7 @@
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2315,7 +2320,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["complete"],
       "review": "candidate-only"
@@ -2327,6 +2333,7 @@
       "kind": "string-union",
       "values": ["return", "uphold"],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2336,7 +2343,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["return", "uphold"],
       "review": "candidate-only"
@@ -2348,6 +2356,7 @@
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2357,9 +2366,10 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
-      "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
+      "lexicallyUnmentionedValues": ["claimed", "link-rejected"],
       "review": "candidate-only"
     },
     {
@@ -2383,6 +2393,7 @@
         "wallet-required"
       ],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2392,7 +2403,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "cancellation-required",
@@ -2418,6 +2430,7 @@
       "kind": "string-union",
       "values": ["ok", "unavailable"],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2427,7 +2440,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["ok"],
       "review": "candidate-only"
@@ -2439,6 +2453,7 @@
       "kind": "string-union",
       "values": ["forward", "request-information"],
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -2448,7 +2463,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["request-information"],
       "review": "candidate-only"
