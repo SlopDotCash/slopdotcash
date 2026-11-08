@@ -14,17 +14,18 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "73609a9d46747db5ee398cd63da9e0ac596b0030f10e843442e8d9a78df5a969",
+      "sha256": "2608e824a9b415792fef7c3c25bea41df3fb340a3716a7834db08c5af408ca70",
       "models": [
+        "formal/models/ci_browser_evidence.qnt",
         "formal/models/ci_browser_runtime.qnt",
         "formal/models/ci_coverage.qnt",
         "formal/models/release_proof_gate.qnt",
         "formal/models/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 291, 438, 502, 503, 517, 527, 592, 822,
-        850, 888, 904, 914, 915, 1004, 1104, 1106, 1107, 1271, 1354, 1507, 1509,
-        1539, 1635, 1657, 1728, 1739, 1764, 1833, 1846, 1859, 1868, 1869, 1870
+        27, 59, 154, 186, 191, 192, 240, 291, 438, 503, 504, 518, 528, 593, 823,
+        851, 889, 905, 915, 916, 1005, 1105, 1107, 1108, 1272, 1355, 1508, 1510,
+        1540, 1636, 1658, 1729, 1740, 1765, 1834, 1847, 1860, 1869, 1870, 1871
       ],
       "review": "mapped-abstraction"
     },
@@ -2774,6 +2775,7 @@
       "path": "playwright.config.ts",
       "sha256": "8f3a3e52452961ea9e663e585788089f68b9175fe46c594192be10810b00b7d2",
       "models": [
+        "formal/models/ci_browser_evidence.qnt",
         "formal/models/ci_browser_runtime.qnt",
         "formal/models/dev_server_lifecycle.qnt"
       ],
@@ -3708,8 +3710,9 @@
     },
     {
       "path": "scripts/run-e2e.mjs",
-      "sha256": "2c438b6124d314e2150ac0788aac4678f0362ce5f4f2a3b68dfc8500783d4b05",
+      "sha256": "987cd79ab5a1d7e5af2d9e86f0e9251af709cf4d2e1a9236e943db6614bba217",
       "models": [
+        "formal/models/ci_browser_evidence.qnt",
         "formal/models/evidence_capture.qnt",
         "formal/models/fixture_wallet_runtime.qnt",
         "formal/models/formal_process.qnt",
@@ -8814,6 +8817,23 @@
         "completePagesTest",
         "incompleteRefusedTest",
         "retryDoesNotSkipTest"
+      ]
+    },
+    {
+      "path": "formal/models/ci_browser_evidence.qnt",
+      "sha256": "fa93a73cafaa81af86c27fba5a7ac667f93f21065bb526a4c478b10eeeaa5107",
+      "sources": [
+        ".github/workflows/deploy.yml",
+        "playwright.config.ts",
+        "scripts/run-e2e.mjs"
+      ],
+      "scenarios": [
+        "distinctDirectoriesRetainBothReportsTest",
+        "explicitlyReusedDirectoryLosesEarlierReportTest",
+        "failedNormalRunCannotClaimCompleteTest",
+        "failedPrivateRunRetainsNormalEvidenceTest",
+        "missingNormalReportCannotClaimCompleteTest",
+        "missingPrivateReportKeepsNormalReportTest"
       ]
     },
     {

@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 317 finite models and 1,555 named scenarios, with zero
+839 production sources, 318 finite models and 1,561 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -329,3 +329,11 @@ writes; the unchanged paused-project case passes on both. This is local
 SQLite evidence, not deployed D1 or GitHub-provider acceptance. The ignored
 runtime acceptance ledger separately records the exact-source limits of
 earlier payment, Inbox and owner browser/API evidence.
+
+## Separate browser-evidence retention follow-up
+
+This branch follows the frozen `a8b0f8226` observation candidate. The registry
+runner now honors an explicit output directory, and the private-intake CI step
+selects its own directory. This keeps its report from replacing the earlier
+normal registry report. The change and six model scenarios are unexecuted;
+see `browser-evidence-output-audit.md` for the observed original artifact loss.
