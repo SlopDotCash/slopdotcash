@@ -4,7 +4,7 @@
 // Owner 2 is an identity reserved to another actor. boundLive captures expiry
 // at verifiedAt, the timestamp bound into SQL; revocation checks row presence.
 // Provider parsing/cryptography and atomic D1 batches are external predicates.
-// Source-only refinement: these scenarios have not been executed.
+// Source-reviewed follow-up: these scenarios have not been executed.
 module api_x_connection {
   type State = {phase:str,flow:int,flowState:str,flowExpired:bool,starts:int,
     sessionPresent:bool,sessionExpired:bool,callback:int,token:bool,verified:bool,
@@ -57,10 +57,10 @@ module api_x_connection {
       .with("publicLink",true).with("recorded",true).with("outcome","connected")
       else s.with("phase","cleanup").with("outcome","failed")}
   action cleanup(databaseWorks:bool):bool=all{s.phase=="cleanup",
-    val cleaned=if(s.flow==s.callback)s.with("flow",0).with("flowState","absent") else s
-    s'=if(not(databaseWorks))finished(s,"error")
-      else if(s.token)cleaned.with("phase","revoke").with("callback",0)
-      else finished(cleaned,s.outcome)}
+    val cleaned=if(not(databaseWorks))s.with("outcome","error")
+      else if(s.flow==s.callback)s.with("flow",0).with("flowState","absent") else s
+    s'=if(s.token)cleaned.with("phase","revoke").with("callback",0)
+      else finished(cleaned,cleaned.outcome)}
   // Revoke failure is swallowed. No provider token is persisted by this handler.
   action revoke(providerAccepted:bool):bool=all{s.phase=="revoke",
     s'=finished(s.with("revokeAttempted",true).with("providerRevoked",providerAccepted),s.outcome)}
@@ -116,8 +116,8 @@ module api_x_connection {
     .then(identityReply(true)).then(commit(false)).then(cleanup(true)).then(revoke(true))
     .expect(s.owner==0 and not(s.linked) and s.response=="failed")
   run cleanupFailureDoesNotUndoCommittedLinkTest=init.then(start).then(callback).then(tokenReply(true))
-    .then(identityReply(true)).then(commit(true)).then(cleanup(false))
-    .expect(s.linked and s.recorded and s.response=="error" and not(s.revokeAttempted))
+    .then(identityReply(true)).then(commit(true)).then(cleanup(false)).then(revoke(true))
+    .expect(s.linked and s.recorded and s.response=="error" and s.revokeAttempted)
   run revokeFailureDoesNotUndoVerifiedLinkTest=init.then(start).then(callback).then(tokenReply(true))
     .then(identityReply(true)).then(commit(true)).then(cleanup(true)).then(revoke(false))
     .expect(s.linked and s.response=="connected" and s.revokeAttempted and not(s.providerRevoked))
@@ -132,4 +132,9 @@ module api_x_connection {
     .then(identityReply(true)).then(commit(true)).then(cleanup(true)).then(revoke(true))
     .then(callback).then(tokenReply(true)).then(identityReply(true)).then(commit(true)).then(cleanup(true)).then(revoke(true))
     .expect(s.linked and s.response=="connected" and s.starts==2 and s.flow==0)
+  run cancellationCleanupFailureReportsErrorTest=init.then(start).then(callback).then(userCancel).then(cleanup(false))
+    .expect(s.response=="error" and not(s.revokeAttempted))
+  run failedRevokeDoesNotHideCleanupFailureTest=init.then(start).then(callback).then(tokenReply(true))
+    .then(identityReply(true)).then(commit(true)).then(cleanup(false)).then(revoke(false))
+    .expect(s.response=="error" and s.revokeAttempted and s.linked)
 }

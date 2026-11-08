@@ -1,8 +1,9 @@
 # X connection completion and cleanup
 
-This model-only refinement starts from `a8b0f8226`. It changes no application
-or authorization rule. No parser, scenario, simulation, verifier or runtime
-test was run here. The twenty named scenarios are unexecuted.
+This follow-up starts from `a8b0f8226`. It began as a model refinement and
+then corrected the skipped token-revocation attempt described below. No
+authorization rule changed. No parser, scenario, simulation, verifier or
+runtime test was run here. The twenty-two named scenarios are unexecuted.
 
 The earlier `api_x_connection` represented successful linking, permanent
 reservation and sign-out with two scenarios. Reading `backend/points/x.ts`
@@ -30,11 +31,14 @@ another clock read. These are observed behaviors, not new guarantees about a
 deadline or a requested policy change.
 
 After a committed link, failed flow deletion can make the request fail without
-undoing the link. Successful deletion attempts to revoke a temporary provider
-token; revoke failure does not undo verified identity. If deletion itself
-throws, the later revoke step is not reached. The handler stores no provider
-token in D1. A successful response is an observation of a committed link, not
-lasting authority that survives later disconnection.
+undoing the link. Source review found that this failure also skipped the
+temporary provider-token revocation attempt required by
+`protocol/points-v1.md`, "X connections and payout recognition". The deletion
+now has a nested `finally`, so its rejection still attempts revocation. A
+provider-revocation failure is caught and the original storage error continues
+to propagate. The handler stores no provider token in D1. A successful response
+is an observation of a committed link, not lasting authority that survives
+later disconnection.
 
 Cryptographic state/cookie equality, provider status and bounded JSON grammar,
 the source's per-request clock observations, atomic D1 batches, and external
@@ -50,11 +54,13 @@ Additional runtime conformance is still needed for the newly modeled provider,
 expiry, supersession and cleanup orders. A source mapping or these unexecuted
 scenarios do not complete that acceptance work.
 
-Fourteen additional unexecuted tests now use that same handler and real SQLite
+Fifteen additional unexecuted tests now use that same handler and real SQLite
 migrations. They cover user cancellation, token/identity refusal, sign-out and
 disconnect during provider work, both observed expiry boundaries, a superseding
 flow, foreign identity ownership, replay while the first callback is pending,
-batch rollback, and cleanup or provider-revocation failure. Provider responses
-and time are controlled; SQLite triggers inject the two database failures.
+batch rollback, and cleanup or provider-revocation failure. The cleanup-failure
+cases require a revocation request and the preserved storage-error result,
+including when the provider revocation also fails. Provider responses and time
+are controlled; SQLite triggers inject the two database failures.
 These tests do not exercise live X authorization or imply that all combinations
 have been verified.

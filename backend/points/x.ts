@@ -227,26 +227,31 @@ export async function handleX(
     } catch {
       return fail();
     } finally {
-      await deps.db
-        .prepare("DELETE FROM points_x_flows WHERE state_hash=?")
-        .bind(hash)
-        .run();
-      if (token) {
-        try {
-          const response = await provider(deps, "/2/oauth2/revoke", {
-            method: "POST",
-            headers: {
-              authorization: basic(config),
-              "content-type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              token,
-              client_id: config.clientId,
-            }).toString(),
-          });
-          await response.body?.cancel();
-        } catch {
-          /* No token is retained. Provider revocation failure cannot undo a verified identity. */
+      try {
+        await deps.db
+          .prepare("DELETE FROM points_x_flows WHERE state_hash=?")
+          .bind(hash)
+          .run();
+      } finally {
+        // A storage failure must not skip the attempt to revoke this token.
+        // The original storage error still propagates after this cleanup.
+        if (token) {
+          try {
+            const response = await provider(deps, "/2/oauth2/revoke", {
+              method: "POST",
+              headers: {
+                authorization: basic(config),
+                "content-type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams({
+                token,
+                client_id: config.clientId,
+              }).toString(),
+            });
+            await response.body?.cancel();
+          } catch {
+            /* No token is retained. Provider revocation failure cannot undo a verified identity. */
+          }
         }
       }
     }

@@ -417,11 +417,11 @@
     },
     {
       "path": "backend/points/x.ts",
-      "sha256": "c31c3104f0497e6fd27dd3210853f6fe35ed69408d5f1d0f35a9ab3fbc79a24c",
+      "sha256": "9a048e6426ac9b02d030bcbd7d83134bd93e6fda1d8eb9219ba0c19d4ec20e25",
       "models": ["formal/models/api_x_connection.qnt"],
       "candidateLines": [
         17, 18, 26, 28, 30, 61, 98, 103, 104, 111, 119, 122, 159, 178, 198, 211,
-        231, 274, 276, 286, 290, 309, 320, 323, 338
+        232, 279, 281, 291, 295, 314, 325, 328, 343
       ],
       "review": "mapped-abstraction"
     },
@@ -8150,14 +8150,16 @@
     },
     {
       "path": "formal/models/api_x_connection.qnt",
-      "sha256": "486394316a37f424eac76c4495f8240cf3c07298fc00e7a966743a8d325ef65a",
+      "sha256": "2d84f2d5fc97f006656c12e169909729fdc42f303da076d101193a7a79529c81",
       "sources": ["backend/points/x.ts", "migrations/0009_points_social.sql"],
       "scenarios": [
+        "cancellationCleanupFailureReportsErrorTest",
         "cleanupFailureDoesNotUndoCommittedLinkTest",
         "databaseFailureDoesNotReserveIdentityTest",
         "disconnectDuringProviderWaitRefusesLateLinkTest",
         "expiredPendingCallbackRefusesTest",
         "failedReconnectPreservesPriorLinkTest",
+        "failedRevokeDoesNotHideCleanupFailureTest",
         "foreignIdentityClaimCannotBeReassignedTest",
         "identityFailureRevokesTemporaryTokenTest",
         "invalidCallbackLeavesPendingFlowTest",

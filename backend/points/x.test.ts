@@ -551,31 +551,40 @@ test("X link batch failure rolls back its new identity claim", async () => {
   }
 });
 
-test("X cleanup failure reports an error without undoing its committed link", async () => {
-  const fixture = await xLifecycleFixture();
-  try {
-    const flow = await fixture.start();
-    fixture.sqlite.exec(
-      "CREATE TRIGGER fixture_x_cleanup_failure BEFORE DELETE ON points_x_flows BEGIN SELECT RAISE(ABORT,'fixture cleanup failure'); END;",
-    );
-    const response = await fixture.call(
-      `x/callback?state=${flow.state}&code=fixture`,
-      undefined,
-      flow.cookie,
-    );
-    expect(response.status).toBe(503);
-    expect(
-      fixture.sqlite.prepare("SELECT x_id,public FROM points_x_links").all(),
-    ).toEqual([
-      { x_id: "987654321", public: 1 },
-    ]);
-    expect(
-      fixture.sqlite.prepare("SELECT status FROM points_x_flows").all(),
-    ).toEqual([
-      { status: "processing" },
-    ]);
-    expect(fixture.providerPaths).not.toContain("/2/oauth2/revoke");
-  } finally {
-    fixture.sqlite.close();
-  }
-});
+for (const revokeFails of [false, true]) {
+  test(`X cleanup failure preserves its error when token revocation ${revokeFails ? "fails" : "succeeds"}`, async () => {
+    const fixture = await xLifecycleFixture();
+    try {
+      const flow = await fixture.start();
+      if (revokeFails) {
+        fixture.setProviderReply(async (path) => {
+          if (path === "/2/oauth2/revoke")
+            throw new Error("Fixture provider revocation failure");
+          return undefined;
+        });
+      }
+      fixture.sqlite.exec(
+        "CREATE TRIGGER fixture_x_cleanup_failure BEFORE DELETE ON points_x_flows BEGIN SELECT RAISE(ABORT,'fixture cleanup failure'); END;",
+      );
+      const response = await fixture.call(
+        `x/callback?state=${flow.state}&code=fixture`,
+        undefined,
+        flow.cookie,
+      );
+      expect(response.status).toBe(503);
+      expect(
+        fixture.sqlite.prepare("SELECT x_id,public FROM points_x_links").all(),
+      ).toEqual([
+        { x_id: "987654321", public: 1 },
+      ]);
+      expect(
+        fixture.sqlite.prepare("SELECT status FROM points_x_flows").all(),
+      ).toEqual([
+        { status: "processing" },
+      ]);
+      expect(fixture.providerPaths).toContain("/2/oauth2/revoke");
+    } finally {
+      fixture.sqlite.close();
+    }
+  });
+}
