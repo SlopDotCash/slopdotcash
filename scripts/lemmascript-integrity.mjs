@@ -168,6 +168,7 @@ function tokenizeProof(text) {
   }
   return tokens;
 }
+const proofModifiers = ["opaque", "ghost"];
 const declarationKinds = [
   "lemma",
   "method",
@@ -191,13 +192,13 @@ function proofDeclarations(tokens) {
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i].text;
     if (!braces && !parens && !brackets) {
-      if (t === "opaque") {
+      if (proofModifiers.includes(t)) {
         if (!["function", "predicate"].includes(tokens[i + 1]?.text))
-          throw Error("Unsupported opaque declaration");
+          throw Error(`Unsupported ${t} declaration`);
         starts.push(i);
       } else if (
         declarationKinds.includes(t) &&
-        tokens[i - 1]?.text !== "opaque"
+        !proofModifiers.includes(tokens[i - 1]?.text)
       )
         starts.push(i);
     }
@@ -236,7 +237,7 @@ function proofDeclarations(tokens) {
       lastOpen >= 0 && lastClose === all.length - 1
         ? all.slice(lastOpen + 1, lastClose)
         : null;
-    const modifier = all[0] === "opaque" ? 1 : 0;
+    const modifier = proofModifiers.includes(all[0]) ? 1 : 0;
     return {
       kind: all[modifier],
       name: all[modifier + 1],
