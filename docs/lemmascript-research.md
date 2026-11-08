@@ -41,6 +41,8 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Complete accepted-work claim partition](lemmascript-work-unit-partition.md)
 - [Complete base58 conversion](lemmascript-base58-research.md)
 - [Payment evidence agreement and counters](lemmascript-payment-evidence.md)
+- [Review grouping and JSON string sizing](lemmascript-review-batching.md)
+- [Complete restriction and appeal folds](lemmascript-enforcement-research.md)
 - [Final candidate dispositions and remaining active algorithms](lemmascript-candidate-dispositions.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
@@ -111,6 +113,8 @@ maintenance surface without improving the selected acceptance result.
 | Exact collection totals | `verified-allocation.sumAmounts`; project, review, quality and funding weights, monthly replacement/frozen totals, received-money validation | Exact sum for any finite BigInt array; nonnegative inputs remain nonnegative |
 | Review pool and deployment selection | `verified-selection`; review credit and Pages deployment selection | Exact bounded sum without unsafe intermediate totals; first maximum preserves deployment tie behavior |
 | Reviewer grouping | `verified-reviewers`; review-credit caller | Complete distinct first-occurrence order, first highest-band source per actor, and first-five count; validated date sorting and immutable actor-to-index mapping remain explicit adapter obligations |
+| Review grouping | `verified-review-batches`; complete review planner | Exact JSON string byte size, longest fitting alias prefix, complete ordered greedy groups and outside-alias binding; native object serialization, hashing and source ordering remain boundaries |
+| Restrictions and appeals | `backend/projects/verified-enforcement`; actual project restriction derivation | Complete chronological episode, exact active-ban pairs, pending project/account appeals and final status/appeal composition; source order and authority remain external |
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native daily liabilities | `verified-native-liability`; real gas reservation | Today's recorded costs plus the largest unresolved maximum per exact wallet/nonce bucket, including the proposed attempt; preserves liabilities across midnight |
 | Retained expiry agreement | `verified-expiry`; Solana recovery and gas journal | Both histories complete and positive, with exact transaction, anchor, horizon, count and digest agreement; provider truth and completeness remain separate |
