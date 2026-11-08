@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { handlePointsApi } from "../backend/points/handler";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import type { PublishedPenalty } from "../src/lib/leaderboard-types";
 import {
   appendPointAwards,
   applyPointsSnapshot,
@@ -23,6 +24,7 @@ import {
   pointRevisionId,
   reconcilePointPenalties,
 } from "../src/lib/points";
+import { penaltyDeductions } from "../src/lib/score-penalties";
 import {
   GENERATED_AT,
   PENALIZED_AUTHOR,
@@ -38,14 +40,15 @@ import {
 
 afterEach(() => setSystemTime());
 
-test("a valid retained debit journal refuses an inexact negative Points total", () => {
+function retainedPointAward(
+  sourceId: string,
+  amount: number,
+  penalty: boolean,
+  number: number,
+  occurredAt = GENERATED_AT,
+): PointAward {
   const actor = { id: PENALIZED_AUTHOR.id, login: PENALIZED_AUTHOR.login };
-  const award = (
-    sourceId: string,
-    amount: number,
-    penalty: boolean,
-    number: number,
-  ): PointAward => ({
+  return {
     key: pointKey(
       "asi",
       actor.id,
@@ -56,22 +59,30 @@ test("a valid retained debit journal refuses an inexact negative Points total", 
     projectId: "asi",
     category: penalty ? "slopbot-penalty" : "merged-pull-request",
     amount,
-    occurredAt: GENERATED_AT,
+    occurredAt,
     sourceId,
     sourceUrl: `https://github.com/SlopDotCash/asi/pull/${number}`,
     workUnitId: penalty ? `${sourceId}:penalty` : sourceId,
     provisional: false,
-  });
+  };
+}
+
+test("a valid retained debit journal refuses an inexact negative Points total", () => {
   let journal = appendPointAwards(
     emptyPointsJournal(GENERATED_AT),
-    [award("PR_retained_earned", 1, false, 100)],
+    [retainedPointAward("PR_retained_earned", 1, false, 100)],
     "a".repeat(64),
     "slop-score-v2",
     GENERATED_AT,
   );
   for (const number of [101, 102]) {
     const sourceId = `PR_retained_debit_${number}`;
-    const debit = award(sourceId, -Number.MAX_SAFE_INTEGER, true, number);
+    const debit = retainedPointAward(
+      sourceId,
+      -Number.MAX_SAFE_INTEGER,
+      true,
+      number,
+    );
     journal = appendPointAwards(
       journal,
       [debit],
@@ -105,6 +116,105 @@ test("a valid retained debit journal refuses an inexact negative Points total", 
   // is not representable by the public Number schema and must not be rounded.
   expect(() => assertPointsJournal(journal)).not.toThrow();
   expect(() => pointMembers(journal)).toThrow("Points total overflow");
+});
+
+test("safe penalties in three project scopes refuse an inexact actor total", () => {
+  const maximum = Number.MAX_SAFE_INTEGER;
+  const events = [0, 1, 2].map((index) => ({
+    actor: PENALIZED_AUTHOR,
+    repository: `https://github.com/example/project-${index}`,
+    occurredAt: GENERATED_AT,
+    scoreThirds: maximum,
+    points: maximum / 3,
+  }));
+  const penalties: PublishedPenalty[] = events.map((event, index) => ({
+    id: `PR_scoped_debit_${index}:penalty`,
+    actor: event.actor,
+    repository: event.repository,
+    occurredAt: event.occurredAt,
+    category: "spam",
+    tableVersion: "slopbot-penalties-v1",
+    debitThirds: maximum,
+    source: {
+      id: `PR_scoped_debit_${index}`,
+      kind: "pull-request",
+      number: 200 + index,
+      title: "Closed fixture",
+      url: `${event.repository}/pull/${200 + index}`,
+    },
+  }));
+  const projectOf = (repository: string) => repository;
+  for (const [index, event] of events.entries()) {
+    const result = penaltyDeductions([event], [penalties[index]], projectOf);
+    expect(result.byActor.get(PENALIZED_AUTHOR.id)).toBe(maximum);
+    expect(result.byPenalty.get(penalties[index].id)).toBe(maximum);
+  }
+  // Every scope is exact by itself. The public actor total must not round
+  // the sum of the three independently applicable debits.
+  expect(() => penaltyDeductions(events, penalties, projectOf)).toThrow(
+    "Penalty total overflow",
+  );
+});
+
+test("a safe lifetime Points total still refuses an inexact monthly subtotal", () => {
+  const maximum = Number.MAX_SAFE_INTEGER;
+  let journal = appendPointAwards(
+    emptyPointsJournal(GENERATED_AT),
+    [
+      retainedPointAward(
+        "PR_monthly_boundary_earned",
+        maximum,
+        false,
+        300,
+        "2026-10-20T00:00:00.000Z",
+      ),
+    ],
+    "a".repeat(64),
+    "slop-score-v2",
+    GENERATED_AT,
+  );
+  for (const [index, amount] of [maximum, 2].entries()) {
+    const sourceId = `PR_monthly_boundary_debit_${index}`;
+    const debit = retainedPointAward(
+      sourceId,
+      -amount,
+      true,
+      301 + index,
+      "2026-11-10T00:00:00.000Z",
+    );
+    journal = appendPointAwards(
+      journal,
+      [debit],
+      "b".repeat(64),
+      "slopbot-penalties-v1",
+      GENERATED_AT,
+      new Map([
+        [
+          debit.key,
+          {
+            sourceId,
+            effectiveAt: GENERATED_AT,
+            reason: "Retained debit evidence",
+          },
+        ],
+      ]),
+      new Map([
+        [
+          debit.key,
+          { category: "spam", debit: amount, reversedAt: null, reversal: null },
+        ],
+      ]),
+    );
+  }
+  // This constructed retained history is schema-valid. Its lifetime total
+  // is exactly -2, but November's negative subtotal is outside safe Number.
+  expect(() => assertPointsJournal(journal)).not.toThrow();
+  expect(pointMembers(journal, "2026-10")).toMatchObject([
+    { total: -2, monthly: maximum },
+  ]);
+  expect(() => pointMembers(journal, "2026-11")).toThrow(
+    "Points total overflow",
+  );
 });
 
 function checkpoint(): PointsJournal {
