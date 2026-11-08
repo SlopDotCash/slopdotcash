@@ -50,6 +50,17 @@ module bot_value_pipeline {
     s' = s.with("a", "prepared").with("aPartition", true).with("last", "partitionA") }
   action partitionB = all { s.b == "leased", bOwns, s.bGroup,
     s' = s.with("b", "prepared").with("bPartition", true).with("last", "partitionB") }
+  // A remote installation check may yield after its initial ownership read.
+  // Its final local read checks the current database execution clock and
+  // must refuse the paid call when a lease expired, including a queued read.
+  action beginPreCallA = all {s.a=="prepared",aOwns,
+    s'=s.with("a","checking").with("last","beginPreCallA")}
+  action beginPreCallB = all {s.b=="prepared",bOwns,
+    s'=s.with("b","checking").with("last","beginPreCallB")}
+  action finishPreCallA = all {s.a=="checking",
+    s'=s.with("a",if(aOwns) "prepared" else "rejected").with("last","finishPreCallA")}
+  action finishPreCallB = all {s.b=="checking",
+    s'=s.with("b",if(bOwns) "prepared" else "rejected").with("last","finishPreCallB")}
   action assessA = all { s.a == "prepared", aOwns, s.aPartition, not(s.retained), not(s.journal), s.calls < 3,
     s' = s.with("a", "called").with("calls", s.calls + 1).with("last", "assessA") }
   action assessB = all { s.b == "prepared", bOwns, s.bPartition, not(s.retained), not(s.journal), s.calls < 3,
@@ -86,6 +97,7 @@ module bot_value_pipeline {
     s' = s.with("b", "complete").with("last", "currentB") }
   action tick = all { s.now < 2, s' = s.with("now", s.now + 1).with("last", "tick") }
   action step = any { startA, startB, collectA, collectB, incompleteA, holdA, holdB, busyB, partitionA, partitionB,
+    beginPreCallA,beginPreCallB,finishPreCallA,finishPreCallB,
     assessA, assessB, recordA, recordB, retainA, retainB, reuseA, reuseB,
     beginPublicationA, beginPublicationB, publishA, publishB, refuseA, refuseB,
     finishA, finishB, currentA, currentB, tick, s' = s }
@@ -117,4 +129,11 @@ module bot_value_pipeline {
     .then(partitionB).then(reuseB).then(beginPublicationB).then(publishB).then(finishB)
     .then(startA).then(collectA).then(holdA).then(partitionA).then(currentA)
     .expect(s.calls == 1 and s.journal and s.a == "complete")
+  run leaseExpiryDuringPreCallCheckPreventsSpendTest = init.then(startA).then(collectA).then(holdA).then(partitionA)
+    .then(beginPreCallA).then(tick).then(finishPreCallA)
+    .expect(s.calls==0 and s.a=="rejected")
+    .then(startB).then(collectB).then(holdB).then(partitionB).then(assessB).then(recordB).then(retainB)
+    .then(beginPublicationB).then(publishB).then(finishB)
+    .then(startA).then(collectA).then(holdA).then(partitionA).then(currentA)
+    .expect(s.calls==1 and s.writes==1 and s.a=="complete" and s.b=="complete")
 }

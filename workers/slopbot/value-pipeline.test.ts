@@ -67,14 +67,19 @@ for (const expiry of [
   "provider",
   "overlap",
   "queued",
+  "pre-call",
+  "queued-pre-call",
 ] as const) {
   test(`${expiry} expiry preserves retained inference and one joint publication for both PRs`, async () => {
+    const beforeCall = expiry === "pre-call" || expiry === "queued-pre-call";
     const trace = pipelineTrace(
-      expiry === "publication" || expiry === "queued"
-        ? "expiredPublicationReusesInferenceTest"
-        : expiry === "provider"
-          ? "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest"
-          : "overlappingConsumerWaitsThenReadsCurrentTest",
+      beforeCall
+        ? "leaseExpiryDuringPreCallCheckPreventsSpendTest"
+        : expiry === "publication" || expiry === "queued"
+          ? "expiredPublicationReusesInferenceTest"
+          : expiry === "provider"
+            ? "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest"
+            : "overlappingConsumerWaitsThenReadsCurrentTest",
     );
     const tick = trace.find((state) => state.last === "tick");
     if (!tick) throw new Error("Generated pipeline trace omitted expiry");
@@ -170,6 +175,7 @@ for (const expiry of [
     };
     let providerCalls = 0;
     let expired = false;
+    let preCallSourceReads = 0;
     const expireRows = () => {
       sqlite.run(
         "UPDATE slopbot_value_processing SET lease_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second') WHERE state='running'",
@@ -232,10 +238,24 @@ for (const expiry of [
         throw new Error("Unexpected external transport");
       if (url.pathname === "/app/installations/1/access_tokens")
         return Response.json({ token: "local-installation" });
-      if (url.pathname === "/installation/repositories")
+      if (url.pathname === "/installation/repositories") {
+        if (
+          expiry === "pre-call" &&
+          !expired &&
+          providerCalls === 0 &&
+          sqlite
+            .query<{ n: number }, []>(
+              "SELECT COUNT(*) n FROM slopbot_value_budget_reservations",
+            )
+            .get()?.n === 1
+        ) {
+          expired = true;
+          expireRows();
+        }
         return Response.json({
           repositories: [{ id: 42, node_id: "R_binary", private: false }],
         });
+      }
       if (url.pathname === "/graphql") {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           query: string;
@@ -313,6 +333,48 @@ for (const expiry of [
     const wrapped = {
       ...db,
       prepare(sql: string) {
+        if (
+          expiry === "queued-pre-call" &&
+          !expired &&
+          providerCalls === 0 &&
+          sql.startsWith(
+            "SELECT COUNT(*) AS n FROM slopbot_value_source_leases",
+          ) &&
+          sqlite
+            .query<{ n: number }, []>(
+              "SELECT COUNT(*) n FROM slopbot_value_budget_reservations",
+            )
+            .get()?.n === 1 &&
+          ++preCallSourceReads === 2
+        ) {
+          expired = true;
+          const queued = (
+            statement: ReturnType<typeof db.prepare>,
+          ): ReturnType<typeof db.prepare> => ({
+            ...statement,
+            bind: (...values: unknown[]) => queued(statement.bind(...values)),
+            first: async <T>() => {
+              const observed = sqlite
+                .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")
+                .get() as { at: string };
+              const expiryAt = new Date(
+                Date.parse(observed.at) + 500,
+              ).toISOString();
+              sqlite.run(
+                "UPDATE slopbot_value_processing SET lease_until=? WHERE state='running'",
+                [expiryAt],
+              );
+              sqlite.run(
+                "UPDATE slopbot_value_source_leases SET lease_until=?",
+                [expiryAt],
+              );
+              await new Promise((resolve) => setTimeout(resolve, 650));
+              setSystemTime(new Date(later));
+              return statement.first<T>();
+            },
+          });
+          return queued(db.prepare(sql));
+        }
         if (
           expiry === "publication" &&
           !expired &&
@@ -413,6 +475,7 @@ for (const expiry of [
           "lease",
         );
         expect(expired).toBe(true);
+        if (beforeCall) expect(providerCalls).toBe(0);
         expect(
           sqlite
             .query("SELECT COUNT(*) n FROM slopbot_work_unit_journal")
@@ -431,12 +494,14 @@ for (const expiry of [
         sqlite
           .query("SELECT COUNT(*) n FROM slopbot_value_inference_attempts")
           .get(),
-      ).toEqual({ n: 1 });
+      ).toEqual({ n: beforeCall ? 2 : 1 });
       expect(
         sqlite
-          .query("SELECT COUNT(*) n FROM slopbot_value_budget_reservations")
+          .query<{ n: number }, []>(
+            "SELECT COUNT(*) n FROM slopbot_value_budget_reservations",
+          )
           .get(),
-      ).toEqual({ n: 1 });
+      ).toEqual({ n: beforeCall ? 2 : 1 });
       expect(
         sqlite.query("SELECT COUNT(*) n FROM slopbot_costs").get(),
       ).toEqual({ n: 1 });

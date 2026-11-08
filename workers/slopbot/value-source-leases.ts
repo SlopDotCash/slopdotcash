@@ -59,7 +59,9 @@ export async function ownsValueSources(
     .prepare(`SELECT COUNT(*) AS n FROM slopbot_value_source_leases held
     JOIN json_each(?1) wanted ON wanted.value=held.scope_key
     JOIN slopbot_value_processing owner ON owner.delivery_id=held.delivery_id AND owner.claim_token=held.claim_token
-    WHERE owner.delivery_id=?2 AND owner.claim_token=?3 AND owner.state='running' AND owner.lease_until>?4 AND held.lease_until>?4`)
+    WHERE owner.delivery_id=?2 AND owner.claim_token=?3 AND owner.state='running'
+      AND owner.lease_until>max(?4,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND held.lease_until>max(?4,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
     .bind(
       valueSourceScopeKeys(sources),
       claim.deliveryId,

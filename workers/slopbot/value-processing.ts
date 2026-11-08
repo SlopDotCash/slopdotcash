@@ -120,7 +120,8 @@ export async function ownsValueRequest(
     (await db
       .prepare(
         `SELECT 1 AS ok FROM slopbot_value_processing
-         WHERE delivery_id=? AND claim_token=? AND state='running' AND lease_until>?`,
+         WHERE delivery_id=? AND claim_token=? AND state='running'
+         AND lease_until>max(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
       )
       .bind(claim.deliveryId, claim.token, at.toISOString())
       .first()) !== null

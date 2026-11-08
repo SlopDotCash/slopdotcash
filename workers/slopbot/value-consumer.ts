@@ -189,7 +189,12 @@ export async function consumeValueRequest(
         github,
         sources.map((s) => s.evidence),
       );
-      return true;
+      // The remote membership check can outlive both local leases. Recheck
+      // after that await before authorizing any paid provider request.
+      return (
+        (await ownsValueRequest(db, claim)) &&
+        (await ownsValueSources(db, claim, scopes))
+      );
     };
     const decisions = await Promise.all(
       sources.map((s) =>
