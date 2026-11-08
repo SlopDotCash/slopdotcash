@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "baseline": "3223535c6fa91d8ce5159bf4fce278acf18e286d",
+  "baseline": "f4f02c250e4cd1a1db2021c3cb182df96c5cd2de",
   "reviewStartedAt": "e3d7dea64f1171f5761033069b98de4fd5cc1e77",
   "meaning": "Current production source census with lexical state candidates and model links. A mapping is not a complete branch or semantic refinement proof. Pending is unfinished review work.",
   "exclusions": "Dependencies, generated build outputs, test/fixture trees, declarations and integration test entry points are not production state machines. Generated registry source remains inventoried through its generator.",
@@ -2579,6 +2579,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0117_slopbot_close_attempts.sql",
+      "sha256": "6487ff6d92813182b24e0be2c60090bb05095a0d0fb0774be6993f0f6a959eb8",
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt"
+      ],
+      "candidateLines": [2, 13, 18, 19, 20, 21, 24, 26, 28, 29, 30, 37, 38, 40],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "5ce68e5d46d579908b1ba07bd7e2935b55d07c7e542e56ad651fa7544304e48f",
       "models": ["formal/models/formal_toolchain.qnt"],
@@ -2587,7 +2597,7 @@
     },
     {
       "path": "playwright.config.ts",
-      "sha256": "86df9e64c265041e3e09177ff1eff26bcc6a37cdb27342324e96713444688cc1",
+      "sha256": "cf5e3afe734262cd4681c71710245bb039b4043c2547d4f724f618f3274801f0",
       "models": ["formal/models/dev_server_lifecycle.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -2968,7 +2978,7 @@
     },
     {
       "path": "scripts/formal-inventory.mjs",
-      "sha256": "1ebbf6e2cfe9c7aef211218d9253aeddc8d0b1a2f65826bd761a9105601964df",
+      "sha256": "1d5b7c5d1d04ecd87c80fc06c94dc4f42807497c718c204bf6c1413b7746dc0a",
       "models": ["formal/models/formal_toolchain.qnt"],
       "candidateLines": [11, 83, 88, 102, 103, 126, 128, 145, 148, 150, 152],
       "review": "mapped-abstraction"
@@ -3955,7 +3965,10 @@
     {
       "path": "src/InboxEmail.tsx",
       "sha256": "53ee7ac4a984061e0552d33827087c793d81a345240a0ed73a36eb0ed7aa0055",
-      "models": ["formal/models/ui_email.qnt"],
+      "models": [
+        "formal/models/ui_email.qnt",
+        "formal/models/ui_email_actions.qnt"
+      ],
       "candidateLines": [
         6, 8, 19, 25, 34, 35, 36, 37, 47, 48, 49, 50, 51, 53, 56, 73, 74, 78,
         79, 80, 103, 105, 114, 119, 130, 144, 145, 148, 149, 163, 169, 173, 179,
@@ -4232,26 +4245,29 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "6f35ba4416432511a9d527545c73fcf80224d953af5d77cd2e5c409dad9494fb",
+      "sha256": "5b4a75a35c0a49f4702018b1f75fb9c9b3fdcce2ef6c6c4c1cc4babd4f6e2adc",
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_draft_save_progress.qnt",
+        "formal/models/ui_draft_slots.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_image_decode.qnt",
         "formal/models/ui_project_draft.qnt",
-        "formal/models/ui_project_setup.qnt"
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_repository_lookup.qnt"
       ],
       "candidateLines": [
-        10, 366, 407, 410, 411, 412, 413, 414, 415, 416, 418, 421, 425, 430,
-        446, 457, 465, 466, 483, 499, 503, 521, 529, 537, 544, 547, 567, 582,
-        583, 754, 755, 757, 760, 765, 766, 786, 789, 790, 792, 793, 798, 803,
-        811, 821, 825, 828, 838, 839, 898, 900, 904, 909, 918, 928, 933, 987,
-        1000, 1008, 1011, 1018, 1087, 1112, 1120, 1121, 1123, 1128, 1132, 1141,
-        1156, 1163, 1253, 1254, 1255, 1257, 1262, 1272, 1282, 1290, 1317, 1327,
-        1334, 1339, 1342, 1371, 1372, 1374, 1375, 1464, 1467, 1494, 1842, 1844,
-        1908, 1917, 1918, 1920, 1930, 1932, 1936, 1947, 1949, 1953, 1954, 1957,
-        1960, 1961, 1962, 1963, 1964, 1965, 1966, 2025, 2026, 2036, 2048, 2059,
-        2060, 2082, 2319, 2336, 2346, 2364, 2367, 2372, 2515, 2523, 2524, 2535,
-        2573, 2578, 2582, 2595, 2596, 2632, 2633, 2634
+        10, 414, 417, 418, 419, 420, 421, 422, 423, 425, 428, 432, 437, 453,
+        464, 472, 473, 490, 506, 510, 528, 536, 544, 551, 554, 574, 589, 590,
+        765, 776, 777, 779, 790, 793, 798, 801, 810, 813, 814, 816, 817, 822,
+        848, 852, 855, 865, 866, 925, 927, 931, 936, 945, 955, 960, 1014, 1027,
+        1035, 1038, 1045, 1114, 1139, 1147, 1148, 1150, 1155, 1159, 1168, 1183,
+        1190, 1280, 1281, 1282, 1284, 1289, 1298, 1308, 1316, 1343, 1353, 1360,
+        1365, 1368, 1379, 1401, 1402, 1404, 1405, 1494, 1497, 1524, 1872, 1874,
+        1936, 1945, 1946, 1948, 1958, 1960, 1964, 1974, 1981, 1994, 1996, 2000,
+        2001, 2004, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2072, 2082, 2094,
+        2125, 2362, 2379, 2389, 2407, 2410, 2415, 2558, 2566, 2567, 2578, 2616,
+        2621, 2625, 2638, 2639, 2652, 2677, 2678, 2679
       ],
       "review": "mapped-abstraction"
     },
@@ -4319,10 +4335,12 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "d88a9230e932ee20f18217d5385daac691b9c246a887f94f350be0db5a7ce77b",
+      "sha256": "845b1bd1c6cef0bb5d440fa26c42008d0db28a106f32458ce22b7f75b785f287",
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt"
       ],
@@ -4335,19 +4353,19 @@
         967, 1005, 1010, 1032, 1107, 1108, 1109, 1110, 1123, 1130, 1135, 1139,
         1140, 1148, 1150, 1155, 1162, 1165, 1201, 1239, 1245, 1301, 1302, 1309,
         1312, 1334, 1354, 1355, 1356, 1360, 1423, 1424, 1425, 1429, 1515, 1568,
-        1575, 1595, 1596, 1597, 1604, 1666, 1671, 1680, 1690, 1700, 1704, 1708,
-        1710, 1755, 1756, 1760, 1763, 1816, 1824, 1852, 1853, 1858, 1859, 1864,
-        1865, 1870, 1922, 1929, 1939, 1940, 1988, 1999, 2000, 2001, 2003, 2007,
-        2013, 2066, 2072, 2077, 2079, 2083, 2122, 2126, 2132, 2158, 2159, 2160,
-        2161, 2162, 2163, 2164, 2308, 2479, 2483, 2511, 2708, 2783, 2784, 2909,
-        2968, 2969, 2976, 2992, 3014, 3031, 3032, 3033, 3036, 3060, 3061, 3070,
-        3101, 3118, 3119, 3120, 3123, 3149, 3150, 3159, 3212, 3275, 3306, 3324,
-        3327, 3328, 3330, 3334, 3340, 3343, 3345, 3349, 3386, 3400, 3436, 3440,
-        3442, 3445, 3519, 3521, 3553, 3575, 3599, 3772, 3904, 4043, 4046, 4048,
-        4055, 4060, 4065, 4066, 4068, 4073, 4089, 4117, 4120, 4127, 4165, 4170,
-        4182, 4183, 4189, 4214, 4216, 4218, 4222, 4223, 4227, 4230, 4231, 4233,
-        4251, 4269, 4274, 4277, 4282, 4285, 4287, 4291, 4296, 4321, 4327, 4370,
-        4373, 4378, 4380, 4418, 4420, 4461, 4480
+        1575, 1595, 1596, 1597, 1604, 1675, 1680, 1689, 1699, 1709, 1713, 1717,
+        1719, 1764, 1765, 1769, 1772, 1825, 1833, 1861, 1862, 1867, 1868, 1873,
+        1874, 1879, 1931, 1938, 1948, 1949, 1997, 2008, 2009, 2010, 2012, 2016,
+        2022, 2075, 2081, 2086, 2088, 2092, 2131, 2135, 2141, 2167, 2168, 2169,
+        2170, 2171, 2172, 2173, 2317, 2488, 2492, 2520, 2717, 2792, 2793, 2918,
+        2977, 2978, 2985, 3001, 3023, 3040, 3041, 3042, 3045, 3069, 3070, 3079,
+        3110, 3127, 3128, 3129, 3132, 3158, 3159, 3168, 3221, 3284, 3315, 3333,
+        3336, 3337, 3339, 3343, 3349, 3352, 3354, 3358, 3395, 3409, 3445, 3449,
+        3451, 3454, 3528, 3530, 3562, 3584, 3608, 3781, 3913, 4052, 4055, 4057,
+        4064, 4069, 4074, 4075, 4077, 4082, 4098, 4126, 4129, 4136, 4174, 4179,
+        4191, 4192, 4198, 4223, 4225, 4227, 4231, 4232, 4236, 4239, 4240, 4242,
+        4260, 4278, 4283, 4286, 4291, 4294, 4296, 4300, 4305, 4330, 4336, 4379,
+        4382, 4387, 4389, 4427, 4429, 4470, 4489
       ],
       "review": "mapped-abstraction"
     },
@@ -4965,6 +4983,18 @@
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
     },
     {
+      "path": "src/lib/project-draft-store.ts",
+      "sha256": "a9bbc9cf625890b4eaa1d70792d53fe1c4b0d91f52866544e836e064f0e76f43",
+      "models": [
+        "formal/models/ui_draft_save_progress.qnt",
+        "formal/models/ui_draft_slots.qnt"
+      ],
+      "candidateLines": [
+        1, 40, 141, 176, 182, 185, 186, 187, 188, 190, 200, 205, 218
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/project-image.mjs",
       "sha256": "4bee8a6f2b6a5fb5b5bf92eed3a4a679b9a367ad9d11e2895a175c850efd823b",
       "models": [],
@@ -4982,7 +5012,10 @@
     {
       "path": "src/lib/project-proposal.ts",
       "sha256": "4ce010721eccf91f50da5c26e0ae5ec32c042088ce64bd5d08eb5c4b11dda923",
-      "models": ["formal/models/ui_project_setup.qnt"],
+      "models": [
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_repository_lookup.qnt"
+      ],
       "candidateLines": [257],
       "review": "mapped-abstraction"
     },
@@ -5304,6 +5337,7 @@
       "sha256": "210cf2bd5c24205f7778f83e9e1aa3317a1ac8b7f89f2a54c997dad41ab6b736",
       "models": [
         "formal/models/ui_resources.qnt",
+        "formal/models/ui_snapshot_cache.qnt",
         "formal/models/ui_time_boundary.qnt"
       ],
       "candidateLines": [
@@ -6136,6 +6170,18 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/close-attempts.ts",
+      "sha256": "c0711815255590c3c29579b55e52a9ca4e9c60439c61893994f3cd114b76a495",
+      "models": [
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_close_recovery_claim.qnt"
+      ],
+      "candidateLines": [
+        45, 58, 59, 81, 83, 84, 86, 90, 120, 125, 128, 129, 142, 154
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/closure-eligibility.ts",
       "sha256": "6bd87c93ebfa2e9bddf0f69882bf74032e302bea1e1dc7b04203bb809805abab",
       "models": [
@@ -6148,7 +6194,11 @@
     {
       "path": "workers/slopbot/contracts.ts",
       "sha256": "a761599308b2102914f025093eb9590f1d1e1f0a21761319f7ee27a31efd01b2",
-      "models": ["formal/models/bot_review_admission.qnt"],
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_review_admission.qnt"
+      ],
       "candidateLines": [358],
       "review": "mapped-abstraction"
     },
@@ -6214,8 +6264,10 @@
     },
     {
       "path": "workers/slopbot/persistence.ts",
-      "sha256": "df0a0d0efc5c97216e23c35b64133a2b71b308b18aed7daaed8e0ea0e8047ce6",
+      "sha256": "551afb522ba32518a9ce8ad7a3ed3616343a6f84064eed362f6c8c62489ce1a4",
       "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_recovery_claim.qnt",
         "formal/models/bot_installation_lifecycle.qnt",
         "formal/models/bot_provider_cost_history.qnt",
         "formal/models/bot_review_lease.qnt",
@@ -6224,9 +6276,9 @@
       "candidateLines": [
         31, 48, 59, 72, 98, 103, 110, 113, 117, 118, 126, 127, 128, 129, 131,
         134, 135, 136, 138, 140, 146, 149, 159, 160, 161, 162, 164, 165, 166,
-        173, 177, 186, 211, 213, 235, 256, 265, 277, 293, 299, 304, 307, 308,
-        319, 320, 323, 327, 330, 331, 353, 356, 357, 376, 382, 385, 416, 474,
-        503, 504
+        173, 177, 186, 211, 213, 235, 256, 265, 277, 294, 295, 297, 308, 314,
+        319, 322, 324, 335, 336, 339, 344, 347, 348, 371, 374, 375, 377, 396,
+        402, 405, 436, 494, 523, 524
       ],
       "review": "mapped-abstraction"
     },
@@ -6291,15 +6343,21 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "b3c926b936f15d266237dc2c6178d9e65e64ff5c2af4f5f401abb71f0f95a288",
-      "models": ["formal/models/bot_moderation.qnt"],
+      "sha256": "012e6a751b5500a7fb24b930cc16c17b90823c4ca8fc9b92430a4af2eafcc5ad",
+      "models": [
+        "formal/models/bot_author_admission.qnt",
+        "formal/models/bot_close_capacity.qnt",
+        "formal/models/bot_close_recovery_claim.qnt",
+        "formal/models/bot_moderation.qnt"
+      ],
       "candidateLines": [
-        3, 143, 256, 271, 280, 290, 293, 485, 639, 788, 841, 977, 982, 987, 989,
-        992, 994, 995, 1006, 1009, 1011, 1068, 1069, 1071, 1072, 1088, 1094,
-        1145, 1181, 1196, 1258, 1263, 1334, 1449, 1456, 1457, 1492, 1509, 1512,
-        1513, 1675, 1680, 1719, 1724, 1731, 1732, 1762, 1811, 1956, 2016, 2022,
-        2033, 2061, 2086, 2094, 2117, 2122, 2198, 2199, 2241, 2276, 2327, 2472,
-        2729, 2804, 2970, 2981, 2989, 3087, 3088, 3128, 3178, 3192, 3208
+        3, 152, 266, 281, 290, 300, 303, 495, 649, 798, 827, 837, 973, 978, 983,
+        985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
+        1090, 1141, 1163, 1164, 1173, 1262, 1264, 1284, 1303, 1380, 1385, 1456,
+        1571, 1578, 1579, 1614, 1631, 1634, 1635, 1797, 1802, 1864, 1877, 1882,
+        1889, 1890, 1894, 1895, 1903, 1919, 1969, 2116, 2176, 2182, 2193, 2221,
+        2246, 2254, 2277, 2282, 2358, 2359, 2401, 2436, 2487, 2632, 2889, 2964,
+        3130, 3141, 3149, 3247, 3248, 3288, 3338, 3352, 3368
       ],
       "review": "mapped-abstraction"
     },
@@ -6557,6 +6615,7 @@
       "path": "workers/slopbot/value-publication-fence.ts",
       "sha256": "deb8ef9188f2ac419c8f156278d17d33b6cd36ff83864b9d95356fd596f71b14",
       "models": [
+        "formal/models/bot_close_capacity.qnt",
         "formal/models/bot_publication_transaction.qnt",
         "formal/models/bot_value_pipeline.qnt"
       ],
@@ -7518,6 +7577,27 @@
       ]
     },
     {
+      "path": "formal/models/bot_author_admission.qnt",
+      "sha256": "982ae372ce9f301abf6d1962ca193e07dd88828fe54a7e316cd36e768cfd73cf",
+      "sources": [
+        "migrations/0117_slopbot_close_attempts.sql",
+        "workers/slopbot/contracts.ts",
+        "workers/slopbot/persistence.ts",
+        "workers/slopbot/review.ts"
+      ],
+      "scenarios": [
+        "ambiguousCloseKeepsAuthorSlotTest",
+        "confirmedCloseCountsOnceTest",
+        "definitiveCloseRefusalReleasesFailedReviewTest",
+        "establishedAuthorMayExceedNewAuthorLimitTest",
+        "expiredReviewCanReclaimItsOwnSlotTest",
+        "expiredSentReviewRetainsSlotTest",
+        "expiredUnsentReviewReleasesSlotTest",
+        "failedUnsentReviewReleasesSlotTest",
+        "newAuthorLastSlotIsAtomicTest"
+      ]
+    },
+    {
       "path": "formal/models/bot_budget_resume.qnt",
       "sha256": "e7d25b3b445fe48c40e8f411d8bb2154b5993c2a2247c187a2e712337829172a",
       "sources": [
@@ -7525,6 +7605,40 @@
         "workers/slopbot/budget-blocks.ts"
       ],
       "scenarios": ["oldClaimCannotResumeTest", "queueLostResponseRetriedTest"]
+    },
+    {
+      "path": "formal/models/bot_close_capacity.qnt",
+      "sha256": "5c89fce331cdd89a14075e86d4e783270378b498d4bca8ad61cbb310e61910ed",
+      "sources": [
+        "migrations/0117_slopbot_close_attempts.sql",
+        "workers/slopbot/close-attempts.ts",
+        "workers/slopbot/contracts.ts",
+        "workers/slopbot/review.ts",
+        "workers/slopbot/value-publication-fence.ts"
+      ],
+      "scenarios": [
+        "breakerDoesNotEraseUnknownRequestTest",
+        "breakerTripsBeforeReservationTest",
+        "changedAuthorityLosesQueuedReservationTest",
+        "concurrentLastSlotHasOneWinnerTest",
+        "confirmedHistoryDoesNotDoubleCountTest",
+        "definitiveRefusalReleasesSlotAndKeepsHistoryTest",
+        "lateCompletionReconcilesWithoutResendingTest",
+        "timeoutDoesNotFreeSlotTest"
+      ]
+    },
+    {
+      "path": "formal/models/bot_close_recovery_claim.qnt",
+      "sha256": "036912d12c37d1bc65e0aa699141d0860f6638e5e50338d922c48b118164bc2d",
+      "sources": [
+        "workers/slopbot/close-attempts.ts",
+        "workers/slopbot/persistence.ts",
+        "workers/slopbot/review.ts"
+      ],
+      "scenarios": [
+        "knownExternalFactSurvivesLeaseExpiryTest",
+        "lateOriginalResponseCannotPublishOverRecoveryTest"
+      ]
     },
     {
       "path": "formal/models/bot_closure_membership.qnt",
@@ -7617,7 +7731,7 @@
     },
     {
       "path": "formal/models/bot_moderation.qnt",
-      "sha256": "3290cc89f09ee4b2e05f3646c8e7290cd4b69282589eee7db5850096aacd2f01",
+      "sha256": "2aa1f89a08e39f26e92095bc9254e948ba0d74ecc17ccd99d55c309333d8e0d4",
       "sources": [
         "migrations/0060_slopbot_maintainer_holds.sql",
         "migrations/0093_slopbot_reopen_source.sql",
@@ -7753,7 +7867,7 @@
     },
     {
       "path": "formal/models/bot_review_lease.qnt",
-      "sha256": "ca12463263428849a199e3d4c9e5225499358a8b65323dc9581a361614635782",
+      "sha256": "741d890a230ce4215d51ee887313185c1ceecdfe9310d6f0a2fd46eed3e00610",
       "sources": [
         "migrations/0045_slopbot_review_leases.sql",
         "workers/slopbot/persistence.ts"
@@ -9831,10 +9945,54 @@
       "scenarios": ["contradictoryPayloadTest", "paidTest", "pendingTest"]
     },
     {
+      "path": "formal/models/ui_draft_save_progress.qnt",
+      "sha256": "7af9828f50a9470c42d93f1ebec7ff11fcca25622a1e4bbecde81002a2caae7a",
+      "sources": [
+        "src/ProjectProposalPage.tsx",
+        "src/lib/project-draft-store.ts"
+      ],
+      "scenarios": [
+        "discardIsAcknowledgedTest",
+        "olderFailureCannotAcknowledgeNewPayloadTest",
+        "partialStorageFailureDoesNotClaimSavedTest",
+        "renderImmediatelyClosesSavedTest",
+        "returningPayloadStillWaitsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_draft_slots.qnt",
+      "sha256": "719ba3cc863f9c8b74100ff7d95b675f008b422572390421a9a2732d92781ee5",
+      "sources": [
+        "src/ProjectProposalPage.tsx",
+        "src/lib/project-draft-store.ts"
+      ],
+      "scenarios": [
+        "cloneNeverGrantsOwnerTest",
+        "delayedPublishKeepsSecondDraftTest",
+        "failedForkStillRetainsRecoverableBytesTest",
+        "legacyImportDoesNotResurrectAfterDiscardTest",
+        "newestDoesNotUseWallClockTest",
+        "partialWriteRemainsRecoverableTest",
+        "serializedEditsHaveDifferentRevisionsTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_email.qnt",
       "sha256": "61f08c34ad3389623fe38662562fb4ae885553b41661558f1137b1273deb9b1f",
       "sources": ["src/InboxEmail.tsx"],
       "scenarios": ["accountChangeTest", "unsubscribeTest", "verifyTest"]
+    },
+    {
+      "path": "formal/models/ui_email_actions.qnt",
+      "sha256": "0976eab826135ba2ba75a2fbba32697a80c967aea947169bb0ad3f4b34e97431",
+      "sources": ["src/InboxEmail.tsx"],
+      "scenarios": [
+        "actorChangeRefusesCompletionTest",
+        "discardedLinkStaysDiscardedTest",
+        "newLinkCompletesTest",
+        "oldFailureLeavesNewLinkTest",
+        "oldSuccessLeavesNewLinkTest"
+      ]
     },
     {
       "path": "formal/models/ui_exclusion_identity.qnt",
@@ -9974,6 +10132,27 @@
       "scenarios": ["acceptedTest", "accountChangeTest", "uncertainRetryTest"]
     },
     {
+      "path": "formal/models/ui_private_report_identity.qnt",
+      "sha256": "2fa807e87eda1c73a85cc558080ed8f3ca7166f4f410bf7a3821bc3deaa04f72",
+      "sources": ["src/SecurityBounty.tsx"],
+      "scenarios": [
+        "accountChangeRemovesBothTest",
+        "bothOpenKeepDistinctReferencesTest",
+        "closingOneKeepsTheOtherTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_private_report_scroll.qnt",
+      "sha256": "fcff79e5fb18e031943ca31b739433b92ec6fb839d79da9c004d4c15badf8b7f",
+      "sources": ["src/SecurityBounty.tsx"],
+      "scenarios": [
+        "blurPreservesScrollTest",
+        "collapseClearsFocusTest",
+        "keyboardScrollsOverflowingReportTest",
+        "returnToStartTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_profile_history.qnt",
       "sha256": "b02f575f92a5287da876ec86fa1d56cc07119061f4e6d04260e5c883c36be01e",
       "sources": ["src/lib/profile-activity.ts", "src/lib/profiles.ts"],
@@ -10065,6 +10244,17 @@
         "noPrematurePaidTest",
         "reportRevisionHistoryTest",
         "verifiedTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_repository_lookup.qnt",
+      "sha256": "b5af43b23a1c332738c8fc89ba7a8c53aa307d719d697ecf65d3c5201fa4a00d",
+      "sources": ["src/ProjectProposalPage.tsx", "src/lib/project-proposal.ts"],
+      "scenarios": [
+        "currentFactsTest",
+        "invalidInputCancelsTest",
+        "obsoleteFactsTest",
+        "typedDescriptionSurvivesTest"
       ]
     },
     {
@@ -10163,6 +10353,20 @@
         "src/lib/project-api.ts"
       ],
       "scenarios": ["cancelTest", "invalidTest", "recheckTest", "signInTest"]
+    },
+    {
+      "path": "formal/models/ui_snapshot_cache.qnt",
+      "sha256": "a100607886c47157b5303f58e68ae0984416a7028b952f1d771837b5b6f60aae",
+      "sources": ["src/lib/use-snapshot.ts"],
+      "scenarios": [
+        "cachedMountTest",
+        "failedForcedRefreshKeepsVisibleRecordTest",
+        "lastConsumerAbortsTest",
+        "oldCleanupCannotUnbindNewReadTest",
+        "oldReadCannotReplaceRefreshCacheTest",
+        "replacedEffectCannotAcceptOldReadTest",
+        "replacementEffectCanJoinBeforeAbortTest"
+      ]
     },
     {
       "path": "formal/models/ui_snapshot_contract.qnt",

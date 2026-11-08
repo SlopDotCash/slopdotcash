@@ -93,8 +93,9 @@ scenarios pass; they do not establish every possible populated migration path.
 
 ## Verification and remaining scope
 
-- The current source's assigned account/project/notification/security/identity
-  suites passed: **318 tests, 0 failures, 2,926 assertions**.
+- The initial assigned account/project/notification/security/identity suite
+  checkpoint passed: **318 tests, 0 failures, 2,926 assertions**. This is
+  historical selected-suite evidence, not the final combined-head result.
 - The added populated-upgrade suite passed: **6 tests, 0 failures, 67 assertions**.
 - Named model scenarios, type checks and seeded simulations run through the
   shared formal runner. Final aggregate TLC verification belongs to the root

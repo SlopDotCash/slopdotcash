@@ -120,7 +120,7 @@ for (const model of models)
   }
 const manifest = {
   schemaVersion: 1,
-  baseline: "3223535c6fa91d8ce5159bf4fce278acf18e286d",
+  baseline: "f4f02c250e4cd1a1db2021c3cb182df96c5cd2de",
   reviewStartedAt: "e3d7dea64f1171f5761033069b98de4fd5cc1e77",
   meaning:
     "Current production source census with lexical state candidates and model links. A mapping is not a complete branch or semantic refinement proof. Pending is unfinished review work.",

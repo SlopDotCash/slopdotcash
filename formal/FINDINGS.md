@@ -43,7 +43,6 @@ claim that all application state errors have been eliminated.
 | Payout presentation | Attempt uncertainty hid a held queue and suggested progress without a wallet or owner commitment | Preserve queue precedence and show the required next action; `backend/security/handler.test.ts` |
 | Payout hold recovery | A cron pre-step could reopen a hold while an old wallet attempt was still active | Keep the hold until the prior attempt is retired; `backend/security/handler.test.ts` |
 | Attempt history | Equal timestamps could select a retired attempt, and a new attempt without a hash could hide an earlier submitted transaction | Use append order to break ties and retain the most recent known transaction; `backend/security/handler.test.ts` |
-
 | Duplicate retirement | A delayed second cancellation reopened a successor's submitted or held outbox | Reopen only when the same atomic batch retired the old attempt; real SQLite and native D1 workflows in `formal/unsigned-retirement-audit.md` |
 | Provider-call ownership | A GitHub check or queued ownership read could outlive the worker lease and still start paid inference | Recheck ownership after remote checks and at database execution time; actual consumer/provider traces in `formal/value-precall-audit.md` |
 | Queued allocation cutoff | A pre-deadline allocation check could commit a queued edit after the automatic cutoff | Enforce the cutoff in the INSERT using database execution time; real SQLite and native D1 evidence in `formal/monthly-cutoff-audit.md` |
@@ -52,6 +51,13 @@ claim that all application state errors have been eliminated.
 | Verifier literal meaning | The upstream fold rewrite could change a string and accept a false invariant | Preserve lexical string/comment boundaries; a real initial-state counterexample is required by the translator regression |
 | Verifier child lifetime | Parent-only timeouts could leave Java running | Supervise and stop the owned process group, retain failure and clean its stage directory; `formal/local-verifier-audit.md` |
 | Signed Points totals | Accepted large negative adjustments could publish an inexact number | Sum signed buckets exactly and refuse an unsafe final total; `formal/aggregation-audit.md` |
+| Close capacity | Concurrent reviews could both pass the daily repository or new-author cap | Reserve capacity in the database before an external close; retain uncertain attempts and release only confirmed refusals; `formal/bot-audit.md` |
+| Close recovery | A late close response or failed follow-up could lose completion or let an old worker publish | Retain immutable attempt evidence and require the current review claim for follow-up work; `workers/slopbot/penalty-appeal.test.ts` |
+| Reopen circuit breaker | A maintainer reversal could trip the breaker while a close waited for its reservation write | Recheck the same seven-day reversal predicate in the reservation statement; `workers/slopbot/penalty-appeal.test.ts` |
+| Project draft ownership | A delayed publication in one tab could erase a newer draft in another | Give each live editor a locked durable slot; clear only its own slot and retain closed-tab recovery; `formal/draft-storage-audit.md` |
+| Draft save feedback | An older saved status could describe a newer pending payload, and early wizard steps hid storage failures | Bind acknowledgement to the rendered payload and show backup feedback at every step; `tests/e2e/project-draft-storage.spec.ts` |
+| Private-report reflow | Enlarged text made the native action selector overflow a narrow viewport | Let the selector shrink within its label; `formal/private-intake-reflow-audit.md` |
+| Private-report navigation | Long report text was not keyboard-scrollable, and two open regions shared a name | Focus the scroll region and bind its name to the individual report headings; `tests/e2e/security-bounty.spec.ts` |
 
 The forwarded-report and payout corrections reuse
 [PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and

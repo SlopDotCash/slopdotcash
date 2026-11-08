@@ -1,89 +1,70 @@
 # State review status
 
-The goal remains active and incomplete. The source census and finite models are
-maintained against `origin/development` in the separate
-`slopdotcash-quint-current` integration worktree. It includes development
-`f4f02c250e4cd1a1db2021c3cb182df96c5cd2de` (including PRs 2400, 2401, 2403 and
-2404). The earlier dirty `slopdotcash`
-checkout is preserved. The prior `slopdotcash-quint` checkpoint and its logs
-remain available; they do not substitute for verification of the latest tree.
+The goal remains active and incomplete. Work targets `origin/development` in
+`slopdotcash-quint-current`, including upstream
+`f4f02c250e4cd1a1db2021c3cb182df96c5cd2de`. The older dirty
+`/Users/shawwalters/slopdotcash` checkout is preserved.
 
-Required policy is recorded in PRD section 12, CONTRIBUTING and identical
-AGENTS/CLAUDE instructions. Quint is lockfile-pinned. The model runner records
-each exact model hash, command, result and diagnostic under ignored
-`evidence/formal/`. It rejects a model changed during its check.
+The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
+require reviewed Quint models and implementation conformance evidence for
+explicit and implicit state transitions. The current global inventory contains
+804 production sources, 272 finite models and 1,026 named scenarios, with zero
+unmapped sources. The separate lexical catalog lists 235 declared lifecycle
+candidates. Neither count establishes complete semantic refinement.
 
-`formal/inventory.json` records production sources, lexical state-review hints,
-model links and explicit pending classifications. Run `formal:inventory:update`
-only after reviewing changes. `formal:coverage` exits unsuccessfully while
-unmapped sources remain. A mapped source is not a proof of full refinement.
+## Integrated corrections
 
-Read the area audits for actual fixes and evidence. Completion still requires
-finishing the source/action inventory, extending models and conformance evidence
-for the pending families, resolving all known discrepancies, and running the
-full code/browser/contract checks against a stable final revision. Production
-deployment and live-provider availability are separate boundaries.
+Read `FINDINGS.md` and the linked area audits for reproduced defects and their
+bounds. The latest integration includes durable close reservations and author
+capacity, execution-time reopen-breaker checks, immutable uncertain-close
+recovery, per-document draft ownership with closed-tab recovery, accurate
+pending-save feedback on every wizard step, private-report reflow, keyboard
+scrolling and distinct accessible identities for simultaneous reports.
 
-The prior file census reached zero unmapped application sources. This is
-a coverage-index milestone, not completion of this goal. Every linked audit
-continues to distinguish finite abstractions from whole-source refinement.
-Remaining work includes cross-tab and navigation/draft interleavings, further
-concurrent backend/payment interactions, exact-revision combined verification,
-and the explicitly listed source-to-model conformance gaps.
+It also retains the earlier identity, publication, stream, migration, report,
+payment, scoring, deadline, ingestion and local-verifier corrections. Original
+authored fixes from PRs 2252 and 2313 and upstream PRs 2400, 2401, 2403 and 2404
+are preserved. Production settings, keys and activation flags were not changed.
 
-The subsequent composition pass added real-handler and browser evidence for
-those concrete interleavings and corrected the discrepancies in `FINDINGS.md`.
-It also integrated the retained-account/recovery work from PR 2403 and reused
-the original authored report/payout fixes from PRs 2252 and 2313. The current
-source and model indexes must pass again after every integration change.
+## Observed validation
 
-The isolated Solana run passed both production-delay scenarios and all 25
-lifecycle scenarios. Rebuilt JavaScript bundles matched all 17 exercised
-bundles. Its receipt distinguishes command-pinned runtime selection and the
-local build-tool workaround from production artifact or mainnet evidence.
-The earlier concurrent run's confirmation timeouts remain failed evidence.
-Full combined code/model/browser verification remains pending; focused passes
-do not close this goal.
+- The frozen `0bc96c5aafab7d1e8c23ae798335f5cb2dced706` checkpoint passed all
+  262 finite TLC checks through the pinned local parser. Its receipt confirms
+  unchanged model/source inputs and no cancellation. This precedes the latest
+  ten models and is not a combined-head pass.
+- The final isolated close implementation passed 179 tests and 971 assertions
+  on `d1848112b5a468b08997a62580e9a45718c517ae`, with a clean unchanged tree.
+- The isolated draft implementation passed 60 selected browser cases plus a
+  16-case capture/partial-write run. Twelve cases in the latter repeat earlier
+  combinations. Both runs had no skips, flakes or unexpected diagnostics.
+  Its five finite models passed separately. Native history used reloads;
+  `pageshow.persisted` was false in all four browser variants, so this is not
+  native BFCache acceptance.
+- Private intake passed 24 selected cases before the two-report label follow-up.
+  The two-report desktop/mobile follow-up passed separately, including its
+  all-rule accessibility check and removal of both bodies on account change.
+  Final local-chain browser lanes remain in progress.
+- The prior six selected LemmaScript modules passed together: 29 functions and
+  855 proof obligations. The current census finds 9,545 runtime functions;
+  unselected functions remain unproved. Broader proof-only research is isolated.
+- The earlier Solana run passed two production-delay and 25 lifecycle cases;
+  all 17 rebuilt JavaScript bundles matched. Local fixtures and build-tool
+  workarounds do not establish mainnet or production deployment acceptance.
 
-The parallel current-development LemmaScript work has been integrated locally.
-Its six selected pure-kernel proof modules passed together after the November 8
-aggregation integration (29 functions and 855 assertions); unselected functions
-remain unproved. No production deployment, live payment or provider activation
-has been performed.
+Exact commands, source/model hashes, failure logs, videos and receipts remain
+under ignored `evidence/`. Earlier interrupted runs, transport timeouts,
+incorrect test probes and failed attempts are retained as failures; later
+focused passes do not retroactively change them.
 
+## Remaining completion work
 
-The latest composition pass adds queued retirement, provider-call ownership
-and monthly-cutoff checks. That census mapped 798 production sources to 253
-finite models, with zero unmapped files. These mappings do not establish full
-refinement. The new real SQL/HTTP workflows reproduced each failure before its
-correction, including native workerd D1 for retirement and allocation cutoff.
+Run the full required code, model, database, contract and browser gates against
+the final combined revision. Finish the private Anvil/Solana browser lanes,
+refresh the PR and exact-head hosted checks, and attach safe walkthrough and
+evidence artifacts. Keep the global inventories current after any further
+source change. Production deployment, live providers, physical devices and
+payment activation remain separate acceptance boundaries.
 
-The earlier `b2cf0141c` checkpoint passed all 753 type/scenario/simulation
-stages for its 251 models with stable source hashes. Its remaining combined
-verification was superseded during integration and is not a full pass.
-Final combined validation must use the new model and source hashes. Browser
-validation also exposed CSS-zoom probes that could read geometry before layout;
-those test-method corrections and their affected runs are recorded separately.
-
-The November 8 integration fixes native feed deadline classification, removes
-the verifier's network server, preserves TLA literals during fold translation,
-pins the actual verifier JAR and supervises child processes on timeout and
-cancellation. It also replaces an unrealistically large browser wheel gesture
-with bounded input; a native-browser control reproduced that test artifact
-without application code. The current-development vetting and commit-census
-changes have three additional models. Refresh both source inventories after
-the active integration work; the earlier counts are historical checkpoints.
-
-The interrupted combined run is not a pass. Its feed defect is fixed; its
-later scan-service timeout and cleanup failures require the new stable run.
-Remaining work includes a confirmed cross-tab draft-backup loss, a confirmed
-mobile private-intake reflow defect, private and local-chain browser lanes,
-the closure-cap concurrency review, model refinements discovered by the
-independent completion audit, native zoom, and final combined verification.
-
-The current checkpoint has 801 mapped sources, 262 models and 972 named
-scenarios. It includes generated production comparisons for exact bucket
-aggregation and models both lifetime and monthly safe-number refusal. The
-lexical normalizer is modeled explicitly, including strings, escaped quotes,
-comments and nested LET boundaries. These counts will change as the active
-draft and closure corrections are integrated; they do not close the goal.
+The source inventory is a review index. Finite models, lexical state discovery,
+selected function proofs and passing workflows do not prove the absence of
+every possible application state error.

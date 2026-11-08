@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "scope": "Current origin/development money-domain and explicitly assigned operational/contributor sources. Model links are partial contracts, not function-by-function semantic refinement. Function candidates are lexical search results.",
+  "scope": "Historical selected-source review checkpoint for money-domain and assigned operational/contributor sources. Its recorded hashes and partial model links are retained as historical evidence and are superseded by formal/inventory.json for current source hashes and mappings. Function candidates are lexical search results, not semantic refinement proofs.",
   "sources": [
     {
       "path": "backend/fee-conversions/handler.ts",

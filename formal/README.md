@@ -6,8 +6,10 @@ The separate older dirty checkout at `/Users/shawwalters/slopdotcash` is preserv
 but is not the target application. Its models and results do not establish
 coverage of this revision.
 
-The review is now integrated with development commit
-`ccc37c36e3f557e7bddf32a95830f29f4876ff9c` (PR 2403). Its four existing
+The current integration includes development commit
+`f4f02c250e4cd1a1db2021c3cb182df96c5cd2de`. The following are earlier
+integration checkpoints, not final verification receipts:
+`ccc37c36e3f557e7bddf32a95830f29f4876ff9c` (PR 2403) contributed four existing
 Quint models are retained as `formal/models/pr_review_*.qnt` and run through
 the same source-bound checker. Earlier validation from the `b92ed9303`
 checkpoint remains historical evidence, not a substitute for final integrated

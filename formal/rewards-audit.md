@@ -13,8 +13,10 @@ mode, contract or operator setting was changed by this review.
 
 ## State families implemented
 
-The money and assigned operational review currently contains 77 finite model families and 285 named
-scenarios. Each model includes explicit `@source` links. These links identify the source
+The table below records the initial money and assigned operational review:
+77 finite model families and 285 named scenarios. It is not the total for the
+selected historical source index or the current global census. Each model
+includes explicit `@source` links. These links identify the source
 of the modeled contract; they do not assert that every method in a linked file
 has been proved to refine that model.
 
@@ -100,12 +102,14 @@ has been proved to refine that model.
 
 ## Source and action inventory
 
-`money-source-inventory.json` contains the selected financial source boundary:
+`money-source-inventory.json` retains a historical selected financial source boundary:
 267 production/configuration/migration/contributor/test-support files, 243 with partial model links,
 24 reviewed stateless helpers and 0 pending source mappings.
 The `*-stateless.json` review maps give a source-specific reason for each pure helper.
-The source index also lists lexical function candidates and source digests to
-navigate the remaining review. Those candidates are not an AST completeness
+Its recorded source hashes and model links have not been refreshed after later
+integrations. Use `formal/inventory.json` for current source hashes, model links
+and coverage counts. The historical index also lists lexical function candidates
+and source digests. Those candidates are not an AST completeness
 claim. Generated, vendor, compiled, ordinary test cases and declaration files are excluded;
 the seven explicitly assigned executable Solana test-support files are listed separately.
 The selected source index has no unmapped file; each mapping is still partial.
