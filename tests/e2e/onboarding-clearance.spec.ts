@@ -1,3 +1,4 @@
+import { enlargeText } from "../text-size";
 /** Agent setup always offers a prompt; only a cleared project gets its own. */
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -82,26 +83,21 @@ test("a cleared project keeps a plain agent setup without an open-work list", as
     path: info.outputPath("project-agent-setup-plain.png"),
     fullPage: true,
   });
-  // 200% zoom keeps setup inside the viewport; 320 px is the mobile limit.
-  if ((page.viewportSize()?.width ?? 0) >= 640) {
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth + 1,
-        ),
-      )
-      .toBe(true);
-    await setup.scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: info.outputPath("project-agent-setup-zoom.png"),
-    });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "1";
-    });
-  }
+  // Check setup with 200% text at the current CSS viewport.
+
+  const restoreEnlargedText1 = await enlargeText(page.locator("body"));
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    )
+    .toBe(true);
+  await setup.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: info.outputPath("project-agent-setup-text-200.png"),
+  });
+  await restoreEnlargedText1();
 
   await page.goto("/projects/asi", { waitUntil: "networkidle" });
   await expect(

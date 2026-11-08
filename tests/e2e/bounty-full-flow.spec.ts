@@ -18,6 +18,7 @@ import {
 } from "../github-api-fixture.mjs";
 import { capturedNotifyEmails } from "../notify-worker-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   escapeRegExp,
   expect,
@@ -1057,18 +1058,14 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     }
     consumedCancellation = null;
     await expectAccessible(maintainer);
-    await maintainer.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    const restoreEnlargedText1 = await enlargeText(maintainer.locator("body"));
     const cancelButton = cancellation.getByRole("button", {
       name: "Cancel old transfer",
       exact: true,
     });
     await cancelButton.focus();
     await maintainer.keyboard.press("Enter");
-    await maintainer.evaluate(() => {
-      document.documentElement.style.zoom = "1";
-    });
+    await restoreEnlargedText1();
     await expect(
       cancellation.getByRole("button", {
         name: "Verify cancellation",
@@ -1198,20 +1195,16 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect((await readCase("reporter-a")).settlement?.ownerRequest).toBeNull();
     await expectAccessible(maintainer);
     await expectAccessible(researcher);
-    if ((maintainer.viewportSize()?.width ?? 0) >= 640) {
-      await maintainer.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await maintainer.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-      await expectAccessible(maintainer);
-      await maintainer.evaluate(() => {
-        document.documentElement.style.zoom = "1";
-      });
-    }
+
+    const restoreEnlargedText2 = await enlargeText(maintainer.locator("body"));
+    expect(
+      await maintainer.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expectAccessible(maintainer);
+    await restoreEnlargedText2();
+
     await maintainer.evaluate(() => window.scrollTo(0, 0));
     await maintainer.screenshot({
       path: test.info().outputPath("paid-owner.png"),

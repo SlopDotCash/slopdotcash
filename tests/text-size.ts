@@ -2,6 +2,15 @@ import type { Locator } from "@playwright/test";
 
 /** Enlarge one rendered subtree, preserving exact inline styles for restoration. */
 export async function enlargeText(root: Locator): Promise<() => Promise<void>> {
+  const settle = () =>
+    root
+      .page()
+      .evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
   const originals = await root.evaluateHandle((element) => {
     const typography = [...element.querySelectorAll<HTMLElement>("*")]
       .filter((element) => element instanceof HTMLElement)
@@ -18,6 +27,7 @@ export async function enlargeText(root: Locator): Promise<() => Promise<void>> {
     }
     return typography.map(({ element, style }) => ({ element, style }));
   });
+  await settle();
   return async () => {
     await originals.evaluate((items) => {
       for (const { element, style } of items) {
@@ -26,5 +36,6 @@ export async function enlargeText(root: Locator): Promise<() => Promise<void>> {
       }
     });
     await originals.dispose();
+    await settle();
   };
 }

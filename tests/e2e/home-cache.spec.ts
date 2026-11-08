@@ -1,3 +1,4 @@
+import { enlargeText } from "../text-size";
 /**
  * First-visit discovery waits only for the project registry, which the site
  * reads from D1 at runtime; no other API or public data response may block it.
@@ -56,13 +57,10 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
       path: test.info().outputPath("cached-projects.png"),
       fullPage: true,
     });
-    // Keep at least 320 CSS pixels for reflow. Doubling the 320px viewport
-    // tests a 160px layout, below the site's supported minimum.
-    if ((page.viewportSize()?.width ?? 0) >= 640) {
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-    }
+    // Check 200% text at the current CSS viewport, including mobile reflow.
+
+    await enlargeText(page.locator("body"));
+
     await expect
       .poll(() =>
         page.evaluate(
@@ -171,7 +169,7 @@ test("a failed registry read keeps the last good projects with a stale label", a
   });
   await expectAccessible(page);
   // The retry control is reachable by keyboard, and the label reflows at
-  // 200% zoom (only where that keeps at least 320 CSS pixels).
+  // 200% text enlargement at the current CSS viewport.
   const retry = notice.getByRole("button", { name: "Try again" });
   for (let step = 0; step < 12; step += 1) {
     if (await retry.evaluate((element) => element === document.activeElement))
@@ -179,19 +177,16 @@ test("a failed registry read keeps the last good projects with a stale label", a
     await page.keyboard.press("Tab");
   }
   await expect(retry).toBeFocused();
-  if ((page.viewportSize()?.width ?? 0) >= 640) {
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      )
-      .toBe(true);
-    await expect(notice).toBeVisible();
-  }
+
+  await enlargeText(page.locator("body"));
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
+  await expect(notice).toBeVisible();
 
   const project = expected[0];
   await page.goto(`/projects/${project.slug}`, { waitUntil: "networkidle" });

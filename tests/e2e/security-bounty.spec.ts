@@ -15,6 +15,7 @@ import {
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   CANCELED,
   expect,
@@ -1969,15 +1970,13 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("security-notice-acknowledged.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    await enlargeText(page.locator("body"));
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("security-notice-zoom.png"),
+      path: test.info().outputPath("security-notice-text-200.png"),
       fullPage: true,
     });
     await context.close();
@@ -2061,12 +2060,10 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("disclosure-approved.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    await enlargeText(page.locator("body"));
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("disclosure-zoom.png"),
+      path: test.info().outputPath("disclosure-text-200.png"),
       fullPage: true,
     });
     expect(diagnostics.count(CANCELED)).toBe(canceled);
@@ -2382,22 +2379,16 @@ test("private settlement requires visibility consent and produces an unsigned re
     path: test.info().outputPath("private-settlement.png"),
     fullPage: true,
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(page.locator("body"));
   await expectAccessible(page, { everyRule: true });
   await page.screenshot({
-    path: test.info().outputPath("private-settlement-zoom.png"),
+    path: test.info().outputPath("private-settlement-text-200.png"),
     fullPage: true,
   });
-  // The existing site supports a minimum layout width of 320 CSS pixels.
-  // At 200% on a 320px viewport it scrolls to that minimum; the request
-  // must not expand the page beyond it.
+  // Enlarged text must preserve the current CSS viewport without page overflow.
   expect(
     await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth <=
-        Math.max(window.innerWidth, 640) + 1,
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
     ),
   ).toBe(true);
   await context.close();
@@ -2768,17 +2759,15 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     path: test.info().outputPath("home-security-bounty.png"),
     fullPage: true,
   });
-  if ((page.viewportSize()?.width ?? 0) >= 640) {
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
-    await expectAccessible(page);
-  }
+
+  await enlargeText(page.locator("body"));
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await expectAccessible(page);
+
   await link.click();
   await expect(
     page.getByRole("heading", {
@@ -3013,9 +3002,7 @@ for (const slowPage of [false, true]) {
         releasePage();
         await (await loaded).finished();
       }
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
+      await enlargeText(page.locator("body"));
       await expectAccessible(page);
       const retry = page.waitForResponse(
         (response) =>
@@ -3344,21 +3331,19 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-inbox.png"),
       fullPage: true,
     });
-    if ((page.viewportSize()?.width ?? 0) >= 640) {
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-      await expectAccessible(page);
-      await page.screenshot({
-        path: test.info().outputPath("slop-report-inbox-zoom.png"),
-        fullPage: true,
-      });
-    }
+
+    await enlargeText(page.locator("body"));
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("slop-report-inbox-text-200.png"),
+      fullPage: true,
+    });
+
     await page.reload({ waitUntil: "networkidle" });
     await report.getByText("Read private report", { exact: true }).click();
     await expect(report.locator(".security-report-text")).toHaveText(
@@ -3822,7 +3807,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       });
       await openPrivateDelivery(page);
       await expect(page.getByRole("alert")).toContainText("is out of date");
-      // The effective layout of the native desktop review at 200% zoom.
+      // Approximate the desktop zoom layout with an 864 CSS-pixel viewport.
       // Backward keyboard navigation must not hide focus under the header.
       const originalViewport = page.viewportSize();
       await page.setViewportSize({ width: 864, height: 498 });
