@@ -239,6 +239,70 @@ async function publicVetting() {
   ).vetting;
 }
 
+test("admin vetting binds protected reads and writes to the displayed actor", async () => {
+  await listPausedProject();
+  const bindActor = (request: Request, expected: string) => {
+    const headers = new Headers(request.headers);
+    headers.set("x-slop-expected-github-id", expected);
+    return new Request(request, { headers });
+  };
+  const before = await vetting.listAssessments();
+  for (const [method, path] of [
+    ["GET", "admin/vetting"],
+    ["POST", "admin/vetting/assessments"],
+    ["POST", "admin/vetting/exemptions"],
+    ["POST", "admin/vetting/exemptions/unknown/revoke"],
+  ] as const) {
+    for (const [expected, status, code] of [
+      [APPLICANT.githubId, 403, "actor_changed"],
+      ["invalid", 400, "invalid_expected_actor"],
+    ] as const) {
+      const response = await vettingApi(
+        bindActor(
+          sessionRequest(
+            method,
+            path,
+            "admin",
+            method === "POST" ? {} : undefined,
+          ),
+          expected,
+        ),
+      );
+      expect(response.status).toBe(status);
+      expect((await response.json()).error).toBe(code);
+    }
+  }
+  expect(await vetting.listAssessments()).toEqual(before);
+  expect(await vetting.listAdmissionExemptions()).toEqual([]);
+  const read = sessionRequest("GET", "admin/vetting", "admin");
+  expect((await vettingApi(read)).status).toBe(200);
+  expect((await vettingApi(bindActor(read, ADMIN.githubId))).status).toBe(200);
+  expect(
+    (
+      await vettingApi(
+        bindActor(
+          sessionRequest("GET", "admin/vetting", "applicant"),
+          APPLICANT.githubId,
+        ),
+      )
+    ).status,
+  ).toBe(403);
+  const queued = await vettingApi(
+    bindActor(
+      sessionRequest("POST", "admin/vetting/assessments", "admin", {
+        projectId: "open-registry",
+        revision: 1,
+        reason: "Actor-bound admission scan",
+      }),
+      ADMIN.githubId,
+    ),
+  );
+  expect(queued.status).toBe(201);
+  // The independent signed-service protocol does not inherit an admin header.
+  const service = await signed("GET", "vetting/requests");
+  expect((await vettingApi(bindActor(service, "invalid"))).status).toBe(200);
+});
+
 describe("community security vetting", () => {
   test("the trusted publisher journals one signed intake attempt", async () => {
     await listPausedProject();

@@ -168,12 +168,14 @@
       "sha256": "e651ccb0701b9d09071310442b0a37b34f0aff6740a7ce02c3e465c97b05b6c0",
       "models": [
         "formal/models/api_request_composition.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_earnings_actor_binding.qnt",
         "formal/models/ui_owner_private_requests.qnt",
         "formal/models/ui_project_authority.qnt",
         "formal/models/ui_project_publication_lifetime.qnt",
         "formal/models/ui_setup_check_lifetime.qnt",
+        "formal/models/vetting_admin_actor.qnt",
         "formal/models/vetting_evidence_access.qnt"
       ],
       "candidateLines": [
@@ -518,6 +520,8 @@
         "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_admin_enforcement_intent.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
@@ -1027,8 +1031,10 @@
     },
     {
       "path": "backend/vetting/handler.ts",
-      "sha256": "d7a2239228cdb702b7c46c19a42817739ea120a295d074b1b4c7460a6f63bb3d",
+      "sha256": "9ca26d070b2aa70c36b542667bf1ec1e011a6616f3e3847020b349808b79e1a7",
       "models": [
+        "formal/models/ui_admin_vetting_requests.qnt",
+        "formal/models/vetting_admin_actor.qnt",
         "formal/models/vetting_admission_lineage.qnt",
         "formal/models/vetting_flag_reinstatement.qnt",
         "formal/models/vetting_result_atomic.qnt",
@@ -1036,10 +1042,10 @@
         "formal/models/vetting_service_auth.qnt"
       ],
       "candidateLines": [
-        109, 110, 256, 273, 275, 331, 389, 391, 398, 416, 552, 583, 666, 676,
-        681, 714, 742, 769, 772, 773, 776, 778, 779, 783, 784, 785, 787, 798,
-        802, 803, 847, 850, 897, 939, 966, 970, 982, 983, 990, 1033, 1165, 1237,
-        1263, 1264
+        110, 111, 258, 275, 277, 333, 391, 393, 400, 418, 554, 585, 668, 678,
+        683, 716, 744, 771, 774, 775, 778, 780, 781, 785, 786, 787, 789, 800,
+        804, 805, 849, 852, 899, 941, 968, 972, 984, 985, 992, 1035, 1167, 1239,
+        1265, 1266
       ],
       "review": "mapped-abstraction"
     },
@@ -4069,45 +4075,54 @@
     },
     {
       "path": "src/Admin.tsx",
-      "sha256": "239062edb180add2e4674aca9ce1fe678c75c998b280ed943cfa98d45b90d1b4",
+      "sha256": "212d15bb0c94b00a7407a5f1c19d08cd3ac74a9e18be7ae6500ecc115a7f6cb9",
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_admin_review.qnt",
+        "formal/models/ui_admin_vetting_requests.qnt",
         "formal/models/ui_focus_session.qnt"
       ],
       "candidateLines": [
-        3, 33, 36, 82, 103, 104, 107, 108, 111, 113, 120, 121, 122, 142, 170,
-        175, 177, 218, 233, 239, 246, 253, 254, 256, 263, 273, 276, 283, 284,
-        290, 297, 305, 306, 337, 342, 364, 473, 510, 516, 519, 521, 547, 687,
-        712, 804, 805, 806, 817, 882, 888, 889, 891, 893, 899, 916, 925, 932,
-        934, 936, 937, 970, 983, 987, 995, 1010, 1017, 1018, 1021, 1022, 1023,
-        1024, 1026, 1031, 1049, 1050, 1153, 1170, 1171, 1188, 1241, 1248, 1258,
-        1259, 1263, 1264, 1272, 1289, 1303, 1304, 1324, 1326, 1330, 1333, 1336,
-        1359, 1360, 1364, 1365
+        3, 33, 36, 87, 108, 109, 112, 113, 116, 118, 125, 126, 127, 147, 175,
+        180, 182, 223, 243, 249, 256, 263, 264, 266, 273, 283, 286, 293, 294,
+        300, 307, 315, 316, 347, 352, 374, 495, 532, 540, 543, 545, 571, 711,
+        736, 832, 833, 834, 837, 849, 932, 938, 939, 941, 943, 949, 968, 977,
+        984, 986, 988, 989, 1022, 1035, 1039, 1047, 1062, 1069, 1070, 1073,
+        1074, 1075, 1076, 1078, 1083, 1101, 1102, 1221, 1238, 1239, 1256, 1309,
+        1316, 1326, 1327, 1331, 1332, 1340, 1357, 1371, 1372, 1392, 1393, 1399,
+        1403, 1406, 1409, 1432, 1433, 1437, 1438
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "sha256": "d70a3409bb4d7f8e4f9c2e57fecf45cb90082a8a8e845b30231ba58dedca6b17",
-      "models": ["formal/models/ui_admin_review.qnt"],
+      "sha256": "3735680d20f2c8a78254a667df014896e9b62c3799ad8a5133161ef8174d2d43",
+      "models": [
+        "formal/models/ui_admin_enforcement_intent.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
+        "formal/models/ui_admin_review.qnt"
+      ],
       "candidateLines": [
-        11, 32, 68, 75, 84, 85, 87, 101, 102, 103, 104, 105, 106, 107, 171, 174,
-        176, 181, 217, 224, 226, 288, 290, 398, 427
+        14, 18, 45, 81, 88, 97, 98, 100, 133, 134, 135, 136, 137, 138, 139, 143,
+        292, 295, 297, 302, 338, 345, 347, 409, 411, 519, 548
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/AdminVetting.tsx",
-      "sha256": "876777f0abd5b64a011a36bef942c5e01ac6395d5f100d60174a94beea8fcfa0",
-      "models": ["formal/models/ui_admin_review.qnt"],
+      "sha256": "9588c42adfc17247b3e4d15f017a63345010fbd3a4cbbbc97404872a5f42d928",
+      "models": [
+        "formal/models/ui_admin_review.qnt",
+        "formal/models/ui_admin_vetting_requests.qnt"
+      ],
       "candidateLines": [
-        24, 44, 51, 61, 62, 67, 85, 97, 101, 103, 112, 127, 128, 129, 130, 131,
-        320, 321, 322, 404, 407, 409, 414, 502, 503, 511, 516, 622, 641, 642,
-        643, 644, 645, 646, 650, 654, 658, 662, 674, 678, 679, 682, 684, 686,
-        691, 694, 697, 698, 700, 704, 707, 710, 712, 729, 736, 738, 739, 752,
-        758, 760, 766, 768, 782, 788, 796, 802, 827, 885, 888, 889, 911
+        24, 49, 56, 66, 67, 72, 90, 102, 106, 108, 117, 150, 151, 152, 197, 198,
+        199, 388, 473, 476, 478, 483, 571, 572, 580, 585, 691, 718, 719, 720,
+        721, 722, 723, 730, 740, 744, 752, 766, 770, 771, 774, 776, 778, 783,
+        786, 789, 790, 792, 796, 799, 802, 804, 821, 828, 830, 831, 844, 850,
+        852, 858, 860, 874, 880, 888, 894, 919, 987, 990, 991, 1023
       ],
       "review": "mapped-abstraction"
     },
@@ -4276,18 +4291,19 @@
     },
     {
       "path": "src/Inbox.tsx",
-      "sha256": "4b3f3a416d1c56573e251c5e2263dd0de1f35bec78e62710235a16a98e5ba033",
+      "sha256": "63c4ab3903e95906765ec676121d850f74a3a38f331572f307154ea0f0d8db96",
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_inbox_mutation_focus.qnt",
+        "formal/models/ui_incomplete_assessments.qnt",
         "formal/models/ui_points_disputes.qnt"
       ],
       "candidateLines": [
         15, 17, 47, 48, 49, 50, 52, 58, 62, 76, 82, 87, 89, 109, 111, 134, 136,
         142, 143, 144, 147, 149, 156, 171, 172, 182, 184, 186, 187, 198, 209,
         212, 218, 219, 227, 228, 252, 257, 260, 266, 272, 273, 282, 283, 295,
-        303, 325, 326, 328, 330, 334, 336, 342, 347, 348, 349, 354, 360, 369,
-        380, 383, 395, 396, 413, 416, 424, 430, 535
+        303, 325, 326, 328, 330, 334, 336, 342, 347, 348, 349, 354, 362, 371,
+        382, 385, 397, 398, 415, 418, 426, 432, 537
       ],
       "review": "mapped-abstraction"
     },
@@ -4312,9 +4328,12 @@
     },
     {
       "path": "src/IncompleteAssessments.tsx",
-      "sha256": "aa686d8c7c21b5cc0981bb8f73dde6565ea080ac3c10b9974ae403d4493a0b5e",
-      "models": ["formal/models/ui_inbox.qnt"],
-      "candidateLines": [1, 18, 19, 20, 21, 22, 23, 30, 79, 103],
+      "sha256": "45e9a2ae387c65c2e83795cb198786842d38e1c8711934a18f5a4bb5c7d3a04c",
+      "models": [
+        "formal/models/ui_inbox.qnt",
+        "formal/models/ui_incomplete_assessments.qnt"
+      ],
+      "candidateLines": [1, 22, 23, 24, 25, 26, 27, 34, 59, 103, 127],
       "review": "mapped-abstraction"
     },
     {
@@ -4851,6 +4870,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/admin-request.ts",
+      "sha256": "e5c8ea7d548f20bd05002a12b64de30172bcf14b4f3cc32e9ac94ea957e31b3f",
+      "models": [
+        "formal/models/ui_admin_mutation_identity.qnt",
+        "formal/models/ui_admin_vetting_requests.qnt"
+      ],
+      "candidateLines": [10, 21],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/allocation-funding-basis.mjs",
       "sha256": "fd029374e2b45e0cf4ec8ee02a9ca45fbaedd71e925bbdfaa7a758a45ae17d3f",
       "models": ["formal/models/allocation_funding.qnt"],
@@ -5138,9 +5167,9 @@
     {
       "path": "src/lib/incomplete-assessments.ts",
       "sha256": "480b238655319ece6ab73b1af2697425cb2a34952774dac34c33efc6362862cc",
-      "models": [],
+      "models": ["formal/models/ui_incomplete_assessments.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure bounded metadata response parser; no retained state, request or mutation."
     },
     {
@@ -5258,9 +5287,9 @@
     {
       "path": "src/lib/notifications.ts",
       "sha256": "24d5a7adb62abcb1bec1d805a1f18755c6b5eab85d79c5c1432c0601fd700876",
-      "models": [],
+      "models": ["formal/models/ui_incomplete_assessments.qnt"],
       "candidateLines": [73, 191, 274, 275],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state."
     },
     {
@@ -5400,6 +5429,7 @@
       "sha256": "0f540723e540ac3f8cb0f4b8d1ae2d5e482eda671ce0f5ad3d67482f2b97e7ac",
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_focus_session.qnt",
@@ -7258,7 +7288,7 @@
     },
     {
       "path": "workers/slopbot/value-processing.ts",
-      "sha256": "1b7a074415c41fab9b84d6809e4d618cfee1c71a0c552c761ef4e6edf3a264e7",
+      "sha256": "2b5d5b220a2da9b2461df36e2b72640c88ca9348a3e2e735f271531e9dff6048",
       "models": [
         "formal/models/api_incomplete_assessments.qnt",
         "formal/models/bot_value_pipeline.qnt",
@@ -7266,8 +7296,8 @@
       ],
       "candidateLines": [
         19, 35, 37, 52, 53, 64, 86, 87, 94, 98, 99, 100, 101, 123, 147, 155,
-        156, 157, 159, 160, 163, 164, 174, 175, 176, 188, 205, 208, 233, 254,
-        256, 268, 269
+        156, 157, 159, 160, 163, 164, 174, 176, 177, 189, 206, 209, 234, 255,
+        257, 269, 270
       ],
       "review": "mapped-abstraction"
     },
@@ -8921,7 +8951,7 @@
     },
     {
       "path": "formal/models/bot_value_request.qnt",
-      "sha256": "0d91e66106f1ea2be2905e5a9b625780c4adf1ba514405a4980f28dd9aac6ed1",
+      "sha256": "a71e1e274676bdfd656bdb925cafd66198ccaaa15f39f97a2ec6725aadf7cb69",
       "sources": [
         "migrations/0050_slopbot_value_requests.sql",
         "migrations/0052_slopbot_value_processing.sql",
@@ -8933,9 +8963,15 @@
         "workers/slopbot/value-processing.ts"
       ],
       "scenarios": [
+        "capturedClockAtExpiryIsRefusedTest",
+        "completedHasNoCurrentLeaseTest",
         "oldLeaseCannotCompleteTest",
         "parkedWaitsForActivationTest",
-        "transientRetryDoesNotAdvanceBlockedCountTest"
+        "queuedFinishAfterExpiryIsRefusedTest",
+        "staleQueuedTokenCannotCompleteCurrentLeaseTest",
+        "transientRetryDoesNotAdvanceBlockedCountTest",
+        "unclaimedHasNoCurrentLeaseTest",
+        "waitingHasNoCurrentLeaseTest"
       ]
     },
     {
@@ -11467,6 +11503,52 @@
       ]
     },
     {
+      "path": "formal/models/ui_admin_enforcement_intent.qnt",
+      "sha256": "abccee36c25b244daf4fc34e8cba023b9c473ac2c043d6b57380fd694835cc80",
+      "sources": [
+        "backend/projects/handler.ts",
+        "src/AdminProjectEnforcement.tsx"
+      ],
+      "scenarios": [
+        "cancelAndNewPreviewUsesNewInputTest",
+        "changedAccountIdentityRefusesApplyTest",
+        "changedPendingInputRequiresNewPreviewTest",
+        "changedPropsHideOldConfirmationTest",
+        "changedSequenceHidesOldConfirmationTest",
+        "changedServerSequenceRefusesCapturedRequestTest",
+        "mismatchingPreviewCannotBeConfirmedTest",
+        "restoredExactInputMayUseReplyTest",
+        "unchangedPreviewConfirmsExactRequestTest",
+        "unchangedPropsStillUseOldServerVersionTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_admin_mutation_identity.qnt",
+      "sha256": "2d4e3e31bef1f43add0d492496406de91dac91fffb1f466a043a4389829da3be",
+      "sources": [
+        "backend/http.ts",
+        "backend/projects/handler.ts",
+        "src/Admin.tsx",
+        "src/AdminProjectEnforcement.tsx",
+        "src/lib/admin-request.ts",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "busyCallerRefusesSecondMutationTest",
+        "changedDraftStaysOpenTest",
+        "departedAcceptedSaveCanClearUnchangedBytesTest",
+        "departedAcceptedSaveCannotClearNewDraftTest",
+        "departedPreflightStartsNoMutationTest",
+        "knownRefusalHidesPrivateViewKeepsDraftTest",
+        "ordinarySaveClearsMatchingDraftTest",
+        "sameActorFailurePreservesDraftTest",
+        "swapAfterCommitCannotPublishSuccessTest",
+        "swapBeforeDispatchCannotCommitTest",
+        "temporaryErrorNeedsMatchingActorTest",
+        "unknownErrorIdentityHidesPrivateViewTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_admin_resource_identity.qnt",
       "sha256": "9d6b08e622a1898547c54d2e68f25d69ceb54961680063b2853c2f18555b89c6",
       "sources": [
@@ -11500,6 +11582,39 @@
         "src/AdminVetting.tsx"
       ],
       "scenarios": ["accessLossTest", "applyTest", "conflictTest"]
+    },
+    {
+      "path": "formal/models/ui_admin_vetting_requests.qnt",
+      "sha256": "c5f7b4719925b6dd89fd682b77176d33739c2ce89d8a2be8ff1c22f57ec474a0",
+      "sources": [
+        "backend/vetting/handler.ts",
+        "src/Admin.tsx",
+        "src/AdminVetting.tsx",
+        "src/lib/admin-request.ts"
+      ],
+      "scenarios": [
+        "acceptedDepartureStartsNoRefreshTest",
+        "acceptedOldLifetimeCannotRefreshNewActorTest",
+        "alreadyAcceptedDepartureRetainsWriteTest",
+        "changedMutationPreflightSendsNothingTest",
+        "changedPreflightCannotDispatchReadTest",
+        "currentReadPublishesTest",
+        "currentSuccessRefreshesOnceTest",
+        "departedPreflightCannotSendMutationTest",
+        "departedReadDoesNotPublishTest",
+        "dispatchCookieMismatchRefusesServerWriteTest",
+        "dispatchCookieSurvivesLaterSwapTest",
+        "duplicateMutationRefusesTest",
+        "forbiddenMutationClearsPrivateParentTest",
+        "newerReadWinsTest",
+        "readForbiddenClearsParentTest",
+        "readPostflightMismatchClearsParentTest",
+        "refreshRechecksActorBeforeSendingTest",
+        "submittedPayloadRemainsCapturedTest",
+        "temporaryMutationFailureKeepsPrivateViewTest",
+        "temporaryReadFailureAllowsRetryTest",
+        "unavailableReadIdentityClearsParentTest"
+      ]
     },
     {
       "path": "formal/models/ui_artifacts.qnt",
@@ -11848,6 +11963,29 @@
         "focusResumesAfterMutationTest",
         "signedOutBeforePostPreventsSendTest",
         "unavailableIdentityHidesPrivateViewAndReleasesActionTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_incomplete_assessments.qnt",
+      "sha256": "223d74289ec2d7a6ecead565e47dce5510b9351be5c770605b66b4aa16aa033a",
+      "sources": [
+        "src/Inbox.tsx",
+        "src/IncompleteAssessments.tsx",
+        "src/lib/incomplete-assessments.ts",
+        "src/lib/notifications.ts"
+      ],
+      "scenarios": [
+        "departedReplyCannotNotifyReplacementTest",
+        "matchingNextPageTest",
+        "newerPageOwnsCompletionTest",
+        "refusalAfterSwapCannotRetainParentTest",
+        "refusedSameActorReloadsParentTest",
+        "sameActorOutageKeepsParentTest",
+        "sessionOutageHidesParentTest",
+        "signOutClearsParentTest",
+        "successfulOldPageCannotRetainParentTest",
+        "transportFailureStillChecksActorTest",
+        "unavailableInitialCanRetryTest"
       ]
     },
     {
@@ -13043,6 +13181,20 @@
         "acquisitionFailureDoesNotConsumeQueueTest",
         "completePinnedAcquisitionTest",
         "partialBatchCannotClearTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting_admin_actor.qnt",
+      "sha256": "fd73aa98b493797dd688032aa1a2a26e96dfa89852d5a3dcf20c0c3d562e06fe",
+      "sources": ["backend/http.ts", "backend/vetting/handler.ts"],
+      "scenarios": [
+        "absentHeaderKeepsLegacyAdminTest",
+        "changedActorCannotReadOrWriteTest",
+        "expectedHeaderDoesNotGrantAdminTest",
+        "malformedHeaderRefusesTest",
+        "matchingAdminTest",
+        "serviceRouteKeepsIndependentSignatureTest",
+        "signedOutRemainsUnauthorizedTest"
       ]
     },
     {

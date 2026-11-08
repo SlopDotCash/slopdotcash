@@ -265,3 +265,25 @@ Admin list/fee reads bind their actor and recheck identity. Retaining a private
 list after a transport failure requires a completed matching admin check;
 timeout during that check clears the old data. New models and regression
 definitions are unexecuted. The related audits state each external boundary.
+
+## Admin intent, assessment access and value finish
+
+Enforcement confirmation rebuilt a request from current inputs after showing
+an older preview. The corrected control stores and confirms the reviewed
+payload, including its project revision, sequence and resolved account IDs.
+Admin writes and vetting reads/writes also bind the initiating actor, suppress
+departed callbacks and invalidate the private parent on access loss. An
+accepted editor write retains its exact-byte draft cleanup semantics.
+
+Incomplete-assessment pagination removed only its own page when identity or
+access changed, leaving the parent's earlier private notifications visible.
+It now asks the parent to revalidate or report the known identity change.
+The vetting handler also enforces the existing expected-actor header before
+an admin request can read or write.
+
+Value-request finish used its captured timestamp as the lease clock. A queued
+statement could therefore complete after actual expiry. The final SQL fence
+now requires the lease to exceed both the captured and execution clocks and
+preserves every owner/sibling record when refused. Five new models and refined
+worker scenarios add 67 unexecuted cases; the added browser, handler and SQLite
+definitions are also unexecuted. Source review is not runtime acceptance.

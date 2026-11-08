@@ -352,6 +352,8 @@ export default function InboxPage() {
                 key={`incomplete:${recipient}`}
                 actorId={recipient}
                 initial={state.value.incompleteAssessments}
+                onChange={load}
+                onIdentityChange={reportsIdentityChanged}
               />
             </Suspense>
           ) : null}

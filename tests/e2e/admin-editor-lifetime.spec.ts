@@ -12,18 +12,23 @@ function gate() {
 }
 
 /** The existing admin fixture, with a held save response and session refresh. */
-async function editorFixture(page: Page) {
+async function editorFixture(page: Page, moderation = false) {
   const project = PROJECTS.find((entry) => entry.id === "asi");
   if (!project) throw new Error("Missing fixture project");
   await serveProjectMaintainer(page, () => project);
   let sessionGate: ReturnType<typeof gate> | null = null;
   let sessionReads = 0;
+  let session: { githubId: string; githubLogin: string; admin: boolean } | null = {
+    githubId: "4242",
+    githubLogin: "operator",
+    admin: true,
+  };
   await page.route("**/api/v1/project-session", async (route) => {
     sessionReads++;
     if (sessionGate) await sessionGate.promise;
     await route.fulfill({
       json: {
-        session: { githubId: "4242", githubLogin: "operator", admin: true },
+        session,
       },
     });
   });
@@ -46,7 +51,7 @@ async function editorFixture(page: Page) {
       restrictedBy: [],
       nextSequence: 1,
       revisionPending: false,
-      moderation: "unconfigured",
+      moderation: moderation ? "moderator" : "unconfigured",
       decisionRequired: false,
       bannedMaintainers: [],
       records: [],
@@ -73,6 +78,7 @@ async function editorFixture(page: Page) {
     }),
   );
   const saveGate = gate();
+  let saveFailure = 0;
   const saves: {
     manifest: ProjectDefinition;
     expectedRevision: number;
@@ -81,9 +87,17 @@ async function editorFixture(page: Page) {
   const savePath = `/api/v1/admin/projects/${project.id}/manifest`;
   await page.route(`**${savePath}`, async (route) => {
     expect(route.request().method()).toBe("PUT");
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
     const body = route.request().postDataJSON();
     saves.push(body);
     await saveGate.promise;
+    if (saveFailure) {
+      await route.fulfill({
+        status: saveFailure,
+        json: { error: "forbidden", message: "Admin access ended." },
+      });
+      return;
+    }
     manifest = body.manifest;
     revision = 2;
     await route.fulfill({ json: { project: record() } });
@@ -102,11 +116,20 @@ async function editorFixture(page: Page) {
   const draftKey = `slop:admin-project:${project.id}:1`;
   return {
     description,
+    project,
+    record,
     reason,
     draftKey,
     savePath,
     saves,
     releaseSave: saveGate.release,
+    refuseSave(status: 401 | 403) {
+      saveFailure = status;
+      session =
+        status === 401
+          ? null
+          : { githubId: "4242", githubLogin: "operator", admin: false };
+    },
     holdSession() {
       sessionGate = gate();
       const held = sessionGate;
@@ -233,6 +256,202 @@ test("editing during admin save retains newer content and reports only the submi
     expect(fixture.saves[0].manifest.headline).toBe(
       "The submitted project description",
     );
+  } finally {
+    fixture.releaseSave();
+  }
+});
+
+for (const status of [401, 403] as const) {
+  test(`an admin save refusal ${status} removes the private view and preserves the local draft`, async ({
+    page,
+    diagnostics,
+  }) => {
+    const fixture = await editorFixture(page);
+    diagnostics.allowResponse(status, "PUT", fixture.savePath);
+    try {
+      await fixture.description.fill("A draft kept after admin access ends");
+      await fixture.reason.fill("Keep this work for an authorized retry.");
+      await expect.poll(() => savedDescription(page, fixture.draftKey)).toBe(
+        "A draft kept after admin access ends",
+      );
+      await page
+        .getByRole("button", { name: "Save revision 2", exact: true })
+        .click();
+      await expect.poll(() => fixture.saves.length).toBe(1);
+      fixture.refuseSave(status);
+      fixture.releaseSave();
+      await expect(page.locator("form.admin-editor")).toHaveCount(0);
+      await expect(
+        page.getByRole("heading", { name: fixture.project.name, exact: true }),
+      ).toHaveCount(0);
+      expect(await savedDescription(page, fixture.draftKey)).toBe(
+        "A draft kept after admin access ends",
+      );
+    } finally {
+      fixture.releaseSave();
+    }
+  });
+}
+
+function enforcementPreview(
+  input: { action: string; expectedRevision: number; expectedSequence: number },
+  record: ReturnType<Awaited<ReturnType<typeof editorFixture>>["record"]>,
+) {
+  return {
+    projectId: record.id,
+    projectName: record.manifest.name,
+    action: input.action,
+    sequence: input.expectedSequence,
+    stateBefore: "clear",
+    stateAfter: input.action === "ban" ? "banned" : "quarantined",
+    appealBefore: "none",
+    appealAfter: "none",
+    result: "revision_appended",
+    pendingReason: null,
+    maintainerBans: [],
+    revision: {
+      before: input.expectedRevision,
+      after: input.expectedRevision + 1,
+      statusBefore: record.status,
+      statusAfter: "paused",
+      listingTierBefore: record.manifest.listingTier,
+      listingTierAfter: "retired",
+    },
+  };
+}
+
+test("editing a pending enforcement preview cannot confirm a different action", async ({
+  page,
+}) => {
+  const fixture = await editorFixture(page, true);
+  const heldPreview = gate();
+  const previews: {
+    action: string;
+    reason: string;
+    evidenceReference: string;
+    expectedRevision: number;
+    expectedSequence: number;
+  }[] = [];
+  const applied: typeof previews = [];
+  const base = `/api/v1/admin/projects/${fixture.project.id}`;
+  await page.route(`**${base}/enforcement-preview`, async (route) => {
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+      "4242",
+    );
+    const body = route.request().postDataJSON();
+    previews.push(body);
+    if (previews.length === 1) await heldPreview.promise;
+    await route.fulfill({
+      json: { preview: enforcementPreview(body, fixture.record()) },
+    });
+  });
+  await page.route(`**${base}/enforcement`, (route) => {
+    applied.push(route.request().postDataJSON());
+    return route.fulfill({ json: {} });
+  });
+  try {
+    await page
+      .getByRole("navigation", { name: "Project administration" })
+      .getByRole("link", { name: "Overview", exact: true })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Enforcement",
+      exact: true,
+    });
+    await panel
+      .getByLabel("Action", { exact: true })
+      .selectOption("quarantine");
+    await panel
+      .getByLabel("Reason", { exact: true })
+      .fill("Review a suspected malicious change");
+    await panel.getByLabel("Evidence link or case ID").fill("case-first");
+    await panel
+      .getByRole("button", { name: "Preview action", exact: true })
+      .click();
+    await expect.poll(() => previews.length).toBe(1);
+    await panel.getByLabel("Action", { exact: true }).selectOption("ban");
+    await panel
+      .getByLabel("Reason", { exact: true })
+      .fill("Review a confirmed malicious change");
+    await panel.getByLabel("Evidence link or case ID").fill("case-second");
+    heldPreview.release();
+    await expect(panel.getByRole("alert")).toContainText("The request changed.");
+    await expect(
+      panel.getByRole("button", { name: "Confirm: Quarantine", exact: true }),
+    ).toHaveCount(0);
+    expect(applied).toEqual([]);
+    await panel
+      .getByRole("button", { name: "Preview action", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("button", { name: "Confirm: Ban project", exact: true }),
+    ).toBeVisible();
+    await panel
+      .getByRole("button", { name: "Confirm: Ban project", exact: true })
+      .click();
+    await expect.poll(() => applied.length).toBe(1);
+    expect(applied[0]).toEqual(previews[1]);
+    expect(applied[0]).toMatchObject({
+      action: "ban",
+      reason: "Review a confirmed malicious change",
+      evidenceReference: "case-second",
+    });
+  } finally {
+    heldPreview.release();
+    fixture.releaseSave();
+  }
+});
+
+test("a changed project revision invalidates its displayed enforcement preview", async ({
+  page,
+}) => {
+  const fixture = await editorFixture(page, true);
+  const applied: unknown[] = [];
+  const base = `/api/v1/admin/projects/${fixture.project.id}`;
+  await page.route(`**${base}/enforcement-preview`, (route) =>
+    route.fulfill({
+      json: {
+        preview: enforcementPreview(
+          route.request().postDataJSON(),
+          fixture.record(),
+        ),
+      },
+    }),
+  );
+  await page.route(`**${base}/enforcement`, (route) => {
+    applied.push(route.request().postDataJSON());
+    return route.fulfill({ json: {} });
+  });
+  try {
+    await page
+      .getByRole("navigation", { name: "Project administration" })
+      .getByRole("link", { name: "Overview", exact: true })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Enforcement",
+      exact: true,
+    });
+    await panel
+      .getByLabel("Reason", { exact: true })
+      .fill("Review a suspected malicious change");
+    await panel.getByLabel("Evidence link or case ID").fill("case-before-delist");
+    await panel
+      .getByRole("button", { name: "Preview action", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("button", { name: "Confirm: Quarantine", exact: true }),
+    ).toBeVisible();
+    fixture.releaseSave();
+    await page.getByRole("button", { name: "Delist", exact: true }).click();
+    await page.getByRole("button", { name: "Delist project", exact: true }).click();
+    await expect.poll(() => fixture.record().revision).toBe(2);
+    await expect(
+      panel.getByRole("button", { name: "Confirm: Quarantine", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      panel.getByRole("button", { name: "Preview action", exact: true }),
+    ).toBeEnabled();
+    expect(applied).toEqual([]);
   } finally {
     fixture.releaseSave();
   }

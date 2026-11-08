@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "69435a314fc3cdfcaf2856c179f7189d6882274fb51ca3e55a493501fa488b20",
+  "inventorySha256": "d154b6d2ea7bb06e2c967d26fbae758bd2114e5766aa0c029c38917e0be5499d",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -112,6 +112,8 @@
         "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_admin_enforcement_intent.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
@@ -134,6 +136,8 @@
         "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_admin_enforcement_intent.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
@@ -1981,14 +1985,16 @@
     },
     {
       "path": "src/Admin.tsx",
-      "line": 1188,
+      "line": 1256,
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_admin_review.qnt",
+        "formal/models/ui_admin_vetting_requests.qnt",
         "formal/models/ui_focus_session.qnt"
       ],
       "lexicallyUnmentionedValues": ["not_converted", "usdc"],
@@ -1996,21 +2002,29 @@
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 106,
+      "line": 138,
       "name": "useState",
       "kind": "string-union",
       "values": ["apply", "preview"],
-      "models": ["formal/models/ui_admin_review.qnt"],
+      "models": [
+        "formal/models/ui_admin_enforcement_intent.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
+        "formal/models/ui_admin_review.qnt"
+      ],
       "lexicallyUnmentionedValues": ["apply"],
       "review": "candidate-only"
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 129,
+      "line": 175,
       "name": "mode",
       "kind": "string-union",
       "values": ["enforcement", "enforcement-preview"],
-      "models": ["formal/models/ui_admin_review.qnt"],
+      "models": [
+        "formal/models/ui_admin_enforcement_intent.qnt",
+        "formal/models/ui_admin_mutation_identity.qnt",
+        "formal/models/ui_admin_review.qnt"
+      ],
       "lexicallyUnmentionedValues": ["enforcement", "enforcement-preview"],
       "review": "candidate-only"
     },

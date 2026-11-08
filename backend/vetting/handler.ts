@@ -36,6 +36,7 @@ import {
   json as jsonResponse,
   PROJECT_ID,
   pathParts,
+  requireActor,
 } from "../http";
 import type { ProjectPersistence } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
@@ -225,6 +226,7 @@ async function requireAdmin(
 ): Promise<WebSession> {
   const session = await deps.session(request);
   if (session === null) fail(401, "unauthorized", "Sign in with GitHub");
+  await requireActor(request, { sessionActor: async () => session });
   if (!session.admin) fail(403, "forbidden", "Admin access is required");
   return session;
 }

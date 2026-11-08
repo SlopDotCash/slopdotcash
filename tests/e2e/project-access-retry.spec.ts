@@ -217,7 +217,7 @@ for (const boundary of ["viewer", "final-session", "admission"] as const) {
     });
     diagnostics.allowCanceledBackgroundReads();
     if (boundary === "admission")
-      diagnostics.allowResponse(409, "GET", "/api/v1/project-setup/eliza");
+      diagnostics.allowResponse(403, "GET", "/api/v1/project-setup/eliza");
     await page.route("**/api/v1/project-session", (route) =>
       route.fulfill({
         json: {
@@ -240,7 +240,7 @@ for (const boundary of ["viewer", "final-session", "admission"] as const) {
         expect(response.status).toBe(200);
         await route.fulfill({ json: { viewer: { githubId: "4243" } } });
       } else {
-        if (boundary === "admission") expect(response.status).toBe(409);
+        if (boundary === "admission") expect(response.status).toBe(403);
         await route.fulfill({
           status: response.status,
           headers: Object.fromEntries(response.headers),

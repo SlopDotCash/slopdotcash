@@ -171,7 +171,8 @@ export async function finishValueRequest(
          AND r.owner=claimed.owner AND r.repo=claimed.repo
          AND (r.delivery_id=owner.delivery_id OR r.received_at<=?3)
        WHERE owner.delivery_id=?1 AND owner.claim_token=?2
-         AND owner.state='running' AND owner.lease_until>?7
+         AND owner.state='running'
+         AND owner.lease_until>max(?7,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
        ON CONFLICT(delivery_id) DO UPDATE SET claim_token=excluded.claim_token,
          state=excluded.state,outcome=excluded.outcome,retry_at=excluded.retry_at,
          -- The delivery_id predicate is load-bearing, not redundant: the SELECT

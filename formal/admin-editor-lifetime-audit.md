@@ -4,6 +4,11 @@ This source-only correction starts from `e4ee8a3c`. No tests, syntax/type/lint/
 format checks, browser runs, simulations or model verifiers were executed.
 The implementation and seven model scenarios remain unvalidated.
 
+The later source-only follow-up in `admin-mutation-intent-audit.md` adds actor
+binding and private-parent invalidation around these saves, while preserving
+this exact-byte cleanup and newer-draft behavior. Its separate models do not
+turn the earlier unexecuted scenarios into runtime evidence.
+
 `ProjectEditor` in `src/Admin.tsx` previously removed its project/revision
 draft key and called `onSaved` whenever the manifest PUT resolved. The parent
 callback reloads the project list and calls `backToOverview`, whose URL guard
