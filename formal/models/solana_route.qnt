@@ -2,6 +2,8 @@
 // @source workers/fee-converter/verified-jupiter-policy.ts
 // @source workers/fee-converter/jupiter-route-schema.ts
 // @source workers/fee-converter/jupiter-wire.ts
+// @source workers/fee-converter/verified-jupiter-wire.ts
+// @source workers/fee-converter/jupiter-values.ts
 // @source workers/fee-converter/solana-accounts.ts
 // @source workers/fee-converter/solana-native-route.ts
 // @source workers/fee-converter/solana-route-accounts.ts

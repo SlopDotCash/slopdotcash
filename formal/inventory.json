@@ -51,7 +51,7 @@
     },
     {
       "path": ".github/workflows/lemmascript.yml",
-      "sha256": "e960384c74048874abcc84737ebd50ba8f807376d00c4786c25772a6468e846f",
+      "sha256": "0d05aed5f32c82dbe9844226a9fcac8d56ddb5a96495eeda81c366591af1f315",
       "models": [
         "formal/models/formal_toolchain.qnt",
         "formal/models/release_proof_gate.qnt"
@@ -2810,9 +2810,12 @@
     },
     {
       "path": "scripts/check-lemmascript.mjs",
-      "sha256": "69ab48c9a71221d84a6cc20bbfd12f1e82314e2a438f6db0a96860a9d077c247",
-      "models": ["formal/models/formal_toolchain.qnt"],
-      "candidateLines": [35, 89, 101, 104, 112, 119, 280],
+      "sha256": "045e6de0afc3098c913b7b1f12819e7435672a431fa2b97fa894d44b7d3d45af",
+      "models": [
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/jupiter_generation.qnt"
+      ],
+      "candidateLines": [35, 89, 104, 107, 115, 122, 297],
       "review": "mapped-abstraction"
     },
     {
@@ -3155,6 +3158,16 @@
       "sha256": "c84c4a71adff6a655ce6f12925e2c03081be95e02aaf6dcd80a44e372fad1396",
       "models": ["formal/models/formal_toolchain.qnt"],
       "candidateLines": [25, 105, 107, 111, 115, 124],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/generate-jupiter-decoder.mjs",
+      "sha256": "ff05474292647f0ebccb3ea3ba0ca9e9ee1deb26db4271a0809b8ecf97afe814",
+      "models": [
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/jupiter_generation.qnt"
+      ],
+      "candidateLines": [26, 30, 469],
       "review": "mapped-abstraction"
     },
     {
@@ -5874,8 +5887,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/fee-converter/jupiter-values.ts",
+      "sha256": "30933119dd3509af67676a520367b64276c1f1dbe0ce7a24b8d9656ee7d652f2",
+      "models": ["formal/models/solana_route.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/fee-converter/jupiter-wire.ts",
-      "sha256": "2538c10df170baec6fc7e4a2839fe33d0494423328da900906a37db3bd0e401c",
+      "sha256": "54f6e43b4a3d9985f57ce56bd4b0045d0801d35a7a9c4b8e9b72ce1001646dd5",
       "models": ["formal/models/solana_route.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5989,6 +6009,13 @@
         "formal/models/fee_quote_policy.qnt",
         "formal/models/solana_route.qnt"
       ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/fee-converter/verified-jupiter-wire.ts",
+      "sha256": "cab8b96162a42a9d2c7e300deea8dcedfae39334b2c13fc8d67a2e23acde1bd8",
+      "models": ["formal/models/solana_route.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -9302,7 +9329,7 @@
     },
     {
       "path": "formal/models/formal_toolchain.qnt",
-      "sha256": "0ce6b89a1581b18a00ef2938c5065db861cbbd55e4898ce8b4e89ae31e9218e7",
+      "sha256": "dfa71c916a040a1de6e59c9ce35d491beb8c113639ce03059ee0af9ecb8631ed",
       "sources": [
         ".github/workflows/formal.yml",
         ".github/workflows/lemmascript.yml",
@@ -9311,6 +9338,7 @@
         "scripts/check-lemmascript.mjs",
         "scripts/formal-inventory.mjs",
         "scripts/formal-state-catalog.mjs",
+        "scripts/generate-jupiter-decoder.mjs",
         "scripts/install-ci-chromium.sh",
         "scripts/install-value-merge-git.ts",
         "scripts/lemmascript-integrity.mjs",
@@ -9477,6 +9505,27 @@
         "extendsExactPrefixTest",
         "interruptedStagePreservesPublicationTest",
         "reorderIsRejectedTest"
+      ]
+    },
+    {
+      "path": "formal/models/jupiter_generation.qnt",
+      "sha256": "4905037a912814242b54930c4034d4fce7c98b966718bf5a62b843d4e8548f78",
+      "sources": [
+        "scripts/check-lemmascript.mjs",
+        "scripts/generate-jupiter-decoder.mjs"
+      ],
+      "scenarios": [
+        "changedInputCannotCertifyTest",
+        "checkedGenerationIsNotTheoremTest",
+        "failedTheoremCannotCertifyTest",
+        "invalidSchemaWritesNothingTest",
+        "missingCompilerBaselineRefusesTest",
+        "partialWriteIsNotProofTest",
+        "repeatedWriteFailureInvalidatesTest",
+        "staleBaselineCannotCertifyTest",
+        "staleSourceRefusesSyncTest",
+        "syncedProofIsNotTheoremTest",
+        "writeDoesNotCreateProofTest"
       ]
     },
     {
@@ -10540,17 +10589,19 @@
     },
     {
       "path": "formal/models/solana_route.qnt",
-      "sha256": "69f11626004fd261dfdf49593099574c6abb0c3d6f3998718f928627e05cbbd8",
+      "sha256": "c15ae163243e4b5ce73956ead32204906a5a4b057b36ffc0f4952f4f11894f75",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/fee-converter/jupiter-route-schema.ts",
         "workers/fee-converter/jupiter-route.ts",
+        "workers/fee-converter/jupiter-values.ts",
         "workers/fee-converter/jupiter-wire.ts",
         "workers/fee-converter/solana-accounts.ts",
         "workers/fee-converter/solana-native-route.ts",
         "workers/fee-converter/solana-route-accounts.ts",
         "workers/fee-converter/solana-route-receipt.ts",
         "workers/fee-converter/verified-jupiter-policy.ts",
+        "workers/fee-converter/verified-jupiter-wire.ts",
         "workers/fee-converter/verified-route-credit.ts"
       ],
       "scenarios": [
