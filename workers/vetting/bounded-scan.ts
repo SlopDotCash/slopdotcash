@@ -214,6 +214,19 @@ const MSBUILD_RECIPE = new RegExp(
 );
 /** Ant reads `build.xml` as XML. Imported files keep whatever name they have. */
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
+/**
+ * An Ant document executes attribute values after XML normalization whatever
+ * its filename, so an imported build identifies itself by a leading `<project>`
+ * root. Allow a BOM, XML declaration, comments, and doctype before it, but
+ * require the root to open the document so a `<project>` mentioned in prose or
+ * embedded in another file is not decoded as Ant.
+ */
+const ANT_ROOT = new RegExp(
+  String.raw`^${String.fromCharCode(0xfeff)}?\s*(?:<\?xml[^>]*\?>\s*)?(?:(?:<!--[\s\S]*?-->|<!DOCTYPE[^>]*>)\s*)*<project(?=[\t\n\r />])`,
+  "u",
+);
+/** Maven POMs share the lowercase `<project>` root but are not Ant documents. */
+const MAVEN_POM = /xmlns\s*=\s*["']http:\/\/maven\.apache\.org\/POM\//u;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
 const SOURCE_EXTENSIONS =
@@ -1715,9 +1728,10 @@ export function inspectRepository(input: {
       continue;
     }
     const text = decode(file.bytes);
-    // Ant imports may use any filename. Its project root identifies the
-    // executable build document without parsing XML or resolving entities.
-    if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
+    // Ant imports may use any filename. A `<project>` element anywhere marks
+    // the executable build surface without parsing XML or resolving entities.
+    const antProject = text !== null && /<project(?=[\t\n\r />])/u.test(text);
+    if (antProject) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
@@ -1731,15 +1745,19 @@ export function inspectRepository(input: {
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
-    // MSBuild and Ant build.xml execute attribute values after XML
-    // normalization. MSBuild also executes property element text after
-    // character references are decoded. Shell text, and every other file,
-    // is left as written.
+    // MSBuild and any Ant build execute attribute values after XML
+    // normalization. An Ant build is identified by a leading `<project>` root
+    // whatever its filename (an imported `ci/common.xml` runs the same way),
+    // while a Maven POM shares that root but is not Ant. The `build.xml` name
+    // stays covered even when its root is obscured. MSBuild also executes
+    // property element text after character references are decoded. Shell
+    // text, and every other file, is left as written.
     const msbuild = MSBUILD_RECIPE.test(file.path);
+    const antBuild =
+      (antProject && ANT_ROOT.test(text) && !MAVEN_POM.test(text)) ||
+      ANT_BUILD_XML.test(file.path);
     const attributes =
-      msbuild || ANT_BUILD_XML.test(file.path)
-        ? xmlAttributeRuleText(text, msbuild)
-        : undefined;
+      msbuild || antBuild ? xmlAttributeRuleText(text, msbuild) : undefined;
     const ruleText = attributes?.text ?? text;
     const provenNonMatches = new Set<RegExp>();
     const found = checkText(
