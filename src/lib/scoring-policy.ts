@@ -10,12 +10,10 @@
  */
 import { isExactUtc } from "./record-validation.mjs";
 import { VALUE_RUBRIC_VERSION } from "./value-assessment";
-import {
-  allocateReviewShares,
-  MAX_CREDITED_REVIEWERS,
-} from "./verified-review-allocation";
+import { allocateWeighted } from "./verified-allocation";
 
-export { MAX_CREDITED_REVIEWERS } from "./verified-review-allocation";
+/** PRD section 7: up to the first five distinct qualifying reviewers. */
+export const MAX_CREDITED_REVIEWERS = 5 as const;
 
 export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
 
@@ -121,10 +119,10 @@ export function allocateReviewCredit(
     throw new RangeError(
       `Review credit needs one to ${MAX_CREDITED_REVIEWERS} positive integer weights`,
     );
-  return allocateReviewShares(
+  return allocateWeighted(
     BigInt(poolThirds),
     weights.map((weight) => BigInt(weight)),
-  ).map(Number);
+  ).amounts.map(Number);
 }
 
 export interface QualifyingReview<Actor extends { id: string }> {

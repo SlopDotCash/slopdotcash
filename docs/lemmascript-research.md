@@ -6,7 +6,7 @@ This work implements the owner's 7 November 2026 request to research the entire
 frontend and backend, select the strongest LemmaScript candidates, implement
 those contracts, and integrate them with the concurrent Quint work.
 
-The implementation starts from current `origin/development`, commit
+The initial implementation started from `origin/development`, commit
 `e3d7dea64f1171f5761033069b98de4fd5cc1e77`, in a separate worktree. The original
 checkout had a materially different application and economic policy. It was
 preserved; its source and policy were not used as the integration baseline.
@@ -81,38 +81,50 @@ maintenance surface without improving the selected acceptance result.
 | --- | --- | --- |
 | Ordinary payment policy | `verified-money`: `ordinaryFeeAmount`, `ordinaryFeeMatches`; `payments/contracts` | Upward 2% rounding, zero for nonpositive projections, exact historical floor compatibility and no third accepted fee |
 | Private-bounty policy | `bountyFeeAmount`; `payments/contracts` | Exact 25/75 split after the existing positive, bounded and divisible-by-four checks |
-| Allocation arithmetic | `weightedShare`; project, review-budget, quality, funding-review allocators | Nonnegative bounded floor quota, remainder bounds, and exact quotient/remainder conservation per contributor |
-| Complete review-credit allocation | `verified-review-allocation`; `scoring-policy.allocateReviewCredit` | Exact conservation, bounded floor-or-ceiling shares and largest-remainder order with original-index ties for one to five reviewers |
+| Allocation arithmetic | `weightedShare`; the actor-order adapter | Nonnegative bounded floor quota, remainder bounds, and exact quotient/remainder conservation per contributor |
+| Complete allocation | `verified-allocation.allocateWeighted`; project, quality, funding-review, review-budget and review-credit callers | Exact conservation, bounded floor-or-ceiling shares and largest-remainder order for any finite nonnegative weight list; empty and all-zero lists produce zero amounts |
 | Contributor allocations | `verified-frontend`: `allocationDisposition` | Recorded-transfer precedence, closure refusal, registered-wallet scheduling, and deadline-dependent unclaimed state |
 | Private draft retention | `draftStillNeeded`; `intake-drafts` | Keep only unresolved locally submitted cases; recorded advisories and terminal refusals release the draft |
 | Public-resource retention | `transientHttpStatus`; `use-public-resource` | Transient/server failures differ from 4xx authorization/refusal responses |
 | Cache/time boundaries | `freshCacheAge`, `identityPollDelay`; `use-snapshot`, `identity-flow` | Half-open freshness interval and poll delay bounded by both allowed interval and remaining lifetime |
 | Funding/display | `fundingReminderVisible`, `roundedUsdcCents` | Suppression for terminal/inapplicable funding states and exact half-up minor-unit display |
+| Decimal amount input | `verified-decimal`; shared `base-units` entry point and vault/project/bounty callers | Exact ASCII decimal decoding, power-of-ten scaling and fractional range; proved uint128 whole-length refusal |
+| Native receipt costs | `executionGasCost`, `nativeFeeTotal`, `normalizedNativeDelta`, `solanaNativeFee` | Exact execution/blob/data/operator totals; payer-only SOL normalization; native principal excluded before the final cost comparison |
 | Fee-conversion arithmetic | `workers/fee-converter/verified-arithmetic` | Exact directional division, slippage floor, cap intersection, strict requote reduction, reserve/rent accounting, price-impact ceiling and replacement percentage rounding |
+| Remainder ordering | `verified-allocation.sortRemainders`; project, quality, funding-review and review-budget allocation | Checked merge sort preserves every row and orders exact remainders with the supplied tie ordinal, for any finite list |
+| Exact collection totals | `verified-allocation.sumAmounts`; project, review, quality and funding weights, monthly replacement/frozen totals, received-money validation | Exact sum for any finite BigInt array; nonnegative inputs remain nonnegative |
+| Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
+| Native budgets and review timeout | `verified-budget`; fee converter, referral poster, payment keeper and vetting review plan | Exact existing positive/daily-budget acceptance and capped review-call timeout |
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
 
 ### Allocation claim boundary
 
-`weightedShare` proves `amount * totalWeight + remainder = total * weight`,
-`0 <= remainder < totalWeight`, and `0 <= amount <= total` under nonnegative
-weights and a positive total. Project, review-budget, quality and funding-review
-callers use this implementation. Their actor uniqueness, aggregation, sorting
-and residual distribution remain outside the per-term proof.
+`allocateWeighted` now proves the complete numerical allocation algorithm.
+Its inputs are a nonnegative BigInt total and a finite list of nonnegative
+BigInt weights. A positive weight sum allocates every unit of the total;
+empty or all-zero weights allocate zero. Every output is nonnegative and
+bounded by the total. For a positive weight sum, every amount is its floor
+quota or one unit more, and rounded-up rows precede unrounded rows by exact
+remainder and supplied input ordinal.
 
-The review-credit caller now uses the complete `allocateReviewShares` loop
-proof. For one through five positive weights it proves exact pool conservation,
-nonnegative bounded shares, floor-or-ceiling quotas, largest-remainder
-selection and original-index tie order. Five is the existing reviewer cap,
-not an added product restriction. BigInt pool and weight magnitudes are not
-bounded in the proof. The public wrapper keeps its safe-integer guards and
-existing errors, and each result is bounded by its safely representable pool.
+The implementation calls the proved sum and merge-sort functions in the same
+source module. This avoids trusting imported method axioms. The generated
+bodies, loop invariants, recursive proofs and proof-only additions all pass
+the existing strict integrity gate. This replaces the earlier five-reviewer
+prototype and the separate sum/sort modules; no list-size cap is added.
 
-Neither proof establishes actor identity, reviewer eligibility, source time,
-or score authority. Those remain in the existing selection code and the
-Quint-generated workflow replay. The unrestricted project/funding allocators
-still need whole-list proofs. `allocateIntegerTotal` receives nonnegative
-weights through the existing validated scoring path; this is a reviewed caller
-assumption, not a newly proved public input validator.
+The project, quality, funding-review and review-budget allocators share an
+adapter that groups equal remainders and retains their existing actor/locale
+comparison. Review credit passes its already ordered weights directly and
+keeps the existing maximum of five reviewers, safe-integer checks and errors.
+It converts each bounded output back to a number within that validated range.
+
+The numerical proof does not establish actor identity, duplicate exclusion,
+review eligibility, source time, the adapter's grouping or ICU collation.
+Those remain explicit source/caller obligations, covered by source review,
+workflow regressions and Quint conformance checks. A complete algorithm
+contract is stronger than a per-term proof, but is not whole-application
+refinement.
 
 ### Confirmed defect: scientific gas-price rounding
 
@@ -180,12 +192,22 @@ provider behavior, database transactions, economic policy, deployment,
 wallet control, or chain finality.
 
 The detailed reports rank remaining sequence/collection and parser candidates.
-Highest follow-on work is unrestricted largest-remainder conservation with
-actor uniqueness, review selection and penalty aggregation, monthly allocation
-replacement invariants, byte decoder bounds, and intake/notification selection.
+Highest follow-on work is actor-identity and grouping refinement, review
+selection and penalty aggregation, monthly allocation replacement invariants,
+byte decoder bounds, display formatting, and intake/notification selection.
 Those need larger loop/sequence proofs and explicit parser semantics. They are
 recorded as unproved, not replaced with assumptions or marked complete merely
 because the source appears in the inventory.
+
+Native `Array.sort` remains a boundary for actor collation only. In pinned
+LemmaScript 0.6.6, `tools/dist/dafny-emit.js` represents native sorting with a
+trusted `SeqSortBy` axiom. Imported method contracts likewise emit axioms.
+The integrity gate continues to reject those declarations. The numerical
+sum, merge sort and complete allocation now reside in one checked source
+module, so the proof contains their executable bodies. The adapter compares
+actors only within equal-remainder groups and supplies those ordinals to the
+proved allocator. Its identity mapping and native collation remain separate
+from the numerical theorem.
 
 Quint owns asynchronous/concurrent transition exploration; implementation tests
 exercise real entry points. A model link, a source hash, a test pass, and a proof

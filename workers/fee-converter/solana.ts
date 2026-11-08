@@ -1,12 +1,13 @@
+import { sumAmounts } from "../../src/lib/verified-allocation";
 import {
   proveSolanaExpiry,
   type RecoveryRpc,
   recoveryOperator,
 } from "./solana-expiry";
 import {
-  greaterAmount,
   minimumOutput,
   rentIncrease,
+  solanaNativeFee,
   spendableNative,
 } from "./verified-arithmetic";
 /**
@@ -344,7 +345,8 @@ export function solanaNativeCost(
   accounts: readonly number[],
   nativePrincipal = 0n,
 ): bigint {
-  let actual = nativeInteger(meta.fee);
+  const fee = nativeInteger(meta.fee);
+  const rent: bigint[] = [];
   const nativeToken = "So11111111111111111111111111111111111111112";
   const tokenNative = (balances: TokenBalance[], index: number) => {
     const b = balances.find(
@@ -361,13 +363,15 @@ export function solanaNativeCost(
       tokenNative(meta.postTokenBalances, index);
     if (before < 0n || after < 0n)
       throw new Error("Solana native rent receipt is inconsistent");
-    actual += rentIncrease(before, after);
+    rent.push(rentIncrease(before, after));
   }
-  const walletDebit =
-    nativeInteger(meta.preBalances[0]) -
-    nativeInteger(meta.postBalances[0]) -
-    nativePrincipal;
-  return greaterAmount(actual, walletDebit);
+  return solanaNativeFee(
+    fee,
+    sumAmounts(rent),
+    nativeInteger(meta.preBalances[0]),
+    nativeInteger(meta.postBalances[0]),
+    nativePrincipal,
+  );
 }
 
 export function createSolanaClient(options: SolanaClientOptions): ChainClient {

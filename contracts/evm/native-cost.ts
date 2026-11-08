@@ -1,4 +1,5 @@
 import type { Address, Hex, TransactionReceipt } from "viem";
+import { executionGasCost, nativeFeeTotal } from "../../src/lib/verified-money";
 
 type ReceiptClient = {
   request(input: {
@@ -19,11 +20,17 @@ export async function evmReceiptNativeCost(
   receipt: TransactionReceipt,
   base: boolean,
 ): Promise<bigint> {
-  let cost = receipt.gasUsed * receipt.effectiveGasPrice;
+  const execution = executionGasCost(
+    receipt.gasUsed,
+    receipt.effectiveGasPrice,
+  );
+  let blob = 0n,
+    data = 0n,
+    operatorFee = 0n;
   if (receipt.type === "eip4844") {
     if (receipt.blobGasUsed === undefined || receipt.blobGasPrice === undefined)
       throw new Error("Finalized blob fee is unavailable");
-    cost += receipt.blobGasUsed * receipt.blobGasPrice;
+    blob = executionGasCost(receipt.blobGasUsed, receipt.blobGasPrice);
   }
   if (base) {
     const raw = (await client.request({
@@ -49,7 +56,8 @@ export async function evmReceiptNativeCost(
     });
     if (!operator.data || !/^0x[0-9a-fA-F]{64}$/u.test(operator.data))
       throw new Error("Base operator fee evidence is unavailable");
-    cost += BigInt(raw.l1Fee as string) + BigInt(operator.data);
+    data = BigInt(raw.l1Fee as string);
+    operatorFee = BigInt(operator.data);
   }
-  return cost;
+  return nativeFeeTotal(execution, blob, data, operatorFee);
 }

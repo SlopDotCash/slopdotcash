@@ -10,9 +10,11 @@
  * or recorded with the plan as sharing its reviewed bytes, and the review is
  * complete only when every call completed.
  */
+
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
+import { boundedReviewTimeout } from "../verified-budget";
 import {
   DETERMINISTIC_COVERAGE_ID,
   INVENTORY_SCHEMA,
@@ -88,7 +90,7 @@ const plannedItemBytes = ({ item, aliases }: PlannedItem) =>
 const tokens = (bytes: number) => Math.ceil(bytes / BYTES_PER_TOKEN);
 /** A larger input gets more time; an outage still fails as a retry. */
 export const callTimeoutMs = (estimatedTokens: number) =>
-  Math.min(600_000, 120_000 + estimatedTokens);
+  boundedReviewTimeout(estimatedTokens);
 
 function planned(evidence: string, items: number): PlannedCall {
   return {

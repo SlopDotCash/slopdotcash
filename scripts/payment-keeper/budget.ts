@@ -2,6 +2,10 @@ import { type Hex, keccak256, serializeTransaction } from "viem";
 import { PROJECT_SIZE, solanaBase58 } from "../../contracts/solana/adapter";
 import type { Signer } from "../../workers/payment-executor/core";
 import type { SolanaSigner } from "../../workers/payment-executor/solana";
+import {
+  positiveBudgetFits,
+  withinBudget,
+} from "../../workers/verified-budget";
 import type { KeeperStore } from "./storage";
 
 export interface GasBudget {
@@ -36,10 +40,7 @@ export function validateBudget(value: GasBudget) {
   ] as const)
     if (!/^(0|[1-9][0-9]*)$/.test(value[key]))
       throw new Error(`Invalid gas budget ${key}`);
-  if (
-    BigInt(value.perTransaction) === 0n ||
-    BigInt(value.perDay) < BigInt(value.perTransaction)
-  )
+  if (!positiveBudgetFits(BigInt(value.perTransaction), BigInt(value.perDay)))
     throw new Error(
       "Daily gas budget must cover one positive transaction budget",
     );
@@ -100,8 +101,12 @@ function reserve(
   if ((unresolved.get(group) ?? 0n) < maximum) unresolved.set(group, maximum);
   for (const value of unresolved.values()) committed += value;
   if (
-    maximum > BigInt(budget.perTransaction) ||
-    committed > BigInt(budget.perDay)
+    !withinBudget(
+      maximum,
+      committed,
+      BigInt(budget.perTransaction),
+      BigInt(budget.perDay),
+    )
   )
     throw new Error(
       "Operator gas budget reached; signed unknown transactions remain reserved",

@@ -55,3 +55,42 @@ export function ordinaryFeeMatches(gross: bigint, fee: bigint): boolean {
 export function bountyFeeAmount(gross: bigint): bigint {
   return gross / 4n;
 }
+
+/** Native execution charge before chain-specific data and operator fees. */
+//@ verify
+//@ requires gasUsed >= 0 && gasPrice >= 0
+//@ ensures \result == gasUsed * gasPrice
+//@ ensures \result >= 0
+//@ ensures gasUsed == 0 || gasPrice == 0 ==> \result == 0
+export function executionGasCost(gasUsed: bigint, gasPrice: bigint): bigint {
+  return gasUsed * gasPrice;
+}
+
+/** Every witnessed native fee component is included once. */
+//@ verify
+//@ requires execution >= 0 && blob >= 0 && data >= 0 && operator >= 0
+//@ ensures \result == execution + blob + data + operator
+//@ ensures \result >= execution && \result >= blob && \result >= data && \result >= operator
+export function nativeFeeTotal(
+  execution: bigint,
+  blob: bigint,
+  data: bigint,
+  operator: bigint,
+): bigint {
+  return execution + blob + data + operator;
+}
+
+/** The fee is removed from the payer's balance change only. */
+//@ verify
+//@ requires before >= 0 && after >= 0 && fee >= 0
+//@ ensures \result + before == after + (payer ? fee : 0)
+//@ ensures !payer ==> \result == after - before
+//@ ensures payer ==> \result == after - before + fee
+export function normalizedNativeDelta(
+  before: bigint,
+  after: bigint,
+  fee: bigint,
+  payer: boolean,
+): bigint {
+  return after - before + (payer ? fee : 0n);
+}

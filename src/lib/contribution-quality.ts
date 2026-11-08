@@ -2,7 +2,7 @@
 import { sha256Hex } from "./async-sha256.mjs";
 import { isCanonicalExternalSourceUrl } from "./external-sources";
 import { exactRecord, type FundingPreparation } from "./funding-review-data";
-import { weightedShare } from "./verified-money";
+import { allocateWeightedRows } from "./weighted-allocation";
 
 export const QUALITY_TIERS = {
   micro: 1,
@@ -216,34 +216,26 @@ export function allocateQualityWeights(
     "Negative quality weight",
   );
   const cap = BigInt(capMinor);
-  const total = [...weights.values()].reduce((sum, weight) => sum + weight, 0n);
-  const rows = [...weights].map(([id, weight]) => ({
-    id,
-    ...(total
-      ? weightedShare(cap, weight, total)
-      : { amount: 0n, remainder: 0n }),
-  }));
-  rows.sort((a, b) => {
-    if (a.remainder !== b.remainder) return a.remainder > b.remainder ? -1 : 1;
-    const left = actorLogins.get(a.id) ?? a.id,
-      right = actorLogins.get(b.id) ?? b.id;
-    const leftLogin = left.toLocaleLowerCase("en"),
-      rightLogin = right.toLocaleLowerCase("en");
-    return (
-      leftLogin.localeCompare(rightLogin, "en") ||
-      left.localeCompare(right, "en") ||
-      a.id.localeCompare(b.id, "en")
-    );
-  });
-  let remaining = total
-    ? cap - rows.reduce((sum, row) => sum + row.amount, 0n)
-    : 0n;
-  for (const row of rows)
-    if (remaining > 0n) {
-      row.amount++;
-      remaining--;
-    }
-  return new Map(rows.map((row) => [row.id, row.amount.toString()]));
+  const rows = [...weights].map(([id, weight]) => ({ id, weight }));
+  const allocated = allocateWeightedRows(
+    cap,
+    rows,
+    (row) => row.weight,
+    (a, b) => {
+      const left = actorLogins.get(a.id) ?? a.id,
+        right = actorLogins.get(b.id) ?? b.id;
+      const leftLogin = left.toLocaleLowerCase("en"),
+        rightLogin = right.toLocaleLowerCase("en");
+      return (
+        leftLogin.localeCompare(rightLogin, "en") ||
+        left.localeCompare(right, "en") ||
+        a.id.localeCompare(b.id, "en")
+      );
+    },
+  );
+  return new Map(
+    allocated.map(({ row, amount }) => [row.id, amount.toString()]),
+  );
 }
 export function calculateQualityReview(
   evidence: QualityEvidence,

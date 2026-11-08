@@ -5,5 +5,8 @@ src/lib/verified-frontend.ts
 workers/fee-converter/verified-arithmetic.ts
 
 workers/verified-policy.ts
-src/lib/verified-review-allocation.ts
+src/lib/verified-partition.ts
+workers/verified-budget.ts
+src/lib/verified-allocation.ts
+src/lib/verified-decimal.ts
 src/lib/verified-aggregation.ts

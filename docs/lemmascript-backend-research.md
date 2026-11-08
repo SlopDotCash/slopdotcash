@@ -189,3 +189,36 @@ whole native-cost accumulation, schema validation, provider data, database
 transactions, code generation and current contract code remain explicit trust
 or verification boundaries. Final exact-head repository checks, current
 Quint models and browser results belong in the integrated verification record.
+
+## Evidence and budget proof extension
+
+The production evidence layout now uses two BigInt partition functions. For
+any positive total, positive part limit and valid part index, the proof gives
+positive bounded lengths and contiguous offsets. Every nonfinal part has the
+limit's size; the final part satisfies exact total conservation. The existing
+array index, digest, key and size checks still validate the records. The
+large-evidence API and backup paths share this implementation. There is no
+new total-size cap, and these arithmetic proofs do not establish stored-byte
+integrity or access authority.
+
+`workers/verified-budget.ts` supplies the existing positive transaction/day
+predicate, keeper cap predicate and review-call timeout. Native fee conversion,
+referral limits and keeper signing retain their exact parsing and error paths.
+Quint and the real database/local-chain tests still cover outstanding sends,
+nonce groups, leases and midnight transitions. The verifier does not treat a
+scalar cap check as proof of the entire budget journal.
+
+## Native receipt accounting extension
+
+EVM receipt accounting now calls proved execution-product and component-total
+functions without changing the order of receipt checks and provider calls.
+Solana balance deltas call a proved payer-only normalization. The converter
+uses the proved sum for rent increments and a proved fee-versus-principal
+comparison. These contracts do not establish RPC truth, receipt identity,
+finality, uniqueness of the supplied account indexes or signing authority.
+
+The converter/adapter regression suite and the actual local Anvil and Solana
+flows pass. The Solana flow captures a public route before cloning and performs
+the swap only in its local validator. The test receipt's fee-plus-rent cost
+reconciles separately from native principal. Test artifacts and logs remain
+under ignored evidence directories; no signing bytes are published.
