@@ -79,6 +79,14 @@ method routeValue(bindings: seq<RouteBinding>, name: string) returns (res: strin
 
 method routeBindingError(bindings: seq<RouteBinding>, expected: RouteExpectedKeys, shared: bool) returns (res: string)
   requires forall i: int :: ((0 <= i) ==> (i < |bindings|) ==> (bindings[i].value != ""))
+  requires (expected.wallet != "")
+  requires (expected.source != "")
+  requires (expected.destination != "")
+  requires (expected.inputMint != "")
+  requires (expected.outputMint != "")
+  requires (expected.inputProgram != "")
+  requires (expected.outputProgram != "")
+  requires (expected.program != "")
   ensures (res == RouteBindingError(bindings, expected, shared))
 {
   var i_t0 := routeValue(bindings, "user_transfer_authority");
