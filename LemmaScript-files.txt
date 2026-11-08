@@ -17,3 +17,5 @@ backend/security/verified-intake.ts
 contracts/solana/verified-token-extensions.ts
 src/lib/verified-monthly-replacement.ts
 backend/vetting/verified-reuse.ts
+workers/fee-converter/verified-native-liability.ts
+workers/fee-converter/verified-expiry.ts
