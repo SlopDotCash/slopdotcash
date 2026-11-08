@@ -1009,10 +1009,25 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     .click();
   await expect(recoveryHash).toBeEditable();
   await expect(recoveryHash).toHaveValue(unrelatedHash);
-  await recoveryHash.fill(sends[0]);
-  await monthly
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
+  const restoreRecoveryText = await enlargeText(monthly);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await recoveryHash.focus();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type(sends[0]);
+  await page.keyboard.press("Tab");
+  await expect(
+    monthly.getByRole("button", { name: "Check transaction", exact: true }),
+  ).toBeFocused();
+  await page.screenshot({
+    path: info.outputPath("monthly-recovery-200-percent-text.png"),
+    fullPage: true,
+  });
+  await page.keyboard.press("Enter");
+  await restoreRecoveryText();
   await expect(monthly.getByRole("status")).toContainText(
     "Waiting for finalized",
   );

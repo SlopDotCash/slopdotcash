@@ -114,3 +114,11 @@ TLC verification completes with 3,075 distinct states, 66,853 generated states,
 depth 17 and an empty queue. It retains the one-request, one-wallet and four
 identifier-class bounds described above. TypeScript and the focused formatter
 check pass. These checks do not prove general implementation refinement.
+
+The final review also exercised the candidate input at 200 percent text size
+on desktop and mobile, without horizontal overflow. Keyboard selection,
+replacement, Tab navigation to Check transaction, and Enter activation all
+passed in the existing real-Anvil workflow. Both cases still verified the
+exact on-chain cap and enabled state, one initial send, and one later opt-out.
+This is controlled text enlargement, not a physical-device or browser-chrome
+zoom certification.
