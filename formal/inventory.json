@@ -163,7 +163,10 @@
     {
       "path": "backend/http.ts",
       "sha256": "e651ccb0701b9d09071310442b0a37b34f0aff6740a7ce02c3e465c97b05b6c0",
-      "models": ["formal/models/api_request_composition.qnt"],
+      "models": [
+        "formal/models/api_request_composition.qnt",
+        "formal/models/vetting_evidence_access.qnt"
+      ],
       "candidateLines": [
         6, 7, 9, 44, 49, 106, 109, 114, 118, 129, 130, 131, 132, 133, 135, 136,
         139, 146
@@ -965,7 +968,7 @@
     },
     {
       "path": "backend/vetting/evidence.ts",
-      "sha256": "7ffb1ebe7b6c947691ec02aab7b2da2b8a5c6c098fff62abd5d17e6676059aa3",
+      "sha256": "50943aebbb679bb0caccaabb12f1b362251a1e3ed49abafd7132e05e07841233",
       "models": [
         "formal/models/vetting_download_stream.qnt",
         "formal/models/vetting_evidence_access.qnt",
@@ -974,9 +977,9 @@
         "formal/models/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        180, 181, 215, 272, 273, 275, 276, 277, 287, 292, 439, 513, 528, 577,
-        602, 636, 744, 745, 762, 1072, 1074, 1236, 1254, 1270, 1290, 1485, 1490,
-        1495, 1550, 1556, 1575, 1580, 1591, 1598, 1665, 1680, 1727, 2010
+        181, 182, 216, 274, 275, 277, 278, 279, 289, 294, 441, 515, 530, 579,
+        604, 638, 746, 747, 764, 1074, 1076, 1238, 1256, 1272, 1292, 1487, 1492,
+        1497, 1552, 1558, 1577, 1582, 1593, 1600, 1667, 1682, 1729, 2012
       ],
       "review": "mapped-abstraction"
     },
@@ -4093,7 +4096,8 @@
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt",
-        "formal/models/ui_public_x_profile.qnt"
+        "formal/models/ui_public_x_profile.qnt",
+        "formal/models/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
         13, 15, 283, 293, 303, 314, 323, 324, 325, 326, 327, 329, 330, 389, 444,
@@ -4773,12 +4777,16 @@
     },
     {
       "path": "src/VettingEvidence.tsx",
-      "sha256": "652faa365de100e37a8028628185a78b6a57b742b14854a0ba11448c3e16e6eb",
-      "models": ["formal/models/ui_artifacts.qnt"],
+      "sha256": "12bd98416f4ca9689a70707457b3b16f4cddccef15115bf89eab59f208febba6",
+      "models": [
+        "formal/models/ui_artifacts.qnt",
+        "formal/models/ui_vetting_inventory.qnt",
+        "formal/models/ui_vetting_reader.qnt"
+      ],
       "candidateLines": [
-        2, 18, 29, 38, 46, 47, 48, 51, 52, 53, 54, 55, 57, 58, 82, 89, 103, 105,
-        109, 144, 145, 147, 166, 171, 261, 262, 264, 287, 288, 290, 294, 295,
-        296, 328, 350, 365, 402, 413
+        5, 7, 29, 40, 49, 57, 58, 59, 62, 63, 66, 67, 68, 69, 72, 85, 127, 141,
+        143, 147, 182, 183, 185, 204, 209, 299, 300, 302, 331, 332, 334, 348,
+        349, 350, 355, 431, 433, 458, 470, 489, 526, 537
       ],
       "review": "mapped-abstraction"
     },
@@ -4832,7 +4840,8 @@
       "sha256": "90a4b15cb147de6233eea8f7675dcab703d066032cbc997cf105e7a940d1527e",
       "models": [
         "formal/models/ui_points_disputes.qnt",
-        "formal/models/ui_transport.qnt"
+        "formal/models/ui_transport.qnt",
+        "formal/models/ui_vetting_reader.qnt"
       ],
       "candidateLines": [1, 99],
       "review": "mapped-abstraction"
@@ -5329,7 +5338,9 @@
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_session.qnt",
-        "formal/models/ui_transport.qnt"
+        "formal/models/ui_transport.qnt",
+        "formal/models/ui_vetting_inventory.qnt",
+        "formal/models/ui_vetting_reader.qnt"
       ],
       "candidateLines": [
         6, 25, 111, 121, 125, 149, 163, 168, 225, 255, 256, 257, 258, 265, 267,
@@ -12342,6 +12353,60 @@
       ]
     },
     {
+      "path": "formal/models/ui_vetting_inventory.qnt",
+      "sha256": "4721c54eccd83c61c2bf349442c98192a01e9d631ec0c644269e2426ae4edef3",
+      "sources": [
+        "src/App.tsx",
+        "src/VettingEvidence.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "cookieChangedBeforePublishInvalidatesTest",
+        "departedReplyCannotPublishOrRefreshTest",
+        "inventoryFailureDoesNotInventEmptySuccessTest",
+        "matchingInventoryBecomesVisibleTest",
+        "newActorLoadsItsOwnInventoryTest",
+        "oldActorInventoryDoesNotRenderForNewActorTest",
+        "previousLookupReplyCannotReplaceNewRequestTest",
+        "readerIdentityLossClearsInventoryTest",
+        "retryAfterSessionCheckOutageTest",
+        "sessionFailureStaysLocalErrorTest",
+        "signedOutDoesNotStartInventoryTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_vetting_reader.qnt",
+      "sha256": "5c2c93edca906000e91b6d83a359932b5090df53316f0a4a58b0e9f1623ed182",
+      "sources": [
+        "src/VettingEvidence.tsx",
+        "src/lib/browser-json.ts",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "abortedBodyCannotRestoreConsumedGrantTest",
+        "actorChangeBeforeBodyRefusesTest",
+        "actorChangeDuringHashRefusesPublicationTest",
+        "authorityBodyRefusalInvalidatesSameActorTest",
+        "authorityRefusalInvalidatesWithoutSessionCheckTest",
+        "completeTextNeedsExactBytesTest",
+        "departedAuthorityRefusalCannotRefreshTest",
+        "departedBufferedBytesCannotDownloadTest",
+        "departedGenericFailureCannotRefreshTest",
+        "departedGrantDoesNotFetchBodyTest",
+        "departedNativeGrantCannotClickTest",
+        "genericBodyFailureWithDifferentActorInvalidatesTest",
+        "genericGrantFailureWaitsForActorTest",
+        "genericHashFailureWithUnavailableSessionInvalidatesTest",
+        "grantConsumptionCannotReplayTest",
+        "nativeClickDoesNotProveDeliveryTest",
+        "nativeDownloadNeedsFreshIdentityTest",
+        "newRequestOwnsLateReplyTest",
+        "selectedObjectChangeDoesNotDownloadTest",
+        "supersededGenericFailureCannotReplaceCurrentRequestTest",
+        "wrongDigestNeverDisplaysTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_wallet_choice.qnt",
       "sha256": "ceeace7c168810bca581f29c98b31b65e2322dad93a76207eb4294ea084af648",
       "sources": ["src/Earnings.tsx", "src/lib/use-payout-wallets.ts"],
@@ -12524,12 +12589,18 @@
     },
     {
       "path": "formal/models/vetting_evidence_access.qnt",
-      "sha256": "65bcff174611b04f82e3ddb645eed764a1c2b7407259070992f4524b985e306e",
-      "sources": ["backend/vetting/evidence.ts"],
+      "sha256": "a798bc5b3cc5d5512c3c10857711bbae45f834ab1cd3e82351c3c39a94da116b",
+      "sources": ["backend/http.ts", "backend/vetting/evidence.ts"],
       "scenarios": [
+        "absentExpectedActorLegacyGrantTest",
+        "anonymousCannotIssueGrantTest",
         "exactAuditedReadTest",
         "expiredGrantTest",
-        "failedReadDoesNotRestoreGrantTest"
+        "failedReadDoesNotRestoreGrantTest",
+        "invalidExpectedActorRefusesGrantTest",
+        "matchingExpectedActorIssuesGrantTest",
+        "mismatchedExpectedActorRefusesGrantTest",
+        "nonOperatorCannotIssueGrantTest"
       ]
     },
     {

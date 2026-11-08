@@ -693,12 +693,16 @@ test("private retained bytes remain inspectable without granting clean clearance
     actor = EVIDENCE_OWNER_GITHUB_ID,
     body?: unknown,
     grant?: string,
+    expectedActor?: string,
   ) =>
     (await retained.evidence.handle(
       new Request(`${ORIGIN}${path}`, {
         method: body === undefined ? "GET" : "POST",
         headers: {
           "x-test-operator": actor,
+          ...(expectedActor === undefined
+            ? {}
+            : { "x-slop-expected-github-id": expectedActor }),
           ...(body === undefined
             ? {}
             : { origin: ORIGIN, "content-type": "application/json" }),
@@ -710,6 +714,36 @@ test("private retained bytes remain inspectable without granting clean clearance
   const overview = `/api/v1/operator/vetting-evidence?assessmentId=${id}&runId=${run}`;
   expect((await operator(overview, "900000001")).status).toBe(403);
   expect((await operator(overview, "")).status).toBe(401);
+  const countsBeforeMismatch = {
+    grants: sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_grants").get(),
+    audits: sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_audit").get(),
+  };
+  for (const path of [overview, `${base}/grant`, `${base}/download-grant`]) {
+    const response = await operator(
+      path,
+      EVIDENCE_READER_GITHUB_ID,
+      path === overview ? undefined : { reason: "Inspect expected-actor refusal" },
+      undefined,
+      EVIDENCE_OWNER_GITHUB_ID,
+    );
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toBe("actor_changed");
+  }
+  expect(
+    sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_grants").get(),
+  ).toEqual(countsBeforeMismatch.grants);
+  expect(
+    sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_audit").get(),
+  ).toEqual(countsBeforeMismatch.audits);
+  const malformedExpected = await operator(
+    overview, undefined, undefined, undefined, "invalid",
+  );
+  expect(malformedExpected.status).toBe(400);
+  expect((await malformedExpected.json()).error).toBe("invalid_expected_actor");
+  const matchingExpected = await operator(
+    overview, undefined, undefined, undefined, EVIDENCE_OWNER_GITHUB_ID,
+  );
+  expect(matchingExpected.status).toBe(200);
   const visible = await operator(overview);
   expect(visible.status).toBe(200);
   expect(await visible.text()).not.toContain(VETTING_TRACE_BODY);

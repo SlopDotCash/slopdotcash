@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "2546fc5b1e4822e4c229223e57584576b7437b928664e5de4eb0156d8412ff37",
+  "inventorySha256": "5ed50157bba7c8b7a924cee34b18ac91cd89cb7713bc630760027418d5230aff",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2005,7 +2005,8 @@
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt",
-        "formal/models/ui_public_x_profile.qnt"
+        "formal/models/ui_public_x_profile.qnt",
+        "formal/models/ui_vetting_inventory.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2025,7 +2026,8 @@
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt",
-        "formal/models/ui_public_x_profile.qnt"
+        "formal/models/ui_public_x_profile.qnt",
+        "formal/models/ui_vetting_inventory.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2045,7 +2047,8 @@
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt",
-        "formal/models/ui_public_x_profile.qnt"
+        "formal/models/ui_public_x_profile.qnt",
+        "formal/models/ui_vetting_inventory.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"

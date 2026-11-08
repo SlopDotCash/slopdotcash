@@ -61,7 +61,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 324 finite models and 1,689 named scenarios, with zero
+839 production sources, 326 finite models and 1,727 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -438,3 +438,22 @@ lookup, visibility observation, missing/error outcomes, callback lifetime
 and profile-key changes. It adds no connection controls and makes no claim
 that the public read represents current provider ownership. See
 `public-x-profile-audit.md` for the source semantics and remaining bounds.
+
+
+## Operator evidence view ownership
+
+The private inventory is now bound to its actor and lookup before rendering.
+A successful response also needs a fresh matching session. Reader actions
+retain their component/attempt owner, cancel a departed body read and recheck
+the actor before a body request or download. Issued server grants and already
+consumed grants retain their original backend semantics.
+`ui_vetting_inventory` and `ui_vetting_reader` add 32 unexecuted scenarios;
+the extended presentation and actual Pages/D1/R2 browser workflows are also
+unexecuted. See `vetting-evidence-ui-audit.md` for the precise boundaries.
+
+The same operator workflow now enforces its expected-actor header through the
+shared backend guard before grant creation or audit. Reader errors preserve
+HTTP refusal status and invalidate the private parent on lost access; other
+errors are retained only after another matching actor observation. Six added
+backend admission scenarios and the extended SQLite/browser cases remain
+unexecuted in this lane.

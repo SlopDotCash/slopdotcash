@@ -162,3 +162,23 @@ access is unavailable. The extended browser workflow changes the real test
 session while an accepted response is held. It and the26newmodel scenarios
 are unexecuted in this lane. This is a source-confirmed correction, not a
 claimed browser reproduction or a completed UI acceptance result.
+
+
+## Separate operator evidence view corrections
+
+Source review found that the first render after an actor change could show
+previously loaded private inventory before its effect reset. Inventory is now
+bound to both actor and lookup, and response-time identity is rechecked. A
+departed EvidenceItem could also trigger a native or Blob download after its
+grant/read completed. Its current actor and attempt now guard those effects;
+body reads are canceled on departure. The grant service remains the authority.
+The 32 new UI model scenarios and held-response browser regressions are unexecuted;
+no server bypass or completed browser acceptance is claimed.
+
+The operator expected-actor header was also previously ignored by the
+evidence service. An already authorized different operator could receive an
+inspection grant intended for the earlier account. The shared actor guard now
+refuses that mismatch before grant creation or audit. Reader error paths also
+clear on authoritative refusal and recheck identity before retaining other
+errors. The new handler/SQLite assertions cover the refused write boundary;
+they have not been executed here.
