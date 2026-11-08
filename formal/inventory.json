@@ -202,6 +202,7 @@
       "models": [
         "formal/models/api_inbox.qnt",
         "formal/models/api_mail_delivery.qnt",
+        "formal/models/points_dispute_intake.qnt",
         "formal/models/points_dispute_lease.qnt"
       ],
       "candidateLines": [
@@ -399,6 +400,7 @@
       "sha256": "deeed15066a2a88aff6a959b49d481fe258d0ddcf7587cb8543996737f75722a",
       "models": [
         "formal/models/api_points_disputes.qnt",
+        "formal/models/points_dispute_intake.qnt",
         "formal/models/points_dispute_lease.qnt"
       ],
       "candidateLines": [49, 131, 198, 218],
@@ -2738,6 +2740,7 @@
       "sha256": "bbaed8641ab21f7652df9d8a4284d4ab60a588794cdbb11970a6c81f70a6287c",
       "models": [
         "formal/models/api_points_disputes.qnt",
+        "formal/models/points_dispute_intake.qnt",
         "formal/models/points_dispute_lease.qnt"
       ],
       "candidateLines": [2, 31, 39],
@@ -10242,6 +10245,29 @@
         "exactProbeReadyTest",
         "wrongChainRefusedTest",
         "wrongRegistryRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points_dispute_intake.qnt",
+      "sha256": "3827e2bf3ceccc6450f01ce6b5aeffd2b914f4706933121a8490e6988ed1e6b5",
+      "sources": [
+        "backend/notifications/events.ts",
+        "backend/points/disputes.ts",
+        "migrations/0114_points_dispute_intake.sql"
+      ],
+      "scenarios": [
+        "anotherRecipientCannotOpenTest",
+        "changedReasonCannotReplaceStatementTest",
+        "concurrentRequestsKeepFirstCommitTest",
+        "correctionBeforePrepareRefusesTest",
+        "correctionBetweenReadAndInsertRefusesTest",
+        "corruptRetainedSourceDoesNotWriteTest",
+        "failedBatchDoesNotPublishNotificationTest",
+        "identicalRetryKeepsFirstStatementTest",
+        "malformedBodyDoesNotWriteTest",
+        "recipientOpensRetainedRevisionTest",
+        "retryAfterCorrectionRecoversOldDisputeTest",
+        "retryAfterFailedBatchCanCreateTest"
       ]
     },
     {

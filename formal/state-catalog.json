@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "e5aa9f7e70d84c099f9bd6ee69dc52a3e0d777d4eff648f4edce7f8208ea9d4b",
+  "inventorySha256": "9ad72b0bd5bbd558f82446ff486a8e976d556cf535150e89f38ff10f9a6e9303",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -22,6 +22,7 @@
       "models": [
         "formal/models/api_inbox.qnt",
         "formal/models/api_mail_delivery.qnt",
+        "formal/models/points_dispute_intake.qnt",
         "formal/models/points_dispute_lease.qnt"
       ],
       "lexicallyUnmentionedValues": ["opened", "resolved"],

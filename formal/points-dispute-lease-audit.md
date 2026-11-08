@@ -49,3 +49,25 @@ Multiple provider routes, arbitrary call counts, cost-writer partial failure,
 SQL/read errors beyond the explicit cost-write outcome, scheduler fairness,
 wall-clock delay and the complete intake/notification compositions are outside
 this focused model. This does not close the application-wide state review.
+
+## Intake and immutable source
+
+`points_dispute_intake` adds twelve unexecuted scenarios for the transaction
+that precedes worker processing. Two requests compete for one dispute on a
+retained revision. A successor may arrive before the source read or between
+that read and the SQL insertion. The SQL must refuse a new dispute for that
+old revision. An identical retry can still recover an already-created dispute
+after a successor arrives; a changed statement cannot replace it. Creation and
+the owner's opened notification are atomic and idempotent. Admission classes
+represent malformed bodies, corrupt source digests, foreign recipients and the
+actual recipient. No award or payment is changed.
+
+This is a separate transaction model so the worker model does not gain an
+unbounded history of intake requests. Their shared boundary is one immutable
+retained dispute. The source tests cover identical retry after a correction,
+a correction between source read and insertion, first-statement retention,
+authority and notification deduplication. Database rollback and admission
+classes remain explicit assumptions until their exact scenarios are executed.
+Neither model yet establishes all detail-read, pagination, retry-response or
+concurrent moderator-decision interleavings. The older `api_points_disputes`
+model's single happy-path scenario does not close those remaining flows.

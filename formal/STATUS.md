@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 318 finite models and 1,570 named scenarios, with zero
+839 production sources, 319 finite models and 1,582 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -339,3 +339,9 @@ cleanup. The original intake model remains. No application code changed;
 `points-dispute-lease-audit.md` records the source mapping, existing runtime
 references and outstanding conformance. This model is outside the active
 corrective PR.
+
+`points_dispute_intake` separately models two competing creation requests, a
+newer Points revision, statement immutability and atomic opened notification.
+Its twelve named scenarios are also unexecuted. The two new models complement
+the existing API model; they do not certify the remaining read, pagination,
+retry-response and moderator-decision interleavings.
