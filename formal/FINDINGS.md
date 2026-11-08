@@ -226,3 +226,21 @@ Source review also corrected the reinstatement model: a withdrawn reporter's
 new flag has a new immutable ID, and a clean scan resolves captured flags
 even if it cannot reinstate the project. New model and regression definitions
 remain unexecuted. The linked area audits retain these bounds and limits.
+
+## Project publication, authority and setup
+
+A publication could return a later writer's registry head as its own result.
+The editor then treated an older local draft as based on that newer revision,
+allowing a later save to overwrite the unseen change. Publication now returns
+its own immutable committed revision. A new project and stored application
+also use their own committed revision for setup and refuse a first write if
+the checked enforcement generation changed.
+
+The maintainer hook could attribute another account's successful access
+response to the initiating account. Project creation, editor publication and
+setup checks also lacked complete initiating-actor/response-lifetime guards.
+Those requests now carry the expected actor and check response-time identity.
+Late results preserve accepted backend writes and local draft ownership.
+Five new models and refined registry models add 52 unexecuted scenarios.
+New browser/handler definitions and fixture corrections are also unexecuted;
+see the three project-publication/authority audits for exact boundaries.

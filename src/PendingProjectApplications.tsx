@@ -153,6 +153,7 @@ function PendingApplication({
       ) : null}
       {publication.status === "published" ? (
         <ProjectSetupStatusPanel
+          actorId={actorId}
           compact
           projectId={publication.result.project.id}
           initial={publication.result.setup}

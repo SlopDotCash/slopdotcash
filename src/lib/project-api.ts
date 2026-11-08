@@ -175,27 +175,35 @@ export function createProject(
   referrer: string | null,
   monthlyAmount: string | null,
   bountyAmount: string | null = null,
+  expectedActorGithubId?: string,
 ): Promise<{
   project: { id: string; revision: number; referrer: unknown };
   setup: ProjectSetupStatus;
 }> {
-  return projectApiRequest("POST", "projects", {
-    manifest,
-    ...(referrer === null ? {} : { referrer }),
-    ...(monthlyAmount === null ? {} : { monthlyAmount }),
-    ...(bountyAmount === null ? {} : { bountyAmount }),
-  });
+  return projectApiRequest(
+    "POST",
+    "projects",
+    {
+      manifest,
+      ...(referrer === null ? {} : { referrer }),
+      ...(monthlyAmount === null ? {} : { monthlyAmount }),
+      ...(bountyAmount === null ? {} : { bountyAmount }),
+    },
+    { expectedActorGithubId },
+  );
 }
 
 /** Runs the setup checks; a passing project activates as part of the check. */
 export function checkProjectSetup(
   projectId: string,
   requestScan = false,
+  expectedActorGithubId?: string,
 ): Promise<{ setup: ProjectSetupStatus }> {
   return projectApiRequest(
     "POST",
     `project-setup/${encodeURIComponent(projectId)}/check`,
     requestScan ? { requestScan: true } : {},
+    { expectedActorGithubId },
   );
 }
 
@@ -245,14 +253,20 @@ export function publishProjectRevision(
   note: string,
   monthlyAmount: string | null,
   bountyAmount: string | null = null,
+  expectedActorGithubId?: string,
 ): Promise<RevisionResult> {
-  return projectApiRequest("PUT", `projects/${encodeURIComponent(projectId)}`, {
-    manifest,
-    expectedRevision,
-    ...(note.trim() ? { reason: note.trim() } : {}),
-    ...(monthlyAmount === null ? {} : { monthlyAmount }),
-    ...(bountyAmount === null ? {} : { bountyAmount }),
-  });
+  return projectApiRequest(
+    "PUT",
+    `projects/${encodeURIComponent(projectId)}`,
+    {
+      manifest,
+      expectedRevision,
+      ...(note.trim() ? { reason: note.trim() } : {}),
+      ...(monthlyAmount === null ? {} : { monthlyAmount }),
+      ...(bountyAmount === null ? {} : { bountyAmount }),
+    },
+    { expectedActorGithubId },
+  );
 }
 
 export type ProjectSessionState =
@@ -339,26 +353,49 @@ export function useProjectMaintainer(projectId: string) {
   // The identity whose maintainer check has answered, allowed or not, so a
   // signed-in visitor sees "checking" rather than a refusal while it runs.
   const [settled, setSettled] = useState<string | null>(null);
-  const identity =
-    session.status === "signed-in"
-      ? `${projectId}:${session.session.githubId}`
-      : null;
+  const actorId =
+    session.status === "signed-in" ? session.session.githubId : null;
+  const identity = actorId === null ? null : `${projectId}:${actorId}`;
   useEffect(() => {
     let active = true;
     setVerified(null);
     setSettled(null);
     setFailure(null);
-    if (identity) {
-      void projectApiRequest(
-        "GET",
-        `project-setup/${encodeURIComponent(projectId)}`,
-      ).then(
-        () => {
+    if (identity && actorId) {
+      void (async () => {
+        let problem: unknown;
+        try {
+          const result = await projectApiRequest<{
+            viewer: { githubId: string };
+          }>(
+            "GET",
+            `project-setup/${encodeURIComponent(projectId)}`,
+            undefined,
+            { expectedActorGithubId: actorId },
+          );
+          if (result?.viewer?.githubId !== actorId)
+            problem = new ProjectApiError(
+              409,
+              "actor_changed",
+              "Your account changed. Retry the access check.",
+            );
+        } catch (error) {
+          problem = error;
+        }
+        if (!active) return;
+        try {
+          const current = await currentProjectSession();
           if (!active) return;
+          if (current?.githubId !== actorId)
+            throw new ProjectApiError(
+              409,
+              "actor_changed",
+              "Your account changed. Retry the access check.",
+            );
+          if (problem !== undefined) throw problem;
           setVerified(identity);
           setSettled(identity);
-        },
-        (error: unknown) => {
+        } catch (error) {
           if (!active) return;
           setVerified(null);
           setSettled(identity);
@@ -370,13 +407,13 @@ export function useProjectMaintainer(projectId: string) {
                   ? error.message
                   : "Project access could not be checked. Retry.",
             });
-        },
-      );
+        }
+      })();
     }
     return () => {
       active = false;
     };
-  }, [projectId, identity]);
+  }, [projectId, actorId, identity]);
   return {
     allowed: identity !== null && verified === identity,
     checking:

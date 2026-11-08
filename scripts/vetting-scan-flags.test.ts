@@ -1182,15 +1182,18 @@ test("the existing-project exemption is permanent but cannot clear reinstatement
     const existing = await canonical("existing-exempt");
     const later = await canonical("later-scanned");
     const create = async (manifest: typeof existing) =>
-      registry.createProject({
-        manifest,
-        manifestText: JSON.stringify(manifest),
-        manifestSha256: "a".repeat(64),
-        reason: "Owner creates a test project",
-        actor: APPLICANT,
-        at: NOW.toISOString(),
-        referrer: null,
-      });
+      registry.createProject(
+        {
+          manifest,
+          manifestText: JSON.stringify(manifest),
+          manifestSha256: "a".repeat(64),
+          reason: "Owner creates a test project",
+          actor: APPLICANT,
+          at: NOW.toISOString(),
+          referrer: null,
+        },
+        await registry.enforcementGeneration(),
+      );
     expect(await create(existing)).toBe("created");
     database.sqlite.exec(
       readFileSync(
@@ -1328,15 +1331,18 @@ test("an exempt owner edit stays active without a scan, while flags still requir
       retained.evidence.retained(assessment.result),
   );
   expect(
-    await projects.createProject({
-      manifest: canonical.manifest,
-      manifestText: JSON.stringify(canonical.manifest),
-      manifestSha256: canonical.manifestSha256,
-      reason: "Existing project before the scan gate",
-      actor: APPLICANT,
-      at: NOW.toISOString(),
-      referrer: null,
-    }),
+    await projects.createProject(
+      {
+        manifest: canonical.manifest,
+        manifestText: JSON.stringify(canonical.manifest),
+        manifestSha256: canonical.manifestSha256,
+        reason: "Existing project before the scan gate",
+        actor: APPLICANT,
+        at: NOW.toISOString(),
+        referrer: null,
+      },
+      await projects.enforcementGeneration(),
+    ),
   ).toBe("created");
   sqlite.exec(
     readFileSync(

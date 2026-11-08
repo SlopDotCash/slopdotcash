@@ -167,6 +167,9 @@
         "formal/models/api_request_composition.qnt",
         "formal/models/ui_earnings_actor_binding.qnt",
         "formal/models/ui_owner_private_requests.qnt",
+        "formal/models/ui_project_authority.qnt",
+        "formal/models/ui_project_publication_lifetime.qnt",
+        "formal/models/ui_setup_check_lifetime.qnt",
         "formal/models/vetting_evidence_access.qnt"
       ],
       "candidateLines": [
@@ -453,24 +456,26 @@
     },
     {
       "path": "backend/projects/cloudflare-persistence.ts",
-      "sha256": "b8974aec5c881881db3c59b0cc8a58139b63dfece4a0595f0e7e32a4471d68c3",
+      "sha256": "28dab7898ead475eed67c27dbcad31437948dc525a1fe861df21a0af8e02856c",
       "models": [
+        "formal/models/api_project_creation_completion.qnt",
         "formal/models/api_project_registry.qnt",
+        "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt"
       ],
       "candidateLines": [
-        27, 50, 63, 65, 82, 112, 199, 233, 251, 388, 404, 419, 437, 440, 446,
-        449, 463, 464, 480, 481, 487, 488, 490, 519, 529, 550, 551, 556, 570,
-        586, 594, 728, 743, 753, 761, 781, 782, 787
+        27, 50, 63, 65, 82, 112, 199, 233, 251, 393, 410, 426, 445, 448, 455,
+        458, 473, 474, 491, 492, 503, 504, 506, 537, 547, 568, 569, 574, 588,
+        604, 612, 746, 761, 771, 779, 799, 800, 805
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/projects/contracts.ts",
-      "sha256": "5cbb2f0acfb38797e3eb5922d6fbe1012f95f385e88a7c5fb36e428d9168de17",
+      "sha256": "0e444c6a43348384fd37326cef947721cb134947dc020fbfa2fa7f54c033ba37",
       "models": ["formal/models/api_project_registry.qnt"],
-      "candidateLines": [19, 20, 54],
+      "candidateLines": [19, 20, 57],
       "review": "mapped-abstraction"
     },
     {
@@ -502,24 +507,29 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "f5879ad8e9b6926cb7f3dfa844352c197ee190c907ab66aae8afaec28390f230",
+      "sha256": "f7594abe9856116659be1e1fa03907973f03f1c73d4d7f9578cce8f090049b0a",
       "models": [
+        "formal/models/api_project_creation_completion.qnt",
         "formal/models/api_project_registry.qnt",
+        "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
-        "formal/models/ui_pending_applications.qnt"
+        "formal/models/ui_pending_applications.qnt",
+        "formal/models/ui_project_authority.qnt",
+        "formal/models/ui_project_publication_lifetime.qnt",
+        "formal/models/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
         155, 160, 170, 174, 232, 257, 262, 289, 290, 292, 294, 343, 427, 434,
         440, 444, 445, 453, 521, 525, 856, 893, 909, 1005, 1018, 1023, 1030,
         1031, 1034, 1049, 1051, 1053, 1064, 1082, 1089, 1100, 1126, 1132, 1133,
         1144, 1146, 1151, 1152, 1153, 1154, 1166, 1167, 1168, 1170, 1175, 1213,
-        1307, 1341, 1359, 1426, 1507, 1518, 1531, 1534, 1554, 1596, 1602, 1606,
-        1612, 1618, 1654, 1662, 1665, 1666, 1711, 1712, 1713, 1730, 1776, 1783,
-        1795, 1832, 1851, 1855, 2029, 2033, 2060, 2080, 2081, 2088, 2092, 2128,
-        2146, 2163, 2195, 2204, 2348, 2374, 2523, 2580, 2620, 2631, 2632, 2745,
-        2753, 2771, 2965
+        1272, 1322, 1356, 1374, 1441, 1522, 1533, 1546, 1549, 1569, 1611, 1617,
+        1621, 1627, 1633, 1669, 1677, 1680, 1681, 1726, 1727, 1728, 1745, 1789,
+        1796, 1808, 1845, 1864, 1868, 1921, 2056, 2060, 2087, 2107, 2108, 2115,
+        2119, 2151, 2165, 2183, 2200, 2232, 2241, 2385, 2411, 2560, 2617, 2657,
+        2668, 2669, 2782, 2790, 2808, 3002
       ],
       "review": "mapped-abstraction"
     },
@@ -4221,7 +4231,10 @@
     {
       "path": "src/EscrowFunding.tsx",
       "sha256": "badd7573b1ce77f202c358eaf7c11561bbf7afa69001c236c61b026e1d2b4456",
-      "models": ["formal/models/ui_resources.qnt"],
+      "models": [
+        "formal/models/ui_project_authority.qnt",
+        "formal/models/ui_resources.qnt"
+      ],
       "candidateLines": [
         2, 132, 133, 134, 136, 142, 146, 157, 183, 188, 192, 193, 194, 195, 196,
         199, 200, 204, 216, 218, 227, 236, 237, 239, 240, 241, 243, 244, 247,
@@ -4434,15 +4447,16 @@
     },
     {
       "path": "src/PendingProjectApplications.tsx",
-      "sha256": "aa0e777ddc7c64140c9c6d0baff68dbab3ae457a183533dc610227927b4340db",
+      "sha256": "fc59cb5505f36b8e0523d2d4261dbe30fe588f4454078a8e8c929659950b2632",
       "models": [
         "formal/models/ui_pending_applications.qnt",
-        "formal/models/ui_project_setup.qnt"
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
         1, 15, 16, 18, 34, 47, 48, 52, 62, 70, 96, 110, 111, 112, 114, 115, 122,
-        126, 129, 133, 134, 141, 154, 167, 168, 169, 170, 171, 172, 174, 176,
-        183, 185, 192, 201, 202, 207, 208, 210, 220, 230, 245
+        126, 129, 133, 134, 141, 154, 168, 169, 170, 171, 172, 173, 175, 177,
+        184, 186, 193, 202, 203, 208, 209, 211, 221, 231, 246
       ],
       "review": "mapped-abstraction"
     },
@@ -4501,6 +4515,7 @@
       "sha256": "2a963a06e809765b35e2e941a6207eb51c0283f1c6cffd9ce9a9a95f6ed086bd",
       "models": [
         "formal/models/ui_navigation.qnt",
+        "formal/models/ui_project_authority.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
       "candidateLines": [
@@ -4586,29 +4601,34 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "5b4a75a35c0a49f4702018b1f75fb9c9b3fdcce2ef6c6c4c1cc4babd4f6e2adc",
+      "sha256": "5898467f1e94c3d44711bc4f531c9e919272e51cf44994824343742fbd464bf3",
       "models": [
+        "formal/models/api_project_revision_receipt.qnt",
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_draft_save_progress.qnt",
         "formal/models/ui_draft_slots.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_image_decode.qnt",
+        "formal/models/ui_project_authority.qnt",
         "formal/models/ui_project_draft.qnt",
+        "formal/models/ui_project_publication_lifetime.qnt",
         "formal/models/ui_project_setup.qnt",
-        "formal/models/ui_repository_lookup.qnt"
+        "formal/models/ui_repository_lookup.qnt",
+        "formal/models/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        10, 414, 417, 418, 419, 420, 421, 422, 423, 425, 428, 432, 437, 453,
-        464, 472, 473, 490, 506, 510, 528, 536, 544, 551, 554, 574, 589, 590,
-        765, 776, 777, 779, 790, 793, 798, 801, 810, 813, 814, 816, 817, 822,
-        848, 852, 855, 865, 866, 925, 927, 931, 936, 945, 955, 960, 1014, 1027,
-        1035, 1038, 1045, 1114, 1139, 1147, 1148, 1150, 1155, 1159, 1168, 1183,
-        1190, 1280, 1281, 1282, 1284, 1289, 1298, 1308, 1316, 1343, 1353, 1360,
-        1365, 1368, 1379, 1401, 1402, 1404, 1405, 1494, 1497, 1524, 1872, 1874,
-        1936, 1945, 1946, 1948, 1958, 1960, 1964, 1974, 1981, 1994, 1996, 2000,
-        2001, 2004, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2072, 2082, 2094,
-        2125, 2362, 2379, 2389, 2407, 2410, 2415, 2558, 2566, 2567, 2578, 2616,
-        2621, 2625, 2638, 2639, 2652, 2677, 2678, 2679
+        10, 127, 442, 445, 446, 447, 448, 449, 450, 451, 453, 456, 460, 465,
+        481, 492, 500, 501, 518, 534, 538, 556, 564, 572, 579, 582, 602, 617,
+        618, 793, 804, 805, 809, 815, 826, 829, 834, 837, 846, 849, 850, 852,
+        853, 858, 886, 890, 893, 903, 904, 963, 965, 969, 974, 983, 993, 998,
+        1052, 1065, 1073, 1076, 1083, 1152, 1177, 1185, 1186, 1188, 1193, 1197,
+        1206, 1221, 1228, 1318, 1319, 1320, 1322, 1328, 1338, 1345, 1361, 1374,
+        1406, 1416, 1423, 1428, 1431, 1442, 1464, 1465, 1467, 1468, 1558, 1561,
+        1588, 1936, 1938, 2000, 2003, 2009, 2010, 2012, 2022, 2024, 2028, 2039,
+        2053, 2065, 2082, 2086, 2092, 2096, 2097, 2100, 2103, 2104, 2105, 2106,
+        2107, 2108, 2109, 2168, 2178, 2190, 2221, 2460, 2484, 2501, 2522, 2525,
+        2530, 2674, 2682, 2683, 2694, 2732, 2737, 2741, 2754, 2755, 2768, 2793,
+        2794, 2795
       ],
       "review": "mapped-abstraction"
     },
@@ -4638,12 +4658,15 @@
     },
     {
       "path": "src/ProjectSetupStatus.tsx",
-      "sha256": "9e99d7af3007204cfe75f064d61e1cb1469932253f4409099088146c78e8aedd",
-      "models": ["formal/models/ui_project_setup.qnt"],
+      "sha256": "7a2dba98043cf6b1b99720b6a602462bb6b46f0dd48d2c8ed4de0cf3537bbe19",
+      "models": [
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_setup_check_lifetime.qnt"
+      ],
       "candidateLines": [
-        10, 20, 24, 29, 34, 37, 43, 45, 61, 64, 68, 78, 96, 99, 102, 103, 124,
-        127, 128, 153, 156, 157, 161, 165, 166, 212, 214, 228, 230, 247, 251,
-        254, 256, 298
+        10, 24, 28, 33, 38, 41, 47, 49, 65, 68, 72, 82, 113, 116, 119, 120, 124,
+        181, 216, 219, 220, 245, 248, 249, 253, 257, 258, 304, 306, 320, 322,
+        339, 343, 346, 348, 390
       ],
       "review": "mapped-abstraction"
     },
@@ -5358,22 +5381,25 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "88d1aaac6438d29e1e679b92b93a16e6a7a1de706be6bb929054402d720cfc86",
+      "sha256": "0f540723e540ac3f8cb0f4b8d1ae2d5e482eda671ce0f5ad3d67482f2b97e7ac",
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
+        "formal/models/ui_project_authority.qnt",
+        "formal/models/ui_project_publication_lifetime.qnt",
         "formal/models/ui_session.qnt",
+        "formal/models/ui_setup_check_lifetime.qnt",
         "formal/models/ui_transport.qnt",
         "formal/models/ui_vetting_inventory.qnt",
         "formal/models/ui_vetting_reader.qnt"
       ],
       "candidateLines": [
-        6, 25, 111, 121, 125, 149, 163, 168, 229, 259, 260, 261, 262, 269, 271,
-        272, 273, 279, 285, 287, 288, 295, 296, 324, 326, 327, 332, 334, 335,
-        341, 343, 346, 365, 371, 383, 389
+        6, 25, 111, 121, 125, 149, 163, 168, 237, 273, 274, 275, 276, 283, 285,
+        286, 287, 293, 299, 301, 302, 309, 310, 338, 340, 341, 346, 348, 349,
+        355, 357, 359, 380, 393, 402, 408, 420, 426
       ],
       "review": "mapped-abstraction"
     },
@@ -8079,6 +8105,21 @@
       "scenarios": ["storedReceiptTest", "uncertainTest"]
     },
     {
+      "path": "formal/models/api_project_creation_completion.qnt",
+      "sha256": "5e050d5e261829865382d3799ad2dc3b5fda45989a79a193cad5211f390dd124",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/handler.ts"
+      ],
+      "scenarios": [
+        "approvedApplicationSurvivesSetupConflictTest",
+        "laterHeadDoesNotChangeQueuedRevisionTest",
+        "postCommitActivationConflictKeepsProjectTest",
+        "queueFailureDoesNotUndoCreationTest",
+        "unchangedProjectCanActivateTest"
+      ]
+    },
+    {
       "path": "formal/models/api_project_enforcement.qnt",
       "sha256": "c4389791a9d097467058bbbfd5ab9128b1ebbe20fab61a5fe36779d40882dcee",
       "sources": [
@@ -8097,7 +8138,7 @@
     },
     {
       "path": "formal/models/api_project_registry.qnt",
-      "sha256": "4ceee69dfa3ec6945626472268255f91ce1d92cd7c9dcb58438c92ddf477c2be",
+      "sha256": "07af97bcf98c9d086bae7e1919d9529db5f9c4728701010063ebca953e5f5196",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/contracts.ts",
@@ -8111,7 +8152,26 @@
         "migrations/0020_project_application_github_check.sql",
         "migrations/0039_project_update_applications.sql"
       ],
-      "scenarios": ["restrictionRaceTest", "unfundedActivationTest"]
+      "scenarios": [
+        "restrictionBeforeCreationRefusesTest",
+        "restrictionRaceTest",
+        "unfundedActivationTest"
+      ]
+    },
+    {
+      "path": "formal/models/api_project_revision_receipt.qnt",
+      "sha256": "0ab2dd534afda7c851325a555c63ef28af9072c07f860728d7a76eece2a6b878",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/handler.ts",
+        "src/ProjectProposalPage.tsx"
+      ],
+      "scenarios": [
+        "competingWriteBeforeCommitRefusesTest",
+        "editedDraftCannotSilentlyUseLaterHeadTest",
+        "laterHeadCannotReplaceReceiptTest",
+        "replyWithoutCompetingWriteTest"
+      ]
     },
     {
       "path": "formal/models/api_public_summary.qnt",
@@ -8121,7 +8181,7 @@
     },
     {
       "path": "formal/models/api_registry_alias_transaction.qnt",
-      "sha256": "02fb9079551fd59d5ae9fe0128de77cec2979f10649900693eedce516004188c",
+      "sha256": "f1e6c9da98468efc96435abdc783b34e0fa7e595fc6ef6a8ef05f25b7bf452fe",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/handler.ts",
@@ -8133,6 +8193,7 @@
         "approvedApplicationCannotPublishTwiceTest",
         "changedBaseLeavesUpdatePendingTest",
         "newApplicationWinsAliasRaceTest",
+        "restrictionInvalidatesNewApplicationTest",
         "restrictionInvalidatesPreparedRevisionTest",
         "revisionWinsAliasRaceTest"
       ]
@@ -12025,6 +12086,31 @@
       ]
     },
     {
+      "path": "formal/models/ui_project_authority.qnt",
+      "sha256": "922672f99fd55c73194ae8680738ddd68dd8b30d8ece3526ea4669d33ac06d9e",
+      "sources": [
+        "backend/http.ts",
+        "backend/projects/handler.ts",
+        "src/EscrowFunding.tsx",
+        "src/Presentation.tsx",
+        "src/ProjectProposalPage.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "cookieSwapAfterDispatchCannotPublishTest",
+        "cookieSwapBeforeDispatchRefusesTest",
+        "departedReplyCannotGrantTest",
+        "failedRequestStillChecksIdentityTest",
+        "focusInvalidatesOldAuthorityTest",
+        "matchingActorGrantsTest",
+        "newerActorOwnsGrantTest",
+        "oldProjectReplyCannotGrantTest",
+        "refusedSameActorIsNotGrantedTest",
+        "unknownFinalIdentityCannotGrantTest",
+        "wrongViewerCannotGrantTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_project_discovery.qnt",
       "sha256": "f065fa727720ac8a4a3e97fa50a2f324c63438330145abab20c7a11e6c81bcb7",
       "sources": ["src/App.tsx"],
@@ -12077,6 +12163,34 @@
         "rotationTest",
         "unverifiedCollectionTest",
         "verifiedReceiptTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_project_publication_lifetime.qnt",
+      "sha256": "5933203d338c589514260c62570854e3bb5fb75ca713a1270de41b2e7ed65ed1",
+      "sources": [
+        "backend/http.ts",
+        "backend/projects/handler.ts",
+        "src/ProjectProposalPage.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "busyEditorRefusesSecondSubmissionTest",
+        "createEditedPayloadKeepsReferrerTest",
+        "createUnchangedPayloadClearsReferrerTest",
+        "departedPreflightStartsNoWriteTest",
+        "departedReplyPreservesNewDraftTest",
+        "detachedCreateCannotClearNewReferrerTest",
+        "differentActorReplyPreservesAcceptedWriteTest",
+        "editDuringSaveIsRebasedTest",
+        "editedDraftCanPublishNextRevisionTest",
+        "failurePathActorChangeRechecksGateTest",
+        "lostReplyDoesNotUndoAcceptedRevisionTest",
+        "persistenceFailureKeepsCurrentDraftTest",
+        "preDispatchActorSwapCannotWriteTest",
+        "retypedRevisionStillKeepsItsNewObjectTest",
+        "unavailableIdentityKeepsDraftWithoutSuccessTest",
+        "unchangedRevisionClearsDraftTest"
       ]
     },
     {
@@ -12311,6 +12425,34 @@
         "src/lib/project-api.ts"
       ],
       "scenarios": ["cancelTest", "invalidTest", "recheckTest", "signInTest"]
+    },
+    {
+      "path": "formal/models/ui_setup_check_lifetime.qnt",
+      "sha256": "a6aa54f21a0b4084d2db49c4ef86df35c0543331ad409dadf9a207ba4cad0920",
+      "sources": [
+        "backend/http.ts",
+        "backend/projects/handler.ts",
+        "src/PendingProjectApplications.tsx",
+        "src/ProjectProposalPage.tsx",
+        "src/ProjectSetupStatus.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "acceptedOldActorWorkSurvivesWithoutPublicationTest",
+        "automaticCheckPublishesTest",
+        "changedActorBeforeRequestCannotCheckTest",
+        "deniedCheckClearsBeforeAnotherReadTest",
+        "departedAcceptedCheckCannotPublishTest",
+        "departedPreflightStartsNoPostTest",
+        "differentProjectBodyClearsTest",
+        "initialResultIsPreservedTest",
+        "outageChangedActorClearsSetupTest",
+        "retryAfterRefusalCanRecoverTest",
+        "sameActorOutageKeepsSetupTest",
+        "swappedDispatchIsRefusedTest",
+        "unavailableFinalIdentityClearsTest",
+        "unknownPreflightClearsTest"
+      ]
     },
     {
       "path": "formal/models/ui_snapshot_cache.qnt",

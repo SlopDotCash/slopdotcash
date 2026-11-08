@@ -404,7 +404,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
     }),
   );
   await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup } }),
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
   );
   await page.route("**/api/v1/projects/eliza*", (route) => {
     if (route.request().method() !== "PUT")
@@ -918,7 +918,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     return route.fulfill({ json: { revision, project } });
   });
   await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup } }),
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
