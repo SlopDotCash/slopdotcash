@@ -16,6 +16,7 @@
       "path": ".github/workflows/deploy.yml",
       "sha256": "2476fa4e6a35a8decb0190b86452dedbd76b56659d97a77f308539c47a0c70f5",
       "models": [
+        "formal/models/ci_browser_runtime.qnt",
         "formal/models/ci_coverage.qnt",
         "formal/models/release_publication.qnt"
       ],
@@ -2598,7 +2599,10 @@
     {
       "path": "playwright.config.ts",
       "sha256": "cf5e3afe734262cd4681c71710245bb039b4043c2547d4f724f618f3274801f0",
-      "models": ["formal/models/dev_server_lifecycle.qnt"],
+      "models": [
+        "formal/models/ci_browser_runtime.qnt",
+        "formal/models/dev_server_lifecycle.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -2712,8 +2716,11 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "ccbad501aff90a4043950e06a6f49931e77a00b9cc824015ed9342d79328495d",
-      "models": ["formal/models/ci_coverage.qnt"],
+      "sha256": "a138ee007882785649e5d258cd1e055732ade7a2b0cc969f39ede23382ae0c0a",
+      "models": [
+        "formal/models/ci_browser_runtime.qnt",
+        "formal/models/ci_coverage.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -8107,6 +8114,21 @@
         "completePagesTest",
         "incompleteRefusedTest",
         "retryDoesNotSkipTest"
+      ]
+    },
+    {
+      "path": "formal/models/ci_browser_runtime.qnt",
+      "sha256": "d6ab9f352209b64003f2d1f00d3d6b5febc961117d644e6ac6544202b35c26cc",
+      "sources": [
+        ".github/workflows/deploy.yml",
+        "playwright.config.ts",
+        "scripts/ci-scope.mjs"
+      ],
+      "scenarios": [
+        "failedDownloadCannotPassTest",
+        "lostFirefoxFailsAtLaunchTest",
+        "pagesRequiresOnlyChromiumTest",
+        "previewInstallsBothEnginesTest"
       ]
     },
     {

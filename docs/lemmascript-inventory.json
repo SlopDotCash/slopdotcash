@@ -2484,7 +2484,7 @@
 {"path":"scripts/child-environment.mjs","sha256":"a9914e969024a6ac131cc83a477a98504909c93bcd19208942e0e6985b353026","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"childEnvironment","kind":"FunctionDeclaration","line":34,"sha256":"b9e71426cb77e68176ce639281527a3d423ecbd224598fff61654c0d95e8f3bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]}
 ]},
-{"path":"scripts/ci-scope.mjs","sha256":"ccbad501aff90a4043950e06a6f49931e77a00b9cc824015ed9342d79328495d","language":"javascript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/ci-scope.mjs","sha256":"a138ee007882785649e5d258cd1e055732ade7a2b0cc969f39ede23382ae0c0a","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"changed","kind":"ArrowFunction","line":27,"sha256":"7cbca26d1194394298db7f617a8ea78caaed0e2f8dc3fc1e544eeccb2292aa3c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@27>","kind":"ArrowFunction","line":27,"sha256":"ce1d987ac11cfc43f1192231eed652312fa16b90d76d38a684b6e32b929c7c47","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@41>","kind":"ArrowFunction","line":41,"sha256":"0c64ea6e4679183f76f8d63779e9e423cef16c5a9bbee2838da6f8f12ce57129","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

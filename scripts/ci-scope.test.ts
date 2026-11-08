@@ -42,6 +42,13 @@ test("a main push selects the complete release browser, installer and sandbox ga
         (lane: { lane: string }) => lane.lane,
       ),
     ).toEqual(["preview-1", "preview-2", "pages", "registry-1", "registry-2"]);
+    // The selected preview suites include Firefox; installing Chromium alone
+    // passed setup but made every Firefox test fail before opening a page.
+    expect(
+      JSON.parse(values.browser_matrix)
+        .include.filter((lane: { server: string }) => lane.server === "preview")
+        .map((lane: { browsers: string }) => lane.browsers),
+    ).toEqual(["chromium firefox", "chromium firefox"]);
     expect(values.installer).toBe("true");
     expect(values.sandbox).toBe("true");
     expect(values.evm).toBe("true");

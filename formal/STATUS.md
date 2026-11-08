@@ -8,7 +8,7 @@ The goal remains active and incomplete. Work targets `origin/development` in
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-804 production sources, 272 finite models and 1,026 named scenarios, with zero
+804 production sources, 273 finite models and 1,030 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 235 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -31,7 +31,7 @@ are preserved. Production settings, keys and activation flags were not changed.
 - The frozen `0bc96c5aafab7d1e8c23ae798335f5cb2dced706` checkpoint passed all
   262 finite TLC checks through the pinned local parser. Its receipt confirms
   unchanged model/source inputs and no cancellation. This precedes the latest
-  ten models and is not a combined-head pass.
+  eleven models and is not a combined-head pass.
 - The final isolated close implementation passed 179 tests and 971 assertions
   on `d1848112b5a468b08997a62580e9a45718c517ae`, with a clean unchanged tree.
 - The isolated draft implementation passed 60 selected browser cases plus a
@@ -64,6 +64,13 @@ refresh the PR and exact-head hosted checks, and attach safe walkthrough and
 evidence artifacts. Keep the global inventories current after any further
 source change. Production deployment, live providers, physical devices and
 payment activation remain separate acceptance boundaries.
+
+The `1f0dafd45` combined local runs were interrupted after the Anvil browser
+flow reproduced a same-account focus check that unmounted the email editor and
+lost its draft. That parent/child correction is being tested in isolation.
+Hosted `1f0dafd45` checks also exposed omitted Firefox installation, a reload
+before draft-save acknowledgement, and a private-intake fixture quota failure.
+Keep those failed/interrupted runs separate from corrected validation.
 
 The source inventory is a review index. Finite models, lexical state discovery,
 selected function proofs and passing workflows do not prove the absence of

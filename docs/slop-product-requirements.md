@@ -473,6 +473,8 @@ funding or changes to economic and access policy.
   concurrency, partial writes, interruption and recovery. Preserve immutable
   history, distinct financial states and integer asset amounts. Model external
   uncertainty without treating a request or signature as finalized evidence.
+  Check composed parent/child and cross-subsystem transitions; isolated
+  component checks do not establish the behavior of their composition.
 - **STATE-03 — Conformance.** Compare model behavior with the actual affected
   workflow. Use model-derived traces or equivalent named scenarios through real
   entry points. Database races need database evidence; UI changes need browser

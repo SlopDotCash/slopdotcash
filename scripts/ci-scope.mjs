@@ -61,8 +61,9 @@ const lane = (name, server, browsers, shard, grep = "") => ({
 const lanes = [];
 if (ui)
   lanes.push(
-    lane("preview-1", "preview", "chromium", "1/2"),
-    lane("preview-2", "preview", "chromium", "2/2"),
+    // Preview includes the draft and email identity cases in both engines.
+    lane("preview-1", "preview", "chromium firefox", "1/2"),
+    lane("preview-2", "preview", "chromium firefox", "2/2"),
     lane("pages", "pages", "chromium", "1/1"),
   );
 // Root skill edits change raw Markdown and discovery bytes checked by Pages.

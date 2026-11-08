@@ -607,6 +607,8 @@ Maintain source mappings, assumptions, reachable scenarios and implementation
 conformance evidence in `formal/`. Cover UI/UX, APIs, workers, storage, queues,
 scheduled jobs, contributor tools, contracts and release workflows, including
 failure, retry, expiry, cancellation, concurrency, interruption and recovery.
+Review composed parent/child and cross-subsystem transitions, not only each
+component in isolation.
 Run `bun run formal:check` and `bun run formal:verify` with the existing required
 checks. Fix model/code discrepancies without weakening product policy. Report
 finite bounds and unresolved gaps; model simulation alone proves neither source

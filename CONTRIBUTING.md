@@ -357,6 +357,8 @@ mapping, assumptions and reachable scenarios. Exercise the real affected
 success, refusal, failure, retry, expiry, cancellation, concurrent and recovery
 paths. Fix discrepancies between the model and code. Models supplement the
 required browser, database, provider and chain evidence; they do not replace it.
+Check composed parent/child and cross-subsystem flows, including identity
+changes and the lifetime of pending work.
 
 Run `bun run formal:check` and `bun run formal:verify`. Report the tool version,
 model-checker backend, finite bounds, actual results and remaining coverage gaps.

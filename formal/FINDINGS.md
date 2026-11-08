@@ -58,6 +58,7 @@ claim that all application state errors have been eliminated.
 | Draft save feedback | An older saved status could describe a newer pending payload, and early wizard steps hid storage failures | Bind acknowledgement to the rendered payload and show backup feedback at every step; `tests/e2e/project-draft-storage.spec.ts` |
 | Private-report reflow | Enlarged text made the native action selector overflow a narrow viewport | Let the selector shrink within its label; `formal/private-intake-reflow-audit.md` |
 | Private-report navigation | Long report text was not keyboard-scrollable, and two open regions shared a name | Focus the scroll region and bind its name to the individual report headings; `tests/e2e/security-bounty.spec.ts` |
+| Browser engine preparation | Preview selected Firefox tests but installed only Chromium | Include both engines in the preview plan; `formal/ci-browser-audit.md` |
 
 The forwarded-report and payout corrections reuse
 [PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and

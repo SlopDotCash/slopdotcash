@@ -363,6 +363,9 @@ test("drafts a project through the setup steps and creates it without an admin",
   });
   await expect(closure).toBeChecked();
   await closure.uncheck();
+  // Reload observes committed bytes, not the visible Saving state of the
+  // queued draft write. Check the actual saved choice before navigating.
+  expect((await readProposalDraft(page)).automaticClosure).toBe("false");
   await page.reload();
   await expect(closure).not.toBeChecked();
   await expect(branch).toHaveValue("development");
