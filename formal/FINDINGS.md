@@ -151,3 +151,14 @@ cookie names with an expiring legacy fallback. See
 `x-connection-lifecycle-audit.md` for the29unexecuted scenarios, nineteen
 added handler cases and remaining browser/provider acceptance. These are
 source-confirmed corrections; no executed before/after result is claimed.
+
+## Separate Points private-view correction
+
+Source review found that a failed post-response identity check only showed an
+error while retaining the earlier account's private award/form. The Points
+view now clears cached private content before notifying the parent of known
+identity loss, and clears before parent revalidation when the session or
+access is unavailable. The extended browser workflow changes the real test
+session while an accepted response is held. It and the26newmodel scenarios
+are unexecuted in this lane. This is a source-confirmed correction, not a
+claimed browser reproduction or a completed UI acceptance result.

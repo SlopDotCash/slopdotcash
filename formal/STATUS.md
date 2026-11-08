@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 322 finite models and 1,645 named scenarios, with zero
+839 production sources, 323 finite models and 1,671 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -394,3 +394,13 @@ the existing API model. `points_dispute_decision` adds sixteen unexecuted
 scenarios for private detail reads, independent first-writer decisions, exact
 and conflicting retries, and an admitted retry returning after resolution.
 Pagination and full runtime conformance remain open.
+
+## Separate Points private-view lifecycle correction
+
+This branch follows frozen `a8b0f8226`. Points requests now recheck the session
+on both success and failure. Identity loss, an unavailable session or an
+access refusal clears cached private lists, details and input before the
+parent refreshes. A departed callback cannot update the replacement parent.
+`ui_points_disputes` adds26unexecuted scenarios; the extended real-browser
+workflow is also unexecuted. See `points-dispute-ui-audit.md`. Exact-source
+browser, accessibility and walkthrough evidence remain required.
