@@ -61,7 +61,7 @@ configuration was changed.
 The later `points_dispute_intake`, `points_dispute_lease` and
 `points_dispute_decision` models expand the original one-scenario API model.
 They distinguish immutable creation/retry, worker ownership and independent
-moderator decisions. Their 43 added scenarios are unexecuted in this lane.
+moderator decisions. Their 44 added scenarios are unexecuted in this lane.
 See `points-dispute-lease-audit.md` for the source map and assumptions; this
 addition does not change the historical runtime results below.
 

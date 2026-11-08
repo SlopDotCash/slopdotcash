@@ -9,12 +9,13 @@
 // Source-authored scenarios are unexecuted.
 module points_dispute_lease {
   pure val workers = Set(1, 2)
-  var s: { owner: int, expired: bool, phase: int -> str, verdict: int -> int,
+  var s: { owner: int, expired: bool, phase: int -> str, verdict: int -> int, admitted: int -> bool,
     calls: Set[int], costs: Set[int], draft: int, firstDraft: int,
     confidence: int, escalated: bool, moderatorNotice: bool,
     resolution: int, resolver: int, resolvedNotice: bool, originalAward: int }
   action init = s' = { owner: 0, expired: false,
     phase: workers.mapBy(_ => "idle"), verdict: workers.mapBy(_ => 0),
+    admitted: workers.mapBy(_ => false),
     calls: Set(), costs: Set(), draft: 0, firstDraft: 0, confidence: 0,
     escalated: false, moderatorNotice: false, resolution: 0, resolver: 0,
     resolvedNotice: false, originalAward: 1 }
@@ -31,9 +32,14 @@ module points_dispute_lease {
     s' = s.with("phase", s.phase.set(w,
       if(s.resolution > 0) "cleanup"
       else if(not(available) or s.draft > 0) "escalate" else "send")) }
+  // mayWrite is observed before the awaited scope read. That read can outlive
+  // the lease; a started provider call still cannot authorize later SQL writes.
+  action observeLease(w: int): bool = all { s.phase.get(w) == "send",
+    s' = s.with("admitted", s.admitted.set(w, owns(w)))
+      .with("phase", s.phase.set(w, "scope")) }
   action send(w: int, scope: bool): bool = all {
-    s.phase.get(w) == "send",
-    s' = if(owns(w) and scope) s.with("phase", s.phase.set(w, "waiting"))
+    s.phase.get(w) == "scope",
+    s' = if(s.admitted.get(w) and scope) s.with("phase", s.phase.set(w, "waiting"))
       .with("calls", s.calls.union(Set(w)))
       else s.with("phase", s.phase.set(w, "escalate")) }
   // Returned calls are accounted before the worker rechecks ownership. A failed
@@ -72,7 +78,7 @@ module points_dispute_lease {
     nondet w = workers.oneOf()
     nondet verdict = Set(0, 1, 2).oneOf()
     nondet ok = Set(false, true).oneOf()
-    any { claim(w), expire, preflight(w, ok), send(w, ok), reply(w, verdict, ok),
+    any { claim(w), expire, preflight(w, ok), observeLease(w), send(w, ok), reply(w, verdict, ok),
       record(w), escalate(w), cleanup(w), decide(1, 1), decide(2, 1), decide(2, 2), s' = s }
   }
   val invariant = all {
@@ -82,36 +88,40 @@ module points_dispute_lease {
     s.resolution > 0 implies(s.resolver == 2 and s.escalated and s.resolvedNotice) }
   run unavailableProjectEscalatesWithoutCallTest = init.then(claim(1)).then(preflight(1, false))
     .then(escalate(1)).then(cleanup(1)).expect(s.escalated and s.calls == Set() and s.owner == 0)
-  run liveClaimRefusesConcurrentWorkerTest = init.then(claim(1)).then(claim(2).fail()).expect(s.owner == 1)
+  run liveClaimRefusesConcurrentWorkerTest = init.then(claim(1)).expect(s.owner == 1).then(claim(2).fail())
   run expiredClaimCanBeReplacedTest = init.then(claim(1)).then(expire).then(claim(2)).expect(s.owner == 2 and not(s.expired))
   run staleCleanupKeepsReplacementTest = init.then(claim(1)).then(preflight(1, false)).then(expire)
     .then(claim(2)).then(escalate(1)).then(cleanup(1)).expect(s.owner == 2 and not(s.escalated))
-  run expiredWorkerCannotDraftTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, true))
+  run expiredWorkerCannotDraftTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, true))
     .then(expire).then(reply(1, 1, true)).then(record(1)).then(escalate(1)).then(cleanup(1))
     .expect(s.draft == 0 and not(s.escalated) and s.costs == Set(1))
-  run staleReturnedCallStillHasCostRecordTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, true))
+  run staleReturnedCallStillHasCostRecordTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, true))
     .then(expire).then(claim(2)).then(reply(1, 1, true)).then(record(1)).then(escalate(1)).then(cleanup(1))
     .expect(s.owner == 2 and s.costs == Set(1) and s.draft == 0)
-  run failedCostWriteDoesNotEscalateTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, true))
+  run failedCostWriteDoesNotEscalateTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, true))
     .then(reply(1, 1, false)).then(cleanup(1)).expect(s.costs == Set() and not(s.escalated) and s.owner == 0)
-  run deniedInferenceEscalatesTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, true))
+  run deniedInferenceEscalatesTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, true))
     .then(reply(1, 0, true)).then(escalate(1)).then(cleanup(1)).expect(s.escalated and s.draft == 0)
-  run returnedDraftCannotResolveTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, true))
+  run returnedDraftCannotResolveTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, true))
     .then(reply(1, 1, true)).then(record(1)).then(escalate(1)).then(cleanup(1))
     .expect(s.draft == 1 and s.confidence == 89 and s.resolution == 0)
-  run savedDraftResumesWithoutSecondCallTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, true))
+  run savedDraftResumesWithoutSecondCallTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, true))
     .then(reply(1, 1, true)).then(record(1)).then(expire).then(claim(2)).then(preflight(2, true))
     .then(escalate(2)).then(cleanup(2)).expect(s.draft == 1 and s.calls == Set(1) and s.escalated)
-  run completedDraftEscalationNeedsNoNewLeaseTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, true))
-    .then(reply(1, 1, true)).then(record(1)).then(escalate(1)).then(cleanup(1)).then(claim(2).fail())
-    .expect(s.escalated and s.draft == 1)
-  run sourceRestrictionBeforeSendEscalatesTest = init.then(claim(1)).then(preflight(1, true)).then(send(1, false))
+  run completedDraftEscalationNeedsNoNewLeaseTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, true))
+    .then(reply(1, 1, true)).then(record(1)).then(escalate(1)).then(cleanup(1))
+    .expect(s.escalated and s.draft == 1).then(claim(2).fail())
+  run sourceRestrictionBeforeSendEscalatesTest = init.then(claim(1)).then(preflight(1, true)).then(observeLease(1)).then(send(1, false))
     .then(escalate(1)).then(cleanup(1)).expect(s.calls == Set() and s.escalated)
   run selfResolutionRefusesTest = init.then(claim(1)).then(preflight(1, false)).then(escalate(1))
-    .then(decide(1, 1).fail()).expect(s.resolution == 0)
+    .expect(s.resolution == 0).then(decide(1, 1).fail())
   run resolvedDisputeStopsOldWorkerTest = init.then(claim(1)).then(preflight(1, false)).then(escalate(1))
-    .then(decide(2, 1)).then(cleanup(1)).then(claim(2).fail())
-    .expect(s.resolution == 1 and s.owner == 1 and s.originalAward == 1)
+    .then(decide(2, 1)).then(cleanup(1))
+    .expect(s.resolution == 1 and s.owner == 1 and s.originalAward == 1).then(claim(2).fail())
   run firstResolutionIsPermanentTest = init.then(claim(1)).then(preflight(1, false)).then(escalate(1))
-    .then(decide(2, 2)).then(decide(2, 1).fail()).expect(s.resolution == 2 and s.originalAward == 1)
+    .then(decide(2, 2)).expect(s.resolution == 2 and s.originalAward == 1).then(decide(2, 1).fail())
+  run leaseLostDuringScopeReadCanStartCallTest = init.then(claim(1)).then(preflight(1, true))
+    .then(observeLease(1)).then(expire).then(claim(2)).then(send(1, true))
+    .then(reply(1, 1, true)).then(record(1)).then(escalate(1)).then(cleanup(1))
+    .expect(s.calls == Set(1) and s.costs == Set(1) and s.owner == 2 and s.draft == 0)
 }

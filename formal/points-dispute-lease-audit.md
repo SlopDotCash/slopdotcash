@@ -2,7 +2,7 @@
 
 This separate follow-up starts from `a8b0f8226`. It adds a source-reviewed
 model without changing application behavior. No parser, test, simulation or
-verifier was run here. The initial fifteen worker scenarios and the additional intake and decision
+verifier was run here. The sixteen worker scenarios and the additional intake and decision
 scenarios are unexecuted.
 
 `api_points_disputes` represents intake, escalation and independent resolution.
@@ -15,7 +15,7 @@ of their source links proves implementation refinement.
 | --- | --- |
 | Atomic claim of an unresolved row without a completed draft/escalation pair | `claim`; a live owner refuses takeover, an expired owner permits it |
 | Re-read after claim, project registry and installation/access lookup | `preflight`; a retained draft skips another provider call; unavailable context escalates |
-| Provider admission at current scope and claim | `send`; lost authority does not start another call |
+| Provider admission observes claim before an awaited scope read | `observeLease` then `send`; a later lease loss can still precede a call, while durable writes remain fenced |
 | Record returned call costs before checking the lease again | `reply`; costs can remain after a worker loses its lease; cost failure does not claim successful escalation |
 | First draft under exact claim token and expiry predicate | `record`; a stale worker cannot write, the first draft remains immutable, confidence is at most 0.89 |
 | Escalation and moderator notification in one batch | `escalate`; stale or resolved work cannot escalate or send the modeled notification |
@@ -32,8 +32,11 @@ integer units, not an assertion that every real draft has confidence 0.89.
 
 The model separates provider completion from draft persistence and final
 cleanup. This exposes the important order in which an old call may finish and
-have its cost recorded after a replacement worker acquired the row. It cannot
-then publish a draft, escalate or clear the replacement token. A successful
+have its cost recorded after a replacement worker acquired the row. The admission callback first
+awaits its lease observation and then awaits the scope read. A lease lost during
+that second read can still be followed by a provider call. The model preserves
+this gap rather than claiming atomic cancellation. The old worker cannot then
+publish a draft, escalate or clear the replacement token. A successful
 model run would only establish that property under the stated finite
 abstraction; no such run is claimed here.
 
@@ -98,3 +101,8 @@ malformed JSON, arbitrary body sizes and asynchronous response transport
 remain separate grammar/read-path acceptance requirements. Existing handler
 tests cover moderation independence, resolved reads, exact/conflicting
 retries and simultaneous moderator decisions. Those tests were only read here.
+
+A source-only review corrected five terminal-refusal scenarios to assert
+retained state before `.fail()`, and split provider lease observation from the
+awaited scope read. These are authoring corrections; no executed model result
+is claimed. The additional late-admission scenario remains unexecuted.

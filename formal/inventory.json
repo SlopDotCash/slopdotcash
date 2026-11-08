@@ -10302,7 +10302,7 @@
     },
     {
       "path": "formal/models/points_dispute_lease.qnt",
-      "sha256": "4b4d72f1176bc83662f3ee7078a77e33d932c53f3978d7480e6e0ba30f6f6c97",
+      "sha256": "9d91b8281cb29b518603f4a1f64055b528b319ee316ec12a04d04ff08015d7a6",
       "sources": [
         "backend/notifications/events.ts",
         "backend/points/disputes.ts",
@@ -10317,6 +10317,7 @@
         "expiredWorkerCannotDraftTest",
         "failedCostWriteDoesNotEscalateTest",
         "firstResolutionIsPermanentTest",
+        "leaseLostDuringScopeReadCanStartCallTest",
         "liveClaimRefusesConcurrentWorkerTest",
         "resolvedDisputeStopsOldWorkerTest",
         "returnedDraftCannotResolveTest",
