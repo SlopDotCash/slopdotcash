@@ -56,7 +56,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Signed Solana wire parser](lemmascript-solana-wire-research.md)
 - [Retained-copy ancestry and unique hunk bindings](lemmascript-retained-binding.md)
 - [Repository access and setup decisions](lemmascript-setup-research.md)
-- [Final candidate dispositions and remaining active algorithms](lemmascript-candidate-dispositions.md)
+- [Candidate dispositions and remaining unselected algorithms](lemmascript-candidate-dispositions.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
 The inventory enumerates first-party JavaScript and TypeScript function bodies
@@ -68,6 +68,15 @@ proof toolchain. Tests, fixtures, generated data, declarations and dependency
 build trees are excluded. Anonymous callbacks are counted as bodies, not as
 independent business capabilities. The exact counts come from the current
 inventory; they do not measure proof completeness.
+
+At the integrated source snapshot
+`b4e51bd07a55b3fb47a40e4bb7e170e455430054`, the inventory records **168 selected
+runtime contracts in 33 modules**, **681 JavaScript/TypeScript files**, **9,793
+function bodies** and **9,625 unselected, unproved bodies**. The parallel Quint
+inventory has **302 models mapped to 836 sources**. These counts describe scope,
+not a proof that every application execution is correct. All selected
+implementation cohorts are integrated; fresh full combined-head verification
+and real-browser acceptance remain pending.
 
 A syntax scan cannot determine purity, reachability, all indirect calls, or
 implementation correctness. Every unselected function remains explicitly
@@ -132,8 +141,8 @@ maintenance surface without improving the selected acceptance result.
 | Enforcement actions | `backend/projects/verified-enforcement`; action and scan planners | Complete six-action acceptance/refusal, moderator/account independence, revision intent and flag-only scan reinstatement; native schema transitions and current authority remain separate |
 | Repository setup | `backend/projects/verified-setup`; access parsing and setup/flagger callers | Complete header result/refusal partition and authority state/message; native shape/role syntax and live GitHub authority remain separate, original lazy identity comparison retained |
 | Text byte partitioning | `verified-text-parts`; inventory and review splitting | Exact newline/continuation cut policy, increasing bounded ends and complete byte coverage; native UTF-8 conversion remains explicit |
-| Source selection and ownership | `verified-source-ownership`; Slopbot discovery and history reads | Complete accepted-commit index order and exact per-record refusal/retire/remove/set operations; native maps, paging, hashes and final ancestry remain boundaries |
-| Retained-copy bindings | `verified-retained-binding`; omitted-hunk evidence matching | Complete finite captured-parent reachability, ordered hunk subset and exactly one eligible attribution per missing hunk; captured Git identity, parsing and final native SHA ordering remain boundaries |
+| Source selection and ownership | `verified-source-ownership`; Slopbot discovery and history reads | Complete accepted-commit index order and exact per-record refusal/retire/remove/set operations; native maps, paging and hashes remain boundaries |
+| Retained-copy bindings and history coverage | `verified-retained-binding`; omitted-hunk evidence and final local work-unit history coverage | Complete finite captured-parent reachability, ordered hunk subset and exactly one eligible attribution per missing hunk; captured Git/digest identity, parsing, returned-flag interpretation and final native SHA ordering remain boundaries |
 | Signed Solana transactions | `verified-solana-wire`; actual parseTransaction | Complete compact-prefix, legacy/v0, instruction/lookup parsing, spans, static program and global reference checks with preserved error order; crypto/RPC identity remain separate |
 | Jupiter route policy | `verified-jupiter-policy`; actual route checker | First invalid privilege role, exact last-name binding and first binding refusal, complete input/quote/slippage/fee agreement; native account evidence, ATA and program truth remain separate |
 | Jupiter byte decoding | `verified-jupiter-wire`; canonical typed decoder | Full four-layout Borsh decoding and refusal order over all 239 enum constructors, typed output and exact consumed bounds; native byte-view materialization and generator translation remain reviewed boundaries |
@@ -261,8 +270,17 @@ the change.
 6. Records command, duration, exit result, source and artifact hashes under
    ignored `evidence/lemmascript/`, and rejects input drift during verification.
 
-The independent CI workflow repeats these checks on pull requests and pushes
-to `development` and `main`. The normal `verify` command also includes them.
+The full Jupiter decoder completed an unfiltered **15,551-obligation check
+with zero errors** in **1,135.748 seconds**, over all 35 selected production
+functions and their defined helpers, with unchanged input hashes. Generator
+freshness now runs inside the captured source snapshot. The exact generated
+Jupiter module alone has a 3,600-second aggregate command cap; other modules
+retain 180 seconds. All retain the 30-second per-obligation limit and the same
+unfiltered source/proof integrity checks. The CI job permits 80 minutes for
+setup and the complete set. A stale generated decoder fails before proof runs.
+
+The integrated CI workflow repeats these checks for the selected checkout.
+The normal `verify` command also includes them.
 The generated translation, TypeScript frontend, Dafny and SMT solver remain
 trusted tools. The integrity gate verifies permitted proof edits; it does not
 prove the translation itself sound.
@@ -284,12 +302,19 @@ all JavaScript semantics, crypto primitives, safe sandbox execution, live
 provider behavior, database transactions, economic policy, deployment,
 wallet control, or chain finality.
 
-The detailed reports rank remaining sequence/collection and parser candidates.
-Remaining work includes end-to-end identity/order refinement, upstream review
-eligibility, the native identity mapping around monthly replacements, full Jupiter decoding, display formatting, and effectful intake/notification authority.
-Those need larger loop/sequence proofs and explicit parser semantics. They are
-recorded as unproved, not replaced with assumptions or marked complete merely
-because the source appears in the inventory.
+The [candidate dispositions](lemmascript-candidate-dispositions.md) retain
+unselected sequence/collection and parser work: source/claim/carrier preparation,
+exact manifest JSON identity, patch and binary comparisons, remaining transfer
+and account-record joins, summary totals, notification MIME/assessment parsing
+and formatting. Native identity mapping around monthly replacements and full
+upstream review qualification also remain outside the selected kernels.
+Full Jupiter typed decoding is complete at the stated source boundary; it is
+not remaining implementation work. The unselected pure algorithms need larger
+loop/sequence or parser contracts and faithful native adapters, not assumed
+authorization flags. Intake/notification authority, persistence, external
+observations and complete combined-head/browser acceptance remain separate
+execution boundaries. Nothing is marked proved merely because it appears in
+the inventory.
 
 Native `Array.sort` remains a boundary for actor collation only. In pinned
 LemmaScript 0.6.6, `tools/dist/dafny-emit.js` represents native sorting with a
