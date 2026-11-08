@@ -3,6 +3,7 @@
 // @source backend/security/analysis.ts
 // @source backend/security/report-analysis.ts
 // @source backend/security/report-intake.ts
+// @source backend/security/verified-intake.ts
 module api_private_assessment {
   var s: {reportVersion: int, attemptVersion: int, state: str, humanDecision: bool, publishedVersion: int, attempts: int}
   action init = s' = {reportVersion: 1, attemptVersion: 0, state: "queued", humanDecision: false, publishedVersion: 0, attempts: 0}

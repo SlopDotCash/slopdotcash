@@ -1,6 +1,7 @@
 // @source src/lib/scoring-policy.ts
 // @source src/lib/verified-allocation.ts
 // @source src/lib/verified-selection.ts
+// @source src/lib/verified-reviewers.ts
 // @source src/lib/leaderboard.ts
 // @source src/lib/points.ts
 // @source src/lib/verified-aggregation.ts

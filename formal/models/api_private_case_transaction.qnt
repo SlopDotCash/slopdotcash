@@ -1,5 +1,6 @@
 // @source backend/security/handler.ts
 // @source backend/security/report-intake.ts
+// @source backend/security/verified-intake.ts
 // @source backend/security/analysis.ts
 // @source migrations/0026_private_security_cases.sql
 // @source migrations/0101_durable_security_intake.sql

@@ -28,6 +28,12 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Frontend and UI journeys](lemmascript-frontend-research.md)
 - [Backend and Worker boundaries](lemmascript-backend-research.md)
 - [Tooling, money, publication, Slopbot, vetting and referrals](lemmascript-tooling-research.md)
+- [Exact score/Points aggregation](lemmascript-aggregation-research.md)
+- [Complete reviewer selection](lemmascript-reviewer-selection.md)
+- [Activity notification consent](lemmascript-notification-prototype.md)
+- [Token-2022 byte parser](lemmascript-token-extensions-research.md)
+- [Monthly frozen award records](lemmascript-monthly-research.md)
+- [Private-intake gates](lemmascript-private-intake.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
 The inventory enumerates first-party JavaScript and TypeScript function bodies
@@ -93,13 +99,16 @@ maintenance surface without improving the selected acceptance result.
 | Fee-conversion arithmetic | `workers/fee-converter/verified-arithmetic` | Exact directional division, slippage floor, cap intersection, strict requote reduction, reserve/rent accounting, price-impact ceiling and replacement percentage rounding |
 | Remainder ordering | `verified-allocation.sortRemainders`; project, quality, funding-review and review-budget allocation | Checked merge sort preserves every row and orders exact remainders with the supplied tie ordinal, for any finite list |
 | Exact collection totals | `verified-allocation.sumAmounts`; project, review, quality and funding weights, monthly replacement/frozen totals, received-money validation | Exact sum for any finite BigInt array; nonnegative inputs remain nonnegative |
-| Review pool and maximum selection | `verified-selection`; review credit and Pages deployment selection | Exact bounded sum without unsafe intermediate totals; first maximum preserves review and deployment tie behavior |
+| Review pool and deployment selection | `verified-selection`; review credit and Pages deployment selection | Exact bounded sum without unsafe intermediate totals; first maximum preserves deployment tie behavior |
+| Reviewer grouping | `verified-reviewers`; review-credit caller | Complete distinct first-occurrence order, first highest-band source per actor, and first-five count; validated date sorting and immutable actor-to-index mapping remain explicit adapter obligations |
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native budgets and review timeout | `verified-budget`; fee converter, referral poster, payment keeper and vetting review plan | Exact existing positive/daily-budget acceptance and capped review-call timeout |
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
 | Activity mail consent | `workers/notify/verified-delivery`; real activity dispatch | Exact retry/suppress/send selection from missing, pilot or registered destination, essential notice, explicit preferences and pinned versions; optional mail requires matching consent and registered essential mail requires security consent |
 | Score and Points buckets | `verified-aggregation`; score debits, Points reconciliation and displayed totals | Exact signed accumulation and ordered per-bucket debit conservation; safe conversion back to the public number schema, including negative-total overflow refusal |
-| Token-2022 extension parsing | `contracts/solana/verified-token-extensions`; mint and token-account readers | Complete header/payload traversal with bounded reads, allowed unique types, exact error precedence and zero-only trailing padding; preserves original bytes without copying |
+| Token-2022 extension parsing | `contracts/solana/verified-token-extensions`; mint and token-account readers | Complete header/payload and metadata field/vector traversal with bounded reads, allowed unique types, exact error precedence and zero-only trailing padding; preserves original bytes without copying |
+| Monthly frozen records | `verified-money.freezeMonthlyAmounts`; monthly snapshot builder | Complete ordered nonzero award records, exact recipient/source strings, both fee modes and gross/net/fee total conservation; JSON/hash and authority remain caller responsibilities |
+| Private intake decisions | `backend/security/verified-intake`; actual qualification and recovery gates | Human-review precedence, explicit unknown/refused states, invalid-clock refusal and strictly expired running-screen recovery |
 
 ### Allocation claim boundary
 
@@ -148,6 +157,26 @@ gas amount through the real client and conversion gate and requires `pending`,
 which prevents signing. This is workflow evidence with deterministic provider
 responses; it does not claim a live Kyber request or on-chain execution. The
 proof covers the arithmetic kernel, not the regex parser or whole handler.
+
+### Confirmed defect: negative Points precision
+
+A retained Points journal accepted by the existing constructor and validator
+could contain individually safe integer debits whose combined negative total
+was outside JavaScript's safe integer range. The old projection checked
+positive-earned overflow but then added negative adjustments without the same
+boundary. A constructed accepted journal produced
+`-18014398509481980` where the exact total was `-18014398509481981`.
+
+The corrected path sums signed values exactly, then applies the existing
+`Points total overflow` refusal before returning an unsafe total or monthly
+subtotal. Score-penalty totals use the same exact bucket core and a safe public
+number boundary. The correction preserves source keys, penalty order,
+reversals, immutable journal history and the public number schema. Actual
+caller regressions cover both unsafe lifetime totals and an unsafe monthly
+subtotal whose lifetime total remains safe. This demonstrates a schema-accepted
+input defect; it does not claim ordinary bounded reconciliation produces that
+history. The [aggregation report](lemmascript-aggregation-research.md) records
+the reproduction and proof boundary.
 
 ## Reproducible verification
 
@@ -202,9 +231,9 @@ provider behavior, database transactions, economic policy, deployment,
 wallet control, or chain finality.
 
 The detailed reports rank remaining sequence/collection and parser candidates.
-Highest follow-on work is actor-identity and grouping refinement, complete review
-eligibility and penalty aggregation, monthly allocation replacement invariants,
-byte decoder bounds, display formatting, and intake/notification selection.
+Remaining work includes end-to-end identity/order refinement, upstream review
+eligibility, monthly allocation replacement identity rules, full Jupiter and
+base58 decoding, display formatting, and effectful intake/notification authority.
 Those need larger loop/sequence proofs and explicit parser semantics. They are
 recorded as unproved, not replaced with assumptions or marked complete merely
 because the source appears in the inventory.

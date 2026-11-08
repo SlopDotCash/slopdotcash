@@ -727,7 +727,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "08712c7c0342f751e94f67912c45ade700fc61fd09b16258ee12b9cffbf9f92d",
+      "sha256": "c1a6759fd4552656ecfc7088e8d60b0f2bed35360b7a2d21dcfa5292e68143b2",
       "models": [
         "formal/models/api_private_assessment.qnt",
         "formal/models/api_private_case_transaction.qnt",
@@ -736,9 +736,10 @@
         "formal/models/api_submission_recovery.qnt"
       ],
       "candidateLines": [
-        80, 117, 144, 163, 168, 211, 218, 258, 367, 374, 462, 504, 514, 529,
-        536, 554, 565, 578, 580, 606, 641, 651, 653, 835, 853, 864, 869, 874,
-        943, 1080, 1157, 1172, 1202, 1238, 1244, 1258, 1263, 1275, 1280, 1285
+        80, 117, 144, 163, 168, 198, 205, 222, 229, 269, 378, 385, 473, 515,
+        525, 540, 547, 565, 576, 589, 591, 617, 652, 662, 664, 846, 864, 875,
+        880, 885, 954, 1091, 1168, 1183, 1213, 1249, 1255, 1269, 1274, 1286,
+        1291, 1296
       ],
       "review": "mapped-abstraction"
     },
@@ -768,6 +769,19 @@
         1105, 1121, 1145, 1147, 1159, 1219, 1236, 1238, 1241, 1250, 1269, 1277,
         1285, 1306, 1324, 1328
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/verified-intake.ts",
+      "sha256": "f5e5fa31151f32128e5423f851c352be2bdaf478303ab59ba6c5a9b82b4c39a6",
+      "models": [
+        "formal/models/api_private_assessment.qnt",
+        "formal/models/api_private_case_transaction.qnt",
+        "formal/models/api_private_intake.qnt",
+        "formal/models/api_report_forward_revision.qnt",
+        "formal/models/api_submission_recovery.qnt"
+      ],
+      "candidateLines": [26, 27, 28, 29, 30, 31, 62, 66, 67, 68, 69, 74, 75],
       "review": "mapped-abstraction"
     },
     {
@@ -1493,7 +1507,7 @@
     },
     {
       "path": "contracts/solana/token-extensions.ts",
-      "sha256": "b3c96abf607a437ed942a0cf046217cb091f58014deca072ff465798aafe31fe",
+      "sha256": "71ed40527b173a3831c707a947ec1d2944b79d92e77b452d374947f97a9501f7",
       "models": ["formal/models/token_admission.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1514,7 +1528,7 @@
     },
     {
       "path": "contracts/solana/verified-token-extensions.ts",
-      "sha256": "5543f151f576a48cd8e31dd7c76f701b0db7a19655c56ece02ab0f145ab45d53",
+      "sha256": "6868bdd7df6dbdfe9fe55dfcf9c371cbd38bd2680621b5e7b23f90edac0ea193",
       "models": ["formal/models/token_admission.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4849,7 +4863,7 @@
     },
     {
       "path": "src/lib/payments/monthly-allocation.ts",
-      "sha256": "e3aefa5e6988943620b4bfdb28c37d3034cc18519d14353af5171e3e75ceb81c",
+      "sha256": "5cc24d78a6d932bcf506933749ffc0cbad420e59d5d382c97a2622722a355f24",
       "models": ["formal/models/monthly_coordinator.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5184,7 +5198,7 @@
     },
     {
       "path": "src/lib/scoring-policy.ts",
-      "sha256": "e7154ce0956e2d2772b7247ff022ba35e498d3fa461e0be6525c09ea95471c3b",
+      "sha256": "ee21a065359fb1999b09ab9e647923abe5be7339a6113d318d33d95d060e6314",
       "models": [
         "formal/models/review_credit.qnt",
         "formal/models/ui_review_pool.qnt"
@@ -5392,8 +5406,9 @@
     },
     {
       "path": "src/lib/verified-money.ts",
-      "sha256": "522b1d14b7959c15c51894a33cb031000a1a1a14c91cb82a720a1c69ef6939e7",
+      "sha256": "d8b11bdde6fbafcd24be05b6d84cd5e10d81f92113d2e92294f17a25d6f7cddc",
       "models": [
+        "formal/models/monthly_coordinator.qnt",
         "formal/models/native_budget.qnt",
         "formal/models/solana_owner_action.qnt"
       ],
@@ -5405,6 +5420,16 @@
       "path": "src/lib/verified-partition.ts",
       "sha256": "ed66ffbfb760cbae983095e8d54dce45302808fe4d7e87c60da7c313ee6d7f8a",
       "models": ["formal/models/vetting_evidence_upload.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/verified-reviewers.ts",
+      "sha256": "8926b4f8ad5eb78d40dfbd1ce54c39e34d47b0080f6502242b9af2f599c856b3",
+      "models": [
+        "formal/models/review_credit.qnt",
+        "formal/models/ui_review_pool.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7246,11 +7271,12 @@
     },
     {
       "path": "formal/models/api_private_assessment.qnt",
-      "sha256": "db6759b60e2fa23161549c2d0557b237884e7bd8df0aab3d7bd238aa600a0df1",
+      "sha256": "7366ef2ee565588da3b7a01a23dca58b3b130703d72cea06b71913d40c0c3462",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/report-analysis.ts",
         "backend/security/report-intake.ts",
+        "backend/security/verified-intake.ts",
         "migrations/0069_security_appeal_triages.sql",
         "migrations/0110_security_analysis_report_version.sql"
       ],
@@ -7287,11 +7313,12 @@
     },
     {
       "path": "formal/models/api_private_case_transaction.qnt",
-      "sha256": "f48dbda413210c4733a2eb87ed51576dca29030309d3739fbdcf71fc112bb5ad",
+      "sha256": "f91b1c3db1fc02cab364b72868a82f3838417f2cbdd0fa964bc1e0c7c22d6ced",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/handler.ts",
         "backend/security/report-intake.ts",
+        "backend/security/verified-intake.ts",
         "migrations/0026_private_security_cases.sql",
         "migrations/0101_durable_security_intake.sql"
       ],
@@ -7308,13 +7335,14 @@
     },
     {
       "path": "formal/models/api_private_intake.qnt",
-      "sha256": "958959705c9f5813a08dc81cce97c72e42d9f3e4a3a9f8034b023deabeb8ceb0",
+      "sha256": "0e5833d145c3e3db761d0186a069dd5f78ee806fc94f59228b50d16cb16526d3",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/intake-grant.ts",
         "backend/security/report-intake.ts",
         "backend/security/reporting-readiness.ts",
         "backend/security/submissions.ts",
+        "backend/security/verified-intake.ts",
         "migrations/0059_private_security_submissions.sql",
         "migrations/0101_durable_security_intake.sql"
       ],
@@ -7379,8 +7407,11 @@
     },
     {
       "path": "formal/models/api_report_forward_revision.qnt",
-      "sha256": "7b5e4b906e2bf3b869b7446356449c58a5c4495616b4495635ca6dbe1aab3a2b",
-      "sources": ["backend/security/report-intake.ts"],
+      "sha256": "dbf74a3b997d01ec49913d067e2264ad46e68ed6f584041bf9b469e22d4cdc1e",
+      "sources": [
+        "backend/security/report-intake.ts",
+        "backend/security/verified-intake.ts"
+      ],
       "scenarios": [
         "caseOwnerInformationReopensTest",
         "explicitInformationReopensTest",
@@ -7417,10 +7448,11 @@
     },
     {
       "path": "formal/models/api_submission_recovery.qnt",
-      "sha256": "56bdeb1f663a167d5a7f8f9d1086051f8f6c3e4f8fba3246794333d50dcc116f",
+      "sha256": "d0884aae1094f35e7b6548bdebea1d08a128d37c1a464fbf143467989f601681",
       "sources": [
         "backend/security/report-intake.ts",
         "backend/security/submissions.ts",
+        "backend/security/verified-intake.ts",
         "migrations/0059_private_security_submissions.sql",
         "migrations/0101_durable_security_intake.sql"
       ],
@@ -8783,7 +8815,7 @@
     },
     {
       "path": "formal/models/monthly_coordinator.qnt",
-      "sha256": "4a3498af407c73320b953acbc2d9d1754773804a04c81c49c684ef8079415dc2",
+      "sha256": "e534def27aa33675bde58dd113df00902e5dfdf09a33a1c9fa84546f8609d113",
       "sources": [
         "backend/payments/monthly-attestation.ts",
         "backend/payments/monthly-publication.ts",
@@ -8793,7 +8825,8 @@
         "migrations/0081_monthly_asset_amount_range.sql",
         "scripts/prepare-monthly-rewards.ts",
         "src/lib/payments/monthly-allocation.ts",
-        "src/lib/verified-allocation.ts"
+        "src/lib/verified-allocation.ts",
+        "src/lib/verified-money.ts"
       ],
       "scenarios": [
         "fundedBanDoesNotEraseTest",
@@ -9377,8 +9410,12 @@
     },
     {
       "path": "formal/models/review_credit.qnt",
-      "sha256": "fb3d6e15d415265380dde3efcf7f0e8b0c40983da79f7edaaac8e070b3d950e4",
-      "sources": ["src/lib/scoring-policy.ts", "src/lib/verified-selection.ts"],
+      "sha256": "ddfd8bf2b074b3a7580dbe9066776a2140ce29c7f70cb606ac987c762816c3d9",
+      "sources": [
+        "src/lib/scoring-policy.ts",
+        "src/lib/verified-reviewers.ts",
+        "src/lib/verified-selection.ts"
+      ],
       "scenarios": [
         "duplicateSourceRefusedTest",
         "minimumPoolTest",
@@ -10103,13 +10140,14 @@
     },
     {
       "path": "formal/models/ui_review_pool.qnt",
-      "sha256": "eedb4057d796e145967fb15723cdff283fc981b45195ee7b0ca2a8068251f4d8",
+      "sha256": "5cd74fbdf2e9b71acf5fb0d2fb7965a19b6d671906bd1c825a52dc47dc4dd67e",
       "sources": [
         "src/lib/leaderboard.ts",
         "src/lib/points.ts",
         "src/lib/scoring-policy.ts",
         "src/lib/verified-aggregation.ts",
         "src/lib/verified-allocation.ts",
+        "src/lib/verified-reviewers.ts",
         "src/lib/verified-selection.ts"
       ],
       "scenarios": [

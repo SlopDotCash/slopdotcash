@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "fdf3de0444b89f15891b01ed8a3f996d0a92685b574138a8d3ec459eaf15a0e8",
+  "inventorySha256": "55ebe2e08f70522b5aa05ffe92ca4f4c0e5cb44231abedb09922f1f906f3c12f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -286,29 +286,6 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "line": 46,
-      "name": "IntakeState",
-      "kind": "string-union",
-      "values": [
-        "legitimate",
-        "needs-information",
-        "queued",
-        "running",
-        "spam",
-        "unavailable"
-      ],
-      "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_report_forward_revision.qnt",
-        "formal/models/api_submission_recovery.qnt"
-      ],
-      "lexicallyUnmentionedValues": [],
-      "review": "candidate-only"
-    },
-    {
-      "path": "backend/security/report-intake.ts",
       "line": 66,
       "name": "review_decision",
       "kind": "string-union",
@@ -339,6 +316,29 @@
       ],
       "models": [
         "formal/models/api_private_intake.qnt",
+        "formal/models/api_submission_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/verified-intake.ts",
+      "line": 3,
+      "name": "IntakeScreeningState",
+      "kind": "string-union",
+      "values": [
+        "legitimate",
+        "needs-information",
+        "queued",
+        "running",
+        "spam",
+        "unavailable"
+      ],
+      "models": [
+        "formal/models/api_private_assessment.qnt",
+        "formal/models/api_private_case_transaction.qnt",
+        "formal/models/api_private_intake.qnt",
+        "formal/models/api_report_forward_revision.qnt",
         "formal/models/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
