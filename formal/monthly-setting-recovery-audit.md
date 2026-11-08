@@ -59,6 +59,13 @@ storage failure, failed clearing, transient verification failure and explicit
 user reset. Its bounded second send requires either resolved evidence or that
 user assertion. A resolved setting is not a contributor payment.
 
+A source-only peer review corrected the model's absent-storage projection:
+after the application removes the key, stale model fields must not resurrect
+an invalid record on reload. Reload now reads hash, provenance, draft and error
+only from a present record. The same review covered verified completion,
+confirmed-unsent clearing and failed unreadable-record clearing. Four named
+clear/reload scenarios supplement the original ten; none were executed.
+
 The model treats account/network/intent/finality validation as predicates
 supplied by the unchanged adapters. It does not prove cryptography, arbitrary
 storage failures, wallet extensions, React scheduling or backend refinement.
