@@ -3151,7 +3151,7 @@
     },
     {
       "path": "scripts/lemmascript-integrity.mjs",
-      "sha256": "c837730700037f2ff745b9231766d0e19a8e636dd585e648de4c550db7ee43f1",
+      "sha256": "d88e5724f62e14ab78cbe858c482bb191166d5ee0320b804c1cd26f7ddc79d31",
       "models": ["formal/models/formal_toolchain.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4557,7 +4557,7 @@
     },
     {
       "path": "src/lib/base58.ts",
-      "sha256": "0e6673bdd39f94851dfe132947c73aafe0944a5564cff56b6ca6cab6a90ea217",
+      "sha256": "e916260891c521ed9f1828ae7213eada0e05d97e948a8c48065451e9172b3c94",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -6840,9 +6840,9 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "8cc66efbcaae382300d7ee7dd6826270009ad6b90176bfaf5908448d9f59573f",
+      "sha256": "e9271369f017d8abff3d46afca66efa7cde9af47dfbf256c0884ec157042f265",
       "models": ["formal/models/bot_retained_acceptance.qnt"],
-      "candidateLines": [23, 50, 170, 176, 201, 203, 204, 209, 226],
+      "candidateLines": [30, 57, 177, 183, 207, 241],
       "review": "mapped-abstraction"
     },
     {
@@ -6930,6 +6930,13 @@
         "formal/models/bot_work_partition.qnt"
       ],
       "candidateLines": [124],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/verified-retained-binding.ts",
+      "sha256": "b43e6fb821227f46bd5aa7dd6395d30b99bff370c038fa4040786f491fc878ff",
+      "models": ["formal/models/bot_retained_acceptance.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -8136,7 +8143,7 @@
     },
     {
       "path": "formal/models/bot_retained_acceptance.qnt",
-      "sha256": "6d68ff53053e9a5c24f622a5e53a4c1ee6527007bcbf428659eaa041230c3040",
+      "sha256": "5ac35b804a04da83e1487a8621d50311039633f07b3b072697712406f6c8d496",
       "sources": [
         "workers/slopbot/value-branch-policy.ts",
         "workers/slopbot/value-commit-hints.ts",
@@ -8144,7 +8151,8 @@
         "workers/slopbot/value-indirect.ts",
         "workers/slopbot/value-no-change-promotion.ts",
         "workers/slopbot/value-retained-copy.ts",
-        "workers/slopbot/value-retained-reference.ts"
+        "workers/slopbot/value-retained-reference.ts",
+        "workers/slopbot/verified-retained-binding.ts"
       ],
       "scenarios": [
         "hintIsNotAcceptanceTest",

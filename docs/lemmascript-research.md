@@ -46,6 +46,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Complete text byte partitioning](lemmascript-text-parts.md)
 - [Accepted source selection and ownership operations](lemmascript-source-ownership.md)
 - [Signed Solana wire parser](lemmascript-solana-wire-research.md)
+- [Retained-copy ancestry and unique hunk bindings](lemmascript-retained-binding.md)
 - [Final candidate dispositions and remaining active algorithms](lemmascript-candidate-dispositions.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
@@ -120,6 +121,7 @@ maintenance surface without improving the selected acceptance result.
 | Restrictions and appeals | `backend/projects/verified-enforcement`; actual project restriction derivation | Complete chronological episode, exact active-ban pairs, pending project/account appeals and final status/appeal composition; source order and authority remain external |
 | Text byte partitioning | `verified-text-parts`; inventory and review splitting | Exact newline/continuation cut policy, increasing bounded ends and complete byte coverage; native UTF-8 conversion remains explicit |
 | Source selection and ownership | `verified-source-ownership`; Slopbot discovery and history reads | Complete accepted-commit index order and exact per-record refusal/retire/remove/set operations; native maps, paging, hashes and final ancestry remain boundaries |
+| Retained-copy bindings | `verified-retained-binding`; omitted-hunk evidence matching | Complete finite captured-parent reachability, ordered hunk subset and exactly one eligible attribution per missing hunk; captured Git identity, parsing and final native SHA ordering remain boundaries |
 | Signed Solana transactions | `verified-solana-wire`; actual parseTransaction | Complete compact-prefix, legacy/v0, instruction/lookup parsing, spans, static program and global reference checks with preserved error order; crypto/RPC identity remain separate |
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native daily liabilities | `verified-native-liability`; real gas reservation | Today's recorded costs plus the largest unresolved maximum per exact wallet/nonce bucket, including the proposed attempt; preserves liabilities across midnight |

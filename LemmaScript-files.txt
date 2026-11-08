@@ -27,3 +27,4 @@ backend/projects/verified-enforcement.ts
 workers/vetting/verified-text-parts.ts
 workers/slopbot/verified-source-ownership.ts
 workers/fee-converter/verified-solana-wire.ts
+workers/slopbot/verified-retained-binding.ts
