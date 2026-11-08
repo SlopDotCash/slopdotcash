@@ -266,6 +266,9 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   let account = donor;
   let wrongNetwork = true;
   let rejected = false;
+  let holdRejectedSend = false;
+  let releaseRejectedSend: (() => void) | undefined;
+  let heldRejectedSendStarted = false;
   let ambiguous = false;
   let forceFailedTransaction = false;
   const sends: string[] = [];
@@ -276,7 +279,15 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       if (method === "eth_accounts" || method === "eth_requestAccounts")
         return [account];
       if (method === "eth_sendTransaction") {
-        if (rejected) return { fixtureError: "rejected" };
+        if (rejected) {
+          if (holdRejectedSend) {
+            heldRejectedSendStarted = true;
+            await new Promise<void>((resolve) => {
+              releaseRejectedSend = resolve;
+            });
+          }
+          return { fixtureError: "rejected" };
+        }
         const requestParams = forceFailedTransaction
           ? [{ ...(params[0] as Record<string, unknown>), gas: "0x7000" }]
           : params;
@@ -307,8 +318,16 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
               ) => Promise<unknown>;
             }
           ).vaultWalletRequest(method, params);
-          if ((value as { fixtureError?: string })?.fixtureError === "rejected")
+          if (
+            (value as { fixtureError?: string })?.fixtureError === "rejected"
+          ) {
+            // A timer observes the reply after the application's promise catch.
+            setTimeout(() => {
+              const state = window as unknown as { rejectedReplies?: number };
+              state.rejectedReplies = (state.rejectedReplies ?? 0) + 1;
+            }, 0);
             throw Object.assign(new Error("User rejected"), { code: 4001 });
+          }
           if ((value as { fixtureError?: string })?.fixtureError === "unknown")
             throw new Error("Transport interrupted after send");
           return value;
@@ -696,8 +715,38 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText("You declined");
   expect(sends).toHaveLength(4);
+  // A wallet can reply after the user leaves this component and starts again.
+  // The rejected first prompt must not clear the newer real Anvil submission.
+  const rejectedRepliesBeforeHold = await page.evaluate(
+    () =>
+      (window as unknown as { rejectedReplies?: number }).rejectedReplies ?? 0,
+  );
+  holdRejectedSend = true;
+  await ownerActions
+    .getByRole("button", { name: "Authorize this award in wallet" })
+    .click();
+  await expect.poll(() => heldRejectedSendStarted).toBe(true);
+  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await expect(ownerActions).toHaveCount(0);
+  await page.goBack();
+  await expect(ownerActions).toBeVisible();
+  await ownerActions
+    .getByText("Wallet confirms nothing was sent", { exact: true })
+    .click();
+  await ownerActions
+    .getByRole("button", {
+      name: "I checked my wallet; this request was not sent",
+    })
+    .click();
   rejected = false;
+  holdRejectedSend = false;
   ambiguous = true;
+  await ownerActions
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await ownerActions
+    .getByRole("button", { name: "Verify award and funding" })
+    .click();
   await ownerActions
     .getByRole("button", { name: "Authorize this award in wallet" })
     .click();
@@ -705,6 +754,25 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "wallet result is unclear",
   );
   expect(sends).toHaveLength(5);
+  const commitmentKey =
+    "slop:award-commitment:v2:eliza:2026-09:base-sepolia:1234";
+  const retainedRetry = await page.evaluate(
+    (key) => sessionStorage.getItem(key),
+    commitmentKey,
+  );
+  expect(retainedRetry).not.toBeNull();
+  releaseRejectedSend?.();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { rejectedReplies?: number }).rejectedReplies,
+      ),
+    )
+    .toBeGreaterThan(rejectedRepliesBeforeHold);
+  expect(
+    await page.evaluate((key) => sessionStorage.getItem(key), commitmentKey),
+  ).toBe(retainedRetry);
   reviewAvailable = false;
   const unavailableReview = diagnostics.allowResponse(
     503,
