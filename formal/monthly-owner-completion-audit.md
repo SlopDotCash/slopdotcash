@@ -65,6 +65,11 @@ missing registry and terminal commit/refusal. The terminal model does not
 assert that a historical valid write becomes invalid after a later registry
 change. Amount validation, immutable proposal content, external GitHub proof,
 clock grammar and D1 execution semantics remain separate predicates.
+For an enable, the implementation captures the settings sequence before
+authority checks. This model starts after that authorization boundary and
+represents a competing opt-out before execution; the existing monthly setting
+ordering model separately covers the earlier sequence-capture order.
+The ban refusal uses the implementation's `account_banned` error code.
 
 Existing real-SQLite references are `backend/payments/monthly.test.ts`:
 automatic/owner finalization preserving a pause before its freeze write;

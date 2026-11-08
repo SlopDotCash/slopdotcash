@@ -43,7 +43,7 @@ module monthly_owner_completion {
     and (if(s.kind=="allocation")allocationCurrent else settingCurrent)
   val refusal=if(not(s.registry))"payment_registry_unavailable"
     else if(not(registryCurrent))"project_changed"
-    else if(s.banned)"participation_banned"
+    else if(s.banned)"account_banned"
     else if(s.kind=="allocation" and (s.frozen or s.allocationSequence!=s.seenAllocation))"allocations_changed"
     else if(s.kind=="allocation")"cutoff_passed" else "setting_changed"
   action execute=all{s.phase=="queued",
@@ -89,7 +89,7 @@ module monthly_owner_completion {
   run competingAllocationStillRefusesTest=init.then(begin("allocation")).then(otherAllocation).then(execute)
     .expect(s.error=="allocations_changed" and s.allocationSequence==1)
   run newBanStillRefusesTest=init.then(begin("disable")).then(banActor).then(execute)
-    .expect(s.error=="participation_banned" and s.writes==0)
+    .expect(s.error=="account_banned" and s.writes==0)
   run unchangedPausedProjectMayUpdateSettingTest=init.then(changeProject("paused")).then(begin("disable")).then(execute)
     .expect(s.phase=="committed" and s.status=="paused" and not(s.automatic))
 }
