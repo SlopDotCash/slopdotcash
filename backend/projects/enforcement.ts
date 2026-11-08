@@ -26,6 +26,13 @@ import type {
 import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { ProjectPersistence } from "./contracts";
+import {
+  type EnforcementHistoryRow,
+  foldEnforcementStatus,
+  openAccountAppealSource,
+  selectActiveBanIndices,
+  selectProjectAppeals,
+} from "./verified-enforcement";
 
 export const ENFORCEMENT_ACTIONS: readonly EnforcementAction[] = [
   "quarantine",
@@ -71,6 +78,27 @@ export type ProjectRestriction = {
   records: ProjectEnforcement[];
 };
 
+function restrictionHistory(
+  records: readonly ProjectEnforcement[],
+): EnforcementHistoryRow[] {
+  return records.map((record) => ({
+    action: record.action,
+    stateAfter: record.stateAfter,
+    appealAfter: record.appealAfter,
+    actor: record.actor
+      ? { kind: "actor", id: record.actor.githubId }
+      : { kind: "none" },
+    actorRole: record.actorRole,
+    sequence: record.sequence,
+    bannedAccounts: (record.maintainerBans ?? []).map(
+      (account) => account.githubId,
+    ),
+    reinstatedAccounts: (record.accountReinstatements ?? []).map(
+      (account) => account.githubId,
+    ),
+  }));
+}
+
 /** Folds one project's records, oldest first, into its current restriction. */
 export function projectRestriction(
   projectId: string,
@@ -79,68 +107,31 @@ export function projectRestriction(
   const records = all
     .filter((record) => record.projectId === projectId)
     .sort((left, right) => left.sequence - right.sequence);
+  const bannedMaintainers = activeAccountBans(records).map(
+    ({ account }) => account,
+  );
+  const episode = foldEnforcementStatus(
+    restrictionHistory(records),
+    bannedMaintainers.map((account) => account.githubId),
+  );
+  const opening = episode.opening < 0 ? null : records[episode.opening];
+  const latest = episode.last < 0 ? null : records[episode.last];
   const restriction: ProjectRestriction = {
     projectId,
     sourceProjectId: projectId,
-    state: "clear",
-    appeal: "none",
-    since: null,
-    restrictedBy: [],
-    openedAtRevision: null,
-    bannedMaintainers: [],
-    repositoryGithubId: null,
-    repositoryKeys: [],
+    state: episode.state as RestrictionState,
+    appeal: episode.appeal as AppealState,
+    since: opening ? opening.createdAt : null,
+    restrictedBy: episode.actorSources.map(
+      (index) => records[index].actor as GithubActor,
+    ),
+    openedAtRevision: opening ? opening.beforeRevision : null,
+    bannedMaintainers,
+    repositoryGithubId: latest ? latest.repositoryGithubId : null,
+    repositoryKeys: latest ? latest.repositoryKeys : [],
     nextSequence: records.length + 1,
     records,
   };
-  for (const record of records) {
-    if (
-      (record.action === "quarantine" || record.action === "ban") &&
-      restriction.state === "clear"
-    ) {
-      restriction.since = record.createdAt;
-      restriction.restrictedBy = [];
-      restriction.openedAtRevision = record.beforeRevision;
-    }
-    if (record.action === "quarantine" || record.action === "ban") {
-      if (
-        record.actor &&
-        !restriction.restrictedBy.some(
-          (actor) => actor.githubId === record.actor?.githubId,
-        )
-      )
-        restriction.restrictedBy.push(record.actor);
-    }
-    for (const maintainer of record.maintainerBans ?? [])
-      if (
-        !restriction.bannedMaintainers.some(
-          (banned) => banned.githubId === maintainer.githubId,
-        )
-      )
-        restriction.bannedMaintainers.push(maintainer);
-    restriction.state = record.stateAfter;
-    restriction.appeal = record.appealAfter;
-    restriction.repositoryGithubId = record.repositoryGithubId;
-    restriction.repositoryKeys = record.repositoryKeys;
-    if (record.stateAfter === "clear") {
-      restriction.since = null;
-      restriction.restrictedBy = [];
-      restriction.openedAtRevision = null;
-      restriction.bannedMaintainers = [];
-    }
-  }
-  restriction.bannedMaintainers = activeAccountBans(records).map(
-    ({ account }) => account,
-  );
-  if (
-    restriction.appeal !== "requested" &&
-    (projectAppealState(restriction) === "requested" ||
-      restriction.bannedMaintainers.some(
-        (account) =>
-          accountAppealState(restriction, account.githubId) === "requested",
-      ))
-  )
-    restriction.appeal = "requested";
   return restriction;
 }
 
@@ -153,7 +144,7 @@ export function projectAppealState(
 }
 
 /**
- * The undecided project appeals in records (oldest first) after the last
+ * The undecided project appeals in records (newest first) after the last
  * record that closed one; the next decision closes all of them. With `kept`,
  * an appeal that confirmed malicious Bans kept also counts: the moderator
  * decision on those Bans closes it.
@@ -162,26 +153,9 @@ function openProjectAppeals(
   records: ProjectEnforcement[],
   kept = false,
 ): ProjectEnforcement[] {
-  const newestFirst = [...records].reverse();
-  const boundary =
-    newestFirst.find(
-      (record) =>
-        // An ordinary ban can retain the pending project appeal. A new
-        // malicious result or a decision that closes it starts a new boundary.
-        (record.action === "ban" &&
-          (record.actorRole === "vetting-service"
-            ? !(kept && record.appealAfter === "requested")
-            : record.appealAfter !== "requested")) ||
-        ["quarantine", "reinstate", "deny_reinstatement"].includes(
-          record.action,
-        ),
-    )?.sequence ?? 0;
-  return newestFirst.filter(
-    (record) =>
-      record.action === "request_reinstatement" &&
-      record.actorRole !== "banned-account" &&
-      record.sequence > boundary,
-  );
+  return selectProjectAppeals(restrictionHistory(records), kept, {
+    kind: "all",
+  }).indices.map((index) => records[index]);
 }
 
 function projectAppealOpen(
@@ -202,35 +176,12 @@ export function accountAppealState(
     )
   )
     return "none";
-  const newestFirst = [...restriction.records].reverse();
-  const boundary =
-    newestFirst.find(
-      (record) =>
-        (record.action === "ban" &&
-          (record.maintainerBans ?? []).some(
-            (account) => account.githubId === githubId,
-          )) ||
-        // A denial decides the open project appeal when there is one, and
-        // the account appeals only when there is not (PRD section 8).
-        (record.action === "deny_reinstatement" &&
-          !projectAppealOpen(
-            restriction.records.filter(
-              (earlier) => earlier.sequence < record.sequence,
-            ),
-          )) ||
-        (record.action === "reinstate_accounts" &&
-          (record.accountReinstatements ?? []).some(
-            (account) => account.githubId === githubId,
-          )),
-    )?.sequence ?? 0;
-  const request = newestFirst.find(
-    (record) =>
-      record.action === "request_reinstatement" &&
-      record.actorRole === "banned-account" &&
-      record.actor?.githubId === githubId &&
-      record.sequence > boundary,
-  );
-  return request ? "requested" : "none";
+  return openAccountAppealSource(
+    restrictionHistory(restriction.records),
+    githubId,
+  ) >= 0
+    ? "requested"
+    : "none";
 }
 
 /**
@@ -256,18 +207,34 @@ export function awaitsMaliciousDecision(
  * Project reinstatement alone does not establish an account's innocence.
  */
 export function activeAccountBans(records: ProjectEnforcement[]) {
-  const released = new Set(
-    records.flatMap((record) =>
-      (record.accountReinstatements ?? []).map(
-        (account) => `${account.banEnforcementId}:${account.githubId}`,
-      ),
+  const keys = new Map<string, number>();
+  const indexOf = (key: string) => {
+    const existing = keys.get(key);
+    if (existing !== undefined) return existing;
+    const index = keys.size;
+    keys.set(key, index);
+    return index;
+  };
+  const releases = records.flatMap((record) =>
+    (record.accountReinstatements ?? []).map((account) =>
+      indexOf(`${account.banEnforcementId}:${account.githubId}`),
     ),
   );
-  return records.flatMap((record) =>
-    (record.maintainerBans ?? [])
-      .filter((account) => !released.has(`${record.id}:${account.githubId}`))
-      .map((account) => ({ account, record })),
+  const bans = records.flatMap((record) =>
+    (record.maintainerBans ?? []).map((account) => ({
+      account,
+      record,
+      key: indexOf(`${record.id}:${account.githubId}`),
+    })),
   );
+  return selectActiveBanIndices(
+    keys.size,
+    bans.map((ban) => ban.key),
+    releases,
+  ).map((index) => ({
+    account: bans[index].account,
+    record: bans[index].record,
+  }));
 }
 
 export function bannedMaintainerIds(
