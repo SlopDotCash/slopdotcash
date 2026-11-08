@@ -556,12 +556,23 @@ async function exerciseNativeSolana(
           }),
         ).toHaveValue(submittedSignature);
       }
+      await expectAccessible(owner.page);
+      const restoreText = await enlargeText(owner.page.locator("body"));
+      expect(
+        await owner.page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      await owner.page.screenshot({
+        path: test
+          .info()
+          .outputPath(`solana-${scenario}-recovery-200-percent.png`),
+      });
+      await restoreText();
       await pay
-        .getByRole("button", {
-          name: "Verify submitted payment",
-          exact: true,
-        })
-        .click();
+        .getByRole("button", { name: "Verify submitted payment", exact: true })
+        .focus();
+      await owner.page.keyboard.press("Enter");
       await expect
         .poll(
           async () =>
