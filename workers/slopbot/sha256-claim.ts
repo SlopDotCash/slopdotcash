@@ -23,7 +23,12 @@ import type { Verdict } from "./contracts";
 // removal, so the summary never goes empty and the verdict is not
 // discarded either.
 
-const SHA256_HEX = /\b[0-9a-fA-F]{64}\b/g;
+// A 64-hex SHA-256 digest, optionally `0x`-prefixed: in `0x8190…` there is
+// no word boundary between `x` and the first hex digit, so the bare
+// `\b[0-9a-fA-F]{64}\b` never matched that spelling and the false claim
+// survived (PR #2413 review, F2). The leading `\b` still anchors the match:
+// inside a longer hex run there is no boundary to start from.
+const SHA256_HEX = /\b(?:0x)?[0-9a-fA-F]{64}\b/g;
 
 // Denials of a value's validity as a SHA-256, each tied to the word sha256
 // itself or to a format noun beside it. A bare "is not valid" / "is not a
@@ -88,12 +93,38 @@ function isFormatDenial(sentence: string): boolean {
   return SHA256_FORMAT_DENIALS.some((p) => p.test(sentence));
 }
 
+// A denial must be about the digest, not about some other value that
+// happens to share the sentence or the summary (PR #2413 review, F1).
+// After the digest itself is stripped out, any remaining quoted literal
+// (e.g. a tag `v1.2.0`), version tag, or a subject noun that names a
+// different value (a signature, a tag) means the denial may be aimed at
+// that value instead — a true claim about it must never be removed, and
+// the sole-claim removal note must never misattribute the denial to the
+// digest.
+function hasOtherNamedValue(sentence: string): boolean {
+  const withoutDigest = sentence.replace(SHA256_HEX, "");
+  return (
+    /[`'"][^`'"]+[`'"]/.test(withoutDigest) ||
+    /\bv\d+(?:\.\d+)*\b/i.test(withoutDigest) ||
+    /\b(?:signature|tag)\b/i.test(withoutDigest)
+  );
+}
+
+// Anaphoric references a lone denial sentence may use to point back at the
+// digest named elsewhere in the summary ("That value is not a sha256 hex
+// value", "The digest is not…", "It is not…"). A sentence that instead
+// names its own subject ("The recorded signature is not…") is a claim
+// about that subject, not the digest.
+const ANAPHORIC_REFERENCE =
+  /\b(?:that|this)\s+(?:value|digest|constant|checksum|hex\s+(?:value|digest))\b|\bthe\s+(?:digest|constant|value|checksum)\b|\bit\s+(?:is|isn'?t|was)\b/i;
+
 /**
  * Indexes of the summary sentences that state the contradicted claim. A
- * sentence qualifies when the denial and a 64-hex value share it, or when
- * the denial stands in its own sentence ("That value is not a sha256 hex
- * value") and the summary names exactly one candidate value, so the denial
- * cannot belong to a different value.
+ * sentence qualifies when the denial and a 64-hex value share it and no
+ * other named value shares it, or when the denial stands in its own
+ * sentence ("That value is not a sha256 hex value") and the summary names
+ * exactly one candidate value, so the denial cannot belong to a different
+ * value.
  */
 function refutedSentenceIndexes(parts: string[]): number[] {
   const found: number[] = [];
@@ -103,18 +134,22 @@ function refutedSentenceIndexes(parts: string[]): number[] {
     if (COMPARISON_TARGET.test(part)) continue;
     if (OTHER_DEFECT_CLAIM.test(part)) continue;
     if (part.match(SHA256_HEX)) {
-      if (!hasOtherHexLiteral(part)) found.push(i);
+      if (!hasOtherHexLiteral(part) && !hasOtherNamedValue(part)) found.push(i);
       continue;
     }
     // Denial in its own sentence: it cites no value, so attribute it only
     // when the whole summary names exactly one 64-hex value and no other
-    // hex-like literal anywhere.
+    // hex-like literal anywhere, and only when the sentence points back
+    // at that value with an anaphoric reference instead of naming a
+    // different subject of its own.
     const whole = parts.join(" ");
     const tokens = [...new Set(whole.match(SHA256_HEX) ?? [])];
     if (
       tokens.length === 1 &&
       !hasOtherHexLiteral(whole) &&
-      !part.match(HEX_LIKE)
+      !part.match(HEX_LIKE) &&
+      ANAPHORIC_REFERENCE.test(part) &&
+      !hasOtherNamedValue(part)
     )
       found.push(i);
   }

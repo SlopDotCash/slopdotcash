@@ -1471,8 +1471,11 @@ async function runReview(
     };
   // Issue #1930 part 1, claim level: a summary sentence may call a 64-hex
   // value "not a sha256 hex value", a format claim the value itself
-  // contradicts. Remove only that sentence before the category drives any
-  // label, hold or closure decision; the verdict and every other sentence
+  // contradicts. Remove only that sentence from the summary. The effect
+  // is on the published comment text only: `verdict.summary` reaches
+  // nothing but the comment (via `neutralize` below), and the category,
+  // label, hold and closure decisions all read `verdict.category`,
+  // which this edit never changes. The verdict and every other sentence
   // stand (PR #2260's whole-verdict downgrade was closed for discarding
   // more than the false claim).
   verdict = suppressRefutedSha256Claim(verdict) ?? verdict;

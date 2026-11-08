@@ -30,7 +30,14 @@ type SourceCase =
   | "changed-original"
   | "large"
   | "none"
-  | "provider-failure";
+  | "provider-failure"
+  | "sha256-claim";
+
+// The SPL Token ELF digest from issue #1930, also used in
+// sha256-claim.test.ts: the model verdict below calls this value
+// "not a sha256 hex value".
+const SHA256_DIGEST =
+  "8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce1f806f2b6237f3311a98f697";
 
 async function reviewEmptyPull(
   status: "active" | "paused",
@@ -114,11 +121,17 @@ async function reviewEmptyPull(
             {
               type: "text",
               text: JSON.stringify({
-                category: source === "none" ? "none" : "busywork",
+                category:
+                  source === "none" || source === "sha256-claim"
+                    ? "none"
+                    : "busywork",
                 confidence: 0.6,
                 rule_refs: [],
                 evidence: [],
-                summary: "Synthetic input-control verdict.",
+                summary:
+                  source === "sha256-claim"
+                    ? `The pinned digest \`${SHA256_DIGEST}\` is not a valid sha256 hex value. The helper also lacks any test.`
+                    : "Synthetic input-control verdict.",
                 limitations: [],
                 objective_defect: null,
               }),
@@ -416,6 +429,17 @@ test("no-finding review publishes one result", async () => {
   const result = await reviewEmptyPull("active", "none");
   expect(result.review).toEqual({ status: "completed", action: "comment" });
   expect(result.comments).toHaveLength(1);
+});
+
+test("runReview wiring: the sha256 suppression reaches the published comment (PR #2413)", async () => {
+  const result = await reviewEmptyPull("active", "sha256-claim");
+  expect(result.review).toEqual({ status: "completed", action: "comment" });
+  expect(result.comments).toHaveLength(1);
+  // The published comment lost only the refuted sentence and still holds
+  // the sibling: this is the wiring case the pure-function tests cannot
+  // prove — deleting the suppression call in runReview must fail it.
+  expect(result.comments[0]).toContain("The helper also lacks any test.");
+  expect(result.comments[0]).not.toContain("is not a valid sha256 hex value");
 });
 
 test("failed provider routes leave a visible retry notice and failed journal entry", async () => {

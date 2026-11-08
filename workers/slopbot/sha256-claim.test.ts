@@ -138,6 +138,45 @@ test("does not attribute a lone denial sentence when two digests are named", () 
   expect(removeRefutedSha256Claim(summary)).toBeNull();
 });
 
+test("keeps a cross-sentence denial about a different value: the signature (PR #2413 F1)", () => {
+  const summary = `The pinned digest \`${DIGEST}\` is the sha256 of the ELF. The recorded signature is not a valid sha256 hex value, so verification is impossible.`;
+  expect(removeRefutedSha256Claim(summary)).toBeNull();
+});
+
+test("keeps a same-sentence denial about a different value: the tag (PR #2413 F1)", () => {
+  const summary = `The pinned digest \`${DIGEST}\` is correct, but the recorded tag \`v1.2.0\` is not a valid sha256 hex value, so the check fails.`;
+  expect(removeRefutedSha256Claim(summary)).toBeNull();
+});
+
+test("keeps a same-sentence denial about an unquoted signature", () => {
+  const summary = `The pinned digest \`${DIGEST}\` is correct, but the recorded signature is not a valid sha256 hex value, so the check fails.`;
+  expect(removeRefutedSha256Claim(summary)).toBeNull();
+});
+
+test("removes a denial of a 0x-prefixed digest (PR #2413 F2)", () => {
+  const summary = `The pinned digest \`0x${DIGEST}\` is not a sha256 hex value, so the assertion cannot pass. The helper also lacks any test.`;
+  expect(removeRefutedSha256Claim(summary)).toBe(
+    "The helper also lacks any test.",
+  );
+});
+
+test("the 0x-prefixed sole claim is replaced by a note quoting the 0x value", () => {
+  const summary = `The pinned digest \`0x${DIGEST}\` is not a sha256 hex value, so the assertion cannot pass.`;
+  const after = removeRefutedSha256Claim(summary);
+  expect(after).toContain("only claim was removed");
+  expect(after).toContain(`0x${DIGEST}`);
+});
+
+test("removes a lone denial that points back with 'the digest' or 'it'", () => {
+  const pin = `The change pins the digest \`${DIGEST}\` for the deployed ELF.`;
+  expect(
+    removeRefutedSha256Claim(`${pin} The digest is not a sha256 hex value.`),
+  ).toBe(pin);
+  expect(removeRefutedSha256Claim(`${pin} It is not a sha256 hex value.`)).toBe(
+    pin,
+  );
+});
+
 test("keeps a finding that negates something else about a digest", () => {
   const summary = `The value \`${DIGEST}\` is not a placeholder; it is the sha256 of the ELF, but no test exercises the comparison helper.`;
   expect(removeRefutedSha256Claim(summary)).toBeNull();
