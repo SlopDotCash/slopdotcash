@@ -69,14 +69,18 @@ build trees are excluded. Anonymous callbacks are counted as bodies, not as
 independent business capabilities. The exact counts come from the current
 inventory; they do not measure proof completeness.
 
-At the integrated source snapshot
-`b4e51bd07a55b3fb47a40e4bb7e170e455430054`, the inventory records **168 selected
+At the application-source checkpoint
+`bd4d58ef66b326a4e85b1728b972e9bf6e56fd65`, the inventory records **168 selected
 runtime contracts in 33 modules**, **681 JavaScript/TypeScript files**, **9,793
 function bodies** and **9,625 unselected, unproved bodies**. The parallel Quint
 inventory has **302 models mapped to 836 sources**. These counts describe scope,
 not a proof that every application execution is correct. All selected
-implementation cohorts are integrated; fresh full combined-head verification
-and real-browser acceptance remain pending.
+implementation cohorts are integrated. Local and hosted checks pass all
+**23,995 proof obligations**, and the complete bounded Quint run passes all
+302 models. The [validation record](lemmascript-validation.md) preserves the
+browser findings, corrections, native-chain results and the two phase timeouts
+in the full repository check. Final rebased-branch verification and merge
+remain pending; these checkpoint results do not certify a later source head.
 
 A syntax scan cannot determine purity, reachability, all indirect calls, or
 implementation correctness. Every unselected function remains explicitly

@@ -1,6 +1,6 @@
-# LemmaScript candidate dispositions — interim reconciliation
+# LemmaScript candidate dispositions
 
-**Interim snapshot: 8 November 2026, `b4e51bd07a55b3fb47a40e4bb7e170e455430054`.** This replaces the older
+**Application-source checkpoint: 8 November 2026, `bd4d58ef66b326a4e85b1728b972e9bf6e56fd65`.** This replaces the older
 71-target snapshot. It reconciles the original
 [frontend](lemmascript-frontend-research.md),
 [backend](lemmascript-backend-research.md) and
@@ -13,9 +13,10 @@ The committed inventory records **168 selected runtime contracts in 33
 modules**. It covers **681** files and **9,793** JavaScript/TypeScript function
 bodies, including **9,625** unselected, unproved bodies. These are accounting
 counts, not capability counts or a proof-coverage percentage. They include callbacks and helpers.
-The integrated cohorts have successful exact-source compiler/prover receipts;
-the count alone proves nothing. A fresh full combined-head verification and
-real-browser run remain pending. The parallel Quint inventory contains 302
+The integrated cohorts pass a complete local and hosted compiler/prover run
+with 23,995 obligations; the count alone proves nothing. The
+[validation record](lemmascript-validation.md) gives the exact receipts,
+browser corrections and remaining final-branch gates. The parallel Quint inventory contains 302
 models mapped to 836 sources; those model counts are not implementation proofs.
 This reconciliation re-read the named candidates, not every inventoried function body.
 
@@ -61,10 +62,12 @@ local work-unit ancestry check also reuses the already proved traversal. Their
 original dated tables must not be read as a current list of missing
 implementations.
 
-## Selected cohorts complete; combined validation pending
+## Selected cohorts complete; final integration pending
 
-No selected implementation cohort remains active at this snapshot. The final
-Jupiter decoder passed an **unfiltered 15,551-obligation check with zero errors**
+No selected implementation cohort remains active at this snapshot. The full
+33-module run passes all 168 selected functions and 23,995 obligations. Before
+that combined run, the standalone Jupiter decoder passed an **unfiltered
+15,551-obligation check with zero errors**
 in **1,135.748 seconds**, covering all 35 selected production functions and their
 defined helpers. Runtime, generated semantics and proof input hashes remained
 unchanged. Earlier interrupted or filtered runs are historical evidence only.
@@ -75,8 +78,9 @@ module alone receives a 3,600-second aggregate command cap; other modules retain
 180 seconds. Every module retains the 30-second per-obligation limit, unfiltered
 assertions and source/proof integrity checks. The CI job allows 80 minutes for
 the complete set and setup. Valid-generation and stale-generation smoke checks
-pass and fail closed respectively. These changes do not turn the standalone
-parser proof into a completed combined-head `verify` or browser run.
+pass and fail closed respectively. Neither the standalone parser result nor
+the combined computation proof replaces a complete repository `verify`,
+browser evidence, or checks on a later rebased source head.
 
 The native earned-fee, EVM direct-recovery, Jupiter route-policy, complete
 enforcement-planning, full Jupiter decoder, finalized route-credit, global-join
@@ -180,7 +184,7 @@ establish all of these facts or verify every application execution.
 
 ## Validation and refresh rule
 
-This is a docs-only interim replacement. Validation is a check of the named
+This is a scope ledger. Its validation checks the named
 current symbols, the committed manifest/inventory counts, the detailed
 reports and local links, plus `git diff --check`. Application tests do not
 exercise this ledger. No runtime, policy, schema, selected-source manifest or
