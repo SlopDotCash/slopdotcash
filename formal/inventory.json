@@ -966,21 +966,21 @@
     },
     {
       "path": "backend/vetting/reuse.ts",
-      "sha256": "79ae850feaa65f8aed814ea8e60432a0b9478f9287c93dbe3ec3dd231e2eeaa0",
+      "sha256": "56737340a88bd99d158f77143870f934df6c0987f404980967af066e091c7252",
       "models": ["formal/models/vetting_scan_reuse.qnt"],
-      "candidateLines": [20, 36],
+      "candidateLines": [22, 41],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/vetting/scan-result.ts",
-      "sha256": "633da7d6c9ab5b624ab2f677ce1aa3ca706cb063fbfa3468aeb02aa835649817",
+      "sha256": "e83628ea1c6da543090c6c0da229fa3ac88e0673ebbeeda506d655e3ae7aa00f",
       "models": [
         "formal/models/vetting_disposition.qnt",
         "formal/models/vetting_result_atomic.qnt"
       ],
       "candidateLines": [
-        79, 113, 170, 175, 176, 191, 385, 391, 392, 393, 424, 439, 448, 492,
-        516, 522, 544, 609
+        83, 117, 174, 179, 180, 195, 389, 395, 396, 397, 428, 443, 452, 496,
+        520, 526, 548, 621
       ],
       "review": "mapped-abstraction"
     },
@@ -991,6 +991,17 @@
       "candidateLines": [27, 50],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure mapping from supplied assessment artifacts/findings to safe location and fixed user-facing text; no state, I/O, current time, authority or persistence. Disposition and admission gates remain in separate models."
+    },
+    {
+      "path": "backend/vetting/verified-reuse.ts",
+      "sha256": "f577d832eac23f43755fcca9b93f5ce629584ecf924e995a4d418d28bd9e5575",
+      "models": [
+        "formal/models/vetting_disposition.qnt",
+        "formal/models/vetting_result_atomic.qnt",
+        "formal/models/vetting_scan_reuse.qnt"
+      ],
+      "candidateLines": [5, 18, 26, 27, 28, 29, 30, 40, 54, 57],
+      "review": "mapped-abstraction"
     },
     {
       "path": "contracts/evm/adapter.ts",
@@ -4863,7 +4874,7 @@
     },
     {
       "path": "src/lib/payments/monthly-allocation.ts",
-      "sha256": "5cc24d78a6d932bcf506933749ffc0cbad420e59d5d382c97a2622722a355f24",
+      "sha256": "958b45e11411112c1ffe139d48abec17fdbdb97930c29555ed2c45b6c257544e",
       "models": ["formal/models/monthly_coordinator.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5415,6 +5426,13 @@
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure bigint arithmetic kernels for weighted shares and ordinary/bounty fees. No I/O, mutation or lifecycle; precondition proofs are separate from state refinement and callers enforce input admissibility."
+    },
+    {
+      "path": "src/lib/verified-monthly-replacement.ts",
+      "sha256": "b2b314acb687ef5b4a8583e8685d5003dde8d2cfacd1cfaa74bfd47af2e3b5d3",
+      "models": ["formal/models/monthly_coordinator.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/verified-partition.ts",
@@ -8815,7 +8833,7 @@
     },
     {
       "path": "formal/models/monthly_coordinator.qnt",
-      "sha256": "e534def27aa33675bde58dd113df00902e5dfdf09a33a1c9fa84546f8609d113",
+      "sha256": "af18ff83c76db5b1ef1266b21d212f502b4c543f9bb5a2e0b739aa6e29f651f7",
       "sources": [
         "backend/payments/monthly-attestation.ts",
         "backend/payments/monthly-publication.ts",
@@ -8826,7 +8844,8 @@
         "scripts/prepare-monthly-rewards.ts",
         "src/lib/payments/monthly-allocation.ts",
         "src/lib/verified-allocation.ts",
-        "src/lib/verified-money.ts"
+        "src/lib/verified-money.ts",
+        "src/lib/verified-monthly-replacement.ts"
       ],
       "scenarios": [
         "fundedBanDoesNotEraseTest",
@@ -10425,10 +10444,11 @@
     },
     {
       "path": "formal/models/vetting_disposition.qnt",
-      "sha256": "74ef6b3250099d2ed89efd525e85450e1de05fb067256d2e4ada2157b53ac5ac",
+      "sha256": "601f204e4f79520dea4c40a8a3096cd73dce55ca82c1c403aee795c739086b68",
       "sources": [
         "backend/vetting/result.ts",
         "backend/vetting/scan-result.ts",
+        "backend/vetting/verified-reuse.ts",
         "workers/vetting/bounded-scan.ts",
         "workers/vetting/publication.ts"
       ],
@@ -10601,12 +10621,13 @@
     },
     {
       "path": "formal/models/vetting_result_atomic.qnt",
-      "sha256": "cdaed73685bc3df05bdf5b1550c0de1b970b334d92a439b72d6b8ddb542dc449",
+      "sha256": "a83e06b8190b8e4c56e3bc119d62df15d5d9f6156961e3bf23f3e41cca13421d",
       "sources": [
         "backend/vetting/handler.ts",
         "backend/vetting/persistence.ts",
         "backend/vetting/result.ts",
         "backend/vetting/scan-result.ts",
+        "backend/vetting/verified-reuse.ts",
         "migrations/0025_community_security_vetting.sql"
       ],
       "scenarios": ["banCommitsWithEvidenceTest", "failureLeavesPendingTest"]
@@ -10644,8 +10665,12 @@
     },
     {
       "path": "formal/models/vetting_scan_reuse.qnt",
-      "sha256": "10f565c4a676d8582a61006001899165565b145d85b3a906d380758b4a2f9af6",
-      "sources": ["backend/vetting/handler.ts", "backend/vetting/reuse.ts"],
+      "sha256": "12fa60f49d703915c126198c9539009264bc61dd584bc4897e3a9d92158e85ac",
+      "sources": [
+        "backend/vetting/handler.ts",
+        "backend/vetting/reuse.ts",
+        "backend/vetting/verified-reuse.ts"
+      ],
       "scenarios": [
         "changedSourceCannotReuseTest",
         "flagsRequireFreshScanTest",

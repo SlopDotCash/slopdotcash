@@ -1,3 +1,4 @@
+// @source backend/vetting/verified-reuse.ts
 // @source backend/vetting/reuse.ts
 // @source backend/vetting/handler.ts
 // Reuse preserves the original clean scan, report and repository. It does not

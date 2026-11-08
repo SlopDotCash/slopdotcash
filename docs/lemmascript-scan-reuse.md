@@ -62,11 +62,13 @@ The existing `assessmentCoversActiveFlags` SQL result is still an explicit
 external observation. Its query, timing and flag-set completeness are not
 proved by this module. Missing coverage still refuses reuse.
 
-The current compiler cannot retain a nullable record field faithfully: a
-small retained experiment showed an execution record emitted without its
-nullable wrapper. This implementation instead projects only that field's
+An initial experiment under the nearest references-only TypeScript config
+emitted an execution record without its nullable wrapper. A later explicit
+strict-config experiment retained nullable records correctly; no false proof
+acceptance was observed. This implementation projects only that field's
 presence and retains all compared strings, nested records and artifact
-length. No imported axiom, assumed authorization or bodyless function is used.
+length. The current selected artifacts are unchanged under strict mode. No
+imported axiom, assumed authorization or bodyless function is used.
 
 ## Limits
 
