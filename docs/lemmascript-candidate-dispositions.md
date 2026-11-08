@@ -1,21 +1,23 @@
 # LemmaScript candidate dispositions — interim reconciliation
 
-**Interim snapshot: 8 November 2026, `9ba5760e9955beb1c9bfca3999525d4fd358d214`.** This replaces the older
+**Interim snapshot: 8 November 2026, `b4e51bd07a55b3fb47a40e4bb7e170e455430054`.** This replaces the older
 71-target snapshot. It reconciles the original
 [frontend](lemmascript-frontend-research.md),
 [backend](lemmascript-backend-research.md) and
 [tooling](lemmascript-tooling-research.md) research with the actual selected
 modules and remaining source. The [main report](lemmascript-research.md) links
 the detailed implementation reports. This ledger must be refreshed after
-active cohorts and final integration checks; it is not a completion receipt.
+final integration checks; it is not a combined verification receipt.
 
-The committed inventory records **133 selected runtime contracts in 32
-modules**. It covers **677** files and **9,700** JavaScript/TypeScript function
-bodies, including **9,567** unselected, unproved bodies. These are accounting counts, not capability
-counts or a proof-coverage percentage. They include callbacks and helpers.
-Selected bodies still require the corresponding successful exact-source
-compiler/prover receipt; the count alone proves nothing. This reconciliation
-re-read the named candidates, not every inventoried function body.
+The committed inventory records **168 selected runtime contracts in 33
+modules**. It covers **681** files and **9,793** JavaScript/TypeScript function
+bodies, including **9,625** unselected, unproved bodies. These are accounting
+counts, not capability counts or a proof-coverage percentage. They include callbacks and helpers.
+The integrated cohorts have successful exact-source compiler/prover receipts;
+the count alone proves nothing. A fresh full combined-head verification and
+real-browser run remain pending. The parallel Quint inventory contains 302
+models mapped to 836 sources; those model counts are not implementation proofs.
+This reconciliation re-read the named candidates, not every inventoried function body.
 
 **Useful pure work remains.** An implemented kernel closes its stated contract
 and input domain, not every algorithm in its original file or family. Pure
@@ -23,7 +25,7 @@ algorithms below are not relabeled as effects to make the ledger look complete.
 
 ## Implemented selected kernels
 
-These rows account for all 133 targets. The individual reports identify
+These rows account for all 168 targets. The individual reports identify
 actual callers, assumptions, proof results, differential/workflow evidence
 and native adapter costs. Final combined-head checks remain separate.
 
@@ -41,6 +43,7 @@ and native adapter costs. Final combined-head checks remain separate.
 | Review batches and text partition: `verified-review-batches`, `verified-text-parts` | 5 | Exact quoted-string byte cost, longest alias prefix, complete greedy spans/group indices and complete newline/continuation byte cuts. Native object serialization, UTF-8 conversion, source order and provider review quality remain external. |
 | Restrictions, appeals and setup: `verified-enforcement`, `verified-setup` | 16 | Complete restriction/active-ban/appeal folds, six-action refusal/result planning and flag-only scan decision; access-header and setup/flagger state/message. Native revision schema validation, original lazy identity comparison, authority acquisition and persistence remain external. |
 | Jupiter route policy: `verified-jupiter-policy` | 4 | Complete first invalid role/privilege, last-name binding, first account-binding refusal and amount/slippage/fee agreement. Canonical nonempty key/header domains come from existing parser/account checks; native ATA/signature/RPC semantics remain external. |
+| Full Jupiter typed Borsh decoder: `verified-jupiter-wire` | 35 | Complete four-layout decoding, all 239 enum constructors, typed values, cursor/node/depth limits, ordered collection prefixes and malformed-input refusals. Native byte-view materialization, generator/compiler translation and deployed-program/crypto/RPC truth remain separate. |
 | EVM direct recovery: `verified-direct-recovery` | 2 | Complete unpaid lowest-consumed-nonce selection, first tie, researcher fallback and lower-unspent blocking; original nonce text and payer-review behavior retained. Typed nonce constructors, native parsing and RPC/consent/write boundaries remain external. |
 | Signed Solana wire parsing: `verified-solana-wire` | 6 | Full compact-prefix/legacy/v0/instruction/lookup parse, all spans, static program and global account-index bounds, full consumption and refusal order. No signature, RPC, table authority or deployed-program claim. |
 | Accepted source selection, ownership and retained-hunk binding: `verified-source-ownership`, `verified-retained-binding` | 10 | Complete accepted-commit order and per-record retire/remove/set plan; captured-parent reachability, proper ordered hunk subset and unique attribution per omitted hunk. The same reachability kernel now checks final local work-unit history coverage. Native graph/Map adapters, returned-flag interpretation, patch parsing, source capture and page/hash/schema validation remain separate. |
@@ -51,24 +54,37 @@ The originally ranked whole-list allocation, score/Points accounting,
 first-five reviewer grouping, monthly frozen/replacement records, evidence
 chunking, TLV metadata, base58, review/text partition, restriction/appeal folds,
 accepted-source ownership, native earned-fee reduction, local expiry step,
-enforcement action/flag-scan decisions, Jupiter account/amount policy and
-EVM recovery-leg selection, finalized token-balance joins and global
-leader/payout source selection now have production-used contracts. The final
+enforcement action/flag-scan decisions, full Jupiter typed decoding,
+Jupiter account/amount policy, EVM recovery-leg selection, finalized token-balance
+joins and global leader/payout source selection now have production-used contracts. The final
 local work-unit ancestry check also reuses the already proved traversal. Their
-original dated tables must not be read as a current list of missing implementations.
+original dated tables must not be read as a current list of missing
+implementations.
 
-## Active or assigned cohorts — outside the 133-target snapshot
+## Selected cohorts complete; combined validation pending
 
-| Cohort | Current status at this interim update | Required completion evidence |
-| --- | --- | --- |
-| Full Jupiter typed Borsh decoder | Active in `slopdotcash-lemma-jupiter`; proposed 35 runtime readers/dispatcher over four layouts and all 239 enum constructors. Runtime and native-view differentials pass. Balanced runtime dispatch and independently range-partitioned defined semantics have been reviewed. Earlier filtered/interrupted/linear-spec runs do not count as full proof. | Successful **unfiltered** current-source proof, generated-source/semantics freshness, strict integrity, bounded exact-module gate configuration, actual caller tests and final integration. No full-parser closure is claimed here. |
+No selected implementation cohort remains active at this snapshot. The final
+Jupiter decoder passed an **unfiltered 15,551-obligation check with zero errors**
+in **1,135.748 seconds**, covering all 35 selected production functions and their
+defined helpers. Runtime, generated semantics and proof input hashes remained
+unchanged. Earlier interrupted or filtered runs are historical evidence only.
+
+The integrated checker runs generator freshness inside its captured source
+snapshot, including `.gitignore` and `biome.json`. The exact Jupiter generated
+module alone receives a 3,600-second aggregate command cap; other modules retain
+180 seconds. Every module retains the 30-second per-obligation limit, unfiltered
+assertions and source/proof integrity checks. The CI job allows 80 minutes for
+the complete set and setup. Valid-generation and stale-generation smoke checks
+pass and fail closed respectively. These changes do not turn the standalone
+parser proof into a completed combined-head `verify` or browser run.
 
 The native earned-fee, EVM direct-recovery, Jupiter route-policy, complete
-enforcement-planning, finalized route-credit, global-join and local
-history-coverage cohorts are **already integrated**, not pending at this
+enforcement-planning, full Jupiter decoder, finalized route-credit, global-join
+and local history-coverage cohorts are **already integrated**, not pending at this
 snapshot. The corresponding [native-fee](lemmascript-native-fee-earnings.md),
 [direct-recovery](lemmascript-direct-recovery.md),
 [Jupiter-policy](lemmascript-jupiter-policy.md),
+[Jupiter-decoder](lemmascript-jupiter-research.md),
 [enforcement-plan](lemmascript-enforcement-plans.md),
 [route-credit](lemmascript-route-credit.md), [global-join](lemmascript-global-joins.md)
 and [history-coverage](lemmascript-history-coverage.md) reports give their precise
@@ -159,7 +175,7 @@ This category applies to the named operation, not every helper in its file:
 - Rust/Solidity contracts and generated shell/Python execution, which are
   outside this TypeScript toolchain even where other formal tools apply.
 
-The 133 selected contracts, passing local workflows and Quint models do not
+The 168 selected contracts, passing local workflows and Quint models do not
 establish all of these facts or verify every application execution.
 
 ## Validation and refresh rule
@@ -170,7 +186,7 @@ reports and local links, plus `git diff --check`. Application tests do not
 exercise this ledger. No runtime, policy, schema, selected-source manifest or
 proof inventory is changed here.
 
-Before final merge, refresh the snapshot SHA and counts after active commits,
+Before final acceptance, refresh the snapshot SHA and counts after new commits,
 record each cohort's actual proof/workflow receipt, and retain remaining pure
 algorithms and native limitations. Full combined-head verification, hosted
 checks, browser evidence, merge and deployment are separate results. It would
