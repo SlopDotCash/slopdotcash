@@ -62,3 +62,66 @@ export function nativeDailyLiability(
   }
   return total;
 }
+
+/** Parsed native earnings; direct recipients use the caller's native address comparison. */
+export type NativeFeeEarning =
+  | { kind: "direct"; recipient: string; amount: bigint; at: string }
+  | { kind: "claim"; amount: bigint; at: string }
+  | { kind: "conversion"; amount: bigint };
+
+export type NativeFeeReceipt =
+  | { kind: "absent" }
+  | { kind: "first"; at: string };
+
+export interface NativeFeeEarnings {
+  amount: bigint;
+  receipt: NativeFeeReceipt;
+  hasDirectCredit: boolean;
+}
+
+/** Exact earned credit/debit fold and its receipt-controlled gas query boundary. */
+//@ verify
+//@ ensures \result.amount == NativeEarnedAmount(entries, wallet)
+//@ ensures \result.receipt == FirstNativeReceipt(entries, wallet)
+//@ ensures \result.hasDirectCredit <==> HasNativeDirectCredit(entries, wallet)
+//@ ensures (\result.receipt.kind == "absent") <==> !HasNativeReceipt(entries, wallet)
+export function nativeFeeEarnings(
+  entries: readonly NativeFeeEarning[],
+  wallet: string,
+): NativeFeeEarnings {
+  let amount = 0n;
+  let receipt: NativeFeeReceipt = { kind: "absent" };
+  let hasDirectCredit = false;
+  let i = 0;
+  while (i < entries.length) {
+    //@ invariant 0 <= i && i <= entries.length
+    //@ invariant amount == NativeEarnedAmount(entries.slice(0, i), wallet)
+    //@ invariant receipt == FirstNativeReceipt(entries.slice(0, i), wallet)
+    //@ invariant hasDirectCredit <==> HasNativeDirectCredit(entries.slice(0, i), wallet)
+    const entry = entries[i];
+    if (entry.kind === "conversion") amount -= entry.amount;
+    else if (entry.kind === "claim" || entry.recipient === wallet) {
+      amount += entry.amount;
+      if (entry.kind === "direct") hasDirectCredit = true;
+      if (receipt.kind === "absent" || entry.at < receipt.at)
+        receipt = { kind: "first", at: entry.at };
+    }
+    i += 1;
+  }
+  return { amount, receipt, hasDirectCredit };
+}
+
+/** Gas keeps one maximum per actual attempt bucket, then earned funds floor at zero. */
+//@ verify
+//@ requires bucketCount >= 0
+//@ requires forall(i, 0 <= i && i < entries.length ==> entries[i].kind == "unsettled" && 0 <= entries[i].bucket && entries[i].bucket < bucketCount && entries[i].maximum >= 0)
+//@ ensures \result == NativePositivePart(earned - PendingTotal(entries, bucketCount))
+//@ ensures \result >= 0
+export function nativeFeeRemainder(
+  earned: bigint,
+  bucketCount: number,
+  entries: NativeLiabilityEntry[],
+): bigint {
+  const liability = nativeDailyLiability(bucketCount, entries, "");
+  return earned > liability ? earned - liability : 0n;
+}
