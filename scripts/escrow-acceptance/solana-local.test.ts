@@ -129,12 +129,19 @@ test("changed live genesis refuses the tick before any ledger work or executor c
     },
   });
   try {
-    const local = new LocalSolanaAcceptance(
-      db,
-      run(`http://127.0.0.1:${rpc.port}`),
-    );
+    const facts = run(`http://127.0.0.1:${rpc.port}`);
+    const local = new LocalSolanaAcceptance(db, facts);
+    const rpcUrl = facts.rpcUrl;
+    // A caller cannot retarget the instance after its facts were recorded.
+    facts.rpcUrl = "https://unrelated.example.com";
+    facts.genesisHash = "replacement-genesis";
     let writes = 0;
     const env = {
+      PAYMENT_NETWORKS: JSON.stringify(["solana-localnet"]),
+      PAYMENT_RPC_URLS: JSON.stringify({ "solana-localnet": rpcUrl }),
+      PAYMENT_SOLANA_GENESIS: JSON.stringify({
+        "solana-localnet": "local-genesis",
+      }),
       PAYMENTS_DB: {
         prepare() {
           writes++;
@@ -148,6 +155,22 @@ test("changed live genesis refuses the tick before any ledger work or executor c
         },
       },
     } as unknown as PaymentsWorkerEnvironment;
+    await expect(
+      local.tick({
+        ...env,
+        PAYMENT_RPC_URLS: JSON.stringify({ "solana-localnet": facts.rpcUrl }),
+      }),
+    ).rejects.toThrow("environment differs");
+    expect(methods).toEqual([]);
+    await expect(
+      local.tick({
+        ...env,
+        PAYMENT_SOLANA_GENESIS: JSON.stringify({
+          "solana-localnet": facts.genesisHash,
+        }),
+      }),
+    ).rejects.toThrow("environment differs");
+    expect(methods).toEqual([]);
     await expect(local.tick(env)).rejects.toThrow("genesis changed");
     expect(methods).toEqual(["getGenesisHash"]);
     expect(writes).toBe(0);

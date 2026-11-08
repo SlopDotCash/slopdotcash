@@ -43,10 +43,12 @@ export interface LocalSolanaRun {
  * project manifests and cannot be used by the production registry cron.
  */
 export class LocalSolanaAcceptance {
+  private readonly run: Readonly<LocalSolanaRun>;
   constructor(
     private readonly sqlite: Database,
-    private readonly run: LocalSolanaRun,
+    run: LocalSolanaRun,
   ) {
+    this.run = Object.freeze({ ...run });
     if (run.network !== "solana-localnet")
       throw new Error("Local acceptance requires solana-localnet");
     assertSolanaTestCluster(run.network, run.genesisHash, run.rpcUrl);
@@ -137,6 +139,13 @@ export class LocalSolanaAcceptance {
   async tick(env: PaymentsWorkerEnvironment): Promise<string[]> {
     const { network, rpcUrl, genesisHash } = this.run;
     assertSolanaTestCluster(network, genesisHash, rpcUrl);
+    if (
+      JSON.stringify(JSON.parse(env.PAYMENT_NETWORKS)) !==
+        JSON.stringify([network]) ||
+      JSON.parse(env.PAYMENT_RPC_URLS)[network] !== rpcUrl ||
+      JSON.parse(env.PAYMENT_SOLANA_GENESIS ?? "{}")[network] !== genesisHash
+    )
+      throw new Error("Local payment environment differs from admitted run");
     const observed = await solanaRpc({ rpcUrl }, "getGenesisHash", []);
     if (observed !== genesisHash)
       throw new Error("Local acceptance RPC genesis changed");

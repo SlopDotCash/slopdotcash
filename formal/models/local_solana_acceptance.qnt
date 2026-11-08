@@ -6,15 +6,16 @@
 // uncertain receipts and container cleanup have separate models and real runs.
 module local_solana_acceptance {
   var s: { phase:str, local:bool, loopback:bool, publicGenesis:bool,
-    sameRun:bool, liveGenesis:bool, immutable:Set[int], declared:Set[int],
+    sameRun:bool, liveGenesis:bool, callerRun:int, boundRun:int, envMatches:bool,
+    immutable:Set[int], declared:Set[int],
     verified:bool, active:Set[int], scanned:Set[int], dispatched:Set[int],
     errors:Set[str], tick:int }
   action initial(local:bool,loopback:bool,publicGenesis:bool):bool = s'={
     phase:"new",local:local,loopback:loopback,publicGenesis:publicGenesis,
-    sameRun:true,liveGenesis:true,immutable:Set(),declared:Set(),verified:false,
+    sameRun:true,liveGenesis:true,callerRun:1,boundRun:1,envMatches:true,immutable:Set(),declared:Set(),verified:false,
     active:Set(),scanned:Set(),dispatched:Set(),errors:Set(),tick:0}
   action init = s'={phase:"new",local:true,loopback:true,publicGenesis:false,
-    sameRun:true,liveGenesis:true,immutable:Set(),declared:Set(),verified:false,
+    sameRun:true,liveGenesis:true,callerRun:1,boundRun:1,envMatches:true,immutable:Set(),declared:Set(),verified:false,
     active:Set(),scanned:Set(),dispatched:Set(),errors:Set(),tick:0}
   val admitted = s.local and s.loopback and not(s.publicGenesis) and s.sameRun
   action open = all {s.phase=="new",s'=s.with("phase",if(admitted) "idle" else "refused")}
@@ -24,9 +25,11 @@ module local_solana_acceptance {
       .with("declared",s.declared.union(Set(id))) else s}
   action resume(matches:bool):bool = all {s.phase=="idle",
     s'=if(matches) s else s.with("sameRun",false).with("phase","refused")}
+  action mutateCaller = all {s.phase=="idle",s'=s.with("callerRun",2)}
+  action changeEnvironment = all {s.phase=="idle",s'=s.with("envMatches",false)}
   action changeGenesis = all {s.phase=="idle",s'=s.with("liveGenesis",false)}
   action beginTick = all {s.phase=="idle",s.tick<2,
-    s'=s.with("phase",if(admitted and s.liveGenesis) "checking" else "refused")
+    s'=s.with("phase",if(admitted and s.liveGenesis and s.envMatches) "checking" else "refused")
       .with("verified",false).with("active",s.declared).with("scanned",Set())
       .with("dispatched",Set()).with("errors",Set()).with("tick",s.tick+1)}
   action verify(ok:bool):bool = all {s.phase=="checking",
@@ -49,15 +52,15 @@ module local_solana_acceptance {
   action finish = all {s.phase=="dispatch",s.dispatched==s.active,s'=s.with("phase","done")}
   action again = all {s.phase=="done",s'=s.with("phase","idle")}
   action step = any {open,record(1,true),record(2,true),record(1,false),resume(true),resume(false),
-    changeGenesis,beginTick,verify(true),verify(false),snapshots(true),snapshots(false),
+    mutateCaller,changeEnvironment,changeGenesis,beginTick,verify(true),verify(false),snapshots(true),snapshots(false),
     scan(1,true),scan(1,false),scan(2,true),scan(2,false),scanned,
     recover(true),recover(false),reconcile(true),reconcile(false),
     dispatch(1,true),dispatch(1,false),dispatch(2,true),dispatch(2,false),finish,again,s'=s}
   val invariant = all {
-    s.declared==s.immutable,
+    s.declared==s.immutable,s.boundRun==1,
     s.active.subseteq(s.declared),s.scanned.subseteq(s.active),s.dispatched.subseteq(s.active),
     Set("snapshots","scan","recover","reconcile","dispatch","done").contains(s.phase)
-      implies (admitted and s.liveGenesis and s.verified),
+      implies (admitted and s.liveGenesis and s.envMatches and s.verified),
     s.dispatched.size()>0 implies s.verified,
     s.tick>=0 and s.tick<=2
   }
@@ -74,6 +77,10 @@ module local_solana_acceptance {
   run changedDeclarationRollsBackTest = opened.then(record(1,false)).expect(s.declared==Set(1,2))
   run changedGenesisStopsBeforeDelegationTest = opened.then(changeGenesis).then(beginTick)
     .expect(s.phase=="refused" and s.dispatched.size()==0 and not(s.verified))
+  run callerMutationCannotRetargetBoundRunTest = opened.then(mutateCaller).then(checked)
+    .expect(s.boundRun==1 and s.callerRun==2 and s.phase=="snapshots")
+  run mismatchedEnvironmentStopsBeforeDelegationTest = opened.then(changeEnvironment).then(beginTick)
+    .expect(s.phase=="refused" and s.dispatched.size()==0)
   run invalidProgramStopsBeforeDelegationTest = opened.then(beginTick).then(verify(false))
     .expect(s.phase=="refused" and s.dispatched.size()==0)
   run snapshotFailureDoesNotFabricateSuccessfulTickTest = opened.then(checked).then(snapshots(false))
