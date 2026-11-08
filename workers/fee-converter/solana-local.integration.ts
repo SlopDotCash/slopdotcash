@@ -4,10 +4,12 @@
 // a real local token transfer funds the fee wallet. No mainnet token moves.
 // SLOP_FEE_TEST_TOKEN=sol creates a native escrow, claims its earned SOL fees,
 // and proves the exact atomic wrap and USDC swap without spending gas topups.
+// Requires a local Docker/Podman context with the reviewed image from
+// scripts/local-solana-validator.mjs already installed. No image is pulled here.
 //   bun workers/fee-converter/solana-local.integration.ts
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -24,6 +26,7 @@ import {
   le,
   message,
 } from "../../contracts/solana/transactions";
+import { startLocalSolanaValidator } from "../../scripts/local-solana-validator.mjs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
@@ -322,42 +325,46 @@ try {
 } catch (error) {
   if (String(error).includes("already serving")) throw error;
 }
-const validator = Bun.spawn(
-  [
-    "solana-test-validator",
-    "--reset",
-    "--quiet",
-    "--ticks-per-slot",
-    "8",
-    "--ledger",
-    join(dir, "ledger"),
-    "--rpc-port",
-    String(PORT),
-    "--faucet-port",
-    String(PORT + 41),
-    "--gossip-port",
-    String(PORT + 32),
-    "--dynamic-port-range",
-    `${PORT + 2}-${PORT + 31}`,
-    "--url",
-    "https://api.mainnet-beta.solana.com",
-    ...programs.flatMap((key) => ["--clone-upgradeable-program", key]),
-    ...clones.flatMap((key) => ["--maybe-clone", key]),
-    ...tableFiles,
-    ...(nativeInput
-      ? nativeGenesis
-      : ["--account", fundingAccount, accountFile]),
-  ],
-  {
-    stdout: Bun.file(join(dir, "validator.stdout.log")),
-    stderr: Bun.file(join(dir, "validator.stderr.log")),
-  },
-);
+const stdout = openSync(join(dir, "validator.stdout.log"), "w", 0o600);
+const stderr = openSync(join(dir, "validator.stderr.log"), "w", 0o600);
+let validator:
+  | Awaited<ReturnType<typeof startLocalSolanaValidator>>
+  | undefined;
 try {
+  validator = await startLocalSolanaValidator({
+    args: [
+      "--reset",
+      "--quiet",
+      "--ticks-per-slot",
+      "8",
+      "--ledger",
+      join(dir, "ledger"),
+      "--rpc-port",
+      String(PORT),
+      "--faucet-port",
+      String(PORT + 41),
+      "--gossip-port",
+      String(PORT + 32),
+      "--dynamic-port-range",
+      `${PORT + 2}-${PORT + 31}`,
+      "--url",
+      "https://api.mainnet-beta.solana.com",
+      ...programs.flatMap((key) => ["--clone-upgradeable-program", key]),
+      ...clones.flatMap((key) => ["--maybe-clone", key]),
+      ...tableFiles,
+      ...(nativeInput
+        ? nativeGenesis
+        : ["--account", fundingAccount, accountFile]),
+    ],
+    rpcPort: PORT,
+    readonlyMounts: [dir],
+    stdio: ["ignore", stdout, stderr],
+    receiptPath: join(dir, "validator-receipt.json"),
+  });
   for (let i = 0; ; i++) {
-    if (validator.exitCode !== null)
+    if (validator.process.exitCode !== null)
       throw new Error(
-        `Local validator exited ${validator.exitCode}; see ${dir}/validator.stderr.log and validator.stdout.log`,
+        `Local validator exited ${validator.process.exitCode}; see ${dir}/validator.stderr.log and validator.stdout.log`,
       );
     try {
       if ((await rpc<string>("getHealth", [])) === "ok") break;
@@ -665,5 +672,10 @@ try {
     `PASS: ${selected} Solana local live cycle (${parsed.legacy ? "legacy" : "v0"}, ${proof.tables.length} lookup tables)`,
   );
 } finally {
-  validator.kill();
+  try {
+    await validator?.close();
+  } finally {
+    closeSync(stdout);
+    closeSync(stderr);
+  }
 }
