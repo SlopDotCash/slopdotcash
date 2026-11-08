@@ -30,6 +30,8 @@ import {
   type EnforcementHistoryRow,
   foldEnforcementStatus,
   openAccountAppealSource,
+  planEnforcementAction,
+  planFlagScanReinstatement,
   selectActiveBanIndices,
   selectProjectAppeals,
 } from "./verified-enforcement";
@@ -378,75 +380,6 @@ export type EnforcementPlan = {
   bansMaintainer: boolean;
 };
 
-function refuse(code: string, message: string): never {
-  throw new EnforcementRefusal(409, code, message);
-}
-
-function requireIndependentModerator(
-  restriction: ProjectRestriction,
-  actor: GithubActor,
-): void {
-  const placed = restriction.restrictedBy.some(
-    (entry) => entry.githubId === actor.githubId,
-  );
-  // The appellant may be a moderator too; the panel still offers the
-  // decision, so the rule has to refuse it here. The decision closes every
-  // open project appeal, so a newer request from another account does not
-  // make the author of an earlier one independent.
-  const appealed = openProjectAppeals(restriction.records, true).some(
-    (record) => record.actor?.githubId === actor.githubId,
-  );
-  if (placed || appealed)
-    throw new EnforcementRefusal(
-      403,
-      "independent_review_required",
-      placed
-        ? "A moderator who did not place this restriction must decide the appeal"
-        : "Another moderator must decide an appeal its author filed",
-    );
-}
-
-/**
- * A decision on account appeals needs a moderator who did not ban any of the
- * accounts it decides and is not one of them (ELG-02). Releases, denials and
- * malicious-result bans use this one rule; the 0072 trigger repeats the ban
- * half for each release.
- */
-function requireIndependentAccountModerator(
-  restriction: ProjectRestriction,
-  actor: GithubActor,
-  accountGithubIds: ReadonlySet<string>,
-): void {
-  if (
-    accountGithubIds.has(actor.githubId) ||
-    activeAccountBans(restriction.records).some(
-      ({ account, record }) =>
-        accountGithubIds.has(account.githubId) &&
-        record.actor?.githubId === actor.githubId,
-    )
-  )
-    throw new EnforcementRefusal(
-      403,
-      "independent_review_required",
-      "A moderator who did not ban this account must decide its appeal.",
-    );
-}
-
-/** Accounts among `accounts` whose own appeal is open. */
-function openAccountAppeals(
-  restriction: ProjectRestriction,
-  accounts: readonly GithubActor[],
-): Set<string> {
-  return new Set(
-    accounts
-      .filter(
-        (account) =>
-          accountAppealState(restriction, account.githubId) === "requested",
-      )
-      .map((account) => account.githubId),
-  );
-}
-
 function revisionTo(
   current: ProjectDefinition,
   next: ProjectDefinition,
@@ -485,177 +418,61 @@ export function planEnforcement(input: {
   listedBefore: boolean;
   responsibleAccounts?: GithubActor[];
 }): EnforcementPlan {
-  const { action, actor, project, restriction } = input;
+  const { actor, project, restriction } = input;
   const manifest = project.manifest;
-  const deciding = awaitsMaliciousDecision(restriction);
-  switch (action) {
-    case "quarantine":
-    case "ban": {
-      if (action === "quarantine" && restriction.state !== "clear")
-        refuse(
-          "already_restricted",
-          `The project is already ${restriction.state}`,
-        );
-      if (action === "ban" && restriction.state === "banned" && !deciding)
-        refuse("already_restricted", "The project is already banned");
-      // Deciding a confirmed malicious result bans the maintainer too. It
-      // closes the open or kept project appeal, any kept appeal when no
-      // account appeal is open, and the open appeal of each account it bans
-      // again. Each appeal it closes needs its own independence.
-      const closesProjectAppeal =
-        deciding &&
-        restriction.appeal === "requested" &&
-        (projectAppealOpen(restriction.records, true) ||
-          openAccountAppeals(restriction, restriction.bannedMaintainers)
-            .size === 0);
-      const reBanned = deciding
-        ? openAccountAppeals(restriction, input.responsibleAccounts ?? [])
-        : new Set<string>();
-      if (closesProjectAppeal) requireIndependentModerator(restriction, actor);
-      requireIndependentAccountModerator(restriction, actor, reBanned);
-      return {
-        stateAfter: action === "ban" ? "banned" : "quarantined",
-        // An escalation, or a decision that closes no appeal, keeps the open
-        // account appeals open for independent review.
-        appealAfter:
-          restriction.appeal !== "requested"
-            ? "none"
-            : closesProjectAppeal || reBanned.size > 0
-              ? "denied"
-              : "requested",
-        bansMaintainer: deciding,
-        ...revisionTo(manifest, {
+  const decision = planEnforcementAction({
+    action: input.action,
+    actorId: actor.githubId,
+    actorRole: input.actorRole ?? "",
+    hasActorRole: input.actorRole !== undefined,
+    state: restriction.state,
+    appeal: restriction.appeal,
+    records: restrictionHistory(restriction.records),
+    restrictedBy: restriction.restrictedBy.map((entry) => entry.githubId),
+    bannedAccounts: restriction.bannedMaintainers.map(
+      (entry) => entry.githubId,
+    ),
+    activeBans: activeAccountBans(restriction.records).map(
+      ({ account, record }) => ({
+        accountId: account.githubId,
+        moderator: record.actor
+          ? { kind: "actor" as const, id: record.actor.githubId }
+          : { kind: "none" as const },
+      }),
+    ),
+    responsibleAccounts: (input.responsibleAccounts ?? []).map(
+      (entry) => entry.githubId,
+    ),
+    manifestStatus: manifest.status,
+    manifestTier: manifest.listingTier,
+    listedBefore: input.listedBefore,
+  });
+  if (decision.kind === "refused")
+    throw new EnforcementRefusal(
+      decision.status,
+      decision.code,
+      decision.message,
+    );
+  const revision =
+    decision.revision === "retired"
+      ? revisionTo(manifest, {
           ...manifest,
           status: "paused",
           listingTier: "retired",
-        }),
-      };
-    }
-    case "request_reinstatement": {
-      const isBannedActor = restriction.bannedMaintainers.some(
-        (account) => account.githubId === actor.githubId,
-      );
-      const isAccountAppeal =
-        isBannedActor &&
-        (input.actorRole === undefined || input.actorRole === "banned-account");
-      if (restriction.state === "clear" && !isAccountAppeal)
-        refuse("not_restricted", "The project has no restriction to appeal");
-      if (
-        isAccountAppeal
-          ? accountAppealState(restriction, actor.githubId) === "requested"
-          : projectAppealState(restriction) === "requested"
-      )
-        refuse("appeal_open", "A reinstatement request is already open");
-      return {
-        stateAfter: restriction.state,
-        appealAfter: "requested",
-        manifest: null,
-        pendingReason: null,
-        bansMaintainer: false,
-      };
-    }
-    case "reinstate_accounts": {
-      if (
-        restriction.appeal !== "requested" ||
-        restriction.bannedMaintainers.length === 0
-      )
-        refuse(
-          "no_open_appeal",
-          "Record an appeal before reinstating an account",
-        );
-      const selected = input.responsibleAccounts ?? [];
-      if (
-        projectAppealState(restriction) !== "requested" &&
-        selected.some(
-          (account) =>
-            restriction.bannedMaintainers.some(
-              (banned) => banned.githubId === account.githubId,
-            ) &&
-            accountAppealState(restriction, account.githubId) !== "requested",
-        )
-      )
-        refuse(
-          "no_open_appeal",
-          "Record an appeal before reinstating an account",
-        );
-      const releasedIds = new Set(selected.map((account) => account.githubId));
-      requireIndependentAccountModerator(restriction, actor, releasedIds);
-      // A release decides only account appeals. The project appeal, open or
-      // kept by malicious results, stays open for its own decision.
-      const appealStillOpen =
-        (restriction.state !== "clear" &&
-          projectAppealOpen(restriction.records, true)) ||
-        restriction.bannedMaintainers.some(
-          (account) =>
-            !releasedIds.has(account.githubId) &&
-            accountAppealState(restriction, account.githubId) === "requested",
-        );
-      return {
-        stateAfter: restriction.state,
-        appealAfter: appealStillOpen ? "requested" : "granted",
-        manifest: null,
-        pendingReason: null,
-        bansMaintainer: false,
-      };
-    }
-    case "reinstate":
-    case "deny_reinstatement": {
-      // An account-only appeal cannot authorize project reinstatement.
-      const projectAppeal = projectAppealState(restriction);
-      const appeal =
-        action === "reinstate" ? projectAppeal : restriction.appeal;
-      if (restriction.state === "clear" || appeal !== "requested")
-        refuse(
-          "no_open_appeal",
-          "Record a reinstatement request before a decision",
-        );
-      // A denial with no open project appeal decides the open account
-      // appeals, so it needs independence from those account bans instead.
-      if (action === "reinstate" || projectAppeal === "requested")
-        requireIndependentModerator(restriction, actor);
-      else
-        requireIndependentAccountModerator(
-          restriction,
-          actor,
-          openAccountAppeals(restriction, restriction.bannedMaintainers),
-        );
-      if (action === "deny_reinstatement") {
-        if (deciding)
-          refuse(
-            "malicious_decision_required",
-            "A confirmed malicious result needs a decision: ban the project and its maintainer, or reinstate it",
-          );
-        return {
-          stateAfter: restriction.state,
-          appealAfter: "denied",
-          manifest: null,
-          pendingReason: null,
-          bansMaintainer: false,
-        };
-      }
-      // A restriction whose paused, retired revision is still pending must
-      // not clear: clearing it would restore the listed or active manifest.
-      if (!enforcedManifest(manifest))
-        refuse(
-          "revision_pending",
-          "Append the paused, retired revision of this restriction before reinstatement",
-        );
-      // Reinstatement lists the project again only if the restriction found
-      // it listed, never above the community tier, and always paused.
-      return {
-        stateAfter: "clear",
-        appealAfter: "granted",
-        bansMaintainer: false,
-        ...(input.listedBefore && manifest.listingTier === "retired"
-          ? revisionTo(manifest, {
-              ...manifest,
-              status: "paused",
-              listingTier: "community",
-            })
-          : { manifest: null, pendingReason: null }),
-      };
-    }
-  }
+        })
+      : decision.revision === "community"
+        ? revisionTo(manifest, {
+            ...manifest,
+            status: "paused",
+            listingTier: "community",
+          })
+        : { manifest: null, pendingReason: null };
+  return {
+    stateAfter: decision.stateAfter as RestrictionState,
+    appealAfter: decision.appealAfter as AppealState,
+    bansMaintainer: decision.bansMaintainer,
+    ...revision,
+  };
 }
 
 /** The public reason text of the revision an action appends. */
@@ -719,24 +536,26 @@ export function planScanReinstatement(input: {
   at: string;
 }): ProjectEnforcement | null {
   const { project, restriction, scan } = input;
-  if (!pausedByFlagsOnly(restriction) || restriction.since === null)
-    return null;
-  // A scan queued before the pause cannot speak to what the flags reported,
-  // and a scan of other content does not describe the project now. The
-  // pause request itself queues its scan, at or after the pause time.
-  if (
-    scan.requestedAt < restriction.since ||
-    scan.contentSha256 !== input.currentContentSha256
-  )
-    return null;
+  const decision = planFlagScanReinstatement(
+    restrictionHistory(restriction.records),
+    restriction.state,
+    restriction.appeal,
+    restriction.since === null
+      ? { kind: "absent" }
+      : { kind: "at", value: restriction.since },
+    scan.requestedAt,
+    scan.contentSha256,
+    input.currentContentSha256,
+  );
+  if (decision.kind === "unchanged") return null;
   const identity = repositoryIdentity(project.manifest);
   return {
     id: `enf_${scan.assessmentId}_reinstate`,
     projectId: project.id,
     sequence: restriction.nextSequence,
     action: "reinstate",
-    stateAfter: "clear",
-    appealAfter: restriction.appeal === "requested" ? "granted" : "none",
+    stateAfter: decision.stateAfter as RestrictionState,
+    appealAfter: decision.appealAfter as AppealState,
     reason:
       "A clean fresh security scan lifted a pause that contributor flags alone placed",
     evidenceReference: scan.assessmentId,
