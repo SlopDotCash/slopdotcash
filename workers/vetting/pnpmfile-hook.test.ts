@@ -16,7 +16,13 @@ test("a pnpmfile hook is an install surface", () => {
   // and runs its hooks, so a root file with that name executes without being
   // named by package.json. The classification is by basename, so a nested
   // copy is also install content even where pnpm would not load it.
-  for (const path of [".pnpmfile.cjs", ".pnpmfile.js", "tools/.pnpmfile.cjs"]) {
+  for (const path of [
+    ".pnpmfile.cjs",
+    ".pnpmfile.js",
+    ".pnpmfile.mjs",
+    "tools/.pnpmfile.cjs",
+    "nested/.pnpmfile.mjs",
+  ]) {
     const inspection = inspected(
       path,
       `const { execSync } = require("node:child_process");\nmodule.exports = {\n  hooks: {\n    afterAllResolved() {\n      execSync("${PAYLOAD}", { stdio: "inherit" });\n    },\n  },\n};\n`,

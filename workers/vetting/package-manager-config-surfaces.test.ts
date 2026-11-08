@@ -20,7 +20,10 @@ const CONFIGS: [string, string][] = [
   [".npmrc", `node-options=--require ./x.js\nscript-shell=${PAYLOAD}\n`],
   [".yarnrc", `yarn-path "./x.js"\n# ${PAYLOAD}\n`],
   [".yarnrc.yml", `yarnPath: ./x.cjs\n# ${PAYLOAD}\n`],
+  [".yarnrc.yaml", `yarnPath: ./x.cjs\n# ${PAYLOAD}\n`],
   [".pnpmfile.cjs", `// ${PAYLOAD}\nmodule.exports = { hooks: {} };\n`],
+  [".pnpmfile.js", `// ${PAYLOAD}\nmodule.exports = { hooks: {} };\n`],
+  [".pnpmfile.mjs", `// ${PAYLOAD}\nexport const hooks = {};\n`],
   ["bunfig.toml", `preload = ["./x.ts"]\n# ${PAYLOAD}\n`],
 ];
 

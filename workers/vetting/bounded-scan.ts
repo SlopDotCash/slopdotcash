@@ -138,7 +138,10 @@ const PACKAGE_MANAGER_CONFIGS = new Set([
   ".npmrc",
   ".yarnrc",
   ".yarnrc.yml",
+  ".yarnrc.yaml",
   ".pnpmfile.cjs",
+  ".pnpmfile.js",
+  ".pnpmfile.mjs",
   "bunfig.toml",
 ]);
 const INSTALL_FILES = new Set([
@@ -153,6 +156,7 @@ const INSTALL_FILES = new Set([
   "preinstall.js",
   ".pnpmfile.cjs",
   ".pnpmfile.js",
+  ".pnpmfile.mjs",
   ".envrc",
   "tasks.json",
   "tox.ini",
