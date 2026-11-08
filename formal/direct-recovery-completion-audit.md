@@ -30,13 +30,30 @@ still append before the final transaction; the fence prevents stale case and
 successor completion, not observation of public chain history.
 
 `direct_recovery_completion.qnt` isolates the boundary across one request,
-three reporter wallets, two generations and bounded case revisions. Eight
+three reporter wallets, two generations and bounded case revisions. Nine
 named scenarios describe stable completion, changes before/after the second
 read, generation/revision races, lost wallet authorization, actor-mismatched
 events and fee-only recovery after a reporter wallet change. Retirement and
 chain correctness remain external predicates covered by their existing models.
 
-The user instructed the team to skip checks and focus on pushing. No tests,
-syntax/type checks, formatter, model scenarios, simulations or verifier were
-run for this change. This is an unvalidated source-level correction; the
-concurrent-handler/SQLite workflow still requires execution when checks resume.
+The original source-only patch was prepared without checks, as requested in
+that chat. Independent validation in the LemmaScript integration subsequently
+reproduced the race with real local Anvil, migrated SQLite and the private API:
+the original source returned 200 and appended one stale successor; the fixed
+source returned 409 with no successor, case revision or case-event change.
+The complete five-scenario direct-payment integration then passed for native,
+token, USDC, USDG and full-award payments. Type checking and scoped style checks
+also passed. No public-network payment was performed.
+
+The initial finite model bound `revision <= 4` failed exhaustive checking:
+two prior case actions, another generation, and the recovery commit can reach
+revision 5. The corrected bound includes that composed path and a named
+regression; no transition or wallet/consent condition was removed. All nine
+model scenarios and exhaustive TLC checking now pass: 3,416 distinct states,
+16,955 generated states, depth 13 and no states left queued. The receipt
+reports unchanged source/model/tool inputs. These are finite abstract-model
+checks, not proof of implementation refinement or live chain availability.
+
+The before/after logs, full integration output and model receipt remain under
+ignored `evidence/recovery-fence/` and `evidence/formal/` in the isolated
+validation worktree.

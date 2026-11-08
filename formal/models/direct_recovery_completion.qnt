@@ -6,7 +6,8 @@
 // One recovery request, three successive reporter wallets, two generations.
 // Chain retirement is a predicate supplied by direct_payment_recovery and
 // direct_solana_retirement. This model covers the post-await commit fence.
-// Source-only follow-up: these scenarios have not been executed.
+// Case actions can reach revision 3 before another generation and this commit;
+// the combined finite bound is 5. This is not a production revision limit.
 module direct_recovery_completion {
   var s: {phase:str,target:int,consent:int,authorized:bool,generation:int,
     revision:int,seenTarget:int,seenGeneration:int,seenRevision:int,actor:int,
@@ -42,7 +43,7 @@ module direct_recovery_completion {
   action step = any {feeRecovery,walletReplacement,reporterConsent,
     revokeWalletAuthorization,begin,reread,retirementVerified,otherGeneration,
     otherCaseAction,commit(1),commit(2),s'=s}
-  val invariant = all {s.generation<=2,s.revision<=4,
+  val invariant = all {s.generation<=2,s.revision<=5,
     s.committed implies (s.phase=="done" and s.generation==s.seenGeneration+1),
     s.committed and not(s.feeOnly) implies (s.targetAtCommit==s.seenTarget
       and (s.seenTarget==1 or s.consentAtCommit==s.seenTarget))}
@@ -63,4 +64,7 @@ module direct_recovery_completion {
     .then(commit(2)).expect(not(s.committed))
   run feeOnlyRecoveryPreservesPaidReporterTest = init.then(feeRecovery).then(begin)
     .then(reread).then(walletReplacement).then(retirementVerified).then(commit(1)).expect(s.committed)
+  run priorCaseActionsAndGenerationRetainSafetyTest = init.then(otherCaseAction)
+    .then(otherCaseAction).then(otherGeneration).then(begin).then(reread)
+    .then(retirementVerified).then(commit(1)).expect(s.revision==5 and invariant)
 }
