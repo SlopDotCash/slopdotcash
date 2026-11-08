@@ -230,12 +230,17 @@ test("Solana fixture and fee changes select their actual chain job", () => {
     "tests/e2e/solana-vault-actions.spec.ts",
     "workers/fee-converter/solana-local.integration.ts",
     "backend/fee-conversions/handler.ts",
+    "scripts/escrow-acceptance/solana-local.ts",
+    "scripts/escrow-acceptance.ts",
   ]) {
     expect(scopeFor({ [path]: "export {};\n" }).solana).toBe("true");
   }
   expect(scopeFor({ "README.md": "Updated documentation.\n" }).solana).toBe(
     "false",
   );
+  expect(
+    scopeFor({ "scripts/escrow-acceptance/local.ts": "export {};\n" }).evm,
+  ).toBe("true");
 });
 
 const registryLanes = (lanes: string[]) =>

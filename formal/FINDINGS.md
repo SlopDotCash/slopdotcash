@@ -65,6 +65,10 @@ claim that all application state errors have been eliminated.
 | Report filter reflow | The real paid-flow mobile check found that enlarged filter text widened the page beyond its viewport | Allow the filter label and native selector to shrink; `formal/private-intake-reflow-audit.md` |
 | Browser engine preparation | New preview Firefox cases were selected without installing Firefox | Include both engines in the preview plan; `formal/ci-browser-audit.md` |
 | Validator cancellation | An intermediate contained launcher could finish cleanup before an outstanding create or ready-receipt write | Await owned mutations and serialize receipt writes; refuse a ready result after cancellation; `formal/solana-container-audit.md` |
+| Wallet evidence correction | An unobserved user-entered transaction ID became fixed and could not be corrected after reload | Retain the pending intent while keeping user-entered evidence editable; preserve the separate explicit-user-reset boundary; `formal/solana-callers-audit.md` |
+| Live fixture wallet writes | A second runtime changed wallet rows while Pages had the same local D1 database open | Seed before Pages starts and use the real registration/challenge/authorization API afterward; `formal/fixture-wallet-audit.md` |
+| Fixture calendar | Wallet workflows assumed the default month still selected September 2026 | Select the retained fixture month through the actual calendar controls before commitment checks; `tests/e2e/award-month.ts` |
+| Release proof gate | The newly added standalone proof jobs did not block the publish workflow's quality result | Require both same-SHA proof jobs in that workflow's dependency graph and quality result; `formal/release-proof-gate-audit.md` |
 
 The forwarded-report and payout corrections reuse
 [PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and

@@ -13,6 +13,8 @@ on:
       - 'src/lib/security-bounty.*'
       - 'scripts/run-security-payments.mjs'
       - 'scripts/local-solana-validator.*'
+      - 'scripts/escrow-acceptance.ts'
+      - 'scripts/escrow-acceptance/**'
       - 'tests/direct-bounty-solana-chain.ts'
       - 'tests/e2e/solana-vault-actions.spec.ts'
       - '.github/workflows/escrow-tests.yml'
