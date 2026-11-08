@@ -116,6 +116,20 @@ test("project exposes eligible work with GitHub targets and keyboard access", as
     path: test.info().outputPath("project-work.png"),
     fullPage: true,
   });
+  if ((page.viewportSize()?.width ?? 0) >= 640) {
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = "2";
+    });
+    await expectAccessible(page, { include: ".project-work" });
+    expect(
+      await work.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    await work.screenshot({
+      path: test.info().outputPath("project-work-200percent.png"),
+    });
+  }
 });
 
 test("old work stays dated and an empty queue does not claim availability", async ({
