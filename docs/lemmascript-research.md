@@ -48,6 +48,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Accepted source selection and ownership operations](lemmascript-source-ownership.md)
 - [Signed Solana wire parser](lemmascript-solana-wire-research.md)
 - [Retained-copy ancestry and unique hunk bindings](lemmascript-retained-binding.md)
+- [Repository access and setup decisions](lemmascript-setup-research.md)
 - [Final candidate dispositions and remaining active algorithms](lemmascript-candidate-dispositions.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
@@ -120,6 +121,7 @@ maintenance surface without improving the selected acceptance result.
 | Reviewer grouping | `verified-reviewers`; review-credit caller | Complete distinct first-occurrence order, first highest-band source per actor, and first-five count; validated date sorting and immutable actor-to-index mapping remain explicit adapter obligations |
 | Review grouping | `verified-review-batches`; complete review planner | Exact JSON string byte size, longest fitting alias prefix, complete ordered greedy groups and outside-alias binding; native object serialization, hashing and source ordering remain boundaries |
 | Restrictions and appeals | `backend/projects/verified-enforcement`; actual project restriction derivation | Complete chronological episode, exact active-ban pairs, pending project/account appeals and final status/appeal composition; source order and authority remain external |
+| Repository setup | `backend/projects/verified-setup`; access parsing and setup/flagger callers | Complete header result/refusal partition and authority state/message; native shape/role syntax and live GitHub authority remain separate, original lazy identity comparison retained |
 | Text byte partitioning | `verified-text-parts`; inventory and review splitting | Exact newline/continuation cut policy, increasing bounded ends and complete byte coverage; native UTF-8 conversion remains explicit |
 | Source selection and ownership | `verified-source-ownership`; Slopbot discovery and history reads | Complete accepted-commit index order and exact per-record refusal/retire/remove/set operations; native maps, paging, hashes and final ancestry remain boundaries |
 | Retained-copy bindings | `verified-retained-binding`; omitted-hunk evidence matching | Complete finite captured-parent reachability, ordered hunk subset and exactly one eligible attribution per missing hunk; captured Git identity, parsing and final native SHA ordering remain boundaries |
