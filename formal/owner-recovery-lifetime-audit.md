@@ -143,9 +143,17 @@ Departed-preflight refusal and cleanup have separate scenarios.
 Every expected refusal is terminal in its named scenario. The previous busy
 scenario chained `.fail()` and then read state; that structure is removed,
 with check, clear and preparation refusals split into independent scenarios.
-Its **23 named scenarios and all changed source are
-unvalidated**. No tests, syntax/type/lint/format checks, models or browser runs
-were executed for this follow-up.
+Its 23 named scenarios were authored without checks in this chat. Independent
+validation of `f8bfc437e2cb85e99365412259d6f6d8997c7fb1` subsequently passed
+all 23 scenarios, seeded simulation and finite TLC exploration: 180,693
+distinct states, 6,070,388 generated states, depth 18 and an empty queue. The
+model and all five mapped runtime source hashes match this local follow-up.
+The receipt in
+`slopdotcash-lemma-owner-expanded-model/evidence/formal/verification-ui_owner_recovery_lifetime.json`
+has SHA-256 `56e68955c5c7fe0062d7c7a23e615a2578ecad0d06db0061c20ebab761ed6c72`.
+The earlier chained-refusal failure remains recorded separately. Model success
+does not prove browser hash retention or wallet behavior; those need their
+actual workflow evidence.
 
 These are still same-tab control-flow models. Exact EVM/Solana transaction
 matching and finality remain in the unchanged adapters. Explicit clearing or

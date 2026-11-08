@@ -241,8 +241,9 @@ evidence limits. This isolated evidence is not a whole-branch result.
 
 Source review also extended the existing registry publication model to cover
 bounded pair retries, first-deployment fallback, a disappearing API, and
-partial or complete file bytes left after write failure. These ten scenarios
-are unexecuted. No registry output or application behavior changed. See
+partial or complete file bytes left after write failure. Its ten scenarios
+and independent finite check passed with 97 distinct states at depth 8. No
+registry output or application behavior changed. See
 `registry-snapshot-completion-audit.md`; it explicitly excludes concurrent
 local writers and does not claim atomic publication.
 
@@ -276,7 +277,9 @@ Source review also preserves the parent PR's terminal refusal scenarios in
 the startup-rejection model. Independent validation found and corrected the
 Inbox model's missing return type; its 13 scenarios and finite TLC exploration
 passed in that isolated worktree. The expanded 23-scenario owner model also
-passed independent finite checks. These model results do not prove browser
-behavior or the combined application. Newer case-projection and journal models,
-the initial-preparation fix, and all combined runtime behavior still require
-their exact-source evidence. Keep original parsing failures and failed runs.
+passed independent finite checks. The initial-preparation fix subsequently
+passed the five isolated API/Anvil asset workflows and 15 concurrent-change
+regressions described in its audit. These results do not prove browser behavior
+or the combined application. Newer case-projection and journal models and all
+combined runtime behavior still require their exact-source evidence. Keep
+original parsing failures and failed runs.
