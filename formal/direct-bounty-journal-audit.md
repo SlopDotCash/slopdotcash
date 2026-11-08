@@ -113,3 +113,41 @@ Both timeouts used Quint 0.33.1, local Apalache 0.62.4, Node 24.15.0, OpenJDK
 run's known checker or model-checker processes still alive. That observation
 is not a general guarantee about escaped processes. No runtime code or model
 bound was changed, and no application/browser test is claimed here.
+
+## Auxiliary witness projection
+
+After the two incomplete finite runs, the next model changes only the ignored
+cell of the `before` witness. Define P(s) to replace `before[touched]` with the
+existing empty entry when `touched` is 1 or 2, and leave s unchanged when
+`touched` is 0. The actual store, per-instance memory, held requests, identities,
+control state and untouched `before` cell are not changed. This is not a
+projection of persisted journal contents.
+
+No action reads `before`. On original reachable states, every selected nonce
+and every nonempty held nonce is 1 or 2, by initialization and reservation.
+A transition either carries the witness unchanged, or overwrites it from the
+actual pre-transition store and sets `touched` to its affected nonce. P is
+idempotent, and for every transition T from those reachable states with the
+same choice of parameters, P(T(P(s))) = P(T(s)). The implementation applies
+P at all seven witness-writing sites. Carrying an already canonical witness
+requires no extra transition. All original enabled choices remain enabled.
+The initial state is fixed by P. Thus the projected reachable graph contains
+the P-image of every original reachable state, without dropping actual
+journal/control states or reducing any actor, nonce or request-ID domain.
+
+The invariant reads `before` only at indices other than `touched`; when
+`touched` is zero that clause is inactive. Therefore I(P(s)) is equivalent to
+I(s). The ownership implication is retained verbatim, and the untouched-cell
+comparison still compares the actual store with its real pre-write value.
+No invariant is replaced with a self-comparison or assumed Boolean. This is
+a property-preserving normalization of an auxiliary witness, not a proof of
+arbitrary browser storage or source refinement.
+
+The projected model passes the unchanged normal gate: type checking, all 15
+named scenarios and 500 seeded traces of at most 60 steps. Its 180-second TLC
+run is still incomplete. The last progress report records 8,836,601 generated
+states, 2,015,095 distinct states, depth 8 and 1,630,464 queued states. No
+invariant violation was reported before termination. The source and mapped
+runtime hashes remained unchanged. This result does not establish completed
+finite verification; the projection argument does not turn a nonempty queue
+into a successful checker result. All three incomplete receipts are retained.

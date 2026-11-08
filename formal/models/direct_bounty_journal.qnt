@@ -8,6 +8,8 @@ module direct_bounty_journal {
   type Held={nonce:int,request:int,transaction:int}
   val empty={request:0,transaction:0,hash:0,candidate:0}
   val noHeld={nonce:0,request:0,transaction:0}
+  // Only the untouched cell of before is an invariant witness. Its touched
+  // cell is canonical empty; actual store/memory/held values are unchanged.
   var s:{store:int->Entry,memory:int->(int->Entry),held:int->Held,used:Set[int],
     warning:int->bool,mounted:int->bool,checked:int->int,emptyInput:int->Set[int],before:int->Entry,touched:int,observed:int,expected:int,wrote:bool}
   action init=s'={store:Map(1->empty,2->empty),
@@ -22,7 +24,7 @@ module direct_bounty_journal {
     all{s.mounted.get(q),s.held.get(q)==noHeld,not(s.used.contains(id)),s.store.get(n).transaction==0,
       s'=if(stored)s.with("store",nextStore).with("memory",s.memory.set(q,nextStore))
         .with("held",s.held.set(q,{nonce:n,request:id,transaction:n}))
-        .with("used",s.used.union(Set(id))).with("before",s.store).with("touched",n)
+        .with("used",s.used.union(Set(id))).with("before",s.store.set(n,empty)).with("touched",n)
         .with("observed",0).with("expected",0).with("wrote",true)
       else s.with("warning",s.warning.set(q,true)).with("wrote",false)}
   }
@@ -39,7 +41,7 @@ module direct_bounty_journal {
           else if(owned and s.mounted.get(q) and local.request==held.request)s.memory.set(q,s.memory.get(q).set(held.nonce,local.with("hash",1)))
           else s.memory)
         .with("warning",s.warning.set(q,not(owned and stored)))
-        .with("before",s.store).with("touched",held.nonce)
+        .with("before",s.store.set(held.nonce,empty)).with("touched",held.nonce)
         .with("observed",current.request).with("expected",held.request).with("wrote",owned and stored)}
   }
   action rejected(q:int):bool={
@@ -50,7 +52,7 @@ module direct_bounty_journal {
     all{held!=noHeld,
       s'=s.with("held",s.held.set(q,noHeld))
         .with("store",if(owned)s.store.set(held.nonce,empty) else s.store)
-        .with("before",s.store).with("touched",held.nonce)
+        .with("before",s.store.set(held.nonce,empty)).with("touched",held.nonce)
         .with("observed",current.request).with("expected",held.request).with("wrote",owned)}
   }
   action depart(q:int):bool=s'=s.with("mounted",s.mounted.set(q,false))
@@ -72,20 +74,20 @@ module direct_bounty_journal {
         .with("memory",if(stored and not(conflict))s.memory.set(q,nextStore) else s.memory)
         .with("checked",s.checked.set(q,if(stored and not(conflict))hash else 0))
         .with("warning",s.warning.set(q,not(stored) or conflict))
-        .with("before",s.store).with("touched",n)
+        .with("before",s.store.set(n,empty)).with("touched",n)
         .with("observed",current.request).with("expected",if(merge)local.request else 0)
         .with("wrote",stored and not(conflict))}
   }
   action newerStoredHash(n:int):bool=all{s.store.get(n).transaction>0,
     s'=s.with("store",s.store.set(n,s.store.get(n).with("hash",2)))
-      .with("before",s.store).with("touched",n).with("expected",0).with("wrote",true)}
+      .with("before",s.store.set(n,empty)).with("touched",n).with("expected",0).with("wrote",true)}
   // External resolution/removal makes an ABA reservation possible. This is
   // not an automatic clear operation supplied by DirectBountyPayment.
   action resolvedAndRemoved(n:int):bool=s'=s.with("store",s.store.set(n,empty))
-    .with("before",s.store).with("touched",n).with("expected",0).with("wrote",true)
+    .with("before",s.store.set(n,empty)).with("touched",n).with("expected",0).with("wrote",true)
   action legacy(n:int):bool=all{s.store.get(n).transaction==0,
     s'=s.with("store",s.store.set(n,{request:0,transaction:n,hash:0,candidate:1}))
-      .with("before",s.store).with("touched",n).with("expected",0).with("wrote",true)}
+      .with("before",s.store.set(n,empty)).with("touched",n).with("expected",0).with("wrote",true)}
   // Choices belong to the action that uses them. This preserves the same
   // transition union without repeating every successor for unrelated values.
   action chooseReserve={nondet q=Set(1,2).oneOf() nondet n=Set(1,2).oneOf()
