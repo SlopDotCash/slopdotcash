@@ -742,7 +742,9 @@ approval signatures, persisted bytes, database reopen, finality before a fresh
 swap, matching token proceeds, lost-send recovery and refusal after a claim
 loses its network lease. It is not live Kyber, Circle or production evidence.
 
-The Solana check uses a local `solana-test-validator` (default port 28899).
+The Solana check uses the reviewed Agave 2.1.21 container through the shared
+local launcher (default RPC port 28899). Prepare the pinned image and local
+engine as described in the [Solana test setup](../../contracts/solana/README.md#local-build-and-end-to-end-tests).
 It captures real Jupiter V2 quote and unsigned swap responses, resolves their
 lookup tables at finalized commitment, and clones the route's public programs
 and accounts. The default input is classic SPL JUP.
@@ -759,7 +761,10 @@ and normalizes fixture rent epochs; lookup addresses and authority stay intact.
 Generated throwaway wallets
 exercise a real local receipt, the normal native budget, signing journal,
 finalized conversion, restart reconciliation and duplicate refusal.
-These checks require `anvil` and `solana-test-validator` on `PATH`. Public
+The EVM checks require `anvil` on `PATH`; the Solana check requires the prepared
+local container engine and image. Its selected `TMPDIR` must be accessible to
+that engine. Cleanup preserves both a primary workflow failure and any cleanup
+failure. Public
 mainnet access is read-only; every signed transaction is sent only to the
 local validator. Local results do not qualify a production deployment.
 
