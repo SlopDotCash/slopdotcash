@@ -7,13 +7,14 @@ test("local tool children cannot re-enable update probes or metrics or inherit c
     process.execPath,
     [
       "-e",
-      'console.log(JSON.stringify({banner:process.env.WRANGLER_HIDE_BANNER,metrics:process.env.WRANGLER_SEND_METRICS,credential:"CLOUDFLARE_API_TOKEN" in process.env}))',
+      'console.log(JSON.stringify({banner:process.env.WRANGLER_HIDE_BANNER,metrics:process.env.WRANGLER_SEND_METRICS,validatorRuntime:process.env.SLOP_SOLANA_CONTAINER_RUNTIME,credential:"CLOUDFLARE_API_TOKEN" in process.env}))',
     ],
     {
       env: childEnvironment(
         {
           PATH: process.env.PATH,
           CLOUDFLARE_API_TOKEN: "test-not-a-credential",
+          SLOP_SOLANA_CONTAINER_RUNTIME: "podman",
         },
         { WRANGLER_HIDE_BANNER: "false", WRANGLER_SEND_METRICS: "true" },
       ),
@@ -24,6 +25,7 @@ test("local tool children cannot re-enable update probes or metrics or inherit c
   expect(JSON.parse(child.stdout)).toEqual({
     banner: "true",
     metrics: "false",
+    validatorRuntime: "podman",
     credential: false,
   });
 });

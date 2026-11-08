@@ -1,4 +1,5 @@
 // @source scripts/local-solana-validator.mjs
+// @source scripts/child-environment.mjs
 // @source .github/workflows/escrow-tests.yml
 // @evidence tests/direct-bounty-solana-chain.ts
 // @evidence tests/solana-container-cancel.workflow.mjs
@@ -6,6 +7,8 @@
 // One owned container, one pending engine mutation. Engine acknowledgement is
 // distinct from sending a request: cancellation waits for it before removal.
 // Image/engine inspection and host socket truth are external observations.
+// inspectRuntime includes the caller's selected engine surviving its child
+// environment projection, checked by the real child-environment regression.
 module solana_container_lifecycle {
   var s: { phase: str, localRuntime: bool, pinnedImage: bool, owned: bool,
     loopbackPorts: bool, verifiedBinary: bool, refused: bool, receiptWritable: bool,

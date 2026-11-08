@@ -34,6 +34,14 @@ the shared launcher, Solana browser fixtures and fee-converter sources.
 exercises those changed paths. A hosted run remains required to establish
 Linux image preparation and caller execution together.
 
+The first vault-browser attempt with an explicitly selected Podman runtime
+instead attempted the unavailable default Docker engine. The browser launcher
+had projected away `SLOP_SOLANA_CONTAINER_RUNTIME`. That non-secret selection
+now survives `childEnvironment`; its existing real-subprocess regression checks
+the observed engine selection together with credential exclusion and forced
+telemetry/update settings. Per-instance receipt paths remain explicit caller
+arguments rather than a shared inherited output path.
+
 ## Cancellation ordering
 
 The first implementation started an asynchronous `run` request and inspected
