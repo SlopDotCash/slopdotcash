@@ -172,3 +172,40 @@ The comparison scripts, before/after logs and strict integrity receipt are
 saved under ignored `evidence/monthly/` in the worktree. Captured artifacts
 are not committed. No live signing, transaction, publication, merge or push
 is part of this isolated follow-up.
+
+## Bounded snapshot benchmark
+
+The actual `buildExecutionSnapshot` was compared at baseline `cc54e73b9`
+and implementation `c76853e9c` on an Apple M4 Max with Bun 1.3.14. Each of
+two fresh processes ran five warmups per implementation, then 20 alternating
+before/after pairs at each size and fee mode. The timed call includes parsing,
+fees, public records, JSON and SHA-256. The full results were compared outside
+the timed spans. Inputs include interleaved zero rows and 96-bit amounts.
+
+| Input rows | Fee mode | Run 1 median, before → after (ms) | Run 2 median, before → after (ms) |
+| --- | --- | --- | --- |
+| 100 | Current | 0.058 → 0.055 | 0.060 → 0.053 |
+| 100 | Legacy | 0.047 → 0.044 | 0.044 → 0.042 |
+| 1,000 | Current | 0.424 → 0.392 | 0.422 → 0.387 |
+| 1,000 | Legacy | 0.390 → 0.365 | 0.388 → 0.359 |
+| 10,000 | Current | 4.045 → 3.772 | 5.564 → 3.683 |
+| 10,000 | Legacy | 4.000 → 4.032 | 3.630 → 3.495 |
+
+These observations are not a speedup claim. At 10,000 rows the current-fee
+median ratios were 0.932 and 0.662; the legacy ratios were 1.008 and 0.963.
+Means and tails varied much more than medians. For 10,000 legacy rows the
+mean increased from 12.52 to 23.58 ms in run 1 and from 6.83 to 8.89 ms in
+run 2; p90 increased from 22.21 to 61.59 ms and from 6.61 to 11.30 ms.
+The first run's longest changed call was 163.32 ms. Garbage collection was
+not forced or measured, and the shared host was not isolated, so these pauses
+do not establish a persistent regression or identify its cause.
+
+The integration does allocate extra intermediate record arrays: parsed
+input records and numeric frozen records precede public string records.
+That is an explicit allocation cost of the complete-record proof boundary;
+removing the old sum array and repeated fee calculation does not prove it
+has no cost. No tuning was made from these bounded, noisy measurements.
+Both runs and all individual timings are saved in ignored
+`evidence/monthly/benchmark-first.json` and `benchmark.json`. The latter also
+records the installed Node 24.15.0; Bun's `process.version` reports its Node
+compatibility version, 24.3.0, rather than that separate executable.
