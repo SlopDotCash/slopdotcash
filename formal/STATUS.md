@@ -18,8 +18,8 @@ not mutable-branch completion claims. Later commits must be assessed against
 their own source and model hashes.
 
 The frozen local `codex/quint-observation-fixes` branch holds the newer
-completion-race corrections below. `codex/quint-observation-review-base`
-integrates them on the reviewed `7faa6399` source while retaining that review's
+completion-race corrections below. `codex/quint-observation-current-base`
+integrates them on the pushed `1bcf755b` dependency while retaining the reviewed
 runner and model fixes. Final rebasing onto the completed dependency batch is
 still required. Do not replace the held published heads with this branch
 during the review batch. Preserve the broader 168-target,
@@ -34,7 +34,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-808 production sources, 307 finite models and 1,401 named scenarios, with zero
+809 production sources, 313 finite models and 1,499 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 235 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -169,10 +169,12 @@ open; passing finite models does not prove absence of all application errors.
 ## Reviewed recovery and runner follow-up
 
 PR 2414 merged as `7f8b920bbc5056416c3f0dd1c7d5c354d44771e4` after its
-corrected head passed all required hosted checks. The follow-up is rebased onto PR 1873's development merge
-`5acc3c47e9a29fc2b55fb756964944eb0a976213`, which includes that commit. Its inventory has 807 production sources, 306 finite
-models and 1,395 named scenarios. Mapping and finite checks do not establish
-implementation refinement.
+corrected head passed all required hosted checks. At the reviewed `7faa6399`
+follow-up checkpoint, the inventory had 807 production sources, 306 finite
+models and 1,395 named scenarios. The later `1bcf755b` dependency is based on
+PR 1873's development merge `5acc3c47e9a29fc2b55fb756964944eb0a976213`.
+Current integration counts are recorded above. Mapping and finite checks do
+not establish implementation refinement.
 
 Independent review reproduced the monthly-setting defect with a real local
 Anvil browser workflow: an entered transaction ID became fixed after a pending
