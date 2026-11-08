@@ -20,7 +20,7 @@ immutable report-version event and object-store boundary remain in place.
 `api_report_forward_revision` models the guard and reopening rules; the
 existing case-transaction model and tests cover the atomic write sequence.
 
-The original authored commit was cherry-picked as `eb1b8283e`, after the
+The original authored commit was cherry-picked after the
 reproduction and focused before/after checks. Both regression cases pass, and
 the combined report-intake, case, submission and notification suites passed
 186 tests. The temporary patch and detailed logs remain local evidence.

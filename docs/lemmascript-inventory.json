@@ -3070,7 +3070,7 @@
 {"name":"<ArrowFunction@404>","kind":"ArrowFunction","line":404,"sha256":"2fc4fb5f313e7fd58d00a3bfd6e5c613ef9f8b30a6db2000ff0b3a9243d9a2e4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"verifyRemoteArtifacts","kind":"FunctionDeclaration","line":409,"sha256":"4d840ab17178d85d7958c0a35b357357dde52af5cf57a4dc77640c5a5ae5ec56","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect","throw-unreachable-model"]}
 ]},
-{"path":"scripts/formal-inventory.mjs","sha256":"fb3844eb24e75af3c72b54895666ab0be103ebe2006c00467cc29a0365426841","language":"javascript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/formal-inventory.mjs","sha256":"1ebbf6e2cfe9c7aef211218d9253aeddc8d0b1a2f65826bd761a9105601964df","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"digest","kind":"ArrowFunction","line":11,"sha256":"0e2a8bf2e3b7ba84dd6d9e6162f6cce32f644d9a9333a833b0cc59b70c240f33","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@14>","kind":"ArrowFunction","line":14,"sha256":"bf944ac029fdf2fc7a63b8c9b66e57cf77e6272b2cf03e0d272a66ea92059e87","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@29>","kind":"ArrowFunction","line":29,"sha256":"49329fdd5046040221edab3b276cb568358081b608add1600f5aa33bd7fc087f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -10578,7 +10578,7 @@
 {"name":"<ArrowFunction@73>","kind":"ArrowFunction","line":73,"sha256":"d370d8946931d10294a66cc8b48750c0f9a89d252b8d747dddcf75cb6302c852","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@77>","kind":"ArrowFunction","line":77,"sha256":"3d60b5a05acf1bc0fb37926848a161db6ed7e6c5c3f547884ca02b354791fbc7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]}
 ]},
-{"path":"workers/vetting/bounded-scan.ts","sha256":"8fae6122c7419958226fb6e07b41acf3caa7968475140c1d84a2a08013734fe7","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/vetting/bounded-scan.ts","sha256":"22cccfc3a9a6e6d39ccfc4a27dca41e323c02a1a20c78450a078331abd78331a","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"declaresInterpreter","kind":"FunctionDeclaration","line":228,"sha256":"308170ee8ec6ce329aa8ce5dc78c03aa0d2c120f795de5acd3be9d0792f32234","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"basename","kind":"FunctionDeclaration","line":253,"sha256":"5abb2739c90a9cdd702e14e183b84bdcf02307c268615c1677ff1e33317c3a7b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"surfacesOf","kind":"FunctionDeclaration","line":258,"sha256":"797e31d2a9ad3ff5ff10b31622bb96e11d3afdf9bb9c888ee39ccfa9ea485a3e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},

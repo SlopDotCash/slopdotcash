@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "baseline": "ccc37c36e3f557e7bddf32a95830f29f4876ff9c",
+  "baseline": "3223535c6fa91d8ce5159bf4fce278acf18e286d",
   "reviewStartedAt": "e3d7dea64f1171f5761033069b98de4fd5cc1e77",
   "meaning": "Current production source census with lexical state candidates and model links. A mapping is not a complete branch or semantic refinement proof. Pending is unfinished review work.",
   "exclusions": "Dependencies, generated build outputs, test/fixture trees, declarations and integration test entry points are not production state machines. Generated registry source remains inventoried through its generator.",
@@ -2957,7 +2957,7 @@
     },
     {
       "path": "scripts/formal-inventory.mjs",
-      "sha256": "fb3844eb24e75af3c72b54895666ab0be103ebe2006c00467cc29a0365426841",
+      "sha256": "1ebbf6e2cfe9c7aef211218d9253aeddc8d0b1a2f65826bd761a9105601964df",
       "models": ["formal/models/formal_toolchain.qnt"],
       "candidateLines": [11, 83, 88, 102, 103, 126, 128, 145, 148, 150, 152],
       "review": "mapped-abstraction"
@@ -6829,7 +6829,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "8fae6122c7419958226fb6e07b41acf3caa7968475140c1d84a2a08013734fe7",
+      "sha256": "22cccfc3a9a6e6d39ccfc4a27dca41e323c02a1a20c78450a078331abd78331a",
       "models": ["formal/models/vetting_disposition.qnt"],
       "candidateLines": [
         240, 248, 249, 1710, 1711, 1892, 1952, 1973, 2040, 2056

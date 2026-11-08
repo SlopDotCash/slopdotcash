@@ -3,7 +3,7 @@
 The goal remains active and incomplete. The source census and finite models are
 maintained against `origin/development` in the separate
 `slopdotcash-quint-current` integration worktree. It includes development
-`ccc37c36e3f557e7bddf32a95830f29f4876ff9c`. The earlier dirty `slopdotcash`
+`3223535c6fa91d8ce5159bf4fce278acf18e286d` (including PRs 2403 and 2404). The earlier dirty `slopdotcash`
 checkout is preserved. The prior `slopdotcash-quint` checkpoint and its logs
 remain available; they do not substitute for verification of the latest tree.
 

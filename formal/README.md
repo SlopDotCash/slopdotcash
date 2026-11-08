@@ -11,7 +11,8 @@ The review is now integrated with development commit
 Quint models are retained as `formal/models/pr_review_*.qnt` and run through
 the same source-bound checker. Earlier validation from the `b92ed9303`
 checkpoint remains historical evidence, not a substitute for final integrated
-verification.
+verification. The later development update `3223535c6fa91d8ce5159bf4fce278acf18e286d`
+(PR 2404) is also included; its bounded-scan regression is retained.
 
 ```sh
 bun install --frozen-lockfile
