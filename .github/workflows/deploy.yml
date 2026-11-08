@@ -478,6 +478,7 @@ jobs:
         if: matrix.lane == 'registry-1'
         env:
           SLOP_E2E_PRIVATE_INTAKE: "1"
+          SLOP_E2E_OUTPUT: "private-intake"
         # This fixture seeds D1 through a second local Wrangler process.
         # Keep its browser projects sequentially to avoid competing SQLite writers.
         run: node scripts/run-e2e.mjs --grep '@private-intake' --workers=1
