@@ -1,6 +1,6 @@
 /** Disposable external-wallet actions for the real Pages/D1 bounty browser flow. */
 import { execFileSync, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -247,57 +247,4 @@ export function seedVerifiedBountyWallets(
     ],
     { stdio: "pipe" },
   );
-}
-
-/** A new, verified successor claim in the same disposable local D1 lineage. */
-export function rotateVerifiedBountyWallet(
-  persistTo: string,
-  actor: { githubId: string; githubLogin: string; address: string },
-) {
-  if (
-    !/^\d+$/u.test(actor.githubId) ||
-    !/^0x[\da-f]{40}$/iu.test(actor.address)
-  )
-    throw new Error("Invalid local wallet actor");
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const digest = createHash("sha256")
-    .update(`${actor.githubId}:${actor.address}`)
-    .digest("hex");
-  const id = `direct-rotated-${actor.githubId}-${randomUUID()}`,
-    challenge = `${id}-challenge`,
-    at = new Date().toISOString();
-  const recordDigest = createHash("sha256")
-    .update(`${id}:${digest}:${at}`)
-    .digest("hex");
-  const sql = [
-    `INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain,supersedes_claim_id) SELECT ${quote(id)},github_user_id,${quote(actor.githubLogin)},${quote(actor.address)},'d1_registry',${quote(digest)},${quote(at)},${quote(recordDigest)},${quote(at)},chain,id FROM effective_payment_wallet_claims WHERE github_user_id=${quote(actor.githubId)} AND chain='base' AND lower(wallet_address)<>lower(${quote(actor.address)});`,
-    `INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) SELECT ${[challenge, id, actor.githubId, "disposable browser rotation", new Date(Date.now() + 86_400_000).toISOString(), at].map(quote).join(",")} WHERE EXISTS(SELECT 1 FROM wallet_claims WHERE id=${quote(id)});`,
-    `INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) SELECT ${[id, actor.githubId, at, challenge, "disposable verified wallet fixture"].map(quote).join(",")} WHERE EXISTS(SELECT 1 FROM wallet_claims WHERE id=${quote(id)});`,
-    `SELECT id FROM effective_payment_wallet_claims WHERE github_user_id=${quote(actor.githubId)} AND chain='base' AND lower(wallet_address)=lower(${quote(actor.address)});`,
-  ].join("\n");
-  const output = execFileSync(
-    "node",
-    [
-      "node_modules/wrangler/bin/wrangler.js",
-      "d1",
-      "execute",
-      "slop-private",
-      "--local",
-      "--persist-to",
-      persistTo,
-      "--command",
-      sql,
-      "--json",
-    ],
-    { stdio: "pipe", encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
-  );
-  const results = JSON.parse(output) as { results?: { id?: string }[] }[];
-  const current = results
-    .flatMap((result) => result.results ?? [])
-    .find((result) => typeof result.id === "string")?.id;
-  if (!current)
-    throw new Error(
-      "EVM fixture wallet rotation did not resolve a current claim",
-    );
-  return current;
 }

@@ -257,6 +257,19 @@ async function runRegistryPhase() {
       // The chain and D1 retain the same payment history across viewports.
       const fixture = await import("../tests/direct-bounty-chain.ts");
       evm = await fixture.startLocalDirectEvmFixture(basePort + 6);
+      // Seed before Pages opens D1; a second live runtime can invalidate its bookmarks.
+      fixture.seedVerifiedBountyWallets(persistTo, [
+        {
+          githubId: E2E_SECURITY_ACCOUNTS.security,
+          githubLogin: "e2e-security",
+          address: evm.payer,
+        },
+        {
+          githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
+          githubLogin: "e2e-reporter-a",
+          address: evm.reporter,
+        },
+      ]);
     }
     if (solanaBounty) {
       const fixture = await import("../tests/direct-bounty-solana-chain.ts");
