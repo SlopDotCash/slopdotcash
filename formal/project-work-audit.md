@@ -1,6 +1,6 @@
 # Project work discovery state review
 
-`project-work.qnt` models the read-only panel in `src/ProjectWork.tsx`, its
+`formal/models/ui_project_work.qnt` models the read-only panel in `src/ProjectWork.tsx`, its
 `ProjectPage` call in `src/App.tsx`, and the public data state supplied by
 `src/lib/use-snapshot.ts`. It models loading, valid empty/nonempty results,
 errors, retries, retained data after refresh failure, stale timestamps, and

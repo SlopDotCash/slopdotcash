@@ -1,3 +1,5 @@
+// @source src/ProjectWork.tsx
+// @source src/App.tsx
 // Read-only work discovery. Parent useSnapshot owns fetch/identity concurrency.
 module project_work {
   var phase: str

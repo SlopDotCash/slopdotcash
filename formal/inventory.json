@@ -3932,23 +3932,24 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "306bdeaafa5a5cd308a963c0b79ab4ec9748f13caef021d3ff6728e3f806149d",
+      "sha256": "0e46a96e13853e9004ab63b103c0968d48b834132a8bca1acf49b08a9123b957",
       "models": [
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt"
+        "formal/models/ui_project_images.qnt",
+        "formal/models/ui_project_work.qnt"
       ],
       "candidateLines": [
-        13, 15, 282, 292, 302, 313, 322, 323, 324, 325, 326, 328, 329, 388, 443,
-        444, 445, 448, 471, 538, 569, 606, 646, 650, 652, 693, 750, 803, 934,
-        935, 937, 1027, 1042, 1056, 1066, 1096, 1099, 1161, 1164, 1166, 1170,
-        1171, 1179, 1199, 1207, 1208, 1215, 1251, 1295, 1298, 1315, 1316, 1359,
-        1361, 1381, 1383, 1438, 1439, 1442, 1443, 1446, 1447, 1465, 1470, 1472,
-        1476, 1477, 1528, 1560, 1562, 1587, 1588, 1605, 1606, 1614, 1615, 1626,
-        1629, 1640
+        13, 15, 283, 293, 303, 314, 323, 324, 325, 326, 327, 329, 330, 389, 444,
+        445, 446, 449, 472, 539, 570, 607, 647, 651, 653, 694, 751, 804, 935,
+        936, 938, 1028, 1043, 1057, 1067, 1097, 1100, 1162, 1165, 1167, 1171,
+        1172, 1180, 1200, 1208, 1209, 1216, 1252, 1296, 1299, 1316, 1317, 1360,
+        1362, 1382, 1384, 1439, 1440, 1443, 1444, 1447, 1448, 1465, 1467, 1472,
+        1477, 1479, 1483, 1484, 1535, 1567, 1569, 1594, 1595, 1612, 1613, 1621,
+        1622, 1633, 1636, 1647
       ],
       "review": "mapped-abstraction"
     },
@@ -4431,6 +4432,16 @@
         10, 20, 24, 29, 34, 37, 43, 45, 61, 64, 68, 78, 96, 99, 102, 103, 124,
         127, 128, 153, 156, 157, 161, 165, 166, 212, 214, 228, 230, 247, 251,
         254, 256, 298
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/ProjectWork.tsx",
+      "sha256": "6c70a0ed30fc6fe97c15c787cff1b3c981f6e03abe585794254f8c4930e65b9e",
+      "models": ["formal/models/ui_project_work.qnt"],
+      "candidateLines": [
+        10, 12, 15, 17, 19, 21, 24, 32, 34, 37, 38, 43, 44, 45, 48, 49, 54, 55,
+        57, 58
       ],
       "review": "mapped-abstraction"
     },
@@ -10885,6 +10896,19 @@
         "src/lib/project-proposal.ts"
       ],
       "scenarios": ["exemptionTest", "revisionTest", "setupTest"]
+    },
+    {
+      "path": "formal/models/ui_project_work.qnt",
+      "sha256": "dbd091ecdfd76aec49f9ed366e0c269b2b590bb6297a8242266ecf3722130b2e",
+      "sources": ["src/App.tsx", "src/ProjectWork.tsx"],
+      "scenarios": [
+        "emptyTest",
+        "failureTest",
+        "loadTest",
+        "pausedTest",
+        "retainedTest",
+        "retryTest"
+      ]
     },
     {
       "path": "formal/models/ui_record_deadlines.qnt",
