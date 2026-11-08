@@ -3,7 +3,7 @@
 This source-only follow-up starts at `e4ee8a3c79b035999d3da98f008f57c674c989d2`.
 No tests, syntax/type/lint/format checks, model scenarios, simulations,
 verifiers, browser commands or services were run. The runtime correction and
-fourteen model scenarios are unvalidated.
+sixteen model scenarios are unvalidated.
 
 ## Source-confirmed order
 
@@ -70,6 +70,14 @@ authority checks. This model starts after that authorization boundary and
 represents a competing opt-out before execution; the existing monthly setting
 ordering model separately covers the earlier sequence-capture order.
 The ban refusal uses the implementation's `account_banned` error code.
+
+For an allocation, the SQL `WHERE` gate runs before the frozen-month trigger
+or sequence uniqueness constraint. If automatic payment is on and the cutoff
+has passed, the statement selects no row. The later diagnostic reads report
+`cutoff_passed`, even if the month also froze or another allocation took the
+captured sequence. The model keeps this precedence and includes a named
+scenario for each combined condition. If the cutoff gate permits the row,
+the trigger or uniqueness conflict still reports `allocations_changed`.
 
 Existing real-SQLite references are `backend/payments/monthly.test.ts`:
 automatic/owner finalization preserving a pause before its freeze write;

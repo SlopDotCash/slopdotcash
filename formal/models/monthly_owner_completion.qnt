@@ -44,8 +44,10 @@ module monthly_owner_completion {
   val refusal=if(not(s.registry))"payment_registry_unavailable"
     else if(not(registryCurrent))"project_changed"
     else if(s.banned)"account_banned"
-    else if(s.kind=="allocation" and (s.frozen or s.allocationSequence!=s.seenAllocation))"allocations_changed"
-    else if(s.kind=="allocation")"cutoff_passed" else "setting_changed"
+    // The WHERE gate runs before the allocation trigger and unique constraint.
+    // A cutoff-suppressed row cannot reach either conflicting-write check.
+    else if(s.kind=="allocation" and s.automatic and s.afterCutoff)"cutoff_passed"
+    else if(s.kind=="allocation")"allocations_changed" else "setting_changed"
   action execute=all{s.phase=="queued",
     s'=if(allowed)s.with("phase","committed").with("writes",1)
       .with("allocationSequence",if(s.kind=="allocation")s.allocationSequence+1 else s.allocationSequence)
@@ -88,6 +90,10 @@ module monthly_owner_completion {
     .expect(s.error=="allocations_changed" and s.writes==0)
   run competingAllocationStillRefusesTest=init.then(begin("allocation")).then(otherAllocation).then(execute)
     .expect(s.error=="allocations_changed" and s.allocationSequence==1)
+  run cutoffPrecedesFrozenMonthRefusalTest=init.then(begin("allocation")).then(freeze).then(cutoff).then(execute)
+    .expect(s.error=="cutoff_passed" and s.writes==0)
+  run cutoffPrecedesCompetingAllocationRefusalTest=init.then(begin("allocation")).then(otherAllocation).then(cutoff).then(execute)
+    .expect(s.error=="cutoff_passed" and s.writes==0 and s.allocationSequence==1)
   run newBanStillRefusesTest=init.then(begin("disable")).then(banActor).then(execute)
     .expect(s.error=="account_banned" and s.writes==0)
   run unchangedPausedProjectMayUpdateSettingTest=init.then(changeProject("paused")).then(begin("disable")).then(execute)
