@@ -1,7 +1,10 @@
+// @source src/lib/verified-monthly-replacement.ts
+// @source src/lib/verified-allocation.ts
 // @source migrations/0062_monthly_allocations.sql
 // @source migrations/0071_monthly_ban_exclusions.sql
 // @source migrations/0081_monthly_asset_amount_range.sql
 // @source src/lib/payments/monthly-allocation.ts
+// @source src/lib/verified-money.ts
 // @source backend/payments/monthly.ts
 // @source backend/payments/monthly-publication.ts
 // @source backend/payments/monthly-attestation.ts

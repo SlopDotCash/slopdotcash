@@ -151,7 +151,7 @@ do not silently assume the property being claimed.
 | Medium: Slopbot routing and retry | `workers/slopbot/routing.ts`: `route`; `appeals.ts`: `escalationFor`; `penalties.ts`: `penaltyFor`; `value-processing.ts`: `valueRetryDelayMs` | Deterministic model route/escalation, bounded monotonic retry, published penalty rules. Simple enum/boolean kernels fit. Never turn an advisory model output into human authority or invent new penalty policy. |
 | High: referral caps | `workers/referral-accrual/core.ts`: `judge`, `totalsOf`, `add`; `config.ts`: `isPeriod` | Accrual is no larger than computed share, remaining project cap or remaining pool; exhausted caps give zero; prior credit cannot be counted twice. The scalar cap is implemented and proved by `cappedReferralAccrual`. Aggregation, candidate ordering, durable period publication and first-payment window dates require separate evidence. |
 | Medium: referral Merkle evidence | `workers/referral-accrual/merkle.ts`: `buildTree`, `verifyProof`; `core.ts`: `buildFile`, `postNextRoot` | Stable leaf order, duplicate-free identities and proof path reconstruction. Hashes are opaque trusted primitives; proof of tree shape is not proof of collision resistance or chain-root publication. |
-| Medium: notification eligibility | `backend/notifications/email.ts`, `email-destinations.ts`; `workers/notify/activity.ts`, `security.ts`, `handler.ts` | Verified destination and explicit preference before delivery, withdrawal stops new sends, partial delivery does not become success. Pure eligibility and MIME character guards are feasible. Provider acceptance, mailbox arrival, token HMAC and single-use database behavior remain boundaries. |
+| Medium: notification eligibility | `backend/notifications/email.ts`, `email-destinations.ts`; `workers/notify/activity.ts`, `security.ts`, `handler.ts` | Verified destination and explicit preference before delivery, withdrawal stops new sends, partial delivery does not become success. The activity-mail eligibility decision is now implemented over actual destination and preference fields. MIME guards, provider acceptance, mailbox arrival, token HMAC and single-use database behavior remain boundaries. |
 | Medium: authentication and HTTP | `backend/http.ts`: `isSameOriginJsonWrite`, `requireActor`; `backend/trace/auth.ts`; `workers/identity/handler.ts`, `rate-limit.ts`, `persistence.ts` | Same-origin writes, expected-actor binding, strict audience/time/role acceptance, one-time assertions, fixed-window admission. Boolean/string/time kernels fit after input normalization. Fetch, crypto, cookies and atomic rate counters are not proved by extraction. |
 | Medium: Points and private/public projection | `backend/points/disputes.ts`, `handler.ts`, `x.ts`; `backend/notifications/incomplete-assessments.ts`; `backend/vetting/summary.ts` | Public accepted-work totals stay separate from private case details; disputes and assessment cursors cannot bypass authority. Safe projections and enum classification are candidates; joins, pagination completeness and current permission checks require real workflow tests. |
 | Medium: vetting acquisition/sandbox | `workers/vetting/acquire.ts`: `resolveSymlinkTarget`, `verifyTrees`; `bounded-scan.ts`; `review-plan.ts`: `batchParts`, `planReview`; `workers/vetting-sandbox/merge.ts` | Bounded paths/bytes/calls, no escape, complete source inventory, deterministic plan partition. Pure path or partition functions may fit. Filesystem, process isolation, tar/git behavior and malicious-code containment require operating-system evidence. |
@@ -185,7 +185,40 @@ external payment was requested by these tests.
 
 The report does not claim that all ranked candidates are implemented or that
 all backend state is proved. Regex parsing and powers of ten in `usdMicro`,
-whole native-cost accumulation, schema validation, provider data, database
+complete native-cost workflow/provenance, schema validation, provider data, database
 transactions, code generation and current contract code remain explicit trust
 or verification boundaries. Final exact-head repository checks, current
 Quint models and browser results belong in the integrated verification record.
+
+## Evidence and budget proof extension
+
+The production evidence layout now uses two BigInt partition functions. For
+any positive total, positive part limit and valid part index, the proof gives
+positive bounded lengths and contiguous offsets. Every nonfinal part has the
+limit's size; the final part satisfies exact total conservation. The existing
+array index, digest, key and size checks still validate the records. The
+large-evidence API and backup paths share this implementation. There is no
+new total-size cap, and these arithmetic proofs do not establish stored-byte
+integrity or access authority.
+
+`workers/verified-budget.ts` supplies the existing positive transaction/day
+predicate, keeper cap predicate and review-call timeout. Native fee conversion,
+referral limits and keeper signing retain their exact parsing and error paths.
+Quint and the real database/local-chain tests still cover outstanding sends,
+nonce groups, leases and midnight transitions. The verifier does not treat a
+scalar cap check as proof of the entire budget journal.
+
+## Native receipt accounting extension
+
+EVM receipt accounting now calls proved execution-product and component-total
+functions without changing the order of receipt checks and provider calls.
+Solana balance deltas call a proved payer-only normalization. The converter
+uses the proved sum for rent increments and a proved fee-versus-principal
+comparison. These contracts do not establish RPC truth, receipt identity,
+finality, uniqueness of the supplied account indexes or signing authority.
+
+The converter/adapter regression suite and the actual local Anvil and Solana
+flows pass. The Solana flow captures a public route before cloning and performs
+the swap only in its local validator. The test receipt's fee-plus-rent cost
+reconciles separately from native principal. Test artifacts and logs remain
+under ignored evidence directories; no signing bytes are published.

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "49d13cb84a7471ef89b1abf58a0d06ec3653fe38179c30a5426ef97233e33a37",
+  "inventorySha256": "24b3107ed09bbf5d294e64d2539ce16c6870502b46225a129fd048aa28d78663",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -67,6 +67,19 @@
       "review": "candidate-only"
     },
     {
+      "path": "backend/payments/verified-evidence.ts",
+      "line": 141,
+      "name": "paymentObligationDecision",
+      "kind": "string-union",
+      "values": ["immutable-mismatch", "payout-mismatch", "ready"],
+      "models": [
+        "formal/models/chain_evidence.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["immutable-mismatch", "payout-mismatch"],
+      "review": "candidate-only"
+    },
+    {
       "path": "backend/points/x.ts",
       "line": 26,
       "name": "status",
@@ -108,7 +121,7 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "line": 41,
+      "line": 48,
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
@@ -293,29 +306,6 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "line": 46,
-      "name": "IntakeState",
-      "kind": "string-union",
-      "values": [
-        "legitimate",
-        "needs-information",
-        "queued",
-        "running",
-        "spam",
-        "unavailable"
-      ],
-      "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_report_forward_revision.qnt",
-        "formal/models/api_submission_recovery.qnt"
-      ],
-      "lexicallyUnmentionedValues": [],
-      "review": "candidate-only"
-    },
-    {
-      "path": "backend/security/report-intake.ts",
       "line": 66,
       "name": "review_decision",
       "kind": "string-union",
@@ -346,6 +336,29 @@
       ],
       "models": [
         "formal/models/api_private_intake.qnt",
+        "formal/models/api_submission_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/verified-intake.ts",
+      "line": 3,
+      "name": "IntakeScreeningState",
+      "kind": "string-union",
+      "values": [
+        "legitimate",
+        "needs-information",
+        "queued",
+        "running",
+        "spam",
+        "unavailable"
+      ],
+      "models": [
+        "formal/models/api_private_assessment.qnt",
+        "formal/models/api_private_case_transaction.qnt",
+        "formal/models/api_private_intake.qnt",
+        "formal/models/api_report_forward_revision.qnt",
         "formal/models/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -2835,7 +2848,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 96,
+      "line": 97,
       "name": "reason",
       "kind": "string-union",
       "values": [
@@ -2855,7 +2868,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 129,
+      "line": 130,
       "name": "status",
       "kind": "string-union",
       "values": ["closed", "live"],
@@ -3007,7 +3020,7 @@
     },
     {
       "path": "workers/fee-converter/native-gas.ts",
-      "line": 38,
+      "line": 43,
       "name": "state",
       "kind": "string-union",
       "values": ["abandoned", "reserved", "signed"],
@@ -3061,6 +3074,16 @@
         "unauthorized",
         "unreachable"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/notify/verified-delivery.ts",
+      "line": 60,
+      "name": "activityDeliveryDecision",
+      "kind": "string-union",
+      "values": ["retry", "send", "suppress"],
+      "models": ["formal/models/api_mail_delivery.qnt"],
+      "lexicallyUnmentionedValues": ["retry", "send", "suppress"],
       "review": "candidate-only"
     },
     {
@@ -3478,7 +3501,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 679,
+      "line": 680,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],

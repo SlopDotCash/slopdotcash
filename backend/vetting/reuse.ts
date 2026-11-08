@@ -1,14 +1,16 @@
 /** The same original-clean boundary governs private lookup and result intake. */
-import {
-  type ProjectRestriction,
-  pausedByFlagsOnly,
-} from "../projects/enforcement";
+import type { ProjectRestriction } from "../projects/enforcement";
 import type { VettingAssessment } from "./persistence";
 import {
   isScanResult,
-  scanSourceInventory,
+  scanSourceInventoryInput,
   type VettingScanResult,
 } from "./scan-result";
+import {
+  originalScanHeader,
+  reusableAssessmentHeader,
+  sameScanEvidence,
+} from "./verified-reuse";
 
 export function reusableCleanScan(
   cached: VettingAssessment | null,
@@ -26,33 +28,46 @@ export function reusableCleanScan(
           )
           .at(-1);
   const prior = cached?.result;
-  return (
-    !pausedByFlagsOnly(restriction) &&
-    coversActiveFlags &&
-    result.disposition === "clean" &&
-    cached !== null &&
-    cached.id === result.reusedAssessmentId &&
-    cached.projectId === result.projectId &&
-    cached.state === "clean" &&
-    // Service bans record at the malicious scan's completedAt, which requires a strictly later request (0031_project_vetting_reinstatements.sql).
-    (latestRestriction === undefined ||
-      (latestRestriction.actorRole === "vetting-service"
-        ? cached.requestedAt > latestRestriction.createdAt
-        : cached.requestedAt >= latestRestriction.createdAt)) &&
-    prior != null &&
-    isScanResult(prior) &&
-    prior.projectId === result.projectId &&
-    prior.disposition === "clean" &&
-    prior.reusedAssessmentId === null &&
-    prior.assessed.repository.toLowerCase() ===
-      result.assessed.repository.toLowerCase() &&
-    prior.assessed.inputManifestSha256 ===
-      result.assessed.inputManifestSha256 &&
-    scanSourceInventory(prior) !== null &&
-    scanSourceInventory(prior) === scanSourceInventory(result) &&
-    prior.assessed.templateSha256 === result.assessed.templateSha256 &&
-    prior.policyVersion === result.policyVersion &&
-    prior.scan.runId === result.scan.runId &&
-    prior.scan.reportSha256 === result.scan.reportSha256
+  // Service bans require a strictly later request (0031_project_vetting_reinstatements.sql).
+  if (
+    !reusableAssessmentHeader(
+      cached === null
+        ? { kind: "missing" }
+        : { kind: "present", assessment: cached },
+      result.reusedAssessmentId,
+      result.projectId,
+      result.disposition,
+      {
+        state: restriction.state,
+        boundary:
+          latestRestriction === undefined
+            ? { kind: "none" }
+            : {
+                kind: "record",
+                actorRole: latestRestriction.actorRole,
+                createdAt: latestRestriction.createdAt,
+              },
+      },
+      coversActiveFlags,
+    )
+  )
+    return false;
+  if (prior == null || !isScanResult(prior)) return false;
+  if (
+    !originalScanHeader(
+      prior.projectId,
+      prior.disposition,
+      prior.reusedAssessmentId,
+      result.projectId,
+    )
+  )
+    return false;
+  const priorRepository = prior.assessed.repository.toLowerCase();
+  const candidateRepository = result.assessed.repository.toLowerCase();
+  return sameScanEvidence(
+    scanSourceInventoryInput(prior),
+    scanSourceInventoryInput(result),
+    priorRepository,
+    candidateRepository,
   );
 }

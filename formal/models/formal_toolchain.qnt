@@ -3,6 +3,7 @@
 // @source scripts/formal-inventory.mjs
 // @source scripts/formal-state-catalog.mjs
 // @source scripts/check-lemmascript.mjs
+// @source scripts/generate-jupiter-decoder.mjs
 // @source scripts/lemmascript-integrity.mjs
 // @source scripts/lemmascript-inventory.mjs
 // @source scripts/setup-lemmascript.sh

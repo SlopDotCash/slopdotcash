@@ -1,3 +1,4 @@
+// @source src/lib/verified-money.ts
 // @source contracts/solana/funding.ts
 // @source src/lib/solana-vault-actions.ts
 // @source contracts/solana/commitment.ts

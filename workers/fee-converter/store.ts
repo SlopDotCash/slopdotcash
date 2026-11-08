@@ -30,6 +30,12 @@ import {
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
+import {
+  type NativeFeeEarning,
+  type NativeLiabilityEntry,
+  nativeFeeEarnings,
+  nativeFeeRemainder,
+} from "./verified-native-liability";
 
 type D1Value = string | number | null;
 interface D1Statement {
@@ -423,9 +429,7 @@ export class D1ConversionStore implements ConversionStore {
         amount_out: string | null;
         created_at: string;
       }>();
-    let balance = 0n;
-    let firstReceipt: string | null = null;
-    let hasDirectCredit = false;
+    const earnings: NativeFeeEarning[] = [];
     // A completed direct award proves its exact fee transfer without a vault claim.
     // The worker reads only the fee fields, never private report or payer data.
     const direct = await this.db
@@ -450,10 +454,13 @@ export class D1ConversionStore implements ConversionStore {
           ? row.recipient === feeWallet
           : row.recipient.toLowerCase() === feeWallet.toLowerCase();
       if (!sameWallet) continue;
-      balance += BigInt(row.fee_base);
-      hasDirectCredit = true;
-      if (firstReceipt === null || row.prepared_at < firstReceipt)
-        firstReceipt = row.prepared_at;
+      earnings.push({
+        kind: "direct",
+        recipient:
+          network === "solana" ? row.recipient : row.recipient.toLowerCase(),
+        amount: BigInt(row.fee_base),
+        at: row.prepared_at,
+      });
     }
     for (const row of results) {
       if (row.kind === "claim") {
@@ -462,14 +469,22 @@ export class D1ConversionStore implements ConversionStore {
           !/^(0|[1-9][0-9]*)$/u.test(row.amount_out)
         )
           throw new Error("Finalized native claim has no verified amount");
-        balance += BigInt(row.amount_out);
-        if (firstReceipt === null || row.created_at < firstReceipt)
-          firstReceipt = row.created_at;
+        earnings.push({
+          kind: "claim",
+          amount: BigInt(row.amount_out),
+          at: row.created_at,
+        });
       } else {
-        balance -= BigInt(row.amount_in);
+        earnings.push({ kind: "conversion", amount: BigInt(row.amount_in) });
       }
     }
-    if (firstReceipt === null) return 0n;
+    const earned = nativeFeeEarnings(
+      earnings,
+      network === "solana" ? feeWallet : feeWallet.toLowerCase(),
+    );
+    if (earned.receipt.kind === "absent") return 0n;
+    const firstReceipt = earned.receipt.at;
+    const hasDirectCredit = earned.hasDirectCredit;
     const { results: gas } = await this.db
       .prepare(
         `SELECT id,nonce,maximum_wei,actual_wei FROM fee_native_gas
@@ -489,17 +504,25 @@ export class D1ConversionStore implements ConversionStore {
         maximum_wei: string;
         actual_wei: string | null;
       }>();
-    const liabilities = new Map<string, bigint>();
+    const buckets = new Map<string, number>();
+    const liabilities: NativeLiabilityEntry[] = [];
     for (const row of gas) {
       const amount = BigInt(row.actual_wei ?? row.maximum_wei);
       // EVM replacements consume one account nonce. Each Solana signed
       // transaction has its own reservation and incurs its own fee.
       const attempt = network === "solana" ? row.id : String(row.nonce);
-      if ((liabilities.get(attempt) ?? 0n) < amount)
-        liabilities.set(attempt, amount);
+      let bucket = buckets.get(attempt);
+      if (bucket === undefined) {
+        bucket = buckets.size;
+        buckets.set(attempt, bucket);
+      }
+      liabilities.push({
+        kind: "unsettled",
+        bucket,
+        maximum: amount > 0n ? amount : 0n,
+      });
     }
-    for (const amount of liabilities.values()) balance -= amount;
-    return balance > 0n ? balance : 0n;
+    return nativeFeeRemainder(earned.amount, buckets.size, liabilities);
   }
 }
 
