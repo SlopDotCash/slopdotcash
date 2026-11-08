@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "49d13cb84a7471ef89b1abf58a0d06ec3653fe38179c30a5426ef97233e33a37",
+  "inventorySha256": "525b2580a08f8036eb6f7e5f466f6d480dd5bde2b722a71b0e0861b00ed66d76",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1964,7 +1964,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 445,
+      "line": 446,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -1974,14 +1974,15 @@
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt"
+        "formal/models/ui_project_images.qnt",
+        "formal/models/ui_project_work.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "src/App.tsx",
-      "line": 934,
+      "line": 935,
       "name": "useState",
       "kind": "string-union",
       "values": ["copied", "error", "idle"],
@@ -1991,14 +1992,15 @@
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt"
+        "formal/models/ui_project_images.qnt",
+        "formal/models/ui_project_work.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "src/App.tsx",
-      "line": 1097,
+      "line": 1098,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2008,7 +2010,8 @@
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt"
+        "formal/models/ui_project_images.qnt",
+        "formal/models/ui_project_work.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
