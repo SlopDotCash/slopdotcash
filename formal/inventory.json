@@ -453,14 +453,14 @@
     },
     {
       "path": "backend/projects/enforcement.ts",
-      "sha256": "cc8e739ecfffdf9e5c84c27e116aa823c4739dcacc56d2f59d214666759ff52d",
+      "sha256": "d06e20299819818808af73dd0f608d8650d321e2ec8c24f9f87795a6d02b4eaf",
       "models": [
         "formal/models/api_project_enforcement.qnt",
         "formal/models/vetting_flag_reinstatement.qnt"
       ],
       "candidateLines": [
-        5, 48, 64, 122, 142, 196, 254, 315, 322, 342, 455, 494, 497, 499, 529,
-        541, 550, 586, 594, 607, 629, 636, 652, 691
+        5, 50, 66, 124, 144, 198, 256, 317, 324, 344, 388, 428, 446, 452, 460,
+        466, 508, 541
       ],
       "review": "mapped-abstraction"
     },
@@ -537,12 +537,17 @@
     },
     {
       "path": "backend/projects/verified-enforcement.ts",
-      "sha256": "d56cb5522579362b3f55a9230e049a2b5f3483e9b45ddad44193af3a98c58b15",
+      "sha256": "5fd440eed7ff4ae593643c30f97b9966ebfe57aa8594066ad271033d69639e8c",
       "models": [
         "formal/models/api_project_enforcement.qnt",
         "formal/models/vetting_flag_reinstatement.qnt"
       ],
-      "candidateLines": [16, 34, 45, 52, 60, 77, 79, 85, 274, 276, 292, 300],
+      "candidateLines": [
+        16, 34, 45, 52, 60, 77, 79, 85, 274, 276, 292, 300, 318, 331, 432, 441,
+        446, 449, 451, 453, 456, 492, 503, 522, 523, 524, 530, 533, 543, 549,
+        560, 576, 592, 614, 616, 626, 631, 644, 660, 670, 677, 683, 688, 714,
+        717, 724
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -5922,7 +5927,7 @@
     },
     {
       "path": "workers/fee-converter/verified-jupiter-policy.ts",
-      "sha256": "321993e4f2d7d69721c9ef9d6b7af0bd53c0904c5cb80f098bf9f6666927fc31",
+      "sha256": "3b5a6fb8437353a04b07ef33afaf7c9731a0400085b67bfa1f71e493b9e55e19",
       "models": [
         "formal/models/fee_quote_policy.qnt",
         "formal/models/solana_route.qnt"
