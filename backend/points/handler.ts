@@ -204,19 +204,25 @@ export async function handlePointsApi(
       )
         return json(401, { error: "invalid_identity" });
       const { githubId: id, githubLogin: login } = identity;
+      // Membership is keyed by the numeric GitHub id. The asserted node id is
+      // only the actor key for a first join. A later spelling of the same
+      // person's node must reuse the stored actor_id: actor_id and github_id
+      // are immutable, and ON CONFLICT(actor_id) cannot recover a UNIQUE
+      // github_id clash (PRD section 3, accounts and wallets).
+      const existing = await deps.db
+        .prepare(
+          "SELECT actor_id, closed_at FROM points_members WHERE github_id=?",
+        )
+        .bind(id)
+        .first<{ actor_id: string; closed_at: string | null }>();
       // A closed account opens again only when this sign-in asks to reopen
       // it, so closing is never undone by an ordinary sign-in.
-      const closed = await deps.db
-        .prepare(
-          "SELECT closed_at FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NOT NULL",
-        )
-        .bind(node, id)
-        .first<{ closed_at: string }>();
-      if (closed && value.reopen !== true)
+      if (existing?.closed_at && value.reopen !== true)
         return json(409, {
           error: "account_closed",
-          closedAt: closed.closed_at,
+          closedAt: existing.closed_at,
         });
+      const actor = existing?.actor_id ?? node;
       const token = randomToken(32);
       const hash = await sha256Hex(token);
       const expires = new Date(Date.parse(now) + 60 * 60 * 1000).toISOString();
@@ -228,17 +234,17 @@ export async function handlePointsApi(
           .prepare(
             "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1) ON CONFLICT(actor_id) DO UPDATE SET login=excluded.login, public=1, closed_at=NULL WHERE points_members.github_id=excluded.github_id AND (points_members.closed_at IS NULL OR ?)",
           )
-          .bind(node, id, login, now, value.reopen ? 1 : 0),
+          .bind(actor, id, login, now, value.reopen ? 1 : 0),
         deps.db
           .prepare(
             "UPDATE points_x_links SET public=1 WHERE actor_id=? AND EXISTS(SELECT 1 FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NULL)",
           )
-          .bind(node, node, id),
+          .bind(actor, actor, id),
         deps.db
           .prepare(
             "INSERT INTO points_sessions(token_hash,actor_id,expires_at) SELECT ?,actor_id,? FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NULL",
           )
-          .bind(hash, expires, node, id),
+          .bind(hash, expires, actor, id),
         deps.db
           .prepare("DELETE FROM points_sessions WHERE expires_at <= ?")
           .bind(now),
@@ -246,9 +252,9 @@ export async function handlePointsApi(
       if (results[2].meta?.changes !== 1) {
         const closed = await deps.db
           .prepare(
-            "SELECT closed_at FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NOT NULL",
+            "SELECT closed_at FROM points_members WHERE github_id=? AND closed_at IS NOT NULL",
           )
-          .bind(node, id)
+          .bind(id)
           .first<{ closed_at: string }>();
         if (closed)
           return json(409, {
@@ -263,7 +269,7 @@ export async function handlePointsApi(
         .prepare(
           `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points FROM points_members m WHERE actor_id=?`,
         )
-        .bind(node)
+        .bind(actor)
         .first<Member>();
       if (!member) throw new Error("Missing joined member");
       return json(200, publicMember(member), sessionCookie(token, 3600));
