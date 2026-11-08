@@ -260,6 +260,9 @@ async function runRegistryPhase() {
     }
     if (solanaBounty) {
       const fixture = await import("../tests/direct-bounty-solana-chain.ts");
+      const { authorizeFixtureWallet } = await import(
+        "../tests/authorize-fixture-wallet.ts"
+      );
       solana = await fixture.startLocalDirectSolanaFixture(basePort + 60);
       fixture.seedVerifiedSolanaBountyWallets(persistTo, [
         {
@@ -359,12 +362,29 @@ async function runRegistryPhase() {
               url.pathname === "/reset-reporter"
                 ? solana.reporter
                 : solana.recoveryAddress;
-            const claimId = fixture.rotateVerifiedSolanaBountyWallet(
-              persistTo,
+            const apiOrigin = `http://127.0.0.1:${basePort + 2}`;
+            const token = JSON.parse(database.env.SLOP_E2E_SECURITY_TOKENS)[
+              "reporter-a"
+            ];
+            const claimId = await authorizeFixtureWallet(
+              async (path, data) => {
+                const result = await fetch(`${apiOrigin}/api/v1/${path}`, {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    origin: apiOrigin,
+                    cookie: `__Host-slop_points=${token}`,
+                  },
+                  body: JSON.stringify(data),
+                  signal: AbortSignal.timeout(15_000),
+                });
+                return { status: result.status, body: await result.json() };
+              },
               {
-                githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
-                githubLogin: "e2e-reporter-a",
+                chain: "solana",
                 address: target,
+                sign: (message) =>
+                  solana.signWalletAuthorization(target, message),
               },
             );
             reply(200, { address: target, claimId });
