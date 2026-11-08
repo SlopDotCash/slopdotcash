@@ -16,6 +16,7 @@ import {
   type EnforcementPreview,
   projectApiRequest,
 } from "./lib/project-api";
+import { availableActions } from "./lib/project-enforcement-actions";
 import { formatDateTime, StatusBadge } from "./Presentation";
 
 const ACTION_LABELS: Record<EnforcementAction, string> = {
@@ -55,32 +56,6 @@ function maintainerList(maintainers: { githubLogin: string }[]) {
   ));
 }
 
-function availableActions(
-  enforcement: AdminProject["enforcement"],
-): EnforcementAction[] {
-  const projectAppeal = enforcement.projectAppeal === "requested";
-  const accountActions: EnforcementAction[] =
-    enforcement.bannedMaintainers.length > 0
-      ? enforcement.appeal === "requested"
-        ? ["reinstate_accounts"]
-        : ["request_reinstatement"]
-      : [];
-  if (enforcement.state === "clear")
-    return [...accountActions, "quarantine", "ban"];
-  if (enforcement.decisionRequired)
-    return projectAppeal
-      ? ["ban", "reinstate"]
-      : ["ban", "request_reinstatement"];
-  const escalate: EnforcementAction[] =
-    enforcement.state === "quarantined" ? ["ban"] : [];
-  const projectActions: EnforcementAction[] = projectAppeal
-    ? ["reinstate"]
-    : ["request_reinstatement"];
-  if (enforcement.appeal === "requested")
-    projectActions.push("deny_reinstatement");
-  return [...new Set([...accountActions, ...escalate, ...projectActions])];
-}
-
 function stateLabel(state: AdminProject["enforcement"]["state"]): string {
   return state === "clear"
     ? "No restriction"
@@ -97,7 +72,10 @@ export function ProjectEnforcementPanel({
   onDone: (note: string) => void;
 }) {
   const enforcement = project.enforcement;
-  const actions = availableActions(enforcement);
+  const actions = availableActions(project.id, enforcement);
+  const inherited =
+    enforcement.sourceProjectId !== undefined &&
+    enforcement.sourceProjectId !== project.id;
   const [action, setAction] = useState<EnforcementAction>(actions[0]);
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState("");
@@ -220,6 +198,12 @@ export function ProjectEnforcementPanel({
           moderator decision.
         </p>
       ) : null}
+      {inherited ? (
+        <p className="admin-status">
+          Restriction recorded on {enforcement.sourceProjectId}. Appeals and
+          reinstatement are decided there.
+        </p>
+      ) : null}
       {enforcement.revisionPending ? (
         <p className="form-error" role="status">
           <CircleAlert aria-hidden="true" /> Restriction active; revision{" "}
@@ -288,7 +272,7 @@ export function ProjectEnforcementPanel({
         <p className="admin-status">Moderation unavailable.</p>
       ) : enforcement.moderation === "not-moderator" ? (
         <p className="admin-status">Moderator access required.</p>
-      ) : (
+      ) : actions.length === 0 ? null : (
         <form className="admin-actions" onSubmit={showPreview}>
           <label>
             Action

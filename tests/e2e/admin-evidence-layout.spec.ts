@@ -96,6 +96,7 @@ test("selected admin project can queue after a superseded pending scan and prese
               moderation: "unconfigured",
               decisionRequired: false,
               bannedMaintainers: [],
+              sourceProjectId: project.id,
               records: [],
             },
           },

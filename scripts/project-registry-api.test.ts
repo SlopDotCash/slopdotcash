@@ -42,7 +42,10 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "../src/lib/allocation-funding";
-import type { RepositoryAccess } from "../src/lib/project-contracts";
+import type {
+  AdminProject,
+  RepositoryAccess,
+} from "../src/lib/project-contracts";
 import { rewardFields } from "../src/lib/project-proposal";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/project-skill-publication.mjs";
@@ -2747,6 +2750,113 @@ describe("project enforcement (ADM-06)", () => {
         }),
       ],
     );
+  });
+
+  test("the admin project list classifies the other project listed for a banned repository as banned", async () => {
+    await listProject();
+    // Listed before the ban: the renamed repository, same GitHub id.
+    await listProject(
+      applicationManifest("renamed-registry", "example/renamed-registry"),
+    );
+    // Listed before the ban: a different repository, never restricted.
+    const base = applicationManifest(
+      "other-registry",
+      "example/other-registry",
+    );
+    await listProject({
+      ...base,
+      authority: {
+        ...(base.authority as Record<string, unknown>),
+        repositoryId: "222222222",
+        repositoryNodeId: "R_other",
+      },
+    });
+    expect((await enforce("admin", "quarantine")).status).toBe(200);
+    expect((await enforce("admin", "ban")).status).toBe(200);
+
+    const admin = await (await call("GET", "admin/projects", "admin")).json();
+    const byId = new Map<string, AdminProject>(
+      admin.projects.map((entry: AdminProject) => [entry.id, entry]),
+    );
+    const source = byId.get("open-registry");
+    const renamed = byId.get("renamed-registry");
+    const other = byId.get("other-registry");
+    if (!source || !renamed || !other)
+      throw new Error("admin list is missing a project");
+    // The record-holding project keeps its own history and sequence.
+    expect(source.enforcement.state).toBe("banned");
+    expect(source.enforcement.records).toHaveLength(2);
+    expect(source.enforcement.decisionRequired).toBe(false);
+    expect(source.enforcement.revisionPending).toBe(false);
+    // The other project listed for the repository is under the same ban:
+    // the classification names it, with the ban's start and placers, while
+    // its own record fields stay empty and its retirement stays pending.
+    expect(renamed.enforcement.state).toBe("banned");
+    expect(renamed.enforcement.since).toBe(source.enforcement.since);
+    expect(renamed.enforcement.since).not.toBeNull();
+    expect(renamed.enforcement.restrictedBy).toEqual([
+      expect.objectContaining({ githubLogin: "e2e-admin" }),
+    ]);
+    expect(renamed.enforcement.records).toEqual([]);
+    expect(renamed.enforcement.nextSequence).toBe(1);
+    expect(renamed.enforcement.decisionRequired).toBe(false);
+    expect(renamed.enforcement.revisionPending).toBe(true);
+    // An unrelated project stays clear.
+    expect(other.enforcement.state).toBe("clear");
+    expect(other.enforcement.revisionPending).toBe(false);
+  });
+
+  test("an inherited restriction offers only the actions on the project itself", async () => {
+    await listProject();
+    // Listed before the ban: the renamed repository, same GitHub id.
+    await listProject(
+      applicationManifest("renamed-registry", "example/renamed-registry"),
+    );
+    expect((await enforce("admin", "quarantine")).status).toBe(200);
+
+    const admin = await (await call("GET", "admin/projects", "admin")).json();
+    const byId = new Map<string, AdminProject>(
+      admin.projects.map((entry: AdminProject) => [entry.id, entry]),
+    );
+    const renamed = byId.get("renamed-registry");
+    const source = byId.get("open-registry");
+    if (!renamed || !source) throw new Error("admin list is missing a project");
+    // The restriction in force is recorded on the source project, so the
+    // panel directs appeal decisions there; the row keeps its own sequence.
+    expect(renamed.enforcement.sourceProjectId).toBe("open-registry");
+    expect(source.enforcement.sourceProjectId).toBe("open-registry");
+    expect(renamed.enforcement.state).toBe("quarantined");
+    // The offered action acts on the project itself: banning the renamed
+    // project previews fine.
+    const offered = await call(
+      "POST",
+      "admin/projects/renamed-registry/enforcement-preview",
+      "admin",
+      {
+        action: "ban",
+        reason: "Moderator note for ban",
+        evidenceReference: EVIDENCE,
+        expectedRevision: renamed.revision,
+        expectedSequence: renamed.enforcement.nextSequence,
+      },
+    );
+    expect(offered.status).toBe(200);
+    // The appeal action the row no longer offers still fails at the API:
+    // the restriction is not recorded on this project.
+    const withheld = await call(
+      "POST",
+      "admin/projects/renamed-registry/enforcement-preview",
+      "admin",
+      {
+        action: "request_reinstatement",
+        reason: "Moderator note for request_reinstatement",
+        evidenceReference: EVIDENCE,
+        expectedRevision: renamed.revision,
+        expectedSequence: renamed.enforcement.nextSequence,
+      },
+    );
+    expect(withheld.status).toBe(409);
+    expect((await withheld.json()).error).toBe("not_restricted");
   });
 
   test("another project listed for a banned repository can still be retired", async () => {
