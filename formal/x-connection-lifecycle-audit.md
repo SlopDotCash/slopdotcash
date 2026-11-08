@@ -48,3 +48,12 @@ historical awards, permanent identity claim and malformed request bodies.
 Additional runtime conformance is still needed for the newly modeled provider,
 expiry, supersession and cleanup orders. A source mapping or these unexecuted
 scenarios do not complete that acceptance work.
+
+Fourteen additional unexecuted tests now use that same handler and real SQLite
+migrations. They cover user cancellation, token/identity refusal, sign-out and
+disconnect during provider work, both observed expiry boundaries, a superseding
+flow, foreign identity ownership, replay while the first callback is pending,
+batch rollback, and cleanup or provider-revocation failure. Provider responses
+and time are controlled; SQLite triggers inject the two database failures.
+These tests do not exercise live X authorization or imply that all combinations
+have been verified.
