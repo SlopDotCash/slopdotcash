@@ -38,6 +38,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Original clean-scan reuse](lemmascript-scan-reuse.md)
 - [Jupiter decoder research](lemmascript-jupiter-research.md)
 - [Native liability and retained expiry agreement](lemmascript-native-liability.md)
+- [Complete Solana expiry traversal step](lemmascript-expiry-traversal.md)
 - [Complete accepted-work claim partition](lemmascript-work-unit-partition.md)
 - [Complete base58 conversion](lemmascript-base58-research.md)
 - [Payment evidence agreement and counters](lemmascript-payment-evidence.md)
@@ -126,6 +127,7 @@ maintenance surface without improving the selected acceptance result.
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native daily liabilities | `verified-native-liability`; real gas reservation | Today's recorded costs plus the largest unresolved maximum per exact wallet/nonce bucket, including the proposed attempt; preserves liabilities across midnight |
 | Retained expiry agreement | `verified-expiry`; Solana recovery and gas journal | Both histories complete and positive, with exact transaction, anchor, horizon, count and digest agreement; provider truth and completeness remain separate |
+| Expiry traversal step | `verified-expiry`; actual retained-history loop | Complete hash, anchor, signature and parent-slot refusal decision with exact next cursor or completion; asynchronous acquisition, full-history truth and persistence remain separate |
 | Native budgets and review timeout | `verified-budget`; fee converter, referral poster, payment keeper and vetting review plan | Exact existing positive/daily-budget acceptance and capped review-call timeout |
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
 | Activity mail consent | `workers/notify/verified-delivery`; real activity dispatch | Exact retry/suppress/send selection from missing, pilot or registered destination, essential notice, explicit preferences and pinned versions; optional mail requires matching consent and registered essential mail requires security consent |
