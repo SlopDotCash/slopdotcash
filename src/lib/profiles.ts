@@ -296,6 +296,42 @@ export function recordedProfileCounts(
   return record ? profileCounts(record) : null;
 }
 
+export type PeopleMergedEntry = {
+  id: string;
+  login: string;
+  merged: number | null;
+};
+
+/**
+ * Merged-PR counts for the points People list. The census is the only
+ * source: a journal member it does not record has an unknown count, never a
+ * fabricated zero (points-v1: missing data is unavailable, never a
+ * fabricated zero). A census-only contributor keeps their recorded count,
+ * and a recorded contributor with no collected rows keeps a real zero.
+ */
+export function peopleMergedCounts(
+  censusPeople: readonly ProfileRecord[] | null,
+  journalActors: readonly { id: string; login: string }[],
+): PeopleMergedEntry[] {
+  const byId = new Map<string, PeopleMergedEntry>();
+  if (censusPeople)
+    for (const p of censusPeople)
+      byId.set(p.id, {
+        id: p.id,
+        login: p.login,
+        merged: profileCounts(p).merged,
+      });
+  for (const actor of journalActors) {
+    const known = byId.get(actor.id);
+    byId.set(actor.id, {
+      id: actor.id,
+      login: known?.login ?? actor.login,
+      merged: known?.merged ?? null,
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.login.localeCompare(b.login));
+}
+
 /**
  * Public search for one contributor's pull requests.
  * `github.com/pulls` is the signed-in dashboard and sends anonymous visitors

@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { type ProfileRecord, recordedProfileCounts } from "../src/lib/profiles";
+import {
+  type ProfileRecord,
+  peopleMergedCounts,
+  recordedProfileCounts,
+} from "../src/lib/profiles";
 
 const record: ProfileRecord = {
   id: "12345",
@@ -33,4 +37,33 @@ test("a recorded contributor with no collected rows has a real zero", () => {
     open: 0,
     closed: 0,
   });
+});
+
+test("a journal member the census does not record has an unknown merged count, not zero", () => {
+  // The points People list merges the journal onto the census: a member
+  // with no census row must read "PR count unavailable" (merged null),
+  // never "No merged PRs" (merged 0).
+  const counts = peopleMergedCounts(
+    [record],
+    [
+      { id: "12345", login: "contributor" },
+      { id: "99999", login: "newcomer" },
+    ],
+  );
+  expect(counts).toEqual([
+    { id: "12345", login: "contributor", merged: 7 },
+    { id: "99999", login: "newcomer", merged: null },
+  ]);
+});
+
+test("a census contributor with no journal record keeps their recorded count", () => {
+  expect(peopleMergedCounts([record], [])).toEqual([
+    { id: "12345", login: "contributor", merged: 7 },
+  ]);
+});
+
+test("a journal member is unknown while the census is still loading", () => {
+  expect(
+    peopleMergedCounts(null, [{ id: "99999", login: "newcomer" }]),
+  ).toEqual([{ id: "99999", login: "newcomer", merged: null }]);
 });
