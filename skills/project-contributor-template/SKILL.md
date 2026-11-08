@@ -60,8 +60,8 @@ contributor can flag the project with that evidence at
 Use the operator's issue or PR when supplied. Otherwise inspect live issues,
 open PRs, maintainer comments and recent merges.
 `node <skill-directory>/scripts/live-report.mjs` gives a read-only heuristic
-inventory; it holds back assigned or claimed work, issues with an open closing
-PR, draft PRs, and PRs with a review request, approval or requested changes on
+inventory; it holds back assigned or claimed work, issues that an open PR
+closes or names in its title, draft PRs, and PRs with a review request, approval or requested changes on
 the current head. Choosing by hand, never take assigned, claimed, draft,
 under-review, security-sensitive, human-gated or epic items. Re-read live
 GitHub before acting and again before submitting; Slop creates no claim.
