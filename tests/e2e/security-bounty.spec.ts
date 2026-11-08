@@ -2979,9 +2979,19 @@ for (const slowPage of [false, true]) {
       await (await delivered).finished();
       // The accepted report remains available in Inbox; its old composer cannot
       // take over the page selected after it was unmounted.
-      await page.getByRole("link", { name: "Slop home", exact: true }).focus();
       expect(await unexpectedNavigation).toBe(false);
       await expect(page).toHaveURL(/\/how-it-works$/u);
+      if (slowPage) {
+        // Keep the next page loading through the late acceptance assertion,
+        // then deliver its chunk before focus and Back can cancel the request.
+        const loaded = page.waitForResponse((response) =>
+          new URL(response.url()).pathname.includes("/assets/PublicPages-"),
+        );
+        releasePage();
+        await (await loaded).finished();
+        await expect(page).toHaveURL(/\/how-it-works$/u);
+      }
+      await page.getByRole("link", { name: "Slop home", exact: true }).focus();
       await page.screenshot({
         path: test.info().outputPath("late-report-navigation.png"),
         fullPage: true,
@@ -2995,13 +3005,6 @@ for (const slowPage of [false, true]) {
       await expect(
         page.getByRole("button", { name: "Retry same report", exact: true }),
       ).toBeEnabled();
-      if (slowPage) {
-        const loaded = page.waitForResponse((response) =>
-          new URL(response.url()).pathname.includes("/assets/PublicPages-"),
-        );
-        releasePage();
-        await (await loaded).finished();
-      }
       await enlargeText(page.locator("body"));
       await expectAccessible(page);
       const retry = page.waitForResponse(
