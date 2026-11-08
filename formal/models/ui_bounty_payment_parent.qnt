@@ -74,13 +74,15 @@ module ui_bounty_payment_parent {
       s.with("storageReady",true).with("storagePending",false).with("journal",hasJournal).with("journalPlan",if(hasJournal)plan else 0)
         .with("savedKeys",if(hasJournal)s.savedKeys.union(Set(storageKey)) else s.savedKeys)
       else s}
-  // The last successful identity/plan preflight binds this invocation. EVM
-  // wallet/network/nonce awaits still follow it; navigation is not cancellation.
+  // Identity/plan preflight binds this invocation. Both send children check
+  // their current mounted lifetime again immediately before recording/opening
+  // a wallet request; only an already-open wallet tail survives departure.
   action reviewBeforePrompt=all{sendPresented,not(s.preflight),not(s.walletOpen),
     s'=s.with("preflight",true).with("promptEpoch",s.epoch)
       .with("promptKey",storageKey).with("promptPlan",s.plan)}
   action preflightRefused=all{s.preflight,s'=finishedPrompt(s)}
-  action recordBeforePrompt=all{s.preflight,not(s.walletOpen),
+  action recordBeforePrompt=all{s.preflight,not(s.walletOpen),s.actor>0,
+    s.promptEpoch==s.epoch,sendChild,
     s'=s.with("preflight",false).with("walletOpen",true)
       .with("journal",if(s.promptEpoch==s.epoch)true else s.journal)
       .with("journalPlan",if(s.promptEpoch==s.epoch)s.promptPlan else s.journalPlan)
@@ -152,9 +154,18 @@ module ui_bounty_payment_parent {
   run declinedWalletRequestClearsItsMarkerTest=init.then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(walletDeclined(true))
     .expect(not(s.journal) and s.savedKeys==Set() and sendPresented)
-  run departureAfterLastGuardDoesNotCancelWalletTailTest=init.then(readCase).then(caseReply(1,1,1,1,1))
-    .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(hidePrivateView).then(recordBeforePrompt)
+  run departureAfterPromptDoesNotCancelWalletTailTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+    .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(hidePrivateView)
     .expect(s.walletOpen and s.savedKeys.contains(111) and s.mode==0 and not(s.journal))
+  run departedEvmPreflightCannotRecordOrPromptTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+    .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(hidePrivateView)
+    .then(recordBeforePrompt.fail())
+  run departedSolanaPreflightCannotRecordOrPromptTest=init.then(readCase).then(caseReply(1,2,1,1,1))
+    .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(hidePrivateView)
+    .then(recordBeforePrompt.fail())
+  run departedSolanaOpenPromptRetainsWalletEvidenceTest=init.then(readCase).then(caseReply(1,2,1,1,1))
+    .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(hidePrivateView)
+    .then(walletReturns(true)).expect(s.hashKeys.contains(213) and s.mode==0 and not(s.journal))
   run declinedRequestWithStorageFailureRetainsMarkerTest=init.then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(walletDeclined(false))
     .expect(s.journal and s.savedKeys.contains(111) and not(sendPresented))

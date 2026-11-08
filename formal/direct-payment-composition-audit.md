@@ -60,12 +60,21 @@ can still write its captured old storage key; it does not fill a new child's
 in-memory state. A known wallet decline removes the old marker only when the
 storage clear succeeds.
 
-Unmount does not universally cancel a send already in progress. In particular,
-the EVM path awaits wallet/network/nonce work after its last private identity
-guard. The model admits departure during that tail and a subsequent marker and
-wallet handoff for the already selected request. This is an explicit boundary,
-not a claim that navigation proves nothing was sent. No new source defect or
-authorization bypass was established by this review.
+The final `beforeSend` callback in both senders now checks the component's
+mounted lifetime immediately before recording and opening the wallet request.
+A component that departs while its preflight or adapter preparation is waiting
+cannot then create a new marker or open a prompt. The parent model's earlier
+departed-preflight witness is corrected to refuse that transition; its State,
+finished-prompt cleanup, factored choices and finite bounds are unchanged.
+
+Once `beforeSend` has recorded the request and the wallet prompt is open,
+navigation does not cancel that prompt. Its later wallet response may retain
+evidence for the original request, subject to that component's storage-ownership
+checks. It does not fill a replacement child's local state. The separate
+[Solana pending-record audit](solana-payment-pending-audit.md) covers the
+same-slot candidate/write race, failed-save acknowledgement and exact-record
+guards added after this parent review. A recorded signature remains evidence
+to check, not proof of finality or payment.
 
 This module bounds one selected case, two actors, two generations/messages/plan
 classes, three case reads, two local replacements, two identity rechecks and one outstanding wallet
