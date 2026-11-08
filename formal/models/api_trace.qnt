@@ -8,8 +8,10 @@
 // @source backend/trace/auth.ts
 // @source backend/trace/validation.ts
 module api_trace {
-  var s: {phase: str, intent: str, object: bool, attachment: bool, grant: str, reads: int, audits: int, events: int, intakeReady: bool}
-  action init = s' = {phase: "awaiting_trace", intent: "absent", object: false, attachment: false, grant: "absent", reads: 0, audits: 0, events: 0, intakeReady: false}
+  // The grant/read endpoints were removed. Historical grant/audit rows may
+  // remain, but no actor can turn them into an application trace-body read.
+  var s: {phase: str, intent: str, object: bool, attachment: bool, legacyHistoryIntact: bool, removedRequests: int, reads: int, events: int, intakeReady: bool}
+  action init = s' = {phase: "awaiting_trace", intent: "absent", object: false, attachment: false, legacyHistoryIntact: true, removedRequests: 0, reads: 0, events: 0, intakeReady: false}
   action verifyIntake = s' = s.with("intakeReady", true)
   action disableIntake = s' = s.with("intakeReady", false)
   action reserve = all { s.phase != "finalized", s.intent == "absent", s' = s.with("intent", "live") }
@@ -20,11 +22,15 @@ module api_trace {
   action finalize = all { s.attachment, s' = s.with("phase", "finalized") }
   // Contributor progress is immutable after run finalization.
   action event = all { s.phase != "finalized", s.events < 2, s' = s.with("events", s.events + 1) }
-  action grant(operator: bool): bool = all { operator, s.attachment, s.grant == "absent", s' = s.with("grant", "live").with("audits", s.audits + 1) }
-  action read(operator: bool): bool = all { operator, s.grant == "live", s' = s.with("grant", "spent").with("reads", 1).with("audits", s.audits + 1) }
-  action step = any { verifyIntake, disableIntake, reserve, putBytes, expire, attach, finalize, event, grant(true), grant(false), read(true), read(false), s' = s }
-  val invariant = all { s.phase == "finalized" implies (s.object and s.attachment), s.reads <= 1, s.reads < s.audits or s.reads == 0 }
+  // Canonical former trace grant/read requests miss matchAuthenticatedRoute and
+  // return 404 before actor authorization, including an operator's request.
+  action removedRoute = all { s.removedRequests < 2,
+    s' = s.with("removedRequests", s.removedRequests + 1) }
+  action step = any { verifyIntake, disableIntake, reserve, putBytes, expire, attach, finalize, event, removedRoute, s' = s }
+  val invariant = all { s.phase == "finalized" implies (s.object and s.attachment), s.reads == 0, s.legacyHistoryIntact }
   run traceTest = init.then(verifyIntake).then(reserve).then(putBytes).then(attach).then(event).then(finalize).expect(s.phase == "finalized" and s.events == 1)
   run orphanTest = init.then(verifyIntake).then(reserve).then(putBytes).then(expire).expect(not(s.attachment))
-  run privateReadTest = init.then(verifyIntake).then(reserve).then(putBytes).then(attach).then(grant(true)).then(read(true)).expect(s.reads == 1 and s.audits == 2)
+  run retiredGrantAndReadRemainUnavailableTest = init.then(verifyIntake).then(reserve)
+    .then(putBytes).then(attach).then(removedRoute).then(removedRoute)
+    .expect(s.reads == 0 and s.legacyHistoryIntact and s.removedRequests == 2)
 }
