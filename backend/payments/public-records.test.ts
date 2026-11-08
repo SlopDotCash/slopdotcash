@@ -399,6 +399,7 @@ test("production direct-transfers exclude testnet networks while staging retains
       ["BASE-SEPOLIA", "t-upper", "4000000"],
       [" base-sepolia", "t-lead", "3000000"],
       ["base-sepolia ", "t-trail", "2000000"],
+      ["base-sepolia\t", "t-tab", "3000000"],
       ["base_sepolia", "t-under", "5000000"],
     ] as const)
       f.sqlite
@@ -421,8 +422,8 @@ test("production direct-transfers exclude testnet networks while staging retains
       "staging",
     );
     expect(staging.status).toBe(200);
-    expect(staging.body.totalMicro).toBe("27000000");
-    expect(staging.body.transfers).toHaveLength(7);
+    expect(staging.body.totalMicro).toBe("30000000");
+    expect(staging.body.transfers).toHaveLength(8);
 
     // Paged route (browsers opt in with x-slop-direct-history: paged).
     const paged = async (tier: "staging" | "production") => {
@@ -443,8 +444,8 @@ test("production direct-transfers exclude testnet networks while staging retains
     expect(pagedProduction.body.transfers[0].network).toBe("base-mainnet");
     const pagedStaging = await paged("staging");
     expect(pagedStaging.status).toBe(200);
-    expect(pagedStaging.body.total).toBe(7);
-    expect(pagedStaging.body.totalMicro).toBe("27000000");
+    expect(pagedStaging.body.total).toBe(8);
+    expect(pagedStaging.body.totalMicro).toBe("30000000");
   } finally {
     f.sqlite.close();
   }
@@ -459,6 +460,7 @@ test("production received totals exclude non-canonically spelled testnet network
       ["BASE-SEPOLIA", "t-upper", "4000000"],
       [" base-sepolia", "t-lead", "3000000"],
       ["base-sepolia ", "t-trail", "2000000"],
+      ["base-sepolia\t", "t-tab", "3000000"],
       ["base_sepolia", "t-under", "5000000"],
     ] as const)
       f.sqlite
@@ -474,8 +476,8 @@ test("production received totals exclude non-canonically spelled testnet network
 
     const staging = await f.read("received", "staging");
     expect(staging.status).toBe(200);
-    expect(staging.body.totals.directMicro).toBe("22000000");
-    expect(staging.body.totals.directTransfers).toBe(6);
+    expect(staging.body.totals.directMicro).toBe("25000000");
+    expect(staging.body.totals.directTransfers).toBe(7);
   } finally {
     f.sqlite.close();
   }

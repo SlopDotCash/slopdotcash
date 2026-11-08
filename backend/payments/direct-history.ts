@@ -35,9 +35,13 @@ export async function directTransferPage(
   // The shared spelling rule lives in the JS filters; the SQL side must
   // match it, so it normalizes case, surrounding whitespace, and
   // underscores before comparing against the canonical registry keys.
+  // SQLite TRIM() strips spaces only, while JS trim() also strips tab,
+  // CR, LF and friends, so the SQL trim lists the same ASCII whitespace
+  // set explicitly — otherwise a tab-suffixed spelling leaks through
+  // this paged route while the JS routes exclude it.
   const testnetFilter = includeTestnets
     ? ""
-    : ` AND REPLACE(LOWER(TRIM(network)), '_', '-') NOT IN (${Object.entries(
+    : ` AND REPLACE(LOWER(TRIM(network, char(9,10,11,12,13,32))), '_', '-') NOT IN (${Object.entries(
         ESCROW_NETWORKS,
       )
         .filter(([, v]) => v.testnet)

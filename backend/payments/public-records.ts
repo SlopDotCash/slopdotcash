@@ -138,9 +138,13 @@ export async function publicVaultPayments(
   // Production excludes testnet networks, mirroring the /totals, /vault, and
   // /received deployment-tier rules. Staging keeps them because it pays in
   // testnet stablecoins.
+  // SQLite TRIM() strips spaces only, while JS trim() also strips tab, CR,
+  // LF and friends, so the SQL trim lists the same ASCII whitespace set
+  // explicitly — otherwise a tab-suffixed spelling leaks through this
+  // paged route while the JS routes exclude it.
   const testnetFilter = includeTestnets
     ? ""
-    : ` AND REPLACE(LOWER(TRIM(o.network)), '_', '-') NOT IN (${Object.entries(
+    : ` AND REPLACE(LOWER(TRIM(o.network, char(9,10,11,12,13,32))), '_', '-') NOT IN (${Object.entries(
         ESCROW_NETWORKS,
       )
         .filter(([, v]) => v.testnet)
