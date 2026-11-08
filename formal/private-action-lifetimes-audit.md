@@ -2,7 +2,7 @@
 
 This source-only pass starts at `6f5aee920874`. No tests, browser, typechecker,
 formatter, simulation or prover were run. The defects below are established by
-the source paths; the corrections and eleven authored scenarios are unverified.
+the source paths; the corrections and twelve authored scenarios are unverified.
 No held branch, generated registry, proof inventory or global status changed.
 
 ## Reachable response ordering
@@ -119,3 +119,12 @@ fields using presumed monotonicity, or guarantee that an external wallet or
 role cannot change after a read. Higher-revision response handling and current
 action preflights keep their existing contracts. The new source and model
 remain untested under the instruction to skip checks.
+
+A source-review follow-up added a lifecycle guard to the loader and replacement
+entry point. A departed equal-revision callback now returns without starting a
+private GET. Effect setup marks the hook active before loading; cleanup marks
+it inactive and keeps the generation/active-read invalidation. StrictMode's
+second setup therefore starts its own read, while a first-setup reply remains
+obsolete. Explicit Retry remains available while the hook is active. A named
+departed-equal-response scenario records that no additional read starts; it
+has not been executed.

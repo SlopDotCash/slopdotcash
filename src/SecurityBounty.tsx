@@ -1125,11 +1125,12 @@ function useSecurityData<T>(
 ] {
   const privateRequest = usePrivateRequest();
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
+  const mounted = useRef(false);
   const generation = useRef(0);
   const activeRead = useRef<number | null>(null);
   const accepted = useRef<{ value: T } | null>(null);
   const load = useCallback(() => {
-    if (path === null) return;
+    if (!mounted.current || path === null) return;
     const current = ++generation.current;
     activeRead.current = current;
     // A refresh keeps the loaded view, so an open case stays mounted.
@@ -1164,14 +1165,17 @@ function useSecurityData<T>(
     );
   }, [path, privateRequest]);
   useEffect(() => {
+    mounted.current = true;
     load();
     return () => {
+      mounted.current = false;
       generation.current += 1;
       activeRead.current = null;
     };
   }, [load]);
   const replace = useCallback(
     (value: T, accept?: (previous: T) => boolean | "refresh") => {
+      if (!mounted.current) return;
       const decision =
         accepted.current !== null && accept
           ? accept(accepted.current.value)

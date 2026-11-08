@@ -104,4 +104,7 @@ module ui_private_case_revisions {
     .then(readReply(2)).expect(s.activeRead==0 and s.acceptedProjection==2)
   run departureClearsActiveEqualRefreshTest=init.then(equalRevisionCallback).then(depart).then(readReply(1))
     .expect(s.activeRead==0 and s.acceptedProjection==1 and not(s.mounted))
+  run departedEqualActionDoesNotStartAnotherReadTest=init.then(startAction).then(commitAction(1))
+    .then(readCase).then(readReply(1)).then(depart).then(actionReply(1))
+    .expect(not(s.mounted) and s.readRevisions.length()==1 and s.activeRead==0)
 }
