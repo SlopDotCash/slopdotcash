@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { matchingExpiryCoverage } from "./verified-expiry";
 /** Owner-approved #905 policy: two independent, history-qualified RPC observations. */
 export type RecoveryRpc = <T>(method: string, params: unknown[]) => Promise<T>;
 const MAINNET = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
@@ -29,17 +30,9 @@ export function matchingCompletedCoverage(
   a?: ExpiryCoverage,
   b?: ExpiryCoverage,
 ): boolean {
-  return (
-    !!a?.complete &&
-    !!b?.complete &&
-    a.blocks > 0 &&
-    a.txId === b.txId &&
-    a.blockhash === b.blockhash &&
-    a.blockhashSlot === b.blockhashSlot &&
-    a.tipSlot === b.tipSlot &&
-    a.tipHash === b.tipHash &&
-    a.blocks === b.blocks &&
-    a.digest === b.digest
+  return matchingExpiryCoverage(
+    a == null ? { kind: "missing" } : { kind: "present", history: a },
+    b == null ? { kind: "missing" } : { kind: "present", history: b },
   );
 }
 export interface ExpiryCoverageStore {
