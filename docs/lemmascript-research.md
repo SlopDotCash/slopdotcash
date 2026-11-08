@@ -97,6 +97,7 @@ maintenance surface without improving the selected acceptance result.
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native budgets and review timeout | `verified-budget`; fee converter, referral poster, payment keeper and vetting review plan | Exact existing positive/daily-budget acceptance and capped review-call timeout |
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
+| Activity mail consent | `workers/notify/verified-delivery`; real activity dispatch | Exact retry/suppress/send selection from missing, pilot or registered destination, essential notice, explicit preferences and pinned versions; optional mail requires matching consent and registered essential mail requires security consent |
 
 ### Allocation claim boundary
 

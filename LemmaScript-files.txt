@@ -11,3 +11,4 @@ src/lib/verified-allocation.ts
 src/lib/verified-decimal.ts
 src/lib/verified-selection.ts
 src/lib/verified-aggregation.ts
+workers/notify/verified-delivery.ts

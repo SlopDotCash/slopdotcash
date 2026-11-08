@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "9c67e3a991a7699092316a220613941e5a50e94ac71fc060bbf19592292c7339",
+  "inventorySha256": "74feefdfa8b64b73b58bf8234a987f521995a3eb0e3adc2ddf4011c21a280bbd",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2949,6 +2949,16 @@
         "unauthorized",
         "unreachable"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/notify/verified-delivery.ts",
+      "line": 60,
+      "name": "activityDeliveryDecision",
+      "kind": "string-union",
+      "values": ["retry", "send", "suppress"],
+      "models": ["formal/models/api_mail_delivery.qnt"],
+      "lexicallyUnmentionedValues": ["retry", "send", "suppress"],
       "review": "candidate-only"
     },
     {
