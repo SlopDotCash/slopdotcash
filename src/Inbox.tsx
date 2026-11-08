@@ -362,6 +362,7 @@ export default function InboxPage() {
                 key={`${recipient}:${window.location.search}`}
                 actorId={recipient}
                 onChange={load}
+                onIdentityChange={reportsIdentityChanged}
               />
             </Suspense>
           ) : null}

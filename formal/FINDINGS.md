@@ -139,3 +139,15 @@ merges. See `direct-preparation-completion-audit.md`,
 their presence in this list does not claim passing browser or combined-head
 evidence. Model authoring errors found by independent checks are retained in
 their audits alongside their corrections.
+
+
+## Separate Points private-view correction
+
+Source review found that a failed post-response identity check only showed an
+error while retaining the earlier account's private award/form. The Points
+view now clears cached private content before notifying the parent of known
+identity loss, and clears before parent revalidation when the session or
+access is unavailable. The extended browser workflow changes the real test
+session while an accepted response is held. It and the24newmodel scenarios
+are unexecuted in this lane. This is a source-confirmed correction, not a
+claimed browser reproduction or a completed UI acceptance result.

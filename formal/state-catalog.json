@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "ef53bfb2e05763ef76aeb72b63f4bc5c82a8d83be8c31c6958cc00a213f55628",
+  "inventorySha256": "19c299a20f84b70f60ef906fd68495717f0cb67b5009355889ba358e85b85325",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1995,6 +1995,7 @@
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt"
@@ -2013,6 +2014,7 @@
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt"
@@ -2031,6 +2033,7 @@
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt"
@@ -2154,7 +2157,10 @@
       "name": "state",
       "kind": "string-union",
       "values": ["resolved", "review", "triage"],
-      "models": ["formal/models/ui_inbox.qnt"],
+      "models": [
+        "formal/models/ui_inbox.qnt",
+        "formal/models/ui_points_disputes.qnt"
+      ],
       "lexicallyUnmentionedValues": ["resolved", "review", "triage"],
       "review": "candidate-only"
     },

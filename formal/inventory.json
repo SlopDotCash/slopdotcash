@@ -4069,6 +4069,7 @@
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
+        "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
         "formal/models/ui_project_work.qnt"
@@ -4213,17 +4214,18 @@
     },
     {
       "path": "src/Inbox.tsx",
-      "sha256": "53c26e5f273707937874a8f1c398f170db950dfb9693099a6485b2626157a796",
+      "sha256": "4b3f3a416d1c56573e251c5e2263dd0de1f35bec78e62710235a16a98e5ba033",
       "models": [
         "formal/models/ui_inbox.qnt",
-        "formal/models/ui_inbox_mutation_focus.qnt"
+        "formal/models/ui_inbox_mutation_focus.qnt",
+        "formal/models/ui_points_disputes.qnt"
       ],
       "candidateLines": [
         15, 17, 47, 48, 49, 50, 52, 58, 62, 76, 82, 87, 89, 109, 111, 134, 136,
         142, 143, 144, 147, 149, 156, 171, 172, 182, 184, 186, 187, 198, 209,
         212, 218, 219, 227, 228, 252, 257, 260, 266, 272, 273, 282, 283, 295,
-        303, 325, 326, 328, 330, 334, 336, 342, 347, 348, 349, 354, 360, 368,
-        379, 382, 394, 395, 412, 415, 423, 429, 534
+        303, 325, 326, 328, 330, 334, 336, 342, 347, 348, 349, 354, 360, 369,
+        380, 383, 395, 396, 413, 416, 424, 430, 535
       ],
       "review": "mapped-abstraction"
     },
@@ -4258,7 +4260,8 @@
       "sha256": "e9deac09fa0a079b3b1b39b488b8407976252de2aeb09ca8c32b962cb573a835",
       "models": [
         "formal/models/ui_hash_navigation.qnt",
-        "formal/models/ui_navigation.qnt"
+        "formal/models/ui_navigation.qnt",
+        "formal/models/ui_points_disputes.qnt"
       ],
       "candidateLines": [1, 47, 49, 61, 67, 73, 93, 140],
       "review": "mapped-abstraction"
@@ -4423,11 +4426,15 @@
     },
     {
       "path": "src/PointsDisputes.tsx",
-      "sha256": "1a6f4dac4409d8f0d6af3a7c44ee937a0d2f3430b8be069a6121c06862793667",
-      "models": ["formal/models/ui_inbox.qnt"],
+      "sha256": "d17dbc5b80f138c1af5a1f6f03e6c5a4cce456b4fbfa53abdedbc47aa3f9c2b5",
+      "models": [
+        "formal/models/ui_inbox.qnt",
+        "formal/models/ui_points_disputes.qnt"
+      ],
       "candidateLines": [
-        1, 10, 28, 42, 43, 44, 45, 49, 50, 51, 52, 53, 54, 56, 84, 91, 92, 114,
-        121, 133, 135, 143, 160, 164, 177, 232, 239, 244
+        1, 10, 28, 44, 45, 46, 47, 51, 52, 53, 54, 55, 56, 58, 96, 97, 98, 99,
+        103, 109, 136, 137, 159, 166, 178, 180, 188, 205, 209, 222, 277, 284,
+        289
       ],
       "review": "mapped-abstraction"
     },
@@ -4795,7 +4802,10 @@
     {
       "path": "src/lib/browser-json.ts",
       "sha256": "90a4b15cb147de6233eea8f7675dcab703d066032cbc997cf105e7a940d1527e",
-      "models": ["formal/models/ui_transport.qnt"],
+      "models": [
+        "formal/models/ui_points_disputes.qnt",
+        "formal/models/ui_transport.qnt"
+      ],
       "candidateLines": [1, 99],
       "review": "mapped-abstraction"
     },
@@ -11552,6 +11562,43 @@
       "sha256": "e8b60bb1f1b267de75f4a722e69e5bbcb81064ac244e78d6a7ba0b4e14a43948",
       "sources": ["src/PayoutConsent.tsx", "src/lib/payout-consent.ts"],
       "scenarios": ["changedAccountTest", "consentTest"]
+    },
+    {
+      "path": "formal/models/ui_points_disputes.qnt",
+      "sha256": "d07f1f57c3e343e6becc5dd4d0766822152e379fd2800ae1532d867f5ec9ee5c",
+      "sources": [
+        "src/App.tsx",
+        "src/Inbox.tsx",
+        "src/Link.tsx",
+        "src/PointsDisputes.tsx",
+        "src/lib/browser-json.ts"
+      ],
+      "scenarios": [
+        "acceptedMutationLoadsDetailTest",
+        "acceptedPostCanLoseItsResponseTest",
+        "accountMismatchClearsOldFormTest",
+        "departedIdentityFailureCannotNotifyNewParentTest",
+        "departedMutationCannotRewriteNavigationTest",
+        "emptyListTest",
+        "firstCompletionDoesNotOwnOtherBusyRequestTest",
+        "forbiddenReadClearsOldListTest",
+        "formBackKeepsLoadedListTest",
+        "hiddenSameActorChildKeepsItsDraftTest",
+        "initialListLoadingTest",
+        "listThenFormTest",
+        "moderatorCanReviewWithoutMachineDraftTest",
+        "oldListRemainsDuringPageLoadTest",
+        "parentFailureKeepsRevalidatedSameActorChildTest",
+        "queryNavigationIgnoresOldReadTest",
+        "requestFailureKeepsReasonTest",
+        "resolvedDetailHasNoMutationControlsTest",
+        "retrySupersedesOldReadTest",
+        "reviewDecisionControlTest",
+        "sameActorReadFailureRetainsListTest",
+        "signoutClearsCachedPointsListTest",
+        "triageRetryDoesNotInventMachineDraftTest",
+        "unavailableSessionDoesNotRetainFormTest"
+      ]
     },
     {
       "path": "formal/models/ui_private_case_revisions.qnt",
