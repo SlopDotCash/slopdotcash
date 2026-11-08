@@ -5,7 +5,7 @@ It adds two focused models and the read-generation correction described below.
 The user directed this chat to skip checks and focus on pushing, so those
 authoring checkpoints had no execution evidence. The independent review below
 records later scoped checks of the reviewed parent. The additional captured-
-storage and accepted-replacement transitions are being reconciled with those
+storage and accepted-replacement transitions are now reconciled with those
 reviewed models; earlier results do not validate their combined revision.
 
 ## Parent selection and identity
@@ -166,7 +166,7 @@ authority over intent, generation, receipt and settlement rules. Those are
 references for future conformance checks; no earlier pass certifies these new
 models. Model-to-source mapping is not proof of refinement or completion.
 
-## Independent model review
+## Earlier independent model review
 
 The PR review found two authoring errors before model execution: a list used
 the set-only `filter` operator, and the typed `received` function lacked its
@@ -214,7 +214,7 @@ deadline stopped the run with no reported violation. Both timeout receipts
 are retained outside the source tree. This result does not permit a claim
 that the submitted-recovery model passed finite verification.
 
-## Property-specific storage quotient
+## Earlier property-specific storage quotient
 
 A separate review found that `stored` cell values feed only later `stored`
 writes in this model. No guard, visible row, identity check, authorization,
@@ -249,3 +249,41 @@ completed in 99.98 seconds with the same 4,819,932 distinct states,
 hashes stayed unchanged during the run. Exact stored cells remain outside
 this finite result; all 13 concrete scenarios and the separate 500-trace
 `concreteStep` and `unboundedStep` simulations pass with those cells retained.
+
+## Reconciliation with the observation fixes
+
+Commit `07a232357428cf5055ee7f5f29bb751d69ac5e2d` combines the reviewed
+state types, completed-call cleanup and factored choices with the later
+observation changes. The parent model adds two accepted replacements and
+retains the corresponding epoch bound of seven. The fallback model retains
+four actor/generation slots with two rows each, captured write targets,
+zero/one/all-write outcomes for the synchronous storage loop, and the
+historical `responseDelivered` observation. Neither model changes application
+code.
+
+The fallback's finite `step` still projects stored payload values, while
+retaining slot identity and all control decisions. `concreteStep`,
+`unboundedStep` and the named scenarios retain actual cell values. The 17
+named scenarios include nonzero captured-slot and partial-write witnesses.
+`postStarted` and `postAuthorized` retain their historical meaning; the
+implication between them is not an independent proof that every retry checks
+authority. The guarded preflight transitions and concrete retry scenarios are
+separate obligations.
+
+The reconciled parent passed 15 named scenarios and the fallback passed 17;
+both passed their normal seeded simulations. Both exhaustive TLC runs hit the
+unchanged 180-second deadline with work still queued. The parent's last
+progress report recorded 45,728,506 generated states, 833,208 distinct states,
+depth 11 and 498,493 queued states. The fallback recorded 17,361,030 generated
+states, 1,336,578 distinct states, depth 16 and 292,463 queued states. These are
+incomplete runs, not successful verification or complete reachable-state
+bounds. No counterexample was reported before either timeout.
+
+The unchanged-input receipts remain at
+`slopdotcash-lemma-bounty-parent-reconcile/evidence/formal/verification-ui_bounty_payment_parent.json`
+(SHA-256 `afcece5a4b96411fa09b0fd3038b692c3111b9395935d0f2c017c166239d79b7`)
+and
+`slopdotcash-lemma-submitted-model/evidence/formal/verification-ui_submitted_payment_recovery.json`
+(SHA-256 `3711a8813c5fc3a6d95786c12b471174e548ba1672fb20c242a2c71ba551d59b`).
+Further complete verification remains required. Preserve these failed runs
+when recording any later optimization or larger-budget result.

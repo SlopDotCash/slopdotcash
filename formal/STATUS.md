@@ -8,16 +8,21 @@ The goal is active and incomplete. PR
 production deployment or completion of the application-wide state review.
 The older dirty `/Users/shawwalters/slopdotcash` checkout is preserved.
 
-The review chat owns the remaining published batch: PR 1873, then PR 2427,
-then PR 2426. At the 8 November handoff, PR 2427 was published on a
-`development` base at `7faa63997d8bce3fbe4ad412ae2805fed993f22c`; PR 2426
-remained held at `bd4d58ef66b326a4e85b1728b972e9bf6e56fd65`. These are
-recorded checkpoints, not mutable-branch completion claims. Later commits
-must be assessed against their own source and model hashes.
+The review chat owns the remaining published batch. PR 1873 merged at
+`5acc3c47e9a29fc2b55fb756964944eb0a976213`. PR 2427 was then rebased and
+published on a `development` base at
+`1bcf755b0645e05a611d288825bf8c4de0696c0c`; its checks remain separate from
+this follow-up. PR 2426 remains held at
+`bd4d58ef66b326a4e85b1728b972e9bf6e56fd65`. These are recorded checkpoints,
+not mutable-branch completion claims. Later commits must be assessed against
+their own source and model hashes.
 
-The separate local `codex/quint-observation-fixes` branch holds the newer
-completion-race corrections below. Do not replace the held published heads
-with this branch during the review batch. Preserve the broader 168-target,
+The frozen local `codex/quint-observation-fixes` branch holds the newer
+completion-race corrections below. `codex/quint-observation-review-base`
+integrates them on the reviewed `7faa6399` source while retaining that review's
+runner and model fixes. Final rebasing onto the completed dependency batch is
+still required. Do not replace the held published heads with this branch
+during the review batch. Preserve the broader 168-target,
 33-module proof manifest when integrating; this local branch still has the
 earlier proof selection. Regenerate the combined inventories after rebasing.
 
@@ -286,3 +291,11 @@ all six corrected cases pass. See the Inbox and owner-recovery audits for the
 fixture and source limits. Newer case-projection and journal models and all
 combined runtime behavior still require their exact-source evidence. Keep
 original parsing failures and failed runs.
+
+The parent and submitted-payment models now preserve the reviewed cleanup and
+choice factoring alongside the new captured-slot and replacement transitions.
+Their normal checks pass independently, but both 180-second finite checks
+remain incomplete. The journal model's corrected names and factored choices
+also pass normal checks, while its finite checks still time out. These are
+open verification obligations; see the composition and journal audits. This
+chat has not run checks on the combined integration branch.
