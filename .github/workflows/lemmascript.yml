@@ -1,10 +1,7 @@
 name: LemmaScript contracts
 
 on:
-  pull_request:
-    branches: [development, main]
-  push:
-    branches: [development, main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -17,7 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Verify proof checkout
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "24.15.0"
