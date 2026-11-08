@@ -35,12 +35,12 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "378eab86952f2ca37a7ea24eb378f762d1601832c542dfead6d72bcdf9b954e8",
+      "sha256": "b56f9d53aba5a3bb403cd1ebbab1b2a22209b2ce24104fcc52a334f2bc40d363",
       "models": [
         "formal/models/ci_coverage.qnt",
         "formal/models/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 35, 43],
+      "candidateLines": [1, 39, 47],
       "review": "mapped-abstraction"
     },
     {
@@ -1493,7 +1493,7 @@
     },
     {
       "path": "contracts/solana/token-extensions.ts",
-      "sha256": "acf18c6291faa0ca184e64de181c5c2623c6a3b7f7b44d8ed270553f9be6087c",
+      "sha256": "b3c96abf607a437ed942a0cf046217cb091f58014deca072ff465798aafe31fe",
       "models": ["formal/models/token_admission.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1509,6 +1509,13 @@
       "path": "contracts/solana/transactions.ts",
       "sha256": "d3e031297fa43a1aa4c5f1392e5e58425f66910e71db82462cb33e6d418930f9",
       "models": ["formal/models/solana_route.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/solana/verified-token-extensions.ts",
+      "sha256": "5543f151f576a48cd8e31dd7c76f701b0db7a19655c56ece02ab0f145ab45d53",
+      "models": ["formal/models/token_admission.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -2636,9 +2643,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "afd550fedc4e1ead843fef40663cc844f47467041e463740adb6f06fe9c6f980",
-      "models": ["formal/models/formal_toolchain.qnt"],
-      "candidateLines": [21, 104, 111, 160],
+      "sha256": "d6d188de94625a2b4c3fae90dfd2d273672cccaf6f4e754250e4abc30be1b9a5",
+      "models": [
+        "formal/models/formal_process.qnt",
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/formal_translation.qnt"
+      ],
+      "candidateLines": [30, 51, 144, 146, 174, 181, 235],
       "review": "mapped-abstraction"
     },
     {
@@ -3364,6 +3375,24 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/quint-local-translator.mjs",
+      "sha256": "69b71a31a94479be4726f9035402fd65bbc2d88fc06e96c0a81c227a3e89121c",
+      "models": [
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/formal_translation.qnt"
+      ],
+      "candidateLines": [42, 97],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/quint-tla-normalization.mjs",
+      "sha256": "93afa850f9ebe954021ee7b54aa82a4f6d7478aa7003f60f2c325b4b567879fc",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure TLA text transformation with no I/O, persisted state, scheduling or authority. Lexically protects string and comment contents and matches nested LET/IN before the fold rewrite. The local translator owns compilation and verification lifecycle; focused regressions and the literal/fold Quint fixture check this transformation."
+    },
+    {
       "path": "scripts/readme-proof-binding.ts",
       "sha256": "e602760eddf7cacd59b78422fcafabac88890340e2b620ed6adb2108f8989fbc",
       "models": ["formal/models/readme_proof_binding.qnt"],
@@ -3439,11 +3468,14 @@
     },
     {
       "path": "scripts/run-e2e-phase.mjs",
-      "sha256": "d45f8e417701c5baafb5a555f79eca4085d9c59aaa464be5713c474cced7b6d8",
-      "models": ["formal/models/evidence_capture.qnt"],
+      "sha256": "a2efca4e42b2404376871a4a3b007435258ed60ed919872979f10233962f8d77",
+      "models": [
+        "formal/models/evidence_capture.qnt",
+        "formal/models/formal_process.qnt"
+      ],
       "candidateLines": [
-        26, 29, 36, 39, 40, 44, 68, 74, 90, 92, 109, 116, 129, 132, 134, 136,
-        143, 147, 154, 159
+        26, 29, 36, 39, 40, 44, 74, 81, 97, 99, 116, 123, 145, 148, 150, 152,
+        159, 163, 170, 175
       ],
       "review": "mapped-abstraction"
     },
@@ -4877,13 +4909,13 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "ff931b4c37ede600ccad0972bb42c7bae140bda9d4c1eb1099602cde673bd1e3",
+      "sha256": "82306c746b95c652bd9efff89fa032797482be028275cbb61d6211974fc1ae01",
       "models": [
         "formal/models/points_journal.qnt",
         "formal/models/points_retained_provenance.qnt",
         "formal/models/ui_review_pool.qnt"
       ],
-      "candidateLines": [333, 857, 864, 873],
+      "candidateLines": [334, 877, 884, 893],
       "review": "mapped-abstraction"
     },
     {
@@ -5138,7 +5170,7 @@
     },
     {
       "path": "src/lib/score-penalties.ts",
-      "sha256": "1e2459cf5e3187799da53f9ace5efeca86c2b0113c4c1645bdc3df361828eccd",
+      "sha256": "10ffbb4349ff5e045b323e7bf5c8064325fa048b9850000c2349e2633351568a",
       "models": ["formal/models/points_journal.qnt"],
       "candidateLines": [7],
       "review": "mapped-abstraction"
@@ -5315,6 +5347,17 @@
       "path": "src/lib/vault-setup.ts",
       "sha256": "5b1728c03318a4f85bf684db47451cc04ab183e86ebcece23fae94cd5c045b8f",
       "models": ["formal/models/vault_creation.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/verified-aggregation.ts",
+      "sha256": "d5affbf40f96890a22caa12c9b162033f122ecd617d46a5e07868df46840de8e",
+      "models": [
+        "formal/models/points_journal.qnt",
+        "formal/models/points_retained_provenance.qnt",
+        "formal/models/ui_review_pool.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6327,9 +6370,9 @@
     },
     {
       "path": "workers/slopbot/value-accepted-commit-census.ts",
-      "sha256": "2db2ef3e2c24665e250951f9cca3408cd38341288156ab6adc34d32fecc45446",
+      "sha256": "c5fb559a232d2b5ac0ba8b303e179f324b6e8389322dca86553623a358b5bcab",
       "models": ["formal/models/bot_accepted_census.qnt"],
-      "candidateLines": [39, 40],
+      "candidateLines": [84, 85],
       "review": "mapped-abstraction"
     },
     {
@@ -6893,10 +6936,10 @@
     },
     {
       "path": "workers/vetting/acquire.ts",
-      "sha256": "1f03e4e23356f8125767827734ddfdad9e1019bc88ca5f299916915ace38a8d7",
+      "sha256": "18bc557ad29fdac24f6138cbb6954de1f484d14adaf411966294921e2e73c727",
       "models": ["formal/models/vetting_acquisition.qnt"],
       "candidateLines": [
-        15, 19, 36, 38, 79, 80, 510, 517, 518, 537, 559, 586, 595, 601
+        15, 19, 36, 38, 81, 82, 512, 519, 520, 539, 561, 588, 597, 603
       ],
       "review": "mapped-abstraction"
     },
@@ -6963,14 +7006,14 @@
     },
     {
       "path": "workers/vetting/queue.ts",
-      "sha256": "ce2824f89e6954c3ef26df3ed41e9a19e12313167cca9c43dea51fe070dd1c04",
+      "sha256": "a6f1ae1a57ec05d1840e541cb14d112dd9163537f05dd5ac7d2122f512258395",
       "models": ["formal/models/vetting_acquisition.qnt"],
-      "candidateLines": [2, 103, 171, 198, 327, 343, 360, 372],
+      "candidateLines": [2, 103, 173, 200, 220, 222, 229, 350, 366, 383, 395],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "669b3d1c27c2a6cd29addcfffd2af6a1996a556243742fd270c193e360278e77",
+      "sha256": "124b970f27e46af35e883d563da0b13d9ff00dafeee505f5f5da71489307f8b5",
       "models": [
         "formal/models/pr_review_retry.qnt",
         "formal/models/vetting_acquisition.qnt",
@@ -6978,17 +7021,17 @@
       ],
       "candidateLines": [
         14, 91, 445, 505, 522, 525, 526, 535, 542, 543, 578, 601, 669, 676, 696,
-        718, 729, 754
+        718, 746, 774
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "98764941bfda4b9907edf82aec8b77323788f5859466f3a2ee77301e4c5b3e11",
+      "sha256": "6981a832952146177d70740278656774a98a6d5da2cf3c919f085101f071c843",
       "models": ["formal/models/vetting_acquisition.qnt"],
       "candidateLines": [
-        4, 11, 134, 142, 143, 161, 186, 190, 197, 203, 212, 259, 462, 491, 499,
-        515, 531, 546, 568, 569, 592, 593, 641, 643, 657, 736, 740, 744, 809
+        4, 11, 136, 149, 150, 168, 193, 197, 204, 210, 219, 266, 469, 498, 506,
+        522, 538, 553, 577, 579, 605, 606, 657, 659, 673, 753, 757, 761, 826
       ],
       "review": "mapped-abstraction"
     },
@@ -7001,9 +7044,9 @@
     },
     {
       "path": "workers/vetting/scanners.ts",
-      "sha256": "3ef59724ea9c32484430029d53dc4e2f06a645ec6ebf2e0f9763eff435aa7435",
+      "sha256": "40fe229371ff89b97b1dfe58c32c4900277926d3f376489922b9cb73378c9bed",
       "models": ["formal/models/vetting_review_batches.qnt"],
-      "candidateLines": [65, 106, 109, 291, 292, 321, 414, 523],
+      "candidateLines": [65, 106, 109, 305, 306, 335, 428, 537],
       "review": "mapped-abstraction"
     },
     {
@@ -8477,8 +8520,21 @@
       ]
     },
     {
+      "path": "formal/models/formal_process.qnt",
+      "sha256": "0e1dbbc12814e4aa99f69d0d46017d15d8395f0b780e6d95a1f4903143a9a758",
+      "sources": ["scripts/check-formal.mjs", "scripts/run-e2e-phase.mjs"],
+      "scenarios": [
+        "canceledCleanupCannotPassTest",
+        "cleanSuccessTest",
+        "cleanupFailureIsExplicitTest",
+        "exitedLauncherStillOwnsChildTest",
+        "failureCannotPublishSuccessTest",
+        "timeoutKillsDescendantTest"
+      ]
+    },
+    {
       "path": "formal/models/formal_toolchain.qnt",
-      "sha256": "6524074edde3dcd1b75dd6140879c2b73ded867f189a479ff70ed2f14a8f3e88",
+      "sha256": "0ce6b89a1581b18a00ef2938c5065db861cbbd55e4898ce8b4e89ae31e9218e7",
       "sources": [
         ".github/workflows/formal.yml",
         ".github/workflows/lemmascript.yml",
@@ -8491,6 +8547,7 @@
         "scripts/install-value-merge-git.ts",
         "scripts/lemmascript-integrity.mjs",
         "scripts/lemmascript-inventory.mjs",
+        "scripts/quint-local-translator.mjs",
         "scripts/setup-lemmascript.sh"
       ],
       "scenarios": [
@@ -8499,6 +8556,21 @@
         "changedSourceFailsRunTest",
         "failedCheckCannotBecomeSuccessTest",
         "selectedSuccessIsNotFullCoverageTest"
+      ]
+    },
+    {
+      "path": "formal/models/formal_translation.qnt",
+      "sha256": "14366e67713903487bd02f40c5e5e40f19501d15d3c4d08f4d3e6a8f9af23182",
+      "sources": [
+        "scripts/check-formal.mjs",
+        "scripts/quint-local-translator.mjs"
+      ],
+      "scenarios": [
+        "changedInputFailsTest",
+        "counterexampleFailsTest",
+        "localParserSuccessTest",
+        "parseFailureCleansTest",
+        "wrongVersionRefusedTest"
       ]
     },
     {
@@ -8997,13 +9069,14 @@
     },
     {
       "path": "formal/models/points_journal.qnt",
-      "sha256": "cf83ea3cc42101f842818b82c1770a5f91c5634e37fccaede6f316f688dfcf37",
+      "sha256": "9ec159e08951e6fc3ddf373ed26626f137fa928c59980e4095deaa8d984c871a",
       "sources": [
         "scripts/generate-points.ts",
         "src/lib/payout-points.ts",
         "src/lib/points.ts",
         "src/lib/score-penalties.ts",
-        "src/lib/score-records.ts"
+        "src/lib/score-records.ts",
+        "src/lib/verified-aggregation.ts"
       ],
       "scenarios": [
         "penaltyKeepsFundedTest",
@@ -9013,8 +9086,12 @@
     },
     {
       "path": "formal/models/points_retained_provenance.qnt",
-      "sha256": "0dae0dd4e4d459e0653be499efdce1113084adb03bc9d1776b2ffdb5b467db75",
-      "sources": ["scripts/generate-points.ts", "src/lib/points.ts"],
+      "sha256": "a574746913009b1e731197da85417a99d3fe0b627c71a3816b1e24b0fa87f90f",
+      "sources": [
+        "scripts/generate-points.ts",
+        "src/lib/points.ts",
+        "src/lib/verified-aggregation.ts"
+      ],
       "scenarios": [
         "adoptedReplayTest",
         "explicitZeroEndsRecoveryTest",
@@ -9643,11 +9720,12 @@
     },
     {
       "path": "formal/models/token_admission.qnt",
-      "sha256": "41fedfafc66f46c48cb8d4d2a2d9614e1c2ee92188aa9437abc099b940617d9c",
+      "sha256": "71482da2408e752348e2369b0b87a7923b430ea7ddd8140f78b639deb0b130c9",
       "sources": [
         "contracts/solana/programs/slop-escrow/src/token_policy.rs",
         "contracts/solana/token-extensions.ts",
-        "contracts/solana/token.ts"
+        "contracts/solana/token.ts",
+        "contracts/solana/verified-token-extensions.ts"
       ],
       "scenarios": [
         "allowedMetadataTest",
@@ -10025,11 +10103,12 @@
     },
     {
       "path": "formal/models/ui_review_pool.qnt",
-      "sha256": "371dd8e3e1b0da6823d2d1b9b23824bb5a91a68da165097ed3af81ff120f1455",
+      "sha256": "eedb4057d796e145967fb15723cdff283fc981b45195ee7b0ca2a8068251f4d8",
       "sources": [
         "src/lib/leaderboard.ts",
         "src/lib/points.ts",
         "src/lib/scoring-policy.ts",
+        "src/lib/verified-aggregation.ts",
         "src/lib/verified-allocation.ts",
         "src/lib/verified-selection.ts"
       ],
