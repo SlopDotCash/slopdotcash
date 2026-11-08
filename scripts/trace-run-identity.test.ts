@@ -148,3 +148,29 @@ test("the registered pair is accepted and stored as posted", async () => {
     { project_id: "slopdotcash", repository: "SlopDotCash/slopdotcash" },
   ]);
 });
+
+test("a repository registered only as an alias or current path is accepted", async () => {
+  const t = api();
+  // The schema requires `githubUrl` to match one registered identity, so a
+  // renamed repository carries the new path as an alias and the manifest points
+  // the URL at it. Both the alias and the derived current path are that string.
+  seedProject(t.sqlite, "renamed", "SlopDotCash/slopdotcash", {
+    repositories: [
+      {
+        id: "SlopDotCash/slopdotcash",
+        aliases: ["slopcash/old-name"],
+        displayName: "slopdotcash",
+        githubUrl: "https://github.com/slopcash/old-name",
+        description: "Reproducible research tooling for everyone.",
+        integrationBranch: "main",
+      },
+    ],
+  });
+  const alias = await t.createRun("renamed", "slopcash/old-name");
+  expect(alias.body.error).toBeUndefined();
+  expect(alias.status).toBe(201);
+  // Control in the same test: the primary id still passes, so the alias is what
+  // moves when the accepted set is narrowed.
+  const primary = await t.createRun("renamed", "SlopDotCash/slopdotcash");
+  expect(primary.status).toBe(201);
+});
