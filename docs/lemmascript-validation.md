@@ -19,7 +19,7 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The current implementation manifest has 32 modules and 133 selected functions.
+The current implementation manifest has 33 modules and 168 selected functions.
 The latest completed combined proof checkpoint below predates that scope; it
 contains twenty-three modules and 88
 selected runtime functions. Dafny's `--isolate-assertions` option proves every
@@ -54,7 +54,7 @@ completed 4,607 obligations with zero errors:
 
 The subsequent modules and extensions have individual complete strict proof
 receipts. They are integrated, but this table does not claim a combined run
-at the 133-function source head:
+at the 168-function source head:
 
 | Later module or extension | Current functions in module | Current obligations in module |
 | --- | ---: | ---: |
@@ -70,13 +70,18 @@ at the 133-function source head:
 | Enforcement folds, action planning and flag scans | 14 | 879 |
 | Finalized route token reconciliation | 4 | 332 |
 | Global actor, archive and payout selection | 5 | 508 |
+| Complete canonical Jupiter decoder | 35 | 15,551 |
 
 The expiry, native-liability and enforcement rows replace the earlier module
 counts rather than adding a second copy. Complete graph reachability is also
 used by final work-unit history coverage without adding another proof target.
 Each detailed report records actual production callers, comparison and
 workflow results, input assumptions and measured costs. The full Jupiter
-decoder remains separate until its unfiltered verifier finishes.
+decoder completed its unfiltered run in 1,135.748 seconds with unchanged input
+hashes. Its earlier 1,200-second timeout remains recorded as incomplete. Only
+this module has a 3,600-second process limit; all modules retain the 30-second
+per-obligation limit and all others retain the 180-second process limit. The
+workflow allows 80 minutes for the manifest, setup and artifact upload.
 
 These counts cannot be compared directly with the earlier 60 declaration
 checks because the proof splitting changed. Neither count is a function
