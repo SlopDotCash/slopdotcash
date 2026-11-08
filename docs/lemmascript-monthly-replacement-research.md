@@ -127,11 +127,14 @@ caller-level comparison and workflow evidence. This distinction is retained
 rather than claiming that a source mapping proves the whole wrapper.
 
 Inputs from the production callers are plain JSON/D1 records. Observable
-getters, Proxies or concurrent mutation of input objects are not included in
-the refinement claim. The batch conversion of ordered changes reads their
-gross fields before the replacement scan, while the prior Map loop read
-them when applying each known change. That distinction has no effect on the
-plain records supplied by the actual callers.
+getters, Proxies, concurrent mutation or null/non-record array entries are
+not included in the refinement claim. The batch conversion of ordered
+changes reads their gross fields before the replacement scan, while the
+prior Map loop read them when applying each known change. For example, a
+later null change could now throw before an earlier unknown-recipient
+refusal. That distinction has no effect on the validated plain records
+supplied by the actual callers; equivalence for arbitrary JavaScript inputs
+is not claimed.
 
 These proofs do not establish authority, deadline or concurrency correctness,
 funding, one-time freeze insertion, attestation, wallet ownership or chain
