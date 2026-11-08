@@ -8,7 +8,7 @@
 // unboundedStep retains repeated attempts and all three identifier classes.
 // Value 0 means empty/invalid syntax. These are model bounds, not UI limits.
 // Exact chain receipt acceptance is an external predicate, never syntax.
-// Authored by source inspection only; no check was run for this revision.
+// Current verification bounds and evidence are in the composition audit.
 module ui_submitted_payment_recovery {
   type State = {parentAlive:bool,mounted:bool,boundActor:int,cookieActor:int,generation:int,
     loadScheduled:bool,activeRead:int,readActors:List[int],readGenerations:List[int],pendingReads:Set[int],
@@ -37,12 +37,13 @@ module ui_submitted_payment_recovery {
       .with("readActors",s.readActors.append(s.cookieActor))
       .with("readGenerations",s.readGenerations.append(s.generation))
       .with("pendingReads",s.pendingReads.union(Set(s.readActors.length()+1)))}
-  action storageReply(id:int,first:int,second:int):bool=all{s.pendingReads.contains(id),
+  action storageReplyWithProjection(id:int,first:int,second:int,project:bool):bool=all{s.pendingReads.contains(id),
     s'=finishedRead(if(s.mounted and id==s.activeRead and s.readActors[id-1]>0)
       s.with("activeRead",0)
         .with("rowActor",s.readActors[id-1]).with("rowGeneration",s.readGenerations[id-1])
-        .with("values",List(first,second)).with("stored",List(first,second))
+        .with("values",List(first,second)).with("stored",if(project)List(0,0) else List(first,second))
       else s,id)}
+  action storageReply(id:int,first:int,second:int):bool=storageReplyWithProjection(id,first,second,false)
   // The effect cancels an old read but does not clear existing rows or actor.
   action storageReadFailure(id:int):bool=all{s.pendingReads.contains(id),
     s'=finishedRead(if(s.mounted and id==s.activeRead)
@@ -71,12 +72,14 @@ module ui_submitted_payment_recovery {
     s'=if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
       s.with("phase","persist-first")
       else finishedCheck(s).with("error",true)}
-  action persistFirst=all{s.phase=="persist-first",
-    s'=s.with("stored",s.stored.replaceAt(0,if(s.checkRows[0]>0)s.checkRows[0] else s.stored[0]))
+  action persistFirstWithProjection(project:bool):bool=all{s.phase=="persist-first",
+    s'=s.with("stored",if(project)List(0,0) else s.stored.replaceAt(0,if(s.checkRows[0]>0)s.checkRows[0] else s.stored[0]))
       .with("phase","persist-second")}
-  action persistSecond=all{s.phase=="persist-second",
-    s'=s.with("stored",s.stored.replaceAt(1,if(s.checkRows[1]>0)s.checkRows[1] else s.stored[1]))
+  action persistSecondWithProjection(project:bool):bool=all{s.phase=="persist-second",
+    s'=s.with("stored",if(project)List(0,0) else s.stored.replaceAt(1,if(s.checkRows[1]>0)s.checkRows[1] else s.stored[1]))
       .with("phase","verify-preflight")}
+  action persistFirst=persistFirstWithProjection(false)
+  action persistSecond=persistSecondWithProjection(false)
   action storageFailure=all{Set("persist-first","persist-second").contains(s.phase),
     s'=finishedCheck(s).with("error",true)}
   // verifyExistingPayment performs another actor-bound fresh GET before POST.
@@ -93,8 +96,8 @@ module ui_submitted_payment_recovery {
   // The enclosing provider, if alive, still checks the actor on API reads.
   action leaveFallback=s'=s.with("mounted",false).with("activeRead",0)
   action closePrivateParent=s'=s.with("parentAlive",false).with("mounted",false).with("activeRead",0)
-  action chooseStorageReply(maxHash:int):bool={nondet id=1.to(2).oneOf() nondet first=0.to(maxHash).oneOf()
-    nondet second=0.to(maxHash).oneOf() storageReply(id,first,second)}
+  action chooseStorageReply(maxHash:int,project:bool):bool={nondet id=1.to(2).oneOf() nondet first=0.to(maxHash).oneOf()
+    nondet second=0.to(maxHash).oneOf() storageReplyWithProjection(id,first,second,project)}
   action chooseStorageFailure={nondet id=1.to(2).oneOf() storageReadFailure(id)}
   action chooseCookie={nondet actor=0.to(2).oneOf() cookieChanges(actor)}
   action chooseEdit(maxHash:int):bool={nondet index=0.to(1).oneOf() nondet value=0.to(maxHash).oneOf() edit(index,value)}
@@ -103,13 +106,19 @@ module ui_submitted_payment_recovery {
   action choosePreflight={nondet generation=1.to(2).oneOf() nondet allowed=Set(false,true).oneOf()
     verifyPreflight(allowed,generation)}
   // Do not multiply every parameter-free transition by unrelated choices.
-  action commonSteps(maxHash:int):bool=any{readStorage,chooseStorageReply(maxHash),chooseStorageFailure,generationChanges,chooseCookie,
+  action commonSteps(maxHash:int,project:bool):bool=any{readStorage,chooseStorageReply(maxHash,project),chooseStorageFailure,generationChanges,chooseCookie,
     confirmed(1),confirmed(2),all{maxHash==3,confirmed(3)},chooseEdit(maxHash),identityReply,
-    chooseAuthorityReply,persistFirst,persistSecond,storageFailure,
+    chooseAuthorityReply,persistFirstWithProjection(project),persistSecondWithProjection(project),storageFailure,
     choosePreflight,verificationReply(true),verificationReply(false),
     leaveFallback,closePrivateParent,s'=s}
-  action step=any{commonSteps(2),boundedBeginVerify}
-  action unboundedStep=any{commonSteps(3),beginVerify}
+  action concreteStep=any{commonSteps(2,false),boundedBeginVerify}
+  // Only the finite invariant check quotients exact stored cell contents.
+  // They feed their own writes, never a guard or another observed field.
+  // Concrete scenarios and both concrete step relations retain those values.
+  // Initial cells are zero; projecting every writer keeps them zero without
+  // relying on action composition, which the TLC backend does not support.
+  action step=any{commonSteps(2,true),boundedBeginVerify}
+  action unboundedStep=any{commonSteps(3,false),beginVerify}
   val invariant=all{s.readActors.length()<=2,s.readActors.length()==s.readGenerations.length(),
     s.values.length()==2,s.stored.length()==2,s.checkRows.length()==2,
     s.postStarted implies s.postAuthorized,
