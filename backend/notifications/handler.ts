@@ -193,7 +193,9 @@ export async function handleNotificationsApi(
             `SELECT event_key,
                     CASE WHEN kind = 'slopbot_appeal_review' AND EXISTS (
                       SELECT 1 FROM slopbot_appeals a WHERE 'slopbot-' || a.appeal_key = notifications.event_key AND a.resolved_at IS NOT NULL
-                      UNION ALL SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.resolved_at IS NOT NULL
+                      UNION ALL SELECT 1 FROM points_disputes p WHERE p.resolved_at IS NOT NULL
+                        AND (notifications.event_key = 'slopbot-' || p.appeal_key || ':resolved'
+                          OR (notifications.event_key = 'slopbot-' || p.appeal_key AND p.appellant_github_id <> notifications.recipient_github_id))
                     ) THEN 'slopbot_appeal_resolved' ELSE kind END AS kind,
                     subject, detail, action_path, source_at,
                     created_at, read_at,

@@ -731,6 +731,67 @@ test("a final decision creates one new unread notice after the receipt was read"
   ).toEqual({ n: 1 });
 });
 
+test("the intake receipt keeps its own kind after the decision notice lands", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "Review a manual award.",
+    })
+  ).json();
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "Independent review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  const decision = {
+    action: "uphold",
+    reason: "Append a date correction; keep the recorded award.",
+  };
+  expect((await h.call(`/${created.id}`, decision, otherToken)).status).toBe(
+    200,
+  );
+  const inboxFor = async (
+    actor: { githubId: string; githubLogin: string },
+    moderatorGithubIds?: ReadonlySet<string>,
+  ) => {
+    const response = await handleNotificationsApi(
+      new Request("https://slop.cash/api/v1/notifications"),
+      {
+        db: h.db,
+        now: () => new Date(NOW),
+        sessionActor: async () => actor,
+        moderatorGithubIds,
+      },
+    );
+    if (!response) throw new Error("Notification route missing");
+    return response.json();
+  };
+  // The receipt and the final decision are separate events (events.ts):
+  // the appellant's receipt stays a receipt, only the decision notice
+  // and the moderator's queue row read as resolved.
+  const appellant = await inboxFor(owner);
+  expect(appellant.notifications).toHaveLength(2);
+  const receipt = appellant.notifications.find(
+    (n: { eventKey: string }) => !n.eventKey.endsWith(":resolved"),
+  );
+  expect(receipt.kind).toBe("slopbot_appeal_review");
+  const final = appellant.notifications.find((n: { eventKey: string }) =>
+    n.eventKey.endsWith(":resolved"),
+  );
+  expect(final.kind).toBe("slopbot_appeal_resolved");
+  const moderatorInbox = await inboxFor(
+    moderator,
+    new Set([moderator.githubId]),
+  );
+  const queueRow = moderatorInbox.notifications.find(
+    (n: { eventKey: string }) => !n.eventKey.endsWith(":resolved"),
+  );
+  expect(queueRow.kind).toBe("slopbot_appeal_resolved");
+});
+
 test("racing moderator decisions retain one result, reason and final notice", async () => {
   const h = await fixture();
   const created = await (
