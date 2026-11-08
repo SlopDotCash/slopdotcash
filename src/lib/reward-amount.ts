@@ -1,5 +1,6 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
+import { roundedUsdcCents } from "./verified-frontend";
 
 export function formatMicroUsdc(value: string): string {
   const amount = BigInt(value);
@@ -7,7 +8,7 @@ export function formatMicroUsdc(value: string): string {
   if (fraction === 0n) {
     return `$${new Intl.NumberFormat("en-US").format(amount / 1_000_000n)}`;
   }
-  const roundedCents = (amount + 5_000n) / 10_000n;
+  const roundedCents = roundedUsdcCents(amount);
   const whole = roundedCents / 100n;
   const cents = (roundedCents % 100n).toString().padStart(2, "0");
   return `$${new Intl.NumberFormat("en-US").format(whole)}.${cents}`;

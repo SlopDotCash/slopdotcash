@@ -40,6 +40,10 @@ export const E2E_SECURITY_ACCOUNTS = Object.freeze({
   // their rolling admission budgets independent without changing the real cap.
   "intake-desktop": "900000031",
   "intake-mobile": "900000032",
+  // The cross-tab Inbox journey creates two reports after the other intake
+  // scenarios. Its setup must not consume their reporters' hourly budgets.
+  "inbox-focus-desktop": "900000033",
+  "inbox-focus-mobile": "900000034",
   security: "900000013",
   triager: "900000014",
   finance: "900000015",

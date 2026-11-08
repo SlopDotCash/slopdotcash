@@ -5,11 +5,15 @@
  * identities and RPC responses are local fixtures, not chain receipts. */
 import { Database } from "bun:sqlite";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
+import { dispatchPayment } from "../../backend/payments/dispatch";
+import { buildPaymentWalletMessage } from "../../backend/payments/possession";
 import { reconcileFailedAttempts } from "./reconcile";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -23,6 +27,7 @@ const SOLANA_TX = "4".repeat(88);
 const BLOCK_HASH = `0x${"b".repeat(64)}`;
 
 let baseRpcDown = false;
+let beforeBaseReceipt: (() => Promise<void>) | null = null;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
   const url = String(input);
@@ -36,13 +41,17 @@ globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
     if (baseRpcDown)
       return new Response("service unavailable", { status: 503 });
     if (request.method === "eth_chainId") return reply("0x1");
-    if (request.method === "eth_getTransactionReceipt")
+    if (request.method === "eth_getTransactionReceipt") {
+      const wait = beforeBaseReceipt;
+      beforeBaseReceipt = null;
+      await wait?.();
       return reply({
         status: "0x0",
         transactionHash: request.params?.[0],
         blockHash: BLOCK_HASH,
         blockNumber: "0x10",
       });
+    }
     if (request.method === "eth_getBlockByNumber")
       return request.params?.[0] === "finalized"
         ? reply({ number: "0x20", hash: BLOCK_HASH })
@@ -123,6 +132,7 @@ function seedAttempt(
     vault: string;
     transactionId: string;
     seed: string;
+    walletAddress?: string;
   },
 ) {
   sql
@@ -133,9 +143,10 @@ function seedAttempt(
       `claim-${input.id}`,
       input.actor,
       `fixture-${input.id}`,
-      input.chain === "base"
-        ? "0x0000000000000000000000000000000000000001"
-        : "11111111111111111111111111111111",
+      input.walletAddress ??
+        (input.chain === "base"
+          ? "0x0000000000000000000000000000000000000001"
+          : "11111111111111111111111111111111"),
       "d1_registry",
       input.seed.repeat(64),
       timestamp,
@@ -334,6 +345,141 @@ try {
       rmSync(directory, { recursive: true, force: true });
     }
     console.log("phase 3 passed: healthy attempt reconciles cleanly");
+  }
+
+  // Phase 4: an old receipt lookup finishes after another reconciler retired
+  // that attempt and the dispatcher submitted its successor. The old result
+  // must not reopen the successor's outbox for an unnecessary rebroadcast.
+  {
+    const { directory, sql, db } = makeDatabase();
+    let releaseReceipt!: () => void;
+    try {
+      execFileSync(
+        "node",
+        [
+          `${root}node_modules/@informalsystems/quint/dist/src/cli.js`,
+          "test",
+          `${root}formal/models/payment_dispatch.qnt`,
+          "--backend=typescript",
+          "--seed=1",
+          "--match=^staleFailurePreservesSubmittedSuccessorTest$",
+          `--out-itf=${join(directory, "trace-{test}-{seq}.json")}`,
+        ],
+        { stdio: "pipe" },
+      );
+      const trace = JSON.parse(
+        readFileSync(
+          join(
+            directory,
+            "trace-staleFailurePreservesSubmittedSuccessorTest-0.json",
+          ),
+          "utf8",
+        ),
+      ) as {
+        states: { s: { outbox: string } }[];
+      };
+      const wallet = privateKeyToAccount(`0x${"4".repeat(64)}`);
+      seedAttempt(sql, {
+        id: "attempt-race",
+        actor: "404",
+        network: "base-local",
+        chain: "base",
+        vault: "vault-base",
+        transactionId: BASE_TX,
+        seed: "4",
+        walletAddress: wallet.address,
+      });
+      const expiresAt = "2026-10-14T00:15:00.000Z";
+      const message = buildPaymentWalletMessage({
+        actorId: "404",
+        chain: "base",
+        address: wallet.address,
+        claimId: "claim-attempt-race",
+        claimDigest: "4".repeat(64),
+        nonce: "challenge-race",
+        expiresAt,
+      });
+      sql
+        .query(
+          "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          "challenge-race",
+          "claim-attempt-race",
+          "404",
+          message,
+          expiresAt,
+          timestamp,
+        );
+      sql
+        .query(
+          "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,?,?)",
+        )
+        .run(
+          "claim-attempt-race",
+          "404",
+          timestamp,
+          "challenge-race",
+          await wallet.signMessage({ message }),
+        );
+      let receiptStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        receiptStarted = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        releaseReceipt = resolve;
+      });
+      beforeBaseReceipt = async () => {
+        receiptStarted();
+        await released;
+      };
+      const slow = reconcileFailedAttempts(
+        db,
+        deployments,
+        rpcUrls,
+        genesisHashes,
+        now,
+      );
+      await started;
+      await reconcileFailedAttempts(
+        db,
+        deployments,
+        rpcUrls,
+        genesisHashes,
+        now,
+      );
+      assert.equal(attemptState(sql, "attempt-race")?.outboxState, "ready");
+      let submissions = 0;
+      const executor = {
+        async submit() {
+          submissions++;
+          return { transactionId: `0x${"c".repeat(64)}` };
+        },
+      };
+      assert.equal(
+        await dispatchPayment(db, executor, "obligation-attempt-race", now),
+        "submitted",
+      );
+      releaseReceipt();
+      await slow;
+      assert.equal(
+        attemptState(sql, "attempt-race")?.outboxState,
+        trace.states.at(-1)?.s.outbox,
+      );
+      assert.equal(
+        await dispatchPayment(db, executor, "obligation-attempt-race", now),
+        "unavailable",
+      );
+      assert.equal(submissions, 1);
+    } finally {
+      beforeBaseReceipt = null;
+      releaseReceipt?.();
+      sql.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+    console.log(
+      "phase 4 passed: stale failure proof preserves a submitted successor",
+    );
   }
 } finally {
   globalThis.fetch = originalFetch;

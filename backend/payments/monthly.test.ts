@@ -3267,3 +3267,68 @@ test("account keeps an award visible when a reservation is indexed during its re
   ]);
   expect(projections).toBe(2);
 });
+
+test("an allocation queued across its automatic cutoff cannot change the proposed amounts", async () => {
+  const current = new Date();
+  const period = new Date(
+    Date.UTC(current.getUTCFullYear(), current.getUTCMonth() - 1, 1),
+  )
+    .toISOString()
+    .slice(0, 7);
+  const end = Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1);
+  const deadline = Math.ceil(Date.now() / 1000) * 1000 + 3000;
+  const local = await createMonthlyAllocationFixture({ deployment, period });
+  const prepare = local.db.prepare.bind(local.db);
+  let queued = false;
+  local.db.prepare = (query) => {
+    const statement = prepare(query);
+    if (!query.startsWith("INSERT INTO monthly_allocation_changes"))
+      return statement;
+    return {
+      ...statement,
+      bind(...values: unknown[]) {
+        const bound = statement.bind(...values);
+        return {
+          ...bound,
+          async run() {
+            queued = true;
+            await Bun.sleep(Math.max(0, deadline - Date.now() + 50));
+            return bound.run();
+          },
+        };
+      },
+    };
+  };
+  try {
+    const service = monthlyOwnerService({
+      db: local.db,
+      getProject: local.getProject,
+      restricted: local.restricted,
+      networks: () => ["base-sepolia"],
+      verifyAuthority: async () => {},
+      schedule: () =>
+        parseMonthlySchedule(
+          JSON.stringify({
+            firstPeriod: period,
+            cutoffSecondsAfterPeriodEnd: (deadline - end) / 1000,
+          }),
+        ),
+      now: () => new Date(),
+    });
+    await expect(
+      service.changeAllocation(local.project.id, period, actor, {
+        githubUserId: B,
+        grossBase: "100",
+        expectedSequence: 0,
+      }),
+    ).rejects.toMatchObject({ code: "cutoff_passed" });
+    expect(queued).toBe(true);
+    expect(
+      local.sqlite
+        .query("SELECT COUNT(*) n FROM monthly_allocation_changes")
+        .get(),
+    ).toEqual({ n: 0 });
+  } finally {
+    local.sqlite.close();
+  }
+});

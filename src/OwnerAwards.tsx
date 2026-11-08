@@ -13,6 +13,7 @@ import { parseVaultAmount } from "./lib/payments/vault-amount";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
+import { useTimeBoundary, useUtcDay } from "./lib/use-time-boundary";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease, {
   releaseStoragePrefix,
@@ -83,6 +84,7 @@ export default function OwnerAwards({
   project: ProjectDefinition;
   awardMonths: readonly string[];
 }) {
+  useUtcDay();
   const months = [...new Set(awardMonths)].sort();
   // Monthly proposals are private records, and a new proposal never enters
   // the public cycle index, so that index cannot list the months an owner
@@ -311,6 +313,12 @@ export default function OwnerAwards({
       if (body && typeof body.automatic === "boolean")
         setView({ ...view, automatic: body.automatic });
     });
+
+  useTimeBoundary(
+    view?.automatic && !view.run && view.cutoffAt
+      ? Date.parse(view.cutoffAt)
+      : null,
+  );
 
   // Decision D1: with the automatic default on, the cutoff fixes the
   // allocations until the coordinator freezes them.

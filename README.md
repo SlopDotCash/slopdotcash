@@ -267,6 +267,11 @@ All code, browser, sandbox, build and production release checks still run.
 Missing or invalid published data stops the release. The option defaults to
 `false`; normal releases continue to collect fresh data.
 
+Before the first verification run, install the pinned local prover with
+`bun run lemmascript:setup`. It downloads and checks the Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH`.
+
 After the chosen preparation succeeds, run:
 
 ```bash
@@ -275,7 +280,8 @@ bun run format:check
 bun run test:e2e
 ```
 
-`bun run verify` checks the committed source records (brand tokens, projects,
+`bun run verify` checks selected LemmaScript contracts, the Quint state models,
+and the committed source records (brand tokens, projects,
 evaluations, disclosures, contribution quality, cycles, and protocol identity);
 audits dependencies; runs type and lint checks, smart-contract unit tests, and
 the database, API, CLI and Worker integration suites; and produces the static build.

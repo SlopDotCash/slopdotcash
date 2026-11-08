@@ -68,6 +68,23 @@ current behavior.
    - a confirming second Surplus verdict; no unresolved limitations; unchanged
      item just before acting.
 
+   The daily close slot is reserved in D1 before the GitHub request. Confirmed
+   closes in the rolling day and every unresolved close attempt consume
+   capacity. Confirmation records the action and settles its reservation in
+   one transaction, so they count once. The new-author review cap similarly
+   counts live review leases and unresolved closes, not only finished reviews.
+   A verified prior merge preserves the existing new-author cap exemption.
+
+   A timeout or lost response does not release a close slot. Replay the
+   original review job to reconcile GitHub's immutable actor, revision and
+   close-time evidence; replay does not send another close. If that evidence
+   remains unavailable, retain the pending attempt for operator investigation.
+   Do not delete it or expire it merely because the review lease ended.
+   A definitive GitHub 401, 403, 404, 410, 422 or 429 refusal records a rejected
+   attempt and releases its slot. A later retry creates a new attempt; it does
+   not rewrite that history. Expired ordinary reviews without a pending close
+   also release their author slot.
+
    Otherwise the bot only comments and labels. Eligible full reviews with no
    finding still update the bot's single review comment. An uncertain finding
    (confidence below 0.9, failed verbatim check, or unconfirmed second review)

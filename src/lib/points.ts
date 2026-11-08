@@ -20,6 +20,7 @@ import {
 import { assertPenaltyHistory } from "./score-penalties";
 import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
+import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 
 export const POINTS_RULE = "slop-points-v1";
 export const POINTS_NOTICE =
@@ -621,29 +622,48 @@ export function reconcilePointPenalties(
   }
   const bucket = (award: PointAward) =>
     `${award.actor.id}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
-  const available = new Map<string, number>();
+  const buckets = new Map<string, number>();
+  const bucketIndex = (key: string): number => {
+    const existing = buckets.get(key);
+    if (existing !== undefined) return existing;
+    const index = buckets.size;
+    buckets.set(key, index);
+    return index;
+  };
+  const credits: { bucket: number; amount: bigint }[] = [];
   for (const member of pointMembers(journal)) {
     for (const award of member.awards) {
       if (award.amount <= 0 || award.category === "payout-received") continue;
-      const key = bucket(award);
-      available.set(key, (available.get(key) ?? 0) + award.amount);
+      credits.push({
+        bucket: bucketIndex(bucket(award)),
+        amount: BigInt(award.amount),
+      });
     }
   }
   let result = journal;
   const latest = latestPoints(journal);
-  for (const candidate of [...candidates.values()].sort(
+  const ordered = [...candidates.values()].sort(
     (a, b) =>
       a.award.occurredAt.localeCompare(b.award.occurredAt) ||
       a.award.workUnitId.localeCompare(b.award.workUnitId),
-  )) {
+  );
+  const requests = ordered.map((candidate) => ({
+    bucket: bucketIndex(bucket(candidate.award)),
+    amount:
+      candidate.penalty?.reversedAt === null
+        ? BigInt(candidate.penalty.debit)
+        : 0n,
+  }));
+  const applied = consumeBuckets(
+    sumBuckets(buckets.size, credits),
+    requests,
+  ).applied;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const candidate = ordered[index];
     const evidence = candidate.penalty;
     if (!evidence) continue;
-    const key = bucket(candidate.award);
-    const debit =
-      evidence.reversedAt === null
-        ? Math.min(evidence.debit, available.get(key) ?? 0)
-        : 0;
-    available.set(key, (available.get(key) ?? 0) - debit);
+    const debit = Number(applied[index]);
+    if (!Number.isSafeInteger(debit)) throw new Error("Points total overflow");
     const award = { ...candidate.award, amount: -debit || 0 };
     const prior = latest.get(award.key);
     if (
@@ -1077,6 +1097,8 @@ export function pointMembers(
       groups.set(key, a);
   }
   const members = new Map<string, PointsMember>();
+  const memberIndexes = new Map<string, number>();
+  const earnedAmounts: { bucket: number; amount: bigint }[] = [];
   for (const a of groups.values()) {
     const m = members.get(a.actor.id) ?? {
       actor: a.actor,
@@ -1087,12 +1109,24 @@ export function pointMembers(
       badges: [],
       awards: [],
     };
-    m.total += a.amount;
-    if (a.occurredAt.startsWith(month)) m.monthly += a.amount;
-    if (!Number.isSafeInteger(m.total))
-      throw new Error("Points total overflow");
+    if (!memberIndexes.has(a.actor.id))
+      memberIndexes.set(a.actor.id, memberIndexes.size);
+    const index = memberIndexes.get(a.actor.id) as number;
+    earnedAmounts.push({ bucket: index * 2, amount: BigInt(a.amount) });
+    if (a.occurredAt.startsWith(month))
+      earnedAmounts.push({ bucket: index * 2 + 1, amount: BigInt(a.amount) });
     m.awards.push(a);
     members.set(a.actor.id, m);
+  }
+  // Preserve the existing refusal before applying negative adjustments: a
+  // later debit does not make an overflowing positive earned total valid.
+  const earnedTotals = sumBuckets(memberIndexes.size * 2, earnedAmounts);
+  for (const [actor, index] of memberIndexes) {
+    const member = members.get(actor) as PointsMember;
+    member.total = Number(earnedTotals[index * 2]);
+    member.monthly = Number(earnedTotals[index * 2 + 1]);
+    if (!Number.isSafeInteger(member.total))
+      throw new Error("Points total overflow");
   }
   // An assessed zero corrects an amount; it does not erase the contributor.
   // Keep these identities discoverable without counting zero awards as badges.
@@ -1122,12 +1156,22 @@ export function pointMembers(
     }
   }
   for (const m of members.values()) {
-    for (const adjustment of adjustments.get(m.actor.id) ?? []) {
-      m.total += adjustment.amount;
+    const memberAdjustments = adjustments.get(m.actor.id) ?? [];
+    const signedAmounts = [
+      { bucket: 0, amount: BigInt(m.total) },
+      { bucket: 1, amount: BigInt(m.monthly) },
+    ];
+    for (const adjustment of memberAdjustments) {
+      signedAmounts.push({ bucket: 0, amount: BigInt(adjustment.amount) });
       if (adjustment.occurredAt.startsWith(month))
-        m.monthly += adjustment.amount;
+        signedAmounts.push({ bucket: 1, amount: BigInt(adjustment.amount) });
       m.awards.push(adjustment);
     }
+    const totals = sumBuckets(2, signedAmounts);
+    m.total = Number(totals[0]);
+    m.monthly = Number(totals[1]);
+    if (!Number.isSafeInteger(m.total) || !Number.isSafeInteger(m.monthly))
+      throw new Error("Points total overflow");
     m.actor = actors.get(m.actor.id)?.award.actor ?? m.actor;
     m.awards.sort(
       (a, b) =>

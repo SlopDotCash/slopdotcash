@@ -1076,9 +1076,15 @@ export function monthlyOwnerService(deps: {
       try {
         // Enabling automatic payment in another tab must also take effect
         // before this allocation write, not only at an earlier settings read.
+        // A queued statement can cross the deadline after changedAt was bound.
+        // Both the caller clock and SQLite's execution clock must allow it.
         const inserted = await deps.db
           .prepare(
-            `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at) SELECT ?,?,?,?,?,?,? WHERE (?=0 OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=0) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+            `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at)
+             SELECT ?1,?2,?3,?4,?5,?6,?7
+             WHERE ((?8=0 AND (?10 IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ','now')<?10))
+               OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=?9 ORDER BY sequence DESC LIMIT 1),1)=0)
+               AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
           )
           .bind(
             project.id,
@@ -1090,6 +1096,7 @@ export function monthlyOwnerService(deps: {
             changedAt.toISOString(),
             Number(cutoffPassed),
             project.id,
+            cutoff?.toISOString() ?? null,
             actor.githubId,
           )
           .run();
@@ -1113,7 +1120,7 @@ export function monthlyOwnerService(deps: {
       if (changed !== 1) {
         await assertMonthlyParticipation(deps.db, actor.githubId);
         if (
-          cutoffPassed &&
+          cutoff !== null &&
           (await automaticMonthlyPayment(deps.db, project.id))
         )
           throw new MonthlyPaymentError(

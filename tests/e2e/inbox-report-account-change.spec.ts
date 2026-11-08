@@ -1,12 +1,16 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
-async function privateReports(page: Page, standalone = false) {
+async function privateReports(
+  page: Page,
+  standalone = false,
+  pendingUntil: string | null = null,
+) {
   const state = {
     actor: "42" as string | null,
     sessionUnavailable: false,
     reportsUnavailable: false,
-    revokedStatus: null as 401 | 404 | null,
+    revokedStatus: null as 401 | 403 | 404 | 410 | null,
     raceAtNextDetail: false,
     rejectedActorBindings: 0,
     mutations: 0,
@@ -51,7 +55,7 @@ async function privateReports(page: Page, standalone = false) {
           projectId: `private-project-${actor}`,
           repository: "example/private",
           origin: "slop",
-          state: "draft",
+          state: pendingUntil ? "uncertain" : "draft",
           revision: 1,
           attempt: 0,
           advisory: null,
@@ -59,7 +63,7 @@ async function privateReports(page: Page, standalone = false) {
           failureCode: null,
           caseId: `sc_account_${actor}_private`,
           retryAllowed: false,
-          reconcileAfter: null,
+          reconcileAfter: pendingUntil,
           intake: {
             state: "legitimate",
             receivedAt: "2026-10-27T12:00:00.000Z",
@@ -254,7 +258,7 @@ test("report errors retain evidence only while the current account is verified",
   await expect(page.getByRole("alert")).toBeVisible();
 });
 
-for (const status of [401, 404] as const) {
+for (const status of [401, 403, 404, 410] as const) {
   test(`revoked private-report access (${status}) removes retained evidence`, async ({
     page,
     diagnostics,
@@ -339,4 +343,26 @@ test("a standalone private workspace clears drafts when its request loses authen
     }),
   ).toHaveCount(0);
   await expect(page.getByRole("alert")).toBeVisible();
+});
+
+test("the passage of an uncertain report retry time updates its message", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  const deadline = "2026-11-07T18:00:00.000Z";
+  await page.clock.install({ time: new Date(Date.parse(deadline) - 30_000) });
+  await privateReports(page, false, deadline);
+  await expect(
+    page.getByText(/Not confirmed by GitHub yet\. Check again after/u),
+  ).toBeVisible();
+  await page.clock.pauseAt(new Date(Date.parse(deadline) - 1));
+  await page.clock.fastForward(1);
+  await expect(
+    page.getByText("Not confirmed by GitHub. Check again.", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("report-retry-ready.png"),
+    fullPage: true,
+  });
 });

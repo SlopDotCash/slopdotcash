@@ -4,6 +4,11 @@ import {
   type EscrowChain,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
+import {
+  bountyFeeAmount,
+  ordinaryFeeAmount,
+  ordinaryFeeMatches,
+} from "../verified-money";
 
 export { formatBaseUnits };
 
@@ -150,14 +155,14 @@ export function payoutFee(
     throw new Error("Invalid gross award");
   if (policy === "security-bounty") {
     if (gross % 4n !== 0n) throw new Error("Bounty split must be exact");
-    return gross / 4n;
+    return bountyFeeAmount(gross);
   }
   if (policy !== "ordinary") throw new Error("Unknown payout policy");
-  return (gross + 49n) / 50n;
+  return ordinaryFeeAmount(gross);
 }
 /** The 2% ordinary fee for any amount, rounded up; zero for zero. For projections and plans. */
 export function ordinaryFee(gross: bigint): bigint {
-  return gross > 0n ? (gross + 49n) / 50n : 0n;
+  return ordinaryFeeAmount(gross);
 }
 /** The fee a vault records for `gross`. Vaults deployed before fees rounded up still record
  * floor(gross / 50) until their upgrade, so reconciliation accepts either 2% rounding and
@@ -169,10 +174,9 @@ export function acceptsPayoutFee(
   policy: PayoutPolicy = "ordinary",
 ): boolean {
   const expected = payoutFee(gross, policy);
-  return (
-    fee === expected ||
-    (policy === "ordinary" && fee === gross / 50n && fee + 1n === expected)
-  );
+  return policy === "ordinary"
+    ? ordinaryFeeMatches(gross, fee)
+    : fee === expected;
 }
 export function isAssetDecimals(value: unknown): value is number {
   return (

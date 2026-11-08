@@ -15,6 +15,7 @@ import {
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   CANCELED,
   expect,
@@ -1969,15 +1970,13 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("security-notice-acknowledged.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    await enlargeText(page.locator("body"));
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("security-notice-zoom.png"),
+      path: test.info().outputPath("security-notice-text-200.png"),
       fullPage: true,
     });
     await context.close();
@@ -2061,12 +2060,10 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("disclosure-approved.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    await enlargeText(page.locator("body"));
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("disclosure-zoom.png"),
+      path: test.info().outputPath("disclosure-text-200.png"),
       fullPage: true,
     });
     expect(diagnostics.count(CANCELED)).toBe(canceled);
@@ -2382,22 +2379,16 @@ test("private settlement requires visibility consent and produces an unsigned re
     path: test.info().outputPath("private-settlement.png"),
     fullPage: true,
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(page.locator("body"));
   await expectAccessible(page, { everyRule: true });
   await page.screenshot({
-    path: test.info().outputPath("private-settlement-zoom.png"),
+    path: test.info().outputPath("private-settlement-text-200.png"),
     fullPage: true,
   });
-  // The existing site supports a minimum layout width of 320 CSS pixels.
-  // At 200% on a 320px viewport it scrolls to that minimum; the request
-  // must not expand the page beyond it.
+  // Enlarged text must preserve the current CSS viewport without page overflow.
   expect(
     await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth <=
-        Math.max(window.innerWidth, 640) + 1,
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
     ),
   ).toBe(true);
   await context.close();
@@ -2768,17 +2759,15 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     path: test.info().outputPath("home-security-bounty.png"),
     fullPage: true,
   });
-  if ((page.viewportSize()?.width ?? 0) >= 640) {
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
-    await expectAccessible(page);
-  }
+
+  await enlargeText(page.locator("body"));
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await expectAccessible(page);
+
   await link.click();
   await expect(
     page.getByRole("heading", {
@@ -3013,9 +3002,7 @@ for (const slowPage of [false, true]) {
         releasePage();
         await (await loaded).finished();
       }
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
+      await enlargeText(page.locator("body"));
       await expectAccessible(page);
       const retry = page.waitForResponse(
         (response) =>
@@ -3344,21 +3331,62 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-inbox.png"),
       fullPage: true,
     });
-    if ((page.viewportSize()?.width ?? 0) >= 640) {
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-      await expectAccessible(page);
-      await page.screenshot({
-        path: test.info().outputPath("slop-report-inbox-zoom.png"),
-        fullPage: true,
-      });
+
+    const textResizeLayout = () =>
+      page.evaluate(() => ({
+        viewport: window.innerWidth,
+        document: document.documentElement.scrollWidth,
+        overflow: [...document.querySelectorAll<HTMLElement>("body *")]
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {
+              tag: element.tagName,
+              classes: element.className,
+              width: rect.width,
+              right: rect.right,
+              scrollWidth: element.scrollWidth,
+              whiteSpace: style.whiteSpace,
+              fontSize: style.fontSize,
+            };
+          })
+          .filter((element) => element.right > window.innerWidth + 1),
+      }));
+    const beforeTextResize = await textResizeLayout();
+    await enlargeText(page.locator("body"));
+    const afterTextResize = await textResizeLayout();
+    await test.info().attach("private-intake-text-resize-layout", {
+      body: JSON.stringify({
+        before: beforeTextResize,
+        after: afterTextResize,
+      }),
+      contentType: "application/json",
+    });
+    expect(afterTextResize.document).toBeLessThanOrEqual(
+      afterTextResize.viewport,
+    );
+    const reportText = report.getByRole("region", {
+      name: new RegExp(summary, "u"),
+    });
+    await reportText.focus();
+    await expect(reportText).toBeFocused();
+    if (
+      await reportText.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      )
+    ) {
+      await reportText.press("PageDown");
+      await expect
+        .poll(() => reportText.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(0);
+      await reportText.press("Home");
     }
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("slop-report-inbox-text-200.png"),
+      fullPage: true,
+    });
+
     await page.reload({ waitUntil: "networkidle" });
     await report.getByText("Read private report", { exact: true }).click();
     await expect(report.locator(".security-report-text")).toHaveText(
@@ -3822,7 +3850,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       });
       await openPrivateDelivery(page);
       await expect(page.getByRole("alert")).toContainText("is out of date");
-      // The effective layout of the native desktop review at 200% zoom.
+      // Approximate the desktop zoom layout with an 864 CSS-pixel viewport.
       // Backward keyboard navigation must not hide focus under the header.
       const originalViewport = page.viewportSize();
       await page.setViewportSize({ width: 864, height: 498 });
@@ -4668,6 +4696,11 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   request,
   diagnostics,
 }) => {
+  // The real SPA navigation deliberately leaves Home while its public Points
+  // shards may still be loading. Their aborts are the expected cleanup.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
   test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
   test.setTimeout(120_000);
   const id = `inbox-draft-${projectSuffix()}`;
@@ -4870,4 +4903,128 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   } finally {
     release();
   }
+});
+
+test("an Inbox focus recheck clears the account changed in another tab @registry @private-intake", async ({
+  page,
+  context,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
+  const id = `tab-account-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  const mobile = test.info().project.name.endsWith("-mobile");
+  const first: Role = mobile ? "inbox-focus-mobile" : "inbox-focus-desktop";
+  const second: Role = mobile ? "reporter-a" : "reporter-b";
+  await listProject(request, TOKENS.security, repository, id, {});
+  await setIntake(request, repository, "disabled");
+  const summary = `Synthetic first-tab report ${id}`;
+  const description = `Synthetic confidential first-tab detail ${id}, created only in local test storage.`;
+  const companionSummary = `${summary} companion`;
+  const companionDescription = `${description} Distinct companion evidence.`;
+  const createReport = (reportSummary: string, reportDescription: string) =>
+    api(request, "POST", "security-submissions", TOKENS[first], {
+      projectId: id,
+      idempotencyKey: key(),
+      origin: "slop",
+      report: {
+        summary: reportSummary,
+        description: reportDescription,
+        cvssVectorString: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      },
+    });
+  const received = await createReport(summary, description);
+  const companion = await createReport(companionSummary, companionDescription);
+  expect(received.status, JSON.stringify(received.body)).toBe(201);
+  expect(companion.status, JSON.stringify(companion.body)).toBe(201);
+  const submission = received.body.submission as { id: string };
+  const companionSubmission = companion.body.submission as { id: string };
+  await signIn(page, TOKENS[first]);
+  await page.goto(`/inbox?submission=${submission.id}`, {
+    waitUntil: "networkidle",
+  });
+  const report = page.locator(
+    `[aria-labelledby="submission-${submission.id}"]`,
+  );
+  await report.getByText("Read private report", { exact: true }).click();
+  await expect(report.getByText(description, { exact: true })).toBeVisible();
+  const companionReport = page.locator(
+    `[aria-labelledby="submission-${companionSubmission.id}"]`,
+  );
+  const companionDetails = companionReport.locator(":scope > details");
+  if (
+    !(await companionDetails.evaluate(
+      (element) => (element as HTMLDetailsElement).open,
+    ))
+  )
+    await companionDetails.locator(":scope > summary").click();
+  await companionReport
+    .getByText("Read private report", { exact: true })
+    .click();
+  await expect(
+    companionReport.getByText(companionDescription, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("region", { name: new RegExp(summary, "u") }),
+  ).toBeVisible();
+  await expect(
+    companionReport.getByRole("region", {
+      name: new RegExp(companionSummary, "u"),
+    }),
+  ).toBeVisible();
+  await expectAccessible(page, {
+    include: ".security-report-text",
+    everyRule: true,
+  });
+  await page.screenshot({
+    path: test.info().outputPath("two-private-report-regions.png"),
+    fullPage: true,
+  });
+  const secondPage = await context.newPage();
+  await secondPage.bringToFront();
+  await signIn(secondPage, TOKENS[second]);
+  await secondPage.getByRole("heading", { level: 1 }).click();
+  await test.info().attach("cross-tab-before-return", {
+    body: JSON.stringify({
+      firstFocused: await page.evaluate(() => document.hasFocus()),
+      secondFocused: await secondPage.evaluate(() => document.hasFocus()),
+    }),
+    contentType: "application/json",
+  });
+  await page.bringToFront();
+  await page.getByRole("heading", { name: "Inbox", exact: true }).click();
+  // Let the browser's automatic focus refresh finish before observing the
+  // explicit recheck below, so its canceled response cannot win the waiter.
+  await page.waitForLoadState("networkidle");
+  const rechecked = page.waitForResponse(async (response) => {
+    if (new URL(response.url()).pathname !== "/api/v1/notifications")
+      return false;
+    if (response.status() !== 200) return false;
+    return (
+      (await response.json()).recipientGithubId === account(second).githubId
+    );
+  });
+  // Automated Chromium marks both tabs focused, even in headed mode. The
+  // account change above uses a real shared cookie; deliver its return signal
+  // explicitly instead of claiming to test the operating system's tab focus.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await rechecked;
+  await expect(page.getByText(description, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(summary, { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText(companionDescription, { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText(companionSummary, { exact: true })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("inbox-after-cross-tab-account.png"),
+    fullPage: true,
+  });
+  await secondPage.close();
 });

@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1TransactionalDatabase } from "../d1";
 import { dispatchPayment } from "./dispatch";
+import { indexPaymentEvent } from "./ledger";
 
 const at = "2026-10-30T00:00:00.000Z";
 const actor = "123";
@@ -94,6 +99,43 @@ function fixture() {
     )
     .run("project", manifest, digest, at, at);
   return { database, sqlite };
+}
+
+async function finalizeFixturePayment(
+  { database, sqlite }: ReturnType<typeof fixture>,
+  transactionId: string,
+) {
+  sqlite
+    .query(`INSERT INTO vault_snapshots
+    (project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,
+     total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,
+     free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at)
+    VALUES('project','base-sepolia','base','0x3000000000000000000000000000000000000003',
+     '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',6,'100000000','0','0','0','0','0','0','98000000','2000000','0',NULL,'1',?,?)`)
+    .run(at, at);
+  await indexPaymentEvent(
+    database,
+    {
+      async verifyFinalized(input) {
+        return {
+          ...input,
+          blockId: "block-final",
+          projectId: "project",
+          network: "base-sepolia",
+          chain: "base",
+          vault: "0x3000000000000000000000000000000000000003",
+          githubUserId: actor,
+          grossMicro: "100000000",
+          netMicro: "98000000",
+          feeMicro: "2000000",
+          sourceDigest: digest,
+          destination: "0x0000000000000000000000000000000000000004",
+        };
+      },
+    },
+    { kind: "paid", obligationId, transactionId, eventIndex: 0 },
+    at,
+  );
 }
 
 test("a late dispatch response cannot replace the recorded transaction", async () => {
@@ -291,5 +333,181 @@ test("a retry that returns the recorded transaction id submits the outbox", asyn
     });
   } finally {
     sqlite.close();
+  }
+});
+
+test("Quint ambiguous-send trace conforms to migrated SQLite dispatch and finalized ledger", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-dispatch-quint-"));
+  const { database, sqlite } = fixture();
+  try {
+    execFileSync(
+      "node",
+      [
+        resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
+        "test",
+        "formal/models/payment_dispatch.qnt",
+        "--backend=typescript",
+        "--seed=1",
+        "--match=^ambiguousRetryTest$",
+        `--out-itf=${join(directory, "trace-{test}-{seq}.json")}`,
+      ],
+      { stdio: "pipe" },
+    );
+    const trace = JSON.parse(
+      readFileSync(join(directory, "trace-ambiguousRetryTest-0.json"), "utf8"),
+    ) as {
+      states: { s: { outbox: string } }[];
+    };
+    const expected = trace.states
+      .map(({ s }) => s.outbox)
+      .filter((state, index, all) => index === 0 || state !== all[index - 1]);
+    const actual: string[] = [];
+    const observe = () =>
+      actual.push(
+        (
+          sqlite
+            .query("SELECT state FROM payment_outbox WHERE obligation_id=?")
+            .get(obligationId) as { state: string }
+        ).state,
+      );
+    observe();
+    let firstAttempt = "";
+    await expect(
+      dispatchPayment(
+        database,
+        {
+          async submit(input) {
+            firstAttempt = input.idempotencyKey;
+            observe();
+            throw new Error("response lost");
+          },
+        },
+        obligationId,
+        new Date(at),
+      ),
+    ).rejects.toThrow("response lost");
+    observe();
+    await expect(
+      dispatchPayment(
+        database,
+        {
+          async submit(input) {
+            expect(input.idempotencyKey).toBe(firstAttempt);
+            observe();
+            return { transactionId: "tx-ambiguous-recovered" };
+          },
+        },
+        obligationId,
+        new Date(at),
+      ),
+    ).resolves.toBe("submitted");
+    observe();
+    await finalizeFixturePayment(
+      { database, sqlite },
+      "tx-ambiguous-recovered",
+    );
+    observe();
+    expect(actual).toEqual(expected);
+    expect(
+      sqlite.query("SELECT count(*) count FROM payment_attempts").get(),
+    ).toEqual({ count: 1 });
+    expect(sqlite.query("SELECT state FROM payment_obligations").get()).toEqual(
+      { state: "paid" },
+    );
+  } finally {
+    sqlite.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Quint late original remains payable after a newly authorized wallet replaces it", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-late-wallet-quint-"));
+  const f = fixture();
+  try {
+    execFileSync(
+      "node",
+      [
+        resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
+        "test",
+        "formal/models/payment_dispatch.qnt",
+        "--backend=typescript",
+        "--seed=1",
+        "--match=^lateOriginalAfterWalletReplacementTest$",
+        `--out-itf=${join(directory, "trace-{test}-{seq}.json")}`,
+      ],
+      { stdio: "pipe" },
+    );
+    const trace = JSON.parse(
+      readFileSync(
+        join(directory, "trace-lateOriginalAfterWalletReplacementTest-0.json"),
+        "utf8",
+      ),
+    ) as { states: { s: { outbox: string } }[] };
+    const expected = trace.states
+      .map(({ s }) => s.outbox)
+      .filter((value, index, all) => index === 0 || value !== all[index - 1]);
+    const actual: string[] = [];
+    const observe = () =>
+      actual.push(
+        (
+          f.sqlite.query("SELECT state FROM payment_outbox").get() as {
+            state: string;
+          }
+        ).state,
+      );
+    observe();
+    const started = deferred<void>();
+    const result = deferred<{ transactionId: string }>();
+    const dispatch = dispatchPayment(
+      f.database,
+      {
+        async submit(input) {
+          expect(input.claimId).toBe(claimId);
+          observe();
+          started.resolve();
+          return result.promise;
+        },
+      },
+      obligationId,
+      new Date(at),
+    );
+    await started.promise;
+    f.sqlite
+      .query(`INSERT INTO wallet_claims
+      (id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,
+       record_sha256,supersedes_claim_id,created_at,chain)
+      VALUES('successor',?,'contributor','0x0000000000000000000000000000000000000006',
+       'd1_registry',?,?,?, ?,?,'base')`)
+      .run(actor, "cd".repeat(32), at, "cd".repeat(32), claimId, at);
+    f.sqlite
+      .query(
+        "INSERT INTO payment_wallet_challenges VALUES('successor-challenge','successor',?,'fixture','2026-10-30T01:00:00.000Z',?)",
+      )
+      .run(actor, at);
+    f.sqlite
+      .query(
+        "INSERT INTO payment_wallet_authorizations VALUES('successor',?,?,'successor-challenge','fixture')",
+      )
+      .run(actor, at);
+    expect(
+      f.sqlite.query("SELECT id FROM effective_payment_wallet_claims").get(),
+    ).toEqual({ id: "successor" });
+    result.resolve({ transactionId: "late-original" });
+    expect(await dispatch).toBe("submitted");
+    observe();
+    await finalizeFixturePayment(f, "late-original");
+    observe();
+    expect(actual).toEqual(expected);
+    expect(
+      f.sqlite.query("SELECT claim_id FROM payment_attempts").get(),
+    ).toEqual({ claim_id: claimId });
+    expect(
+      f.sqlite
+        .query("SELECT state,paid_transaction FROM payment_obligations")
+        .get(),
+    ).toEqual({ state: "paid", paid_transaction: "late-original" });
+  } finally {
+    f.sqlite.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

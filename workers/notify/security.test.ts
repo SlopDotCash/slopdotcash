@@ -1068,6 +1068,180 @@ test("pre-pilot inbox history is not mailed and does not expose a dead acknowled
   h.sqlite.close();
 });
 
+test("populated mail upgrades preserve history and bind only future notices to new consent", async () => {
+  const h = await setup(true);
+  try {
+    const notices = () =>
+      h.sqlite.query("SELECT * FROM notifications ORDER BY event_key").all();
+    const securityQueue = () =>
+      h.sqlite
+        .query(
+          "SELECT id,event_key,recipient_github_id,case_id,template_version,state,attempts,next_attempt_at,claimed_at,destination_digest,provider_reference,acknowledged_at,created_at,updated_at,escalation_checked_at,escalation_of FROM security_notification_outbox ORDER BY id",
+        )
+        .all();
+    const activityQueue = () =>
+      h.sqlite
+        .query("SELECT * FROM activity_notification_outbox ORDER BY id")
+        .all();
+    const securityEvidence = () =>
+      h.sqlite
+        .query(
+          "SELECT * FROM security_notification_delivery_events ORDER BY id",
+        )
+        .all();
+    const activityEvidence = () =>
+      h.sqlite
+        .query(
+          "SELECT * FROM activity_notification_delivery_events ORDER BY id",
+        )
+        .all();
+    const apply = (name: string) =>
+      h.sqlite.exec(readFileSync(`migrations/${name}`, "utf8"));
+    h.sqlite
+      .query("UPDATE notifications SET read_at=? WHERE recipient_github_id=?")
+      .run(at, backup.githubId);
+    const prePilot = notices();
+    expect(prePilot).toHaveLength(2);
+    expect(
+      prePilot.map((row) => (row as { read_at: string | null }).read_at).sort(),
+    ).toEqual([at, null].sort());
+    apply("0030_security_notification_outbox.sql");
+    expect(notices()).toEqual(prePilot);
+    expect(securityQueue()).toEqual([]);
+
+    const oldVersion = "b".repeat(64);
+    h.sqlite
+      .query(
+        "INSERT INTO notification_email_preferences(github_id,enabled,destination_version,updated_at) VALUES(?,1,?,?)",
+      )
+      .run(reporter.githubId, oldVersion, at);
+    h.sqlite
+      .query(
+        "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES('security-case:old-queued',?,'security_case',?,'/security',?,?)",
+      )
+      .run(reporter.githubId, h.caseId, at, at);
+    h.sqlite
+      .query(
+        "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES('project-revision:old-delivered',?,'project_revision','bounty','/projects/bounty',?,?)",
+      )
+      .run(reporter.githubId, at, at);
+    h.sqlite.exec(`
+      UPDATE security_notification_outbox SET state='retrying',attempts=1,destination_digest='${oldVersion}';
+      INSERT INTO security_notification_delivery_events(delivery_id,state,evidence_reference,attempt,destination_digest,at)
+        SELECT id,'retrying','old-security-evidence',1,destination_digest,created_at FROM security_notification_outbox;
+      UPDATE activity_notification_outbox SET state='provider-accepted',attempts=1,provider_reference='old-provider',destination_digest='${oldVersion}';
+      INSERT INTO activity_notification_delivery_events(delivery_id,state,evidence_reference,attempt,destination_digest,at)
+        SELECT id,'provider-accepted','old-activity-evidence',1,destination_digest,created_at FROM activity_notification_outbox;
+    `);
+    const populatedNotices = notices();
+    const oldSecurity = securityQueue();
+    const oldActivity = activityQueue();
+    const oldSecurityEvidence = securityEvidence();
+    const oldActivityEvidence = activityEvidence();
+    expect(oldSecurity).toHaveLength(1);
+    expect(oldActivity).toHaveLength(1);
+    for (const name of [
+      "0063_account_closure_notification_events.sql",
+      "0065_slopbot_appeal_notifications.sql",
+      "0079_slopbot_scam_review_notifications.sql",
+    ]) {
+      apply(name);
+      expect(notices()).toEqual(populatedNotices);
+      expect(securityQueue()).toEqual(oldSecurity);
+      expect(activityQueue()).toEqual(oldActivity);
+      expect(securityEvidence()).toEqual(oldSecurityEvidence);
+      expect(activityEvidence()).toEqual(oldActivityEvidence);
+    }
+    apply("0111_verified_notification_email.sql");
+    expect(notices()).toEqual(populatedNotices);
+    expect(securityQueue()).toEqual(oldSecurity);
+    const boundVersions = () =>
+      h.sqlite
+        .query(
+          "SELECT id,destination_version FROM security_notification_outbox ORDER BY id",
+        )
+        .all();
+    const unboundHistory = oldSecurity.map((row) => ({
+      id: (row as { id: string }).id,
+      destination_version: null,
+    }));
+    expect(boundVersions()).toEqual(unboundHistory);
+    expect(activityQueue()).toEqual(oldActivity);
+    expect(securityEvidence()).toEqual(oldSecurityEvidence);
+    expect(activityEvidence()).toEqual(oldActivityEvidence);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT security_enabled FROM notification_email_preferences WHERE github_id=?",
+        )
+        .get(reporter.githubId),
+    ).toEqual({ security_enabled: null });
+    expect(
+      h.sqlite
+        .query("SELECT COUNT(*) AS n FROM notification_email_destinations")
+        .get(),
+    ).toEqual({ n: 0 });
+
+    const currentVersion = "c".repeat(64);
+    h.sqlite
+      .query("INSERT INTO notification_email_destinations VALUES(?,?,?,?)")
+      .run(reporter.githubId, "new-reporter@example.com", currentVersion, at);
+    h.sqlite
+      .query(
+        "UPDATE notification_email_preferences SET security_enabled=1,destination_version=? WHERE github_id=?",
+      )
+      .run(currentVersion, reporter.githubId);
+    // Opt-in binds no historical queue rows and creates no retrospective mail.
+    expect(securityQueue()).toEqual(oldSecurity);
+    expect(boundVersions()).toEqual(unboundHistory);
+    expect(activityQueue()).toEqual(oldActivity);
+    await dispatchSecurityMail({ ...h.deps, generalEmail: true });
+    expect(h.sent).toHaveLength(0);
+    expect(h.rows()[0].state).toBe("suppressed");
+
+    h.sqlite
+      .query(
+        "UPDATE security_cases SET submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=? WHERE id=?",
+      )
+      .run(at, at, owner.githubId, h.caseId);
+    for (let replay = 0; replay < 2; replay++)
+      await h.db.batch([notifySecurityReportReceived(h.db, h.caseId)]);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT destination_version FROM security_notification_outbox WHERE event_key=?",
+        )
+        .get(`security-receipt:${h.caseId}`),
+    ).toEqual({ destination_version: currentVersion });
+    expect(securityQueue()).toHaveLength(2);
+    await dispatchSecurityMail({ ...h.deps, generalEmail: true });
+    expect(h.sent.map((mail) => mail.to)).toEqual(["new-reporter@example.com"]);
+    expect(securityEvidence()[0]).toEqual(oldSecurityEvidence[0]);
+    expect(activityEvidence()).toEqual(oldActivityEvidence);
+    expect(
+      notices().filter(
+        (row) =>
+          (row as { event_key: string }).event_key !==
+          `security-receipt:${h.caseId}`,
+      ),
+    ).toEqual(populatedNotices);
+    expect(() =>
+      h.sqlite
+        .query(
+          "UPDATE notifications SET detail='rewritten' WHERE recipient_github_id=?",
+        )
+        .run(backup.githubId),
+    ).toThrow("notifications change only from unread to read");
+    expect(() =>
+      h.sqlite.exec(
+        "DELETE FROM security_notification_delivery_events WHERE evidence_reference='old-security-evidence'",
+      ),
+    ).toThrow("delivery evidence is append-only");
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("a negative receipt cannot reconcile a later attempt or append duplicate evidence", async () => {
   const h = await setup();
   h.deps.sendEmail = async () => {

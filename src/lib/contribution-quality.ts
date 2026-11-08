@@ -2,6 +2,7 @@
 import { sha256Hex } from "./async-sha256.mjs";
 import { isCanonicalExternalSourceUrl } from "./external-sources";
 import { exactRecord, type FundingPreparation } from "./funding-review-data";
+import { weightedShare } from "./verified-money";
 
 export const QUALITY_TIERS = {
   micro: 1,
@@ -218,8 +219,9 @@ export function allocateQualityWeights(
   const total = [...weights.values()].reduce((sum, weight) => sum + weight, 0n);
   const rows = [...weights].map(([id, weight]) => ({
     id,
-    amount: total ? (cap * weight) / total : 0n,
-    remainder: total ? (cap * weight) % total : 0n,
+    ...(total
+      ? weightedShare(cap, weight, total)
+      : { amount: 0n, remainder: 0n }),
   }));
   rows.sort((a, b) => {
     if (a.remainder !== b.remainder) return a.remainder > b.remainder ? -1 : 1;

@@ -45,3 +45,12 @@ workers/operator-keeper/wrangler.operator.toml
 
 # Local development backend data (scripts/dev-backend.ts).
 .slop-dev/
+
+# Local formal verification results
+evidence/formal/
+_apalache-out/
+
+# Local pinned LemmaScript prover and regeneration scratch state.
+.tools/
+*.dfy.base
+*.dfy.merged

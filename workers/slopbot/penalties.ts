@@ -3,6 +3,8 @@
 // once, on an upheld appeal or a maintainer reopen. A closure alone never
 // authorizes a debit: only a confirmed close of a closure-eligible author
 // (D6) reaches recordPenalty. Changes to this table apply prospectively.
+
+import { penaltyDebit } from "../verified-policy";
 import type { Category } from "./contracts";
 import type { D1Database } from "./persistence";
 
@@ -17,24 +19,36 @@ export type PenaltyRule = {
 
 const NO_DEBIT: PenaltyRule = {
   action: "close",
-  debitThirds: 0,
+  debitThirds: penaltyDebit("low_quality"),
   moderatorReview: false,
 };
 // A clear violation of a project rule that the verdict quotes verbatim.
 const QUOTED_RULE: PenaltyRule = {
   action: "close",
-  debitThirds: 1,
+  debitThirds: penaltyDebit("busywork"),
   moderatorReview: false,
 };
 
 export const PENALTY_TABLE: Readonly<
   Record<Exclude<Category, "none">, PenaltyRule>
 > = {
-  spam: { action: "close", debitThirds: 3, moderatorReview: false },
-  scam: { action: "close", debitThirds: 24, moderatorReview: true },
+  spam: {
+    action: "close",
+    debitThirds: penaltyDebit("spam"),
+    moderatorReview: false,
+  },
+  scam: {
+    action: "close",
+    debitThirds: penaltyDebit("scam"),
+    moderatorReview: true,
+  },
   low_quality: NO_DEBIT,
   duplicate: NO_DEBIT,
-  out_of_scope: { action: "label", debitThirds: 0, moderatorReview: false },
+  out_of_scope: {
+    action: "label",
+    debitThirds: penaltyDebit("out_of_scope"),
+    moderatorReview: false,
+  },
   busywork: QUOTED_RULE,
   gaming: QUOTED_RULE,
   // Not in the published table: no debit.

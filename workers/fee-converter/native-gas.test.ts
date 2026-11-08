@@ -1,10 +1,16 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
+  encodeAbiParameters,
+  encodeEventTopics,
   type Hex,
   keccak256,
+  parseAbiItem,
   parseTransaction,
   serializeTransaction,
   type TransactionSerializableEIP1559,
@@ -17,9 +23,9 @@ import {
 } from "../../contracts/solana/transactions";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
-import type { ConversionRow } from "./core";
+import { type ConversionRow, runNetwork } from "./core";
 import { createEvmClient } from "./evm";
-import { runOnce } from "./index";
+import { chainClient, runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
 import { parseTransaction as parseSolanaWire } from "./solana";
 import { LOOKUP_TABLE_PROGRAM, resolveSolanaAccounts } from "./solana-accounts";
@@ -28,6 +34,32 @@ import { D1ConversionStore, LOCK_MS } from "./store";
 
 const token = `0x${"2".repeat(40)}`;
 const hash = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as Hex;
+function quintStates<T>(model: string, scenario: string): T[] {
+  const directory = mkdtempSync(join(tmpdir(), "slop-fee-trace-"));
+  try {
+    execFileSync(
+      "node",
+      [
+        resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
+        "test",
+        `formal/models/${model}.qnt`,
+        "--backend=typescript",
+        "--seed=1",
+        `--match=^${scenario}$`,
+        `--out-itf=${join(directory, "trace-{test}-{seq}.json")}`,
+      ],
+      { stdio: "pipe" },
+    );
+    const trace = JSON.parse(
+      readFileSync(join(directory, `trace-${scenario}-0.json`), "utf8"),
+    ) as { states: { s: T }[] };
+    return trace.states
+      .map(({ s }) => s)
+      .filter((state) => state !== undefined);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 const envLimits = {
   FEE_CONVERTER_MIN_VALUE_MICRO: "5000000",
   FEE_CONVERTER_GAS_MULTIPLE: "10",
@@ -220,7 +252,13 @@ test("a wrong signature or duplicate reservation cannot create a durable send", 
   ).toEqual({ n: 1 });
 });
 
-test("same-nonce replacements reserve their maximum once and settle exactly one winner", async () => {
+test("same-nonce replacement liability survives lease takeover and settles one winner", async () => {
+  const expected = quintStates<{
+    settled: boolean;
+    receipt: { "#bigint": string };
+    settledDay: { "#bigint": string };
+  }>("fee_lease_journal", "replacementWinnerAfterLeaseAndMidnightTest").at(-1);
+  if (!expected) throw new Error("Quint omitted the native settlement state");
   const h = await fixture({
     perTransaction: "3000000",
     perDay: "3000000",
@@ -250,21 +288,48 @@ test("same-nonce replacements reserve their maximum once and settle exactly one 
     ),
   ).toBe(true);
   await expect(h.reserve(h.tx(1))).rejects.toThrow("Native daily budget");
-  h.clock.now = new Date("2026-10-27T00:01:00Z");
-  await h.journal.settle(
-    {
-      txId: original.txId!,
-      rawTx: original.rawTx,
-      conversionId: original.id,
-      feeWallet: h.wallet,
-      nonce: 0,
-    },
-    { txId: original.txId!, actualWei: "900000", blockHash: hash(7) },
+  // The original run stops during its awaited receipt. The successor owns
+  // the next UTC day's lease; both original and replacement remain held.
+  h.clock.now = new Date(h.clock.now.getTime() + LOCK_MS + 1);
+  expect(await h.store.acquireLock("ethereum", "successor", h.now())).toBe(
+    true,
   );
+  const budget = h.config.networks[0].nativeBudget;
+  if (!budget) throw new Error("Native fixture budget is required");
+  const successor = new NativeGasJournal(
+    h.db,
+    "ethereum",
+    h.wallet,
+    "successor",
+    budget,
+    h.now,
+  );
+  await successor.recoverUnsigned();
+  const send = {
+    txId: original.txId!,
+    rawTx: original.rawTx,
+    conversionId: original.id,
+    feeWallet: h.wallet,
+    nonce: 0,
+  };
+  const cost = {
+    txId: original.txId!,
+    actualWei: "900000",
+    blockHash: hash(7),
+  };
+  await successor.settle(send, cost);
   const rows = await h.journal.rows();
   expect(rows.map((r) => r.actual_wei).sort()).toEqual(["0", "900000"]);
   expect(rows.every((r) => r.settled_day === "2026-10-27")).toBe(true);
-  await h.reserve(h.tx(1));
+  const settled = JSON.stringify(rows);
+  await expect(h.journal.settle(send, cost)).rejects.toThrow(
+    "lost its lease or attempt",
+  );
+  expect(JSON.stringify(await h.journal.rows())).toBe(settled);
+  expect(expected.settled).toBe(rows.every((row) => row.actual_wei !== null));
+  expect(expected.receipt["#bigint"]).toBe("1"); // Original wins over its replacement.
+  expect(expected.settledDay["#bigint"]).toBe("1"); // The next UTC day.
+  await h.reserve(h.tx(1), successor);
   expect(
     (await h.journal.rows()).filter((r) => r.state === "reserved"),
   ).toHaveLength(1);
@@ -357,6 +422,285 @@ test("unavailable receipts retain gas until the canonical cost is recovered", as
   await expect(h.reserve(h.tx(2, 3n))).rejects.toThrow("Native daily budget");
   await client.reconcileNativeGas?.();
   expect((await h.journal.rows())[0]).toEqual(settled);
+});
+
+test("wallet handoff and receipt delays preserve exact conversion history", async () => {
+  const h = await fixture();
+  const original = await h.commit();
+  await h.store.releaseLock("ethereum", h.run, h.now());
+  const nextWallet = privateKeyToAccount(
+    generatePrivateKey(),
+  ).address.toLowerCase();
+  const nextConfig = { ...h.config.networks[0], feeWallet: nextWallet };
+  const transfer = parseAbiItem(
+    "event Transfer(address indexed from,address indexed to,uint256 value)",
+  );
+  const logs: Record<string, unknown>[] = [];
+  let receiptVisible = true;
+  let finalizedNonce = "0x1";
+  const rpcFetch = (async (_url: unknown, init?: RequestInit) => {
+    const q = JSON.parse(String(init?.body));
+    let result: unknown;
+    if (q.method === "eth_getTransactionReceipt")
+      result = receiptVisible
+        ? {
+            transactionHash: original.txId,
+            blockHash: hash(16),
+            blockNumber: "0x10",
+            transactionIndex: "0x0",
+            from: h.wallet,
+            to: token,
+            status: "0x1",
+            gasUsed: "0x5208",
+            effectiveGasPrice: "0x64",
+            cumulativeGasUsed: "0x5208",
+            logsBloom: `0x${"0".repeat(512)}`,
+            type: "0x2",
+            logs: [
+              {
+                address: original.targetToken,
+                blockHash: hash(16),
+                blockNumber: "0x10",
+                transactionHash: original.txId,
+                transactionIndex: "0x0",
+                logIndex: "0x0",
+                removed: false,
+                topics: encodeEventTopics({
+                  abi: [transfer],
+                  eventName: "Transfer",
+                  args: { from: token as Hex, to: h.wallet as Hex },
+                }),
+                data: encodeAbiParameters([{ type: "uint256" }], [10_000_000n]),
+              },
+            ],
+          }
+        : null;
+    else if (q.method === "eth_getBlockByNumber")
+      result = {
+        number: "0x10",
+        hash: hash(16),
+        transactions: [original.txId],
+      };
+    else if (q.method === "eth_call") result = `0x${"0".repeat(64)}`;
+    else if (q.method === "eth_getTransactionByHash") result = null;
+    else if (q.method === "eth_getTransactionCount")
+      result = q.params[1] === "finalized" ? finalizedNonce : "0x1";
+    else throw new Error(`Unexpected handoff RPC ${q.method}`);
+    return Response.json({ jsonrpc: "2.0", id: q.id, result });
+  }) as typeof fetch;
+  const client = createEvmClient({
+    config: nextConfig,
+    limits: h.config.limits,
+    kyberClientId: "test",
+    fetch: rpcFetch,
+  });
+  await runNetwork(nextConfig, {
+    mode: "dry_run",
+    limits: h.config.limits,
+    store: h.store,
+    now: h.now,
+    randomId: () => "changed-wallet-run",
+    projectTokens: async () => [],
+    client: () => client,
+    log: (event) => logs.push(event),
+  });
+  expect(
+    h.sqlite
+      .query("SELECT state,amount_out FROM fee_conversions WHERE id=?")
+      .get(original.id),
+  ).toEqual({ state: "submitted", amount_out: null });
+  expect(logs).toContainEqual(
+    expect.objectContaining({ event: "fee_conversion_reconcile_error" }),
+  );
+  receiptVisible = false;
+  await runNetwork(h.config.networks[0], {
+    mode: "dry_run",
+    limits: h.config.limits,
+    store: h.store,
+    now: h.now,
+    randomId: () => "missing-receipt-run",
+    projectTokens: async () => [],
+    client: () =>
+      createEvmClient({
+        config: h.config.networks[0],
+        limits: h.config.limits,
+        kyberClientId: "test",
+        fetch: rpcFetch,
+      }),
+    log: (event) => logs.push(event),
+  });
+  expect(
+    h.sqlite
+      .query("SELECT state,amount_out FROM fee_conversions WHERE id=?")
+      .get(original.id),
+  ).toEqual({ state: "submitted", amount_out: null });
+  finalizedNonce = "0x0";
+  await runNetwork(h.config.networks[0], {
+    mode: "dry_run",
+    limits: h.config.limits,
+    store: h.store,
+    now: h.now,
+    randomId: () => "included-unfinalized-receipt-run",
+    projectTokens: async () => [],
+    client: () =>
+      createEvmClient({
+        config: h.config.networks[0],
+        limits: h.config.limits,
+        kyberClientId: "test",
+        fetch: rpcFetch,
+      }),
+    log: (event) => logs.push(event),
+  });
+  expect(
+    h.sqlite
+      .query("SELECT state,amount_out FROM fee_conversions WHERE id=?")
+      .get(original.id),
+  ).toEqual({ state: "submitted", amount_out: null });
+  finalizedNonce = "0x1";
+  receiptVisible = true;
+  await runNetwork(h.config.networks[0], {
+    mode: "dry_run",
+    limits: h.config.limits,
+    store: h.store,
+    now: h.now,
+    randomId: () => "original-wallet-recovery",
+    projectTokens: async () => [],
+    client: () =>
+      createEvmClient({
+        config: h.config.networks[0],
+        limits: h.config.limits,
+        kyberClientId: "test",
+        fetch: rpcFetch,
+      }),
+    log: (event) => logs.push(event),
+  });
+  expect(
+    h.sqlite
+      .query("SELECT state,amount_out FROM fee_conversions WHERE id=?")
+      .get(original.id),
+  ).toEqual({ state: "finalized", amount_out: "10000000" });
+  const expected = quintStates<{ row: string; output: { "#bigint": string } }>(
+    "fee_wallet_handoff",
+    "originalConfigurationRecoversExactOutputTest",
+  ).at(-1);
+  expect(expected?.row).toBe("finalized");
+  expect(expected?.output["#bigint"]).toBe("2");
+});
+
+test("a replacement key cannot sign for the configured wallet", async () => {
+  const h = await fixture();
+  let calls = 0;
+  expect(() =>
+    chainClient(
+      { ...h.env, FEE_WALLET_KEY_ETHEREUM: generatePrivateKey() },
+      h.config,
+      h.config.networks[0],
+      {
+        nativeGas: h.journal,
+        fetch: Object.assign(
+          async () => {
+            calls++;
+            throw new Error("RPC must not be reached");
+          },
+          { preconnect: () => {} },
+        ),
+      },
+    ),
+  ).toThrow("does not control the configured fee wallet");
+  expect(calls).toBe(0);
+  const seed = new Uint8Array(32).fill(7);
+  const otherSeed = new Uint8Array(32).fill(8);
+  const wallet = solanaBase58(ed25519.getPublicKey(seed));
+  const env = {
+    ...envLimits,
+    FEE_CONVERTER_MODE: "live",
+    FEE_CONVERTER_NETWORKS: "solana",
+    FEE_WALLET_SOLANA: wallet,
+    FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+      solana: {
+        perTransaction: "100000",
+        perDay: "200000",
+        additionalFeeReserve: "0",
+      },
+    }),
+    FEE_WALLET_KEY_SOLANA: JSON.stringify([
+      ...otherSeed,
+      ...ed25519.getPublicKey(otherSeed),
+    ]),
+  };
+  const config = parseConfig(env);
+  const budget = config.networks[0].nativeBudget;
+  if (!budget) throw new Error("Missing Solana native test budget");
+  expect(() =>
+    chainClient(env, config, config.networks[0], {
+      nativeGas: new NativeGasJournal(
+        h.db,
+        "solana",
+        wallet,
+        "solana-handoff",
+        budget,
+        h.now,
+      ),
+      fetch: Object.assign(
+        async () => {
+          calls++;
+          throw new Error("RPC must not be reached");
+        },
+        { preconnect: () => {} },
+      ),
+    }),
+  ).toThrow("configured fee wallet");
+  expect(calls).toBe(0);
+});
+
+test("three expired business intents retain one nonce liability until its canonical winner", async () => {
+  const h = await fixture();
+  const rows: ConversionRow[] = [];
+  for (let index = 0; index < 3; index++) {
+    const tx = {
+      ...h.tx(0, 100n + BigInt(index) * 10n),
+      data: `0x0${index + 1}` as Hex,
+    };
+    const reservation = await h.reserve(tx);
+    const row = h.row(
+      `reused-${index}`,
+      await h.account.signTransaction(tx),
+      reservation,
+    );
+    await h.store.insert(row, { runId: h.run, now: h.now() });
+    rows.push(row);
+    if (index < 2)
+      await h.store.update(row.id, {
+        state: "failed",
+        reason: "router deadline passed before inclusion",
+      });
+  }
+  await expect(h.reserve(h.tx(0, 130n))).rejects.toThrow("already reserved");
+  expect((await h.journal.rows()).every((row) => row.actual_wei === null)).toBe(
+    true,
+  );
+  const original = rows[0];
+  if (!original.txId) throw new Error("Missing original signed hash");
+  await h.journal.settle(
+    {
+      txId: original.txId,
+      rawTx: original.rawTx,
+      conversionId: original.id,
+      feeWallet: h.wallet,
+      nonce: 0,
+    },
+    { txId: original.txId, actualWei: "1000000", blockHash: hash(99) },
+  );
+  const native = await h.journal.rows();
+  expect(native.map((row) => row.actual_wei)).toEqual(["1000000", "0", "0"]);
+  const expected = quintStates<{
+    count: { "#bigint": string };
+    winner: { "#bigint": string };
+    settled: boolean;
+  }>("fee_nonce_reuse", "threeIntentsKeepOneNonceLiabilityTest").at(-1);
+  expect(Number(expected?.count["#bigint"])).toBe(native.length);
+  expect(expected?.winner["#bigint"]).toBe("1");
+  expect(expected?.settled).toBe(true);
 });
 
 test("business failure and router expiry do not release signed gas; overruns hold future signing", async () => {

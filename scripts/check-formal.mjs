@@ -1,27 +1,105 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(import.meta.dirname, "..");
-const models = join(root, "formal/pr-review-20261107");
-const quint = join(root, "node_modules/@informalsystems/quint/dist/src/cli.js");
 const verify = process.argv.includes("--verify");
-const artifacts = mkdtempSync(join(tmpdir(), "slop-formal-"));
+const selected = process.argv
+  .find((arg) => arg.startsWith("--model="))
+  ?.slice(8);
+const quint = join(root, "node_modules/.bin/quint");
+const localTranslator = join(root, "scripts/quint-local-translator.mjs");
+const modelDirectory = join(root, "formal/models");
+const files = readdirSync(modelDirectory)
+  .filter(
+    (file) =>
+      file.endsWith(".qnt") && (!selected || file === `${selected}.qnt`),
+  )
+  .sort();
+if (files.length === 0) throw new Error("No matching Quint models");
+const digest = (value) => createHash("sha256").update(value).digest("hex");
+const toolHashes = Object.fromEntries(
+  [
+    "scripts/check-formal.mjs",
+    "scripts/run-e2e-phase.mjs",
+    "bun.lock",
+    ...(verify
+      ? [
+          "scripts/quint-local-translator.mjs",
+          "scripts/quint-tla-normalization.mjs",
+          "formal/tlc.json",
+        ]
+      : []),
+  ].map((path) => [path, digest(readFileSync(join(root, path)))]),
+);
+const java = verify
+  ? spawnSync("java", ["-version"], { encoding: "utf8", timeout: 10_000 })
+  : null;
+const javaVersion = java
+  ? `${java.stdout ?? ""}${java.stderr ?? ""}`.trim()
+  : null;
+if (java && (java.status !== 0 || !/version "21[."]/u.test(javaVersion)))
+  throw new Error(
+    `Java 21 is required for the pinned verifier: ${javaVersion}`,
+  );
+const cancellation = new AbortController();
+const cancel = () => cancellation.abort(new Error("Model checks canceled"));
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+  process.once(signal, cancel);
+const toolsUnchanged = () =>
+  Object.entries(toolHashes).every(
+    ([path, hash]) => digest(readFileSync(join(root, path))) === hash,
+  );
+const inputHashes = new Map(
+  files.map((file) => [file, digest(readFileSync(join(modelDirectory, file)))]),
+);
+const modelSources = new Map(
+  files.map((file) => [
+    file,
+    [
+      ...readFileSync(join(modelDirectory, file), "utf8").matchAll(
+        /^\s*\/\/\s*@source\s+(\S+)\s*$/gmu,
+      ),
+    ].map((match) => match[1]),
+  ]),
+);
+const sourceHashes = new Map(
+  [...new Set([...modelSources.values()].flat())]
+    .sort()
+    .map((path) => [path, digest(readFileSync(join(root, path)))]),
+);
 const results = [];
-console.log(`Formal evidence: ${artifacts}`);
-for (const file of readdirSync(models)
-  .filter((name) => name.endsWith(".qnt"))
-  .sort()) {
-  const input = join(models, file);
+models: for (const file of files) {
+  const input = `formal/models/${file}`;
+  const modelText = readFileSync(join(root, input), "utf8");
+  if (!/^\s*run\s+\w+Test\s*=/mu.test(modelText)) {
+    throw new Error(`${input} has no named reachability scenario`);
+  }
+  const temporalProperties = [
+    ...modelText.matchAll(/^\s*temporal\s+(\w+Property)\s*=/gmu),
+  ].map((match) => match[1]);
   const stages = verify
     ? [
         [
           "verify",
           input,
           "--backend=tlc",
+          "--verbosity=3",
+          "--tlc-config=formal/tlc.json",
           "--invariant=invariant",
-          `--server-endpoint=localhost:${20000 + (process.pid % 20000)}`,
+          ...(temporalProperties.length
+            ? [`--temporal=${temporalProperties.join(",")}`]
+            : []),
         ],
       ]
     : [
@@ -44,42 +122,132 @@ for (const file of readdirSync(models)
         ],
       ];
   for (const args of stages) {
-    const started = Date.now();
-    const result = spawnSync(process.execPath, [quint, ...args], {
-      cwd: artifacts,
-      encoding: "utf8",
-      timeout: 180000,
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-    const passed = result.status === 0 && !result.error;
-    writeFileSync(
-      join(artifacts, `${basename(file, ".qnt")}-${args[0]}.log`),
-      output,
+    const testedSha256 = digest(readFileSync(join(root, input)));
+    const testedSources = Object.fromEntries(
+      modelSources
+        .get(file)
+        .map((path) => [path, digest(readFileSync(join(root, path)))]),
     );
-    results.push({
-      model: file,
-      command: args,
-      passed,
-      exitCode: result.status,
-      milliseconds: Date.now() - started,
-      error: result.error?.message ?? null,
-    });
-    console.log(`${passed ? "PASS" : "FAIL"} ${file} ${args[0]}`);
-    if (!passed) {
-      console.error(output || result.error?.message);
-      break;
+    const started = Date.now();
+    const command = verify
+      ? [process.execPath, "--import", localTranslator, quint, ...args]
+      : [quint, ...args];
+    let output = "";
+    let bytes = 0;
+    const collect = (text) => {
+      bytes += Buffer.byteLength(text);
+      if (bytes > 8 * 1024 * 1024)
+        cancellation.abort(new Error("Verifier exceeded 8MiB output limit"));
+      else output += text;
+    };
+    const stageDirectory = mkdtempSync(join(tmpdir(), "slop-formal-stage-"));
+    let status;
+    try {
+      status = await runE2ePhase({
+        label: args[0],
+        command: command[0],
+        args: command.slice(1),
+        cwd: root,
+        env: {
+          ...process.env,
+          TMPDIR: stageDirectory,
+          TMP: stageDirectory,
+          TEMP: stageDirectory,
+        },
+        timeoutMs: verify ? 180_000 : 90_000,
+        signal: cancellation.signal,
+        onStdout: collect,
+        onStderr: collect,
+      });
+    } finally {
+      rmSync(stageDirectory, { recursive: true, force: true });
     }
+    const stable =
+      toolsUnchanged() &&
+      testedSha256 === digest(readFileSync(join(root, input))) &&
+      Object.entries(testedSources).every(
+        ([path, hash]) => digest(readFileSync(join(root, path))) === hash,
+      );
+    const error = cancellation.signal.aborted
+      ? cancellation.signal.reason.message
+      : null;
+    const passed = status === 0 && !error && stable;
+    results.push({
+      model: input,
+      sha256: testedSha256,
+      sources: testedSources,
+      command,
+      passed,
+      exitCode: status,
+      durationMs: Date.now() - started,
+      output,
+      error: stable
+        ? error
+        : "Model or mapped source changed while its check was running; repeat against stable bytes.",
+    });
+    console.log(`${passed ? "PASS" : "FAIL"} ${args[0]} ${file}`);
+    if (!passed) console.error(output || error);
+    if (cancellation.signal.aborted) break models;
+    if (!passed) break;
   }
 }
-const version = JSON.parse(
-  readFileSync(
-    join(root, "node_modules/@informalsystems/quint/package.json"),
-    "utf8",
-  ),
-).version;
+const directory = join(root, "evidence/formal");
+mkdirSync(directory, { recursive: true });
+const finalFiles = readdirSync(modelDirectory)
+  .filter(
+    (file) =>
+      file.endsWith(".qnt") && (!selected || file === `${selected}.qnt`),
+  )
+  .sort();
+const inputsUnchanged =
+  toolsUnchanged() &&
+  JSON.stringify(files) === JSON.stringify(finalFiles) &&
+  files.every(
+    (file) =>
+      digest(readFileSync(join(modelDirectory, file))) ===
+      inputHashes.get(file),
+  ) &&
+  [...sourceHashes].every(
+    ([path, hash]) => digest(readFileSync(join(root, path))) === hash,
+  );
+if (!inputsUnchanged)
+  console.error(
+    "FAIL model set or mapped source changed during verification; repeat the check.",
+  );
+const report = {
+  schemaVersion: 1,
+  mode: verify ? "exhaustive-finite-tlc" : "types-scenarios-seeded-simulation",
+  translation: verify ? "local-apalache-cli" : "not-used",
+  toolHashes,
+  javaVersion,
+  canceled: cancellation.signal.aborted,
+  generatedAt: new Date().toISOString(),
+  inputsUnchanged,
+  quintVersion: JSON.parse(
+    readFileSync(
+      join(root, "node_modules/@informalsystems/quint/package.json"),
+      "utf8",
+    ),
+  ).version,
+  limitations: [
+    "Model correctness does not establish source refinement.",
+    "Finite bounds and abstractions are defined in each model and its audit.",
+    "The Quint TLC backend disables deadlock checking; terminal-state progress requires explicit scenarios.",
+  ],
+  results,
+};
 writeFileSync(
-  join(artifacts, "results.json"),
-  `${JSON.stringify({ quintVersion: version, results }, null, 2)}\n`,
+  join(
+    directory,
+    `${verify ? "verification" : "checks"}${selected ? `-${selected}` : ""}.json`,
+  ),
+  `${JSON.stringify(report, null, 2)}\n`,
 );
-if (results.some((result) => !result.passed)) process.exitCode = 1;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+  process.removeListener(signal, cancel);
+if (
+  !inputsUnchanged ||
+  cancellation.signal.aborted ||
+  results.some((result) => !result.passed)
+)
+  process.exitCode = 1;

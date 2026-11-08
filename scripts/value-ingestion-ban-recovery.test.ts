@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { type AddressInfo, createServer } from "node:net";
 import {
   fetchProjectPenaltyState,
+  fetchValueHistoryPage,
+  fetchWorkUnitHistoryPage,
   loadParticipationBans,
   ValueFeedUnavailableError,
 } from "./value-ingestion";
@@ -40,9 +42,17 @@ test("a ban feed that times out after its headers reports unavailable", async ()
       );
     },
   });
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const timeout = spyOn(AbortSignal, "timeout").mockImplementation(() =>
+    originalTimeout(50),
+  );
   const transport = Object.assign(
-    async (_input: unknown, init?: RequestInit) =>
-      fetch(server.url, { ...init, signal: AbortSignal.timeout(50) }),
+    async (_input: unknown, init?: RequestInit) => {
+      const response = await fetch(server.url, init);
+      const signal = init?.signal;
+      if (!signal) throw new Error("The feed must own its request deadline");
+      return response;
+    },
     { preconnect: fetch.preconnect },
   );
   try {
@@ -50,6 +60,7 @@ test("a ban feed that times out after its headers reports unavailable", async ()
       loadParticipationBans(github, transport),
     ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
   } finally {
+    timeout.mockRestore();
     server.stop(true);
   }
 });
@@ -123,3 +134,45 @@ test("a complete empty ban feed succeeds", async () => {
   );
   expect(await loadParticipationBans(github, transport)).toEqual(new Map());
 });
+
+for (const feed of [
+  "bans",
+  "penalties",
+  "value history",
+  "work-unit history",
+] as const) {
+  test(`a ${feed} response returned after its deadline remains unavailable`, async () => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeout = spyOn(AbortSignal, "timeout").mockImplementation(() =>
+      originalTimeout(5),
+    );
+    const transport = Object.assign(
+      async (_input: unknown, init?: RequestInit) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error("The feed must own its request deadline");
+        if (!signal.aborted)
+          await new Promise<void>((resolve) =>
+            signal.addEventListener("abort", () => resolve(), { once: true }),
+          );
+        // Bun's native timeout can fulfill a body with its received prefix.
+        // The separate local HTTP case exercises that transport; this fixes
+        // the exact late-fulfillment state independently of runtime scheduling.
+        return new Response('{"schemaVersion":');
+      },
+      { preconnect: fetch.preconnect },
+    );
+    try {
+      await expect(
+        feed === "bans"
+          ? loadParticipationBans(github, transport)
+          : feed === "penalties"
+            ? fetchProjectPenaltyState("asi", transport)
+            : feed === "value history"
+              ? fetchValueHistoryPage("elizaOS/asi", 1, 0, transport)
+              : fetchWorkUnitHistoryPage("elizaOS/asi", 1, 0, null, transport),
+      ).rejects.toBeInstanceOf(ValueFeedUnavailableError);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+}

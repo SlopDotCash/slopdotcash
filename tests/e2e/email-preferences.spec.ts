@@ -1,3 +1,4 @@
+import { enlargeText } from "../text-size";
 /** Actual Pages session + D1 preferences + shipped local notify Worker. No real email is sent. */
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -88,12 +89,10 @@ test("verified activity email preference persists and can be withdrawn @registry
   await expectAccessible(page);
   await page.reload({ waitUntil: "networkidle" });
   await expect(toggle).toBeChecked();
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(page.locator("body"));
   await expect(toggle).toBeVisible();
   await page.screenshot({
-    path: test.info().outputPath("optional-email-zoom.png"),
+    path: test.info().outputPath("optional-email-text-200.png"),
     fullPage: true,
   });
   const disabledResponse = page.waitForResponse(

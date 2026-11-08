@@ -341,33 +341,36 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     appId && appKey
       ? { fetch: send, apiOrigin, appId, privateKey: appKey, now }
       : null;
-  const directRpcUrls = JSON.parse(env.PAYMENT_RPC_URLS ?? "{}");
-  const directPaymentConfig = defaultDirectPaymentConfiguration(
-    directRpcUrls,
-    env.SOLANA_RECOVERY_RPC_URL
-      ? { "solana-mainnet": env.SOLANA_RECOVERY_RPC_URL }
-      : {},
-  );
-  // Local validators have their own genesis. This exception cannot change a
-  // public deployment's chain: both the request and the RPC must be loopback.
-  if (
-    env.SLOP_LOCAL_SOLANA_GENESIS &&
-    (!loopbackOrigin(new URL(request.url).origin, "") ||
-      typeof directRpcUrls["solana-mainnet"] !== "string" ||
-      !loopbackOrigin(new URL(directRpcUrls["solana-mainnet"]).origin, "") ||
-      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(env.SLOP_LOCAL_SOLANA_GENESIS))
-  )
-    throw new Error("Local Solana configuration requires loopback endpoints");
+  // Resolve payment configuration only when a payment operation needs it.
+  // A broken rail must not stop account reads, signout or private intake.
+  const directPaymentConfig = (network: string) => {
+    const directRpcUrls = JSON.parse(env.PAYMENT_RPC_URLS ?? "{}");
+    const resolve = defaultDirectPaymentConfiguration(
+      directRpcUrls,
+      env.SOLANA_RECOVERY_RPC_URL
+        ? { "solana-mainnet": env.SOLANA_RECOVERY_RPC_URL }
+        : {},
+    );
+    // Local validators have their own genesis. This exception cannot change a
+    // public deployment's chain: both the request and the RPC must be loopback.
+    if (
+      env.SLOP_LOCAL_SOLANA_GENESIS &&
+      (!loopbackOrigin(new URL(request.url).origin, "") ||
+        typeof directRpcUrls["solana-mainnet"] !== "string" ||
+        !loopbackOrigin(new URL(directRpcUrls["solana-mainnet"]).origin, "") ||
+        !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(env.SLOP_LOCAL_SOLANA_GENESIS))
+    )
+      throw new Error("Local Solana configuration requires loopback endpoints");
+    const config = resolve(network);
+    return config &&
+      network === "solana-mainnet" &&
+      env.SLOP_LOCAL_SOLANA_GENESIS
+      ? { ...config, genesisHash: env.SLOP_LOCAL_SOLANA_GENESIS }
+      : config;
+  };
   const securityResponse = await handleSecurityApi(request, {
     db,
-    directPayments: (network) => {
-      const config = directPaymentConfig(network);
-      return config &&
-        network === "solana-mainnet" &&
-        env.SLOP_LOCAL_SOLANA_GENESIS
-        ? { ...config, genesisHash: env.SLOP_LOCAL_SOLANA_GENESIS }
-        : config;
-    },
+    directPayments: directPaymentConfig,
     // A separate key namespace; contributor trace APIs never read reports.
     reportStorage: env.PRIVATE_TRACES,
     reportIntakeEnabled: env.SLOP_PRIVATE_INTAKE_MODE === "on",

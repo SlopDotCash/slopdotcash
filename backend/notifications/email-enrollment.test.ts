@@ -907,3 +907,34 @@ test("a competing enrollment with the same key returns conflict after the initia
     h.sqlite.close();
   }
 });
+
+test("verification retains its admission-time expiry check across a queued commit", async () => {
+  let delayCommit = false;
+  let h: Awaited<ReturnType<typeof setup>>;
+  h = await setup(undefined, async () => {
+    if (delayCommit) {
+      delayCommit = false;
+      h.advance(2_000);
+    }
+  });
+  try {
+    await h.enroll();
+    h.advance(29 * 60_000 + 59_000);
+    delayCommit = true;
+    const result = await h.verify();
+    expect(result.status).toBe(200);
+    expect(h.worker.now().toISOString()).toBe("2026-10-30T12:30:01.000Z");
+    expect(
+      h.sqlite
+        .query(
+          "SELECT expires_at,consumed_at FROM notification_email_verifications",
+        )
+        .get(),
+    ).toEqual({
+      expires_at: "2026-10-30T12:30:00.000Z",
+      consumed_at: "2026-10-30T12:29:59.000Z",
+    });
+  } finally {
+    h.sqlite.close();
+  }
+});

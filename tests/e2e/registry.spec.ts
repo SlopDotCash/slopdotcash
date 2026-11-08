@@ -1299,12 +1299,10 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     path: test.info().outputPath("operator-ban-notice.png"),
     fullPage: true,
   });
-  await moderator.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(moderator.locator("body"));
   await expectAccessible(moderator);
   await moderator.screenshot({
-    path: test.info().outputPath("operator-ban-notice-zoom200.png"),
+    path: test.info().outputPath("operator-ban-notice-text-200.png"),
     fullPage: true,
   });
   await banNotice.getByRole("link", { name: "Open admin" }).focus();
@@ -1444,12 +1442,10 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     "Ban project and maintainer by @e2e-moderator (project-moderator, admin-panel)",
   );
   await expectAccessible(moderator);
-  await moderator.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(moderator.locator("body"));
   await expectAccessible(moderator);
   await moderator.screenshot({
-    path: test.info().outputPath("malicious-decision-zoom200.png"),
+    path: test.info().outputPath("malicious-decision-text-200.png"),
     fullPage: true,
   });
   await moderatorContext.close();
@@ -1733,9 +1729,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   );
   await locationNotice.locator(".inbox-title").focus();
   await expect(locationNotice.locator(".inbox-title")).toBeFocused();
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  const restoreEnlargedText3 = await enlargeText(page.locator("body"));
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -1745,9 +1739,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     path: test.info().outputPath("inbox-location-200.png"),
     fullPage: true,
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "1";
-  });
+  await restoreEnlargedText3();
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("scan-inbox.png"),
@@ -2494,14 +2486,8 @@ test.describe("private evidence console", () => {
         name: "Harmless trace fixture verified content",
       }),
     ).toHaveValue(VETTING_EVIDENCE_OBJECTS[0].body);
-    // At 200% zoom, keep at least the supported 320 CSS-pixel reflow width.
-    // Zooming a 320px viewport directly would test an unsupported 160px layout.
-    const viewport = page.viewportSize();
-    if (viewport && viewport.width < 640)
-      await page.setViewportSize({ ...viewport, width: 640 });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    // Enlarge text at the current CSS viewport; this is not browser zoom.
+    const restoreEnlargedText4 = await enlargeText(page.locator("body"));
     await expect(
       trace.getByRole("textbox", {
         name: "Harmless trace fixture verified content",
@@ -2514,15 +2500,12 @@ test.describe("private evidence console", () => {
     ).toBe(true);
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("private-evidence-zoom.png"),
+      path: test.info().outputPath("private-evidence-text-200.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "1";
-    });
+    await restoreEnlargedText4();
     await expectAccessible(page);
     await page.evaluate(() => window.scrollTo(0, 0));
-    if (viewport) await page.setViewportSize(viewport);
     await page.screenshot({
       path: test.info().outputPath("private-evidence.png"),
       fullPage: true,

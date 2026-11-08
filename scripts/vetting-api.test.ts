@@ -20,6 +20,7 @@ import {
   type VettingPin,
 } from "../backend/vetting/persistence";
 import { parseVettingResult } from "../backend/vetting/result";
+import { onRequest } from "../functions/api/v1/[[path]]";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import {
@@ -31,6 +32,7 @@ import {
   signedVettingHeaders,
   VETTING_EVIDENCE_OBJECTS,
   VETTING_TRACE_BODY,
+  VETTING_TRACE_SHA,
   vettingKeyPair,
   vettingResult,
 } from "../tests/vetting-fixtures";
@@ -1440,3 +1442,275 @@ test("a reservation whose reply is lost is still read as present by the next run
   });
   expect(await nextRun.has(id)).toBe(true);
 }, 60_000);
+
+// PRD8: cancellation while the final audit is pending is one terminal stream
+// outcome. It must not append both a cancelled and a finished receipt.
+test("download cancellation during final audit records one terminal outcome", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const runId = "download-terminal-race";
+  await retained.retain(id, runId);
+  const path = `/api/v1/operator/vetting-evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+  const grant = await retained.evidence.handle(
+    new Request(`${ORIGIN}${path}/download-grant`, {
+      method: "POST",
+      headers: {
+        origin: ORIGIN,
+        "content-type": "application/json",
+        "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+      },
+      body: JSON.stringify({ reason: "Check the terminal stream audit race" }),
+    }),
+  );
+  expect(grant?.status).toBe(201);
+  const cookie = grant?.headers.get("set-cookie")?.split(";")[0];
+  if (!cookie) throw new Error("Missing synthetic download grant");
+  const response = await retained.evidence.handle(
+    new Request(`${ORIGIN}${path}/download`, {
+      headers: {
+        cookie,
+        "sec-fetch-site": "same-origin",
+        "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+      },
+    }),
+  );
+  if (!response?.body) throw new Error("Missing download stream");
+  const reader = response.body.getReader();
+  expect((await reader.read()).done).toBe(false);
+  let finishStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    finishStarted = resolve;
+  });
+  let continueFinish: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    continueFinish = resolve;
+  });
+  let finishSettled: () => void = () => {};
+  const settled = new Promise<void>((resolve) => {
+    finishSettled = resolve;
+  });
+  const audit = retained.evidence.audit.bind(retained.evidence);
+  retained.evidence.audit = async (...args) => {
+    if (args[1] === "download-finished") {
+      finishStarted();
+      await gate;
+    }
+    try {
+      return await audit(...args);
+    } finally {
+      if (args[1] === "download-finished") finishSettled();
+    }
+  };
+  const finalRead = reader.read();
+  try {
+    await started;
+    await reader.cancel();
+  } finally {
+    continueFinish();
+    retained.evidence.audit = audit;
+  }
+  await finalRead;
+  await settled;
+  const outcomes = sqlite
+    .query(
+      "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action IN ('download-finished','download-cancelled') ORDER BY action",
+    )
+    .all(id, runId);
+  expect(outcomes).toHaveLength(1);
+}, 30000);
+
+// EVIDENCE.md requires current authorization for each streamed part. Use the
+// real Pages session resolver and signout mutation while a local R2 read waits.
+test("native evidence download stops when its session is revoked during a part read", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const runId = "download-session-revoked";
+  await retained.retain(id, runId);
+  const token = `native_evidence_session_${"a".repeat(40)}`;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const actorId = "native-evidence-operator";
+  sqlite.run(
+    "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)",
+    [
+      actorId,
+      EVIDENCE_OWNER_GITHUB_ID,
+      "fixture-operator",
+      new Date().toISOString(),
+    ],
+  );
+  sqlite.run(
+    "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
+    [tokenHash, actorId, new Date(Date.now() + 3600000).toISOString()],
+  );
+  const storage = retained.evidence.deps.bucket;
+  if (!storage) throw new Error("Missing local R2 storage");
+  let waitForRead = false;
+  let readStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  let resumeRead: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    resumeRead = resolve;
+  });
+  const env = {
+    SLOP_DB: retained.evidence.deps.db,
+    TRACE_AUTH_SECRET: "test-only-trace-rate-limit-secret-long-enough",
+    VETTING_EVIDENCE: {
+      head: storage.head.bind(storage),
+      put: storage.put.bind(storage),
+      async get(key: string) {
+        if (waitForRead) {
+          readStarted();
+          await gate;
+        }
+        return storage.get(key);
+      },
+    },
+  } as unknown as Parameters<typeof onRequest>[0]["env"];
+  const path = `/api/v1/operator/vetting-evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+  const sessionCookie = `__Host-slop_points=${token}`;
+  const grant = await onRequest({
+    env,
+    request: new Request(`${ORIGIN}${path}/download-grant`, {
+      method: "POST",
+      headers: {
+        origin: ORIGIN,
+        "content-type": "application/json",
+        cookie: sessionCookie,
+      },
+      body: JSON.stringify({
+        reason: "Check signout during the native evidence transfer",
+      }),
+    }),
+  });
+  expect(grant.status).toBe(201);
+  const grantCookie = grant.headers.get("set-cookie")?.split(";")[0];
+  if (!grantCookie) throw new Error("Missing native read grant");
+  const response = await onRequest({
+    env,
+    request: new Request(`${ORIGIN}${path}/download`, {
+      headers: {
+        cookie: `${sessionCookie}; ${grantCookie}`,
+        "sec-fetch-site": "same-origin",
+      },
+    }),
+  });
+  expect(response.status).toBe(200);
+  if (!response.body) throw new Error("Missing native evidence stream");
+  waitForRead = true;
+  const reader = response.body.getReader();
+  const reading = reader.read();
+  try {
+    await started;
+    const signout = await onRequest({
+      env,
+      request: new Request(`${ORIGIN}/api/v1/points/signout`, {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/json",
+          cookie: sessionCookie,
+        },
+        body: "{}",
+      }),
+    });
+    expect(signout.status).toBe(200);
+    expect(
+      sqlite
+        .query("SELECT COUNT(*) n FROM points_sessions WHERE token_hash=?")
+        .get(tokenHash),
+    ).toEqual({ n: 0 });
+  } finally {
+    resumeRead();
+  }
+  await expect(reading).rejects.toThrow("Sign in with GitHub");
+  expect(
+    sqlite
+      .query(
+        "SELECT consumed_at IS NOT NULL AS used FROM vetting_evidence_grants",
+      )
+      .get(),
+  ).toEqual({ used: 1 });
+  expect(
+    sqlite
+      .query(
+        "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action LIKE 'download-%' ORDER BY created_at,id",
+      )
+      .all(id, runId)
+      .some(
+        (row) => (row as { action: string }).action === "download-finished",
+      ),
+  ).toBe(false);
+}, 30000);
+
+for (const changed of [false, true]) {
+  test(`concurrent evidence registration ${changed ? "rejects changed bytes" : "replays identical bytes"} atomically`, async () => {
+    await listPausedProject();
+    const id = await queueScan();
+    const runId = "concurrent-registration";
+    const path = `/api/v1/vetting/evidence/${id}/${runId}`;
+    const manifest = {
+      traceSha256: VETTING_TRACE_SHA,
+      objects: VETTING_EVIDENCE_OBJECTS.map(
+        ({ body: _body, ...object }) => object,
+      ),
+    };
+    const firstBody = JSON.stringify(manifest);
+    const secondBody = JSON.stringify(
+      changed
+        ? {
+            ...manifest,
+            objects: manifest.objects.map((object) => ({
+              ...object,
+              label: `${object.label} revised`,
+            })),
+          }
+        : manifest,
+    );
+    const make = (body: string) => retained.request("POST", path, body);
+    const requests = await Promise.all([make(firstBody), make(secondBody)]);
+    const db = retained.evidence.deps.db;
+    const batch = db.batch.bind(db);
+    let entered = 0;
+    let releaseFirst: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    db.batch = async (statements) => {
+      entered++;
+      if (entered === 1) await gate;
+      try {
+        return await batch(statements);
+      } finally {
+        if (entered === 2) releaseFirst();
+      }
+    };
+    try {
+      const responses = await Promise.all(
+        requests.map((request) => retained.evidence.handle(request)),
+      );
+      expect(entered).toBe(2);
+      expect(responses.map((response) => response?.status).sort()).toEqual(
+        changed ? [201, 409] : [200, 201],
+      );
+      expect(
+        sqlite
+          .query(
+            "SELECT COUNT(*) n FROM vetting_evidence_runs WHERE assessment_id=? AND run_id=?",
+          )
+          .get(id, runId),
+      ).toEqual({ n: 1 });
+      expect(
+        sqlite
+          .query(
+            "SELECT COUNT(*) n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='register'",
+          )
+          .get(id, runId),
+      ).toEqual({ n: 1 });
+    } finally {
+      releaseFirst();
+      db.batch = batch;
+    }
+  }, 30000);
+}

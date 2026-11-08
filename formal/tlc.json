@@ -1,0 +1,5 @@
+{
+  "workers": 2,
+  "maxHeap": "-Xmx2G",
+  "stackSize": "-Xss16m"
+}

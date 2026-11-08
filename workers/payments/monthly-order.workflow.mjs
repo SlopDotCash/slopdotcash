@@ -7,12 +7,19 @@ import { join, resolve } from "node:path";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
 import { childEnvironment } from "../../scripts/child-environment.mjs";
+import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Real dispatcher/migrations/native D1. The executor binding is a transport
 // fixture; the compiled EVM suite separately proves the root/leaf ordering.
 const folder = await mkdtemp(join(tmpdir(), "slop-monthly-order-"));
 const time = "2027-01-05T00:00:00.000Z";
+const cutoffNow = new Date();
+const cutoffPeriod = new Date(
+  Date.UTC(cutoffNow.getUTCFullYear(), cutoffNow.getUTCMonth() - 1, 1),
+)
+  .toISOString()
+  .slice(0, 7);
 const requests = [];
 let failCurrent = false;
 let runtime;
@@ -22,7 +29,36 @@ try {
   await writeFile(
     entry,
     `import {runMonthlyCommitments} from ${JSON.stringify(resolve("workers/payments/index.ts"))};
+import {monthlyOwnerService} from ${JSON.stringify(resolve("backend/payments/monthly.ts"))};
+import {CloudflareProjectPersistence} from ${JSON.stringify(resolve("backend/projects/cloudflare-persistence.ts"))};
 export default {async fetch(request,env){try {
+if(new URL(request.url).pathname==='/cutoff') {
+  const mode=new URL(request.url).searchParams.get('mode');
+  const period=${JSON.stringify(cutoffPeriod)};
+  const [year,month]=period.split('-').map(Number);
+  const deadline=Math.ceil(Date.now()/1000)*1000+2000;
+  const wrapped={
+    prepare(query){
+      const statement=env.DB.prepare(query);
+      if(!query.startsWith('INSERT INTO monthly_allocation_changes') || mode==='early') return statement;
+      return {bind(...values){const bound=statement.bind(...values);return {async run(){
+        await new Promise(resolve=>setTimeout(resolve,Math.max(0,deadline-Date.now()+100)));
+        return bound.run();
+      }}}};
+    },
+    batch(statements){return env.DB.batch(statements);}
+  };
+  const service=monthlyOwnerService({db:wrapped,
+    getProject:(id)=>new CloudflareProjectPersistence(env.DB).getProject(id),
+    restricted:async()=>false,networks:()=>['base-sepolia'],verifyAuthority:async()=>{},
+    schedule:()=>({firstPeriod:period,cutoffSecondsAfterPeriodEnd:(deadline-Date.UTC(year,month,1))/1000}),
+    now:()=>new Date()});
+  try {
+    const view=await service.changeAllocation('eliza',period,{githubId:'900000071',githubLogin:'owner'},
+      {githubUserId:'101',grossBase:mode==='early'?'0':'1',expectedSequence:mode==='early'?0:1});
+    return Response.json({sequence:view.proposal.allocationSequence});
+  } catch(error) { return Response.json({code:error.code,diagnostic:error.message},{status:error.status??500}); }
+}
 await runMonthlyCommitments({PAYMENTS_DB:env.DB,REGISTRY_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',PAYMENT_RPC_URLS:'{}',MONTHLY_PAYMENT_SCHEDULE:JSON.stringify({firstPeriod:'2026-11',cutoffSecondsAfterPeriodEnd:259200}),EVM_PAYMENT_EXECUTOR:env.EXECUTOR},new Date(${JSON.stringify(time)}));
 return new Response(null,{status:204});}catch{return new Response(null,{status:503});}}};`,
   );
@@ -204,11 +240,91 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
   assert.equal((await run()).status, 503);
   assert.equal(requests.length, 52);
   assert.ok(requests.every((row) => row.projectId !== "zz-unrelated"));
+  // Actual D1 execution crosses the cutoff after JavaScript has bound an
+  // otherwise valid edit. The early and opted-out cases must still work.
+  const template = JSON.parse(
+    (
+      await db
+        .prepare("SELECT manifest FROM projects WHERE id='zz-unrelated'")
+        .first()
+    ).manifest,
+  );
+  const fixture = fixtureProject("eliza");
+  const cutoffManifest = {
+    ...fixture,
+    reward: { ...fixture.reward, feeBasisPoints: 200, chain: "base" },
+    escrow: { ...template.escrow, effectiveCycle: cutoffPeriod },
+  };
+  const cutoffText = JSON.stringify(cutoffManifest);
+  const cutoffHash = createHash("sha256").update(cutoffText).digest("hex");
+  const cutoffStamp = new Date().toISOString();
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('eliza',1,?,?,'Fixture',?)",
+      )
+      .bind(cutoffText, cutoffHash, cutoffStamp),
+    db
+      .prepare(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('eliza',?,1,?,?,?,?)",
+      )
+      .bind(
+        cutoffManifest.status,
+        cutoffText,
+        cutoffHash,
+        cutoffStamp,
+        cutoffStamp,
+      ),
+    db.prepare(
+      "INSERT INTO project_repositories VALUES('elizaos/eliza','eliza')",
+    ),
+    db
+      .prepare(
+        "INSERT INTO monthly_reward_bases VALUES('eliza',?,?,?,?, '1',1,?)",
+      )
+      .bind(cutoffPeriod, cutoffText, cutoffHash, "e".repeat(64), cutoffStamp),
+    db
+      .prepare(
+        "INSERT INTO monthly_reward_base_rows VALUES('eliza',?,'101','recipient','1',?)",
+      )
+      .bind(cutoffPeriod, "f".repeat(64)),
+  ]);
+  const early = await runtime.dispatchFetch(
+    "https://slop.cash/cutoff?mode=early",
+  );
+  assert.equal(early.status, 200, await early.clone().text());
+  assert.deepEqual(await early.json(), { sequence: 1 });
+  const late = await runtime.dispatchFetch(
+    "https://slop.cash/cutoff?mode=late",
+  );
+  assert.equal(late.status, 409, await late.clone().text());
+  assert.equal((await late.json()).code, "cutoff_passed");
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) n FROM monthly_allocation_changes WHERE project_id='eliza'",
+        )
+        .first()
+    ).n,
+    1,
+  );
+  await db
+    .prepare(
+      "INSERT INTO monthly_payment_settings VALUES('eliza',1,0,'900000071',?)",
+    )
+    .bind(cutoffStamp)
+    .run();
+  const off = await runtime.dispatchFetch("https://slop.cash/cutoff?mode=off");
+  assert.equal(off.status, 200, await off.clone().text());
+  assert.deepEqual(await off.json(), { sequence: 2 });
   const fk = await db.prepare("PRAGMA foreign_key_check").all();
   assert.equal(fk.results.length, 0);
   console.log(
     JSON.stringify({
       nativeD1: true,
+      queuedCutoffRefused: true,
+      beforeCutoffAndOptOutEditsPreserved: true,
       initialPending: 53,
       replacedVaultScenarioPending: 54,
       originalLruCandidates: 50,

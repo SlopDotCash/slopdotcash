@@ -1529,6 +1529,69 @@ describe("project registry API", () => {
     }
   });
 
+  test("a Solana reward mint must come from the selected mainnet before registry publication", async () => {
+    const mint = new Uint8Array(82);
+    mint[44] = 9;
+    mint[45] = 1;
+    let genesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+    let unavailable = false;
+    const calls: string[] = [];
+    deps.readTokenMetadata = rpcTokenMetadataReader(
+      (async (_url, init) => {
+        const { method } = JSON.parse(String(init?.body));
+        calls.push(method);
+        if (unavailable) return new Response("Rate limited", { status: 429 });
+        return Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          result:
+            method === "getGenesisHash"
+              ? genesis
+              : {
+                  value: {
+                    owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                    data: [Buffer.from(mint).toString("base64"), "base64"],
+                  },
+                },
+        });
+      }) as typeof fetch,
+      { solana: "https://fixture.invalid" },
+    );
+    const submit = () =>
+      create(
+        {
+          ...applicationManifest("open-registry", "example/open-registry"),
+          rewardAsset: {
+            network: "solana",
+            kind: "token",
+            address: "So11111111111111111111111111111111111111112",
+            symbol: "TEST",
+          },
+        },
+        { monthlyAmount: "1000" },
+      );
+    const wrongNetwork = await submit();
+    expect(wrongNetwork.status).toBe(422);
+    expect(await persistence.listProjects()).toEqual([]);
+    expect(calls).toEqual(["getGenesisHash"]);
+    unavailable = true;
+    expect((await submit()).status).toBe(503);
+    expect(await persistence.listProjects()).toEqual([]);
+    unavailable = false;
+    genesis = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+    const correctNetwork = await submit();
+    expect(correctNetwork.status).toBe(201);
+    expect(calls).toEqual([
+      "getGenesisHash",
+      "getGenesisHash",
+      "getGenesisHash",
+      "getAccountInfo",
+    ]);
+    expect(
+      (await persistence.getProject("open-registry"))?.manifest.rewardAsset,
+    ).toMatchObject({ network: "solana", decimals: 9, symbol: "TEST" });
+  });
+
   test("refuses a project id too long for its reviewer skill name", async () => {
     const id = "reproducible-research-toolkit-for-everyone-x";
     const response = await create(

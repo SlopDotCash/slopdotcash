@@ -3,6 +3,12 @@ import {
   type RecoveryRpc,
   recoveryOperator,
 } from "./solana-expiry";
+import {
+  greaterAmount,
+  minimumOutput,
+  rentIncrease,
+  spendableNative,
+} from "./verified-arithmetic";
 /**
  * Solana fee-wallet client. Routes come from the Jupiter Swap API. Each
  * Jupiter transaction is parsed before signing: the fee wallet is the only
@@ -307,8 +313,10 @@ function signedMinimumOutput(quote: JupiterQuote): bigint {
   // The API can round its display threshold up by one base unit. /swap
   // encodes quoted output and slippage, not that threshold. Retain only
   // the conservative floor we can bind to those signed instruction fields.
-  const minimum =
-    (BigInt(quote.outAmount) * BigInt(10000 - quote.slippageBps)) / 10000n;
+  const minimum = minimumOutput(
+    BigInt(quote.outAmount),
+    BigInt(quote.slippageBps),
+  );
   const advertised = BigInt(quote.otherAmountThreshold);
   if (advertised < minimum || advertised > minimum + 1n)
     throw new Error(
@@ -353,14 +361,13 @@ export function solanaNativeCost(
       tokenNative(meta.postTokenBalances, index);
     if (before < 0n || after < 0n)
       throw new Error("Solana native rent receipt is inconsistent");
-    if (after > before) actual += after - before;
+    actual += rentIncrease(before, after);
   }
   const walletDebit =
     nativeInteger(meta.preBalances[0]) -
     nativeInteger(meta.postBalances[0]) -
     nativePrincipal;
-  if (walletDebit > actual) actual = walletDebit;
-  return actual;
+  return greaterAmount(actual, walletDebit);
 }
 
 export function createSolanaClient(options: SolanaClientOptions): ChainClient {
@@ -1175,10 +1182,10 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           wallet,
           { commitment: "finalized" },
         ]);
-        const spendable =
-          nativeInteger(result.value) -
-          BigInt(config.nativeBudget?.perTransaction ?? "0");
-        return spendable > 0n ? spendable : 0n;
+        return spendableNative(
+          nativeInteger(result.value),
+          BigInt(config.nativeBudget?.perTransaction ?? "0"),
+        );
       }
       const mint = await admittedMint(token);
       // A reviewed route debits only the canonical associated account. A

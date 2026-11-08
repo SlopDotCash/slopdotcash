@@ -1,21 +1,13 @@
 /** Deterministic, non-custodial cycle funding reminder copy. */
+import {
+  fundingReminderVisible,
+  type ReminderLifecycle,
+} from "./verified-frontend";
 
 type CycleReminder = {
   kind: "funding-check";
   message: string;
 };
-
-type CycleReminderLifecycle =
-  | "closed-no-awards"
-  | "external-provisional"
-  | "live"
-  | "paid"
-  | "payment-ready"
-  | "review"
-  | "settlement-planned"
-  | "wound-up";
-
-const DAY_MS = 24 * 60 * 60 * 1_000;
 
 /**
  * Remind the viewer to check current vault funding near cycle close. A public
@@ -29,16 +21,15 @@ export function cycleSettlementReminder(input: {
   kind: "external-prize-share" | "monthly-pool";
   now: string;
   settledAt: string | null;
-  state: CycleReminderLifecycle;
+  state: ReminderLifecycle;
 }): CycleReminder | null {
   if (
-    input.kind !== "monthly-pool" ||
-    input.settledAt !== null ||
-    input.state === "closed-no-awards" ||
-    input.state === "external-provisional" ||
-    input.state === "paid" ||
-    input.state === "wound-up" ||
-    Date.parse(input.now) - Date.parse(input.closesAt) < -7 * DAY_MS
+    !fundingReminderVisible(
+      input.kind === "monthly-pool",
+      input.settledAt !== null,
+      input.state,
+      Date.parse(input.now) - Date.parse(input.closesAt),
+    )
   ) {
     return null;
   }
