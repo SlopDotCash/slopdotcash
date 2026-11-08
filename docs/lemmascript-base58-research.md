@@ -152,6 +152,14 @@ accepts any finite valid base58 length within available runtime resources.
 
 Reproduce the focused checks from this worktree with:
 
+The native Node registry-sync entry point also imports this codec through
+`funding-address.mjs`. Its first integration check found an extensionless
+import that Bun accepted but Node 24 could not resolve. The codec now uses
+the explicit `.ts` dependency path. Both no-emit TypeScript projects allow
+that syntax. `bun run projects:sync`, a direct Node roundtrip with leading
+zero bytes, and TypeScript checking pass with this correction. This is a
+runtime-resolution fix; it changes no base58 arithmetic or proof body.
+
 ```sh
 lsc check --backend=dafny --time-limit=30 \
   --extra-flags=--isolate-assertions src/lib/verified-base58.ts
