@@ -498,15 +498,14 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "sha256": "5660900b8ccb2617cb335c70271dd32aaed1a3c3c030857b734c8ba7667aa880",
+      "sha256": "4dc7269817a5d4f0e5a8fa2cc0443fa3798e2a939fe55e5f7932b09710a92a0e",
       "models": ["formal/models/api_project_registry.qnt"],
       "candidateLines": [
-        7, 41, 42, 52, 53, 99, 107, 113, 117, 126, 153, 154, 157, 162, 166, 177,
-        179, 198, 210, 218, 220, 224, 236, 244, 249, 254, 260, 265, 269, 271,
-        276, 284, 293, 294, 297, 302, 306, 311, 312, 313, 315, 318, 319, 325,
-        328, 329, 332, 335, 336, 339, 340, 342, 343, 349, 350, 352, 353, 355,
-        356, 361, 362, 364, 365, 367, 378, 381, 391, 392, 437, 481, 488, 495,
-        519, 530, 538, 543
+        7, 48, 49, 59, 60, 111, 119, 125, 129, 138, 146, 147, 217, 229, 237,
+        239, 243, 255, 263, 268, 273, 279, 284, 288, 290, 295, 303, 312, 313,
+        316, 321, 325, 330, 331, 332, 334, 337, 338, 344, 347, 348, 351, 354,
+        355, 358, 359, 361, 362, 368, 369, 371, 372, 374, 375, 380, 381, 383,
+        384, 386, 397, 400, 410, 411, 456, 500, 507, 514, 538, 549, 557, 562
       ],
       "review": "mapped-abstraction"
     },
@@ -541,6 +540,13 @@
         "formal/models/vetting_flag_reinstatement.qnt"
       ],
       "candidateLines": [16, 34, 45, 52, 60, 77, 79, 85, 274, 276, 292, 300],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/projects/verified-setup.ts",
+      "sha256": "69e3ea4375692554d177c67371a781afd0cf4d75de9af868212d88482ec96e74",
+      "models": ["formal/models/api_project_registry.qnt"],
+      "candidateLines": [68, 71, 72, 73, 78, 79, 80, 88, 89, 93, 97, 103, 108],
       "review": "mapped-abstraction"
     },
     {
@@ -7646,7 +7652,7 @@
     },
     {
       "path": "formal/models/api_project_registry.qnt",
-      "sha256": "e18fb823aab36a7604d0b5044306038052af88d31c95192e4eea675cb86e7c6e",
+      "sha256": "4ceee69dfa3ec6945626472268255f91ce1d92cd7c9dcb58438c92ddf477c2be",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/contracts.ts",
@@ -7655,6 +7661,7 @@
         "backend/projects/repository-access.ts",
         "backend/projects/setup.ts",
         "backend/projects/skill-publication.ts",
+        "backend/projects/verified-setup.ts",
         "migrations/0019_project_registry.sql",
         "migrations/0020_project_application_github_check.sql",
         "migrations/0039_project_update_applications.sql"

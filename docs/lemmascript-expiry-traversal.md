@@ -1,7 +1,7 @@
 # Solana expiry history traversal decision
 
 This cohort extends the existing retained-history agreement proof. PRD
-section 8 and the 26 October 2026 decision for issue #905 require two
+section 6 and the 26 October 2026 decision for issue #905 require two
 independent finalized histories before an expired native reservation can
 be released. The production path is `proveSolanaExpiry` in
 `workers/fee-converter/solana-expiry.ts`. This change adds no release rule,
