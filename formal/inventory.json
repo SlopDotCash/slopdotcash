@@ -3586,40 +3586,41 @@
     },
     {
       "path": "scripts/run-e2e-phase.mjs",
-      "sha256": "a2efca4e42b2404376871a4a3b007435258ed60ed919872979f10233962f8d77",
+      "sha256": "334d111167598bb2865410f3087984e2b7a3476c0cb29b8c3b37f118ce28324f",
       "models": [
         "formal/models/evidence_capture.qnt",
         "formal/models/formal_process.qnt",
         "formal/models/integration_pipeline.qnt"
       ],
       "candidateLines": [
-        26, 29, 36, 39, 40, 44, 74, 81, 97, 99, 116, 123, 145, 148, 150, 152,
-        159, 163, 170, 175
+        26, 29, 36, 39, 40, 44, 76, 84, 101, 103, 120, 127, 145, 166, 169, 171,
+        173, 180, 184, 191, 196
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/run-e2e.mjs",
-      "sha256": "b21215c508a3cd88cef93eac81c31b5cc19fe88759ae3e09e8161c1a49d511d7",
+      "sha256": "2c438b6124d314e2150ac0788aac4678f0362ce5f4f2a3b68dfc8500783d4b05",
       "models": [
         "formal/models/evidence_capture.qnt",
         "formal/models/fixture_wallet_runtime.qnt",
+        "formal/models/formal_process.qnt",
         "formal/models/runner_cancellation.qnt"
       ],
       "candidateLines": [
-        54, 63, 64, 65, 66, 85, 101, 102, 195, 272, 318, 320, 430, 499, 527,
-        599, 600, 613, 629, 635, 665, 666, 700
+        54, 63, 64, 65, 66, 85, 102, 103, 196, 273, 319, 321, 431, 500, 528,
+        600, 601, 614, 630, 636, 666, 667, 701
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/run-integration.mjs",
-      "sha256": "306d539d903e8b9c825898a4cb4da18bb3d40306d79ee356377bfaf3896cbf22",
+      "sha256": "1eea01a750dec4603e62fc6957472465697e9ff02dcbba8c59dd57115c1f73f6",
       "models": [
         "formal/models/dev_server_lifecycle.qnt",
         "formal/models/integration_pipeline.qnt"
       ],
-      "candidateLines": [],
+      "candidateLines": [93, 94, 95],
       "review": "mapped-abstraction"
     },
     {
@@ -3650,7 +3651,10 @@
     {
       "path": "scripts/runner-cancellation.mjs",
       "sha256": "0de7539378ede52287633bb302b9dbc7b275e8ecc88aa796350eedca678aaa6a",
-      "models": ["formal/models/runner_cancellation.qnt"],
+      "models": [
+        "formal/models/integration_pipeline.qnt",
+        "formal/models/runner_cancellation.qnt"
+      ],
       "candidateLines": [8, 9, 10, 12, 13, 16, 21],
       "review": "mapped-abstraction"
     },
@@ -7447,7 +7451,7 @@
     },
     {
       "path": "formal/models/api_mail_delivery.qnt",
-      "sha256": "64af073da66ae403db5fcf5c54fae91a9314b6ec652de17142dff5f7fc8c3a54",
+      "sha256": "3ac67cff7b27ecae8132dee756ffa941b33d66ff6c83eeace8ec37a0410437cd",
       "sources": [
         "backend/notifications/events.ts",
         "backend/notifications/handler.ts",
@@ -7846,7 +7850,7 @@
     },
     {
       "path": "formal/models/binding_veto_policy.qnt",
-      "sha256": "a655aa13eeb74b1f085590d83efff017e8df566a7966b8201f4b816ba2750948",
+      "sha256": "9637a02ac5ff1c5cea08b99fc67ea1b26f0804b70b94bc8b63eaf8a1196ecb8c",
       "sources": [
         "contracts/evm/src/ProjectEscrow.sol",
         "contracts/solana/programs/slop-escrow/src/lib.rs"
@@ -7855,6 +7859,7 @@
         "cancelledBindingCannotPayTest",
         "cappedBeforeFirstPaymentTest",
         "duplicateVetoCannotConsumeBudgetTest",
+        "evmConfirmationRefusedTest",
         "evmPendingWaivesWithoutCountingTest",
         "evmRotationExecutesWithoutConfirmationTest",
         "nonOwnerCannotVetoTest",
@@ -7863,11 +7868,13 @@
         "paymentResetsBudgetTest",
         "solanaCancelledRotationResetsClockTest",
         "solanaConfirmationReplayRefusedTest",
+        "solanaConfirmedRotationExecutesAfterWaitTest",
         "solanaConfirmedRotationStillWaitsTest",
         "solanaConfirmedWaivesUntilExecutionTest",
         "solanaProposalAloneDoesNotWaiveTest",
         "solanaRequiresNamedUnpaidAwardTest",
         "solanaRotationWithoutConfirmationRefusedTest",
+        "solanaZeroDelayConfirmedExecutionTest",
         "solanaZeroDelayStillNeedsConfirmationTest",
         "zeroDelayHasNoVetoWindowTest"
       ]
@@ -9047,15 +9054,22 @@
     },
     {
       "path": "formal/models/formal_process.qnt",
-      "sha256": "0e1dbbc12814e4aa99f69d0d46017d15d8395f0b780e6d95a1f4903143a9a758",
-      "sources": ["scripts/check-formal.mjs", "scripts/run-e2e-phase.mjs"],
+      "sha256": "25e0905a51ea37a0a84985eb4937c1ac071070da7eb7f93feecb67bee878a77c",
+      "sources": [
+        "scripts/check-formal.mjs",
+        "scripts/run-e2e-phase.mjs",
+        "scripts/run-e2e.mjs"
+      ],
       "scenarios": [
         "canceledCleanupCannotPassTest",
         "cleanSuccessTest",
         "cleanupFailureIsExplicitTest",
+        "cooperativeBrowserInterruptClosesServerTest",
         "exitedLauncherStillOwnsChildTest",
         "failureCannotPublishSuccessTest",
-        "timeoutKillsDescendantTest"
+        "normalBrowserClosesManagedServerTest",
+        "timeoutKillsDescendantTest",
+        "uncooperativeBrowserCannotClaimCleanupTest"
       ]
     },
     {
@@ -9224,15 +9238,22 @@
     },
     {
       "path": "formal/models/integration_pipeline.qnt",
-      "sha256": "438d63f80d4a9b877730628fcfb43eca99618d0f9a4e27783d347f7a57c4b978",
-      "sources": ["scripts/run-e2e-phase.mjs", "scripts/run-integration.mjs"],
+      "sha256": "2bd1287c7ac3519836c19668e2d00510d125442fa35e65808aa0b0adf7fc1b57",
+      "sources": [
+        "scripts/run-e2e-phase.mjs",
+        "scripts/run-integration.mjs",
+        "scripts/runner-cancellation.mjs"
+      ],
       "scenarios": [
         "allDriversCompleteTest",
         "canceledBeforeFirstDriverTest",
         "canceledDriverCannotStartSuccessorTest",
         "cleanupFailureIsNotSuccessTest",
+        "earlierFailureSurvivesLaterSignalTest",
         "ordinaryFailureStillCollectsOtherDriversTest",
-        "repeatedSignalsKeepCancellationTest"
+        "repeatedSignalsKeepCancellationTest",
+        "startAfterCancellationRefusedTest",
+        "successorAfterCancellationRefusedTest"
       ]
     },
     {
@@ -10085,7 +10106,7 @@
     },
     {
       "path": "formal/models/runner_cancellation.qnt",
-      "sha256": "270e948fbb344cb0bf0c602fdeb78bb498510b7d52dcd6c22a53fa0626352788",
+      "sha256": "90c8cd09d83bd5d1f6caeb1c8abbf93628599082a303dc35f88bf8525c90a632",
       "sources": [
         "scripts/prepare-e2e-fixture.mjs",
         "scripts/run-e2e.mjs",
@@ -10093,10 +10114,14 @@
         "scripts/runner-cancellation.mjs"
       ],
       "scenarios": [
+        "activePhasePreventsCompletionTest",
+        "beginAfterCancellationRefusedTest",
         "canceledBeforeAnyStartupTest",
         "cancellationBetweenPortsPreventsLaunchTest",
         "firstFailureSurvivesRepeatedSignalsTest",
         "lateStartupResourceStillClosesTest",
+        "launchAfterCancellationRefusedTest",
+        "pendingCleanupPreventsCompletionTest",
         "twoPhasesDrainBeforeCompletionTest"
       ]
     },
@@ -10556,7 +10581,7 @@
     },
     {
       "path": "formal/models/ui_bounty_payment_parent.qnt",
-      "sha256": "002b47b2459f7b924a33375ea24778068ed084eb883d7dbc984e3143a025cb3f",
+      "sha256": "bce87b553440c6b19da9f239695fe13fb238106d76d49d12f332e93767d401c6",
       "sources": [
         "src/DirectBountyPayment.tsx",
         "src/SecurityBounty.tsx",
@@ -11256,7 +11281,7 @@
     },
     {
       "path": "formal/models/ui_submitted_payment_recovery.qnt",
-      "sha256": "6aa082f435fe57717447069c165b0aafb0e6c85afed621266bc34ca98195af91",
+      "sha256": "360d727c855308c9dd968d32257c6e1a7422bab77357f04c137b727c8b865166",
       "sources": [
         "src/BountySubmittedPayments.tsx",
         "src/SecurityBounty.tsx",
@@ -11265,6 +11290,7 @@
       "scenarios": [
         "confirmedIdentifiersAreNotResubmittedTest",
         "editDuringRequestDoesNotChangeCapturedHashesTest",
+        "failedAuthorizationCanRetryTest",
         "failedReloadRetainsExistingRowsTest",
         "fallbackDepartureMayFinishSameActorVerificationTest",
         "generationChangeBetweenPreflightsRefusesPostTest",
