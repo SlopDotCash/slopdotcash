@@ -370,12 +370,17 @@ Install the pinned toolchain and run the complete repository check:
 
 ```bash
 bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 bun run leaderboard:generate
 bun run verify
 bun run format:check
 bun run test:e2e
 ```
+
+`lemmascript:setup` downloads and checks the pinned Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH` before running `verify`.
 
 The committed registry snapshot is empty. Award and skill validation need the
 synced project identities. Do not commit the generated snapshot.

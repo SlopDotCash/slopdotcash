@@ -637,9 +637,14 @@ refinement nor the absence of every application state error.
 - Do not leave TODOs, placeholders, dead controls, or silent fallback success.
 - Keep `AGENTS.md` and `CLAUDE.md` byte-identical.
 
-Run from the repository root:
+Install the lockfile and local prover before running the checks.
+`lemmascript:setup` downloads and checks the pinned Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH`. Run from the repository root:
 
 ```bash
+bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 bun run leaderboard:generate
 bun run projects:check
@@ -662,8 +667,8 @@ and policy mirrors; explain why application acceptance does not apply to the
 prose itself. Keep required repository checks. Do not fabricate UI or
 deployment evidence.
 
-Rebase onto current `origin/development`, install the lockfile, sync the
-project registry with `bun run projects:sync`, and prepare the ledger with
+Rebase onto current `origin/development`, install the lockfile and local prover
+as above, sync the project registry with `bun run projects:sync`, and prepare the ledger with
 `bun run leaderboard:generate`. Do not commit the generated registry snapshot.
 Local pull-request checks may use the validated public-snapshot preparation in
 [Local review checks](README.md#local-review-checks) instead of live ingestion.
