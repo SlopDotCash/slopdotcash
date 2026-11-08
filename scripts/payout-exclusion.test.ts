@@ -96,7 +96,6 @@ test("an excluded owner keeps the score, receives nothing, and the other share i
       { projectId: "asi", period: "2026-11", generatedAt: AFTER_NOVEMBER },
       snapshotBytes,
       policyBytes,
-      project,
     );
     return {
       base,
@@ -229,7 +228,6 @@ test("an exclusion written with the owner's other GitHub node ID format still ex
     { projectId: "asi", period: "2026-11", generatedAt: AFTER_NOVEMBER },
     new TextEncoder().encode(JSON.stringify(snapshot)),
     policyBytes,
-    project,
   );
   // The payment backend excludes user 43 by numeric ID, so the proposal must too.
   expect(
