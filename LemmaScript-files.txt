@@ -29,3 +29,4 @@ workers/slopbot/verified-source-ownership.ts
 workers/fee-converter/verified-solana-wire.ts
 workers/slopbot/verified-retained-binding.ts
 backend/projects/verified-setup.ts
+workers/fee-converter/verified-jupiter-policy.ts

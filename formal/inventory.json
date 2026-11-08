@@ -5798,7 +5798,7 @@
     },
     {
       "path": "workers/fee-converter/jupiter-route.ts",
-      "sha256": "0aac229ce00958581f3a6681ae334cfa9d7a32a40fce48a76f71aa5450d2f344",
+      "sha256": "4f29d76d370c758aed8b3280e5d5e4f8d32bd4b8a0886c6260882d3da4f1af9d",
       "models": [
         "formal/models/fee_quote_policy.qnt",
         "formal/models/solana_route.qnt"
@@ -5911,6 +5911,16 @@
       "sha256": "4c57516608636d009854016a2def8ecd4666dfc4490cbeef1278f058a827c04d",
       "models": ["formal/models/solana_expiry.qnt"],
       "candidateLines": [73],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/fee-converter/verified-jupiter-policy.ts",
+      "sha256": "321993e4f2d7d69721c9ef9d6b7af0bd53c0904c5cb80f098bf9f6666927fc31",
+      "models": [
+        "formal/models/fee_quote_policy.qnt",
+        "formal/models/solana_route.qnt"
+      ],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -9022,11 +9032,12 @@
     },
     {
       "path": "formal/models/fee_quote_policy.qnt",
-      "sha256": "278bb69ca93774eedc6ea46572c0589160eefb6d39051b4212ff279e4055a11e",
+      "sha256": "f94c0574763c9726d1878a6ce55f50c7fcef651dfd98dfbd4107b1934b26f20c",
       "sources": [
         "workers/fee-converter/config.ts",
         "workers/fee-converter/core.ts",
-        "workers/fee-converter/jupiter-route.ts"
+        "workers/fee-converter/jupiter-route.ts",
+        "workers/fee-converter/verified-jupiter-policy.ts"
       ],
       "scenarios": ["acceptableTest", "dustPendingTest", "routeRefusedTest"]
     },
@@ -10311,7 +10322,7 @@
     },
     {
       "path": "formal/models/solana_route.qnt",
-      "sha256": "9d461a92c9d06c591c441fe97479a76ec1bec7de6e3e61a99a2dbd505e07f1bb",
+      "sha256": "d548323eba53036f6821598e2c3dbc81b95f2e76f66d1e0b2cf13707da2097db",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/fee-converter/jupiter-route-schema.ts",
@@ -10320,7 +10331,8 @@
         "workers/fee-converter/solana-accounts.ts",
         "workers/fee-converter/solana-native-route.ts",
         "workers/fee-converter/solana-route-accounts.ts",
-        "workers/fee-converter/solana-route-receipt.ts"
+        "workers/fee-converter/solana-route-receipt.ts",
+        "workers/fee-converter/verified-jupiter-policy.ts"
       ],
       "scenarios": [
         "checkedRouteTest",

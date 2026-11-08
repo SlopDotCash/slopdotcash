@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 673,
-    "functions": 9693,
-    "selectedContractTargets": 112,
-    "unprovedFunctions": 9581,
+    "files": 674,
+    "functions": 9694,
+    "selectedContractTargets": 116,
+    "unprovedFunctions": 9578,
     "nonTypeScriptFiles": 52
   },
   "limits": [
@@ -8695,13 +8695,10 @@
 {"path":"workers/fee-converter/jupiter-route-schema.ts","sha256":"bc57d3e27a71e4acd95c7c898b27be6561a3db3ee594ba39504c56dbf4c206e1","language":"typescript","disposition":"no-function-body","functions":[
 
 ]},
-{"path":"workers/fee-converter/jupiter-route.ts","sha256":"0aac229ce00958581f3a6681ae334cfa9d7a32a40fce48a76f71aa5450d2f344","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"assertJupiterRoute","kind":"FunctionDeclaration","line":26,"sha256":"5043cdb9aad8e9fb8590d9e2ded785f5eee320ae9afcf04d66628ca82f6052f7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"<ArrowFunction@41>","kind":"ArrowFunction","line":41,"sha256":"833ff5c26bd94712c5984284ba98caaa61cc4c9376d7f7f1cb061acd6e3387fa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"writable","kind":"ArrowFunction","line":49,"sha256":"9dec3af6e06aa538b83f6108202981f67e670e5d72bed0fef3ec6106585dcf3e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@57>","kind":"ArrowFunction","line":57,"sha256":"4af7b65fc0f3d81a3877ec4dce866a8f442c2ef6d8aa36c8600efb6e33900bdb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"required","kind":"ArrowFunction","line":67,"sha256":"57f39a2cb68410aa7dab8cbc6d772f477d03abd5cfc33b3e79db41deccfbf4fb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"optional","kind":"ArrowFunction","line":71,"sha256":"5ecd3d0e1d7d70a69ff4b9c07b95450c4bdff7bcd8b14ac43f6e19d26b34bc0b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"workers/fee-converter/jupiter-route.ts","sha256":"4f29d76d370c758aed8b3280e5d5e4f8d32bd4b8a0886c6260882d3da4f1af9d","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"assertJupiterRoute","kind":"FunctionDeclaration","line":32,"sha256":"385b397d6d52d6de923c8ebaea8105793b8bf5e06b66f73bcfb1c20ff79bad69","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"<ArrowFunction@47>","kind":"ArrowFunction","line":47,"sha256":"833ff5c26bd94712c5984284ba98caaa61cc4c9376d7f7f1cb061acd6e3387fa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@69>","kind":"ArrowFunction","line":69,"sha256":"fa6c96573d08961cf16795e346b3456a28d4fddfc71a51d02a7e140adddf9a19","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"workers/fee-converter/jupiter-wire.ts","sha256":"2538c10df170baec6fc7e4a2839fe33d0494423328da900906a37db3bd0e401c","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"decodeJupiterRoute","kind":"FunctionDeclaration","line":38,"sha256":"d2452b30e4e67ad81017b7c71b1d139fc0f995d66b096c0dd12946ad6c11cd00","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
@@ -8936,6 +8933,12 @@
 {"name":"matchingExpiryCoverage","kind":"FunctionDeclaration","line":22,"sha256":"05414f175a6ac0106f4dd98efbdca72b86400ed93fb9baddb8b48da5d5589f43","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"containsExpirySignature","kind":"FunctionDeclaration","line":58,"sha256":"bb6c54023d0d9ffdc06c4c93d1f69736adc7ac790ba4c32d079f414c2682ba4f","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"expiryTraversalStep","kind":"FunctionDeclaration","line":82,"sha256":"46dace579aceb3681ab278bbd41e4f061d3b7141d4c9172cb5335e83e71652ed","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
+]},
+{"path":"workers/fee-converter/verified-jupiter-policy.ts","sha256":"321993e4f2d7d69721c9ef9d6b7af0bd53c0904c5cb80f098bf9f6666927fc31","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"invalidRouteRole","kind":"FunctionDeclaration","line":22,"sha256":"805f43436ccb88fa619afae0c4c9ca59c4f95fbb048bd0262826224d3ffe0367","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"routeValue","kind":"FunctionDeclaration","line":57,"sha256":"1b83cf963f0623a3aef0809da5e261a846aade4f4a7b527383c2eaa5870e1d15","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"routeBindingError","kind":"FunctionDeclaration","line":87,"sha256":"64eae841252455146ace5e2b1c05ab59e2fc30de5b786b8aa89fb21ae7423040","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"routeAmountsMatch","kind":"FunctionDeclaration","line":159,"sha256":"469653ee7e93210d7fb4e89d5ef7003e1df56af2752384329015d06fa5144a9f","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
 {"path":"workers/fee-converter/verified-native-liability.ts","sha256":"28020a9a6110cb7be8c230456e2bc174869c9d8746d14b48b3ea8abb6bf2ce6f","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"nativeDailyLiability","kind":"FunctionDeclaration","line":18,"sha256":"065da195239fa77ff87c7e5b50ef63b922ff4d1189033c2c2bbf42f60bc2ff34","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
