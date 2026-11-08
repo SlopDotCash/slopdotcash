@@ -10,12 +10,12 @@
  */
 import { isExactUtc } from "./record-validation.mjs";
 import { VALUE_RUBRIC_VERSION } from "./value-assessment";
-import {
-  allocateReviewShares,
-  MAX_CREDITED_REVIEWERS,
-} from "./verified-review-allocation";
+import { allocateWeighted } from "./verified-allocation";
+import { selectReviewers } from "./verified-reviewers";
+import { cappedTotal } from "./verified-selection";
 
-export { MAX_CREDITED_REVIEWERS } from "./verified-review-allocation";
+/** PRD section 7: up to the first five distinct qualifying reviewers. */
+export const MAX_CREDITED_REVIEWERS = 5 as const;
 
 export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
 
@@ -95,10 +95,10 @@ function reviewCreditPoolThirds(
 ): number {
   if (!Number.isSafeInteger(assessedSizeThirds) || assessedSizeThirds < 0)
     throw new RangeError("Assessed size must be a non-negative integer");
-  const bands = creditedBands.reduce((sum, band) => sum + band, 0);
-  return Math.max(
+  return cappedTotal(
+    [...creditedBands],
+    assessedSizeThirds,
     MIN_REVIEW_CREDIT_POOL_THIRDS,
-    Math.min(bands, assessedSizeThirds),
   );
 }
 
@@ -121,10 +121,10 @@ export function allocateReviewCredit(
     throw new RangeError(
       `Review credit needs one to ${MAX_CREDITED_REVIEWERS} positive integer weights`,
     );
-  return allocateReviewShares(
+  return allocateWeighted(
     BigInt(poolThirds),
     weights.map((weight) => BigInt(weight)),
-  ).map(Number);
+  ).amounts.map(Number);
 }
 
 export interface QualifyingReview<Actor extends { id: string }> {
@@ -152,20 +152,6 @@ interface ReviewCreditAllocation<Actor extends { id: string }> {
   beyondLimitReviewIds: string[];
 }
 
-function compareReviewTime(
-  left: { submittedAt: string; reviewId: string },
-  right: { submittedAt: string; reviewId: string },
-): number {
-  const difference =
-    Date.parse(left.submittedAt) - Date.parse(right.submittedAt);
-  if (difference !== 0) return difference;
-  return left.reviewId < right.reviewId
-    ? -1
-    : left.reviewId > right.reviewId
-      ? 1
-      : 0;
-}
-
 /**
  * One explicit allocation for one pull request: dedupe by immutable reviewer
  * ID, order reviewers by their first qualifying review (submission time, then
@@ -180,34 +166,54 @@ export function allocatePullRequestReviewCredit<Actor extends { id: string }>(
   assessedSizeThirds: number,
 ): ReviewCreditAllocation<Actor> {
   const seen = new Set<string>();
-  const byReviewer = new Map<string, QualifyingReview<Actor>[]>();
+  const actorIndexes = new Map<string, number>();
+  const timed: { review: QualifyingReview<Actor>; submittedAt: number }[] = [];
   for (const review of reviews) {
     if (seen.has(review.reviewId))
       throw new Error("Review credit received a repeated review source");
     seen.add(review.reviewId);
-    if (!Number.isFinite(Date.parse(review.submittedAt)))
+    const submittedAt = Date.parse(review.submittedAt);
+    if (!Number.isFinite(submittedAt))
       throw new Error("Qualifying review lacks a verified submission time");
     if (!Number.isSafeInteger(review.thirds) || review.thirds < 1)
       throw new RangeError("Qualifying review needs a positive band");
-    const list = byReviewer.get(review.actor.id) ?? [];
-    list.push(review);
-    byReviewer.set(review.actor.id, list);
+    if (!actorIndexes.has(review.actor.id))
+      actorIndexes.set(review.actor.id, actorIndexes.size);
+    timed.push({ review, submittedAt });
   }
-  const reviewers = [...byReviewer.values()]
-    .map((list) => {
-      const ordered = [...list].sort(compareReviewTime);
-      const first = ordered[0] as QualifyingReview<Actor>;
-      const source = ordered.reduce((best, review) =>
-        review.thirds > best.thirds ? review : best,
-      );
-      return { first, source, ordered };
-    })
+  // Unique review IDs make this the same total order used within each old
+  // actor group and between their first reviews. Actor metadata stays on the
+  // selected source object; only immutable IDs become dense scan indexes.
+  const ordered = timed
     .sort(
       (left, right) =>
-        compareReviewTime(left.first, right.first) ||
-        (left.first.actor.id < right.first.actor.id ? -1 : 1),
-    );
-  const creditedReviewers = reviewers.slice(0, MAX_CREDITED_REVIEWERS);
+        left.submittedAt - right.submittedAt ||
+        (left.review.reviewId < right.review.reviewId
+          ? -1
+          : left.review.reviewId > right.review.reviewId
+            ? 1
+            : 0),
+    )
+    .map(({ review }) => review);
+  const grouped: QualifyingReview<Actor>[][] = Array.from(
+    { length: actorIndexes.size },
+    () => [],
+  );
+  const entries = ordered.map((review) => {
+    const actor = actorIndexes.get(review.actor.id) as number;
+    grouped[actor].push(review);
+    return { actor, thirds: review.thirds };
+  });
+  const selection = selectReviewers(
+    actorIndexes.size,
+    entries,
+    MAX_CREDITED_REVIEWERS,
+  );
+  const reviewers = selection.actors.map((actor) => ({
+    source: ordered[selection.sources[actor]] as QualifyingReview<Actor>,
+    ordered: grouped[actor],
+  }));
+  const creditedReviewers = reviewers.slice(0, selection.creditedCount);
   const bands = creditedReviewers.map((reviewer) => reviewer.source.thirds);
   const poolThirds = bands.length
     ? reviewCreditPoolThirds(bands, assessedSizeThirds)
@@ -224,7 +230,7 @@ export function allocatePullRequestReviewCredit<Actor extends { id: string }>(
         .map((review) => review.reviewId),
     })),
     beyondLimitReviewIds: reviewers
-      .slice(MAX_CREDITED_REVIEWERS)
+      .slice(selection.creditedCount)
       .flatMap((reviewer) => reviewer.ordered.map((review) => review.reviewId)),
   };
 }

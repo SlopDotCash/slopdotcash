@@ -1,6 +1,6 @@
 import { type ApiError, cookieValue, fail } from "../../backend/http";
 import { readLimitedBody } from "../../backend/trace/validation";
-import brand from "../../brand/tokens.json" with { type: "json" };
+import { brandTokens as brand } from "../../src/brand-tokens";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type DeploymentTier,

@@ -1,3 +1,4 @@
+// @source workers/slopbot/verified-retained-binding.ts
 // @source workers/slopbot/value-retained-copy.ts
 // @source workers/slopbot/value-retained-reference.ts
 // @source workers/slopbot/value-indirect.ts

@@ -1,6 +1,7 @@
 // @source workers/fee-converter/core.ts
 // @source workers/fee-converter/config.ts
 // @source workers/fee-converter/jupiter-route.ts
+// @source workers/fee-converter/verified-jupiter-policy.ts
 // Finite quote-policy truth table; chain quote authenticity is a separate boundary.
 module fee_quote_policy {
   type S = { state: str, capacity: bool, priced: bool, dust: bool, gas: bool,

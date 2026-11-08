@@ -1,5 +1,5 @@
 /*
- * Blackout design system. Tokens come from brand/tokens.json through
+ * Blackout design system. Tokens come from src/brand-tokens.ts through
  * brand-tokens.css. This layer loads after styles.css and owns the shared
  * primitives: type, buttons, inputs, header, footer, skill box and home.
  */

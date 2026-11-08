@@ -1,3 +1,5 @@
+// @source src/lib/verified-allocation.ts
+// @source src/lib/weighted-allocation.ts
 // @source src/lib/funding-review-data.ts
 // @source src/lib/project-view.ts
 // @source src/lib/contribution-quality.ts

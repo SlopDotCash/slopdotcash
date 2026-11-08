@@ -54,3 +54,7 @@ _apalache-out/
 .tools/
 *.dfy.base
 *.dfy.merged
+
+test-results/
+_apalache-out/
+dist/

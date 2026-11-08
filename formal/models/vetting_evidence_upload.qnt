@@ -1,3 +1,4 @@
+// @source src/lib/verified-partition.ts
 // @source migrations/0034_vetting_private_evidence.sql
 // @source migrations/0035_vetting_evidence_chunks.sql
 // @source migrations/0036_vetting_evidence_assembly.sql

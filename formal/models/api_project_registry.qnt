@@ -5,6 +5,7 @@
 // @source backend/projects/handler.ts
 // @source backend/projects/cloudflare-persistence.ts
 // @source backend/projects/setup.ts
+// @source backend/projects/verified-setup.ts
 // @source backend/projects/repository-access.ts
 // @source backend/projects/github-lookup.ts
 // @source backend/projects/skill-publication.ts

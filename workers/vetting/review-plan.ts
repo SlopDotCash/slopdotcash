@@ -10,9 +10,11 @@
  * or recorded with the plan as sharing its reviewed bytes, and the review is
  * complete only when every call completed.
  */
+
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
+import { boundedReviewTimeout } from "../verified-budget";
 import {
   DETERMINISTIC_COVERAGE_ID,
   INVENTORY_SCHEMA,
@@ -31,6 +33,10 @@ import {
   type ScannerProfile,
   SYNTHESIS_PROMPT_REVISION,
 } from "./scanners";
+import {
+  fittedAliasCount,
+  layoutReviewBatches,
+} from "./verified-review-batches";
 
 /** Default input budget of one batch call, in estimated tokens. */
 export const DEFAULT_BATCH_TOKENS = 150_000;
@@ -88,7 +94,7 @@ const plannedItemBytes = ({ item, aliases }: PlannedItem) =>
 const tokens = (bytes: number) => Math.ceil(bytes / BYTES_PER_TOKEN);
 /** A larger input gets more time; an outage still fails as a retry. */
 export const callTimeoutMs = (estimatedTokens: number) =>
-  Math.min(600_000, 120_000 + estimatedTokens);
+  boundedReviewTimeout(estimatedTokens);
 
 function planned(evidence: string, items: number): PlannedCall {
   return {
@@ -246,54 +252,37 @@ export function planReview(
    * widest index and count), plus each alias's JSON bytes and its comma.
    */
   const fittedAliases = (item: Item, aliases: string[]): string[] => {
-    let size = Buffer.byteLength(
+    const size = Buffer.byteLength(
       batchEvidence(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, [item], {
         [item.id]: [],
       }),
     );
-    let fitted = 0;
-    for (const alias of aliases) {
-      size += Buffer.byteLength(JSON.stringify(alias)) + (fitted > 0 ? 1 : 0);
-      if (size > limit) break;
-      fitted += 1;
-    }
-    return aliases.slice(0, fitted);
+    return aliases.slice(0, fittedAliasCount(size, aliases, limit));
   };
-  const groups: PlannedItem[][] = [];
-  const outside: { item: Item; group: number; paths: string[] }[] = [];
-  let current: PlannedItem[] = [];
-  let bytes = BATCH_OVERHEAD_BYTES;
-  const flush = () => {
-    if (current.length > 0) groups.push(current);
-    current = [];
-    bytes = BATCH_OVERHEAD_BYTES;
-  };
-  for (const item of ordered) {
+  const prepared = ordered.map((item) => {
     const aliases = sameBytes.get(item.id) ?? [];
     const fitted = aliases.length > 0 ? fittedAliases(item, aliases) : aliases;
-    if (fitted.length < aliases.length) {
-      // The reviewed copy fills its own batch; the remaining identical paths
-      // share its reviewed bytes and are recorded outside the model batches.
-      flush();
-      groups.push([{ item, aliases: fitted }]);
-      outside.push({
-        item,
-        group: groups.length,
-        paths: aliases.slice(fitted.length),
-      });
-      continue;
-    }
-    const plannedItem: PlannedItem = { item, aliases };
-    const size = plannedItemBytes(plannedItem);
-    if (
-      current.length > 0 &&
-      (bytes + size > limit || current.length >= MAX_INVENTORY_ITEMS)
-    )
-      flush();
-    current.push(plannedItem);
-    bytes += size;
-  }
-  flush();
+    const plannedItem: PlannedItem = { item, aliases: fitted };
+    return {
+      plannedItem,
+      paths: aliases.slice(fitted.length),
+      layout: {
+        bytes:
+          fitted.length < aliases.length ? 0 : plannedItemBytes(plannedItem),
+        aliases: aliases.length,
+        fitted: fitted.length,
+      },
+    };
+  });
+  const layout = layoutReviewBatches(
+    prepared.map((entry) => entry.layout),
+    BATCH_OVERHEAD_BYTES,
+    limit,
+    MAX_INVENTORY_ITEMS,
+  );
+  const groups = layout.spans.map(({ start, end }) =>
+    prepared.slice(start, end).map(({ plannedItem }) => plannedItem),
+  );
   const batches = groups.map((plannedItems, index) => {
     const items = plannedItems.map(({ item }) => item);
     const aliases = Object.fromEntries(
@@ -306,12 +295,18 @@ export function planReview(
       items.length,
     );
   });
-  const sameBytesOutsideBatches = outside.map(({ item, group, paths }) => ({
-    sourcePath: item.id,
-    sourceSha256: item.sha256,
-    batch: `batch-${group}`,
-    paths,
-  }));
+  const sameBytesOutsideBatches = prepared.flatMap((entry, index) =>
+    entry.paths.length > 0
+      ? [
+          {
+            sourcePath: entry.plannedItem.item.id,
+            sourceSha256: entry.plannedItem.item.sha256,
+            batch: `batch-${layout.groupOf[index] + 1}`,
+            paths: entry.paths,
+          },
+        ]
+      : [],
+  );
   return { mode: "batched", batches, batchTokens, sameBytesOutsideBatches };
 }
 

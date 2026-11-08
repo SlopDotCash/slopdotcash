@@ -1,4 +1,5 @@
 // @source backend/security/report-intake.ts
+// @source backend/security/verified-intake.ts
 // PR2252: a maintainer-forward decision closes a raw held-screen revision
 // window. Explicit intake or case-owner requests for information can reopen
 // it. Intake and case revisions are separate CAS tokens; at most two edits.

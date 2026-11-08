@@ -12,6 +12,7 @@
   "scripts/lemmascript-source-directories.mjs": "Static excluded-directory names shared by proof snapshot and inventory scanners; no updates or cross-call state transition.",
   "scripts/path-containment.ts": "Pure directory-containment predicate over supplied paths/path API. File mutation and cleanup lifecycles belong to its callers.",
   "scripts/sha256.mjs": "Pure content digest helper. It owns no durable, asynchronous or UI lifecycle state; callers model the trust placed in the digest.",
+  "src/brand-tokens.ts": "Immutable design-token data only; it declares no state transitions. The build and identity consumers are modeled separately.",
   "src/lib/async-sha256.mjs": "Stateless digest operation over an owned byte view; callers own asynchronous completion and trust decisions.",
   "src/lib/base58.ts": "Pure byte/text encoding with per-call local accumulators; no retained state or side effects.",
   "src/lib/byte-encoding.ts": "Pure byte/base64 conversion and buffer-copy helpers; protocol/session state belongs to callers.",

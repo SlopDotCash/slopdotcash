@@ -42,6 +42,10 @@ import {
   verifySolanaDirect,
 } from "./direct-solana";
 import { retireSolanaPlans } from "./direct-solana-recovery";
+import {
+  planEvmRecovery,
+  type RecoveryNonce,
+} from "./verified-direct-recovery";
 
 type Database = D1TransactionalDatabase<D1QueryStatement>;
 export interface DirectPaymentConfig {
@@ -936,10 +940,6 @@ async function evmRecoveryState(
   config?: DirectPaymentConfiguration,
 ) {
   const transactions = c.intent.transactions;
-  const unpaid =
-    transactions
-      ?.map((tx, index) => ({ tx, index }))
-      .filter(({ index }) => !c.paidIndexes.has(index)) ?? [];
   let finalized: bigint | undefined;
   let payerReview = true;
   const settings = config?.(c.intent.network);
@@ -961,33 +961,34 @@ async function evmRecoveryState(
     } catch {
       /* A read failure must not invite a self-call through unknown code. */
     }
-  const finalNonce = finalized;
-  const spent =
-    finalNonce === undefined
+  // A missing finalized nonce and unchanged/paid researcher leave no candidate;
+  // preserve the old path's refusal to parse unused transaction nonce strings.
+  const fallback = !c.researcherPaid && c.target.id !== c.intent.recipient.id;
+  const nonces: RecoveryNonce[] =
+    finalized === undefined && !fallback
       ? []
-      : unpaid.filter(({ tx }) => tx.nonce && BigInt(tx.nonce) < finalNonce);
-  spent.sort((a, b) =>
-    BigInt(a.tx.nonce as string) < BigInt(b.tx.nonce as string) ? -1 : 1,
+      : (transactions ?? []).map((tx, index) =>
+          (c.paidIndexes.has(index) && !(index === 0 && fallback)) ||
+          tx.nonce === undefined
+            ? { kind: "absent" }
+            : { kind: "present", text: tx.nonce, value: BigInt(tx.nonce) },
+        );
+  const plan = planEvmRecovery(
+    nonces,
+    [...c.paidIndexes],
+    finalized === undefined
+      ? { kind: "unavailable" }
+      : { kind: "known", value: finalized },
+    c.researcherPaid,
+    c.intent.recipient.id,
+    c.target.id,
   );
-  const legIndex =
-    spent[0]?.index ??
-    (!c.researcherPaid && c.target.id !== c.intent.recipient.id ? 0 : null);
-  const nonce = legIndex === null ? undefined : transactions?.[legIndex]?.nonce;
-  const blockedByLower =
-    nonce !== undefined &&
-    unpaid.some(
-      ({ tx, index }) =>
-        index !== legIndex &&
-        tx.nonce &&
-        BigInt(tx.nonce) < BigInt(nonce) &&
-        (finalized === undefined || BigInt(tx.nonce) >= finalized),
-    );
   return {
-    legIndex,
-    nonce,
-    consumed: spent.some(({ index }) => index === legIndex),
+    legIndex: plan.legIndex < 0 ? null : plan.legIndex,
+    nonce: plan.legIndex < 0 ? undefined : transactions?.[plan.legIndex]?.nonce,
+    consumed: plan.consumed,
     payerReview,
-    blockedByLower,
+    blockedByLower: plan.blockedByLower,
   };
 }
 

@@ -1,6 +1,7 @@
 // @source migrations/0112_direct_payment_recovery.sql
 // @source migrations/0113_direct_unpaid_leg_recovery.sql
 // @source backend/security/direct-payments.ts
+// @source backend/security/verified-direct-recovery.ts
 // Direct award successor: no absence/advanced-nonce shortcut proves retirement.
 module direct_payment_recovery {
   type S = { chain: str, payer: bool, consent: bool, changed: bool, retired: bool,

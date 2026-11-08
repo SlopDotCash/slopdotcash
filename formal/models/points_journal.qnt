@@ -1,5 +1,7 @@
 // @source src/lib/points.ts
+// @source src/lib/verified-aggregation.ts
 // @source src/lib/payout-points.ts
+// @source src/lib/verified-global-joins.ts
 // @source src/lib/score-penalties.ts
 // @source src/lib/score-records.ts
 // @source scripts/generate-points.ts

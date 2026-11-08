@@ -1,6 +1,7 @@
 /** All-time money received, as published by GET /api/v1/payments/received. */
 import { ESCROW_NETWORKS } from "./escrow-policy.mjs";
 import { CANONICAL_UINT } from "./record-validation.mjs";
+import { sumAmounts } from "./verified-allocation";
 
 /** One contributor's all-time receipts in micro-dollars (USDC base units). */
 export interface ReceivedContributor {
@@ -56,7 +57,7 @@ export function isReceivedTotals(value: unknown): value is ReceivedTotals {
           (p) => !!p && typeof p.projectId === "string" && money(p.usdMicro),
         ),
     ) &&
-    v.contributors.reduce((sum, c) => sum + BigInt(c.usdMicro), 0n) ===
+    sumAmounts(v.contributors.map((c) => BigInt(c.usdMicro))) ===
       BigInt(v.totals.usdMicro)
   );
 }

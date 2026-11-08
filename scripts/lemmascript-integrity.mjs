@@ -168,6 +168,7 @@ function tokenizeProof(text) {
   }
   return tokens;
 }
+const proofModifiers = ["opaque", "ghost"];
 const declarationKinds = [
   "lemma",
   "method",
@@ -190,8 +191,17 @@ function proofDeclarations(tokens) {
     brackets = 0;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i].text;
-    if (!braces && !parens && !brackets && declarationKinds.includes(t))
-      starts.push(i);
+    if (!braces && !parens && !brackets) {
+      if (proofModifiers.includes(t)) {
+        if (!["function", "predicate"].includes(tokens[i + 1]?.text))
+          throw Error(`Unsupported ${t} declaration`);
+        starts.push(i);
+      } else if (
+        declarationKinds.includes(t) &&
+        !proofModifiers.includes(tokens[i - 1]?.text)
+      )
+        starts.push(i);
+    }
     if (t === "{") braces++;
     if (t === "}") braces--;
     if (t === "(") parens++;
@@ -227,9 +237,10 @@ function proofDeclarations(tokens) {
       lastOpen >= 0 && lastClose === all.length - 1
         ? all.slice(lastOpen + 1, lastClose)
         : null;
+    const modifier = proofModifiers.includes(all[0]) ? 1 : 0;
     return {
-      kind: all[0],
-      name: all[1],
+      kind: all[modifier],
+      name: all[modifier + 1],
       header: body ? all.slice(0, lastOpen) : all,
       body,
     };
