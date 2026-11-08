@@ -442,8 +442,8 @@ async function exerciseNativeSolana(
       await held.done;
       await removeReadHold();
       await owner.page
-        .locator(".security-case-choice")
-        .filter({ hasText: `solana-${suffix}` })
+        .locator(`[aria-labelledby="submission-${submission}"]`)
+        .getByRole("button", { name: "Open case", exact: true })
         .click();
       await expect(
         pay.getByRole("button", { name: "Pay approved award", exact: true }),
@@ -486,8 +486,8 @@ async function exerciseNativeSolana(
           .getByRole("button", { name: "Back to reports", exact: true })
           .click();
         await owner.page
-          .locator(".security-case-choice")
-          .filter({ hasText: `solana-${suffix}` })
+          .locator(`[aria-labelledby="submission-${submission}"]`)
+          .getByRole("button", { name: "Open case", exact: true })
           .click();
         const field = pay.getByLabel("Transaction signature from your wallet", {
           exact: true,
