@@ -39,6 +39,7 @@ type Pending = {
   enabled: boolean;
   decimals: number;
   hash: string | null;
+  hashSource?: "wallet" | "recovery";
   solanaBlockhash?: string;
 };
 function readPending(key: string, solana: boolean): Pending | null {
@@ -59,7 +60,10 @@ function readPending(key: string, solana: boolean): Pending | null {
     (value.hash !== null &&
       !(solana
         ? isSolanaTransactionId(value.hash)
-        : /^0x[0-9a-fA-F]{64}$/.test(value.hash)))
+        : /^0x[0-9a-fA-F]{64}$/.test(value.hash))) ||
+    (value.hashSource !== undefined &&
+      (value.hash === null ||
+        !["wallet", "recovery"].includes(value.hashSource)))
   )
     throw new Error(
       "The saved monthly payment request cannot be read. Check your wallet activity before starting a new one.",
@@ -101,7 +105,7 @@ export function AutomaticMonthlyPayment({
   const [automatic, setAutomatic] = useState(true);
   const [review, setReview] = useState<MonthlyReview | null>(null);
   const [notice, setNotice] = useState("");
-  const [recoveryHash, setRecoveryHash] = useState("");
+  const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const wallets = usePayoutWallets().filter((entry) =>
     solana
       ? entry.family === "solana" && entry.solanaFunding
@@ -166,6 +170,7 @@ export function AutomaticMonthlyPayment({
       try {
         const beforeSend = () => {
           remember(intent);
+          setRecoveryHash("");
           requested = true;
         };
         const hash = solana
@@ -176,7 +181,7 @@ export function AutomaticMonthlyPayment({
               beforeSend,
             )
           : await sendEvmMonthlySetting(deployment, wallet, review, beforeSend);
-        const submitted = { ...intent, hash };
+        const submitted: Pending = { ...intent, hash, hashSource: "wallet" };
         setPending(submitted);
         try {
           remember(submitted);
@@ -201,7 +206,11 @@ export function AutomaticMonthlyPayment({
   const check = () =>
     run(async () => {
       if (!pending || !wallet) return;
-      const hash = pending.hash ?? recoveryHash.trim();
+      // Legacy records do not identify who supplied their hash. Keep them
+      // editable; only a hash returned by this wallet request is fixed.
+      const hash =
+        pending.hashSource === "wallet" ? pending.hash : recoveryHash.trim();
+      if (!hash) throw new Error("Enter the transaction from your wallet.");
       const target: MonthlySetting = {
         cap: pending.cap,
         enabled: pending.enabled,
@@ -216,12 +225,32 @@ export function AutomaticMonthlyPayment({
             hash,
           )
         : await checkEvmMonthlySetting(deployment, wallet, target, hash);
-      if (!pending.hash) remember({ ...pending, hash });
       if (result === "pending") {
-        setNotice("Submitted. Waiting for finalized chain evidence.");
+        if (pending.hashSource !== "wallet") {
+          const candidate: Pending = {
+            ...pending,
+            hash,
+            hashSource: "recovery",
+          };
+          setPending(candidate);
+          try {
+            remember(candidate);
+          } catch {
+            setNotice(
+              `This transaction could not be saved on this device. Keep its ${solana ? "signature" : "hash"}: ${hash}. Check it again before another action.`,
+            );
+            return;
+          }
+        }
+        setNotice(
+          pending.hashSource === "wallet"
+            ? "Submitted. Waiting for finalized chain evidence."
+            : "Waiting for finalized chain evidence.",
+        );
         return;
       }
       remember(null);
+      setRecoveryHash("");
       setReview(null);
       if (result === "failed") {
         setNotice(
@@ -330,19 +359,23 @@ export function AutomaticMonthlyPayment({
           {link ? (
             <p>
               <a href={link} target="_blank" rel="noreferrer">
-                View submitted transaction
+                {pending.hashSource === "wallet"
+                  ? "View submitted transaction"
+                  : "View transaction to check"}
               </a>
             </p>
-          ) : (
+          ) : null}
+          {pending.hashSource !== "wallet" ? (
             <label>
               Transaction {solana ? "signature" : "hash"} from your wallet
               <input
                 value={recoveryHash}
+                disabled={busy}
                 onChange={(event) => setRecoveryHash(event.target.value)}
                 spellCheck={false}
               />
             </label>
-          )}
+          ) : null}
           <button
             type="button"
             className="button primary-button"
