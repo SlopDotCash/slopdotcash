@@ -40,6 +40,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Native liability and retained expiry agreement](lemmascript-native-liability.md)
 - [Complete accepted-work claim partition](lemmascript-work-unit-partition.md)
 - [Complete base58 conversion](lemmascript-base58-research.md)
+- [Payment evidence agreement and counters](lemmascript-payment-evidence.md)
 - [Final candidate dispositions and remaining active algorithms](lemmascript-candidate-dispositions.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
@@ -103,6 +104,7 @@ maintenance surface without improving the selected acceptance result.
 | Funding/display | `fundingReminderVisible`, `roundedUsdcCents` | Suppression for terminal/inapplicable funding states and exact half-up minor-unit display |
 | Base58 conversion | `verified-base58`; browser/worker codec and Solana adapter | Exact radix value, digit range, leading zeros, alphabet inverse and roundtrip composition; original byte-carry bitwise loop retained, native adapters remain reviewed boundaries |
 | Decimal amount input | `verified-decimal`; shared `base-units` entry point and vault/project/bounty callers | Exact ASCII decimal decoding, power-of-ten scaling and fractional range; proved uint128 whole-length refusal |
+| Payment evidence and counters | `backend/payments/verified-evidence`; ledger and vault snapshot callers | Full normalized fact and immutable obligation agreement, legacy asset and paid-replay precedence, older block refusal, and first decreased cumulative counter; native JSON and D1/provider authority remain explicit |
 | Native receipt costs | `executionGasCost`, `nativeFeeTotal`, `normalizedNativeDelta`, `solanaNativeFee` | Exact execution/blob/data/operator totals; payer-only SOL normalization; native principal excluded before the final cost comparison |
 | Fee-conversion arithmetic | `workers/fee-converter/verified-arithmetic` | Exact directional division, slippage floor, cap intersection, strict requote reduction, reserve/rent accounting, price-impact ceiling and replacement percentage rounding |
 | Remainder ordering | `verified-allocation.sortRemainders`; project, quality, funding-review and review-budget allocation | Checked merge sort preserves every row and orders exact remainders with the supplied tie ordinal, for any finite list |

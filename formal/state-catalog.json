@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "7a186a4a3aea2f8274bc5771dde58802a17696320ab2bf06d017c9df952b6f0b",
+  "inventorySha256": "929145f140043f1477e5355d6dc7325f3ca674ad4f9dcf80fd8f31d5751846c9",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -64,6 +64,19 @@
         "formal/models/monthly_source_conflict.qnt"
       ],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/payments/verified-evidence.ts",
+      "line": 141,
+      "name": "paymentObligationDecision",
+      "kind": "string-union",
+      "values": ["immutable-mismatch", "payout-mismatch", "ready"],
+      "models": [
+        "formal/models/chain_evidence.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["immutable-mismatch", "payout-mismatch"],
       "review": "candidate-only"
     },
     {
