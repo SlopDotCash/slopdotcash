@@ -117,7 +117,10 @@ describe("container commands that stay clean", () => {
       "docker --debug ps\n",
       "docker system prune -f\n",
       "mydocker run --rm img:1 ./install\n",
+      "dockerrun --rm img:1 ./install\n",
       "docker runner\n",
+      // A subcommand that only takes the word as an argument is not a run.
+      "docker context use run\n",
     ])
       expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([]);
   });
