@@ -314,6 +314,8 @@ function commandToken(name: string): string {
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 /** An option value: a bare word or a quoted string that is not an option. */
 const OPERAND = String.raw`(?:"(?!-)[^"\n]{1,256}"|'(?!-)[^'\n]{1,256}'|[^\s|;&<>()'"-][^\s|;&<>()'"]*)`;
+/** A `NAME=value` assignment for the command that follows. */
+const ASSIGNMENT = String.raw`[A-Za-z_]\w*=(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\s|;&<>()'"]*)`;
 /**
  * `env` options and assignments that still run the command that follows
  * (GNU and BSD `env`): `-`, `--`, `-i`, `-v`, `-u NAME`, `-C DIR`, `-P PATH`,
@@ -321,18 +323,32 @@ const OPERAND = String.raw`(?:"(?!-)[^"\n]{1,256}"|'(?!-)[^'\n]{1,256}'|[^\s|;&<
  * Options and quoted values are bounded so a chain of `env -u env -u …`
  * cannot make the scan quadratic.
  */
-const ENV_COMMAND = String.raw`${commandToken("env")}(?:\s+(?:(?-i:-(?:[iv]+|[iv]*[uCP]\s*${OPERAND}|S)|--(?:ignore-environment|debug|(?:unset|chdir|split-string)(?:=|\s+)${OPERAND})?|-)(?=$|[\s|;&<>()])|[A-Za-z_]\w*=(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\s|;&<>()'"]*))){0,16}`;
+const ENV_COMMAND = String.raw`${commandToken("env")}(?:\s+(?:(?-i:-(?:[iv]+|[iv]*[uCP]\s*${OPERAND}|S)|--(?:ignore-environment|debug|(?:unset|chdir|split-string)(?:=|\s+)${OPERAND})?|-)(?=$|[\s|;&<>()])|${ASSIGNMENT})){0,16}`;
 /**
  * `sudo` options that still run the command that follows, alone or
  * clustered (`-Eu root`), with their long forms and `--`. `-s` and `-i` pass
  * a following command to a shell's `-c`, so they run it too. `-e`, `-l`,
  * `-v`, `-V`, `-K` and `-U` never run the command and are not matched.
  * Option letters are case-sensitive: `-E` runs the command, `-e` edits it.
+ * `NAME=value` assignments may come among the options: sudo keeps reading
+ * options after one.
  */
 const SUDO_FLAG = "[ABbEHikNnPSs]";
-const SUDO_COMMAND = String.raw`${commandToken("sudo")}(?:\s+(?-i:-(?:${SUDO_FLAG}+|${SUDO_FLAG}*[aCcDghpRrTtu]\s*${OPERAND})|--(?:askpass|bell|background|preserve-env(?:=${OPERAND})?|set-home|login|reset-timestamp|no-update|non-interactive|preserve-groups|stdin|shell|(?:auth-type|login-class|close-from|chdir|group|host|prompt|chroot|role|type|command-timeout|user)(?:=|\s+)${OPERAND})?)(?=$|[\s|;&<>()])){0,16}`;
+const SUDO_INVOCATION = String.raw`${commandToken("sudo")}(?:\s+(?:(?-i:-(?:${SUDO_FLAG}+|${SUDO_FLAG}*[aCcDghpRrTtu]\s*${OPERAND})|--(?:askpass|bell|background|preserve-env(?:=${OPERAND})?|set-home|login|reset-timestamp|no-update|non-interactive|preserve-groups|stdin|shell|(?:auth-type|login-class|close-from|chdir|group|host|prompt|chroot|role|type|command-timeout|user)(?:=|\s+)${OPERAND})?)(?=$|[\s|;&<>()])|${ASSIGNMENT})){0,16}`;
+/**
+ * `env` and `sudo` each run the command that follows, so a chain of them in
+ * any order, such as `env FOO=1 sudo -E` or `env A=1 env B=2`, does too.
+ * The chain is bounded: every copy of these groups slows the scan of a long
+ * line.
+ */
+const SUDO_COMMAND = String.raw`(?:(?:${SUDO_INVOCATION}|${ENV_COMMAND})(?:\s+(?=${commandToken("(?:sudo|env)")}))?){1,4}`;
 /** `sudo -s` or `sudo -i` with no command starts a shell that reads standard input. */
-const SUDO_STDIN_SHELL = String.raw`(?=${commandToken("sudo")}(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|(?!\s--(?=$|\s))[^\n|;&<>()'"])*?\s(?-i:-${SUDO_FLAG}*[is]|--(?:shell|login)(?=$|[\s|;&<>()])))${SUDO_COMMAND}(?=\s*(?:$|[|;&<>()]|\d+[<>]))`;
+const SUDO_STDIN_SHELL = String.raw`(?:${ENV_COMMAND}\s+){0,2}(?=${commandToken("sudo")}(?:"[^"\n]{0,256}"|'[^'\n]{0,256}'|(?!\s--(?=$|\s))[^\n|;&<>()'"])*?\s(?-i:-${SUDO_FLAG}*[is]|--(?:shell|login)(?=$|[\s|;&<>()])))${SUDO_INVOCATION}(?=\s*(?:$|[|;&<>()]|\d+[<>]))`;
+/**
+ * A stream decoder with only known stream arguments: extra operands can read
+ * local files and help/version flags do not decode the download.
+ */
+const DECODE_STAGE = String.raw`(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
@@ -411,9 +427,10 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     // `sudo -s` or `sudo -i` with no command starts the target user's shell,
-    // and that shell reads the downloaded script from the pipe.
+    // and that shell reads the downloaded script, or its decoded bytes, from
+    // the pipe.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*${SUDO_STDIN_SHELL}`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*(?:\\[ \t]*\r?\n[^\n|]*)*\|\s*(?:${DECODE_STAGE}\s*\|\s*)?${SUDO_STDIN_SHELL}`,
       "iu",
     ),
     summary: "Runs a remote download in a sudo shell",
@@ -505,7 +522,7 @@ const RULES: Rule[] = [
     // decoder to known stream arguments: extra operands can read local files
     // and help/version flags do not decode the download.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b[^\n|]*(?:\\[ \t]*\r?\n[^\n|]*)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*(?:\\[ \t]*\r?\n[^\n|]*)*\|\s*${DECODE_STAGE}\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a decoded remote download in a shell or interpreter",

