@@ -1,3 +1,4 @@
+// @source backend/vetting/verified-reuse.ts
 // @source migrations/0025_community_security_vetting.sql
 // @source backend/vetting/persistence.ts
 // @source backend/vetting/handler.ts

@@ -15,3 +15,5 @@ src/lib/verified-reviewers.ts
 workers/notify/verified-delivery.ts
 backend/security/verified-intake.ts
 contracts/solana/verified-token-extensions.ts
+src/lib/verified-monthly-replacement.ts
+backend/vetting/verified-reuse.ts

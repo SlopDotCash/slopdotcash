@@ -1,3 +1,4 @@
+// @source src/lib/verified-monthly-replacement.ts
 // @source src/lib/verified-allocation.ts
 // @source migrations/0062_monthly_allocations.sql
 // @source migrations/0071_monthly_ban_exclusions.sql

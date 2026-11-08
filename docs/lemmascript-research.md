@@ -34,6 +34,9 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Token-2022 byte parser](lemmascript-token-extensions-research.md)
 - [Monthly frozen award records](lemmascript-monthly-research.md)
 - [Private-intake gates](lemmascript-private-intake.md)
+- [Monthly award replacement](lemmascript-monthly-replacement-research.md)
+- [Original clean-scan reuse](lemmascript-scan-reuse.md)
+- [Jupiter decoder research](lemmascript-jupiter-research.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
 The inventory enumerates first-party JavaScript and TypeScript function bodies
@@ -108,6 +111,8 @@ maintenance surface without improving the selected acceptance result.
 | Score and Points buckets | `verified-aggregation`; score debits, Points reconciliation and displayed totals | Exact signed accumulation and ordered per-bucket debit conservation; safe conversion back to the public number schema, including negative-total overflow refusal |
 | Token-2022 extension parsing | `contracts/solana/verified-token-extensions`; mint and token-account readers | Complete header/payload and metadata field/vector traversal with bounded reads, allowed unique types, exact error precedence and zero-only trailing padding; preserves original bytes without copying |
 | Monthly frozen records | `verified-money.freezeMonthlyAmounts`; monthly snapshot builder | Complete ordered nonzero award records, exact recipient/source strings, both fee modes and gross/net/fee total conservation; JSON/hash and authority remain caller responsibilities |
+| Monthly replacements | `verified-monthly-replacement`; current allocation and change validation | Ordered last replacement, exact metadata preservation, first unknown recipient, self-change and excluded-positive refusals; native recipient mapping and sort remain explicit |
+| Original scan reuse | `backend/vetting/verified-reuse`; lookup and intake | Exact cached/original identity, restriction freshness, explicit or legacy source inventory and complete retained-evidence matching; database flag coverage and Unicode normalization remain external |
 | Private intake decisions | `backend/security/verified-intake`; actual qualification and recovery gates | Human-review precedence, explicit unknown/refused states, invalid-clock refusal and strictly expired running-screen recovery |
 
 ### Allocation claim boundary
@@ -241,7 +246,7 @@ wallet control, or chain finality.
 
 The detailed reports rank remaining sequence/collection and parser candidates.
 Remaining work includes end-to-end identity/order refinement, upstream review
-eligibility, monthly allocation replacement identity rules, full Jupiter and
+eligibility, the native identity mapping around monthly replacements, full Jupiter and
 base58 decoding, display formatting, and effectful intake/notification authority.
 Those need larger loop/sequence proofs and explicit parser semantics. They are
 recorded as unproved, not replaced with assumptions or marked complete merely

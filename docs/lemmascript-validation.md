@@ -19,10 +19,10 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The completed combined proof checkpoint contains fourteen modules and 59
+The completed combined proof checkpoint contains sixteen modules and 65
 selected runtime functions. Dafny's `--isolate-assertions` option proves every
 assertion in a separate obligation; it does not filter assertions. The run
-completed 2,572 obligations with zero errors:
+completed 2,721 obligations with zero errors:
 
 | Runtime module | Functions | Obligations |
 | --- | ---: | ---: |
@@ -40,6 +40,8 @@ completed 2,572 obligations with zero errors:
 | Notification consent | 3 | 41 |
 | Private intake decisions | 3 | 32 |
 | Token-2022 headers and metadata | 6 | 631 |
+| Monthly award replacement | 2 | 85 |
+| Original clean-scan reuse | 4 | 64 |
 
 These counts cannot be compared directly with the earlier 60 declaration
 checks because the proof splitting changed. Neither count is a function
