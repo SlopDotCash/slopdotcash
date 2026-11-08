@@ -1,6 +1,6 @@
 # LemmaScript candidate dispositions — interim reconciliation
 
-**Interim snapshot: 8 November 2026, `b8d6cc7b8`.** This replaces the older
+**Interim snapshot: 8 November 2026, `6aeeba78b069860d55757db00b3305971e8926d9`.** This replaces the older
 71-target snapshot. It reconciles the original
 [frontend](lemmascript-frontend-research.md),
 [backend](lemmascript-backend-research.md) and
@@ -9,8 +9,8 @@ modules and remaining source. The [main report](lemmascript-research.md) links
 the detailed implementation reports. This ledger must be refreshed after
 active cohorts and final integration checks; it is not a completion receipt.
 
-The committed inventory records **112 selected runtime contracts in 28
-modules**, **9,679** JavaScript/TypeScript function bodies and **9,567**
+The committed inventory records **124 selected runtime contracts in 30
+modules**, **9,687** JavaScript/TypeScript function bodies and **9,563**
 unselected, unproved bodies. These are accounting counts, not capability
 counts or a proof-coverage percentage. They include callbacks and helpers.
 Selected bodies still require the corresponding successful exact-source
@@ -23,7 +23,7 @@ algorithms below are not relabeled as effects to make the ledger look complete.
 
 ## Implemented selected kernels
 
-These rows account for all 112 targets. The individual reports identify
+These rows account for all 124 targets. The individual reports identify
 actual callers, assumptions, proof results, differential/workflow evidence
 and native adapter costs. Final combined-head checks remain separate.
 
@@ -39,29 +39,40 @@ and native adapter costs. Final combined-head checks remain separate.
 | Work-unit claim partition: `verified-work-unit` | 1 | All available distinct claims occur exactly once in nonempty units; unknown, duplicate or omitted references refuse. Native source-ID mapping and GitHub acceptance remain separate. |
 | Payment evidence and cumulative counters: `verified-evidence` | 6 | Complete normalized fact/asset/obligation agreement, paid-replay precedence, older-block/asset decision and first decreased counter. Native JSON/coercion, receipt observation and transactional uniqueness remain separate. |
 | Review batches and text partition: `verified-review-batches`, `verified-text-parts` | 5 | Exact quoted-string byte cost, longest alias prefix, complete greedy spans/group indices and complete newline/continuation byte cuts. Native object serialization, UTF-8 conversion, source order and provider review quality remain external. |
-| Restrictions, appeals and setup: `verified-enforcement`, `verified-setup` | 10 | Complete restriction episode/active-ban/appeal folds and final status; complete access-header result and setup/flagger state/message. Enforcement action planning and native lazy identity comparison are not included. |
+| Restrictions, appeals and setup: `verified-enforcement`, `verified-setup` | 16 | Complete restriction/active-ban/appeal folds, six-action refusal/result planning and flag-only scan decision; access-header and setup/flagger state/message. Native revision schema validation, original lazy identity comparison, authority acquisition and persistence remain external. |
+| Jupiter route policy: `verified-jupiter-policy` | 4 | Complete first invalid role/privilege, last-name binding, first account-binding refusal and amount/slippage/fee agreement. Canonical nonempty key/header domains come from existing parser/account checks; native ATA/signature/RPC semantics remain external. |
+| EVM direct recovery: `verified-direct-recovery` | 2 | Complete unpaid lowest-consumed-nonce selection, first tie, researcher fallback and lower-unspent blocking; original nonce text and payer-review behavior retained. Typed nonce constructors, native parsing and RPC/consent/write boundaries remain external. |
 | Signed Solana wire parsing: `verified-solana-wire` | 6 | Full compact-prefix/legacy/v0/instruction/lookup parse, all spans, static program and global account-index bounds, full consumption and refusal order. No signature, RPC, table authority or deployed-program claim. |
 | Accepted source selection, ownership and retained-hunk binding: `verified-source-ownership`, `verified-retained-binding` | 10 | Complete accepted-commit order and per-record retire/remove/set plan; captured-parent reachability, proper ordered hunk subset and unique attribution per omitted hunk. Native graph/Map adapters, patch parsing, source capture and final history traversal remain separate. |
 
 The originally ranked whole-list allocation, score/Points accounting,
 first-five reviewer grouping, monthly frozen/replacement records, evidence
 chunking, TLV metadata, base58, review/text partition, restriction/appeal folds,
-accepted-source ownership, earned native-fee reduction and local expiry-step
-candidates now have production-used contracts. Their original dated tables
-must not be read as a current list of missing implementations.
+accepted-source ownership, native earned-fee reduction, local expiry step,
+enforcement action/flag-scan decisions, Jupiter account/amount policy and
+EVM recovery-leg selection now have production-used contracts. Their original
+dated tables must not be read as a current list of missing implementations.
 
-## Active or assigned cohorts — outside the 112-target snapshot
+## Active or assigned cohorts — outside the 124-target snapshot
 
 | Cohort | Current status at this interim update | Required completion evidence |
 | --- | --- | --- |
 | Full Jupiter typed Borsh decoder | Active in `slopdotcash-lemma-jupiter`; proposed 35 runtime readers/dispatcher over four layouts and all 239 enum constructors. Runtime and native-view differentials pass. Balanced runtime dispatch and independently range-partitioned defined semantics have been reviewed. Earlier filtered/interrupted/linear-spec runs do not count as full proof. | Successful **unfiltered** current-source proof, generated-source/semantics freshness, strict integrity, bounded exact-module gate configuration, actual caller tests and final integration. No full-parser closure is claimed here. |
-| EVM direct-payment recovery planner | Active in `slopdotcash-lemma-direct-recovery`, from `b8d6cc7b8`: `direct-payments.ts:evmRecoveryState` and proposed `verified-direct-recovery.ts`. It targets complete unpaid-leg selection, lowest consumed nonce, fallback, and lower-unspent-nonce blocking, using real paid indices/nonces. | Complete success/refusal/result theorem, preserved parsing and fallback order, old/new caller comparisons, recovery workflows and integration. Research/implementation is not proof closure. |
-| Enforcement action planner | Assigned next after this ledger; not implemented in this snapshot. `planEnforcement` remains distinct from the eight completed fold functions. `planScanReinstatement` may share a coherent decision layer. | Full action/refusal precedence, real actor/history independence checks and returned state/appeal/maintainer-ban/revision intent; preserve native schema transitions and persistence outside the kernel. |
 
-The native earned-fee cohort is **already integrated**, not active, at this
-snapshot. `nativeFeeEarnings` and `nativeFeeRemainder` reuse the existing
-liability algorithm; the module now has three selected functions. EVM nonce
-buckets and Solana reservation-ID buckets retain their distinct meaning.
+The native earned-fee, EVM direct-recovery, Jupiter route-policy and complete
+enforcement-planning cohorts are **already integrated**, not pending at this
+snapshot. The corresponding [native-fee](lemmascript-native-fee-earnings.md),
+[direct-recovery](lemmascript-direct-recovery.md),
+[Jupiter-policy](lemmascript-jupiter-policy.md) and
+[enforcement-plan](lemmascript-enforcement-plans.md) reports give their precise
+contracts, accepted input domains, peer reviews and local workflow receipts.
+
+`nativeFeeEarnings` and `nativeFeeRemainder` reuse the existing liability
+algorithm; EVM nonce buckets and Solana reservation-ID buckets retain their
+distinct meaning. A separate source-history follow-up is considering reuse
+of the already proved ancestor traversal for the final history coverage
+adapter. That has no new algorithm/count in this snapshot and is not yet
+claimed complete here.
 
 ## Remaining substantive pure candidates
 
@@ -73,16 +84,22 @@ not close them.
 
 | Source and candidate | Useful contract still absent | Boundary that must remain explicit |
 | --- | --- | --- |
-| `backend/projects/enforcement.ts:planEnforcement`, `planScanReinstatement`, independence helpers | Complete permitted/refused action and result for quarantine, ban, project/account appeal, denial and reinstatement; exact independent moderator requirements and proposed revision | The folds are available for reuse, but do not prove this planner. `revisionTo`/`assertProjectPolicyTransition`, live authority, schema validation, SQL triggers and immutable writes remain separate. Assigned cohort above. |
-| `backend/security/direct-payments.ts:evmRecoveryState` and surrounding recovery record construction | Exact selected unpaid leg and nonce-blocking result, then full recovery transfer/recipient/paid-leg preservation if a separate extraction is justified | Native BigInt/identity parsing and RPC observations must keep their order. Original payer lookup, successor consent, cancellation/expiry evidence and database writes are not inputs to assume true. Active cohort above. |
 | `workers/slopbot/value-retained-copy.ts:sameAuthorReopen`, `retainedEditIdentity`, `changedHunks`, `alreadyAcceptedPromotion`; `value-manifest-identity.ts:exactJsonIdentity` | Complete ordered commit/file comparison, hunk parsing, duplicate-key/numeric-token-preserving JSON identity and exact promotion/reopen agreement | The retained-hunk graph/subset/binding result is proved; native regex/patch parsing and these other algorithms are not. A full JSON syntax/token contract is larger than a field-equality helper. Preserve byte/rename/binary/manifest cases and original source objects. |
 | `workers/slopbot/value-merge-resolution.ts:mergeResolutionMatches`; `value-binary.ts:needsAddedBinaryProof`, `sameAddedBinary`; `value-evidence.ts:valueEvidenceMatchesRepository` | Complete parent/source/path and optional relocation comparison, duplicate-free ordered lists, exact binary proof fields and repository-policy matching | These comparisons remain pure candidates even though Git reconstruction, blob hashes, human media review and live GitHub authority are external. Preserve native regex/Unicode and missing-field semantics. |
 | `value-work-unit-consumption.ts:readWorkUnitHistory` final ancestor traversal; source collection/group preparation | Exact requested-source ancestry/coverage and complete source/claim/carrier joins | Per-record ownership is proved, not the final native graph walk or every accepted-source preparation algorithm. Paging, hash verification, schema and provider acquisition remain distinct. Reuse the captured-graph work only when actual identity adapters match. |
 | `backend/security/direct-payments.ts:verifyDirectPayment`, `recoverDirectIntent`; `workers/payment-executor/binding-recovery.ts:reconcileBindingWinner`; `security/payments.ts:prepareSecuritySettlement` | Complete typed transfer/leg/result agreement and recovery output, retaining immutable paid legs, original payer, exact asset/destination and budget | These mix pure decisions with observations and writes. They must not all be labeled effectful; a useful extraction would receive validated actual records, then leave signature/RPC/consent/atomicity checks in place. |
 | `backend/payments/chain-awards.ts:holdsAward`, payment/settlement joins; shared leader/Points views | Complete award/source/actor joins, no archived/open overlap and deterministic grouped output | Existing fee, allocation and bucket proofs do not prove which records belong in a join. Keep scored work, Points, payable money, held and paid states distinct. Canonical chain evidence and SQL completeness remain external. |
-| `workers/fee-converter/jupiter-route.ts:assertJupiterRoute`, account/receipt binding reductions | Complete parsed route/account/value relation, admission and exact returned binding from real parsed fields | Full byte decoding is the active Jupiter cohort; it does not prove route policy, loaded table contents, account privilege interpretation, signature validation, simulation or finalized receipt truth. Native/cryptographic semantics need their actual boundary. |
+| `workers/fee-converter/solana-accounts.ts`, `solana-route-accounts.ts`, `solana-route-receipt.ts`; direct recovery's remaining output construction | Full loaded-account/source-destination observation joins and immutable transfer/receipt binding beyond the now-proved role/key/amount and recovery-selection policies | The pure comparison/record portions remain candidates; cryptographic account proofs, ATA derivation, parsed nonce validation, RPC finality and consent are independent. Higher risk lies at these trust boundaries, so another small equality wrapper would add less than complete record or observation-join contracts. |
 | `workers/vetting/review-plan.ts:batchParts`, synthesis assembly and coverage joins; scan/provenance result reducers | Complete split-item/alias/source-to-final-evidence relation and consistent result/coverage aggregation | The text cuts, byte cost, greedy groups and reuse decisions are proved. Full JSON framing, tier/source joins, synthesis contents and provider result consistency remain unproved. Do not introduce repository-size caps or conflate model success with coverage. |
 | `src/lib/global-leaderboard.ts:createGlobalLeaders`, `openMonthScores`; `payout-points.ts:payoutPointAwards`; notification/incomplete-assessment parsing | Complete identity grouping, record selection/pagination and preserved metadata/order | Monetary sums and frontend status helpers do not close whole record selection. Native dates, schema parsers, account identity and API response completeness remain explicit. These are feasible lower-priority pure work. |
+
+These are the next tier of genuine pure work, not a claim that all functions
+or all policies are proved. The selected top contracts now address complete
+algorithms on the highest-risk arithmetic, signed-byte parsing, moderation
+planning and ownership paths. Remaining rows need larger native-parser,
+record-join or acquisition-adapter arguments, or have lower marginal risk
+than those completed contracts. They remain feasible work; priority is not
+reclassified as an effect or tool impossibility.
 
 This table intentionally retains pure work in files with async or storage
 callers. It does not assert that every named large function is directly
@@ -132,7 +149,7 @@ This category applies to the named operation, not every helper in its file:
 - Rust/Solidity contracts and generated shell/Python execution, which are
   outside this TypeScript toolchain even where other formal tools apply.
 
-The 112 selected contracts, passing local workflows and Quint models do not
+The 124 selected contracts, passing local workflows and Quint models do not
 establish all of these facts or verify every application execution.
 
 ## Validation and refresh rule
