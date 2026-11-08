@@ -19,7 +19,9 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The completed combined proof checkpoint contains twenty-three modules and 88
+The current implementation manifest has 32 modules and 133 selected functions.
+The latest completed combined proof checkpoint below predates that scope; it
+contains twenty-three modules and 88
 selected runtime functions. Dafny's `--isolate-assertions` option proves every
 assertion in a separate obligation; it does not filter assertions. The run
 completed 4,607 obligations with zero errors:
@@ -49,6 +51,32 @@ completed 4,607 obligations with zero errors:
 | Payment facts and counters | 6 | 58 |
 | Review groups and JSON sizes | 3 | 229 |
 | Restrictions and appeals | 8 | 421 |
+
+The subsequent modules and extensions have individual complete strict proof
+receipts. They are integrated, but this table does not claim a combined run
+at the 133-function source head:
+
+| Later module or extension | Current functions in module | Current obligations in module |
+| --- | ---: | ---: |
+| Complete text partition | 2 | 205 |
+| Accepted-source ownership | 5 | 364 |
+| Signed Solana wire parser | 6 | 891 |
+| Retained-copy graph and unique binding | 5 | 536 |
+| Expiry agreement and complete traversal step | 3 | 123 |
+| Setup header and authority decisions | 2 | 67 |
+| Native liability and earned-fee accounting | 3 | 256 |
+| Jupiter account and quote policy | 4 | 83 |
+| EVM recovery selection | 2 | 207 |
+| Enforcement folds, action planning and flag scans | 14 | 879 |
+| Finalized route token reconciliation | 4 | 332 |
+| Global actor, archive and payout selection | 5 | 508 |
+
+The expiry, native-liability and enforcement rows replace the earlier module
+counts rather than adding a second copy. Complete graph reachability is also
+used by final work-unit history coverage without adding another proof target.
+Each detailed report records actual production callers, comparison and
+workflow results, input assumptions and measured costs. The full Jupiter
+decoder remains separate until its unfiltered verifier finishes.
 
 These counts cannot be compared directly with the earlier 60 declaration
 checks because the proof splitting changed. Neither count is a function
