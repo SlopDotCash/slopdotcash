@@ -56,3 +56,9 @@ hero attempt used a reserved name, and the first image translation used an
 unsupported init-action alias; both failed before verification and are retained
 separately from the corrected passes. These were specification/tooling issues,
 not evidence of an application defect.
+
+The existing three browser files passed 20/20 Chromium desktop/mobile cases
+with no skips, flakes or unexpected failures. This source-specific run covered
+the unchanged App runtime in its frozen built fixture. Other integration files
+changed while it ran, so it is not a final whole-head validation claim. The
+ignored `evidence/formal/app-state-followup/` receipt retains that boundary.

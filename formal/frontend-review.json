@@ -30,7 +30,13 @@
     {
       "path": "src/App.tsx",
       "lines": 1651,
-      "models": ["ui_navigation.qnt", "ui_hash_navigation.qnt"],
+      "models": [
+        "ui_navigation.qnt",
+        "ui_hash_navigation.qnt",
+        "ui_hero_animation.qnt",
+        "ui_project_discovery.qnt",
+        "ui_project_images.qnt"
+      ],
       "statelessReason": null,
       "status": "modeled-abstraction",
       "refinementProved": false
@@ -465,7 +471,7 @@
     {
       "path": "src/SolanaBountyRecovery.tsx",
       "lines": 117,
-      "models": ["ui_transaction.qnt"],
+      "models": ["ui_solana_history_recovery.qnt"],
       "statelessReason": null,
       "status": "modeled-abstraction",
       "refinementProved": false

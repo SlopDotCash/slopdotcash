@@ -5,7 +5,6 @@
 // @source src/OwnerReserveRelease.tsx
 // @source src/DirectBountyPayment.tsx
 // @source src/SolanaBountyPayment.tsx
-// @source src/SolanaBountyRecovery.tsx
 // @source src/ReferralClaims.tsx
 // @source src/BountySubmittedPayments.tsx
 // @source src/OwnerBountyVault.tsx
