@@ -12,7 +12,7 @@ import {
   assertProfiles,
   contributorPullSearchUrl,
   type ProfileIndex,
-  profileCounts,
+  recordedProfileCounts,
 } from "./lib/profiles";
 import { findProject } from "./lib/projects.mjs";
 import { isUsdMicroAsset } from "./lib/received-totals";
@@ -117,11 +117,7 @@ export function ProfileActivity({
       : [];
   const p = matches.length === 1 ? matches[0] : undefined;
   const id = actorId ?? p?.id;
-  const counts = p
-    ? profileCounts(p)
-    : id && state.status === "ready"
-      ? { merged: 0, open: 0, closed: 0 }
-      : null;
+  const counts = recordedProfileCounts(p);
   const image =
     p?.avatarUrl ??
     `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?size=160`;
