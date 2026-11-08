@@ -139,3 +139,15 @@ merges. See `direct-preparation-completion-audit.md`,
 their presence in this list does not claim passing browser or combined-head
 evidence. Model authoring errors found by independent checks are retained in
 their audits alongside their corrections.
+
+
+## Separate X lifecycle corrections
+
+Source-only review found that a failed flow deletion skipped the required
+temporary-token revocation attempt. It also found that a shared cookie could
+be cleared by an older callback or overwritten by a delayed start response.
+The handler now attempts revocation in nested cleanup and uses per-flow
+cookie names with an expiring legacy fallback. See
+`x-connection-lifecycle-audit.md` for the29unexecuted scenarios, nineteen
+added handler cases and remaining browser/provider acceptance. These are
+source-confirmed corrections; no executed before/after result is claimed.

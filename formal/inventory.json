@@ -418,11 +418,11 @@
     },
     {
       "path": "backend/points/x.ts",
-      "sha256": "c31c3104f0497e6fd27dd3210853f6fe35ed69408d5f1d0f35a9ab3fbc79a24c",
+      "sha256": "6fc6edf791d173291a7f823341611ab5f6d51e338ed38f8539e316108e140fc2",
       "models": ["formal/models/api_x_connection.qnt"],
       "candidateLines": [
-        17, 18, 26, 28, 30, 61, 98, 103, 104, 111, 119, 122, 159, 178, 198, 211,
-        231, 274, 276, 286, 290, 309, 320, 323, 338
+        17, 18, 27, 31, 38, 65, 102, 103, 104, 114, 115, 130, 133, 170, 189,
+        209, 222, 243, 290, 292, 302, 306, 325, 330, 336, 339, 354
       ],
       "review": "mapped-abstraction"
     },
@@ -8157,9 +8157,39 @@
     },
     {
       "path": "formal/models/api_x_connection.qnt",
-      "sha256": "2379d65201c651727aacd08f2c9e7f48e1bcea5e413332700e9eed367a1eb78d",
+      "sha256": "1d638d6e7847aebf2f8d76b42f6a08e8f319f8ab837df6cba9109140eeb093b5",
       "sources": ["backend/points/x.ts", "migrations/0009_points_social.sql"],
-      "scenarios": ["reservationTest", "signoutRaceTest"]
+      "scenarios": [
+        "cancellationCleanupFailureReportsErrorTest",
+        "cleanupFailureDoesNotUndoCommittedLinkTest",
+        "databaseFailureDoesNotReserveIdentityTest",
+        "disconnectDuringProviderWaitRefusesLateLinkTest",
+        "expiredCookieCannotClaimPendingFlowTest",
+        "expiredPendingCallbackRefusesTest",
+        "failedReconnectPreservesPriorLinkTest",
+        "failedRevokeDoesNotHideCleanupFailureTest",
+        "foreignIdentityClaimCannotBeReassignedTest",
+        "identityFailureRevokesTemporaryTokenTest",
+        "invalidCallbackLeavesPendingFlowTest",
+        "invalidCodeCleansClaimTest",
+        "malformedCallbackRetainsCurrentCookieTest",
+        "newerFlowCanFinishAfterOldCallbackRefusalTest",
+        "oldCallbackFailureClearsOnlyItsCookieTest",
+        "oldCancellationRetainsNewCookieTest",
+        "oneCookieExpiryDoesNotExpireNewFlowTest",
+        "processingFlowCanFinishAfterFlowExpiryTest",
+        "reorderedStartResponsesKeepNewFlowCookieTest",
+        "replayCannotDeleteClaimedFlowTest",
+        "reservationTest",
+        "retainedCookieCannotReplayConsumedFlowTest",
+        "revokeFailureDoesNotUndoVerifiedLinkTest",
+        "sessionExpiryBeforePersistenceRefusesTest",
+        "signoutRaceTest",
+        "supersededCallbackLeavesNewFlowTest",
+        "timeAfterSqlBindingIsNotAnotherSessionReadTest",
+        "tokenFailureCleansWithoutLinkTest",
+        "userCancellationCleansWithoutTokenTest"
+      ]
     },
     {
       "path": "formal/models/artifact_transport.qnt",

@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 319 finite models and 1,572 named scenarios, with zero
+839 production sources, 319 finite models and 1,599 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -348,3 +348,22 @@ runner now honors an explicit output directory, and the private-intake CI step
 selects its own directory. This keeps its report from replacing the earlier
 normal registry report. The change and six model scenarios are unexecuted;
 see `browser-evidence-output-audit.md` for the observed original artifact loss.
+
+## Separate X connection cleanup and model refinement
+
+This branch follows frozen `a8b0f8226` and refines `api_x_connection`. Source
+review also found that failed flow deletion skipped the required temporary
+provider-token revocation attempt. A nested `finally` now attempts revocation
+while preserving the original storage error. Twenty-nine unexecuted scenarios
+represent replay, provider failure, callback expiry, supersession, permanent
+claims, disconnect, and cleanup/revocation outcomes. The model preserves the
+source's current callback and SQL-bound-time semantics. See `x-connection-lifecycle-audit.md`;
+it does not imply runtime conformance or acceptance of the broader identity
+flows. This refinement is not part of the active corrective PR.
+
+
+The X follow-up also replaces the shared start cookie with a per-flow cookie
+name, with an expiring legacy fallback. This corrects both delayed callback
+cleanup and reversed start-response arrival. Its model now separates the D1
+start from cookie delivery. The nineteen added handler/SQLite cases and all
+29 X scenarios remain unexecuted in this lane; the active core PR is unchanged.

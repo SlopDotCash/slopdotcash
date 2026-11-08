@@ -175,8 +175,11 @@ Public community cards include public members even without accepted work.
 
 X uses OAuth 2.0 authorization code with S256 PKCE and a confidential client.
 The browser flow cookie is separate, HttpOnly/Secure/SameSite=Lax, expires after
-ten minutes, and is bound to the initiating GitHub web session. Callback state
-is single-use. The application verifies `/2/users/me`, stores only account ID,
+ten minutes, and is bound to the initiating GitHub web session. Each flow has
+a distinct cookie name so out-of-order starts and callbacks cannot overwrite
+or clear another flow's cookie. A pre-upgrade shared cookie remains accepted
+until its original expiry and is not cleared by a callback. Callback state is
+single-use. The application verifies `/2/users/me`, stores only account ID,
 handle and verification time, and attempts to revoke the temporary provider
 token immediately; provider failure never causes a token to be persisted.
 No refresh token, posts, messages, follower lists, or provider token is retained.
