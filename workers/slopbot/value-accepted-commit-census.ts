@@ -18,6 +18,8 @@ interface Pull {
   number: number;
   url: string;
   mergedAt: string;
+  baseRefOid: string | null;
+  headRefOid: string | null;
   repository: {
     id: string;
     databaseId: number;
@@ -30,6 +32,49 @@ interface Pull {
 export interface AcceptedCommitCensus {
   ids: Set<string>;
   carriers: Map<string, Carrier[]>;
+}
+
+/** GitHub lists at most 250 commits for a pull request, through GraphQL and
+ * REST alike, while `totalCount` still reports the full number. The compare
+ * API pages through the whole range, so a larger pull request is read there
+ * and must agree with both the reported count and every listed commit.
+ */
+const PULL_REQUEST_COMMIT_LISTING_LIMIT = 250;
+const SHA = /^[a-f0-9]{40}$/u;
+
+async function compareRangeCommits(
+  github: ValueClient,
+  current: string,
+  pull: Pull,
+  total: number,
+  listed: Set<string>,
+): Promise<Set<string> | null> {
+  const base = pull.baseRefOid;
+  const head = pull.headRefOid;
+  if (!base || !head || !SHA.test(base) || !SHA.test(head)) return null;
+  const shas = new Set<string>();
+  const pages = Math.ceil(total / 100);
+  for (let page = 1; page <= pages; page++) {
+    const range = await github.get<{
+      total_commits: number;
+      commits: { sha: string }[];
+    }>(`/repos/${current}/compare/${base}...${head}?per_page=100&page=${page}`);
+    if (
+      !range ||
+      range.total_commits !== total ||
+      !Array.isArray(range.commits) ||
+      range.commits.length !== Math.min(100, total - (page - 1) * 100)
+    )
+      return null;
+    for (const { sha } of range.commits) {
+      if (typeof sha !== "string" || !SHA.test(sha) || shas.has(sha))
+        return null;
+      shas.add(sha);
+    }
+  }
+  if (shas.size !== total) return null;
+  for (const sha of listed) if (!shas.has(sha)) return null;
+  return shas;
 }
 
 /** Search supplies the full current API-era census, not just the first PR
@@ -74,7 +119,7 @@ async function collectRange(
     } = await github.graphql<{
       search: Page<Pull> & { issueCount: number };
     }>(
-      `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){issueCount nodes{... on PullRequest{id number url mergedAt repository{id databaseId nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}pageInfo{hasNextPage endCursor}}}`,
+      `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){issueCount nodes{... on PullRequest{id number url mergedAt baseRefOid headRefOid repository{id databaseId nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}pageInfo{hasNextPage endCursor}}}`,
       { q: query, cursor },
     );
     const search = result.search;
@@ -168,17 +213,28 @@ async function collectRange(
           return null;
         commits = next.repository.pullRequest.commits;
       }
-      if (shas.size !== total) return null;
+      let accepted = shas;
+      if (shas.size !== total) {
+        // Only GitHub's listing limit is recoverable; any other shortfall is
+        // an incomplete census.
+        const complete =
+          shas.size === PULL_REQUEST_COMMIT_LISTING_LIMIT &&
+          total > PULL_REQUEST_COMMIT_LISTING_LIMIT
+            ? await compareRangeCommits(github, current, pull, total, shas)
+            : null;
+        if (complete === null) return null;
+        accepted = complete;
+      }
       if (pull.mergeCommit !== null) {
-        if (!/^[a-f0-9]{40}$/u.test(pull.mergeCommit.oid)) return null;
-        shas.add(pull.mergeCommit.oid);
+        if (!SHA.test(pull.mergeCommit.oid)) return null;
+        accepted.add(pull.mergeCommit.oid);
       }
       const carrier = {
         repository: evidence.repository,
         number: pull.number,
         nodeId: pull.id,
       };
-      for (const sha of shas) {
+      for (const sha of accepted) {
         const matches = carriers.get(sha) ?? [];
         matches.push(carrier);
         carriers.set(sha, matches);
