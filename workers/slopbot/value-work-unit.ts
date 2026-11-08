@@ -21,6 +21,7 @@ import {
 } from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
+import { selectAcceptedCommitIndices } from "./verified-source-ownership";
 import { completeClaimPartition } from "./verified-work-unit";
 
 export interface WorkUnitSource {
@@ -36,14 +37,17 @@ export function acceptedWorkUnitCommits(
   evidence: ValueEvidence,
 ): ValueEvidence["commits"] {
   const indirect = evidence.indirectAcceptance;
-  return evidence.commits.filter(
-    (entry) =>
-      (entry.parents.length <= 1 ||
-        evidence.mergeResolutions?.some(
-          (resolution) => resolution.commitSha === entry.sha,
-        )) &&
-      (!indirect || indirect.acceptedCommitShas.includes(entry.sha)),
+  const selected = selectAcceptedCommitIndices(
+    evidence.commits.map((entry) => ({
+      sha: entry.sha,
+      parentCount: entry.parents.length,
+    })),
+    (evidence.mergeResolutions ?? []).map((resolution) => resolution.commitSha),
+    indirect
+      ? { kind: "indirect", shas: indirect.acceptedCommitShas }
+      : { kind: "direct" },
   );
+  return selected.map((index) => evidence.commits[index]);
 }
 
 export interface WorkUnitClaim {
