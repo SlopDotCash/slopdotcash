@@ -1,4 +1,5 @@
 // @source scripts/check-formal.mjs
+// @source scripts/quint-local-translator.mjs
 // @source scripts/formal-inventory.mjs
 // @source scripts/formal-state-catalog.mjs
 // @source scripts/check-lemmascript.mjs

@@ -27,6 +27,14 @@ it("refuses a successful model run when its mapped implementation changes during
       readFileSync(join(root, "scripts/check-formal.mjs")),
     );
     writeFileSync(
+      join(fixture, "scripts/run-e2e-phase.mjs"),
+      readFileSync(join(root, "scripts/run-e2e-phase.mjs")),
+    );
+    writeFileSync(
+      join(fixture, "bun.lock"),
+      readFileSync(join(root, "bun.lock")),
+    );
+    writeFileSync(
       join(fixture, "implementation.ts"),
       "export const state = 'before';\n",
     );
@@ -65,11 +73,15 @@ module source_binding {
       child.once("close", resolveCode);
     });
     expect(changed).toBe(true);
-    expect(output).toContain("ok initializedTest passed");
     expect(code).toBe(1);
     const report = JSON.parse(
       readFileSync(join(fixture, "evidence/formal/checks.json"), "utf8"),
     );
+    expect(
+      report.results.find((result: { command: string[] }) =>
+        result.command.includes("test"),
+      )?.output,
+    ).toContain("ok initializedTest passed");
     expect(report.inputsUnchanged).toBe(false);
     expect(report.results[0].sources["implementation.ts"]).toMatch(
       /^[a-f0-9]{64}$/u,

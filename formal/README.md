@@ -18,6 +18,7 @@ verification. The later development update `3223535c6fa91d8ce5159bf4fce278acf18e
 bun install --frozen-lockfile
 bun run formal:check
 bun run formal:verify
+SLOP_QUINT_TRANSLATOR_TEST=1 bun test scripts/quint-local-translator.test.ts
 node scripts/check-formal.mjs --model=MODEL_NAME
 node scripts/check-formal.mjs --verify --model=MODEL_NAME
 ```
@@ -27,6 +28,12 @@ The check command typechecks, runs scenarios, and samples 500 seeded traces of
 up to 60 steps. Verification explores finite state graphs with TLC through the
 lockfile-pinned Quint tool. Java 21 and the pinned Apalache distribution are
 needed for translation. Commands fail on violations, errors or timeouts.
+The repository runner uses a local parser process instead of the upstream
+gRPC launcher, pins the JAR bytes and supervises each process group. See the
+[local verifier audit](local-verifier-audit.md) for the reproduced transport,
+literal-normalization and cancellation defects and their evidence.
+The Java 21 CI job explicitly enables the translator's real TLC regressions;
+without the environment flag those expensive cases are reported as skipped.
 The TLC backend disables deadlock detection: reachable scenarios and explicit
 progress properties must cover terminal and stalled behavior separately.
 Temporal properties named `*Property` are also checked by the TLC runner.

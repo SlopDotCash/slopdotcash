@@ -5,4 +5,7 @@ export function runE2ePhase(options: {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  signal?: AbortSignal;
+  onStdout?: (text: string) => void;
+  onStderr?: (text: string) => void;
 }): Promise<number>;
