@@ -73,6 +73,48 @@ describe("generated proof integrity boundary", () => {
     ).toThrow();
   });
 
+  it("allows only defined opaque functions and predicates with unchanged generated tokens", () => {
+    const added = `${generated}
+opaque function sumMeaning(x: int): int { x + 1 }
+opaque predicate positive(x: int) { x > 0 }
+`;
+    expect(() => requireProofIntegrity(generated, added)).not.toThrow();
+    expect(() => requireProofIntegrity(added, added)).not.toThrow();
+    for (const [from, to] of [
+      [
+        "sumMeaning(x: int): int { x + 1 }",
+        "sumMeaning(x: int): int { x + 2 }",
+      ],
+      ["sumMeaning(x: int)", "sumMeaning(x: nat)"],
+      ["{ x > 0 }", "{ assume false; x > 0 }"],
+      ["opaque function sumMeaning", "opaque function {:axiom} sumMeaning"],
+    ]) {
+      expect(() =>
+        requireProofIntegrity(added, added.replace(from, to)),
+      ).toThrow();
+    }
+    for (const extra of [
+      "opaque function missing(x: int): int",
+      "opaque predicate missing(x: int)",
+      "opaque method missing() { }",
+      "opaque lemma missing() { }",
+      "opaque opaque function missing(): int { 0 }",
+      "opaque function increment(x: int): int { 0 }",
+      "opaque predicate hidden() { assume false; true }",
+      "opaque function {:verify false} hidden(): int { 0 }",
+    ]) {
+      expect(() =>
+        requireProofIntegrity(generated, `${generated}\n${extra}`),
+      ).toThrow();
+    }
+    expect(() =>
+      requireProofIntegrity(
+        generated,
+        generated.replace("function increment", "opaque function increment"),
+      ),
+    ).toThrow();
+  });
+
   it("finds compiler-supported body-header contracts and rejects nested targets", () => {
     const source = `export function increment(x: bigint): bigint {
       //@ verify
