@@ -1,6 +1,7 @@
 // @source scripts/check-formal.mjs
 // @source scripts/run-e2e-phase.mjs
 // @source scripts/run-e2e.mjs
+// @source scripts/check-lemmascript.mjs
 // One launcher and one inherited process-group child. SIGKILL, OOM or machine
 // death of the supervisor itself are external failures, not caught cancellation.
 module formal_process {

@@ -56,6 +56,7 @@ export function runE2ePhase({
   interruptSignal,
   onStdout,
   onStderr,
+  onExit,
 }) {
   return new Promise((resolvePhase) => {
     const stdout = onStdout ? { write: onStdout } : process.stdout;
@@ -163,7 +164,8 @@ export function runE2ePhase({
       stderr.write(`[${label}] ${error.message}\n`);
       finish(1);
     });
-    child.on("exit", (status) => {
+    child.on("exit", (status, signal) => {
+      onExit?.(status, signal);
       // Exit precedes close: even a successful launcher can leave a server
       // holding inherited pipes or sockets. Stop remaining POSIX group members
       // on every exit; close and group checks still precede returning status.

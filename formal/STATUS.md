@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 317 finite models and 1,555 named scenarios, with zero
+839 production sources, 317 finite models and 1,557 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -329,3 +329,12 @@ writes; the unchanged paused-project case passes on both. This is local
 SQLite evidence, not deployed D1 or GitHub-provider acceptance. The ignored
 runtime acceptance ledger separately records the exact-source limits of
 earlier payment, Inbox and owner browser/API evidence.
+
+## Separate LemmaScript cancellation follow-up
+
+This branch follows frozen `a8b0f8226`. The proof checker now forwards parent
+signals through the existing process-group supervisor and retains canceled
+failure receipts. The missing parent-signal path predates corrective22b and
+has not been runtime-reproduced here. Model scenarios and subprocess tests
+are authored but unexecuted; see `lemmascript-cancellation-audit.md`. This
+source is not part of the active corrective PR.
