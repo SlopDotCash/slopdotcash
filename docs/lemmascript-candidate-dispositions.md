@@ -9,7 +9,7 @@ modules and remaining source. The [main report](lemmascript-research.md) links
 the detailed implementation reports. This ledger must be refreshed after
 final integration checks; it is not a combined verification receipt.
 
-The committed inventory records **168 selected runtime contracts in 33
+At that checkpoint, the inventory records **168 selected runtime contracts in 33
 modules**. It covers **681** files and **9,793** JavaScript/TypeScript function
 bodies, including **9,625** unselected, unproved bodies. These are accounting
 counts, not capability counts or a proof-coverage percentage. They include callbacks and helpers.
@@ -19,6 +19,13 @@ with 23,995 obligations; the count alone proves nothing. The
 browser corrections and remaining final-branch gates. The parallel Quint inventory contains 302
 models mapped to 836 sources; those model counts are not implementation proofs.
 This reconciliation re-read the named candidates, not every inventoried function body.
+
+After rebasing onto development `5d8b2402e070ec6cc6adf069e5e4f68ce41fcd96`,
+the regenerated inventory contains **683 files, 9,813 function bodies and 9,645
+unproved bodies**, with the same **168 contracts in 33 modules**. The state
+inventory contains **308 models mapped to 838 sources**. These are current
+scope counts; the completed proof and browser results above retain their
+recorded checkpoint and do not certify the rebased tree.
 
 **Useful pure work remains.** An implemented kernel closes its stated contract
 and input domain, not every algorithm in its original file or family. Pure

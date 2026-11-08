@@ -82,6 +82,12 @@ browser findings, corrections, native-chain results and the two phase timeouts
 in the full repository check. Final rebased-branch verification and merge
 remain pending; these checkpoint results do not certify a later source head.
 
+The tree rebased onto development `5d8b2402e070ec6cc6adf069e5e4f68ce41fcd96`
+has **683 inventoried files, 9,813 function bodies and 9,645 unproved bodies**.
+It retains **168 selected contracts in 33 modules**. Its state inventory has
+**308 models mapped to 838 sources**. These regenerated scope counts are not
+new proof results; final checks on the rebased tree remain separate.
+
 A syntax scan cannot determine purity, reachability, all indirect calls, or
 implementation correctness. Every unselected function remains explicitly
 unproved. Selected functions are marked `contract-target-unconfirmed` until a
