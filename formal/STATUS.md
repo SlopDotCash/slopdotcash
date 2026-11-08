@@ -8,7 +8,7 @@ The goal remains active and incomplete. Work targets `origin/development` in
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-807 production sources, 306 finite models and 1,381 named scenarios, with zero
+808 production sources, 307 finite models and 1,401 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 235 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -134,27 +134,41 @@ No final whole-head verification, full repeated wallet matrix, merge, production
 deployment or activation is claimed. The original state-correctness goal remains
 open; passing finite models does not prove absence of all application errors.
 
-## Source-only follow-up after the coordinated push
+## Reviewed recovery and runner follow-up
 
-The follow-up remains separate from PR 2414 while that review holds its head
-stable. It preserves the user instruction to skip further checks and push.
-No tests, syntax/type checks, browser runs, format checks, simulations or model
-verifiers were run for these follow-up changes.
+PR 2414 merged as `7f8b920bbc5056416c3f0dd1c7d5c354d44771e4` after its
+corrected head passed all required hosted checks. The follow-up is rebased onto PR 1873's development merge
+`5acc3c47e9a29fc2b55fb756964944eb0a976213`, which includes that commit. Its inventory has 807 production sources, 306 finite
+models and 1,395 named scenarios. Mapping and finite checks do not establish
+implementation refinement.
 
-- Automatic monthly payment now distinguishes wallet-returned transaction IDs
-  from entered/legacy evidence. A pending lookup no longer hides the correction
-  input or enables another send. This is a source-confirmed pre-existing path;
-  new runtime and UI video evidence remain outstanding.
-- Integration/security/browser runners pass process cancellation to owned
-  phases, stop new work, and await cleanup. Browser phases are directly owned
-  by their coordinator instead of a nested detached coordinator. Synchronous
-  copies and opaque fixture-startup boundaries remain documented.
-- Backend models now reflect retired trace-read routes, cookie-less OAuth
-  callbacks with the original session binding, independent grant lifetimes,
-  and the authority observed during notification preparation.
-- Binding rotation timing and reset states, monthly recovery storage removal,
-  and direct-payment parent/fallback composition have explicit model updates.
+Independent review reproduced the monthly-setting defect with a real local
+Anvil browser workflow: an entered transaction ID became fixed after a pending
+lookup and reload. The corrected desktop/mobile cases retain the editor, accept
+the valid transaction, preserve the two-send count and exact on-chain cap, and
+keep wallet-returned IDs fixed. Keyboard correction and 200 percent text reflow
+also passed. The walkthrough uses controlled fixtures, not live funds.
 
-The generated inventory is only a source/model index. It does not validate
-these authored models or prove that the new implementation is correct. The
-original completion goal remains open and final combined validation is absent.
+The signal probes exercised the actual integration, security-payment and browser
+coordinators. They observed 9, 53 and 22 descendants respectively; after SIGTERM
+all returned 143 with no observed live descendants. Review first reproduced a
+managed Vite server left after an abrupt Playwright exit. Browser cancellation
+and deadline handling now allow Playwright to close its server, with the existing
+bounded hard-cleanup fallback. A separate real-process probe confirmed both
+abort and deadline paths. Eight existing process lifecycle tests, four preview
+cases, two Pages cases and two registry cases passed. A prior command failure
+also retained exit one through a later signal. These checks do not prove that
+an uncooperative process outside the owned group always stops.
+
+Review repaired invalid model scenario composition and two model type errors.
+Scoped type, scenario, simulation and finite checks passed; see
+`backend-runner-review-audit.md`, `monthly-setting-recovery-audit.md`,
+`runner-cancellation-audit.md` and `direct-payment-composition-audit.md` for exact
+bounds. Submitted-payment finite verification uses two invocations, two nonzero
+identifier classes and a projection of unobserved stored contents. Its concrete
+scenarios and separate uncapped-step simulations keep exact stored values. The
+finite result does not prove longer histories or exact stored contents.
+
+Combined final-head verification and hosted checks remain required. The wider
+state audit is still open. No production release, provider delivery, live-wallet
+authority or settlement availability is claimed.

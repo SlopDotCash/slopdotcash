@@ -89,22 +89,20 @@ The source inventory and area audits also include reviewed transitions that
 needed no implementation change. They remain bounded abstractions unless an
 audit explicitly supplies stronger conformance evidence.
 
-## Source-only follow-up
+## Reviewed follow-up
 
-These corrections were established by source inspection after the user asked
-to skip further checks. They are not new runtime reproductions or validated
-fixes, and remain separate from the table of earlier reproduced results.
+The monthly recovery and runner defects below were first identified by source
+inspection and then reproduced during independent review. Their earlier failed
+runs remain separate from passing corrected runs.
 
-- Monthly-setting recovery stored a pasted transaction ID as fixed after a
-  pending lookup, hiding the editor across reload. The correction retains
-  editable candidate evidence and the pending-send guard. See
-  `monthly-setting-recovery-audit.md`.
-- Integration, security-payment and browser coordinators did not connect
-  process signals to detached phases. The follow-up wires cancellation,
-  removes the nested browser coordinator and awaits owned cleanup. See
-  `integration-cancellation-audit.md` and `runner-cancellation-audit.md`.
+- A pending lookup fixed an entered monthly-setting transaction ID across reload,
+  hiding the correction input. Real desktop/mobile Anvil workflows now prove
+  correction, finality, unchanged cap and send counts, and fixed wallet IDs.
+- Integration, security-payment and browser cancellation did not own all cleanup.
+  Actual process probes exposed and then verified the managed-browser-server
+  correction, including timeout and first-failure preservation.
 
-The follow-up also corrects model/source disagreements described in
-`backend-source-review.md`, `binding-veto-audit.md`, and
-`direct-payment-composition-audit.md`. No tests or verifiers were run for those
-revisions.
+Model/source corrections and verification limits are recorded in
+`backend-runner-review-audit.md`, `binding-veto-audit.md`,
+`runner-cancellation-audit.md` and `direct-payment-composition-audit.md`.
+Final combined-head checks remain separate from these scoped results.
