@@ -296,3 +296,28 @@ and
 (SHA-256 `3711a8813c5fc3a6d95786c12b471174e548ba1672fb20c242a2c71ba551d59b`).
 Further complete verification remains required. Preserve these failed runs
 when recording any later optimization or larger-budget result.
+
+## Completed submitted-recovery diagnostic
+
+The independent same-input diagnostic for the reconciled submitted-recovery
+model completed with a 600-second allowance: 60,118,525 generated states,
+3,549,900 distinct states, depth 27 and zero states left queued. TLC took
+219,413 ms; the wrapper took 227,169 ms. No violation was reported, and the
+receipt records unchanged model, mapped source and runtime inputs. Its model
+and all three mapped source hashes match this prepared branch. This is the
+stated finite storage quotient and invocation bounds, not exact stored-content
+or implementation refinement proof.
+
+The receipt is
+`slopdotcash-lemma-submitted-model/evidence/submitted-reconciliation/diagnostic600-awake/result.json`,
+SHA-256 `562839723a0293aa5d051b2a012df616d214a2faa385639ea8def18002a16353`.
+The earlier 180-second failures remain incomplete. A separate 600-second run
+was interrupted by host sleep and is not a valid runtime-budget measurement.
+
+The checked-in runner now allows 600 seconds for this model's verification
+stage and records the effective `timeoutMs` in every stage result. Its normal
+type/scenario/simulation stages remain at 90 seconds; other verification
+stages remain at 180 seconds. The allowance table is part of the hashed runner
+source. No model domain, guard, invariant or temporal property changed. The
+diagnostic did not use this new runner revision, so final combined-run evidence
+is still required. Parent and journal completion remain separate obligations.

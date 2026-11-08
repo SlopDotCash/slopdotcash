@@ -310,13 +310,16 @@ fixture and source limits. Newer case-projection and journal models and all
 combined runtime behavior still require their exact-source evidence. Keep
 original parsing failures and failed runs.
 
-The parent and submitted-payment models now preserve the reviewed cleanup and
+The parent and submitted-payment models preserve the reviewed cleanup and
 choice factoring alongside the new captured-slot and replacement transitions.
-Their normal checks pass independently, but both 180-second finite checks
-remain incomplete. The journal model's corrected names and factored choices
-also pass normal checks, while its finite checks still time out. These are
-open verification obligations; see the composition and journal audits. This
-chat has not run checks on the combined integration branch.
+Their normal checks pass independently. Both earlier 180-second finite checks
+remain incomplete; a later unchanged submitted-recovery diagnostic completes
+in about 219 seconds with 3,549,900 distinct states and an empty queue. The
+runner now has an explicit 600-second verification allowance for that model
+and records each stage's effective timeout. The changed runner still needs
+its own combined-run evidence. Parent and journal completion remain open;
+see the composition and journal audits. This chat has not run checks on the
+combined integration branch.
 
 The latest Solana and Admin runtime revisions and the three new finite models
 still require their complete evidence. The independent monthly SQLite run
