@@ -713,6 +713,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   await page.reload();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await selectAwardMonth(page, "2026-09");
   await expect(page.getByRole("alert")).toHaveText(
     "Review temporarily unavailable",
   );

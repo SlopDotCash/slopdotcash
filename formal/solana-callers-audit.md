@@ -134,3 +134,15 @@ hashes and exact results are recorded under ignored
 No production handler, economic policy, signing authority, chain identifier,
 program bytes or expected transaction result was changed. Local synthetic-chain
 evidence is not public-network availability, deployment or production funding.
+# Resumed fixture corrections
+
+The next combined run passed four cases and failed four, with six not reached.
+Its two EVM failures occurred after reload selected the current calendar month;
+the test now selects September again before checking that fixture's deliberate
+review outage. The two bounty cases expected a new-vault creation control that
+the 30 October direct-payment UI removed. The retained bounty-vault API is
+still supported. Those cases now create/register the real local-chain vault
+through that API, retain wrong-signature and retained-domain checks, and then
+exercise the existing private funding/withdrawal UI. This does not restore a
+removed product control or change bounty policy. Final repeated results remain
+required; prior failures stay in the isolated lane's evidence.

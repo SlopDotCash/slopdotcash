@@ -1274,75 +1274,92 @@ async function ownerSetupWorkflow(
     const setup = page.getByRole("region", {
       name: bounty ? "Set up bounty vault" : "Set up project vault",
     });
-    await setup
-      .getByRole("button", { name: "Connect Local Solana wallet" })
-      .click();
-    const monthly = setup.getByRole("combobox", {
-      name: "Automatic monthly payment",
-      exact: true,
-    });
-    if (bounty) await expect(monthly).toHaveCount(0);
-    else {
-      await expect(monthly).toHaveValue("on");
-      if (!automatic) await monthly.selectOption("off");
-    }
-    // Capture the reply in a route: Chrome can drop a streamed body before
-    // response.json() reads it through DevTools.
     const reviewUrl = `${origin}/api/v1/project-vaults/${project.id}`;
-    let browserReview:
-      | { transaction: { blockhash: string; lastValidBlockHeight: number } }
-      | undefined;
-    await page.route(reviewUrl, async (route) => {
-      const request = route.request();
-      if (
-        request.method() !== "POST" ||
-        request.postDataJSON().step !== "review"
-      )
-        return route.fallback();
-      const response = await route.fetch();
-      const body = await response.json();
-      browserReview ??= body.review;
-      await route.fulfill({ response, json: body });
-    });
-    await setup.getByRole("button", { name: "Review vault creation" }).click();
-    await expect(
-      setup.getByRole("button", { name: "Create vault in wallet" }),
-    ).toBeEnabled();
-    await page.unroute(reviewUrl);
-    if (!browserReview)
-      throw new Error("The browser review reply was not captured.");
-    await page.screenshot({
-      path: info.outputPath("solana-create-review.png"),
-      fullPage: true,
-    });
-    if (automatic) {
-      // A normal owner can leave this review open past the Solana transaction lifetime.
-      await expect
-        .poll(() => connection.getBlockHeight("confirmed"), {
-          timeout: 240_000,
-          intervals: [1000],
-        })
-        .toBeGreaterThan(browserReview.transaction.lastValidBlockHeight);
-      const validity = await connection.isBlockhashValid(
-        browserReview.transaction.blockhash,
-        "confirmed",
+    if (bounty) {
+      // New bounties use direct payments. The retained vault API still admits
+      // existing vault-backed programs; qualify it before their funding UI.
+      await expect(setup).toHaveCount(0);
+      const transaction = web3.Transaction.from(
+        Buffer.from(reviewed.review.transaction.transaction, "base64"),
       );
-      expect(validity.value).toBe(false);
-      await info.attach("expired-creation-review.json", {
-        body: JSON.stringify({
-          blockhash: browserReview.transaction.blockhash,
-          lastValidBlockHeight: browserReview.transaction.lastValidBlockHeight,
-          blockHeightBeforeCreate: await connection.getBlockHeight("confirmed"),
-          validBeforeCreate: validity.value,
-        }),
-        contentType: "application/json",
+      transaction.sign(donor);
+      sends.push(await connection.sendRawTransaction(transaction.serialize()));
+    } else {
+      await setup
+        .getByRole("button", { name: "Connect Local Solana wallet" })
+        .click();
+      const monthly = setup.getByRole("combobox", {
+        name: "Automatic monthly payment",
+        exact: true,
       });
+      if (bounty) await expect(monthly).toHaveCount(0);
+      else {
+        await expect(monthly).toHaveValue("on");
+        if (!automatic) await monthly.selectOption("off");
+      }
+      // Capture the reply in a route: Chrome can drop a streamed body before
+      // response.json() reads it through DevTools.
+      let browserReview:
+        | { transaction: { blockhash: string; lastValidBlockHeight: number } }
+        | undefined;
+      await page.route(reviewUrl, async (route) => {
+        const request = route.request();
+        if (
+          request.method() !== "POST" ||
+          request.postDataJSON().step !== "review"
+        )
+          return route.fallback();
+        const response = await route.fetch();
+        const body = await response.json();
+        browserReview ??= body.review;
+        await route.fulfill({ response, json: body });
+      });
+      await setup
+        .getByRole("button", { name: "Review vault creation" })
+        .click();
+      await expect(
+        setup.getByRole("button", { name: "Create vault in wallet" }),
+      ).toBeEnabled();
+      await page.unroute(reviewUrl);
+      if (!browserReview)
+        throw new Error("The browser review reply was not captured.");
+      await page.screenshot({
+        path: info.outputPath("solana-create-review.png"),
+        fullPage: true,
+      });
+      if (automatic) {
+        // A normal owner can leave this review open past the Solana transaction lifetime.
+        await expect
+          .poll(() => connection.getBlockHeight("confirmed"), {
+            timeout: 240_000,
+            intervals: [1000],
+          })
+          .toBeGreaterThan(browserReview.transaction.lastValidBlockHeight);
+        const validity = await connection.isBlockhashValid(
+          browserReview.transaction.blockhash,
+          "confirmed",
+        );
+        expect(validity.value).toBe(false);
+        await info.attach("expired-creation-review.json", {
+          body: JSON.stringify({
+            blockhash: browserReview.transaction.blockhash,
+            lastValidBlockHeight:
+              browserReview.transaction.lastValidBlockHeight,
+            blockHeightBeforeCreate:
+              await connection.getBlockHeight("confirmed"),
+            validBeforeCreate: validity.value,
+          }),
+          contentType: "application/json",
+        });
+      }
+      await setup
+        .getByRole("button", { name: "Create vault in wallet" })
+        .click();
+      await expect(setup.getByRole("alert")).toContainText(
+        "Transport interrupted",
+      );
+      expect(sends).toHaveLength(1);
     }
-    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
-    await expect(setup.getByRole("alert")).toContainText(
-      "Transport interrupted",
-    );
-    expect(sends).toHaveLength(1);
     await page.reload({ waitUntil: "networkidle" });
     if (bounty) await openProjectSecuritySettings(page);
     if (!bounty) {
@@ -1356,13 +1373,29 @@ async function ownerSetupWorkflow(
       expect(changed.ok(), JSON.stringify(await changed.json())).toBe(true);
     }
     wrongSignature = true;
-    await setup
-      .getByLabel("Creation transaction signature")
-      .fill(deployment.deploymentTransaction);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
-    await expect(setup.getByRole("alert")).toContainText("does not match");
+    if (bounty) {
+      const mismatch = await page.request.post(reviewUrl, {
+        headers,
+        data: {
+          step: "register",
+          expectedRevision: 1,
+          network: "solana-devnet",
+          claimId: claim.claimId,
+          automatic,
+          payoutPolicy: "security-bounty",
+          transactionId: deployment.deploymentTransaction,
+        },
+      });
+      expect(mismatch.status()).toBe(422);
+    } else {
+      await setup
+        .getByLabel("Creation transaction signature")
+        .fill(deployment.deploymentTransaction);
+      await setup
+        .getByRole("button", { name: "Check vault registration" })
+        .click();
+      await expect(setup.getByRole("alert")).toContainText("does not match");
+    }
     wrongSignature = false;
     await connection.confirmTransaction(sends[0], "finalized");
     // A new infrastructure pin must not strand an already finalized creation
@@ -1455,11 +1488,17 @@ async function ownerSetupWorkflow(
       ),
       contentType: "application/json",
     });
-    await setup.getByLabel("Creation transaction signature").fill(sends[0]);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
-    await expect(setup).toHaveCount(0);
+    if (bounty) {
+      await api(`project-vaults/${project.id}`, registration);
+      await page.reload({ waitUntil: "networkidle" });
+      await openProjectSecuritySettings(page);
+    } else {
+      await setup.getByLabel("Creation transaction signature").fill(sends[0]);
+      await setup
+        .getByRole("button", { name: "Check vault registration" })
+        .click();
+      await expect(setup).toHaveCount(0);
+    }
     if (!bounty) {
       await page
         .locator("summary")
@@ -1792,7 +1831,7 @@ async function ownerSetupWorkflow(
 for (const bounty of [false, true])
   test(
     bounty
-      ? "owner creates, recovers and funds a private Solana bounty vault through the API"
+      ? "owner registers and funds a retained private Solana bounty vault through the API"
       : "owner creates, recovers, registers and funds a Solana vault through the API",
     ({ diagnostics, page }, info) =>
       ownerSetupWorkflow({ diagnostics, page }, info, bounty),
