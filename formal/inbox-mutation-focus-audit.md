@@ -71,3 +71,24 @@ Existing inbox browser flows are in `tests/e2e/site.spec.ts` and
 results do not validate this new source revision. The missing focused browser
 evidence is a held POST, a focus event before commit, completion, and a final
 read showing the mutation, with separate account-change and failure cases.
+
+## Independent model validation
+
+The initial model at `29eb8bedf0bc02bd35e6ff44d16e8ce681e48af5` could not
+parse: `beginRead(cursor:int)` had no required return type. The normal checker
+and TLC both stopped at that syntax error before semantic validation.
+
+The correction names the existing state record `State` and declares
+`beginRead(cursor:int):State`. All fields, transitions, guards, invariants and
+finite domains are unchanged. The corrected model passes type checking, all
+13 named scenarios and 500 seeded simulation traces of at most 60 steps with
+seed `20261107`. Full finite TLC completes with 260,413 generated states,
+34,953 distinct states, maximum depth 23 and an empty queue.
+
+Quint 0.33.1, Node 24.15.0, local Apalache 0.62.4 and OpenJDK 21.0.10 used the
+existing 90-second normal-stage and 180-second verification deadlines. Model
+and mapped source hashes stayed unchanged during the checks. The domain
+remains two actors, two cursors, four live epochs and one departure epoch;
+process scheduling, API authority and exact receipt validation remain outside
+this finite model. No browser run or runtime edit is claimed. The original
+parse failure and corrected receipts remain outside committed source.

@@ -7,18 +7,19 @@
 // current-session checks remain external observations, not cookie ownership.
 // No checks were run for this source-only follow-up.
 module ui_inbox_mutation_focus {
-  var s:{mounted:bool,actor:int,recipient:int,cursor:int,epoch:int,
+  type State = {mounted:bool,actor:int,recipient:int,cursor:int,epoch:int,
     active:bool,phase:str,actionEpoch:int,actionActor:int,actionCursor:int,
     state:str,serverRead:Set[int],viewRead:bool,previousRead:bool,
     readEpoch:int,readActor:int,readCursor:int,snapshot:bool,
     success:bool,error:bool}
+  var s:State
   action init=s'={mounted:true,actor:1,recipient:1,cursor:0,epoch:0,
     active:false,phase:"idle",actionEpoch:0,actionActor:0,actionCursor:0,
     state:"ready",serverRead:Set(),viewRead:false,previousRead:false,
     readEpoch:0,readActor:0,readCursor:0,snapshot:false,success:false,error:false}
   val ownsView=s.mounted and s.epoch==s.actionEpoch and s.actor==s.actionActor and s.actor>0
   val privateVisible=s.mounted and s.state=="ready" and s.recipient>0
-  def beginRead(cursor:int)=s.with("epoch",s.epoch+1).with("readEpoch",s.epoch+1)
+  def beginRead(cursor:int):State=s.with("epoch",s.epoch+1).with("readEpoch",s.epoch+1)
     .with("readActor",s.actor).with("readCursor",cursor).with("cursor",cursor)
     .with("snapshot",s.serverRead.contains(s.actor)).with("state","loading")
   action focus=all{s.mounted,
