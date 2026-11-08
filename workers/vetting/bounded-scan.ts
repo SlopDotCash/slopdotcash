@@ -315,6 +315,8 @@ function commandToken(name: string): string {
 const SHELL_COMMAND = commandToken("(?:ba|da|k|a|z|fi|t?c)?sh");
 const ENV_COMMAND = commandToken("env");
 const SUDO_COMMAND = commandToken("sudo");
+/** The process environment object, in the spellings a dump reaches it by. */
+const ENV_OBJECT = String.raw`(?:globalThis\.|window\.|self\.)?process\??(?:\.env|\[["']env["']\])`;
 /**
  * Interpreters that read their program from standard input when no script
  * file argument is given, so a download piped into one executes the
@@ -376,8 +378,19 @@ const RULES: Rule[] = [
   {
     threat: "secret-exfiltration",
     severity: "high",
-    pattern:
-      /JSON\.stringify\(\s*(?:\{[^{}]*\.\.\.\s*process(?:\.env|\[["']env["']\])[^{}]*\}|process(?:\.env|\[["']env["']\])\s*\))|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:curl|wget)\b[^\n]*["']?(?:\$\(\s*(?:env|printenv)\b[^)]*\)|\x60\s*(?:env|printenv)\b[^\x60]*\x60)|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b/iu,
+    // The whole environment, in every spelling that reaches a body. `process`
+    // may be optional-chained, reached through `globalThis`, or indexed with a
+    // string, and the object may be nested, which is why the spread branch
+    // scans a bounded window instead of a brace class. `JSON.stringify` also
+    // takes a replacer and a spacing argument, so the closing bracket is not
+    // required right after the object. `Object.entries` and its siblings dump
+    // the same thing. In a shell, `env`, `printenv`, bare `set` and
+    // `export -p` all print it; `set` with arguments sets positional
+    // parameters, so only the bare form counts.
+    pattern: new RegExp(
+      String.raw`(?:Object\.(?:entries|keys|values)\(\s*${ENV_OBJECT}|JSON\.stringify\(\s*${ENV_OBJECT}(?:\s*[,)])|JSON\.stringify\([\s\S]{0,300}?\.\.\.\s*${ENV_OBJECT})|json\.dumps\(\s*(?:dict\()?\s*os\.environ|\b(?:curl|wget)\b[^\n]*["']?(?:\$\(\s*(?:(?:env|printenv)\b[^)]*|set|export\s+-p)\s*\)|\x60\s*(?:(?:env|printenv)\b[^\x60]*|set|export\s+-p)\s*\x60)|\b(?:env|printenv)\s*\|\s*(?:(?:[^\s|;&<>()'"]*\/)?(?:sudo|doas|busybox|env)(?:\s+-\S+)*\s+)*(?:[^\s|;&<>()'"]*\/)?(?:curl|wget|ncat|netcat|nc)\b`,
+      "iu",
+    ),
     summary: "Serializes the whole environment, which holds secrets",
   },
   {
