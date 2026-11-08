@@ -40,6 +40,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Native liability and retained expiry agreement](lemmascript-native-liability.md)
 - [Complete accepted-work claim partition](lemmascript-work-unit-partition.md)
 - [Complete base58 conversion](lemmascript-base58-research.md)
+- [Final candidate dispositions and remaining active algorithms](lemmascript-candidate-dispositions.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
 The inventory enumerates first-party JavaScript and TypeScript function bodies
