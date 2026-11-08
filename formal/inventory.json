@@ -3297,8 +3297,11 @@
     },
     {
       "path": "scripts/prepare-e2e-fixture.mjs",
-      "sha256": "abd773bfa8ad981057fb1522f15d45fe74e414d45048308ca12062404ed7fb15",
-      "models": ["formal/models/dev_server_lifecycle.qnt"],
+      "sha256": "4b4ee2f430a526e3a7c7ec46a4cd078949d9ac1fa6e540ccd6fd71779d920f89",
+      "models": [
+        "formal/models/dev_server_lifecycle.qnt",
+        "formal/models/runner_cancellation.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -3586,7 +3589,8 @@
       "sha256": "a2efca4e42b2404376871a4a3b007435258ed60ed919872979f10233962f8d77",
       "models": [
         "formal/models/evidence_capture.qnt",
-        "formal/models/formal_process.qnt"
+        "formal/models/formal_process.qnt",
+        "formal/models/integration_pipeline.qnt"
       ],
       "candidateLines": [
         26, 29, 36, 39, 40, 44, 74, 81, 97, 99, 116, 123, 145, 148, 150, 152,
@@ -3596,21 +3600,25 @@
     },
     {
       "path": "scripts/run-e2e.mjs",
-      "sha256": "f6f079fe3acde2648d15fd6bc0cbf78f43eaf4604d7d34cbfe8b4983d6511516",
+      "sha256": "b21215c508a3cd88cef93eac81c31b5cc19fe88759ae3e09e8161c1a49d511d7",
       "models": [
         "formal/models/evidence_capture.qnt",
-        "formal/models/fixture_wallet_runtime.qnt"
+        "formal/models/fixture_wallet_runtime.qnt",
+        "formal/models/runner_cancellation.qnt"
       ],
       "candidateLines": [
-        56, 58, 179, 253, 293, 295, 394, 447, 472, 541, 542, 555, 570, 576, 593,
-        637
+        54, 63, 64, 65, 66, 85, 101, 102, 195, 272, 318, 320, 430, 499, 527,
+        599, 600, 613, 629, 635, 665, 666, 700
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/run-integration.mjs",
-      "sha256": "1753afb27501853ab0044959528b43cc0fc31b6a3072d4a80d796ba0f93b6b16",
-      "models": ["formal/models/dev_server_lifecycle.qnt"],
+      "sha256": "306d539d903e8b9c825898a4cb4da18bb3d40306d79ee356377bfaf3896cbf22",
+      "models": [
+        "formal/models/dev_server_lifecycle.qnt",
+        "formal/models/integration_pipeline.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -3624,9 +3632,12 @@
     },
     {
       "path": "scripts/run-security-payments.mjs",
-      "sha256": "b1489d8346d8462bd8b97729dc94aeac77525e43841fde6672bcb7a2ab385a6f",
-      "models": ["formal/models/local_security_checks.qnt"],
-      "candidateLines": [71],
+      "sha256": "046914a34aec3b2ba430a0f54219fe252a36aa62a1d4d1bf6f7c960d37658b91",
+      "models": [
+        "formal/models/local_security_checks.qnt",
+        "formal/models/runner_cancellation.qnt"
+      ],
+      "candidateLines": [69, 80],
       "review": "mapped-abstraction"
     },
     {
@@ -3634,6 +3645,13 @@
       "sha256": "3547befb770d5a369d8858c2397e8d1d8a21d3655b6c75a41e0f62f5198019ee",
       "models": ["formal/models/workflow_authority.qnt"],
       "candidateLines": [3, 53, 134, 135],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/runner-cancellation.mjs",
+      "sha256": "0de7539378ede52287633bb302b9dbc7b275e8ecc88aa796350eedca678aaa6a",
+      "models": ["formal/models/runner_cancellation.qnt"],
+      "candidateLines": [8, 9, 10, 12, 13, 16, 21],
       "review": "mapped-abstraction"
     },
     {
@@ -3955,19 +3973,26 @@
     },
     {
       "path": "src/AutomaticMonthlyPayment.tsx",
-      "sha256": "6e9e7bb10b968b65af91c1a5ee2ec1d507fe1b7e600e5bb68cbec12fb5b87b65",
-      "models": ["formal/models/ui_transaction.qnt"],
+      "sha256": "69cd26255217ad0b208c8a68c722f156f42ede807df5d8961a7cdee1d9eccf8d",
+      "models": [
+        "formal/models/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui_transaction.qnt"
+      ],
       "candidateLines": [
-        1, 35, 44, 47, 73, 88, 90, 93, 98, 99, 100, 101, 102, 103, 104, 110,
-        125, 127, 153, 154, 203, 204, 206, 207, 215, 219, 220, 221, 233, 234,
-        235, 249, 255, 275, 292, 313, 319, 322, 325, 326, 354, 429, 448
+        1, 35, 45, 48, 77, 92, 94, 97, 102, 103, 104, 105, 106, 107, 108, 114,
+        129, 131, 157, 158, 184, 208, 212, 215, 216, 224, 228, 229, 230, 231,
+        246, 247, 248, 262, 263, 264, 278, 284, 304, 321, 342, 348, 351, 354,
+        355, 362, 368, 387, 462, 481
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/BountySubmittedPayments.tsx",
       "sha256": "2c930de239b298b0e5a58d4a1f1d9a68e9265c1c95c75c3533fbaa153ee7bed3",
-      "models": ["formal/models/ui_transaction.qnt"],
+      "models": [
+        "formal/models/ui_submitted_payment_recovery.qnt",
+        "formal/models/ui_transaction.qnt"
+      ],
       "candidateLines": [1, 29, 30, 32],
       "review": "mapped-abstraction"
     },
@@ -4009,6 +4034,7 @@
       "path": "src/DirectBountyPayment.tsx",
       "sha256": "0c336cdeaa94f895e610e821a7b11a5fb6268897886f72bbff7ad26fe70f05d8",
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_tab_scope.qnt",
         "formal/models/ui_transaction.qnt"
       ],
@@ -4182,7 +4208,10 @@
     {
       "path": "src/OwnerPresentation.tsx",
       "sha256": "d45c76ee6d0cee39b3ce74292ca576660e110c3027b60655e3e80650bd47d888",
-      "models": ["formal/models/ui_record_display.qnt"],
+      "models": [
+        "formal/models/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui_record_display.qnt"
+      ],
       "candidateLines": [59],
       "review": "mapped-abstraction",
       "statelessReason": "Controlled change-review/recovery/pending presentation. State and actions are owned by the calling wallet machine."
@@ -4479,6 +4508,7 @@
       "path": "src/SecurityBounty.tsx",
       "sha256": "845b1bd1c6cef0bb5d440fa26c42008d0db28a106f32458ce22b7f75b785f287",
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
@@ -4488,7 +4518,8 @@
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_submission_controls.qnt"
+        "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt"
       ],
       "candidateLines": [
         27, 31, 137, 222, 229, 252, 254, 261, 274, 275, 277, 284, 288, 302, 305,
@@ -4536,7 +4567,10 @@
     {
       "path": "src/SolanaBountyPayment.tsx",
       "sha256": "310829542f75414a50d153551a8f15ad73d817523c529b76c59af83ebc413e87",
-      "models": ["formal/models/ui_transaction.qnt"],
+      "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
+        "formal/models/ui_transaction.qnt"
+      ],
       "candidateLines": [
         1, 11, 38, 39, 40, 41, 42, 47, 55, 83, 109, 157, 161, 162, 178, 188,
         189, 190, 196, 206
@@ -4760,7 +4794,10 @@
     {
       "path": "src/lib/evm-vault-actions.ts",
       "sha256": "30e3fb68c1006efc4fc5029333fb361f4b01f419d3525a7625226f46ad6f6623",
-      "models": ["formal/models/evm_owner_action.qnt"],
+      "models": [
+        "formal/models/evm_owner_action.qnt",
+        "formal/models/ui_monthly_setting_recovery.qnt"
+      ],
       "candidateLines": [
         260, 287, 308, 314, 331, 333, 334, 337, 338, 347, 348, 349, 350, 351
       ],
@@ -4957,7 +4994,10 @@
     {
       "path": "src/lib/monthly-commitment-actions.ts",
       "sha256": "fd724e13e340f0851635599ab9c961fc6014b9b2b96765e20445f5455a86c5e9",
-      "models": ["formal/models/solana_owner_action.qnt"],
+      "models": [
+        "formal/models/solana_owner_action.qnt",
+        "formal/models/ui_monthly_setting_recovery.qnt"
+      ],
       "candidateLines": [
         44, 75, 80, 191, 206, 284, 287, 300, 397, 398, 399, 401, 402
       ],
@@ -5462,9 +5502,11 @@
       "path": "src/lib/use-action.ts",
       "sha256": "2ab920b0a8d22dcea44e6a544556775a44559d81989788fcf2a407f01e1dae64",
       "models": [
+        "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_submission_controls.qnt",
+        "formal/models/ui_submitted_payment_recovery.qnt",
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [1, 5, 10, 11],
@@ -7416,7 +7458,7 @@
     },
     {
       "path": "formal/models/api_mail_delivery.qnt",
-      "sha256": "c075f239b7f844284b89e041ac5a0136e09abbcdd6e597ec611f80abce67696c",
+      "sha256": "64af073da66ae403db5fcf5c54fae91a9314b6ec652de17142dff5f7fc8c3a54",
       "sources": [
         "backend/notifications/events.ts",
         "backend/notifications/handler.ts",
@@ -7427,7 +7469,19 @@
         "workers/notify/index.ts",
         "workers/notify/security.ts"
       ],
-      "scenarios": ["ambiguousTest", "deliveredTest", "optOutTest"]
+      "scenarios": [
+        "ambiguousTest",
+        "authorityLostBeforePreparationRefusesTest",
+        "definiteRejectionCountsProviderCallTest",
+        "deliveredTest",
+        "inFlightPreparationKeepsObservedAuthorityTest",
+        "inFlightPreparationKeepsObservedConsentTest",
+        "optOutTest",
+        "preparationAfterAuthorityLossRefusedTest",
+        "preparationAfterOptOutRefusedTest",
+        "preparationFailureDoesNotCountProviderCallTest",
+        "uncertainSendCountsProviderCallTest"
+      ]
     },
     {
       "path": "formal/models/api_payment_wallet_protocol.qnt",
@@ -7484,7 +7538,7 @@
     },
     {
       "path": "formal/models/api_private_authorization.qnt",
-      "sha256": "dbdf12b0ccb25840ac57a9ef02c89adfe495b8ef40eb735986dcb37e766ea0bc",
+      "sha256": "27c8b39b75e522ff97db29d1dd32911a279696ac3480c7d8f03889f53bc96266",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/intake-grant.ts",
@@ -7492,9 +7546,15 @@
       ],
       "scenarios": [
         "boundGrantTest",
+        "callbackAfterSignOutCannotReadTest",
+        "callbackWithoutSiteCookieTest",
+        "callbackWrongAccountRefusedTest",
         "changedActorRefusedTest",
-        "changedSubmissionRefusedTest",
+        "expiredFlowRefusedTest",
         "expiredGrantRefusedTest",
+        "grantOutlivesFlowTest",
+        "grantReadDoesNotConsumeTest",
+        "providerWrongAccountRefusedTest",
         "sameActorNewSessionRefusedTest",
         "switchedAccountTest",
         "switchedReportTest"
@@ -7690,7 +7750,7 @@
     },
     {
       "path": "formal/models/api_trace.qnt",
-      "sha256": "79c577efd1d78a063c03f7f199d4ec45085f7bdb42a43502f1f65b4cc81aebee",
+      "sha256": "aad2b8ff08f16b1857cf6d07d002a742925206934ab5000f1728b2830a701d09",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/cloudflare-persistence.ts",
@@ -7702,7 +7762,11 @@
         "migrations/0006_private_intake_status.sql",
         "migrations/0058_trace_write_reservations.sql"
       ],
-      "scenarios": ["orphanTest", "privateReadTest", "traceTest"]
+      "scenarios": [
+        "orphanTest",
+        "retiredGrantAndReadRemainUnavailableTest",
+        "traceTest"
+      ]
     },
     {
       "path": "formal/models/api_wallet_claims.qnt",
@@ -7793,7 +7857,7 @@
     },
     {
       "path": "formal/models/binding_veto_policy.qnt",
-      "sha256": "5d77aeabbef2f91a6e5fd88c409da970d9e7e03d20c4035397440e6af1333c18",
+      "sha256": "a655aa13eeb74b1f085590d83efff017e8df566a7966b8201f4b816ba2750948",
       "sources": [
         "contracts/evm/src/ProjectEscrow.sol",
         "contracts/solana/programs/slop-escrow/src/lib.rs"
@@ -7803,13 +7867,19 @@
         "cappedBeforeFirstPaymentTest",
         "duplicateVetoCannotConsumeBudgetTest",
         "evmPendingWaivesWithoutCountingTest",
+        "evmRotationExecutesWithoutConfirmationTest",
         "nonOwnerCannotVetoTest",
         "oldBindingCanUseNewAwardWindowTest",
         "paidBindingCannotBeVetoedTest",
         "paymentResetsBudgetTest",
+        "solanaCancelledRotationResetsClockTest",
+        "solanaConfirmationReplayRefusedTest",
+        "solanaConfirmedRotationStillWaitsTest",
         "solanaConfirmedWaivesUntilExecutionTest",
         "solanaProposalAloneDoesNotWaiveTest",
         "solanaRequiresNamedUnpaidAwardTest",
+        "solanaRotationWithoutConfirmationRefusedTest",
+        "solanaZeroDelayStillNeedsConfirmationTest",
         "zeroDelayHasNoVetoWindowTest"
       ]
     },
@@ -9164,6 +9234,19 @@
       ]
     },
     {
+      "path": "formal/models/integration_pipeline.qnt",
+      "sha256": "438d63f80d4a9b877730628fcfb43eca99618d0f9a4e27783d347f7a57c4b978",
+      "sources": ["scripts/run-e2e-phase.mjs", "scripts/run-integration.mjs"],
+      "scenarios": [
+        "allDriversCompleteTest",
+        "canceledBeforeFirstDriverTest",
+        "canceledDriverCannotStartSuccessorTest",
+        "cleanupFailureIsNotSuccessTest",
+        "ordinaryFailureStillCollectsOtherDriversTest",
+        "repeatedSignalsKeepCancellationTest"
+      ]
+    },
+    {
       "path": "formal/models/isolated_execution.qnt",
       "sha256": "f97d6ca8370a75835967f5a512ea7aa21877852af8e04c6afc91977a909e117f",
       "sources": [
@@ -10012,6 +10095,23 @@
       ]
     },
     {
+      "path": "formal/models/runner_cancellation.qnt",
+      "sha256": "270e948fbb344cb0bf0c602fdeb78bb498510b7d52dcd6c22a53fa0626352788",
+      "sources": [
+        "scripts/prepare-e2e-fixture.mjs",
+        "scripts/run-e2e.mjs",
+        "scripts/run-security-payments.mjs",
+        "scripts/runner-cancellation.mjs"
+      ],
+      "scenarios": [
+        "canceledBeforeAnyStartupTest",
+        "cancellationBetweenPortsPreventsLaunchTest",
+        "firstFailureSurvivesRepeatedSignalsTest",
+        "lateStartupResourceStillClosesTest",
+        "twoPhasesDrainBeforeCompletionTest"
+      ]
+    },
+    {
       "path": "formal/models/security_payment_projection.qnt",
       "sha256": "f75f8add68ff217ab4f7c3609b4ec33c2a010ed49456636c87206f7b9870c3f7",
       "sources": [
@@ -10466,6 +10566,31 @@
       ]
     },
     {
+      "path": "formal/models/ui_bounty_payment_parent.qnt",
+      "sha256": "002b47b2459f7b924a33375ea24778068ed084eb883d7dbc984e3143a025cb3f",
+      "sources": [
+        "src/DirectBountyPayment.tsx",
+        "src/SecurityBounty.tsx",
+        "src/SolanaBountyPayment.tsx",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "actorCheckUnmountsOldPrivateChildTest",
+        "declinedRequestWithStorageFailureRetainsMarkerTest",
+        "declinedWalletRequestClearsItsMarkerTest",
+        "departedWalletResultStaysInOriginalStorageSlotTest",
+        "departureAfterLastGuardDoesNotCancelWalletTailTest",
+        "evmGenerationChangeRemountsChildTest",
+        "fallbackGenerationChangeRetainsComponentInstanceTest",
+        "sameGenerationEvmPlanKeepsAndChecksJournalTest",
+        "solanaMessageChangeRemountsChildTest",
+        "staleStorageReplyCannotPopulateNewChildTest",
+        "supersededCaseReadCannotRestoreSendControlsTest",
+        "transientRefreshRetainsPaymentChildTest",
+        "uncertainWalletResultKeepsOriginalMarkerTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_calendar_views.qnt",
       "sha256": "ee28f9c7943d99ae5cc3b8cdb4f6fe78379062930c46b052f99168c9c0fa376b",
       "sources": [
@@ -10704,6 +10829,32 @@
         "reviewSourceTest",
         "splitTest",
         "unavailableModelTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_monthly_setting_recovery.qnt",
+      "sha256": "ce6b89bc24b839068ed0732d46f281d2ae7e2abd1a46bc2acacb560e8cae0237",
+      "sources": [
+        "src/AutomaticMonthlyPayment.tsx",
+        "src/OwnerPresentation.tsx",
+        "src/lib/evm-vault-actions.ts",
+        "src/lib/monthly-commitment-actions.ts"
+      ],
+      "scenarios": [
+        "candidateRemainsEditableAcrossReloadTest",
+        "clearedUnreadableRecordStaysAbsentAfterReloadTest",
+        "confirmedUnsentRecordDoesNotResurrectAfterReloadTest",
+        "correctCandidateAfterPendingTest",
+        "failedCandidateWriteKeepsMemoryFenceTest",
+        "failedClearKeepsRequestTest",
+        "failedUnreadableClearRemainsBlockedAfterReloadTest",
+        "failedWriteReloadNeedsExplicitUserAssertionTest",
+        "finalizedMismatchPreservesEditableCandidateTest",
+        "invalidProvenanceRefusesNewSendTest",
+        "resolvedRecordDoesNotResurrectAfterReloadTest",
+        "returnedWalletHashStaysFixedTest",
+        "transientCheckErrorKeepsCandidateTest",
+        "unmarkedLegacyHashIsEditableTest"
       ]
     },
     {
@@ -11125,6 +11276,29 @@
         "terminalFailureHasNoResendTest",
         "uncertainUsesReconcileNotResendTest",
         "unsavedLegacyDraftCannotLeaveForGithubTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_submitted_payment_recovery.qnt",
+      "sha256": "6aa082f435fe57717447069c165b0aafb0e6c85afed621266bc34ca98195af91",
+      "sources": [
+        "src/BountySubmittedPayments.tsx",
+        "src/SecurityBounty.tsx",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "confirmedIdentifiersAreNotResubmittedTest",
+        "editDuringRequestDoesNotChangeCapturedHashesTest",
+        "failedReloadRetainsExistingRowsTest",
+        "fallbackDepartureMayFinishSameActorVerificationTest",
+        "generationChangeBetweenPreflightsRefusesPostTest",
+        "generationRefreshRetainsOldRowsUntilReplyTest",
+        "parentActorCheckRefusesNewCookieActorTest",
+        "parentDepartureAfterPostDoesNotDeliverSuccessTest",
+        "parentDepartureStopsFinalPreflightTest",
+        "partialCandidateWriteDoesNotPostTest",
+        "rawSessionMismatchStopsBeforeCandidateWritesTest",
+        "staleStorageReplyDoesNotReplaceNewGenerationTest"
       ]
     },
     {

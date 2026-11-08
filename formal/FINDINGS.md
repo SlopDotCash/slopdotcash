@@ -7,7 +7,7 @@ revision. The area audits identify the source checkpoint, bounds, before/after
 evidence and model links.
 The tests below use application entry points, real local databases or browser
 flows as appropriate. A local provider fixture does not establish live service
-availability. The full combined validation is still in progress; this is not a
+availability. The full combined validation remains incomplete; this is not a
 claim that all application state errors have been eliminated.
 
 | Boundary | Incorrect transition | Corrected behavior / regression |
@@ -88,3 +88,23 @@ symbolic links in actual source. See `docs/lemmascript-validation.md`.
 The source inventory and area audits also include reviewed transitions that
 needed no implementation change. They remain bounded abstractions unless an
 audit explicitly supplies stronger conformance evidence.
+
+## Source-only follow-up
+
+These corrections were established by source inspection after the user asked
+to skip further checks. They are not new runtime reproductions or validated
+fixes, and remain separate from the table of earlier reproduced results.
+
+- Monthly-setting recovery stored a pasted transaction ID as fixed after a
+  pending lookup, hiding the editor across reload. The correction retains
+  editable candidate evidence and the pending-send guard. See
+  `monthly-setting-recovery-audit.md`.
+- Integration, security-payment and browser coordinators did not connect
+  process signals to detached phases. The follow-up wires cancellation,
+  removes the nested browser coordinator and awaits owned cleanup. See
+  `integration-cancellation-audit.md` and `runner-cancellation-audit.md`.
+
+The follow-up also corrects model/source disagreements described in
+`backend-source-review.md`, `binding-veto-audit.md`, and
+`direct-payment-composition-audit.md`. No tests or verifiers were run for those
+revisions.

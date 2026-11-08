@@ -8,7 +8,7 @@ The goal remains active and incomplete. Work targets `origin/development` in
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-806 production sources, 301 finite models and 1,311 named scenarios, with zero
+807 production sources, 306 finite models and 1,381 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 235 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -133,3 +133,28 @@ remain incomplete. The binding model's last added scenario was not rerun.
 No final whole-head verification, full repeated wallet matrix, merge, production
 deployment or activation is claimed. The original state-correctness goal remains
 open; passing finite models does not prove absence of all application errors.
+
+## Source-only follow-up after the coordinated push
+
+The follow-up remains separate from PR 2414 while that review holds its head
+stable. It preserves the user instruction to skip further checks and push.
+No tests, syntax/type checks, browser runs, format checks, simulations or model
+verifiers were run for these follow-up changes.
+
+- Automatic monthly payment now distinguishes wallet-returned transaction IDs
+  from entered/legacy evidence. A pending lookup no longer hides the correction
+  input or enables another send. This is a source-confirmed pre-existing path;
+  new runtime and UI video evidence remain outstanding.
+- Integration/security/browser runners pass process cancellation to owned
+  phases, stop new work, and await cleanup. Browser phases are directly owned
+  by their coordinator instead of a nested detached coordinator. Synchronous
+  copies and opaque fixture-startup boundaries remain documented.
+- Backend models now reflect retired trace-read routes, cookie-less OAuth
+  callbacks with the original session binding, independent grant lifetimes,
+  and the authority observed during notification preparation.
+- Binding rotation timing and reset states, monthly recovery storage removal,
+  and direct-payment parent/fallback composition have explicit model updates.
+
+The generated inventory is only a source/model index. It does not validate
+these authored models or prove that the new implementation is correct. The
+original completion goal remains open and final combined validation is absent.
