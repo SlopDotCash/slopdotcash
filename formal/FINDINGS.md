@@ -1,7 +1,10 @@
 # Reproduced discrepancies
 
-This index lists implementation defects corrected by the current-development
-review. The area audits give the bounds, before/after evidence and model links.
+This index lists defects corrected during the current-development review,
+including failures reproduced in intermediate review candidates and test
+infrastructure. It does not attribute every row to the original development
+revision. The area audits identify the source checkpoint, bounds, before/after
+evidence and model links.
 The tests below use application entry points, real local databases or browser
 flows as appropriate. A local provider fixture does not establish live service
 availability. The full combined validation is still in progress; this is not a
@@ -57,8 +60,11 @@ claim that all application state errors have been eliminated.
 | Project draft ownership | A delayed publication in one tab could erase a newer draft in another | Give each live editor a locked durable slot; clear only its own slot and retain closed-tab recovery; `formal/draft-storage-audit.md` |
 | Draft save feedback | An older saved status could describe a newer pending payload, and early wizard steps hid storage failures | Bind acknowledgement to the rendered payload and show backup feedback at every step; `tests/e2e/project-draft-storage.spec.ts` |
 | Private-report reflow | Enlarged text made the native action selector overflow a narrow viewport | Let the selector shrink within its label; `formal/private-intake-reflow-audit.md` |
-| Private-report navigation | Long report text was not keyboard-scrollable, and two open regions shared a name | Focus the scroll region and bind its name to the individual report headings; `tests/e2e/security-bounty.spec.ts` |
-| Browser engine preparation | Preview selected Firefox tests but installed only Chromium | Include both engines in the preview plan; `formal/ci-browser-audit.md` |
+| Private-report navigation | Long report text was not keyboard-scrollable; an intermediate focus fix gave two open regions the same name | Focus the scroll region and bind its name to the individual report headings; `tests/e2e/security-bounty.spec.ts` |
+| Email editor composition | A same-account background identity check destroyed a private-session user's email draft | Retain only the actor-bound email subtree while blocking writes; clear it on confirmed identity change or sign-out; `formal/email-editor-audit.md` |
+| Report filter reflow | The real paid-flow mobile check found that enlarged filter text widened the page beyond its viewport | Allow the filter label and native selector to shrink; `formal/private-intake-reflow-audit.md` |
+| Browser engine preparation | New preview Firefox cases were selected without installing Firefox | Include both engines in the preview plan; `formal/ci-browser-audit.md` |
+| Validator cancellation | An intermediate contained launcher could finish cleanup before an outstanding create or ready-receipt write | Await owned mutations and serialize receipt writes; refuse a ready result after cancellation; `formal/solana-container-audit.md` |
 
 The forwarded-report and payout corrections reuse
 [PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and

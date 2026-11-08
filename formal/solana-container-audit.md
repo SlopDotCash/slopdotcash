@@ -25,6 +25,15 @@ and [release manifest](https://github.com/anza-xyz/agave/releases/download/v2.1.
 The launcher requires the image already installed and checks its actual binary
 version and digest before returning ready.
 
+The isolated Solana CI job now prepares that same digest before its callers
+run. The image reference is imported from the launcher, so the workflow does
+not maintain a second mutable version. A failed image download stops setup;
+the launcher has no native or unpinned fallback. The job's selector includes
+the shared launcher, Solana browser fixtures and fee-converter sources.
+`ci_coverage` models selection and the existing real Git/selector regression
+exercises those changed paths. A hosted run remains required to establish
+Linux image preparation and caller execution together.
+
 ## Cancellation ordering
 
 The first implementation started an asynchronous `run` request and inspected
