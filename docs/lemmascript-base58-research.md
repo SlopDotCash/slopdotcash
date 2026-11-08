@@ -68,12 +68,14 @@ be identical. `RadixRoundTrip` composes the proved encoder and decoder
 postconditions in either direction. It does not assume a conversion result
 is correct instead of proving its loop.
 
-The alphabet inverse then gives the string mapping. For every byte array,
-decoding its encoding returns the original bytes. For every string over the
-base58 alphabet, encoding its decoding returns that string. An empty input
-stays empty. Every leading zero byte becomes one leading `1`, and every
-leading `1` becomes one zero byte. A run made only of zero bytes or `1`
-characters retains its full length; numeric value alone would not prove
+The mathematical kernel and alphabet composition establishes both roundtrip
+directions: bytes return after encoding and decoding, and valid alphabet
+strings return after decoding and encoding. The native `Uint8Array`, string
+iteration and output-mapping wrappers are reviewed and differentially
+checked; this is not a separately compiled whole-wrapper theorem. An empty
+input stays empty. Every leading zero byte becomes one leading `1`, and
+every leading `1` becomes one zero byte. A run made only of zero bytes or
+`1` characters retains its full length; numeric value alone would not prove
 this property.
 
 The proof uses the repository's JavaScript UTF-16 string model. Native
