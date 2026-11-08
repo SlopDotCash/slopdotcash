@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 675,
-    "functions": 9688,
-    "selectedContractTargets": 124,
-    "unprovedFunctions": 9564,
+    "files": 676,
+    "functions": 9694,
+    "selectedContractTargets": 128,
+    "unprovedFunctions": 9566,
     "nonTypeScriptFiles": 52
   },
   "limits": [
@@ -8817,12 +8817,14 @@
 {"name":"unchanged","kind":"ArrowFunction","line":338,"sha256":"6cabda599f87e891a468037ea84062c128c9b5d8b9ce2323b71b92a432bce786","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@342>","kind":"ArrowFunction","line":342,"sha256":"ed7bdd460e06bf7826ae4612555ce1e7227e08330ca2257f7b3e5bb328dcc0f7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/fee-converter/solana-route-receipt.ts","sha256":"34e798fdccf46793827312d44526bebe12d6d287bbb253639384bf6390640638","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"finalizedRouteCredit","kind":"FunctionDeclaration","line":43,"sha256":"e0b0e01696bbbb22b0cdc5651a9b3870595e250c017155f3efcb64adcdab6aaf","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"<ArrowFunction@63>","kind":"ArrowFunction","line":63,"sha256":"f64840f4b8a484e81a977b54fb27590e4a2b80df8e8568b7c7eff105d56ef217","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"balances","kind":"ArrowFunction","line":99,"sha256":"f5a850386ad81dd9dd1f75a5327cd0248d554b476ed674eb2465a8d97ee9248d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"change","kind":"ArrowFunction","line":124,"sha256":"856c1ec1f2b9d80d163bcd59b04b8c281bec94f7140dc385edde30ea6ba0e896","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"<ArrowFunction@175>","kind":"ArrowFunction","line":175,"sha256":"8b01dc55e39a83b04bad6c0d8beb50b92550dde52c106cb86eac35e543623be9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"workers/fee-converter/solana-route-receipt.ts","sha256":"5490550996082c00f11aa2b79687e89a0d0100d5b2a3c7ac472da88c22843ce2","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"finalizedRouteCredit","kind":"FunctionDeclaration","line":48,"sha256":"11f2ea2224443deced9ab73ca498ff75de856456287236311d08730af31c25de","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"<ArrowFunction@68>","kind":"ArrowFunction","line":68,"sha256":"f64840f4b8a484e81a977b54fb27590e4a2b80df8e8568b7c7eff105d56ef217","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"balances","kind":"ArrowFunction","line":104,"sha256":"f5a850386ad81dd9dd1f75a5327cd0248d554b476ed674eb2465a8d97ee9248d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"identity","kind":"ArrowFunction","line":133,"sha256":"4b89332876bcff72bbdf96fb6cefce57013cacb63372644cd9b3620ff37f13d1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"project","kind":"ArrowFunction","line":143,"sha256":"d5816f11bdb9fbda25a6bdd458db8e1674625832ee9c8e2c54ec939dacc10540","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@144>","kind":"ArrowFunction","line":144,"sha256":"3ffc8b69d04cc662b58d367c54cb3d08d2bac88a5d6809c739e003620adb014a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@188>","kind":"ArrowFunction","line":188,"sha256":"8b01dc55e39a83b04bad6c0d8beb50b92550dde52c106cb86eac35e543623be9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"workers/fee-converter/solana.ts","sha256":"84d1da5800c74c5727bef7b17ed78fd99c85b36fb7578715b89fec00b36ed696","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"solanaEscrowConfig","kind":"FunctionDeclaration","line":138,"sha256":"f3b969918fdd99a356656c4bdb24b81a065c5c16a0a5bc293ec5c38e48a340ad","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
@@ -8939,6 +8941,12 @@
 {"name":"nativeDailyLiability","kind":"FunctionDeclaration","line":18,"sha256":"065da195239fa77ff87c7e5b50ef63b922ff4d1189033c2c2bbf42f60bc2ff34","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"nativeFeeEarnings","kind":"FunctionDeclaration","line":88,"sha256":"c7bfffdad5d77df22e3c721e29ca55b9d10f71fc35c5cfb29be9c5f424dacf67","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"nativeFeeRemainder","kind":"FunctionDeclaration","line":120,"sha256":"4e68efac92ba5e0a4572e1c1ddccdb9440125b970aa043fb794e50c240a93e9d","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
+]},
+{"path":"workers/fee-converter/verified-route-credit.ts","sha256":"fab30cc11179d493a326bbbbfb64472d53d7ace7be0e7461b349702477118bf7","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"balancePosition","kind":"FunctionDeclaration","line":20,"sha256":"0122dc42e58296e5af58eeca6eb7e0419f8d02fde42c80cd7d05880a939553be","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"routeTokenChange","kind":"FunctionDeclaration","line":40,"sha256":"49bacc967f4dede06fe7a3827fe3608d8f75189650109fe398aa206d9e0dc67d","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"routeTokenCredit","kind":"FunctionDeclaration","line":76,"sha256":"e250a271f0241db41f9a75a52ea823bf005f2c146d8ae70ae5682bd41a26c6f7","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"firstDebitedHolding","kind":"FunctionDeclaration","line":124,"sha256":"bced623ddfa3af146837d0b2809387505c035f1d799f4b8b4c7e8ade21924f14","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
 {"path":"workers/fee-converter/verified-solana-wire.ts","sha256":"c10c0b94ba811918b81fa43a95846b9840aead9e38cfa5ff0452de44203821ea","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"readCompact","kind":"FunctionDeclaration","line":34,"sha256":"61b40d5b28800d38d57f9c2b55d7c28ecfea18863592232c36de913e9fe29df0","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},

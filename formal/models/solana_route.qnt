@@ -6,6 +6,7 @@
 // @source workers/fee-converter/solana-native-route.ts
 // @source workers/fee-converter/solana-route-accounts.ts
 // @source workers/fee-converter/solana-route-receipt.ts
+// @source workers/fee-converter/verified-route-credit.ts
 // @source contracts/solana/transactions.ts
 // Route account/read/lookup proofs precede signing; receipt independently proves output.
 module solana_route {

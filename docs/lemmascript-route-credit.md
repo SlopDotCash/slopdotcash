@@ -1,6 +1,6 @@
 # Solana finalized-route token reconciliation
 
-This cohort serves PRD section 11, including the required Solana received-fee
+This cohort serves PRD sections 6 and 11, including the required Solana received-fee
 conversion route and its settlement evidence. It completes the pure token
 balance reconciliation inside `finalizedRouteCredit`; it does not prove a
 provider response, transaction signature, or the whole converter state machine.

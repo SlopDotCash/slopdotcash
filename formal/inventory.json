@@ -5875,9 +5875,11 @@
     },
     {
       "path": "workers/fee-converter/solana-route-receipt.ts",
-      "sha256": "34e798fdccf46793827312d44526bebe12d6d287bbb253639384bf6390640638",
+      "sha256": "5490550996082c00f11aa2b79687e89a0d0100d5b2a3c7ac472da88c22843ce2",
       "models": ["formal/models/solana_route.qnt"],
-      "candidateLines": [59, 65, 78, 89, 97, 101, 111, 140, 144, 167, 181, 199],
+      "candidateLines": [
+        64, 70, 83, 94, 102, 106, 116, 174, 177, 180, 194, 206
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -5944,6 +5946,13 @@
         "formal/models/fee_nonce_reuse.qnt",
         "formal/models/native_budget.qnt"
       ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/fee-converter/verified-route-credit.ts",
+      "sha256": "fab30cc11179d493a326bbbbfb64472d53d7ace7be0e7461b349702477118bf7",
+      "models": ["formal/models/solana_route.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -10339,7 +10348,7 @@
     },
     {
       "path": "formal/models/solana_route.qnt",
-      "sha256": "d548323eba53036f6821598e2c3dbc81b95f2e76f66d1e0b2cf13707da2097db",
+      "sha256": "69f11626004fd261dfdf49593099574c6abb0c3d6f3998718f928627e05cbbd8",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/fee-converter/jupiter-route-schema.ts",
@@ -10349,7 +10358,8 @@
         "workers/fee-converter/solana-native-route.ts",
         "workers/fee-converter/solana-route-accounts.ts",
         "workers/fee-converter/solana-route-receipt.ts",
-        "workers/fee-converter/verified-jupiter-policy.ts"
+        "workers/fee-converter/verified-jupiter-policy.ts",
+        "workers/fee-converter/verified-route-credit.ts"
       ],
       "scenarios": [
         "checkedRouteTest",
