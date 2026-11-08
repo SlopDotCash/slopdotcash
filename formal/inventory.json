@@ -213,12 +213,12 @@
     },
     {
       "path": "backend/notifications/handler.ts",
-      "sha256": "f614dba6f183b3561cd30a6316766262136c8f4901b8dd2df9508efe64cfcc7c",
+      "sha256": "4c9b5e49551cc30eaa3ec1accc9cff7209181855ab34976af2ee892f23d45f2a",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt"
       ],
-      "candidateLines": [61, 68, 69, 135, 168, 202, 206, 267, 300, 319, 320],
+      "candidateLines": [61, 68, 69, 135, 168, 204, 208, 269, 302, 321, 322],
       "review": "mapped-abstraction"
     },
     {
