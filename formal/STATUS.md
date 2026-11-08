@@ -61,7 +61,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 337 finite models and 1,889 named scenarios, with zero
+839 production sources, 344 finite models and 1,969 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -94,6 +94,17 @@ definitions are unexecuted. See `project-publication-receipt-audit.md`,
 `project-publication-lifetime-audit.md`, and
 `project-authority-setup-audit.md`. The generated function census has 9,906
 bodies in 684 files, with the same 168 selected contracts.
+
+The resource/notification completion batch adds seven models and 80 scenarios
+across new and refined models. Resource deadlines settle once; private Admin
+retention requires a completed matching identity check. Notification metadata
+and backup escalation now use current attempt/acknowledgment predicates.
+The new models also make payment-page assembly, link callback and document-head
+transitions explicit. All added scenarios and browser/handler definitions are
+unexecuted. See `resource-deadline-admin-audit.md`,
+`notification-attempt-ownership-audit.md`, `payment-page-assembly-audit.md`,
+and `navigation-completion-audit.md`. The refreshed function census contains
+9,913 bodies in 684 files; the selected contract count remains 168.
 
 ## Integrated corrections
 

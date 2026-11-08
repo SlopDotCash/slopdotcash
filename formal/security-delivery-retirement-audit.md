@@ -15,8 +15,12 @@ limit. It separates provider acceptance from delivery; includes stale sending
 claims becoming ambiguous, definite non-send retry and backoff, and both
 accepted and ambiguous reconciliation. A held receipt read can interleave with
 another receipt or a later attempt. Commit requires the captured state,
-attempt, destination digest and a previously unused evidence ID. A late worker
-cannot overwrite a row that no longer belongs to its sending attempt.
+attempt, destination digest and a previously unused evidence ID. A late worker's
+state completion cannot overwrite a row that no longer belongs to its sending
+attempt. This claim did not cover its separate preparation metadata writes;
+the later source-only correction and full boundary are recorded in
+`notification-attempt-ownership-audit.md`. This historical validation does not
+cover that correction.
 
 The two destination and evidence identities are representatives. Time is an
 explicit due/not-due event, not a proof of elapsed seconds or provider timing.

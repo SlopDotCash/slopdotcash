@@ -148,7 +148,10 @@
     {
       "path": "backend/fee-conversions/handler.ts",
       "sha256": "c21119000c0bdc1e792b9d68fefe1cf83eeb92019d7ce41dd1ee75940b2ce404",
-      "models": ["formal/models/fee_conversion.qnt"],
+      "models": [
+        "formal/models/fee_conversion.qnt",
+        "formal/models/ui_admin_resource_identity.qnt"
+      ],
       "candidateLines": [46, 71, 116, 126, 148, 158, 164, 166, 169, 192],
       "review": "mapped-abstraction"
     },
@@ -165,6 +168,7 @@
       "sha256": "e651ccb0701b9d09071310442b0a37b34f0aff6740a7ce02c3e465c97b05b6c0",
       "models": [
         "formal/models/api_request_composition.qnt",
+        "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_earnings_actor_binding.qnt",
         "formal/models/ui_owner_private_requests.qnt",
         "formal/models/ui_project_authority.qnt",
@@ -514,6 +518,7 @@
         "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
@@ -748,6 +753,7 @@
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/direct_preparation_completion.qnt",
         "formal/models/direct_recovery_completion.qnt",
+        "formal/models/notification_escalation.qnt",
         "formal/models/security_payment_projection.qnt",
         "formal/models/ui_private_case_revisions.qnt"
       ],
@@ -4063,20 +4069,22 @@
     },
     {
       "path": "src/Admin.tsx",
-      "sha256": "426fe344e7e25ea28fa1226a056856fee14ad97d9682ed1565e393609c6541a5",
+      "sha256": "239062edb180add2e4674aca9ce1fe678c75c998b280ed943cfa98d45b90d1b4",
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
+        "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_admin_review.qnt",
         "formal/models/ui_focus_session.qnt"
       ],
       "candidateLines": [
-        3, 32, 35, 78, 99, 100, 103, 104, 107, 109, 116, 117, 118, 156, 171,
-        177, 184, 191, 192, 194, 201, 211, 214, 221, 222, 228, 235, 243, 244,
-        275, 280, 302, 411, 448, 454, 457, 459, 485, 625, 650, 742, 743, 744,
-        755, 820, 826, 827, 829, 831, 837, 852, 857, 864, 866, 868, 869, 902,
-        915, 919, 927, 942, 949, 950, 953, 954, 955, 956, 958, 963, 981, 982,
-        1085, 1102, 1103, 1120, 1172, 1175, 1185, 1186, 1190, 1191, 1199, 1216,
-        1230, 1231, 1251, 1253, 1257, 1260, 1263
+        3, 33, 36, 82, 103, 104, 107, 108, 111, 113, 120, 121, 122, 142, 170,
+        175, 177, 218, 233, 239, 246, 253, 254, 256, 263, 273, 276, 283, 284,
+        290, 297, 305, 306, 337, 342, 364, 473, 510, 516, 519, 521, 547, 687,
+        712, 804, 805, 806, 817, 882, 888, 889, 891, 893, 899, 916, 925, 932,
+        934, 936, 937, 970, 983, 987, 995, 1010, 1017, 1018, 1021, 1022, 1023,
+        1024, 1026, 1031, 1049, 1050, 1153, 1170, 1171, 1188, 1241, 1248, 1258,
+        1259, 1263, 1264, 1272, 1289, 1303, 1304, 1324, 1326, 1330, 1333, 1336,
+        1359, 1360, 1364, 1365
       ],
       "review": "mapped-abstraction"
     },
@@ -4107,6 +4115,7 @@
       "path": "src/App.tsx",
       "sha256": "69be46c6627af337ae67948b56195421b4049c4f96d56b22e35c0610788b70fc",
       "models": [
+        "formal/models/ui_document_head.qnt",
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
@@ -4313,6 +4322,7 @@
       "sha256": "e9deac09fa0a079b3b1b39b488b8407976252de2aeb09ca8c32b962cb573a835",
       "models": [
         "formal/models/ui_hash_navigation.qnt",
+        "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_points_disputes.qnt"
       ],
@@ -4466,6 +4476,7 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
@@ -4514,6 +4525,7 @@
       "path": "src/Presentation.tsx",
       "sha256": "2a963a06e809765b35e2e941a6207eb51c0283f1c6cffd9ce9a9a95f6ed086bd",
       "models": [
+        "formal/models/ui_document_head.qnt",
         "formal/models/ui_navigation.qnt",
         "formal/models/ui_project_authority.qnt",
         "formal/models/ui_record_deadlines.qnt"
@@ -4981,7 +4993,10 @@
     {
       "path": "src/lib/document-head.ts",
       "sha256": "098c82190bcbb5923ea64a53695e65e3e8129f4bfe381e19b3c035b1cb3cf500",
-      "models": ["formal/models/ui_navigation.qnt"],
+      "models": [
+        "formal/models/ui_document_head.qnt",
+        "formal/models/ui_navigation.qnt"
+      ],
       "candidateLines": [1, 8, 55],
       "review": "mapped-abstraction"
     },
@@ -5260,7 +5275,8 @@
       "sha256": "6448f7c3cdf4e031ab3a1a05e1924a2e9d889e18c3a4eb1b7272daa5f78d080f",
       "models": [
         "formal/models/escrow_balances.qnt",
-        "formal/models/ordinary_fee.qnt"
+        "formal/models/ordinary_fee.qnt",
+        "formal/models/ui_payment_page_assembly.qnt"
       ],
       "candidateLines": [33, 53, 54, 55, 77, 94, 129, 137, 226],
       "review": "mapped-abstraction"
@@ -5384,6 +5400,7 @@
       "sha256": "0f540723e540ac3f8cb0f4b8d1ae2d5e482eda671ce0f5ad3d67482f2b97e7ac",
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
+        "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
@@ -5766,7 +5783,10 @@
     {
       "path": "src/lib/use-direct-transfers.ts",
       "sha256": "0c27ab70453ce5d4129143ba6e410879a02454910dc2071099bed0e0c0f46c3c",
-      "models": ["formal/models/ui_resources.qnt"],
+      "models": [
+        "formal/models/ui_payment_page_assembly.qnt",
+        "formal/models/ui_resources.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5782,11 +5802,14 @@
     },
     {
       "path": "src/lib/use-public-resource.ts",
-      "sha256": "30ab089448034dec1fd2f1e608d00035387eeb1567c7d167f10044719a78bdb7",
-      "models": ["formal/models/ui_resources.qnt"],
+      "sha256": "61433ccb6ad5a5a790fc3415f34b84b8088a8178277d59d8ca0830a7b3901851",
+      "models": [
+        "formal/models/ui_admin_resource_identity.qnt",
+        "formal/models/ui_resource_deadline.qnt",
+        "formal/models/ui_resources.qnt"
+      ],
       "candidateLines": [
-        1, 7, 8, 9, 14, 16, 19, 24, 28, 36, 37, 38, 42, 52, 54, 62, 69, 75, 79,
-        90
+        1, 7, 8, 9, 14, 16, 19, 24, 28, 40, 41, 42, 47, 58, 71, 79, 83, 93, 104
       ],
       "review": "mapped-abstraction"
     },
@@ -5820,7 +5843,10 @@
     {
       "path": "src/lib/use-vault-payments.ts",
       "sha256": "b2b8de8c5fc18545f814951adedd277553b2d0f59b2f52113f076239dc26f3e8",
-      "models": ["formal/models/ui_resources.qnt"],
+      "models": [
+        "formal/models/ui_payment_page_assembly.qnt",
+        "formal/models/ui_resources.qnt"
+      ],
       "candidateLines": [115, 122, 123, 124, 125],
       "review": "mapped-abstraction"
     },
@@ -6353,12 +6379,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "ed1541e320ec29e99486b0250a31f106f850428fa2c84350357b1ac164e0648c",
+      "sha256": "286913cf1bdbb64b4b48c751e6af96eaf7a4a998d3ce6d8eb4927111e56e18cd",
       "models": [
         "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_attempt_ownership.qnt",
         "formal/models/notification_delivery.qnt"
       ],
-      "candidateLines": [301, 303, 314, 319, 325, 336],
+      "candidateLines": [303, 305, 324, 330, 344],
       "review": "mapped-abstraction"
     },
     {
@@ -6381,30 +6408,37 @@
     {
       "path": "workers/notify/handler.ts",
       "sha256": "8b149fa3d63ed951fed934755c0d3b93839bdcc1174e3e18ba9662b746043836",
-      "models": ["formal/models/api_mail_delivery.qnt"],
+      "models": [
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_admin_fanout.qnt"
+      ],
       "candidateLines": [66, 71, 189, 191, 192, 193, 194, 196, 199, 263, 405],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/notify/index.ts",
       "sha256": "2e1872d85db095a2115095295848c307e37d98114326c437682a2497ebae456f",
-      "models": ["formal/models/api_mail_delivery.qnt"],
+      "models": [
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_admin_fanout.qnt"
+      ],
       "candidateLines": [139, 180, 182, 215, 217],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/notify/security.ts",
-      "sha256": "108cebb38a1e07b69e1f9a343420e6029c4594eb39f76904b31485c920dc631b",
+      "sha256": "89c93cf387aab32c58bd058c40e33e160ad7f349696d9a694c11786e36b37524",
       "models": [
         "formal/models/api_mail_delivery.qnt",
+        "formal/models/notification_attempt_ownership.qnt",
         "formal/models/notification_delivery.qnt",
         "formal/models/notification_escalation.qnt"
       ],
       "candidateLines": [
-        51, 146, 147, 150, 152, 156, 160, 161, 204, 212, 214, 217, 219, 224,
-        235, 238, 247, 248, 312, 324, 399, 400, 406, 413, 423, 424, 425, 429,
-        431, 432, 446, 447, 458, 459, 473, 474, 475, 482, 509, 552, 566, 567,
-        575, 581, 583
+        51, 146, 147, 150, 152, 156, 160, 161, 204, 213, 215, 218, 220, 234,
+        250, 258, 269, 273, 274, 339, 356, 431, 432, 438, 454, 455, 456, 460,
+        462, 463, 480, 481, 492, 493, 507, 508, 509, 516, 543, 586, 600, 601,
+        609, 615, 617
       ],
       "review": "mapped-abstraction"
     },
@@ -6834,7 +6868,10 @@
     {
       "path": "workers/slopbot/failure-alerts.ts",
       "sha256": "283d8eb97585ccfbd44c602114b72a4ad7f7c9dd6f3537205d8841dd5fb1133d",
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": [
+        "formal/models/bot_notice_delivery.qnt",
+        "formal/models/notification_admin_fanout.qnt"
+      ],
       "candidateLines": [31, 43, 70],
       "review": "mapped-abstraction"
     },
@@ -6998,7 +7035,10 @@
     {
       "path": "workers/slopbot/spend-alerts.ts",
       "sha256": "2d778ce10576864ef3e937a2e5c9ff90cbf0a9ae288cb961fec8906add2405d4",
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": [
+        "formal/models/bot_notice_delivery.qnt",
+        "formal/models/notification_admin_fanout.qnt"
+      ],
       "candidateLines": [11, 27, 31, 45, 65],
       "review": "mapped-abstraction"
     },
@@ -7854,7 +7894,7 @@
     },
     {
       "path": "formal/models/api_email_consent.qnt",
-      "sha256": "4674ca54882adb3bfb04539c775538b6d9372dd9c209371300a43e52464e4bb2",
+      "sha256": "1f642880d8247703ae921542bc8ee42df3d66c83437ebf20dcc62b3b108a3742",
       "sources": [
         "backend/notifications/email-destinations.ts",
         "backend/notifications/email.ts",
@@ -7863,7 +7903,15 @@
         "migrations/0116_email_preference_revision.sql",
         "workers/notify/enrollment.ts"
       ],
-      "scenarios": ["expiredTokenTest", "optOutWinsTest", "verificationTest"]
+      "scenarios": [
+        "admittedBeforeExpiryCanFinishTest",
+        "anotherActorCannotVerifyTest",
+        "consumedTokenCannotVerifyAgainTest",
+        "expiredTokenTest",
+        "freshVerificationAfterOptOutTest",
+        "optOutWinsTest",
+        "verificationTest"
+      ]
     },
     {
       "path": "formal/models/api_identity.qnt",
@@ -8626,7 +8674,7 @@
     },
     {
       "path": "formal/models/bot_notice_delivery.qnt",
-      "sha256": "d2f6b79ae130f4f3d8d4d4bb293a768611a9e0bbc5bc1f5a8cfe6f59c2e2d408",
+      "sha256": "1f1cab8a40084b58353472dee6c0241fcb5c40df1654d0406973f8e193c9b04d",
       "sources": [
         "migrations/0049_slopbot_spend_alerts.sql",
         "migrations/0085_slopbot_provider_failure_notices.sql",
@@ -10219,8 +10267,41 @@
       "scenarios": ["claimRequiresAccrualTest", "claimsFeesNotPrincipalTest"]
     },
     {
+      "path": "formal/models/notification_admin_fanout.qnt",
+      "sha256": "ba093b348705d3c9b6f3acc73e389ba99fdce33044ed1db6a9b5a3265388cd4f",
+      "sources": [
+        "workers/notify/handler.ts",
+        "workers/notify/index.ts",
+        "workers/slopbot/failure-alerts.ts",
+        "workers/slopbot/spend-alerts.ts"
+      ],
+      "scenarios": [
+        "allRecipientsAcceptedTest",
+        "crashAfterFirstRecipientRetainsUncertaintyTest",
+        "firstFailureStillAttemptsSecondTest",
+        "invalidConfigurationDoesNotSendTest",
+        "invalidRequestDoesNotSendTest",
+        "lostReplyDoesNotEraseAcceptanceTest",
+        "secondFailureRetainsKnownAcceptanceTest"
+      ]
+    },
+    {
+      "path": "formal/models/notification_attempt_ownership.qnt",
+      "sha256": "513cdfe000374b752a0fc035ae1c0e67c636b8340509c8cac6cb0d286a999c67",
+      "sources": ["workers/notify/activity.ts", "workers/notify/security.ts"],
+      "scenarios": [
+        "currentAttemptCanSendTest",
+        "currentPreparationFailureKeepsRetryTest",
+        "lostFinalCheckStopsNewSendTest",
+        "oldProviderCompletionCannotSettleSuccessorTest",
+        "retirementAfterLastCheckCannotRecallCallTest",
+        "staleDestinationCannotReplaceSuccessorTest",
+        "staleRetryCannotChangeSuccessorTimeTest"
+      ]
+    },
+    {
       "path": "formal/models/notification_delivery.qnt",
-      "sha256": "65046bd13db93d49b040792a121dd4461a487d4af53b42923879bce4d5d06d19",
+      "sha256": "35cfbe2daf3165d0ae01f185d1e441d270e4f5daa62faa16f03da13be210a439",
       "sources": [
         "migrations/0030_security_notification_outbox.sql",
         "migrations/0033_optional_notification_email.sql",
@@ -10238,14 +10319,18 @@
     },
     {
       "path": "formal/models/notification_escalation.qnt",
-      "sha256": "5879a2bdd5808f3030024813527c77323a21417c67463cf3fb0110c12d0e91b0",
+      "sha256": "fd7ffe3446136256bb0e084ee94d6f2b2046359c20ffb68659e128e8e456016b",
       "sources": [
+        "backend/security/handler.ts",
         "migrations/0030_security_notification_outbox.sql",
         "migrations/0063_account_closure_notification_events.sql",
         "workers/notify/security.ts"
       ],
       "scenarios": [
+        "acknowledgmentAfterImmediateReadRefusesTest",
+        "acknowledgmentAfterScheduledReadRefusesTest",
         "failedReceiptEscalatesTest",
+        "laterAccessChangeDoesNotEraseObservedGrantTest",
         "oneBackupOnlyTest",
         "readIsNotAcknowledgeTest",
         "receiptDoesNotEscalateForTimeTest",
@@ -11382,6 +11467,31 @@
       ]
     },
     {
+      "path": "formal/models/ui_admin_resource_identity.qnt",
+      "sha256": "9d6b08e622a1898547c54d2e68f25d69ceb54961680063b2853c2f18555b89c6",
+      "sources": [
+        "backend/fee-conversions/handler.ts",
+        "backend/http.ts",
+        "backend/projects/handler.ts",
+        "src/Admin.tsx",
+        "src/lib/project-api.ts",
+        "src/lib/use-public-resource.ts"
+      ],
+      "scenarios": [
+        "accessRefusalDropsRecordImmediatelyTest",
+        "capturedRequestSurvivesCookieChangeButCannotPublishTest",
+        "changedBeforeDispatchFailsAdmissionTest",
+        "detachedReplyCannotFillNewActorViewTest",
+        "failedIdentityReadCannotRetainRecordTest",
+        "feeRefreshDoesNotRetainPriorResultTest",
+        "matchingAdminLoadsPrivateDataTest",
+        "nonTransientErrorIsNotRetainedTest",
+        "preflightChangeStartsNoPrivateGetTest",
+        "recheckedTransientErrorKeepsOwnRecordTest",
+        "timeoutDuringIdentityReadDropsRecordTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_admin_review.qnt",
       "sha256": "3f31c614b7ba17b796c8244e83e55ec71b77c70e58e5be5ce2fb23bc46c886e0",
       "sources": [
@@ -11483,6 +11593,24 @@
       "sha256": "5f58223fb1a66e6c7d6dcce0b4eb299e0f367524a4debbd5f5394a31975b10b8",
       "sources": ["src/CyclePages.tsx", "src/lib/cycle-index.ts"],
       "scenarios": ["contradictoryPayloadTest", "paidTest", "pendingTest"]
+    },
+    {
+      "path": "formal/models/ui_document_head.qnt",
+      "sha256": "1676cea42a6d661196f10af90ca394329fe9eed9e452f5e70cfb7e38bdc57902",
+      "sources": [
+        "src/App.tsx",
+        "src/Presentation.tsx",
+        "src/lib/document-head.ts"
+      ],
+      "scenarios": [
+        "lastMissingCleanupRestoresCurrentRouteTest",
+        "missingAfterRouteRemovesCanonicalTest",
+        "missingOpenGraphElementIsNotCreatedTest",
+        "nullRouteAfterCleanupStaysNoindexTest",
+        "routeAfterMissingStaysNoindexTest",
+        "unrelatedRobotsValueIsPreservedTest",
+        "validRouteGetsCanonicalTest"
+      ]
     },
     {
       "path": "formal/models/ui_draft_save_progress.qnt",
@@ -11739,6 +11867,20 @@
       ]
     },
     {
+      "path": "formal/models/ui_link_dispatch.qnt",
+      "sha256": "19fb7c991dac45c2248c64b0b19ff02326f07c9e45aad7b521260e6f5e3b6b5b",
+      "sources": ["src/Link.tsx", "src/Points.tsx"],
+      "scenarios": [
+        "arrivingTargetIsUsedByTimerTest",
+        "bothTimersMayAlignCurrentTargetTest",
+        "missingTargetScrollsTopTest",
+        "modifiedClickKeepsCurrentDocumentTest",
+        "oldTimerUsesCurrentDestinationTest",
+        "primaryClickPushesBeforeScrollTest",
+        "queuedClickScrollIsNotObserverTakeoverTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_model_outcomes.qnt",
       "sha256": "eb668376fe406c2c2668fb6a58fb2149f294d9bfa191df30911fe5dba4a4fa72",
       "sources": ["src/lib/model-outcomes.ts"],
@@ -11926,6 +12068,41 @@
         "storageFailureDoesNotPromptTest",
         "supersededRegistrationCannotClearChangedHashTest",
         "supersededReviewCannotReplaceCurrentReviewTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_payment_page_assembly.qnt",
+      "sha256": "dfc67a556ff59467f0dd2832ed8f2556d731c89fe4723396c5017f16798e668f",
+      "sources": [
+        "src/lib/payments/contracts.ts",
+        "src/lib/use-direct-transfers.ts",
+        "src/lib/use-vault-payments.ts"
+      ],
+      "scenarios": [
+        "blockedOriginStartsNoRequestTest",
+        "cancelledReplyCannotPublishTest",
+        "changedBoundaryIsAnErrorTest",
+        "changedTotalIsAnErrorTest",
+        "continuationAfterTotalIsAnErrorTest",
+        "countOverflowIsAnErrorTest",
+        "crossPageDuplicateIsAnErrorTest",
+        "cursorBeyondBoundaryIsAnErrorTest",
+        "directCompletePagesTest",
+        "directPageAmountMismatchIsAnErrorTest",
+        "directPagesPublishOnlyAtTheEndTest",
+        "emptyContinuationIsAnErrorTest",
+        "emptyFinalPageIsAnEmptySuccessTest",
+        "failedSecondPageNeverPublishesPrefixTest",
+        "legacyInvalidMoneyShapeIsAnErrorTest",
+        "legacyPreservesItsWeakerContractTest",
+        "malformedPaginationIsNotLegacyTest",
+        "noLegacyFallbackAfterFirstPagedReplyTest",
+        "nonAdvancingCursorIsAnErrorTest",
+        "retryStartsWithFreshAssemblyTest",
+        "shortFinalPageIsAnErrorTest",
+        "vaultDoesNotInventDirectAmountCheckTest",
+        "vaultThreePagesTest",
+        "withinPageDuplicateKeepsOnlyPrivatePrefixTest"
       ]
     },
     {
@@ -12324,6 +12501,23 @@
         "invalidInputCancelsTest",
         "obsoleteFactsTest",
         "typedDescriptionSurvivesTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_resource_deadline.qnt",
+      "sha256": "65afad73ad36b4beab78b1a3032173d946079056f876f007615aae0792fbb681",
+      "sources": ["src/lib/use-public-resource.ts"],
+      "scenarios": [
+        "adminTimeoutCannotRetainUnverifiedRecordTest",
+        "authoritativeFailureDropsRecordTest",
+        "changedLoaderDoesNotReuseCacheTest",
+        "checkedTransientFailureRetainsRecordTest",
+        "departedResponseIsIgnoredTest",
+        "publicTimeoutCanRetainOldRecordTest",
+        "retryAfterTimeoutCanSucceedTest",
+        "successBeatsLaterOutcomeTest",
+        "timeoutBeatsLateSuccessTest",
+        "uncheckedTransientFailureDropsRecordTest"
       ]
     },
     {

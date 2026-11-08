@@ -244,3 +244,24 @@ Late results preserve accepted backend writes and local draft ownership.
 Five new models and refined registry models add 52 unexecuted scenarios.
 New browser/handler definitions and fixture corrections are also unexecuted;
 see the three project-publication/authority audits for exact boundaries.
+
+## Notification ownership and resource deadlines
+
+Notification completion already guarded its state transition, but retry timing
+and destination writes used only the delivery ID. An old worker could therefore
+alter successor metadata. Those writes now share the current-attempt predicate;
+a lost attempt stops before a new provider call. The final local check remains
+separate from the external send and cannot recall one already started.
+
+Backup escalation checked an old acknowledgment snapshot before awaiting access.
+Its insertion now requires the primary to remain unacknowledged and without an
+existing backup. The consent model also now captures its revision when Verify
+starts, matching the actual handler, and the fan-out model distinguishes a
+notify-service request from individual provider acceptances.
+
+A resource deadline previously only aborted a signal; loaders that ignored it
+could publish later. Deadline, success and failure now share terminal settlement.
+Admin list/fee reads bind their actor and recheck identity. Retaining a private
+list after a transport failure requires a completed matching admin check;
+timeout during that check clears the old data. New models and regression
+definitions are unexecuted. The related audits state each external boundary.

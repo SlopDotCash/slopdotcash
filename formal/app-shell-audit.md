@@ -1,5 +1,9 @@
 # App view state follow-up
 
+The later source-only [navigation completion](navigation-completion-audit.md)
+adds explicit link-dispatch and document-head models. Its new scenarios have
+not been executed; the historical receipts below do not validate those bytes.
+
 The source inventory originally mapped `src/App.tsx` to navigation models.
 That file also owns independent presentation and discovery state. This review
 adds those models without changing application behavior. A file-level mapping

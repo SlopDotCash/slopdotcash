@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "6a50c08e54f42b9e9001d78314604f7ce59d30a65db9da0666790a7897ce63f8",
+  "inventorySha256": "69435a314fc3cdfcaf2856c179f7189d6882274fb51ca3e55a493501fa488b20",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -9,7 +9,10 @@
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
-      "models": ["formal/models/fee_conversion.qnt"],
+      "models": [
+        "formal/models/fee_conversion.qnt",
+        "formal/models/ui_admin_resource_identity.qnt"
+      ],
       "lexicallyUnmentionedValues": ["not_converted", "usdc"],
       "review": "candidate-only"
     },
@@ -109,6 +112,7 @@
         "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
@@ -130,6 +134,7 @@
         "formal/models/api_project_revision_receipt.qnt",
         "formal/models/api_registry_alias_transaction.qnt",
         "formal/models/referrer_attribution.qnt",
+        "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
@@ -292,6 +297,7 @@
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/direct_preparation_completion.qnt",
         "formal/models/direct_recovery_completion.qnt",
+        "formal/models/notification_escalation.qnt",
         "formal/models/security_payment_projection.qnt",
         "formal/models/ui_private_case_revisions.qnt"
       ],
@@ -311,6 +317,7 @@
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/direct_preparation_completion.qnt",
         "formal/models/direct_recovery_completion.qnt",
+        "formal/models/notification_escalation.qnt",
         "formal/models/security_payment_projection.qnt",
         "formal/models/ui_private_case_revisions.qnt"
       ],
@@ -1974,12 +1981,13 @@
     },
     {
       "path": "src/Admin.tsx",
-      "line": 1120,
+      "line": 1188,
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
+        "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_admin_review.qnt",
         "formal/models/ui_focus_session.qnt"
       ],
@@ -2013,6 +2021,7 @@
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
       "models": [
+        "formal/models/ui_document_head.qnt",
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
@@ -2034,6 +2043,7 @@
       "kind": "string-union",
       "values": ["copied", "error", "idle"],
       "models": [
+        "formal/models/ui_document_head.qnt",
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
@@ -2055,6 +2065,7 @@
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
       "models": [
+        "formal/models/ui_document_head.qnt",
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
         "formal/models/ui_navigation.qnt",
@@ -2150,6 +2161,7 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
@@ -2165,6 +2177,7 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
@@ -2180,6 +2193,7 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
@@ -2738,7 +2752,8 @@
       "values": ["paid", "reserved"],
       "models": [
         "formal/models/escrow_balances.qnt",
-        "formal/models/ordinary_fee.qnt"
+        "formal/models/ordinary_fee.qnt",
+        "formal/models/ui_payment_page_assembly.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2758,7 +2773,8 @@
       ],
       "models": [
         "formal/models/escrow_balances.qnt",
-        "formal/models/ordinary_fee.qnt"
+        "formal/models/ordinary_fee.qnt",
+        "formal/models/ui_payment_page_assembly.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "awaiting-reservation",
@@ -3364,7 +3380,10 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": [
+        "formal/models/bot_notice_delivery.qnt",
+        "formal/models/notification_admin_fanout.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -3374,7 +3393,10 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": [
+        "formal/models/bot_notice_delivery.qnt",
+        "formal/models/notification_admin_fanout.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },

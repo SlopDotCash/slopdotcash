@@ -29,6 +29,7 @@ import {
 import {
   type FormEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -45,6 +46,8 @@ import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
+  currentProjectSession,
+  ProjectApiError,
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
@@ -60,6 +63,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
+import { transientHttpStatus } from "./lib/verified-frontend";
 import { ChangeReview } from "./OwnerPresentation";
 import {
   formatDateTime,
@@ -121,12 +125,70 @@ function LoadNotice({
   );
 }
 
+class AdminReadIdentityError extends Error {}
+class RecheckedAdminReadFailure extends ProjectApiError {}
+
+const retainAdminRead = (error: unknown) =>
+  error instanceof RecheckedAdminReadFailure;
+
+async function requireAdminReadActor(actorId: string, signal: AbortSignal) {
+  signal.throwIfAborted();
+  let session;
+  try {
+    session = await currentProjectSession();
+  } catch {
+    signal.throwIfAborted();
+    throw new AdminReadIdentityError(
+      "Your admin session could not be checked. Retry.",
+    );
+  }
+  signal.throwIfAborted();
+  if (session?.githubId !== actorId || !session.admin)
+    throw new AdminReadIdentityError(
+      "Your admin account or access changed. Reload this page.",
+    );
+}
+
+async function readAdminResource<T>(
+  path: string,
+  actorId: string,
+  signal: AbortSignal,
+): Promise<T> {
+  await requireAdminReadActor(actorId, signal);
+  try {
+    const value = await projectApiRequest<T>("GET", path, undefined, {
+      expectedActorGithubId: actorId,
+    });
+    signal.throwIfAborted();
+    await requireAdminReadActor(actorId, signal);
+    return value;
+  } catch (error) {
+    signal.throwIfAborted();
+    if (
+      error instanceof AdminReadIdentityError ||
+      (error instanceof ProjectApiError &&
+        ([401, 403, 404, 410].includes(error.status) ||
+          error.code === "actor_changed"))
+    )
+      throw error;
+    await requireAdminReadActor(actorId, signal);
+    if (error instanceof ProjectApiError && transientHttpStatus(error.status))
+      throw new RecheckedAdminReadFailure(
+        error.status,
+        error.code,
+        error.message,
+      );
+    throw error;
+  }
+}
+
 /** The admin project list; the API checks admin authority on every read. */
-const loadAdminProjects = async () => ({
+const loadAdminProjects = async (actorId: string, signal: AbortSignal) => ({
   projects: (
-    await projectApiRequest<{ projects: AdminProject[] }>(
-      "GET",
+    await readAdminResource<{ projects: AdminProject[] }>(
       "admin/projects",
+      actorId,
+      signal,
     )
   ).projects,
 });
@@ -843,23 +905,29 @@ function projectState(project: AdminProject) {
 }
 
 function ProjectsSection({
+  actorId,
   selectedProject,
   section,
 }: {
+  actorId: string;
   selectedProject: string | null;
   section: ProjectSection;
 }) {
   const [query, setQuery] = useState("");
+  const load = useCallback(
+    (signal: AbortSignal) => loadAdminProjects(actorId, signal),
+    [actorId],
+  );
   // A save reloads this list while it is on screen; a transient failure
   // keeps the loaded projects visible, but an authorization failure
   // (401/403) still replaces them with the full error, so private data
   // and the admin controls leave the screen together.
   const [state, reload] = usePublicResource(
     true,
-    loadAdminProjects,
+    load,
     "Projects could not load.",
     undefined,
-    { retainOnTransientFailure: true },
+    { retainOnTransientFailure: true, retainFailure: retainAdminRead },
   );
   const [note, setNote] = useState<string | null>(null);
   const refreshError =
@@ -1129,10 +1197,11 @@ type FeeConversionReport = {
   }[];
 };
 
-const loadFeeConversions = async () => {
-  const { routes, totals } = await projectApiRequest<FeeConversionReport>(
-    "GET",
+const loadFeeConversions = async (actorId: string, signal: AbortSignal) => {
+  const { routes, totals } = await readAdminResource<FeeConversionReport>(
     "admin/fee-conversions",
+    actorId,
+    signal,
   );
   return { routes, totals };
 };
@@ -1171,10 +1240,14 @@ function convertedAmount(
  * Robinhood Chain keeps each received asset and shows it as "not converted",
  * not pending. Totals count finalized live conversions only.
  */
-function FeeConversionsSection() {
+function FeeConversionsSection({ actorId }: { actorId: string }) {
+  const load = useCallback(
+    (signal: AbortSignal) => loadFeeConversions(actorId, signal),
+    [actorId],
+  );
   const [state, reload] = usePublicResource(
     true,
-    loadFeeConversions,
+    load,
     "Fee conversions could not load.",
   );
   return (
@@ -1282,9 +1355,14 @@ export default function AdminPage() {
           </Link>
         </nav>
         {fees ? (
-          <FeeConversionsSection />
+          <FeeConversionsSection
+            key={state.session.githubId}
+            actorId={state.session.githubId}
+          />
         ) : (
           <ProjectsSection
+            key={state.session.githubId}
+            actorId={state.session.githubId}
             selectedProject={selectedProject}
             section={section}
           />
