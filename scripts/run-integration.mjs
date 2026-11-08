@@ -9,6 +9,21 @@ import { childEnvironment } from "./child-environment.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const cancellation = new AbortController();
+let interruptedExitCode = 0;
+const signalHandlers = new Map();
+for (const [signal, code] of [
+  ["SIGINT", 130],
+  ["SIGTERM", 143],
+  ["SIGHUP", 129],
+]) {
+  const handle = () => {
+    interruptedExitCode ||= code;
+    cancellation.abort();
+  };
+  signalHandlers.set(signal, handle);
+  process.on(signal, handle);
+}
 const drivers = [
   [
     "dev-private-flow",
@@ -82,9 +97,18 @@ const runDriver = ([label, command, args, env = process.env]) =>
     cwd: root,
     env,
     timeoutMs: 10 * 60_000,
+    signal: cancellation.signal,
   });
 const statuses = [];
-for (const driver of drivers) statuses.push(await runDriver(driver));
+try {
+  for (const driver of drivers) {
+    if (cancellation.signal.aborted) break;
+    statuses.push(await runDriver(driver));
+  }
+} finally {
+  for (const [signal, handle] of signalHandlers) process.off(signal, handle);
+}
+if (cancellation.signal.aborted) process.exit(interruptedExitCode || 1);
 const failed = drivers.filter((_, index) => statuses[index] !== 0);
 if (failed.length > 0) {
   process.stderr.write(
