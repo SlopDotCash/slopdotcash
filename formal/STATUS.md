@@ -39,7 +39,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 319 finite models and 1,601 named scenarios, with zero
+839 production sources, 322 finite models and 1,645 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -376,3 +376,21 @@ failure receipts. The missing parent-signal path predates corrective22b and
 has not been runtime-reproduced here. Model scenarios and subprocess tests
 are authored but unexecuted; see `lemmascript-cancellation-audit.md`. This
 source is not part of the active corrective PR.
+
+## Separate Points dispute lease model
+
+This branch follows frozen `a8b0f8226`. `points_dispute_lease` adds sixteen
+unexecuted scenarios for two worker claims, expiry and takeover, returned
+provider costs, immutable drafts, independent resolution and token-matched
+cleanup. The original intake model remains. No application code changed;
+`points-dispute-lease-audit.md` records the source mapping, existing runtime
+references and outstanding conformance. This model is outside the active
+corrective PR.
+
+`points_dispute_intake` separately models two competing creation requests, a
+newer Points revision, statement immutability and atomic opened notification.
+Its twelve named scenarios are also unexecuted. The two new models complement
+the existing API model. `points_dispute_decision` adds sixteen unexecuted
+scenarios for private detail reads, independent first-writer decisions, exact
+and conflicting retries, and an admitted retry returning after resolution.
+Pagination and full runtime conformance remain open.
