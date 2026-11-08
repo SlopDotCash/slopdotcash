@@ -2,6 +2,7 @@
  * Transaction identities are local journal fixtures, not chain receipts or payouts. */
 import { Database } from "bun:sqlite";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,6 +91,33 @@ function deferred<T = void>() {
     reject = fail;
   });
   return { promise, resolve, reject };
+}
+function retirementModelOutboxes() {
+  const traces = mkdtempSync(join(directory, "retirement-traces-"));
+  execFileSync(
+    "node",
+    [
+      join(root, "node_modules/@informalsystems/quint/dist/src/cli.js"),
+      "test",
+      join(root, "formal/models/payment_unsigned_retirement.qnt"),
+      "--backend=typescript",
+      "--seed=20261108",
+      "--match=^staleRetirementKeeps(Submitted|Held)Test$",
+      `--out-itf=${join(traces, "trace-{test}-{seq}.json")}`,
+    ],
+    { stdio: "pipe" },
+  );
+  return Object.fromEntries(
+    readdirSync(traces).map((file) => {
+      const name = /^trace-(.*)-\d+\.json$/u.exec(file)?.[1];
+      const trace = JSON.parse(readFileSync(join(traces, file), "utf8")) as {
+        states: { s: { outbox: string } }[];
+      };
+      const outbox = trace.states.at(-1)?.s.outbox;
+      if (!name || !outbox) throw new Error("Missing retirement model trace");
+      return [name, outbox];
+    }),
+  );
 }
 /** Park the dispatcher on one query so recovery can run inside its window. */
 function gatedFirst(
@@ -709,6 +737,146 @@ try {
     2,
     "The successor claim must dispatch once, without repeating the retired attempt",
   );
+  // Two recovery runs can receive the same idempotent unsigned-retirement
+  // response. Once one run dispatches the successor, the other response is
+  // about history and must not reopen that successor's outbox.
+  const modeledOutboxes = retirementModelOutboxes();
+  for (const successorState of ["submitted", "held"] as const) {
+    const expectedOutbox =
+      modeledOutboxes[
+        successorState === "submitted"
+          ? "staleRetirementKeepsSubmittedTest"
+          : "staleRetirementKeepsHeldTest"
+      ];
+    assert.equal(expectedOutbox, successorState);
+    const duplicate = leasedAttempt(
+      `duplicate-${successorState}`,
+      successorState === "submitted" ? "707" : "708",
+      "0x0000000000000000000000000000000000000008",
+    );
+    const cancelled = deferred();
+    const releaseCancellation = deferred();
+    let delayed = false;
+    const originalService = env.EVM_PAYMENT_EXECUTOR;
+    const delayedEnv = {
+      ...env,
+      EVM_PAYMENT_EXECUTOR: {
+        async fetch(request: Request) {
+          const body = (await request.clone().json()) as {
+            idempotencyKey: string;
+          };
+          const response = await originalService.fetch(request);
+          if (
+            !delayed &&
+            body.idempotencyKey === duplicate.attempt &&
+            new URL(request.url).pathname === "/v1/cancel-unsubmitted"
+          ) {
+            delayed = true;
+            cancelled.resolve();
+            await releaseCancellation.promise;
+          }
+          return response;
+        },
+      },
+    };
+    const oldRecovery = recoverUncertainAttempts(delayedEnv);
+    await cancelled.promise;
+    try {
+      await recoverUncertainAttempts(env);
+      const submitted = dispatchPayment(
+        db,
+        {
+          async submit() {
+            if (successorState === "held")
+              throw new Error("Fixture successor response unavailable");
+            return { transactionId: `successor-${successorState}` };
+          },
+        },
+        duplicate.obligation,
+        new Date(),
+      );
+      if (successorState === "submitted")
+        assert.equal(await submitted, "submitted");
+      else
+        await assert.rejects(
+          submitted,
+          /Fixture successor response unavailable/,
+        );
+      if (successorState === "held") {
+        duplicate.rotate();
+        assert.equal(
+          await dispatchPayment(
+            db,
+            {
+              async submit() {
+                throw new Error("Uncertain successor must remain held");
+              },
+            },
+            duplicate.obligation,
+            new Date(),
+          ),
+          "unavailable",
+        );
+      }
+      const attemptRows = sql
+        .query(
+          "SELECT id,state,transaction_id FROM payment_attempts WHERE obligation_id=? ORDER BY rowid",
+        )
+        .all(duplicate.obligation);
+      assert.equal(
+        sql
+          .query<{ state: string }, [string]>(
+            "SELECT state FROM payment_outbox WHERE obligation_id=?",
+          )
+          .get(duplicate.obligation)?.state,
+        successorState,
+      );
+      releaseCancellation.resolve();
+      await oldRecovery;
+      assert.deepEqual(
+        sql
+          .query(
+            "SELECT id,state,transaction_id FROM payment_attempts WHERE obligation_id=? ORDER BY rowid",
+          )
+          .all(duplicate.obligation),
+        attemptRows,
+        "A repeated retirement preserves both immutable attempt records",
+      );
+      assert.equal(
+        sql
+          .query<{ state: string }, [string]>(
+            "SELECT state FROM payment_outbox WHERE obligation_id=?",
+          )
+          .get(duplicate.obligation)?.state,
+        expectedOutbox,
+        "A delayed retirement must not reopen the successor outbox",
+      );
+      if (successorState === "held") {
+        // The next authorized wallet may retire the unsigned successor too,
+        // but only its own recovery may make the held row dispatchable.
+        const pending = sql
+          .query<{ id: string }, [string]>(
+            "SELECT id FROM payment_attempts WHERE obligation_id=? AND state='unknown'",
+          )
+          .get(duplicate.obligation);
+        assert(pending);
+        retirements.set(pending.id, duplicate.obligation);
+        await recoverUncertainAttempts(env);
+        assert.equal(
+          sql
+            .query<{ state: string }, [string]>(
+              "SELECT state FROM payment_outbox WHERE obligation_id=?",
+            )
+            .get(duplicate.obligation)?.state,
+          "ready",
+          "Retiring the actual unsigned successor may reopen the outbox",
+        );
+      }
+    } finally {
+      releaseCancellation.resolve();
+      await oldRecovery.catch(() => undefined);
+    }
+  }
   // A submit that returns after retirement keeps its receipt on the same row.
   const late = leasedAttempt(
     "late",

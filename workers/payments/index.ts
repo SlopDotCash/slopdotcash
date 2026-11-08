@@ -180,8 +180,11 @@ export async function recoverUncertainAttempts(
             ).bind(attempt.idempotencyKey),
             // A dispatcher may be mid-submit under a live lease: keep it, so
             // its own completion batch still matches the token.
+            // Only the batch that actually retired this attempt may reopen
+            // the outbox. A delayed duplicate response can follow a newer
+            // submitted or held successor and must leave that state intact.
             env.PAYMENTS_DB.prepare(
-              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid' AND NOT (state='processing' AND lease_until IS NOT NULL AND lease_until > ?)",
+              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND changes()=1 AND state!='paid' AND NOT (state='processing' AND lease_until IS NOT NULL AND lease_until > ?)",
             ).bind(
               new Date().toISOString(),
               attempt.obligationId,

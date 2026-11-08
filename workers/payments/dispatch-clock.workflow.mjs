@@ -14,18 +14,47 @@ import { applicationManifest } from "../../tests/project-application-manifest.ts
 const folder = await mkdtemp(join(tmpdir(), "slop-dispatch-clock-"));
 const stamp = "2026-10-29T00:00:02.000Z";
 const ids = [`0x${"a".repeat(64)}`, `0x${"b".repeat(64)}`];
+const retirementId = `0x${"d".repeat(64)}`;
 let runtime;
 try {
   const entry = join(folder, "worker.ts");
   const output = join(folder, "worker.mjs");
   await writeFile(
     entry,
-    `import {runPaymentDispatch} from ${JSON.stringify(resolve("workers/payments/index.ts"))};
+    `import {runPaymentDispatch,recoverUncertainAttempts} from ${JSON.stringify(resolve("workers/payments/index.ts"))};
 import {dispatchPayment} from ${JSON.stringify(resolve("backend/payments/dispatch.ts"))};
 const NativeDate=Date;
 let clock=NativeDate.parse(${JSON.stringify(stamp)});
 globalThis.Date=class extends NativeDate {constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}};
 export default {async fetch(request,env){
+  if(new URL(request.url).pathname==='/retirement'){
+    const held=await dispatchPayment(env.DB,{async submit(){throw new Error('Old wallet must stay held');}},${JSON.stringify(retirementId)},new Date());
+    const initialOutbox=(await env.DB.prepare('SELECT state FROM payment_outbox WHERE obligation_id=?').bind(${JSON.stringify(retirementId)}).first()).state;
+    let first=true,cancelCalls=0,notify,resume;
+    const reached=new Promise(resolve=>notify=resolve);
+    const gate=new Promise(resolve=>resume=resolve);
+    const service={async fetch(request){
+      const input=await request.json();
+      if(input.idempotencyKey!=='retirement-old') throw new Error('Unexpected retirement attempt');
+      if(new URL(request.url).pathname==='/v1/attempt-status') return Response.json({transactionId:null});
+      cancelCalls++;
+      if(first){first=false;notify();await gate;}
+      return Response.json({retired:true,transactionId:null});
+    }};
+    const recovery={PAYMENTS_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',EVM_PAYMENT_EXECUTOR:service};
+    const pending=recoverUncertainAttempts(recovery);
+    await reached;
+    try{
+      await recoverUncertainAttempts(recovery);
+      const submitted=await dispatchPayment(env.DB,{async submit(){return {transactionId:'native-successor'};}},${JSON.stringify(retirementId)},new Date());
+      const query=()=>env.DB.prepare('SELECT id,state,transaction_id FROM payment_attempts WHERE obligation_id=? ORDER BY rowid').bind(${JSON.stringify(retirementId)}).all();
+      const before=await query();
+      resume();await pending;
+      const after=await query();
+      const outbox=await env.DB.prepare('SELECT state FROM payment_outbox WHERE obligation_id=?').bind(${JSON.stringify(retirementId)}).first();
+      return Response.json({held,initialOutbox,submitted,cancelCalls,before:before.results,after:after.results,outbox:outbox.state});
+    } finally {resume();await pending.catch(()=>{});}
+  }
   let probeCalls=0,probeOutcome,leaseUntil;
   const service={async fetch(request){
     const payment=await request.json();
@@ -221,12 +250,63 @@ export default {async fetch(request,env){
     )
     .first();
   assert.equal(foreignAttempts.total, 0);
+  // Native workerd D1 must preserve SQLite's immediately preceding UPDATE
+  // count across prepared statements in the same batch. Exercise that through
+  // the actual recovery function, with two idempotent cancellation responses.
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES('claim-retirement','101','fixture',?,'d1_registry',?,?,?,'claim',?,'base')",
+      )
+      .bind(`0x${"8".repeat(40)}`, hash, stamp, "e".repeat(64), stamp),
+    db
+      .prepare(
+        "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES('challenge-retirement','claim-retirement','101','fixture','2027-01-01T00:00:00.000Z',?)",
+      )
+      .bind(stamp),
+    db
+      .prepare(
+        "INSERT INTO payment_wallet_authorizations VALUES('claim-retirement','101',?,'challenge-retirement','fixture')",
+      )
+      .bind(stamp),
+    db
+      .prepare(
+        "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at,paid_transaction) VALUES(?,'clock','101','base-sepolia','base',?,?,6,'100','2',?,'reserved',?,NULL)",
+      )
+      .bind(retirementId, vault, deployment.asset, "d".repeat(64), stamp),
+    db
+      .prepare(
+        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES('retirement-old',?,'claim',?,'prepared')",
+      )
+      .bind(retirementId, stamp),
+    db
+      .prepare("INSERT INTO payment_outbox VALUES(?,'ready',NULL,NULL,?)")
+      .bind(retirementId, stamp),
+  ]);
+  const retirementResponse = await runtime.dispatchFetch(
+    "https://slop.cash/retirement",
+  );
+  assert.equal(retirementResponse.status, 200);
+  const retirement = await retirementResponse.json();
+  assert.equal(retirement.held, "unavailable");
+  assert.equal(retirement.initialOutbox, "held");
+  assert.equal(retirement.submitted, "submitted");
+  assert.equal(retirement.cancelCalls, 2);
+  assert.equal(retirement.outbox, "submitted");
+  assert.deepEqual(retirement.after, retirement.before);
+  assert.equal(retirement.after.length, 2);
+  assert.deepEqual(
+    retirement.after.map((row) => row.state),
+    ["failed", "submitted"],
+  );
+  assert.equal(retirement.after[1].transaction_id, "native-successor");
   console.log(
     JSON.stringify({
       nativeD1: true,
       ...result,
       outboxStates: rows.results.map((row) => row.state),
       paymentAttempts: attempts.total,
+      duplicateRetirementPreservesSuccessor: retirement.outbox === "submitted",
       liveChain: false,
     }),
   );
