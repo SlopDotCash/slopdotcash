@@ -22,6 +22,10 @@ import {
   workUnitSourceBindings,
 } from "./value-work-unit-journal";
 import { validateWorkUnitAssessment } from "./value-work-unit-review";
+import {
+  type CurrentOwner,
+  planOwnershipTransition,
+} from "./verified-source-ownership";
 
 type Page = Awaited<ReturnType<typeof workUnitHistory>>;
 type Row = Page["records"][number];
@@ -125,7 +129,8 @@ export async function readWorkUnitHistory(
   const records = new Map<string, { row: Row; record: WorkUnitRecord }>();
   const currentSources = new Map<string, string>();
   const currentClaims = new Map<string, string>();
-  const used = new Set<string>();
+  const used: boolean[] = [];
+  const recordIndices = new Map<string, number>();
   let after = 0;
   let through: number | null = null;
   let total: number | null = null;
@@ -160,36 +165,52 @@ export async function readWorkUnitHistory(
       assertRecord(record, repositories);
       const predecessors = new Set(record.supersedes);
       const members = new Set(record.sources.map(sourceKey));
-      for (const previous of predecessors) {
-        const parent = records.get(previous)?.record;
-        if (
-          !parent ||
-          used.has(previous) ||
-          parent.projectId !== record.projectId ||
-          parent.sources.some((source) => !members.has(sourceKey(source)))
-        )
-          throw new Error(
-            "Joint history has a missing, forked or incomplete predecessor",
-          );
-      }
-      for (const key of members) {
-        const owner = currentSources.get(key);
-        if (owner && !predecessors.has(owner))
-          throw new Error("Joint history omits current source ownership");
-      }
-      for (const claim of record.claims) {
-        const owner = currentClaims.get(claim.id);
-        if (owner && !predecessors.has(owner))
-          throw new Error("Joint history duplicates a current claim");
-      }
-      for (const previous of predecessors) {
-        used.add(previous);
-        for (const [key, owner] of currentClaims)
-          if (owner === previous) currentClaims.delete(key);
-      }
-      for (const key of members) currentSources.set(key, row.record_digest);
-      for (const claim of record.claims)
-        currentClaims.set(claim.id, row.record_digest);
+      const owner = (value: string | undefined): CurrentOwner =>
+        value ? { kind: "owned", digest: value } : { kind: "unowned" };
+      const plan = planOwnershipTransition(
+        record.projectId,
+        row.record_digest,
+        [...predecessors].map((digest) => {
+          const parent = records.get(digest)?.record;
+          return {
+            digest,
+            index: recordIndices.get(digest) ?? -1,
+            record: parent
+              ? {
+                  kind: "stored" as const,
+                  projectId: parent.projectId,
+                  sourceKeys: parent.sources.map(sourceKey),
+                }
+              : { kind: "missing" as const },
+          };
+        }),
+        used,
+        [...members].map((key) => ({
+          key,
+          owner: owner(currentSources.get(key)),
+        })),
+        record.claims.map((claim) => ({
+          key: claim.id,
+          owner: owner(currentClaims.get(claim.id)),
+        })),
+        predecessors.size
+          ? [...currentClaims].map(([key, owner]) => ({ key, owner }))
+          : [],
+      );
+      if (plan.kind === "predecessor")
+        throw new Error(
+          "Joint history has a missing, forked or incomplete predecessor",
+        );
+      if (plan.kind === "source")
+        throw new Error("Joint history omits current source ownership");
+      if (plan.kind === "claim")
+        throw new Error("Joint history duplicates a current claim");
+      for (const previous of plan.retire) used[previous] = true;
+      for (const key of plan.removeClaims) currentClaims.delete(key);
+      for (const key of plan.setSources) currentSources.set(key, plan.owner);
+      for (const key of plan.setClaims) currentClaims.set(key, plan.owner);
+      recordIndices.set(row.record_digest, used.length);
+      used.push(false);
       records.set(row.record_digest, { row, record });
       history.push(row);
       after = row.sequence;
