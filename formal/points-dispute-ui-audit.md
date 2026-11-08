@@ -3,7 +3,7 @@
 This scoped review starts from `a8b0f8226` and covers `PointsDisputes.tsx`,
 its Inbox mount/key, and query navigation through `Link` and `App`. Only the
 new model and this audit are authored by this lane. No parser, test, browser,
-simulation, verifier or application command was run. The model's twenty-four
+simulation, verifier or application command was run. The model's twenty-six
 named scenarios are unexecuted.
 
 ## Source-confirmed privacy finding
@@ -33,6 +33,19 @@ content only after the session matches. Departed/aborted requests notify no
 parent. The model's `identity` error class means this invalidation result,
 not a claim that all three paths show the same literal error text.
 
+The refusal path is split before the session recheck. A 401/403/404/410 header
+clears the current private payload immediately, while the request remains
+busy and body parsing may still be pending. A parsed 409 `account_changed`
+clears at the body boundary instead. The separate `refused-body` and
+`refused-session` phases make both waiting intervals explicit for reads and
+mutations. Neither phase notifies the parent early. Recheck completion
+chooses the identity callback or parent reload and then delivers the error;
+a later matching session cannot convert that refused response into success.
+Two additional scenarios assert cleared data and still-busy state before
+recheck completion, with zero parent notifications, and end with terminal
+refusal of an attempted success payload. Shared busy-state overlap remains
+as described below; the clear itself does not manufacture a request mutex.
+
 ## Model scope and mapping
 
 `ui_points_disputes` is separate from the generic Inbox model. It represents:
@@ -46,6 +59,7 @@ not a claim that all three paths show the same literal error text.
 | Canceled/replaced GET callbacks | `activeRead` and captured request epoch; an obsolete callback does not publish data or clear current busy state |
 | Mutation callback lifetime | Captured actor/epoch in `mutations`; response delivery does not imply a still-mounted recipient |
 | Known identity loss or authority refusal | Clear private fields, hide for parent refresh and notify only the still-owned parent |
+| Refused headers/body while session recheck waits | `refusedReadHeaders`/`refusedMutationHeaders`, then the body phase; clear payloads without early parent notification or success publication |
 | Same-account request failure | Preserve form/list with an explicit error and Retry; do not claim that an ambiguous POST had no effect |
 | Mutation success | Select the returned dispute ID, clear input drafts, replace the query and request child/parent refresh |
 | Query navigation and actor change | `remount`; the key includes the recipient and the complete search string |

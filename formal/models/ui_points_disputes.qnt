@@ -54,15 +54,35 @@ module ui_points_disputes {
       .with("activeRead",id).with("reload",false).with("busy",true)
       .with("error","none").with("detail",0).with("detailId",0)
       .with("draft",false).with("mayDecide",false)}
+  // Header refusals clear cached payloads before either body parsing or the
+  // later session lookup. They retain the request's current busy state.
+  action refusedReadHeaders(id:int):bool={
+    val request=s.reads.get(id)
+    val waiting=s.with("reads",s.reads.set(id,request.with("phase","refused-body")))
+    all{request.phase=="pending",
+      s'=if(owns(request) and s.activeRead==id)clearPrivate(waiting) else waiting}
+  }
+  // Also represents a 409 account_changed recognized only after body parsing.
+  // A body failure after refused headers still proceeds to the session check.
+  action refusedReadBody(id:int):bool={
+    val request=s.reads.get(id)
+    val waiting=s.with("reads",s.reads.set(id,request.with("phase","refused-session")))
+    all{Set("pending","refused-body").contains(request.phase),
+      s'=if(owns(request) and s.activeRead==id)clearPrivate(waiting) else waiting}
+  }
   // outcome: 0 same-actor transport failure; 1 accepted JSON; 2 authority
-  // refusal; 3 session unavailable. Known identity mismatch also tears down.
+  // refusal after body; 3 session unavailable. A refused HTTP response cannot
+  // become a successful payload because the later session happens to match.
   action readReply(id:int,outcome:int,payload:int,draft:bool,decider:bool):bool={
     val request=s.reads.get(id)
     val current=owns(request) and s.activeRead==id
-    val invalid=outcome==2 or outcome==3 or s.cookie!=request.actor
+    val invalid=request.phase=="refused-session" or outcome==3 or s.cookie!=request.actor
     val changedIdentity=outcome!=3 and s.cookie!=request.actor
     val finished=s.with("reads",s.reads.set(id,request.with("phase","done")))
-    all{request.phase=="pending",outcome>=0,outcome<=3,payload>=1,payload<=3,
+    all{Set("pending","refused-session").contains(request.phase),
+      outcome>=0,outcome<=3,payload>=1,payload<=3,
+      request.phase!="pending" or outcome!=2,
+      request.phase!="refused-session" or outcome!=1,
       s'=if(not(current))finished
       else if(invalid)clearPrivate(finished).with("busy",false).with("error","identity")
         .with("parent","loading").with("parentNotifications",s.parentNotifications+1)
@@ -98,12 +118,26 @@ module ui_points_disputes {
   // departure; it is not a Points adjustment or a payment.
   action acceptMutation(id:int):bool=all{s.mutations.get(id).phase=="pending",
     s'=s.with("accepted",s.accepted.union(Set(id)))}
+  action refusedMutationHeaders(id:int):bool={
+    val request=s.mutations.get(id)
+    val waiting=s.with("mutations",s.mutations.set(id,request.with("phase","refused-body")))
+    all{request.phase=="pending",
+      s'=if(owns(request))clearPrivate(waiting) else waiting}
+  }
+  action refusedMutationBody(id:int):bool={
+    val request=s.mutations.get(id)
+    val waiting=s.with("mutations",s.mutations.set(id,request.with("phase","refused-session")))
+    all{Set("pending","refused-body").contains(request.phase),
+      s'=if(owns(request))clearPrivate(waiting) else waiting}
+  }
   action mutationReply(id:int,outcome:int):bool={
     val request=s.mutations.get(id)
-    val invalid=outcome==2 or outcome==3 or s.cookie!=request.actor
+    val invalid=request.phase=="refused-session" or outcome==3 or s.cookie!=request.actor
     val changedIdentity=outcome!=3 and s.cookie!=request.actor
     val finished=s.with("mutations",s.mutations.set(id,request.with("phase","done")))
-    all{request.phase=="pending",outcome>=0,outcome<=3,
+    all{Set("pending","refused-session").contains(request.phase),outcome>=0,outcome<=3,
+      request.phase!="pending" or outcome!=2,
+      request.phase!="refused-session" or outcome!=1,
       outcome!=1 or s.accepted.contains(id),
       s'=if(not(owns(request)))finished
       else if(invalid)clearPrivate(finished).with("busy",false).with("error","identity")
@@ -120,9 +154,9 @@ module ui_points_disputes {
     nondet draft=Set(false,true).oneOf() nondet decider=Set(false,true).oneOf()
     nondet kind=Set("create","decision","retry").oneOf()
     any{parentLoads,parentSameActor,parentUnavailableSameActor,remount(1,target),remount(2,target),depart,cookieChanges(actor),
-      startRead(id),readReply(id,outcome,payload,draft,decider),retryRead,olderRecords,
+      startRead(id),refusedReadHeaders(id),refusedReadBody(id),readReply(id,outcome,payload,draft,decider),retryRead,olderRecords,
       chooseAward(id),editReason(yes),editDecision(yes),back,beginMutation(id,kind),
-      acceptMutation(id),mutationReply(id,outcome),s'=s}}
+      acceptMutation(id),refusedMutationHeaders(id),refusedMutationBody(id),mutationReply(id,outcome),s'=s}}
   val invariant=all{s.epoch>=1,s.epoch<=2,s.cursor>=0,s.cursor<=1,
     s.page>=0,s.page<=2,s.detail>=0,s.detail<=3,s.accepted.subseteq(ids),
     s.mayDecide implies s.detail==2,
@@ -159,7 +193,8 @@ module ui_points_disputes {
     .then(olderRecords).then(startRead(2)).then(cookieChanges(0)).then(readReply(2,1,2,false,false))
     .expect(s.page==0 and s.url==0 and s.error=="identity" and s.parentNotifications==1)
   run forbiddenReadClearsOldListTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
-    .then(olderRecords).then(startRead(2)).then(readReply(2,2,1,false,false))
+    .then(olderRecords).then(startRead(2)).then(refusedReadHeaders(2)).then(refusedReadBody(2))
+    .then(readReply(2,2,1,false,false))
     .expect(s.page==0 and s.error=="identity" and s.parentNotifications==1)
   run unavailableSessionDoesNotRetainFormTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
     .then(chooseAward(1)).then(editReason(true)).then(beginMutation(1,"create"))
@@ -180,7 +215,8 @@ module ui_points_disputes {
     .expect(s.url==2 and s.selected==2 and s.parentNotifications==0)
   run departedIdentityFailureCannotNotifyNewParentTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
     .then(chooseAward(1)).then(editReason(true)).then(beginMutation(1,"create"))
-    .then(remount(2,0)).then(mutationReply(1,2)).expect(s.actor==2 and s.parentNotifications==0 and s.error=="none")
+    .then(remount(2,0)).then(refusedMutationHeaders(1)).then(refusedMutationBody(1))
+    .then(mutationReply(1,2)).expect(s.actor==2 and s.parentNotifications==0 and s.error=="none")
   run hiddenSameActorChildKeepsItsDraftTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
     .then(chooseAward(1)).then(editReason(true)).then(parentLoads).then(parentSameActor)
     .expect(s.reason and s.award==1 and maySubmit)
@@ -190,4 +226,17 @@ module ui_points_disputes {
   run firstCompletionDoesNotOwnOtherBusyRequestTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
     .then(chooseAward(1)).then(editReason(true)).then(beginMutation(1,"create")).then(beginMutation(2,"create"))
     .then(mutationReply(1,0)).expect(not(s.busy) and s.mutations.get(2).phase=="pending")
+  run refusedReadClearsBeforeSessionRecheckTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
+    .then(olderRecords).then(startRead(2)).then(refusedReadHeaders(2))
+    .expect(s.page==0 and s.detail==0 and s.busy and s.parentNotifications==0)
+    .then(refusedReadBody(2))
+    .expect(s.reads.get(2).phase=="refused-session" and s.page==0 and s.busy and s.parentNotifications==0)
+    .then(readReply(2,1,2,false,false).fail())
+  run refusedMutationClearsBeforeSessionRecheckTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
+    .then(chooseAward(1)).then(editReason(true)).then(beginMutation(1,"create")).then(acceptMutation(1))
+    .then(refusedMutationHeaders(1))
+    .expect(s.award==0 and not(s.reason) and s.page==0 and s.busy and s.parentNotifications==0)
+    .then(refusedMutationBody(1))
+    .expect(s.mutations.get(1).phase=="refused-session" and s.award==0 and s.busy and s.parentNotifications==0)
+    .then(mutationReply(1,1).fail())
 }

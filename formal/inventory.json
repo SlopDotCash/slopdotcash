@@ -11565,7 +11565,7 @@
     },
     {
       "path": "formal/models/ui_points_disputes.qnt",
-      "sha256": "d07f1f57c3e343e6becc5dd4d0766822152e379fd2800ae1532d867f5ec9ee5c",
+      "sha256": "07faf605b83d0427dfbe3c009d08fca168c55f08e1321403a4d423e19ec6c76e",
       "sources": [
         "src/App.tsx",
         "src/Inbox.tsx",
@@ -11590,6 +11590,8 @@
         "oldListRemainsDuringPageLoadTest",
         "parentFailureKeepsRevalidatedSameActorChildTest",
         "queryNavigationIgnoresOldReadTest",
+        "refusedMutationClearsBeforeSessionRecheckTest",
+        "refusedReadClearsBeforeSessionRecheckTest",
         "requestFailureKeepsReasonTest",
         "resolvedDetailHasNoMutationControlsTest",
         "retrySupersedesOldReadTest",
