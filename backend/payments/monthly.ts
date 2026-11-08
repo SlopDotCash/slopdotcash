@@ -860,6 +860,27 @@ export function monthlyOwnerService(deps: {
         "The project changed. Reload its awards.",
       );
   }
+  async function mutationProjectUnchanged(project: ProjectRecord) {
+    const current = await deps.db
+      .prepare("SELECT revision,manifest_sha256 FROM projects WHERE id=?")
+      .bind(project.id)
+      .first<{ revision: number; manifest_sha256: string }>();
+    if (!current)
+      throw new MonthlyPaymentError(
+        503,
+        "payment_registry_unavailable",
+        "Monthly changes require the current project registry in the payment database.",
+      );
+    if (
+      current.revision !== project.revision ||
+      current.manifest_sha256 !== project.manifestSha256
+    )
+      throw new MonthlyPaymentError(
+        409,
+        "project_changed",
+        "The project changed. Reload its awards.",
+      );
+  }
   async function view(
     project: ProjectRecord,
     period: string,
@@ -1078,13 +1099,16 @@ export function monthlyOwnerService(deps: {
         // before this allocation write, not only at an earlier settings read.
         // A queued statement can cross the deadline after changedAt was bound.
         // Both the caller clock and SQLite's execution clock must allow it.
+        // The registry version used for owner authorization must also remain
+        // current when this statement executes.
         const inserted = await deps.db
           .prepare(
             `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at)
              SELECT ?1,?2,?3,?4,?5,?6,?7
              WHERE ((?8=0 AND (?10 IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ','now')<?10))
                OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=?9 ORDER BY sequence DESC LIMIT 1),1)=0)
-               AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+               AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})
+               AND EXISTS(SELECT 1 FROM projects WHERE id=?12 AND revision=?13 AND manifest_sha256=?14)`,
           )
           .bind(
             project.id,
@@ -1098,6 +1122,9 @@ export function monthlyOwnerService(deps: {
             project.id,
             cutoff?.toISOString() ?? null,
             actor.githubId,
+            project.id,
+            project.revision,
+            project.manifestSha256,
           )
           .run();
         changed = inserted.meta?.changes;
@@ -1118,6 +1145,7 @@ export function monthlyOwnerService(deps: {
         );
       }
       if (changed !== 1) {
+        await mutationProjectUnchanged(project);
         await assertMonthlyParticipation(deps.db, actor.githubId);
         if (
           cutoff !== null &&
@@ -1152,9 +1180,11 @@ export function monthlyOwnerService(deps: {
       await assertMonthlyParticipation(deps.db, actor.githubId);
       let changed: number | undefined;
       try {
+        // A later registry revision can change the authorized owner while
+        // the earlier authority/participation requests are still in flight.
         const inserted = await deps.db
           .prepare(
-            `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND (?=0 OR COALESCE(MAX(sequence),0)=?)`,
+            `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND (?=0 OR COALESCE(MAX(sequence),0)=?) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=?)`,
           )
           .bind(
             project.id,
@@ -1165,6 +1195,9 @@ export function monthlyOwnerService(deps: {
             actor.githubId,
             Number(on),
             expectedSequence,
+            project.id,
+            project.revision,
+            project.manifestSha256,
           )
           .run();
         changed = inserted.meta?.changes;
@@ -1177,6 +1210,7 @@ export function monthlyOwnerService(deps: {
         );
       }
       if (changed !== 1) {
+        await mutationProjectUnchanged(project);
         await assertMonthlyParticipation(deps.db, actor.githubId);
         throw new MonthlyPaymentError(
           409,
