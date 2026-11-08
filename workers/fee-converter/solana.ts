@@ -10,6 +10,7 @@ import {
   solanaNativeFee,
   spendableNative,
 } from "./verified-arithmetic";
+import { parseSolanaWire } from "./verified-solana-wire";
 /**
  * Solana fee-wallet client. Routes come from the Jupiter Swap API. Each
  * Jupiter transaction is parsed before signing: the fee wallet is the only
@@ -174,17 +175,6 @@ export function solanaEscrowConfig(
   };
 }
 
-function compactLength(bytes: Uint8Array, offset: number): [number, number] {
-  let value = 0;
-  for (let shift = 0, i = 0; i < 3; i++, shift += 7) {
-    const byte = bytes[offset + i];
-    if (byte === undefined) throw new Error("truncated transaction");
-    value |= (byte & 0x7f) << shift;
-    if ((byte & 0x80) === 0) return [value, offset + i + 1];
-  }
-  throw new Error("invalid compact length");
-}
-
 export interface ParsedTransaction {
   signatureCount: number;
   messageOffset: number;
@@ -201,86 +191,51 @@ export interface ParsedTransaction {
 
 /** Parse the entire signed wire message, including every v0 address lookup. */
 export function parseTransaction(raw: Uint8Array): ParsedTransaction {
-  const [signatureCount, afterCount] = compactLength(raw, 0);
-  const messageOffset = afterCount + signatureCount * 64;
-  let offset = messageOffset;
-  const take = (count: number) => {
-    if (
-      !Number.isSafeInteger(count) ||
-      count < 0 ||
-      offset + count > raw.length
-    )
-      throw new Error("truncated transaction");
-    const part = raw.slice(offset, offset + count);
-    offset += count;
-    return part;
-  };
-  const length = () => {
-    const [n, next] = compactLength(raw, offset);
-    offset = next;
-    return n;
-  };
-  if (messageOffset >= raw.length || raw.length > 1232)
-    throw new Error("invalid transaction size");
-  const legacy = (raw[offset] & 0x80) === 0;
-  if (!legacy && take(1)[0] !== 0x80)
-    throw new Error("unsupported message version");
-  const [requiredSignatures, readonlySigned, readonlyUnsigned] = take(3);
-  const keyCount = length();
-  if (
-    keyCount < requiredSignatures ||
-    signatureCount !== requiredSignatures ||
-    readonlySigned > requiredSignatures ||
-    readonlyUnsigned > keyCount - requiredSignatures
-  )
-    throw new Error("invalid transaction signer header");
-  const staticKeys = Array.from({ length: keyCount }, () =>
-    solanaBase58(take(32)),
+  const result = parseSolanaWire(raw);
+  if (result.kind === "failure") {
+    const errors = [
+      "",
+      "truncated transaction",
+      "invalid compact length",
+      "invalid transaction size",
+      "unsupported message version",
+      "invalid transaction signer header",
+      "program id outside the static keys",
+      "invalid transaction account indexes or trailing bytes",
+    ];
+    throw new Error(errors[result.error]);
+  }
+  const parsed = result.value;
+  const staticKeys = Array.from({ length: parsed.keyCount }, (_, index) =>
+    solanaBase58(
+      raw.slice(
+        parsed.staticStart + index * 32,
+        parsed.staticStart + (index + 1) * 32,
+      ),
+    ),
   );
-  const blockhashOffset = offset;
-  take(32);
-  const programs: string[] = [],
-    instructions: ParsedTransaction["instructions"] = [];
-  const instructionCount = length();
-  for (let i = 0; i < instructionCount; i++) {
-    const programIndex = take(1)[0];
-    // Invoked programs stay in static keys, so no table can substitute a router.
-    if (programIndex >= staticKeys.length)
-      throw new Error("program id outside the static keys");
-    const accounts = [...take(length())],
-      data = take(length());
-    programs.push(staticKeys[programIndex]);
-    instructions.push({ program: staticKeys[programIndex], accounts, data });
-  }
-  const lookups: ParsedTransaction["lookups"] = [];
-  if (!legacy) {
-    const count = length();
-    for (let i = 0; i < count; i++) {
-      const address = solanaBase58(take(32)),
-        writable = [...take(length())],
-        readonly = [...take(length())];
-      lookups.push({ address, writable, readonly });
-    }
-  }
-  const total =
-    keyCount +
-    lookups.reduce((n, t) => n + t.writable.length + t.readonly.length, 0);
-  if (
-    offset !== raw.length ||
-    total > 256 ||
-    instructions.some((i) => i.accounts.some((index) => index >= total))
-  )
-    throw new Error("invalid transaction account indexes or trailing bytes");
+  const instructions = parsed.instructions.map((instruction) => ({
+    program: staticKeys[instruction.program],
+    accounts: [
+      ...raw.slice(instruction.accounts.start, instruction.accounts.end),
+    ],
+    data: raw.slice(instruction.data.start, instruction.data.end),
+  }));
+  const lookups = parsed.lookups.map((lookup) => ({
+    address: solanaBase58(raw.slice(lookup.address.start, lookup.address.end)),
+    writable: [...raw.slice(lookup.writable.start, lookup.writable.end)],
+    readonly: [...raw.slice(lookup.readonly.start, lookup.readonly.end)],
+  }));
   return {
-    signatureCount,
-    messageOffset,
-    requiredSignatures,
-    readonlySigned,
-    readonlyUnsigned,
+    signatureCount: parsed.signatureCount,
+    messageOffset: parsed.messageOffset,
+    requiredSignatures: parsed.requiredSignatures,
+    readonlySigned: parsed.readonlySigned,
+    readonlyUnsigned: parsed.readonlyUnsigned,
     staticKeys,
-    blockhashOffset,
-    programs,
-    legacy,
+    blockhashOffset: parsed.blockhashOffset,
+    programs: instructions.map((instruction) => instruction.program),
+    legacy: parsed.legacy,
     lookups,
     instructions,
   };
