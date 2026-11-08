@@ -37,6 +37,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Monthly award replacement](lemmascript-monthly-replacement-research.md)
 - [Original clean-scan reuse](lemmascript-scan-reuse.md)
 - [Jupiter decoder research](lemmascript-jupiter-research.md)
+- [Jupiter account and quote policy](lemmascript-jupiter-policy.md)
 - [Native liability and retained expiry agreement](lemmascript-native-liability.md)
 - [Earned native-fee accounting](lemmascript-native-fee-earnings.md)
 - [Complete Solana expiry traversal step](lemmascript-expiry-traversal.md)
@@ -127,6 +128,7 @@ maintenance surface without improving the selected acceptance result.
 | Source selection and ownership | `verified-source-ownership`; Slopbot discovery and history reads | Complete accepted-commit index order and exact per-record refusal/retire/remove/set operations; native maps, paging, hashes and final ancestry remain boundaries |
 | Retained-copy bindings | `verified-retained-binding`; omitted-hunk evidence matching | Complete finite captured-parent reachability, ordered hunk subset and exactly one eligible attribution per missing hunk; captured Git identity, parsing and final native SHA ordering remain boundaries |
 | Signed Solana transactions | `verified-solana-wire`; actual parseTransaction | Complete compact-prefix, legacy/v0, instruction/lookup parsing, spans, static program and global reference checks with preserved error order; crypto/RPC identity remain separate |
+| Jupiter route policy | `verified-jupiter-policy`; actual route checker | First invalid privilege role, exact last-name binding and first binding refusal, complete input/quote/slippage/fee agreement; native account evidence, ATA and program truth remain separate |
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native daily liabilities | `verified-native-liability`; real gas reservation | Today's recorded costs plus the largest unresolved maximum per exact wallet/nonce bucket, including the proposed attempt; preserves liabilities across midnight |
 | Earned native fees | `verified-native-liability`; conversion store | Complete direct/claim/conversion fold, earliest receipt, direct-credit status and zero-floored credit after one maximum per actual attempt bucket; SQL and normalized wallet identity remain boundaries |
