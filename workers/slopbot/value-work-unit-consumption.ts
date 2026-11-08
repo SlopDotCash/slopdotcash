@@ -22,6 +22,7 @@ import {
   workUnitSourceBindings,
 } from "./value-work-unit-journal";
 import { validateWorkUnitAssessment } from "./value-work-unit-review";
+import { retainedAncestors } from "./verified-retained-binding";
 import {
   type CurrentOwner,
   planOwnershipTransition,
@@ -229,17 +230,36 @@ export async function readWorkUnitHistory(
   }
   const current = records.get(currentDigest);
   if (!current) throw new Error("Joint history current record is missing");
-  const ancestors = new Set<string>();
-  const pending = [currentDigest];
-  while (pending.length) {
-    const id = pending.pop();
-    if (!id || ancestors.has(id)) continue;
-    ancestors.add(id);
-    const parent = records.get(id);
-    if (!parent) throw new Error("Joint history ancestor is missing");
-    pending.push(...parent.record.supersedes);
+  // Reuse the complete captured-graph traversal. Missing predecessor vertices
+  // remain explicit, so they cannot turn into a shorter successful history.
+  const knownCount = records.size;
+  const vertices = new Map(recordIndices);
+  const graph: number[][] = Array.from({ length: knownCount }, () => []);
+  for (const [digest, { record }] of records) {
+    const index = recordIndices.get(digest) as number;
+    for (const predecessor of record.supersedes) {
+      if (!predecessor) continue;
+      let parent = vertices.get(predecessor);
+      if (parent === undefined) {
+        parent = graph.length;
+        vertices.set(predecessor, parent);
+        graph.push([]);
+      }
+      graph[index].push(parent);
+    }
   }
-  if (ancestors.size !== history.length)
+  const ancestors = retainedAncestors(
+    graph,
+    recordIndices.get(currentDigest) as number,
+  );
+  let ancestorCount = 0;
+  for (let index = 0; index < ancestors.length; index++) {
+    if (!ancestors[index]) continue;
+    if (index >= knownCount)
+      throw new Error("Joint history ancestor is missing");
+    ancestorCount += 1;
+  }
+  if (ancestorCount !== history.length)
     throw new Error("Joint history contains unrelated records");
   return { history, throughSequence: through, current };
 }
