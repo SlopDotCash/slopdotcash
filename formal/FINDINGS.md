@@ -7,7 +7,7 @@ revision. The area audits identify the source checkpoint, bounds, before/after
 evidence and model links.
 The tests below use application entry points, real local databases or browser
 flows as appropriate. A local provider fixture does not establish live service
-availability. The full combined validation is still in progress; this is not a
+availability. The full combined validation remains incomplete; this is not a
 claim that all application state errors have been eliminated.
 
 | Boundary | Incorrect transition | Corrected behavior / regression |
@@ -88,3 +88,21 @@ symbolic links in actual source. See `docs/lemmascript-validation.md`.
 The source inventory and area audits also include reviewed transitions that
 needed no implementation change. They remain bounded abstractions unless an
 audit explicitly supplies stronger conformance evidence.
+
+## Reviewed follow-up
+
+The monthly recovery and runner defects below were first identified by source
+inspection and then reproduced during independent review. Their earlier failed
+runs remain separate from passing corrected runs.
+
+- A pending lookup fixed an entered monthly-setting transaction ID across reload,
+  hiding the correction input. Real desktop/mobile Anvil workflows now prove
+  correction, finality, unchanged cap and send counts, and fixed wallet IDs.
+- Integration, security-payment and browser cancellation did not own all cleanup.
+  Actual process probes exposed and then verified the managed-browser-server
+  correction, including timeout and first-failure preservation.
+
+Model/source corrections and verification limits are recorded in
+`backend-runner-review-audit.md`, `binding-veto-audit.md`,
+`runner-cancellation-audit.md` and `direct-payment-composition-audit.md`.
+Final combined-head checks remain separate from these scoped results.

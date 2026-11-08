@@ -22,7 +22,6 @@ import {
  * site sessions.
  */
 
-import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -40,36 +39,54 @@ import { startSlopbotWorkerFixture } from "../tests/slopbot-worker-fixture.mjs";
 import { childEnvironment } from "./child-environment.mjs";
 import { prepareE2eFixture } from "./prepare-e2e-fixture.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
+import { createRunnerCancellation } from "./runner-cancellation.mjs";
 import { sha256Hex } from "./sha256.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const playwright = join(packageRoot, "node_modules", ".bin", "playwright");
-function runSync(command, args) {
-  const result = spawnSync(command, args, {
-    cwd: packageRoot,
-    env: childEnvironment(),
-    stdio: "inherit",
-    timeout: 40 * 60_000,
-    killSignal: "SIGKILL",
+async function runCommand(
+  command,
+  args,
+  cwd = packageRoot,
+  env = childEnvironment(),
+) {
+  await cancellation.checkpoint();
+  const status = await runE2ePhase({
+    label: `setup:${command}`,
+    command,
+    args,
+    cwd,
+    env,
+    timeoutMs: 40 * 60_000,
+    signal: cancellation.signal,
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0)
-    throw new Error(
-      `${command} failed with status ${result.status ?? "unknown"}`,
-    );
+  cancellation.record(status);
+  if (status !== 0) {
+    cancellation.abort(status);
+    throw new Error(`${command} failed with status ${status}`);
+  }
+  await cancellation.checkpoint();
 }
 
-function runPhase(label, server, port, args, extraEnv = {}) {
+async function runPhase(
+  label,
+  server,
+  port,
+  args,
+  extraEnv = {},
+  cwd = packageRoot,
+) {
+  await cancellation.checkpoint();
   // Each registry shard shares one local SQLite database between Pages and
   // Slopbot. Concurrent test files can invalidate a reporting read's snapshot
   // while another file writes. Keep those cases serial; separate shards still
   // have independent databases, and preview keeps its requested parallelism.
   const workers = label === "registry" ? "1" : process.env.SLOP_E2E_WORKERS;
-  return runE2ePhase({
+  const status = await runE2ePhase({
     label,
     command: playwright,
     args: ["test", ...args],
-    cwd: packageRoot,
+    cwd,
     env: {
       ...childEnvironment(),
       ...extraEnv,
@@ -79,7 +96,11 @@ function runPhase(label, server, port, args, extraEnv = {}) {
       SLOP_E2E_PORT: port,
       ...(workers ? { SLOP_E2E_WORKERS: workers } : {}),
     },
+    signal: cancellation.signal,
+    interruptSignal: "SIGINT",
   });
+  cancellation.record(status);
+  return status;
 }
 
 const lane = process.env.SLOP_E2E_LANE;
@@ -101,10 +122,6 @@ const walletFixture =
   lane === "preview" &&
   (process.env.SLOP_E2E_VAULT_ACTIONS === "1" ||
     process.env.SLOP_E2E_SOLANA_VAULT === "1");
-if (!walletFixture) {
-  if (process.env.SLOP_E2E_PREBUILT !== "1") runSync("bun", ["run", "build"]);
-  runSync("node", ["scripts/dist-manifest.mjs", "verify-local", "dist"]);
-}
 
 // The preview phase binds the base port and Pages binds the next one.
 const basePort = Number(process.env.SLOP_E2E_PORT ?? "4466");
@@ -131,9 +148,9 @@ function sessionToken() {
 }
 
 /** Creates a fresh local D1 with every migration and two site sessions. */
-function prepareRegistryDatabase(persistTo) {
+async function prepareRegistryDatabase(persistTo) {
   const local = ["--local", "--persist-to", persistTo];
-  runSync("node", [
+  await runCommand("node", [
     wrangler,
     "d1",
     "migrations",
@@ -179,7 +196,7 @@ function prepareRegistryDatabase(persistTo) {
       return `INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('${actor}','${githubId}','e2e-${role}','2026-01-01T00:00:00.000Z',0); INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES('${hash}','${actor}','${expires}');`;
     })
     .join(" ");
-  runSync("node", [
+  await runCommand("node", [
     wrangler,
     "d1",
     "execute",
@@ -242,7 +259,10 @@ function prepareRegistryDatabase(persistTo) {
   };
 }
 
+const cancellation = createRunnerCancellation();
+
 async function runRegistryPhase() {
+  await cancellation.checkpoint();
   const persistTo = mkdtempSync(join(tmpdir(), "slop-e2e-d1-"));
   const githubPort = basePort + 3;
   const directBounty = process.env.SLOP_E2E_DIRECT_BOUNTY === "1";
@@ -252,11 +272,14 @@ async function runRegistryPhase() {
   let failure;
   let status;
   try {
-    const database = prepareRegistryDatabase(persistTo);
+    const database = await prepareRegistryDatabase(persistTo);
+    await cancellation.checkpoint();
     if (directBounty) {
       // The chain and D1 retain the same payment history across viewports.
       const fixture = await import("../tests/direct-bounty-chain.ts");
+      await cancellation.checkpoint();
       evm = await fixture.startLocalDirectEvmFixture(basePort + 6);
+      await cancellation.checkpoint();
       // Seed before Pages opens D1; a second live runtime can invalidate its bookmarks.
       fixture.seedVerifiedBountyWallets(persistTo, [
         {
@@ -273,10 +296,13 @@ async function runRegistryPhase() {
     }
     if (solanaBounty) {
       const fixture = await import("../tests/direct-bounty-solana-chain.ts");
+      await cancellation.checkpoint();
       const { authorizeFixtureWallet } = await import(
         "../tests/authorize-fixture-wallet.ts"
       );
+      await cancellation.checkpoint();
       solana = await fixture.startLocalDirectSolanaFixture(basePort + 60);
+      await cancellation.checkpoint();
       fixture.seedVerifiedSolanaBountyWallets(persistTo, [
         {
           githubId: E2E_SECURITY_ACCOUNTS.security,
@@ -298,6 +324,7 @@ async function runRegistryPhase() {
             })
             .end(JSON.stringify(body));
         try {
+          cancellation.check();
           const url = new URL(request.url, "http://127.0.0.1");
           if (
             request.method === "GET" &&
@@ -334,7 +361,9 @@ async function runRegistryPhase() {
               reply(400, { error: "invalid_address" });
               return;
             }
-            reply(200, { balance: String(await solana.balance(address)) });
+            const balance = String(await solana.balance(address));
+            cancellation.check();
+            reply(200, { balance });
             return;
           }
           if (
@@ -350,6 +379,7 @@ async function runRegistryPhase() {
           const chunks = [];
           let size = 0;
           for await (const chunk of request) {
+            cancellation.check();
             size += chunk.length;
             if (size > 4096) {
               reply(413, { error: "request_too_large" });
@@ -357,6 +387,7 @@ async function runRegistryPhase() {
             }
             chunks.push(chunk);
           }
+          cancellation.check();
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           if (
             url.pathname === "/rotate-reporter" ||
@@ -381,6 +412,7 @@ async function runRegistryPhase() {
             ];
             const claimId = await authorizeFixtureWallet(
               async (path, data) => {
+                cancellation.check();
                 const result = await fetch(`${apiOrigin}/api/v1/${path}`, {
                   method: "POST",
                   headers: {
@@ -389,15 +421,22 @@ async function runRegistryPhase() {
                     cookie: `__Host-slop_points=${token}`,
                   },
                   body: JSON.stringify(data),
-                  signal: AbortSignal.timeout(15_000),
+                  signal: AbortSignal.any([
+                    cancellation.signal,
+                    AbortSignal.timeout(15_000),
+                  ]),
                 });
-                return { status: result.status, body: await result.json() };
+                const body = await result.json();
+                cancellation.check();
+                return { status: result.status, body };
               },
               {
                 chain: "solana",
                 address: target,
-                sign: (message) =>
-                  solana.signWalletAuthorization(target, message),
+                sign: (message) => {
+                  cancellation.check();
+                  return solana.signWalletAuthorization(target, message);
+                },
               },
             );
             reply(200, { address: target, claimId });
@@ -420,18 +459,27 @@ async function runRegistryPhase() {
             reply(400, { error: "invalid_request" });
             return;
           }
+          cancellation.check();
           const signature = await solana.signAndSend(raw);
+          cancellation.check();
           reply(200, { signature: Buffer.from(signature).toString("base64") });
         } catch {
+          if (cancellation.signal.aborted) {
+            response.destroy();
+            return;
+          }
           reply(500, { error: "wallet_request_failed" });
         }
       });
+      await cancellation.checkpoint();
       await new Promise((resolve, reject) => {
         walletBridge.once("error", reject);
         walletBridge.listen(basePort + 7, "127.0.0.1", resolve);
       });
     }
+    await cancellation.checkpoint();
     github = await startGitHubApiFixture(githubPort);
+    await cancellation.checkpoint();
     // The owned-repository picker resolves the current login by actor ID.
     // Mirror the seeded sessions in the GitHub fixture. Flag tests still
     // supply their own eligibility facts through the same control route.
@@ -443,10 +491,16 @@ async function runRegistryPhase() {
       url.searchParams.set("login", actor.login);
       url.searchParams.set("createdAt", "2020-01-01T00:00:00Z");
       url.searchParams.set("merged", "0");
-      const response = await fetch(url, { method: "PUT" });
+      await cancellation.checkpoint();
+      const response = await fetch(url, {
+        method: "PUT",
+        signal: cancellation.signal,
+      });
+      cancellation.check();
       if (response.status !== 204)
         throw new Error("Could not seed the GitHub account fixture");
     }
+    await cancellation.checkpoint();
     notify = await startNotifyWorkerFixture(
       packageRoot,
       persistTo,
@@ -463,12 +517,14 @@ async function runRegistryPhase() {
           }
         : undefined,
     );
+    await cancellation.checkpoint();
     slopbot = await startSlopbotWorkerFixture(
       packageRoot,
       `http://127.0.0.1:${githubPort}`,
       basePort + 5,
       persistTo,
     );
+    await cancellation.checkpoint();
     status = await runPhase(
       "registry",
       "pages",
@@ -522,6 +578,7 @@ async function runRegistryPhase() {
       },
     );
   } catch (error) {
+    cancellation.abort(1);
     failed = true;
     failure = error;
   } finally {
@@ -530,9 +587,11 @@ async function runRegistryPhase() {
       Promise.resolve().then(() => notify?.close()),
       Promise.resolve().then(() => github?.close()),
       Promise.resolve().then(() => {
-        if (!walletBridge) return;
+        if (!walletBridge?.listening) return;
         walletBridge.closeAllConnections();
-        return new Promise((resolve) => walletBridge.close(resolve));
+        return new Promise((resolve, reject) =>
+          walletBridge.close((error) => (error ? reject(error) : resolve())),
+        );
       }),
       Promise.resolve().then(() => solana?.close()),
       Promise.resolve().then(() => evm?.close()),
@@ -555,6 +614,7 @@ async function runRegistryPhase() {
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason);
     if (errors.length) {
+      cancellation.record(1);
       const cleanupError = new AggregateError(
         errors,
         "Registry fixture cleanup failed",
@@ -572,46 +632,77 @@ async function runRegistryPhase() {
 
 /** Runs the preview and Pages phases inside the fixture workspace. */
 async function runFixturePhases() {
-  const workspace = await prepareE2eFixture();
-  const status = runE2ePhase({
-    label: "fixture",
-    command: "node",
-    args: ["scripts/run-e2e.mjs", ...extraArgs],
-    cwd: workspace,
-    env: {
-      ...childEnvironment(),
-      SLOP_E2E_PREBUILT: "1",
-      SLOP_E2E_WORKSPACE: "fixture",
-      SLOP_E2E_PORT: String(basePort),
-      ...(lane ? { SLOP_E2E_LANE: lane } : {}),
-      ...(process.env.SLOP_E2E_WORKERS
-        ? { SLOP_E2E_WORKERS: process.env.SLOP_E2E_WORKERS }
-        : {}),
-    },
-    timeoutMs: 60 * 60_000,
-  });
-  return status.finally(async () => {
-    try {
-      // CI uploads diagnostics from this checkout, not the temporary copy.
-      for (const folder of ["playwright-report", "test-results"]) {
-        const source = join(workspace, folder);
-        if (existsSync(source))
-          cpSync(source, join(packageRoot, folder), { recursive: true });
+  let workspace;
+  let status;
+  let failure;
+  try {
+    await cancellation.checkpoint();
+    workspace = await prepareE2eFixture({
+      runCommand: (command, args, cwd, env = process.env) =>
+        runCommand(command, args, cwd, env),
+    });
+    await cancellation.checkpoint();
+    await runCommand(
+      "node",
+      ["scripts/dist-manifest.mjs", "verify-local", "dist"],
+      workspace,
+    );
+    // Launch Playwright here, not through a nested run-e2e process. Each phase
+    // is detached by the shared helper and must be owned by this abort scope.
+    const statuses = await Promise.all(
+      selectedFixturePhases().map(({ server, port, args }) =>
+        runTask(() =>
+          runPhase(
+            `fixture:${server}`,
+            server,
+            port,
+            args,
+            { SLOP_E2E_WORKSPACE: "fixture" },
+            workspace,
+          ),
+        ),
+      ),
+    );
+    status = statuses.find((result) => result !== 0) ?? 0;
+    cancellation.record(status);
+  } catch (error) {
+    cancellation.abort(1);
+    failure = error;
+  } finally {
+    if (workspace) {
+      try {
+        // Preserve diagnostics before deleting this run's workspace.
+        for (const folder of ["playwright-report", "test-results"]) {
+          const source = join(workspace, folder);
+          if (existsSync(source))
+            cpSync(source, join(packageRoot, folder), { recursive: true });
+        }
+      } catch (error) {
+        cancellation.record(1);
+        if (failure) console.error(error);
+        else failure = error;
+      } finally {
+        try {
+          await rm(workspace, {
+            recursive: true,
+            force: true,
+            maxRetries: 10,
+            retryDelay: 200,
+          });
+        } catch (error) {
+          cancellation.record(1);
+          if (failure) console.error(error);
+          else failure = error;
+        }
       }
-    } finally {
-      await rm(workspace, {
-        recursive: true,
-        force: true,
-        maxRetries: 10,
-        retryDelay: 200,
-      });
     }
-  });
+  }
+  if (failure) throw failure;
+  return status;
 }
 
-let statuses;
-if (insideFixture) {
-  const phases = [
+function selectedFixturePhases() {
+  return [
     {
       server: "preview",
       port: String(basePort),
@@ -622,17 +713,52 @@ if (insideFixture) {
       port: String(basePort + 1),
       args: ["--project=chromium-desktop", "--grep", "@pages", ...extraArgs],
     },
-  ];
-  statuses = await Promise.all(
-    phases
-      .filter((phase) => lane === undefined || phase.server === lane)
-      .map(({ server, port, args }) => runPhase(server, server, port, args)),
-  );
-} else {
-  statuses = await Promise.all([
-    ...(lane === undefined || lane === "registry" ? [runRegistryPhase()] : []),
-    ...(lane === undefined || lane !== "registry" ? [runFixturePhases()] : []),
-  ]);
+  ].filter((phase) => lane === undefined || phase.server === lane);
 }
-const failed = statuses.find((status) => status !== 0);
-if (failed !== undefined) process.exit(failed);
+
+// Wait for every sibling's finally block, including startup that returns a
+// resource after cancellation. A rejected sibling cannot abandon its peers.
+async function runTask(task) {
+  try {
+    return await task();
+  } catch (error) {
+    if (error?.name !== "AbortError") console.error(error);
+    cancellation.abort(1);
+    return 1;
+  }
+}
+
+try {
+  await cancellation.checkpoint();
+  if (!walletFixture) {
+    if (process.env.SLOP_E2E_PREBUILT !== "1")
+      await runCommand("bun", ["run", "build"]);
+    await runCommand("node", [
+      "scripts/dist-manifest.mjs",
+      "verify-local",
+      "dist",
+    ]);
+  }
+  if (insideFixture) {
+    await Promise.all(
+      selectedFixturePhases().map(({ server, port, args }) =>
+        runTask(() => runPhase(server, server, port, args)),
+      ),
+    );
+  } else {
+    await Promise.all([
+      ...(lane === undefined || lane === "registry"
+        ? [runTask(runRegistryPhase)]
+        : []),
+      ...(lane === undefined || lane !== "registry"
+        ? [runTask(runFixturePhases)]
+        : []),
+    ]);
+  }
+} catch (error) {
+  if (error?.name !== "AbortError") console.error(error);
+  cancellation.record(1);
+} finally {
+  cancellation.dispose();
+}
+process.exitCode = cancellation.exitCode;

@@ -53,6 +53,7 @@ export function runE2ePhase({
   env,
   timeoutMs = 40 * 60_000,
   signal,
+  interruptSignal,
   onStdout,
   onStderr,
 }) {
@@ -71,12 +72,14 @@ export function runE2ePhase({
     let cleaningUp = false;
     let cleanupTimer;
     let cleanupPoll;
+    let interruptTimer;
     const finish = (status) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(cleanupTimer);
       clearTimeout(cleanupPoll);
+      clearTimeout(interruptTimer);
       signal?.removeEventListener("abort", onAbort);
       resolvePhase(timedOut || aborted ? 1 : status);
     };
@@ -84,6 +87,7 @@ export function runE2ePhase({
       if (cleaningUp || settled) return;
       cleaningUp = true;
       clearTimeout(timer);
+      clearTimeout(interruptTimer);
       if (child.pid) {
         if (process.platform === "win32") {
           const result = spawnSync(
@@ -123,11 +127,28 @@ export function runE2ePhase({
     const timer = setTimeout(() => {
       timedOut = true;
       stderr.write(`[${label}] exceeded the ${timeoutMs}ms phase deadline\n`);
-      stopProcessTree(1);
+      interruptOrStop();
     }, timeoutMs);
     function onAbort() {
       aborted = true;
       stderr.write(`[${label}] canceled\n`);
+      interruptOrStop();
+    }
+    function interruptOrStop() {
+      if (settled || cleaningUp || interruptTimer) return;
+      clearTimeout(timer);
+      if (interruptSignal && process.platform !== "win32" && child.pid) {
+        // Playwright owns web servers in separate process groups. Let its
+        // interrupt handler close them before falling back to group cleanup.
+        try {
+          process.kill(child.pid, interruptSignal);
+          interruptTimer = setTimeout(() => stopProcessTree(1), 5000);
+          return;
+        } catch (error) {
+          if (error.code !== "ESRCH")
+            stderr.write(`[${label}] interrupt failed: ${error.message}\n`);
+        }
+      }
       stopProcessTree(1);
     }
     if (onStdout) {

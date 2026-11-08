@@ -7,8 +7,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { childEnvironment } from "./child-environment.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
+import { createRunnerCancellation } from "./runner-cancellation.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const cancellation = createRunnerCancellation();
 const drivers = [
   [
     "dev-private-flow",
@@ -82,13 +84,28 @@ const runDriver = ([label, command, args, env = process.env]) =>
     cwd: root,
     env,
     timeoutMs: 10 * 60_000,
+    signal: cancellation.signal,
   });
 const statuses = [];
-for (const driver of drivers) statuses.push(await runDriver(driver));
-const failed = drivers.filter((_, index) => statuses[index] !== 0);
+try {
+  for (const driver of drivers) {
+    await cancellation.checkpoint();
+    const status = await runDriver(driver);
+    statuses.push(status);
+    cancellation.record(status === 0 ? 0 : 1);
+  }
+} catch (error) {
+  if (!cancellation.signal.aborted) console.error(error);
+  cancellation.abort(1);
+} finally {
+  cancellation.dispose();
+}
+const failed = drivers
+  .slice(0, statuses.length)
+  .filter((_, index) => statuses[index] !== 0);
 if (failed.length > 0) {
   process.stderr.write(
     `Failed: ${failed.map(([label]) => label).join(", ")}\n`,
   );
-  process.exit(1);
 }
+process.exitCode = cancellation.exitCode;

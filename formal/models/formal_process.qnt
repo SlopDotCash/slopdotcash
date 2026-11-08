@@ -1,29 +1,40 @@
 // @source scripts/check-formal.mjs
 // @source scripts/run-e2e-phase.mjs
+// @source scripts/run-e2e.mjs
 // One launcher and one inherited process-group child. SIGKILL, OOM or machine
 // death of the supervisor itself are external failures, not caught cancellation.
 module formal_process {
   var s: {phase:str, launcher:bool, child:bool, pipes:bool,
-    failed:bool, temporary:bool, result:str}
+    failed:bool, temporary:bool, external:bool, result:str}
   action init = s'={phase:"new",launcher:false,child:false,pipes:false,
-    failed:false,temporary:false,result:"none"}
+    failed:false,temporary:false,external:false,result:"none"}
   action start = all {s.phase=="new",s'=s.with("phase","running")
     .with("launcher",true).with("child",true).with("temporary",true)}
   action launcherExit(ok) = all {s.phase=="running",s'=s.with("phase","cleanup")
     .with("launcher",false).with("failed",not(ok))}
   action cancel = all {Set("running","cleanup").contains(s.phase),
     s'=s.with("phase","cleanup").with("failed",true)}
+  // Playwright owns web servers in separate process groups. On cancellation or
+  // timeout its SIGINT handler closes these before exiting; a bounded fallback
+  // must not claim they closed.
+  action managedServer = all {s.phase=="running",s'=s.with("external",true)}
+  action managedServerClosed = all {s.external,s'=s.with("external",false)}
+  action interrupt = all {s.phase=="running",s'=s.with("phase","interrupting").with("failed",true)}
+  action cooperativeExit = all {s.phase=="interrupting",s'=s.with("phase","cleanup")
+    .with("launcher",false).with("external",false)}
+  action interruptDeadline = all {s.phase=="interrupting",s'=s.with("phase","cleanup")}
   action killGroup = all {s.phase=="cleanup",s'=s.with("launcher",false).with("child",false)}
   action drain = all {not(s.launcher),not(s.child),s'=s.with("pipes",true)}
-  action cleanup = all {s.phase=="cleanup",s.pipes,not(s.child),
+  action cleanup = all {s.phase=="cleanup",s.pipes,not(s.child),not(s.external),
     s'=s.with("phase","done").with("temporary",false)}
   action cleanupDeadline = all {s.phase=="cleanup",
     s'=s.with("phase","done").with("failed",true).with("temporary",false)}
   action report = all {s.phase=="done",s'=s.with("result",if(s.failed) "fail" else "pass")}
   action step = {nondet ok=Set(false,true).oneOf()
-    any {start,launcherExit(ok),cancel,killGroup,drain,cleanup,cleanupDeadline,report,s'=s}}
+    any {start,launcherExit(ok),cancel,managedServer,managedServerClosed,interrupt,cooperativeExit,
+      interruptDeadline,killGroup,drain,cleanup,cleanupDeadline,report,s'=s}}
   val invariant = all {s.result=="pass" implies all {not(s.failed),not(s.launcher),
-    not(s.child),s.pipes,not(s.temporary)},s.failed implies s.result!="pass"}
+    not(s.child),not(s.external),s.pipes,not(s.temporary)},s.failed implies s.result!="pass"}
   run cleanSuccessTest = init.then(start).then(launcherExit(true)).then(killGroup)
     .then(drain).then(cleanup).then(report).expect(s.result=="pass")
   run timeoutKillsDescendantTest = init.then(start).then(cancel).then(killGroup)
@@ -36,4 +47,13 @@ module formal_process {
     .then(drain).then(cleanup).then(report).expect(s.result=="fail")
   run cleanupFailureIsExplicitTest = init.then(start).then(cancel).then(cleanupDeadline)
     .then(report).expect(s.result=="fail" and s.child)
+  run cooperativeBrowserInterruptClosesServerTest = init.then(start).then(managedServer)
+    .then(interrupt).then(cooperativeExit).then(killGroup).then(drain).then(cleanup)
+    .then(report).expect(s.result=="fail" and not(s.external))
+  run uncooperativeBrowserCannotClaimCleanupTest = init.then(start).then(managedServer)
+    .then(interrupt).then(interruptDeadline).then(killGroup).then(drain).then(cleanupDeadline)
+    .then(report).expect(s.result=="fail" and s.external)
+  run normalBrowserClosesManagedServerTest = init.then(start).then(managedServer)
+    .then(managedServerClosed).then(launcherExit(true)).then(killGroup).then(drain)
+    .then(cleanup).then(report).expect(s.result=="pass" and not(s.external))
 }
