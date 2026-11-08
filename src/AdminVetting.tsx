@@ -23,11 +23,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { projectApiRequest } from "./lib/project-api";
-import type {
-  AdmissionExemption,
-  AssessmentState,
-  AssessmentSummary,
-  VettingClearance as Clearance,
+import {
+  type AdmissionExemption,
+  ASSESSMENT_STATE_TEXT,
+  type AssessmentSummary,
+  assessmentHistoryStateText,
+  type VettingClearance as Clearance,
 } from "./lib/vetting-contracts";
 
 type AdminAssessment = AssessmentSummary & {
@@ -106,13 +107,6 @@ function clearanceLabel(clearance: Clearance): string {
 const scanLabel = (value: string) => {
   const text = value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("-", " ");
   return text.charAt(0).toUpperCase() + text.slice(1);
-};
-
-const STATE_TEXT: Record<AssessmentState, string> = {
-  pending: "Queued",
-  incomplete: "Incomplete",
-  clean: "Clean",
-  malicious: "Confirmed malicious",
 };
 
 function AdmissionExemptionForm({
@@ -390,7 +384,13 @@ function evidenceRun(assessment: AdminAssessment) {
   return null;
 }
 
-function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
+function AssessmentDetails({
+  assessment,
+  stateText,
+}: {
+  assessment: AdminAssessment;
+  stateText: string;
+}) {
   const result = assessment.result;
   const run = evidenceRun(assessment);
   const gaps =
@@ -411,7 +411,7 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
                 : "warning"
           }
         >
-          {STATE_TEXT[assessment.state]}
+          {stateText}
         </StatusBadge>
         <time dateTime={assessment.completedAt ?? assessment.requestedAt}>
           {time(assessment.completedAt ?? assessment.requestedAt)}
@@ -765,7 +765,7 @@ export function VettingSection({ projectId }: { projectId: string }) {
                                   : "Existing-project exemption"
                                 : clearance.state === "stale"
                                   ? `Live head ${clearance.live.commitSha} (template ${clearance.live.templateSha256}) is not scanned. Last scan: ${clearance.assessment.commitSha}.`
-                                  : `${clearance.state === "cleared" && clearance.basis === "admission" ? "Admission scan" : "Scan"} of revision ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
+                                  : `${clearance.state === "cleared" && clearance.basis === "admission" ? "Admission scan" : "Scan"} of revision ${clearance.assessment.revision} · ${ASSESSMENT_STATE_TEXT[clearance.assessment.state]}`}
                         </dd>
                       </div>
                       {"assessment" in clearance &&
@@ -859,6 +859,10 @@ export function VettingSection({ projectId }: { projectId: string }) {
                           <AssessmentDetails
                             assessment={assessment}
                             key={assessment.id}
+                            stateText={assessmentHistoryStateText(
+                              history,
+                              assessment,
+                            )}
                           />
                         ))}
                       </>

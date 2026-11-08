@@ -36,6 +36,29 @@ export type PublicationReceipt = PublicationIntent & {
 
 export type AssessmentState = "pending" | VettingDisposition;
 
+/** Display text for an assessment state (VET-01 display fields). */
+export const ASSESSMENT_STATE_TEXT: Record<AssessmentState, string> = {
+  pending: "Queued",
+  incomplete: "Incomplete",
+  clean: "Clean",
+  malicious: "Confirmed malicious",
+};
+
+/**
+ * The state text for one entry of a project's scan history, which the API
+ * returns newest first. Only the newest request can occupy the project's
+ * queue: an older pending request was superseded by it and will not be
+ * scanned, so the history names it superseded instead of queued.
+ */
+export function assessmentHistoryStateText(
+  history: readonly Pick<AssessmentSummary, "id" | "state">[],
+  assessment: Pick<AssessmentSummary, "id" | "state">,
+): string {
+  if (assessment.state === "pending" && history[0]?.id !== assessment.id)
+    return "Superseded";
+  return ASSESSMENT_STATE_TEXT[assessment.state];
+}
+
 /** The safe public summary of one assessment (VET-01 display fields). */
 export type AssessmentSummary = {
   id: string;
