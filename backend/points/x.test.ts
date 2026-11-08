@@ -576,6 +576,7 @@ for (const revokeFails of [false, true]) {
         flow.cookie,
       );
       expect(response.status).toBe(503);
+      expect(response.headers.has("set-cookie")).toBe(false);
       expect(
         fixture.sqlite.prepare("SELECT x_id,public FROM points_x_links").all(),
       ).toEqual([
