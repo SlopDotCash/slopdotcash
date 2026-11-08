@@ -24,6 +24,7 @@
     "contracts/solana/adapter.ts",
     "contracts/solana/native.ts",
     "contracts/solana/token-extensions.ts",
+    "contracts/solana/verified-token-extensions.ts",
     "contracts/solana/token.ts",
     "contracts/solana/token.test.ts",
     "contracts/solana/adapter.test.ts",
