@@ -18,6 +18,13 @@ tick also requires its network/RPC/genesis environment to match that copy.
 Database triggers forbid updates and deletion;
 a declaration batch commits together or rolls back.
 
+The section 21 caller waits for its last committed award to finalize before
+its first local tick. A confirmed creation is not sufficient: the fresh native
+run reproduced a project created at slot 365 while the finalized read was
+still at slot 341, returning null and terminating as `Invalid RPC object`.
+`chain.waitFinalized` now uses the existing resumable `Waiting` path, preserving
+all signed steps if the wait budget ends. No adapter gate is relaxed.
+
 Each local tick rechecks the exact genesis and verifies every declared
 program and project before delegating. It calls the existing
 `refreshVaultSnapshots`, `readDeploymentVaultTotals`, `scanSolanaPayments`,
@@ -35,7 +42,7 @@ to key recovery. Its monthly and fault-scenario acceptance is still open.
 
 ## Model and conformance
 
-`local_solana_acceptance.qnt` models two declarations and two ticks. Its twelve
+`local_solana_acceptance.qnt` models two declarations and two ticks. Its fourteen
 named scenarios cover local admission, remote/public refusal, changed run or
 declaration, changed live genesis, invalid program, successful delegation and
 partial failures. It proves only the bounded harness-level invariant that
@@ -56,12 +63,15 @@ native signing, scanning, payment, replay and reconciliation. The prior
 pre-repair refusal, its stopped-container receipt, and the repaired run are
 kept in separate ignored evidence directories.
 
-Pinned Bun 1.3.14 / Node 24.15.0: the three regression cases pass (25
-assertions), TypeScript and Biome pass. Quint 0.33.1 with the server-free
-Apalache 0.62.4 / Java 21 translator explores 7,865 distinct states (36,707
-generated); the invariant holds and all source hashes stay fixed. Twelve named
-scenarios and 500 samples of up to 60 steps use seed 20261107. The full native
-section 21 run is still in progress; no passing native result is claimed here. No local result is public-devnet, production-registry, deployment, or
+The pre-finality-correction checkpoint passed three regression cases (25
+assertions), TypeScript, Biome, twelve named scenarios, 500 samples of up to 60
+steps at seed 20261107, and 7,865 distinct TLC states (36,707 generated).
+The finality correction passes the same 3 regression cases and 25 assertions,
+TypeScript and Biome. All 14 named scenarios and 500 samples of up to 60 steps
+pass at seed 20261107. Quint 0.33.1 with the server-free Apalache 0.62.4 / Java 21
+translator explores 12,185 distinct states (59,971 generated), with no invariant
+violation and unchanged model/source hashes. The fresh-ELF native section 21
+run remains in progress; no passing native result is claimed here. No local result is public-devnet, production-registry, deployment, or
 live settlement evidence. RPC identity may change after a read; the actual
 executor and chain adapters retain their own fresh checks. An arbitrary injected executor implementation or concurrent mutation of the
 environment is not constrained by this harness; its owned service wiring uses

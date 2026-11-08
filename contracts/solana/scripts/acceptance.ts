@@ -1436,6 +1436,14 @@ export async function runSolana(
       };
     await persist();
 
+    // The local tick verifies the project at finalized commitment. A confirmed
+    // commit can still be ahead of that view, including the project's creation.
+    // Keep this as a resumable wait; never weaken the adapter's finality gate.
+    if (network === "solana-localnet")
+      await ready(() =>
+        chain.waitFinalized(steps["commit-walletless"].transactionId),
+      );
+
     // 4-5. Register, co-sign the binding, and let the cron dispatch.
     for (const role of ["registered", "walletless"] as const)
       await payThroughDispatch(
