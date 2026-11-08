@@ -1,5 +1,5 @@
 /** Disposable native-SOL wallet for the real Pages/D1 browser workflow. */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash, createPrivateKey, sign } from "node:crypto";
 import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { childEnvironment } from "../scripts/child-environment.mjs";
+import { startLocalSolanaValidator } from "../scripts/local-solana-validator.mjs";
 import { SOLANA_NATIVE_ASSET } from "../src/lib/escrow-policy.mjs";
 
 const fixtureRequire = createRequire(import.meta.url);
@@ -33,26 +33,35 @@ export async function startLocalDirectSolanaFixture(port: number) {
     throw new Error("Invalid disposable Solana port");
   const directory = mkdtempSync(join(tmpdir(), "slop-browser-solana-"));
   const log = openSync(join(directory, "validator.log"), "w", 0o600);
-  const validator = spawn(
-    "solana-test-validator",
-    [
-      "--reset",
-      "--quiet",
-      "--ticks-per-slot",
-      "8",
-      "--ledger",
-      join(directory, "ledger"),
-      "--rpc-port",
-      String(port),
-      "--faucet-port",
-      String(port + 41),
-      "--dynamic-port-range",
-      `${port + 2}-${port + 31}`,
-      "--bind-address",
-      "127.0.0.1",
-    ],
-    { env: childEnvironment(), stdio: ["ignore", log, log] },
-  );
+  let launched: Awaited<ReturnType<typeof startLocalSolanaValidator>>;
+  try {
+    launched = await startLocalSolanaValidator({
+      rpcPort: port,
+      args: [
+        "--reset",
+        "--quiet",
+        "--ticks-per-slot",
+        "8",
+        "--ledger",
+        join(directory, "ledger"),
+        "--rpc-port",
+        String(port),
+        "--faucet-port",
+        String(port + 41),
+        "--dynamic-port-range",
+        `${port + 2}-${port + 31}`,
+        "--bind-address",
+        "127.0.0.1",
+      ],
+      stdio: ["ignore", log, log],
+      receiptPath: process.env.SLOP_SOLANA_CONTAINER_RECEIPT,
+    });
+  } catch (error) {
+    closeSync(log);
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+  const validator = launched.process;
   const rpcUrl = `http://127.0.0.1:${port}`;
   const connection = new Connection(rpcUrl, {
     commitment: "confirmed",
@@ -95,19 +104,12 @@ export async function startLocalDirectSolanaFixture(port: number) {
     connection._rpcWebSocket.close();
     if (history.listening)
       await new Promise<void>((resolve) => history.close(() => resolve()));
-    if (validator.exitCode === null && validator.signalCode === null) {
-      const exited = new Promise<void>((resolve) =>
-        validator.once("exit", () => resolve()),
-      );
-      validator.kill("SIGTERM");
-      await Promise.race([exited, sleep(5000)]);
-      if (validator.exitCode === null && validator.signalCode === null) {
-        validator.kill("SIGKILL");
-        await exited;
-      }
+    try {
+      await launched.close();
+    } finally {
+      closeSync(log);
+      rmSync(directory, { recursive: true, force: true });
     }
-    closeSync(log);
-    rmSync(directory, { recursive: true, force: true });
   }
   try {
     if (!fee) throw new Error("Missing reviewed Solana fee recipient");
