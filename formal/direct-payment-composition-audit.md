@@ -1,9 +1,12 @@
 # Direct-payment parent and recovery composition
 
-This source-only review started at `120c7a22a121`. It adds two focused models;
-it changes no production code. The user initially directed the team to skip
-checks and focus on pushing, so that first checkpoint had no execution
-evidence. The independent review below records the later scoped checks.
+This review started at `120c7a22a121`, with a follow-up at `d6323d9f2426`.
+It adds two focused models and the read-generation correction described below.
+The user directed this chat to skip checks and focus on pushing, so those
+authoring checkpoints had no execution evidence. The independent review below
+records later scoped checks of the reviewed parent. The additional captured-
+storage and accepted-replacement transitions are being reconciled with those
+reviewed models; earlier results do not validate their combined revision.
 
 ## Parent selection and identity
 
@@ -16,7 +19,7 @@ their callbacks in `src/SecurityBounty.tsx`, plus `DirectBountyPayment.tsx`,
   the selected detail is keyed by case. Private API calls check the actor
   before and after the request and send the expected-actor header.
 - Case refresh retains the last ready detail. Request generations prevent an
-  older GET from replacing a newer result. A transient refresh error is shown
+  older GET from replacing a newer GET result. A transient refresh error is shown
   with the retained case. Authoritative access refusal is also handled by the
   enclosing private provider; it is not permission to keep sending from a
   stale case.
@@ -65,7 +68,7 @@ not a claim that navigation proves nothing was sent. No new source defect or
 authorization bypass was established by this review.
 
 This module bounds one selected case, two actors, two generations/messages/plan
-classes, three case reads, two identity rechecks and one outstanding wallet
+classes, three case reads, two local replacements, two identity rechecks and one outstanding wallet
 invocation. The journal is one representative transfer. It does not exclude
 simultaneous prompts from independent children/tabs, model every partial EVM
 leg or prove nonce uniqueness. Those remain the `ui_tab_scope` and financial
@@ -89,8 +92,19 @@ identifiers at the time of the click. Already-confirmed identifiers are hidden
 and excluded from that list. Inputs remain editable while the action runs;
 later edits do not change its captured list. The callback first checks the raw
 actor and authorizes the current generation. It writes candidates back to their
-original storage records. A failed later write can leave earlier candidate
-writes intact, but it stops the verification call.
+original storage records. The follow-up replaces the model's single storage
+list with four actor/generation groups and captures the original row group
+alongside the clicked rows. A generation change and new storage read while
+authorization is pending must not redirect those writes into the new group's
+records. A named scenario records the old candidate in generation 1 while
+preserving the newly loaded generation-2 record.
+
+The source's storage loop has no `await`. The model now treats it as one atomic
+attempt with zero, one or both row writes completed; it no longer admits React
+input edits between its synchronous writes. A failed later write can leave
+earlier candidate writes intact, but it stops the verification call. Edits
+during either pending API request remain possible and do not change the
+captured POST body or captured storage keys.
 
 `verifyExistingPayment` then performs another fresh, actor-bound case GET. It
 requires `verify-payment` and the same generation, and sends the POST with the
@@ -104,10 +118,15 @@ available path. Removing only the fallback does not cancel its promise while
 the enclosing provider stays valid. Removing the provider prevents a later
 successful private response from being delivered, although a POST already
 accepted by the server may have recorded evidence. The second model keeps
-server acceptance distinct from delivery to the current private view.
+server acceptance distinct from delivery to the private view. The model names
+the latter `responseDelivered`: it is an observation that the response arrived
+through a valid provider, not a lasting authority capability. It can remain a
+historical observation after the private view is closed; it does not then
+enable a new verification request.
 
 `ui_submitted_payment_recovery` bounds one fallback instance, two actors,
-two generations, two rows and two dependency-triggered storage reads. It
+two generations, two stable row keys per actor/generation group, two visible
+rows and two dependency-triggered storage reads. It
 models both preflights, partial candidate writes, captured versus edited
 inputs, confirmation filtering, cookie changes and both departure boundaries.
 Its finite `step` now explores at most two verification invocations and two
@@ -120,6 +139,22 @@ the retry path inside the finite two-invocation scope.
 Hash grammar, local-storage key enumeration, receipt cryptography, backend
 atomicity and the exact chain status are external predicates. It is not a
 model of payment broadcasting.
+
+## Source-confirmed replacement race
+
+The follow-up found that `useSecurityData.replace(value)` did not advance the
+read generation. An active GET could therefore start before an action, return
+after the action's successful replacement, and overwrite that newer detail.
+An old GET failure could likewise add a refresh error to the replaced value.
+This is a source-confirmed interleaving; no new runtime reproduction was run.
+
+The shared hook now advances its read generation before publishing a local
+replacement. Existing success/error callbacks from older reads fail their
+generation comparison. Two named model scenarios cover replacement followed
+by an old success and by an old failure. The model does not infer that a
+displayed revision is current authorization: each payment preflight still
+reads the private API. The correction fences the hook's state commit, not
+independent authority decisions made by the enclosing private-request wrapper.
 
 ## Conformance references and status
 

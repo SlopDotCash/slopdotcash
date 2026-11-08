@@ -1159,7 +1159,11 @@ function useSecurityData<T>(
     };
   }, [load]);
   const replace = useCallback(
-    (value: T) => setState({ status: "ready", value }),
+    (value: T) => {
+      // An action result supersedes every read started before it.
+      generation.current += 1;
+      setState({ status: "ready", value });
+    },
     [],
   );
   return [state, load, replace];
