@@ -84,7 +84,9 @@ describe("a container image run during install", () => {
   test("sudo and an environment assignment do not hide it", () => {
     for (const line of [
       "sudo docker run --rm img:1 ./install\n",
+      "sudo -u bob docker run --rm img:1 ./install\n",
       "env DOCKER_BUILDKIT=1 docker run --rm img:1 ./install\n",
+      "FOO=1 docker run --rm img:1 ./install\n",
     ])
       expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([RUNS]);
   });
@@ -108,12 +110,20 @@ describe("container commands that stay clean", () => {
       "docker compose up -d\n",
       "docker compose down\n",
       "docker compose config\n",
+      "docker compose logs -f\n",
+      "docker container create img:1\n",
       "docker ps\n",
       "docker --version\n",
       "docker --debug ps\n",
       "docker system prune -f\n",
+      "mydocker run --rm img:1 ./install\n",
+      "docker runner\n",
     ])
       expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([]);
+  });
+
+  test("an empty script is clean", () => {
+    expect(findingsOf("setup.sh", "#!/bin/sh\n")).toEqual([]);
   });
 
   test("a Dockerfile RUN is the Dockerfile surface, not a container run", () => {
