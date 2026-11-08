@@ -90,7 +90,9 @@ type Run = {
   enableMail(): Promise<void>;
   mail(moderators?: string): Promise<string[]>;
   ban: () => void;
-  review: () => Promise<string>;
+  review: (number?: 5 | 6) => Promise<string>;
+  seedSecondReview: () => void;
+  priorMergeCount: (count: number) => void;
   deliver: (job: Job) => Promise<string>;
   tick: () => Promise<Job[]>;
   model: (category: Category, confidence: number) => void;
@@ -124,8 +126,15 @@ type Run = {
   pauseNextReopen: () => { entered: Promise<void>; release: () => void };
   pauseNextClose: (options?: {
     loseResponse?: boolean;
+    failBeforeWrite?: boolean;
+    rejectStatus?: number;
+    pauseAfterWrite?: boolean;
     afterWrite?: () => void;
   }) => { entered: Promise<void>; release: () => void };
+  pauseNextCloseReservation: () => {
+    entered: Promise<void>;
+    release: () => void;
+  };
   beforeAppealResolution: (callback: () => void) => void;
   beforePenaltyInsert: (callback: () => Promise<void>) => void;
   currentState: () => string;
@@ -169,9 +178,23 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   );
   let beforeAppealResolution: (() => void) | null = null;
   let beforePenaltyInsert: (() => Promise<void>) | null = null;
+  let beforeCloseReservation: (() => Promise<void>) | null = null;
   const prepare = db.prepare.bind(db);
   db.prepare = (sql) => {
     const statement = prepare(sql);
+    if (sql.startsWith("INSERT OR IGNORE INTO slopbot_close_attempts")) {
+      const wrap = (inner: typeof statement): typeof statement => ({
+        ...inner,
+        bind: (...values) => wrap(inner.bind(...values)),
+        run: async () => {
+          const callback = beforeCloseReservation;
+          beforeCloseReservation = null;
+          await callback?.();
+          return inner.run();
+        },
+      });
+      return wrap(statement);
+    }
     if (sql.startsWith("UPDATE slopbot_appeals SET resolved_at")) {
       const wrapResolution = (inner: typeof statement): typeof statement => ({
         ...inner,
@@ -251,8 +274,19 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
 
   const writes: string[] = [];
   const comments: string[] = [];
+  const commentHistory = new Map<number, { id: number; body: string }[]>();
+  const addComment = (path: string, body: string) => {
+    comments.push(body);
+    const number = path.includes("/issues/6/") ? 6 : 5;
+    const entry = { id: 900 + comments.length, body };
+    commentHistory.set(number, [...(commentHistory.get(number) ?? []), entry]);
+    return entry.id;
+  };
   const labels: string[] = [];
   let state = "open";
+  let secondState = "open";
+  let secondClosedBy: number | null = null;
+  let secondClosedAt: string | null = null;
   let closedBy: number | null = null;
   let closedAt: string | null = null;
   // undefined: GitHub reports the current time; null: no close time.
@@ -260,7 +294,13 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let closerEvidence = true;
   let merged = false;
   let pauseClose: (() => Promise<void>) | null = null;
-  let closeOptions: { loseResponse?: boolean; afterWrite?: () => void } = {};
+  let closeOptions: {
+    loseResponse?: boolean;
+    failBeforeWrite?: boolean;
+    rejectStatus?: number;
+    pauseAfterWrite?: boolean;
+    afterWrite?: () => void;
+  } = {};
   let head = "b".repeat(40);
   let comparisonBase = "c".repeat(40);
   let loseLabelDelete = false;
@@ -290,6 +330,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let onReviewComment: (() => void) | null = null;
   let emptyComparison = false;
   let reportedFiles = 1;
+  let priorMergeCount = 0;
   let duplicate = false;
   let duplicateChange: Parameters<Run["changeDuplicate"]>[0] | null = null;
   const consent = (value: boolean | null) => {
@@ -396,6 +437,11 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       }
       if (path.endsWith("/access_tokens"))
         return Response.json({ token: "local-synthetic-token" });
+      if (
+        path === "/search/issues" &&
+        url.searchParams.get("q")?.includes("is:merged")
+      )
+        return Response.json({ total_count: priorMergeCount });
       if (path === `/repos/${owner}/${repo}`)
         return Response.json({
           id: repositoryId,
@@ -466,9 +512,15 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             ? duplicateChange === "closed"
               ? "closed"
               : "open"
-            : state,
+            : path.endsWith("/issues/6")
+              ? secondState
+              : state,
           closed_by:
-            closerEvidence && closedBy !== null ? { id: closedBy } : null,
+            closerEvidence &&
+            (path.endsWith("/issues/6") ? secondClosedBy : closedBy) !== null
+              ? { id: path.endsWith("/issues/6") ? secondClosedBy : closedBy }
+              : null,
+          closed_at: path.endsWith("/issues/6") ? secondClosedAt : closedAt,
           title: "Followers",
           body:
             path.endsWith("/issues/4") && duplicateChange === "body"
@@ -488,20 +540,31 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             ? {}
             : { pull_request: {} }),
         });
-      if (path.endsWith("/pulls/5") && request.method === "PATCH") {
+      if (
+        (path.endsWith("/pulls/5") || path.endsWith("/pulls/6")) &&
+        request.method === "PATCH"
+      ) {
         const next = ((await request.json()) as { state: string }).state;
+        const options = next === "closed" ? closeOptions : {};
+        if (next === "closed") closeOptions = {};
         if (next === "open" && pauseReopen) {
           const pause = pauseReopen;
           pauseReopen = null;
           await pause();
         }
-        if (next === "closed" && pauseClose) {
-          const pause = pauseClose;
-          pauseClose = null;
-          await pause();
+        const closePause = next === "closed" ? pauseClose : null;
+        if (closePause) pauseClose = null;
+        if (closePause && !options.pauseAfterWrite) await closePause();
+        if (options.failBeforeWrite) return new Response(null, { status: 503 });
+        if (options.rejectStatus !== undefined)
+          return new Response(null, { status: options.rejectStatus });
+        if (path.endsWith("/pulls/6")) {
+          secondState = next;
+          secondClosedBy = next === "closed" ? 999 : null;
+        } else {
+          state = next;
+          closedBy = next === "closed" ? 999 : null;
         }
-        state = next;
-        closedBy = next === "closed" ? 999 : null;
         // GitHub reports its own close time in the close response.
         closedAt =
           next === "closed"
@@ -509,10 +572,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
               ? new Date().toISOString()
               : githubCloseTime
             : null;
+        if (path.endsWith("/pulls/6")) secondClosedAt = closedAt;
         if (next === "closed") {
-          const options = closeOptions;
-          closeOptions = {};
           options.afterWrite?.();
+          if (closePause && options.pauseAfterWrite) await closePause();
           if (options.loseResponse) return new Response(null, { status: 503 });
         }
         if (next === "open" && loseReopenResponse) {
@@ -522,7 +585,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             { status: 503 },
           );
         }
-        return Response.json({ state, closed_at: closedAt });
+        return Response.json({ state: next, closed_at: closedAt });
       }
       if (
         path.endsWith("/pulls/5") ||
@@ -602,9 +665,10 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             body: "Unrelated comment",
             user: { id: OUTSIDER, type: "User" },
           })),
-          ...comments.map((body, i) => ({
-            id: 901 + i,
-            body,
+          ...(
+            commentHistory.get(path.includes("/issues/6/") ? 6 : 5) ?? []
+          ).map((entry) => ({
+            ...entry,
             user: {
               id: appealHistoryMode === "copied" ? OUTSIDER : 999,
               type: "Bot",
@@ -616,6 +680,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       }
       if (/\/issues\/[56]\/comments$/u.test(path)) {
         const body = ((await request.json()) as { body: string }).body;
+        let id: number;
         if (body.startsWith("<!-- slopbot:appeal:")) {
           if (appealRejection !== null) {
             const status = appealRejection;
@@ -631,16 +696,16 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
             appealResponse = null;
             return new Response(null, { status: 503 });
           }
-          comments.push(body);
+          id = addComment(path, body);
           if (appealResponse === "accepted") {
             appealResponse = null;
             return new Response(null, { status: 503 });
           }
         } else {
           onReviewComment?.();
-          comments.push(body);
+          id = addComment(path, body);
         }
-        return Response.json({ id: 900 + comments.length }, { status: 201 });
+        return Response.json({ id }, { status: 201 });
       }
       if (path.endsWith("/issues/comments/77") && request.method === "GET")
         return Response.json({
@@ -659,8 +724,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           failCommentUpdate = false;
           return new Response(null, { status: 502 });
         }
-        comments.push(((await request.json()) as { body: string }).body);
-        return Response.json({ id: Number(path.split("/").pop()) });
+        const body = ((await request.json()) as { body: string }).body;
+        const id = Number(path.split("/").pop());
+        comments.push(body);
+        for (const entries of commentHistory.values()) {
+          const entry = entries.find((comment) => comment.id === id);
+          if (entry) entry.body = body;
+        }
+        return Response.json({ id });
       }
       if (/\/issues\/[56]\/labels$/u.test(path)) {
         const body = (await request.json()) as { labels: string[] };
@@ -939,6 +1010,21 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         closeOptions = options;
         return { entered: arrival, release };
       },
+      pauseNextCloseReservation: () => {
+        let entered!: () => void;
+        let release!: () => void;
+        const arrival = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const resumed = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        beforeCloseReservation = async () => {
+          entered();
+          await resumed;
+        };
+        return { entered: arrival, release };
+      },
       head: (sha) => {
         head = sha;
       },
@@ -1040,11 +1126,23 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       writes,
       comments,
       labels,
-      review: () =>
+      seedSecondReview: () => {
+        sqlite.run(
+          `INSERT INTO run_progress_events(id,run_id,github_user_id,kind,occurred_at,source,github_object_id,
+            github_url,head_sha,created_at,idempotency_key)
+           VALUES ('event-2','run-1','42','pull_request_opened',?,'agent','PR_second',NULL,NULL,?,'idem-event-2')`,
+          [at, at],
+        );
+      },
+      priorMergeCount: (count) => {
+        priorMergeCount = count;
+      },
+      review: (number = 5) =>
         reviewItem(env as unknown as ReviewEnv, {
           kind: "review",
-          deliveryId: "close-review",
+          deliveryId: `close-review-${number}`,
           ...base,
+          number,
         }),
       job: (kind, extra) =>
         ({
@@ -2976,8 +3074,13 @@ test("an appeal reaches triage after a confirmed close whose comment update fail
         reversal: null,
       },
     ]);
-    // The queue retry finds a closed item and has no review to repeat.
-    expect(await run.review()).toBe("item is not open");
+    // The queue retry repairs the retained close comment, without another close.
+    expect(await run.review()).toBe("closed (spam)");
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
 
     // The author's appeal still reaches Slopbot triage, and the accepted
     // uphold reopens the item and reverses the debit once.
@@ -3634,8 +3737,13 @@ test("a close response without GitHub's close time records no debit", async () =
   setSystemTime(new Date(CLOSED_AT));
   await closedItem(async (run) => {
     run.closeTime(null);
-    expect(await run.review()).toBe("labeled (spam)");
+    await expect(run.review()).rejects.toThrow(
+      "GitHub did not confirm the close",
+    );
     expect(run.sql(PENALTY)).toEqual([]);
+    expect(run.sql("SELECT state FROM slopbot_close_attempts")).toEqual([
+      { state: "pending" },
+    ]);
   });
 });
 
@@ -3864,3 +3972,442 @@ test("reverting the branch to the appealed head after a later head's close never
     ]);
   });
 });
+
+test("concurrent reviews reserve the last repository daily close slot before GitHub", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.seedSecondReview();
+    run.repositoryConfig(
+      JSON.stringify({
+        version: 1,
+        audience: "protection",
+        closure: true,
+        dailyCloseCap: 1,
+      }),
+    );
+    const paused = run.pauseNextClose();
+    const first = run.review();
+    let second: string | undefined;
+    try {
+      await Promise.race([
+        paused.entered,
+        first.then((outcome) => {
+          throw new Error(`First review ended before close: ${outcome}`);
+        }),
+      ]);
+      second = await run.review(6);
+    } finally {
+      paused.release();
+    }
+    expect(await first).toBe("closed (spam)");
+    expect(second).toStartWith("labeled (");
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 1 }]);
+  });
+}, 30000);
+
+test("concurrent reviews reserve the last new-author daily review slot", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.seedSecondReview();
+    for (const id of [1, 2]) {
+      run.sql(`INSERT INTO slopbot_reviews
+        (review_key,installation_id,repository_id,item_kind,item_number,item_node_id,author_id,
+         revision,content_digest,policy_digest,status,created_at,completed_at)
+        VALUES ('prior-${id}',1,${run.repositoryId},'pull_request',${id},'PR_prior_${id}',42,
+         'prior','prior','prior','completed','${CLOSED_AT}','${CLOSED_AT}')`);
+    }
+    const paused = run.pauseNextClose();
+    const first = run.review();
+    let second: string | undefined;
+    try {
+      await Promise.race([
+        paused.entered,
+        first.then((outcome) => {
+          throw new Error(`First review ended before close: ${outcome}`);
+        }),
+      ]);
+      second = await run.review(6);
+    } finally {
+      paused.release();
+    }
+    expect(await first).toBe("closed (spam)");
+    expect(second).toBe("daily review cap for new author reached");
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_reviews WHERE status = 'completed'",
+      ),
+    ).toEqual([{ n: 3 }]);
+  });
+}, 30000);
+
+test("a lost close response reconciles GitHub evidence without another PATCH or model call", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextClose({ loseResponse: true });
+    const first = run.review().catch((error: unknown) => error);
+    await paused.entered;
+    paused.release();
+    expect(await first).toBeInstanceOf(Error);
+    const calls = run.modelInputs.length;
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.modelInputs).toHaveLength(calls);
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
+    expect(run.sql("SELECT state FROM slopbot_close_attempts")).toEqual([
+      { state: "confirmed" },
+    ]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 1 }]);
+    expect(run.sql(PENALTY)).toHaveLength(1);
+    expect(run.comments.at(-1)).toContain("Slopbot closed this item");
+  });
+}, 30000);
+
+test("an unconfirmed close keeps its slot and cannot be resent while GitHub still shows open", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.seedSecondReview();
+    run.repositoryConfig(
+      JSON.stringify({
+        version: 1,
+        audience: "protection",
+        closure: true,
+        dailyCloseCap: 1,
+      }),
+    );
+    const paused = run.pauseNextClose({ failBeforeWrite: true });
+    const first = run.review().catch((error: unknown) => error);
+    await paused.entered;
+    paused.release();
+    expect(await first).toBeInstanceOf(Error);
+    expect(run.currentState()).toBe("open");
+    setSystemTime(new Date(Date.parse(CLOSED_AT) + 2 * day));
+    await expect(run.review()).rejects.toThrow("Review is still claimed");
+    expect(await run.review(6)).toStartWith("labeled (");
+    expect(
+      run.writes.filter(
+        (write) => write.startsWith("PATCH ") && write.includes("/pulls/"),
+      ),
+    ).toHaveLength(1);
+    expect(run.sql("SELECT state FROM slopbot_close_attempts")).toEqual([
+      { state: "pending" },
+    ]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 0 }]);
+  });
+}, 30000);
+
+test("a delayed close reservation cannot win a slot another review already consumed", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.seedSecondReview();
+    run.repositoryConfig(
+      JSON.stringify({
+        version: 1,
+        audience: "protection",
+        closure: true,
+        dailyCloseCap: 1,
+      }),
+    );
+    const paused = run.pauseNextCloseReservation();
+    const first = run.review();
+    try {
+      await Promise.race([
+        paused.entered,
+        first.then((result) => {
+          throw new Error(`Reservation not reached: ${result}`);
+        }),
+      ]);
+      expect(await run.review(6)).toBe("closed (spam)");
+    } finally {
+      paused.release();
+    }
+    expect(await first).toStartWith("labeled (");
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 1 }]);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_close_attempts")).toEqual(
+      [{ n: 1 }],
+    );
+  });
+}, 30000);
+
+test("a delayed close reservation refuses an owner consent revision before sending", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextCloseReservation();
+    const first = run.review();
+    try {
+      await Promise.race([
+        paused.entered,
+        first.then((result) => {
+          throw new Error(`Reservation not reached: ${result}`);
+        }),
+      ]);
+      run.consent(false);
+    } finally {
+      paused.release();
+    }
+    expect(await first).toStartWith("labeled (");
+    expect(
+      run.writes.filter(
+        (write) => write.startsWith("PATCH ") && write.includes("/pulls/"),
+      ),
+    ).toHaveLength(0);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_close_attempts")).toEqual(
+      [{ n: 0 }],
+    );
+  });
+}, 30000);
+
+test("close confirmation rolls back atomically and retries without another external close", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.sql(
+      "CREATE TRIGGER fail_close_confirmation BEFORE UPDATE ON slopbot_close_attempts BEGIN SELECT RAISE(ABORT, 'fixture confirmation failed'); END",
+    );
+    await expect(run.review()).rejects.toThrow("fixture confirmation failed");
+    expect(run.currentState()).toBe("closed");
+    expect(run.sql("SELECT state FROM slopbot_close_attempts")).toEqual([
+      { state: "pending" },
+    ]);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 0 }]);
+    run.sql("DROP TRIGGER fail_close_confirmation");
+    expect(await run.review()).toBe("closed (spam)");
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 1 }]);
+  });
+}, 30000);
+
+test("verified prior merges preserve the new-author cap exemption during concurrent reviews", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    run.seedSecondReview();
+    run.priorMergeCount(1);
+    for (const id of [1, 2])
+      run.sql(`INSERT INTO slopbot_reviews
+      (review_key,installation_id,repository_id,item_kind,item_number,item_node_id,author_id,
+       revision,content_digest,policy_digest,status,created_at,completed_at)
+      VALUES ('prior-${id}',1,${run.repositoryId},'pull_request',${id},'PR_prior_${id}',42,
+       'prior','prior','prior','completed','${CLOSED_AT}','${CLOSED_AT}')`);
+    const paused = run.pauseNextClose();
+    const first = run.review();
+    try {
+      await Promise.race([
+        paused.entered,
+        first.then((result) => {
+          throw new Error(`Close not reached: ${result}`);
+        }),
+      ]);
+      expect(await run.review(6)).toBe("closed (spam)");
+    } finally {
+      paused.release();
+    }
+    expect(await first).toBe("closed (spam)");
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_reviews WHERE status = 'completed'",
+      ),
+    ).toEqual([{ n: 4 }]);
+  });
+}, 30000);
+
+test("a pre-migration close action cannot reserve or send the same close again", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // Represent populated pre-0117 history: the close fact remains, with no
+    // reservation table row and an interrupted review to be retried.
+    run.sql("DROP TRIGGER slopbot_close_attempt_no_delete");
+    run.sql("DELETE FROM slopbot_close_attempts");
+    run.sql(
+      "UPDATE slopbot_reviews SET status = 'failed', completed_at = NULL",
+    );
+    await run.reopen();
+    expect(await run.review()).toStartWith("labeled (");
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_close_attempts")).toEqual(
+      [{ n: 0 }],
+    );
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 1 }]);
+  });
+}, 30000);
+
+test("expired ordinary reviews without pending closes release new-author capacity", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    for (const id of [1, 2, 3])
+      run.sql(`INSERT INTO slopbot_reviews
+      (review_key,installation_id,repository_id,item_kind,item_number,item_node_id,author_id,
+       revision,content_digest,policy_digest,status,created_at,claim_token,lease_expires_at)
+      VALUES ('crashed-${id}',1,${run.repositoryId},'pull_request',${id},'PR_crashed_${id}',42,
+       'prior','prior','prior','running','2020-01-01T00:00:00.000Z','old-${id}','2020-01-01T00:20:00.000Z')`);
+    expect(await run.review()).toBe("closed (spam)");
+  });
+}, 30000);
+
+for (const status of [401, 403, 404, 410, 422, 429]) {
+  test(`a definitive GitHub ${status} close rejection releases capacity and retains retry history`, async () => {
+    setSystemTime(new Date(CLOSED_AT));
+    await closedItem(async (run) => {
+      const paused = run.pauseNextClose({ rejectStatus: status });
+      const first = run.review().catch((error: unknown) => error);
+      await paused.entered;
+      paused.release();
+      expect(await first).toBeInstanceOf(Error);
+      expect(run.currentState()).toBe("open");
+      expect(run.sql("SELECT state FROM slopbot_close_attempts")).toEqual([
+        { state: "rejected" },
+      ]);
+      expect(await run.review()).toBe("closed (spam)");
+      expect(
+        run.sql("SELECT state FROM slopbot_close_attempts ORDER BY rowid"),
+      ).toEqual([{ state: "rejected" }, { state: "confirmed" }]);
+      expect(
+        run.writes.filter(
+          (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+        ),
+      ).toHaveLength(2);
+    });
+  }, 30000);
+}
+
+test("a late close response cannot publish after an expired worker's recovery takes the claim", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextClose({ pauseAfterWrite: true });
+    const first = run.review().catch((error: unknown) => error);
+    try {
+      await paused.entered;
+      expect(run.currentState()).toBe("closed");
+      setSystemTime(new Date(Date.parse(CLOSED_AT) + 21 * 60_000));
+      expect(await run.review()).toBe("closed (spam)");
+      const writes = [...run.writes];
+      paused.release();
+      expect(await first).toBeInstanceOf(Error);
+      expect(run.writes).toEqual(writes);
+    } finally {
+      paused.release();
+    }
+    expect(
+      run.sql("SELECT state, comment_confirmed FROM slopbot_close_attempts"),
+    ).toEqual([{ state: "confirmed", comment_confirmed: 1 }]);
+    expect(run.sql("SELECT status FROM slopbot_reviews")).toEqual([
+      { status: "completed" },
+    ]);
+    expect(run.sql(PENALTY)).toHaveLength(1);
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
+  });
+}, 30000);
+
+test("a delayed close reservation rechecks a newly tripped reopen breaker", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextCloseReservation();
+    const first = run.review();
+    try {
+      await Promise.race([
+        paused.entered,
+        first.then((result) => {
+          throw new Error(`Reservation not reached: ${result}`);
+        }),
+      ]);
+      const closedAt = new Date(Date.parse(CLOSED_AT) - 60_000).toISOString();
+      run.sql(`INSERT INTO slopbot_actions(review_key,repository_id,item_node_id,action,detail,created_at)
+        VALUES ('prior-close',${run.repositoryId},'PR_breaker','close','{}','${closedAt}')`);
+      run.sql(`INSERT INTO slopbot_actions(review_key,repository_id,item_node_id,action,detail,created_at)
+        VALUES ('prior-reopen',${run.repositoryId},'PR_breaker','human_reopen','{}','${CLOSED_AT}')`);
+    } finally {
+      paused.release();
+    }
+    expect(await first).toStartWith("labeled (");
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(0);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_close_attempts")).toEqual(
+      [{ n: 0 }],
+    );
+  });
+}, 30000);
+
+test("a tripped breaker retains an already-sent unknown close for reconciliation", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextClose({ failBeforeWrite: true });
+    const first = run.review().catch((error: unknown) => error);
+    await paused.entered;
+    paused.release();
+    expect(await first).toBeInstanceOf(Error);
+    const closedAt = new Date(Date.parse(CLOSED_AT) - 60_000).toISOString();
+    run.sql(`INSERT INTO slopbot_actions(review_key,repository_id,item_node_id,action,detail,created_at)
+      VALUES ('prior-close',${run.repositoryId},'PR_breaker','close','{}','${closedAt}')`);
+    run.sql(`INSERT INTO slopbot_actions(review_key,repository_id,item_node_id,action,detail,created_at)
+      VALUES ('prior-reopen',${run.repositoryId},'PR_breaker','human_reopen','{}','${CLOSED_AT}')`);
+    await expect(run.review()).rejects.toThrow("Review is still claimed");
+    expect(run.sql("SELECT state FROM slopbot_close_attempts")).toEqual([
+      { state: "pending" },
+    ]);
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
+  });
+}, 30000);
+
+test("the breaker permits equality at ten percent and counts each reversed item once", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const at = new Date(Date.parse(CLOSED_AT) - 60_000).toISOString();
+    for (let i = 0; i < 10; i++)
+      run.sql(`INSERT INTO slopbot_actions
+      (review_key,repository_id,item_node_id,action,detail,created_at)
+      VALUES ('prior-close-${i}',${run.repositoryId},'PR_breaker_${i}','close','{}','${at}')`);
+    for (let i = 0; i < 2; i++)
+      run.sql(`INSERT INTO slopbot_actions
+      (review_key,repository_id,item_node_id,action,detail,created_at)
+      VALUES ('prior-reopen-${i}',${run.repositoryId},'PR_breaker_0','human_reopen','{}','${CLOSED_AT}')`);
+    expect(await run.review()).toBe("closed (spam)");
+  });
+}, 30000);

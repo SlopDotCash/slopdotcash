@@ -3,6 +3,8 @@
 // workers/slopbot/persistence.ts: startReview, ownsReviewClaim, finishReview.
 // Three token generations and five clock instants represent renewal/expiry.
 // Clock expiry grants no authority to an old worker, even before takeover.
+// This single-item projection assumes admission capacity; the multi-item
+// author cap and pending external closures are in bot_author_admission.
 module bot_review_lease {
   var s: { status: str, token: int, now: int, expires: int,
     recordedToken: int, callMade: bool, retry: bool }

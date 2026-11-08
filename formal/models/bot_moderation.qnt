@@ -6,6 +6,8 @@
 // @source workers/slopbot/closure-eligibility.ts
 // One immutable PR revision. Global activation and member eligibility are
 // observations, never derived from a pasted attribution marker or model text.
+// Closure here assumes available capacity. Atomic multi-item capacity and
+// uncertain external requests are in bot_close_capacity/bot_author_admission.
 module bot_moderation {
   var s: { verdict: str, phase: str, qualified: bool, consent: bool,
     member: bool, exempt: bool, assigned: bool, reopened: bool,

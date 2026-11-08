@@ -28,6 +28,9 @@ for every statement in that file.
 | `bot_budget_resume` | `recordBudgetBlock`, active block, `resumeBudgetBlocks` | Two claims/two sends; due time, live claim, active installation; queue precedes checkpoint |
 | `bot_repository_access` | Live installation lookup, permission read, internal access/read routing and GitHub client | Immutable repository and actor match; missing/suspended/unavailable do not grant authority |
 | `bot_quality_receipt` | `verifyQualityReceipt`, `loadQualityEvidence` | Two ticks; signature, source/policy, isolation, predicate, expiry and independently qualified profile |
+| `bot_close_capacity` | Atomic close reservation, external PATCH, refusal, lost response and action confirmation | Two items with two attempts each, one repository slot and three scaled days; pending attempts never age out |
+| `bot_author_admission` | Atomic `startReview` capacity, failure, lease expiry and prior-merge exemption | One new author, two items and two earlier reviews in one rolling day |
+| `bot_close_recovery_claim` | Expired original request, recovery claim, fact confirmation and late response | Two claim generations; a late receipt does not restore comment or review-completion authority |
 
 `api_reporting_readiness` also maps the scheduled/private reporting refresher.
 `api_points_disputes` maps Points triage/escalation orchestration. Their existing
@@ -108,6 +111,72 @@ commit-limit regressions passed through the collector.
   isolation and production closure qualification are separate runtime and
   operational evidence. No provider, account, signing, deployment or
   production activation was performed for this state review.
+
+## Concurrent closure and review capacity
+
+The `b073742d3` review handler checked daily counts before separate awaited
+GitHub writes. A real local regression paused item 5's PATCH before the server
+applied it and completed item 6 against the same migrated SQLite database.
+Both returned `closed (spam)` with a repository cap of one. Seeding two earlier
+completed reviews reproduced the same overrun of the new-author cap of three.
+
+Migration 0117 adds immutable close attempts. One SQL INSERT reserves capacity
+while checking the current review claim and the existing registry publication
+fence. Its shared seven-day breaker predicate preserves distinct reversed
+items and close-action counts, and checks the current ratio in that same write.
+A competing item, expired claim, changed manifest, restriction or newly tripped
+breaker cannot
+win on the earlier count. The confirmed GitHub action and reservation settle in
+one D1 batch. Existing close actions still count; no historical backfill or
+quota reset occurs. New-author admission similarly checks other active reviews,
+recent completed reviews and pending/confirmed close facts in the claim write.
+Only live ordinary review leases consume capacity; their expiry cannot finish
+the old review, so it releases that slot when no external close is pending.
+A positive prior-merge observation retains the existing exemption.
+
+Lost responses retain their pending slots indefinitely. A replay that observes
+the same revision closed by Slopbot, with GitHub's close time, confirms the old
+attempt and repairs its penalty/comment using the retained decision. It makes
+no second PATCH and performs no model call. Maintainer reopen evidence still
+wins before any debit. Open, wrong-actor or changed-source observations do not
+prove that a delayed request cannot complete and do not release capacity.
+If retries exhaust without binding evidence, an operator must investigate and
+replay the original job when evidence becomes available; there is no automatic
+timer-based release. Production closure remains disabled.
+Definitive GitHub 401/403/404/410/422/429 refusals follow the existing appeal
+transport distinction: they record a rejected attempt and release capacity.
+Retry appends a new attempt, while transport loss, 5xx responses and malformed
+success remain pending. Pending rows take priority in recovery, with a
+deterministic timestamp/row order for equal-time historical rows.
+
+The three new models isolate repository capacity, author admission and the
+late-response/recovery claim race. They do
+not claim an atomic transaction with GitHub. Tests use the real review handler,
+SQLite transactions and a local HTTP server, including simultaneous reviews,
+delayed SQL execution, consent changes, response loss, confirmation rollback
+and the prior-merge exemption. The delayed-response test lets GitHub apply the
+close, expires the original lease, completes recovery under a new claim, and
+only then returns the original response. The stale worker makes no further
+GitHub write and cannot change the successor's completed review. Provider replies are synthetic; these runs do
+not qualify model quality or deployed closure authority.
+
+The delayed-SQL breaker regression first reproduced a close after a concurrent
+human reopen crossed the 0.1 threshold. The shared predicate now refuses it.
+Separate cases preserve equality at exactly 0.1, count duplicate reversals of
+one item once, and keep already-sent unknown attempts pending if the breaker
+trips later. The reservation is the local authorization point; it cannot cancel
+an external request that already started.
+
+Validation used pinned Bun 1.3.14, Node 24.15.0, Quint 0.33.1 and the local
+Apalache 0.62.4/TLC adapter. All 19 named scenarios and 1,000 seeded traces of
+up to 60 transitions per model passed. TLC exhausted 222,894 close-capacity
+states, 151 author-admission states and 38 recovery-claim states; each run
+checked stable model and mapped source bytes. The full penalty/appeal suite
+passed 176 tests and 963 assertions before the final shared-breaker refinement.
+Five focused breaker tests then passed, including the three newly added cases;
+the integrated revision still needs the combined required check run. Typecheck
+and scoped lint passed. These bounded and local results do not qualify deployed
+GitHub behavior or authorize enabling production closure.
 
 ## Additional API and historical-state checks
 
