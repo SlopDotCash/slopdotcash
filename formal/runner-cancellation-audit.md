@@ -75,7 +75,7 @@ than proving it.
 
 Review found that directly killing Playwright still left its separately managed
 Vite server alive. The first cancellation probe reproduced this with the real
-preview runner. The browser phase now sends SIGINT to Playwright, whose installed
+preview runner. The browser phase now sends SIGINT on cancellation or timeout to Playwright, whose installed
 handler closes its managed web server. The shared supervisor allows five seconds
 for this cleanup, then retains the existing process-group kill fallback. Other
 commands keep their original direct cleanup. Windows retains task-tree cleanup.
@@ -99,3 +99,17 @@ eight, empty queue). It represents cooperative browser cleanup, the deadline
 fallback, and the distinction between a failed cleanup report and proof that an
 external process disappeared. These checks do not prove general process-tree
 refinement or live provider behavior.
+
+A second review reproduced the same managed-server leak on the phase deadline.
+The deadline and AbortSignal now use one bounded interrupt path. A real
+subprocess probe that starts a detached managed child confirmed both paths
+return failure and leave that child stopped. The TypeScript declaration exposes
+the same optional signal as the implementation. The existing eight process
+lifecycle checks passed again after this change.
+
+Normal execution also passed: four preview clock-transition browser cases,
+two Pages/site cases and two registry email-preference cases. Each runner
+returned zero; the inspected listener ranges were free after completion. A
+controlled first-driver failure followed by SIGTERM retained failure exit one
+in the real integration coordinator. The runtime probe and all captures remain
+outside committed source.

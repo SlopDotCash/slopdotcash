@@ -127,11 +127,16 @@ export function runE2ePhase({
     const timer = setTimeout(() => {
       timedOut = true;
       stderr.write(`[${label}] exceeded the ${timeoutMs}ms phase deadline\n`);
-      stopProcessTree(1);
+      interruptOrStop();
     }, timeoutMs);
     function onAbort() {
       aborted = true;
       stderr.write(`[${label}] canceled\n`);
+      interruptOrStop();
+    }
+    function interruptOrStop() {
+      if (settled || cleaningUp || interruptTimer) return;
+      clearTimeout(timer);
       if (interruptSignal && process.platform !== "win32" && child.pid) {
         // Playwright owns web servers in separate process groups. Let its
         // interrupt handler close them before falling back to group cleanup.
