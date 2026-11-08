@@ -18,6 +18,10 @@ establish that ordering as a product defect or approve a new cancellation
 policy. The model must not imply that a preference update can retract an
 external call already being prepared or sent. A stronger boundary needs a
 separate specified linearization point and real concurrent-handler evidence.
+The model records the consent and authority observed during preparation, so
+its invariant can distinguish authorized preparation from later revocation.
+The two pre-preparation refusal scenarios and that historical observation
+invariant are authored but have not been executed in this source-only review.
 
 ## Other boundaries inspected
 
