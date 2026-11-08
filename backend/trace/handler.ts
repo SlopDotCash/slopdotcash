@@ -7,6 +7,7 @@ import {
 } from "../../src/lib/deployment";
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import type { GithubActor } from "../../src/lib/project-contracts";
+import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import {
   assertWalletPossessionChallenge,
   isSignableSolanaAddress,
@@ -34,6 +35,7 @@ import {
   pathParts,
 } from "../http";
 import { canonicalWalletClaimDigests } from "../payments/wallet-registration";
+import { currentRepositoryPath } from "../projects/setup";
 import { signApiToken, verifyApiToken } from "./auth";
 import {
   type ApiRole,
@@ -814,6 +816,36 @@ async function exchangeIdentityAssertion(
     tokenType: "Bearer",
     expiresAt: new Date(expiresAt * 1000).toISOString(),
   });
+}
+
+/**
+ * A run names the project and repository it belongs to, and the closure check
+ * re-derives the pair from the pull request instead of trusting the row. An
+ * unchecked pair is therefore accepted and silently never counts. Refuse it at
+ * creation with the same repository set the closure check accepts, so the two
+ * ends cannot disagree.
+ */
+async function assertRunIdentity(
+  deps: TraceApiDependencies,
+  projectId: string,
+  repository: string,
+) {
+  const manifest = await deps.persistence.projectManifest(projectId);
+  if (manifest === null)
+    fail(404, "project_not_found", "The project is not registered");
+  const project = assertProjectDefinition(JSON.parse(manifest));
+  const named = repository.toLowerCase();
+  const accepted = project.repositories.some((entry) =>
+    [entry.id, ...(entry.aliases ?? []), currentRepositoryPath(entry)]
+      .map((name) => name.toLowerCase())
+      .includes(named),
+  );
+  if (!accepted)
+    fail(
+      422,
+      "repository_not_in_project",
+      "The repository is not in the project",
+    );
 }
 
 async function createRun(
