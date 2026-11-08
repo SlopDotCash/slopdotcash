@@ -19,10 +19,10 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The completed combined proof checkpoint contains eighteen modules and 67
+The completed combined proof checkpoint contains twenty modules and 71
 selected runtime functions. Dafny's `--isolate-assertions` option proves every
 assertion in a separate obligation; it does not filter assertions. The run
-completed 2,914 obligations with zero errors:
+completed 3,899 obligations with zero errors:
 
 | Runtime module | Functions | Obligations |
 | --- | ---: | ---: |
@@ -44,6 +44,8 @@ completed 2,914 obligations with zero errors:
 | Original clean-scan reuse | 4 | 64 |
 | Native daily liability | 1 | 150 |
 | Retained expiry agreement | 1 | 43 |
+| Complete claim partition | 1 | 281 |
+| Base58 conversion | 3 | 704 |
 
 These counts cannot be compared directly with the earlier 60 declaration
 checks because the proof splitting changed. Neither count is a function
@@ -367,13 +369,13 @@ The follow-up at `d543fa204` passed all nine strict source/proof modules:
 43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
 correction requires the final combined source gate to run again.
 The latest combined proof receipt is
-`evidence/lemmascript/1794154515134-35053/result.json`; all eighteen modules pass
-2,914 obligations after the rebase onto Quint parent
+`evidence/lemmascript/1794154882897-67858/result.json`; all twenty modules pass
+3,899 obligations on the integrated `f37c44ac7` checkpoint after the rebase onto Quint parent
 `1f0dafd45aa172ca5b65bb22fb16da99e35fbb1a`. Source hashes are stable; combined
 typecheck, lint and format checks pass. The rebased
 server-free translator's 14 gated regression tests also pass, including a real
-TLC counterexample for the false literal invariant. The four changed monthly
-and vetting models pass all type, scenario and simulation stages.
+TLC counterexample for the false literal invariant. The changed monthly, vetting, native and claim-partition models pass their
+type, scenario and simulation stages.
 
 The repository test checkpoint at `54be5f519` passed 1,848 tests and 21,746
 assertions with zero failures in 629.74 seconds. Six platform/opt-in cases were
@@ -388,6 +390,14 @@ API/SQLite workflows pass 171 tests and 1,806 assertions with zero failures.
 One existing disposable-sandbox case is skipped. This run takes 330.70 seconds;
 `evidence/lemmascript-selection/combined-65-workflow-receipt.json` records the
 source and log hash. It also predates the final Quint-parent rebase.
+
+After that rebase, native accounting and route preparation pass 104 tests/620
+assertions; accepted-work partition workflows pass 30 tests/210 assertions;
+base58 wallet, adapter and route workflows pass 24 tests/235 assertions.
+Independent frontend/shared review also passes 22 existing workflows/1,729
+assertions and finds no substantive integration defect. The backend review
+also finds no substantive defect. These source reviews and test results do
+not replace the final browser, full repository or chain gates.
 
 The complete browser attempt at `3649142e0` was not green. The Pages lane
 passed six checks. Preview passed 343 checks before its 35-minute limit, with
