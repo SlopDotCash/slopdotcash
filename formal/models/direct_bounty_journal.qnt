@@ -18,9 +18,9 @@ module direct_bounty_journal {
     before:Map(1->empty,2->empty),touched:0,observed:0,expected:0,wrote:false}
   action reserve(q:int,n:int,id:int,stored:bool):bool={
     val entry={request:id,transaction:n,hash:0,candidate:0}
-    val next=s.store.set(n,entry)
+    val nextStore=s.store.set(n,entry)
     all{s.mounted.get(q),s.held.get(q)==noHeld,not(s.used.contains(id)),s.store.get(n).transaction==0,
-      s'=if(stored)s.with("store",next).with("memory",s.memory.set(q,next))
+      s'=if(stored)s.with("store",nextStore).with("memory",s.memory.set(q,nextStore))
         .with("held",s.held.set(q,{nonce:n,request:id,transaction:n}))
         .with("used",s.used.union(Set(id))).with("before",s.store).with("touched",n)
         .with("observed",0).with("expected",0).with("wrote",true)
@@ -30,12 +30,12 @@ module direct_bounty_journal {
     val held=s.held.get(q)
     val current=if(held.nonce==0)empty else s.store.get(held.nonce)
     val owned=current.request==held.request and current.transaction==held.transaction
-    val next=s.store.set(held.nonce,current.with("hash",1))
+    val nextStore=s.store.set(held.nonce,current.with("hash",1))
     val local=if(held.nonce==0)empty else s.memory.get(q).get(held.nonce)
     all{held!=noHeld,
       s'=s.with("held",s.held.set(q,noHeld))
-        .with("store",if(owned and stored)next else s.store)
-        .with("memory",if(owned and stored and s.mounted.get(q))s.memory.set(q,next)
+        .with("store",if(owned and stored)nextStore else s.store)
+        .with("memory",if(owned and stored and s.mounted.get(q))s.memory.set(q,nextStore)
           else if(owned and s.mounted.get(q) and local.request==held.request)s.memory.set(q,s.memory.get(q).set(held.nonce,local.with("hash",1)))
           else s.memory)
         .with("warning",s.warning.set(q,not(owned and stored)))
@@ -65,11 +65,11 @@ module direct_bounty_journal {
       and current.request==local.request and current.transaction==local.transaction
     val conflict=local.hash>0 and current.hash==0 and not(merge)
     val entry=if(merge)current.with("hash",local.hash) else current
-    val next=s.store.set(n,entry)
+    val nextStore=s.store.set(n,entry)
     val hash=if(s.emptyInput.get(q).contains(n))0 else if(entry.candidate>0)entry.candidate else entry.hash
     all{s.mounted.get(q),
-      s'=s.with("store",if(stored and not(conflict))next else s.store)
-        .with("memory",if(stored and not(conflict))s.memory.set(q,next) else s.memory)
+      s'=s.with("store",if(stored and not(conflict))nextStore else s.store)
+        .with("memory",if(stored and not(conflict))s.memory.set(q,nextStore) else s.memory)
         .with("checked",s.checked.set(q,if(stored and not(conflict))hash else 0))
         .with("warning",s.warning.set(q,not(stored) or conflict))
         .with("before",s.store).with("touched",n)
@@ -86,13 +86,24 @@ module direct_bounty_journal {
   action legacy(n:int):bool=all{s.store.get(n).transaction==0,
     s'=s.with("store",s.store.set(n,{request:0,transaction:n,hash:0,candidate:1}))
       .with("before",s.store).with("touched",n).with("expected",0).with("wrote",true)}
-  action step={
-    nondet q=Set(1,2).oneOf()
-    nondet n=Set(1,2).oneOf()
-    nondet id=Set(1,2,3).oneOf()
-    any{reserve(q,n,id,true),reserve(q,n,id,false),returned(q,true),returned(q,false),
-      rejected(q),depart(q),clearInput(q,n),check(q,n,true),check(q,n,false),newerStoredHash(n),
-      resolvedAndRemoved(n),legacy(n),s'=s}}
+  // Choices belong to the action that uses them. This preserves the same
+  // transition union without repeating every successor for unrelated values.
+  action chooseReserve={nondet q=Set(1,2).oneOf() nondet n=Set(1,2).oneOf()
+    nondet id=Set(1,2,3).oneOf() nondet stored=Set(false,true).oneOf()
+    reserve(q,n,id,stored)}
+  action chooseReturned={nondet q=Set(1,2).oneOf() nondet stored=Set(false,true).oneOf()
+    returned(q,stored)}
+  action chooseRejected={nondet q=Set(1,2).oneOf() rejected(q)}
+  action chooseDepart={nondet q=Set(1,2).oneOf() depart(q)}
+  action chooseClearInput={nondet q=Set(1,2).oneOf() nondet n=Set(1,2).oneOf()
+    clearInput(q,n)}
+  action chooseCheck={nondet q=Set(1,2).oneOf() nondet n=Set(1,2).oneOf()
+    nondet stored=Set(false,true).oneOf() check(q,n,stored)}
+  action chooseNewerStoredHash={nondet n=Set(1,2).oneOf() newerStoredHash(n)}
+  action chooseResolvedAndRemoved={nondet n=Set(1,2).oneOf() resolvedAndRemoved(n)}
+  action chooseLegacy={nondet n=Set(1,2).oneOf() legacy(n)}
+  action step=any{chooseReserve,chooseReturned,chooseRejected,chooseDepart,chooseClearInput,
+    chooseCheck,chooseNewerStoredHash,chooseResolvedAndRemoved,chooseLegacy,s'=s}
   val invariant=all{s.used.subseteq(Set(1,2,3)),
     s.wrote and s.expected>0 implies s.observed==s.expected,
     s.touched>0 implies Set(1,2).exclude(Set(s.touched)).forall(n=>s.store.get(n)==s.before.get(n))}
