@@ -215,8 +215,14 @@ Install the lockfile before preparing the ledger input:
 
 ```bash
 bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 ```
+
+The setup command installs the pinned Dafny prover for the source contracts.
+It checks the official archive checksum and reuses a valid local installation.
+See the [LemmaScript report](docs/lemmascript-research.md) for supported platforms,
+proof scope and the contract-update process.
 
 The registry sync reads the public D1 API without credentials, as PR CI does.
 Award and skill validation need those project identities; the committed empty

@@ -19,12 +19,12 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The eight proof modules contain 41 selected runtime functions. The check uses
+The nine proof modules contain 43 selected runtime functions. The check uses
 Dafny's `--isolate-assertions` option, which proves every assertion in a separate
 obligation. It does not filter or skip assertions. The completed run reports
-1,364 verified obligations: 142 money, 40 frontend, 231 fee-converter, 26 worker
+1,435 verified obligations: 142 money, 40 frontend, 231 fee-converter, 26 worker
 policy, 65 evidence-partition, 5 budget/timeout, 662 complete-allocation and 193
-decimal-parsing obligations, with zero errors. These counts cannot be compared directly with
+decimal-parsing and 71 bounded-selection obligations, with zero errors. These counts cannot be compared directly with
 the earlier 60 declaration checks because the proof splitting changed.
 Neither count is a function coverage percentage.
 
@@ -163,6 +163,32 @@ after the early range check. This is not a production latency guarantee.
 The five affected project/amount/monthly suites passed 121 tests and 1,211
 assertions. The actual production entry points also passed under Node 24.15.0,
 including its MJS-to-TypeScript module loading.
+
+### Review and release selection
+
+`verified-selection.ts` adds two executable sequence proofs. `cappedTotal`
+returns the existing minimum/limit-bounded sum while keeping each intermediate
+addition within the supplied safe integer limit. Review credit passes the
+validated assessed-size limit, validated positive bands and the single existing
+policy minimum. The theorem does not assume the uncapped sum fits a number.
+
+`firstMaximumIndex` returns the first maximum for every nonempty supplied list.
+The review caller uses it after its original chronological sort, so equal
+highest bands retain the earlier source. The Pages deployment selector uses it
+after all its existing clean-commit, branch, project, stage, time and URL checks.
+Equal deployment timestamps retain the first matching result. The empty result
+still returns `undefined`. These changes do not prove upstream identity,
+JavaScript date parsing, Cloudflare truth or release authority.
+
+The standalone proof passed all 71 assertion checks. The first strict check
+rejected plain added assertions in a generated method; placing the same checked
+facts in explicit proof blocks passes the unchanged integrity gate. The actual
+review callers matched the prior implementation in 2,420 cases, and the actual
+deployment selector matched in 1,604 cases. The production command also passed
+under Node 24.15.0, including equal timestamps and the empty-result exit status.
+Seven affected workflow suites passed 36 tests and 2,902 assertions.
+Final exact-source checks and caller evidence are recorded in the current run receipts. The earlier
+41-function combined checks remain evidence for their own unchanged checkpoint.
 
 ### Runtime evidence correction
 

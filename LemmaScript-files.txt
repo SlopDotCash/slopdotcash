@@ -9,4 +9,5 @@ src/lib/verified-partition.ts
 workers/verified-budget.ts
 src/lib/verified-allocation.ts
 src/lib/verified-decimal.ts
+src/lib/verified-selection.ts
 src/lib/verified-aggregation.ts

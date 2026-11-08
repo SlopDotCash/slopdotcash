@@ -3615,9 +3615,9 @@
     },
     {
       "path": "scripts/select-pages-deployment.mjs",
-      "sha256": "7f83dfcabdc8cdf359e537e0999502a96aaf5d7fbe2b93c7aafd79f7efc43781",
+      "sha256": "fdc21890ab4a71a94ec5e1ab503d4e243d84185169f3256e21c8f2e1c1b32e98",
       "models": ["formal/models/release_publication.qnt"],
-      "candidateLines": [54],
+      "candidateLines": [55],
       "review": "mapped-abstraction"
     },
     {
@@ -5324,7 +5324,7 @@
     },
     {
       "path": "src/lib/scoring-policy.ts",
-      "sha256": "cf96517d545d369ddc993589c40f4553b41ba9ed1d88600b771de8e5e6064d7c",
+      "sha256": "e7154ce0956e2d2772b7247ff022ba35e498d3fa461e0be6525c09ea95471c3b",
       "models": [
         "formal/models/review_credit.qnt",
         "formal/models/ui_review_pool.qnt"
@@ -5551,6 +5551,18 @@
       "models": ["formal/models/vetting_evidence_upload.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/verified-selection.ts",
+      "sha256": "7f35e914ddbcfdcc9ff77bd115e98af69dc19a16f036a1675ed7f66f76cbb2a9",
+      "models": [
+        "formal/models/release_publication.qnt",
+        "formal/models/review_credit.qnt",
+        "formal/models/ui_review_pool.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction",
+      "statelessReason": "Pure bounded summation and stable maximum-index selection over supplied numeric values. Local loop variables are not an application lifecycle; review eligibility, actor grouping and deployment authority remain in their existing caller models."
     },
     {
       "path": "src/lib/vetting-contracts.ts",
@@ -9824,7 +9836,7 @@
     },
     {
       "path": "formal/models/release_publication.qnt",
-      "sha256": "9d725688fb79604d4506ac82c842d4d2f13606b7ac1313af29dfcf6dfb219939",
+      "sha256": "e1a68b0c21d20a9638dbd5a5417917bc788448816109dc3e1e3ca504e80cae9e",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
@@ -9832,7 +9844,8 @@
         "scripts/prepare-site.mjs",
         "scripts/release-notify.mjs",
         "scripts/select-pages-deployment.mjs",
-        "scripts/verify-staging-deployment.mjs"
+        "scripts/verify-staging-deployment.mjs",
+        "src/lib/verified-selection.ts"
       ],
       "scenarios": [
         "exactReleaseTest",
@@ -9843,8 +9856,8 @@
     },
     {
       "path": "formal/models/review_credit.qnt",
-      "sha256": "6a123880ee156e54c4525928295c7f95c3b5d38d6f3a547d88df75c4493744b2",
-      "sources": ["src/lib/scoring-policy.ts"],
+      "sha256": "fb3d6e15d415265380dde3efcf7f0e8b0c40983da79f7edaaac8e070b3d950e4",
+      "sources": ["src/lib/scoring-policy.ts", "src/lib/verified-selection.ts"],
       "scenarios": [
         "duplicateSourceRefusedTest",
         "minimumPoolTest",
@@ -10788,12 +10801,13 @@
     },
     {
       "path": "formal/models/ui_review_pool.qnt",
-      "sha256": "c24a728ee46c3ac3501f68969804bf75106f5a1ea76ffcaf3e99070ca717060f",
+      "sha256": "371dd8e3e1b0da6823d2d1b9b23824bb5a91a68da165097ed3af81ff120f1455",
       "sources": [
         "src/lib/leaderboard.ts",
         "src/lib/points.ts",
         "src/lib/scoring-policy.ts",
-        "src/lib/verified-allocation.ts"
+        "src/lib/verified-allocation.ts",
+        "src/lib/verified-selection.ts"
       ],
       "scenarios": [
         "advancingWindowKeepsSharesTest",

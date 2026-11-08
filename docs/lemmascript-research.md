@@ -93,6 +93,7 @@ maintenance surface without improving the selected acceptance result.
 | Fee-conversion arithmetic | `workers/fee-converter/verified-arithmetic` | Exact directional division, slippage floor, cap intersection, strict requote reduction, reserve/rent accounting, price-impact ceiling and replacement percentage rounding |
 | Remainder ordering | `verified-allocation.sortRemainders`; project, quality, funding-review and review-budget allocation | Checked merge sort preserves every row and orders exact remainders with the supplied tie ordinal, for any finite list |
 | Exact collection totals | `verified-allocation.sumAmounts`; project, review, quality and funding weights, monthly replacement/frozen totals, received-money validation | Exact sum for any finite BigInt array; nonnegative inputs remain nonnegative |
+| Review pool and maximum selection | `verified-selection`; review credit and Pages deployment selection | Exact bounded sum without unsafe intermediate totals; first maximum preserves review and deployment tie behavior |
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native budgets and review timeout | `verified-budget`; fee converter, referral poster, payment keeper and vetting review plan | Exact existing positive/daily-budget acceptance and capped review-call timeout |
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
@@ -156,6 +157,12 @@ bun run verify
 bun run test:e2e
 ```
 
+The setup script installs the checksum-pinned Dafny 4.11.0 release on macOS
+arm64 and Linux x86-64. On another platform, install that official Dafny version
+and place its executable on `PATH`, then run the checks without the automatic
+setup command. LemmaScript is installed by the repository lockfile. Neither
+tool is shipped in the browser or Worker runtime.
+
 After reviewing a changed contract/caller, refresh the inventory with
 `bun run lemmascript:inventory:update`. Regenerate proof artifacts with the
 pinned `lsc` using `lemmascript.json`. Keep proof additions separate from
@@ -192,8 +199,8 @@ provider behavior, database transactions, economic policy, deployment,
 wallet control, or chain finality.
 
 The detailed reports rank remaining sequence/collection and parser candidates.
-Highest follow-on work is actor-identity and grouping refinement, review
-selection and penalty aggregation, monthly allocation replacement invariants,
+Highest follow-on work is actor-identity and grouping refinement, complete review
+eligibility and penalty aggregation, monthly allocation replacement invariants,
 byte decoder bounds, display formatting, and intake/notification selection.
 Those need larger loop/sequence proofs and explicit parser semantics. They are
 recorded as unproved, not replaced with assumptions or marked complete merely

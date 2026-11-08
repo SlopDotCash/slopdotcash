@@ -380,7 +380,11 @@ bun run test:e2e
 
 `lemmascript:setup` downloads and checks the pinned Dafny 4.11.0 archive on
 macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
-and put `dafny` on `PATH` before running `verify`.
+and put `dafny` on `PATH` before running `verify`. `verify` checks the selected
+executable contracts as well as the application checks. For a contract change,
+follow the source, proof and inventory process in
+[the LemmaScript report](docs/lemmascript-research.md). These contracts do not
+replace the Quint or real workflow evidence above.
 
 The committed registry snapshot is empty. Award and skill validation need the
 synced project identities. Do not commit the generated snapshot.
