@@ -10,19 +10,24 @@ module ui_owner_recovery_lifetime {
   type S = {kind:str,legacy:bool,alive:Set[int],locals:List[int],localHash:List[bool],checks:Set[int],
     captured:List[int],capturedHash:List[bool],outcomes:List[int],store:int,hashFor:int,retried:bool,
     walletOpen:Set[int],walletOwner:List[int],ignored:Set[int],warnings:Set[int],cleared:Set[int]}
-  def initial(kind:str,legacy:bool):S = {kind:kind,legacy:legacy,alive:Set(1),
+  def initial(kind:str,legacy:bool,liveTail:bool):S = {kind:kind,legacy:legacy,alive:Set(1),
     locals:List(1,0),localHash:List(false,false),checks:Set(),captured:List(0,0),capturedHash:List(false,false),outcomes:List(0,0),
-    store:1,hashFor:0,retried:false,walletOpen:if(legacy)Set() else Set(1),walletOwner:List(1,0),ignored:Set(),warnings:Set(),cleared:Set()}
+    store:1,hashFor:0,retried:false,walletOpen:if(liveTail)Set(1) else Set(),walletOwner:List(1,0),ignored:Set(),warnings:Set(),cleared:Set()}
   var s:S
   action init={nondet kind=Set("commitment","release").oneOf()
-    nondet legacy=Set(false,true).oneOf() s'=initial(kind,legacy)}
-  action commitment=s'=initial("commitment",false)
-  action legacyRelease=s'=initial("release",true)
+    nondet legacy=Set(false,true).oneOf() nondet liveTail=Set(false,true).oneOf()
+    s'=initial(kind,legacy,liveTail and not(legacy))}
+  action commitment=s'=initial("commitment",false,false)
+  action commitmentTail=s'=initial("commitment",false,true)
+  action legacyRelease=s'=initial("release",true,false)
+  // useAction's busy flag belongs to the instance awaiting its wallet. A
+  // remounted second instance can still inspect the shared pending record.
+  def walletBusy(id:int):bool=s.walletOpen.exists(attempt=>s.walletOwner[attempt-1]==id)
   action mountSecond=all{not(s.alive.contains(2)),s.locals[1]==0,
     s'=s.with("alive",s.alive.union(Set(2))).with("locals",s.locals.replaceAt(1,s.store))
       .with("localHash",s.localHash.replaceAt(1,s.store>0 and s.hashFor==s.store))}
   action leave(id:int):bool=all{s.alive.contains(id),s'=s.with("alive",s.alive.exclude(Set(id)))}
-  action check(id:int):bool=all{s.alive.contains(id),s.locals[id-1]>0,not(s.checks.contains(id)),s.captured[id-1]==0,
+  action check(id:int):bool=all{s.alive.contains(id),not(walletBusy(id)),s.locals[id-1]>0,not(s.checks.contains(id)),s.captured[id-1]==0,
     s'=s.with("checks",s.checks.union(Set(id))).with("captured",s.captured.replaceAt(id-1,s.locals[id-1]))
       .with("capturedHash",s.capturedHash.replaceAt(id-1,s.localHash[id-1]))}
   action reply(id:int,outcome:int,storageWorks:bool):bool=all{s.checks.contains(id),outcome>=1,outcome<=3,
@@ -39,7 +44,7 @@ module ui_owner_recovery_lifetime {
       .with("outcomes",s.outcomes.replaceAt(id-1,outcome))
       .with("cleared",s.cleared.union(Set(s.captured[id-1])))}
   // A start represents the already-authorized preflight reaching beforeSend.
-  action retry(id:int,storageWorks:bool):bool=all{s.alive.contains(id),s.locals[id-1]==0,not(s.retried),
+  action retry(id:int,storageWorks:bool):bool=all{s.alive.contains(id),not(walletBusy(id)),s.locals[id-1]==0,not(s.retried),
     s'=if(s.store==0 and storageWorks)
       s.with("store",2).with("hashFor",0).with("locals",s.locals.replaceAt(id-1,2))
         .with("localHash",s.localHash.replaceAt(id-1,false)).with("walletOwner",s.walletOwner.replaceAt(1,id))
@@ -64,7 +69,7 @@ module ui_owner_recovery_lifetime {
         .with("locals",if(s.alive.contains(s.walletOwner[attempt-1]))
           s.locals.replaceAt(s.walletOwner[attempt-1]-1,0) else s.locals)
     else s.with("walletOpen",s.walletOpen.exclude(Set(attempt)))}
-  action userClears(id:int,storageWorks:bool):bool=all{s.alive.contains(id),s.locals[id-1]>0,not(s.localHash[id-1]),not(s.checks.contains(id)),
+  action userClears(id:int,storageWorks:bool):bool=all{s.alive.contains(id),not(walletBusy(id)),s.locals[id-1]>0,not(s.localHash[id-1]),not(s.checks.contains(id)),
     s'=if(s.store==s.locals[id-1] and (s.hashFor==s.store)==s.localHash[id-1] and storageWorks)
       s.with("store",0).with("hashFor",0).with("locals",s.locals.replaceAt(id-1,0))
         .with("localHash",s.localHash.replaceAt(id-1,false))
@@ -89,23 +94,27 @@ module ui_owner_recovery_lifetime {
   run departedPendingCannotOverwriteRetryTest=legacyRelease.then(check(1)).then(leave(1)).then(mountSecond)
     .then(check(2)).then(reply(2,2,true)).then(retry(2,true)).then(reply(1,1,true))
     .expect(s.store==2 and s.hashFor==0)
-  run walletTailRetainsStillOwnedEvidenceTest=commitment.then(leave(1)).then(walletReturns(1,true))
+  run walletTailRetainsStillOwnedEvidenceTest=commitmentTail.then(leave(1)).then(walletReturns(1,true))
     .expect(s.store==1 and s.hashFor==1)
-  run walletTailCannotReplaceRetryTest=commitment.then(leave(1)).then(mountSecond).then(check(2))
+  run walletTailCannotReplaceRetryTest=commitmentTail.then(leave(1)).then(mountSecond).then(check(2))
     .then(reply(2,2,true)).then(retry(2,true)).then(walletReturns(1,true))
     .expect(s.store==2 and s.hashFor==0 and s.ignored.contains(1))
-  run walletTailCannotRecreateExplicitlyClearedSlotTest=commitment.then(userClears(1,true)).then(walletReturns(1,true))
+  run walletTailCannotRecreateExplicitlyClearedSlotTest=commitmentTail.then(leave(1)).then(mountSecond)
+    .then(userClears(2,true)).then(walletReturns(1,true))
     .expect(s.store==0 and s.ignored.contains(1))
   run failedRemovalKeepsAttemptTest=commitment.then(check(1)).then(reply(1,3,false))
     .expect(s.store==1 and s.locals[0]==1 and not(s.retried))
-  run failedHashWriteKeepsUnknownAttemptTest=commitment.then(walletReturns(1,false))
+  run failedHashWriteKeepsUnknownAttemptTest=commitmentTail.then(walletReturns(1,false))
     .expect(s.store==1 and s.hashFor==0 and s.warnings.contains(1))
-  run changedEvidenceInSameAttemptIsNotClearedTest=commitment.then(check(1)).then(walletReturns(1,true))
-    .then(reply(1,2,true)).expect(s.store==1 and s.hashFor==1 and s.outcomes[0]==4)
-  run departedDeclineClearsOnlyItsOwnRecordTest=commitment.then(leave(1)).then(walletDeclines(1,true))
+  run changedEvidenceInSameAttemptIsNotClearedTest=commitmentTail.then(mountSecond).then(check(2)).then(walletReturns(1,true))
+    .then(reply(2,2,true)).expect(s.store==1 and s.hashFor==1 and s.outcomes[1]==4)
+  run departedDeclineClearsOnlyItsOwnRecordTest=commitmentTail.then(leave(1)).then(walletDeclines(1,true))
     .expect(s.store==0 and s.cleared.contains(1))
-  run departedDeclineCannotClearRetryTest=commitment.then(leave(1)).then(mountSecond).then(check(2))
+  run departedDeclineCannotClearRetryTest=commitmentTail.then(leave(1)).then(mountSecond).then(check(2))
     .then(reply(2,2,true)).then(retry(2,true)).then(walletDeclines(1,true)).expect(s.store==2)
   run failedCreationDoesNotPromptRetryTest=commitment.then(check(1)).then(reply(1,2,true)).then(retry(1,false))
     .expect(s.store==0 and not(s.retried) and not(s.walletOpen.contains(2)))
+  run sameInstanceWalletBusyBlocksRecoveryControlsTest=commitmentTail.then(check(1).fail())
+    .then(userClears(1,true).fail()).then(retry(1,true).fail())
+    .expect(walletBusy(1) and s.store==1)
 }

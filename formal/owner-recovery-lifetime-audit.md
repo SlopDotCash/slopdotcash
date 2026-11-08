@@ -73,7 +73,10 @@ parent/keyed-child and multi-leg boundaries are not proved by this model.
 storage slot, an original attempt (including a legacy form), one retry with a
 fresh ID, a check per instance, pending/finalized-failure/finalized-success
 outcomes, one wallet result per attempt, storage failures, and explicit user
-clearing. Its thirteen named scenarios include the old A/new B deletion order,
+clearing. Saved-pending and live-wallet-tail initial states are separate.
+The instance awaiting a wallet result cannot check, clear, or retry while
+`useAction` is busy; a remounted instance can inspect the shared marker.
+Its fourteen named scenarios include the old A/new B deletion order,
 live-instance ownership refusal, legacy A versus identified B, a departed
 pending response, retained still-owned wallet evidence, ignored replaced or
 cleared wallet tails, changed evidence in the same attempt, and failed
@@ -84,5 +87,11 @@ UUID uniqueness, exact transaction verification and React's unmount delivery
 are assumptions at this boundary. The finite model does not prove browser
 execution, arbitrary remount histories, cross-tab coordination, or old client
 versions that do not write an attempt ID. A legacy record uses exact-value
-comparison; new attempts break an otherwise identical-value retry. All thirteen
+comparison; new attempts break an otherwise identical-value retry. All fourteen
 scenarios and the complete model are **unexecuted** for this revision.
+
+A source-only model correction separates the live wallet prompt from an
+ordinary restored pending record. Tail scenarios use the departed first
+instance and a second instance; the same-attempt evidence-change scenario
+checks in the second instance while the first wallet promise returns. This
+does not change runtime code or add execution evidence.
