@@ -1,4 +1,5 @@
 // @source contracts/solana/token-extensions.ts
+// @source contracts/solana/verified-token-extensions.ts
 // @source contracts/solana/token.ts
 // @source contracts/solana/programs/slop-escrow/src/token_policy.rs
 // Program-specific token admission; exact byte parsing remains a refinement boundary.

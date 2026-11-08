@@ -1,3 +1,7 @@
+// @source workers/fee-converter/verified-native-liability.ts
+// @source workers/fee-converter/verified-arithmetic.ts
+// @source src/lib/verified-money.ts
+// @source workers/verified-budget.ts
 // @source contracts/evm/native-cost.ts
 // @source migrations/0090_referral_post_gas.sql
 // @source migrations/0092_fee_native_gas.sql

@@ -235,6 +235,29 @@ lemma ceilPercent_ensures(value: int, percent: int)
 {
 }
 
+function solanaNativeFee(fee: int, rent: int, before: int, after: int, principal: int): int
+  requires (fee >= 0)
+  requires (rent >= 0)
+  requires (before >= 0)
+  requires (after >= 0)
+  requires (principal >= 0)
+{
+  greaterAmount((fee + rent), ((before - after) - principal))
+}
+
+lemma solanaNativeFee_ensures(fee: int, rent: int, before: int, after: int, principal: int)
+  requires (fee >= 0)
+  requires (rent >= 0)
+  requires (before >= 0)
+  requires (after >= 0)
+  requires (principal >= 0)
+  ensures (solanaNativeFee(fee, rent, before, after, principal) >= (fee + rent))
+  ensures (solanaNativeFee(fee, rent, before, after, principal) >= ((before - after) - principal))
+  ensures ((solanaNativeFee(fee, rent, before, after, principal) == (fee + rent)) || (solanaNativeFee(fee, rent, before, after, principal) == ((before - after) - principal)))
+  ensures ((((before - after) - principal) <= (fee + rent)) ==> (solanaNativeFee(fee, rent, before, after, principal) == (fee + rent)))
+{
+}
+
 lemma MultiplyMonotone(lower: int, upper: int, factor: int)
   requires lower <= upper
   requires factor >= 0

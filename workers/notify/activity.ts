@@ -18,6 +18,7 @@ import {
   recordDelivery,
   retryWithoutProviderCall,
 } from "./security";
+import { activityDeliveryDecision, deliveryVersion } from "./verified-delivery";
 
 type VerifiedDestination = {
   email: string;
@@ -267,28 +268,43 @@ export async function dispatchActivityMail(
           security_enabled: number | null;
           destination_version: string | null;
         }>();
-      // An essential notice whose operator-verified record is not yet in effect
-      // made no provider call: retry it on the bounded schedule. Optional mail
-      // never retries here, because its consent names one effective destination.
-      if (
-        !destination.available &&
-        row.essential &&
-        deps.config.recipients[row.recipient_github_id]
-      ) {
+      const decision = activityDeliveryDecision(
+        {
+          essential: row.essential !== 0,
+          version: deliveryVersion(row.destination_version),
+        },
+        destination.available
+          ? {
+              kind: registered ? "registered" : "pilot",
+              destinationVersion: destination.destinationVersion,
+            }
+          : {
+              kind: "unavailable",
+              pilotConfigured: Boolean(
+                deps.config.recipients[row.recipient_github_id],
+              ),
+            },
+        preference && destination.available
+          ? {
+              kind: "stored",
+              activity: preference.enabled === 1 ? "enabled" : "disabled",
+              security:
+                preference.security_enabled === 1
+                  ? "enabled"
+                  : preference.security_enabled === 0
+                    ? "disabled"
+                    : "unset",
+              version: deliveryVersion(preference.destination_version),
+            }
+          : { kind: "missing" },
+      );
+      // Retry an essential notice whose configured pilot is not in effect.
+      // Optional mail requires consent for one currently effective destination.
+      if (decision === "retry") {
         await retryWithoutProviderCall(deps, row, "activity");
         continue;
       }
-      if (
-        !destination.available ||
-        (row.essential && preference?.security_enabled === 0) ||
-        (registered &&
-          (row.destination_version !== registered.destinationVersion ||
-            (row.essential && preference?.security_enabled !== 1))) ||
-        (!row.essential &&
-          (preference?.enabled !== 1 ||
-            preference.destination_version !== destination.destinationVersion ||
-            row.destination_version !== destination.destinationVersion))
-      ) {
+      if (!destination.available || decision === "suppress") {
         await recordDelivery(deps, row, "suppressed", null, "activity");
         continue;
       }

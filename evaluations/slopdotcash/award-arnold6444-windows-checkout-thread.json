@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_arnold6444_windows_checkout_thread",
+  "projectId": "slopdotcash",
+  "repository": "SlopDotCash/slopdotcash",
+  "actor": {
+    "id": "U_kgDOCKrpmQ",
+    "login": "arnold6444",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/145418649?v=4",
+    "url": "https://github.com/arnold6444",
+    "kind": "User"
+  },
+  "occurredAt": "2026-10-21T10:08:05.000Z",
+  "points": 2,
+  "source": {
+    "id": "external-70964a6fdbcd2348deb8d90354bc3ee2d611a0f374c92955b17916a3a6d5139b",
+    "kind": "external",
+    "platform": "x",
+    "title": "Thread (Korean): why brand:check fails on a Windows checkout and how PR #722 fixed it",
+    "url": "https://x.com/arnold6444/status/2112848388060524998",
+    "evidence": {
+      "archiveUrl": "https://archive.ph/nJI7D",
+      "contentSha256": "644d6846cbf0e6b3d9f9cffb4ca2e4859efe041e1f84b01a3bcd47fdd349b74e",
+      "capturedAt": "2026-10-21T10:39:37.000Z"
+    }
+  },
+  "reason": "A five-post Korean explainer of the Windows checkout failure fixed in SlopDotCash/slopdotcash#722: core.autocrlf rewrote LF to CRLF so brand:check compared different bytes, the fix was a .gitattributes rule rather than a looser check, the thread quotes the before and after byte comparison (687 of 700 files differed, then 0) and tells readers to compare a fresh checkout against Git bytes instead of disabling the check. It also states what the fix does not prove. The explainer is separate from the merged PR, which already scored on its own.",
+  "review": {
+    "reviewer": "drew-dot-com",
+    "reviewedAt": "2026-10-28T13:50:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/1678"
+  }
+}

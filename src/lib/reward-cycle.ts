@@ -36,7 +36,7 @@ import {
   type WalletProof,
 } from "./rewards";
 import { eventThirds } from "./score-penalties";
-import { weightedShare } from "./verified-money";
+import { allocateWeightedRows } from "./weighted-allocation";
 
 type RewardCycleProposal =
   | ExternalContributionShareManifest
@@ -104,34 +104,14 @@ export function allocateReviewBudgetMinor(
     )
     .sort((left, right) => left.actorId.localeCompare(right.actorId));
   if (eligible.length === 0 || totalMinor === 0n) return new Map();
-  const totalWeight = eligible.reduce(
-    (total, contributor) => total + BigInt(contributor.scoreThirds),
-    0n,
-  );
-  const allocations = new Map<string, bigint>();
-  const remainders = eligible.map((contributor) => {
-    const { amount, remainder } = weightedShare(
-      totalMinor,
-      BigInt(contributor.scoreThirds),
-      totalWeight,
-    );
-    allocations.set(contributor.actorId, amount);
-    return { actorId: contributor.actorId, remainder };
-  });
-  let unallocated =
-    totalMinor -
-    [...allocations.values()].reduce((total, amount) => total + amount, 0n);
-  remainders.sort((left, right) =>
-    left.remainder === right.remainder
-      ? left.actorId.localeCompare(right.actorId)
-      : left.remainder > right.remainder
-        ? -1
-        : 1,
-  );
-  for (let index = 0; unallocated > 0n; index += 1) {
-    const actorId = remainders[index % remainders.length].actorId;
-    allocations.set(actorId, (allocations.get(actorId) ?? 0n) + 1n);
-    unallocated -= 1n;
+  const allocations = new Map(eligible.map(({ actorId }) => [actorId, 0n]));
+  for (const { row, amount } of allocateWeightedRows(
+    totalMinor,
+    eligible,
+    (contributor) => BigInt(contributor.scoreThirds),
+    (left, right) => left.actorId.localeCompare(right.actorId),
+  )) {
+    allocations.set(row.actorId, amount);
   }
   return allocations;
 }

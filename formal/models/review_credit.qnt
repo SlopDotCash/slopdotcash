@@ -1,4 +1,6 @@
 // @source src/lib/scoring-policy.ts
+// @source src/lib/verified-selection.ts
+// @source src/lib/verified-reviewers.ts
 // Fixed seven-review fixture ingested in any order: actor A at t1/band1 and
 // t3/band3, B at t2/band2, C/D/E/F at t4..7. First five distinct actors receive
 // one highest-band weight each; F is beyond the cap. Size is bounded 0..5.

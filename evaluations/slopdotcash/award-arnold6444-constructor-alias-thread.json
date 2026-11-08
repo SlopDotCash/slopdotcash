@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_arnold6444_constructor_alias_thread",
+  "projectId": "slopdotcash",
+  "repository": "SlopDotCash/slopdotcash",
+  "actor": {
+    "id": "U_kgDOCKrpmQ",
+    "login": "arnold6444",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/145418649?v=4",
+    "url": "https://github.com/arnold6444",
+    "kind": "User"
+  },
+  "occurredAt": "2026-10-21T10:33:49.000Z",
+  "points": 2,
+  "source": {
+    "id": "external-84e0494125a5c7c470de789faaa752867412db53b637cbf31d6ea715cdff9fe7",
+    "kind": "external",
+    "platform": "x",
+    "title": "Thread (Korean): a provider named constructor became an Object function string, the alias lookup fixed in PR #772",
+    "url": "https://x.com/arnold6444/status/2112854867387830736",
+    "evidence": {
+      "archiveUrl": "https://archive.ph/YF5nT",
+      "contentSha256": "0d56bc7bbcb03caf3314dfd9ac5206e51d056c647010b3dbbb5eed7d1136d4f9",
+      "capturedAt": "2026-10-21T10:42:18.000Z"
+    }
+  },
+  "reason": "A three-post Korean explainer of the model attribution bug fixed in SlopDotCash/slopdotcash#772: a plain PROVIDER_ALIASES[name] lookup returned the inherited Object constructor for a provider literally named constructor, so the models summary showed a function string. It shows the Object.hasOwn fix, the cases checked (constructor, Constructor, existing OpenAI and Z.ai aliases, unregistered names) and says the change is metadata only, not model performance. A worked example of the prototype-key pitfall for contributors who map names with plain objects; separate from the merged PR, which already scored on its own.",
+  "review": {
+    "reviewer": "drew-dot-com",
+    "reviewedAt": "2026-10-28T13:50:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/1680"
+  }
+}
