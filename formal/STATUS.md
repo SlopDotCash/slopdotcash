@@ -3,7 +3,8 @@
 The goal remains active and incomplete. The source census and finite models are
 maintained against `origin/development` in the separate
 `slopdotcash-quint-current` integration worktree. It includes development
-`3223535c6fa91d8ce5159bf4fce278acf18e286d` (including PRs 2403 and 2404). The earlier dirty `slopdotcash`
+`f4f02c250e4cd1a1db2021c3cb182df96c5cd2de` (including PRs 2400, 2401, 2403 and
+2404). The earlier dirty `slopdotcash`
 checkout is preserved. The prior `slopdotcash-quint` checkpoint and its logs
 remain available; they do not substitute for verification of the latest tree.
 
@@ -23,7 +24,7 @@ for the pending families, resolving all known discrepancies, and running the
 full code/browser/contract checks against a stable final revision. Production
 deployment and live-provider availability are separate boundaries.
 
-The current file census has reached zero unmapped application sources. This is
+The prior file census reached zero unmapped application sources. This is
 a coverage-index milestone, not completion of this goal. Every linked audit
 continues to distinguish finite abstractions from whole-source refinement.
 Remaining work includes cross-tab and navigation/draft interleavings, further
@@ -45,14 +46,14 @@ Full combined code/model/browser verification remains pending; focused passes
 do not close this goal.
 
 The parallel current-development LemmaScript work has been integrated locally.
-Its five selected pure-kernel proof modules passed together (27 functions and
-700 assertions); unselected functions
+Its six selected pure-kernel proof modules passed together after the November 8
+aggregation integration (29 functions and 855 assertions); unselected functions
 remain unproved. No production deployment, live payment or provider activation
 has been performed.
 
 
 The latest composition pass adds queued retirement, provider-call ownership
-and monthly-cutoff checks. The census now maps 798 production sources to 253
+and monthly-cutoff checks. That census mapped 798 production sources to 253
 finite models, with zero unmapped files. These mappings do not establish full
 refinement. The new real SQL/HTTP workflows reproduced each failure before its
 correction, including native workerd D1 for retirement and allocation cutoff.
@@ -63,3 +64,26 @@ verification was superseded during integration and is not a full pass.
 Final combined validation must use the new model and source hashes. Browser
 validation also exposed CSS-zoom probes that could read geometry before layout;
 those test-method corrections and their affected runs are recorded separately.
+
+The November 8 integration fixes native feed deadline classification, removes
+the verifier's network server, preserves TLA literals during fold translation,
+pins the actual verifier JAR and supervises child processes on timeout and
+cancellation. It also replaces an unrealistically large browser wheel gesture
+with bounded input; a native-browser control reproduced that test artifact
+without application code. The current-development vetting and commit-census
+changes have three additional models. Refresh both source inventories after
+the active integration work; the earlier counts are historical checkpoints.
+
+The interrupted combined run is not a pass. Its feed defect is fixed; its
+later scan-service timeout and cleanup failures require the new stable run.
+Remaining work includes a confirmed cross-tab draft-backup loss, a confirmed
+mobile private-intake reflow defect, private and local-chain browser lanes,
+the closure-cap concurrency review, model refinements discovered by the
+independent completion audit, native zoom, and final combined verification.
+
+The current checkpoint has 801 mapped sources, 262 models and 972 named
+scenarios. It includes generated production comparisons for exact bucket
+aggregation and models both lifetime and monthly safe-number refusal. The
+lexical normalizer is modeled explicitly, including strings, escaped quotes,
+comments and nested LET boundaries. These counts will change as the active
+draft and closure corrections are integrated; they do not close the goal.

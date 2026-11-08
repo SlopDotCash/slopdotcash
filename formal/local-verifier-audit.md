@@ -62,6 +62,8 @@ probes confirmed that the test Java descendants exited. Exact commands,
 digests, comparison outputs and process evidence belong under ignored
 `evidence/`; interrupted earlier runs are not complete passes.
 
+`formal_tla_lexing.qnt` records the string, escape, comment and nested-LET
+boundaries; the normalizer is not excluded as a stateless file.
 `formal_translation.qnt` models version refusal, parse failure, checking,
 cleanup and publication. `formal_process.qnt` models an inherited child,
 launcher exit, cancellation, group cleanup and failure reporting. Their bounds

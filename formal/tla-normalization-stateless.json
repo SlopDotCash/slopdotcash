@@ -1,3 +1,0 @@
-{
-  "scripts/quint-tla-normalization.mjs": "Pure TLA text transformation with no I/O, persisted state, scheduling or authority. Lexically protects string and comment contents and matches nested LET/IN before the fold rewrite. The local translator owns compilation and verification lifecycle; focused regressions and the literal/fold Quint fixture check this transformation."
-}

@@ -10,10 +10,12 @@ import {
   type ProjectContributor,
 } from "../src/lib/project-view";
 import { allocatePullRequestReviewCredit } from "../src/lib/scoring-policy";
+import { consumeBuckets, sumBuckets } from "../src/lib/verified-aggregation";
 import {
   type Disclosure,
   verifyDisclosure,
 } from "./check-direct-payment-disclosures";
+import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 function contributor(id: string, weight: number): ProjectContributor {
   return {
@@ -301,6 +303,68 @@ test("Quint historical disclosure trace reproduces legacy rounding without asser
     expect(verifyDisclosure(anomaly, preparation).length).toBe(1);
     anomaly.rows[0].walletAnomaly = "Observed external transfer discrepancy";
     expect(verifyDisclosure(anomaly, preparation)).toEqual([]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Quint signed bucket traces agree with production sums and ordered consumption", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-bucket-model-"));
+  let diagnostic = "";
+  try {
+    const status = await runE2ePhase({
+      label: "bucket-traces",
+      command: "node",
+      args: [
+        resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
+        "run",
+        "formal/models/bucket_aggregation.qnt",
+        "--backend=typescript",
+        "--seed=20261108",
+        "--max-samples=100",
+        "--step=produce",
+        "--max-steps=1",
+        "--n-traces=100",
+        `--out-itf=${join(directory, "bucket-{seq}.json")}`,
+      ],
+      cwd: process.cwd(),
+      env: process.env,
+      timeoutMs: 20_000,
+      onStdout: () => {},
+      onStderr: (text) => {
+        diagnostic += text;
+      },
+    });
+    if (status !== 0)
+      throw new Error(`Bucket trace generation failed: ${diagnostic}`);
+    const paths = readdirSync(directory);
+    expect(paths).toHaveLength(100);
+    for (const path of paths) {
+      const trace = JSON.parse(
+        readFileSync(join(directory, path), "utf8"),
+        (_key, value) =>
+          value && typeof value === "object" && "#bigint" in value
+            ? BigInt(value["#bigint"])
+            : value,
+      ) as { states: { s: Record<string, bigint> }[] };
+      const state = trace.states.at(-1)?.s;
+      if (!state) throw new Error("Quint omitted final bucket state");
+      expect(
+        sumBuckets(2, [
+          { bucket: Number(state.bucketA), amount: state.entryA },
+          { bucket: Number(state.bucketB), amount: state.entryB },
+        ]),
+      ).toEqual([state.sum0, state.sum1]);
+      const consumed = consumeBuckets(
+        [state.initial0, state.initial1],
+        [
+          { bucket: Number(state.requestBucketA), amount: state.requestA },
+          { bucket: Number(state.requestBucketB), amount: state.requestB },
+        ],
+      );
+      expect(consumed.applied).toEqual([state.appliedA, state.appliedB]);
+      expect(consumed.remaining).toEqual([state.remaining0, state.remaining1]);
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

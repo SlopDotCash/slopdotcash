@@ -2,7 +2,7 @@
 
 ## Reproduction
 
-The branch starts from current development
+The original proof branch started from development
 `e3d7dea64f1171f5761033069b98de4fd5cc1e77`. Runtime contracts and proof
 artifacts are listed in `LemmaScript-files.txt`; their exact source hashes,
 command output and current results are written to ignored
@@ -17,14 +17,20 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The five proof modules contain 27 selected runtime functions. The check now
+The earlier five proof modules contained 27 selected runtime functions. The check
 uses Dafny's `--isolate-assertions` option, which proves every assertion in a
 separate obligation. It does not filter or skip assertions. The completed run
-reports 700 verified obligations: 96 money, 40 frontend, 202 fee-converter,
+reported 700 verified obligations: 96 money, 40 frontend, 202 fee-converter,
 26 worker policy, and 336 review-allocation obligations, with zero errors.
 These counts cannot be compared directly with the earlier 60 declaration
 checks because the proof splitting changed. Neither count is a function
 coverage percentage.
+
+The November 8 integrated run adds exact bucket aggregation and ordered
+consumption. All six modules passed: 29 selected functions and 855 obligations
+(the earlier 700 plus 155 aggregation obligations). The receipt is
+`evidence/lemmascript/1794152627151-66843/result.json`. Unselected functions
+remain unproved; subsequent source changes require fresh combined validation.
 
 The default timeout is 30 seconds per prover obligation; the runner also
 bounds each subprocess and kills the subprocess group on timeout. Explicit

@@ -47,6 +47,11 @@ claim that all application state errors have been eliminated.
 | Duplicate retirement | A delayed second cancellation reopened a successor's submitted or held outbox | Reopen only when the same atomic batch retired the old attempt; real SQLite and native D1 workflows in `formal/unsigned-retirement-audit.md` |
 | Provider-call ownership | A GitHub check or queued ownership read could outlive the worker lease and still start paid inference | Recheck ownership after remote checks and at database execution time; actual consumer/provider traces in `formal/value-precall-audit.md` |
 | Queued allocation cutoff | A pre-deadline allocation check could commit a queued edit after the automatic cutoff | Enforce the cutoff in the INSERT using database execution time; real SQLite and native D1 evidence in `formal/monthly-cutoff-audit.md` |
+| Feed deadline | A native HTTP body could fulfill after timeout with partial JSON and take the integrity-error path | Retain the request deadline through headers and body classification; 200-request before/after HTTP reproduction in `formal/feed-deadline-audit.md` |
+| Verifier network boundary | A localhost client option still started a wildcard gRPC listener | Use the pinned local parser command and TLC without a server; `formal/local-verifier-audit.md` |
+| Verifier literal meaning | The upstream fold rewrite could change a string and accept a false invariant | Preserve lexical string/comment boundaries; a real initial-state counterexample is required by the translator regression |
+| Verifier child lifetime | Parent-only timeouts could leave Java running | Supervise and stop the owned process group, retain failure and clean its stage directory; `formal/local-verifier-audit.md` |
+| Signed Points totals | Accepted large negative adjustments could publish an inexact number | Sum signed buckets exactly and refuse an unsafe final total; `formal/aggregation-audit.md` |
 
 The forwarded-report and payout corrections reuse
 [PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and

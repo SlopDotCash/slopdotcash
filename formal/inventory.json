@@ -35,12 +35,12 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "378eab86952f2ca37a7ea24eb378f762d1601832c542dfead6d72bcdf9b954e8",
+      "sha256": "b56f9d53aba5a3bb403cd1ebbab1b2a22209b2ce24104fcc52a334f2bc40d363",
       "models": [
         "formal/models/ci_coverage.qnt",
         "formal/models/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 35, 43],
+      "candidateLines": [1, 39, 47],
       "review": "mapped-abstraction"
     },
     {
@@ -2636,9 +2636,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "afd550fedc4e1ead843fef40663cc844f47467041e463740adb6f06fe9c6f980",
-      "models": ["formal/models/formal_toolchain.qnt"],
-      "candidateLines": [21, 104, 111, 160],
+      "sha256": "d6d188de94625a2b4c3fae90dfd2d273672cccaf6f4e754250e4abc30be1b9a5",
+      "models": [
+        "formal/models/formal_process.qnt",
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/formal_translation.qnt"
+      ],
+      "candidateLines": [30, 51, 144, 146, 174, 181, 235],
       "review": "mapped-abstraction"
     },
     {
@@ -2982,7 +2986,8 @@
       "models": [
         "formal/models/github_census.qnt",
         "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt"
+        "formal/models/pr_review_recovery.qnt",
+        "formal/models/value_feed_deadline.qnt"
       ],
       "candidateLines": [
         23, 178, 189, 198, 265, 276, 278, 281, 380, 468, 489, 525, 556, 620,
@@ -3363,6 +3368,24 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/quint-local-translator.mjs",
+      "sha256": "69b71a31a94479be4726f9035402fd65bbc2d88fc06e96c0a81c227a3e89121c",
+      "models": [
+        "formal/models/formal_tla_lexing.qnt",
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/formal_translation.qnt"
+      ],
+      "candidateLines": [42, 97],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/quint-tla-normalization.mjs",
+      "sha256": "93afa850f9ebe954021ee7b54aa82a4f6d7478aa7003f60f2c325b4b567879fc",
+      "models": ["formal/models/formal_tla_lexing.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/readme-proof-binding.ts",
       "sha256": "e602760eddf7cacd59b78422fcafabac88890340e2b620ed6adb2108f8989fbc",
       "models": ["formal/models/readme_proof_binding.qnt"],
@@ -3438,11 +3461,14 @@
     },
     {
       "path": "scripts/run-e2e-phase.mjs",
-      "sha256": "d45f8e417701c5baafb5a555f79eca4085d9c59aaa464be5713c474cced7b6d8",
-      "models": ["formal/models/evidence_capture.qnt"],
+      "sha256": "a2efca4e42b2404376871a4a3b007435258ed60ed919872979f10233962f8d77",
+      "models": [
+        "formal/models/evidence_capture.qnt",
+        "formal/models/formal_process.qnt"
+      ],
       "candidateLines": [
-        26, 29, 36, 39, 40, 44, 68, 74, 90, 92, 109, 116, 129, 132, 134, 136,
-        143, 147, 154, 159
+        26, 29, 36, 39, 40, 44, 74, 81, 97, 99, 116, 123, 145, 148, 150, 152,
+        159, 163, 170, 175
       ],
       "review": "mapped-abstraction"
     },
@@ -3606,11 +3632,14 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "fc30674d1b81d153fcb1004dcaa321a298a6bc6c34da3ddc50b30c39ac9097aa",
-      "models": ["formal/models/value_ingestion.qnt"],
+      "sha256": "b321b872e6b9904da1fa360b4b273bfc97df7ca5be013cce84bd5a3912ac506b",
+      "models": [
+        "formal/models/value_feed_deadline.qnt",
+        "formal/models/value_ingestion.qnt"
+      ],
       "candidateLines": [
-        48, 59, 136, 137, 138, 140, 141, 288, 289, 290, 291, 293, 294, 624, 660,
-        693, 717, 748, 749, 750, 751, 753, 754
+        48, 59, 147, 148, 149, 151, 152, 302, 303, 304, 305, 307, 308, 638, 674,
+        707, 731, 764, 765, 766, 767, 769, 770
       ],
       "review": "mapped-abstraction"
     },
@@ -4873,13 +4902,15 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "ff931b4c37ede600ccad0972bb42c7bae140bda9d4c1eb1099602cde673bd1e3",
+      "sha256": "82306c746b95c652bd9efff89fa032797482be028275cbb61d6211974fc1ae01",
       "models": [
+        "formal/models/bucket_aggregation.qnt",
         "formal/models/points_journal.qnt",
         "formal/models/points_retained_provenance.qnt",
+        "formal/models/points_total_precision.qnt",
         "formal/models/ui_review_pool.qnt"
       ],
-      "candidateLines": [333, 857, 864, 873],
+      "candidateLines": [334, 877, 884, 893],
       "review": "mapped-abstraction"
     },
     {
@@ -5134,8 +5165,11 @@
     },
     {
       "path": "src/lib/score-penalties.ts",
-      "sha256": "1e2459cf5e3187799da53f9ace5efeca86c2b0113c4c1645bdc3df361828eccd",
-      "models": ["formal/models/points_journal.qnt"],
+      "sha256": "10ffbb4349ff5e045b323e7bf5c8064325fa048b9850000c2349e2633351568a",
+      "models": [
+        "formal/models/bucket_aggregation.qnt",
+        "formal/models/points_journal.qnt"
+      ],
       "candidateLines": [7],
       "review": "mapped-abstraction"
     },
@@ -5311,6 +5345,16 @@
       "path": "src/lib/vault-setup.ts",
       "sha256": "5b1728c03318a4f85bf684db47451cc04ab183e86ebcece23fae94cd5c045b8f",
       "models": ["formal/models/vault_creation.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/verified-aggregation.ts",
+      "sha256": "d5affbf40f96890a22caa12c9b162033f122ecd617d46a5e07868df46840de8e",
+      "models": [
+        "formal/models/bucket_aggregation.qnt",
+        "formal/models/points_total_precision.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6275,9 +6319,12 @@
     },
     {
       "path": "workers/slopbot/value-accepted-commit-census.ts",
-      "sha256": "2db2ef3e2c24665e250951f9cca3408cd38341288156ab6adc34d32fecc45446",
-      "models": ["formal/models/bot_accepted_census.qnt"],
-      "candidateLines": [39, 40],
+      "sha256": "c5fb559a232d2b5ac0ba8b303e179f324b6e8389322dca86553623a358b5bcab",
+      "models": [
+        "formal/models/bot_accepted_census.qnt",
+        "formal/models/bot_commit_census_fallback.qnt"
+      ],
+      "candidateLines": [84, 85],
       "review": "mapped-abstraction"
     },
     {
@@ -6831,10 +6878,13 @@
     },
     {
       "path": "workers/vetting/acquire.ts",
-      "sha256": "1f03e4e23356f8125767827734ddfdad9e1019bc88ca5f299916915ace38a8d7",
-      "models": ["formal/models/vetting_acquisition.qnt"],
+      "sha256": "18bc557ad29fdac24f6138cbb6954de1f484d14adaf411966294921e2e73c727",
+      "models": [
+        "formal/models/vetting_acquisition.qnt",
+        "formal/models/vetting_terminal_outcomes.qnt"
+      ],
       "candidateLines": [
-        15, 19, 36, 38, 79, 80, 510, 517, 518, 537, 559, 586, 595, 601
+        15, 19, 36, 38, 81, 82, 512, 519, 520, 539, 561, 588, 597, 603
       ],
       "review": "mapped-abstraction"
     },
@@ -6901,32 +6951,39 @@
     },
     {
       "path": "workers/vetting/queue.ts",
-      "sha256": "ce2824f89e6954c3ef26df3ed41e9a19e12313167cca9c43dea51fe070dd1c04",
-      "models": ["formal/models/vetting_acquisition.qnt"],
-      "candidateLines": [2, 103, 171, 198, 327, 343, 360, 372],
+      "sha256": "a6f1ae1a57ec05d1840e541cb14d112dd9163537f05dd5ac7d2122f512258395",
+      "models": [
+        "formal/models/vetting_acquisition.qnt",
+        "formal/models/vetting_terminal_outcomes.qnt"
+      ],
+      "candidateLines": [2, 103, 173, 200, 220, 222, 229, 350, 366, 383, 395],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "269162a6e4501b8eced7faf9dea5ae3984e9b2fa9732b75e93f555d9c6234f24",
+      "sha256": "9a4744295fef3e811d67df976913a8e6ba9bc4742ae7ee10c7bd7bf630a7d86b",
       "models": [
         "formal/models/pr_review_retry.qnt",
         "formal/models/vetting_acquisition.qnt",
+        "formal/models/vetting_failed_review_provenance.qnt",
         "formal/models/vetting_review_batches.qnt"
       ],
       "candidateLines": [
         13, 89, 443, 503, 520, 523, 524, 533, 540, 541, 576, 599, 667, 674, 694,
-        716, 727, 752
+        716, 744, 772
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "98764941bfda4b9907edf82aec8b77323788f5859466f3a2ee77301e4c5b3e11",
-      "models": ["formal/models/vetting_acquisition.qnt"],
+      "sha256": "6981a832952146177d70740278656774a98a6d5da2cf3c919f085101f071c843",
+      "models": [
+        "formal/models/vetting_acquisition.qnt",
+        "formal/models/vetting_terminal_outcomes.qnt"
+      ],
       "candidateLines": [
-        4, 11, 134, 142, 143, 161, 186, 190, 197, 203, 212, 259, 462, 491, 499,
-        515, 531, 546, 568, 569, 592, 593, 641, 643, 657, 736, 740, 744, 809
+        4, 11, 136, 149, 150, 168, 193, 197, 204, 210, 219, 266, 469, 498, 506,
+        522, 538, 553, 577, 579, 605, 606, 657, 659, 673, 753, 757, 761, 826
       ],
       "review": "mapped-abstraction"
     },
@@ -6939,9 +6996,12 @@
     },
     {
       "path": "workers/vetting/scanners.ts",
-      "sha256": "3ef59724ea9c32484430029d53dc4e2f06a645ec6ebf2e0f9763eff435aa7435",
-      "models": ["formal/models/vetting_review_batches.qnt"],
-      "candidateLines": [65, 106, 109, 291, 292, 321, 414, 523],
+      "sha256": "40fe229371ff89b97b1dfe58c32c4900277926d3f376489922b9cb73378c9bed",
+      "models": [
+        "formal/models/vetting_review_batches.qnt",
+        "formal/models/vetting_terminal_outcomes.qnt"
+      ],
+      "candidateLines": [65, 106, 109, 305, 306, 335, 428, 537],
       "review": "mapped-abstraction"
     },
     {
@@ -7433,7 +7493,7 @@
     },
     {
       "path": "formal/models/bot_accepted_census.qnt",
-      "sha256": "c7d747eef65ef5ab811af9e2bf47c08f6d4f5793302047ad037128d73b185715",
+      "sha256": "b2c1cd2139cee6be84e23313b0cdc3f3c3f72dda82ee0462b4e50df50a927ae0",
       "sources": [
         "workers/slopbot/value-accepted-commit-census.ts",
         "workers/slopbot/value-group-collection.ts"
@@ -7477,6 +7537,20 @@
         "closedMembershipTest",
         "explicitReopenTest",
         "maintainerExcludedTest"
+      ]
+    },
+    {
+      "path": "formal/models/bot_commit_census_fallback.qnt",
+      "sha256": "5b5d941809d6916d61fa0253a58124ff229459de312fce9606f12c7967dd8bc2",
+      "sources": ["workers/slopbot/value-accepted-commit-census.ts"],
+      "scenarios": [
+        "arbitraryShortListingCannotUseFallbackTest",
+        "duplicateAcrossPagesCannotCompleteTest",
+        "listingCeilingRecoversThroughCompleteCompareTest",
+        "missingHeadCannotCompleteTest",
+        "movingCompareCountCannotCompleteTest",
+        "omittedListedCommitCannotCompleteTest",
+        "shortLastPageCannotCompleteTest"
       ]
     },
     {
@@ -7871,6 +7945,22 @@
         "closureKeepsAwardTest",
         "prefundedNeedsFundsTest",
         "removalRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/bucket_aggregation.qnt",
+      "sha256": "50e8434eec65b78c45c14c248a06d1141afa3045102ca73bef98974fe62da54e",
+      "sources": [
+        "src/lib/points.ts",
+        "src/lib/score-penalties.ts",
+        "src/lib/verified-aggregation.ts"
+      ],
+      "scenarios": [
+        "earlierRequestConsumesFirstTest",
+        "independentRequestsTest",
+        "sameBucketPreservesNegativeSumTest",
+        "signedBucketsStaySeparateTest",
+        "zeroBalancesCannotSpendTest"
       ]
     },
     {
@@ -8414,8 +8504,38 @@
       ]
     },
     {
+      "path": "formal/models/formal_process.qnt",
+      "sha256": "0e1dbbc12814e4aa99f69d0d46017d15d8395f0b780e6d95a1f4903143a9a758",
+      "sources": ["scripts/check-formal.mjs", "scripts/run-e2e-phase.mjs"],
+      "scenarios": [
+        "canceledCleanupCannotPassTest",
+        "cleanSuccessTest",
+        "cleanupFailureIsExplicitTest",
+        "exitedLauncherStillOwnsChildTest",
+        "failureCannotPublishSuccessTest",
+        "timeoutKillsDescendantTest"
+      ]
+    },
+    {
+      "path": "formal/models/formal_tla_lexing.qnt",
+      "sha256": "54a3e3dd9c903a1ba99644c38e5be96d0f0959a33ab690fed5f10d768c4e036c",
+      "sources": [
+        "scripts/quint-local-translator.mjs",
+        "scripts/quint-tla-normalization.mjs"
+      ],
+      "scenarios": [
+        "escapedQuoteStaysLiteralTest",
+        "innerInCannotRewriteOuterFoldTest",
+        "lineCommentEndsAtNewlineTest",
+        "nestedCommentStaysProtectedTest",
+        "nonLambdaDoesNotRewriteTest",
+        "quotedFoldIsDataTest",
+        "stringCannotBeSkippedToLambdaTest"
+      ]
+    },
+    {
       "path": "formal/models/formal_toolchain.qnt",
-      "sha256": "6524074edde3dcd1b75dd6140879c2b73ded867f189a479ff70ed2f14a8f3e88",
+      "sha256": "0ce6b89a1581b18a00ef2938c5065db861cbbd55e4898ce8b4e89ae31e9218e7",
       "sources": [
         ".github/workflows/formal.yml",
         ".github/workflows/lemmascript.yml",
@@ -8428,6 +8548,7 @@
         "scripts/install-value-merge-git.ts",
         "scripts/lemmascript-integrity.mjs",
         "scripts/lemmascript-inventory.mjs",
+        "scripts/quint-local-translator.mjs",
         "scripts/setup-lemmascript.sh"
       ],
       "scenarios": [
@@ -8436,6 +8557,21 @@
         "changedSourceFailsRunTest",
         "failedCheckCannotBecomeSuccessTest",
         "selectedSuccessIsNotFullCoverageTest"
+      ]
+    },
+    {
+      "path": "formal/models/formal_translation.qnt",
+      "sha256": "14366e67713903487bd02f40c5e5e40f19501d15d3c4d08f4d3e6a8f9af23182",
+      "sources": [
+        "scripts/check-formal.mjs",
+        "scripts/quint-local-translator.mjs"
+      ],
+      "scenarios": [
+        "changedInputFailsTest",
+        "counterexampleFailsTest",
+        "localParserSuccessTest",
+        "parseFailureCleansTest",
+        "wrongVersionRefusedTest"
       ]
     },
     {
@@ -8955,6 +9091,18 @@
         "sameAmountAdoptionThenRevocationTest",
         "snapshotAdoptionThenRevocationTest",
         "unrelatedZeroNeverRecoveredTest"
+      ]
+    },
+    {
+      "path": "formal/models/points_total_precision.qnt",
+      "sha256": "a04e0626a68203406eb755260b4bd3ea8f4b8e7af844a9e412cdcade5eb23021",
+      "sources": ["src/lib/points.ts", "src/lib/verified-aggregation.ts"],
+      "scenarios": [
+        "exactBoundaryPublishesTest",
+        "exactSignedCancellationTest",
+        "negativeOverflowRefusedTest",
+        "positiveEarnedOverflowRefusedBeforeAdjustmentTest",
+        "unsafeMonthCannotHideBehindSafeLifetimeTest"
       ]
     },
     {
@@ -10124,6 +10272,22 @@
       ]
     },
     {
+      "path": "formal/models/value_feed_deadline.qnt",
+      "sha256": "27a935890ea336b2e89b534028d86d47e5113f0c6f439ce47b60c9b3f91b2fd4",
+      "sources": [
+        "scripts/generate-leaderboard.ts",
+        "scripts/value-ingestion.ts"
+      ],
+      "scenarios": [
+        "expiredCompleteBodyTest",
+        "expiredPartialBodyTest",
+        "malformedCompleteBodyTest",
+        "resetKeepsSnapshotTest",
+        "timeoutBeforeHeadersTest",
+        "verifiedFeedPublishesTest"
+      ]
+    },
+    {
       "path": "formal/models/value_ingestion.qnt",
       "sha256": "78fd858d15ee643234a66ef4d3bb07e5e495552d38dfaa47229a50276a4bd497",
       "sources": ["scripts/value-ingestion.ts"],
@@ -10165,7 +10329,7 @@
     },
     {
       "path": "formal/models/vetting_acquisition.qnt",
-      "sha256": "663bc6d75676aab05d9282f1233467ea1cdb96d0f9fca056a401468889c36605",
+      "sha256": "2b1d5b225fdb5fee7fde504d741dc27a4c750a7a996b87be1be244ee5912cde8",
       "sources": [
         "workers/vetting/acquire.ts",
         "workers/vetting/assembly-manifest.ts",
@@ -10287,6 +10451,17 @@
       "scenarios": [
         "executionSuccessDoesNotReleaseTest",
         "fullCaptureBindsSourceOnlyTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting_failed_review_provenance.qnt",
+      "sha256": "bfd71df54c3ecbe6330aeb3d437f7daa948e6ab9ad4c20499d8a03364fd53114",
+      "sources": ["workers/vetting/review-plan.ts"],
+      "scenarios": [
+        "exhaustedBudgetDoesNotInventReportTest",
+        "firstFailureUsesBatchOrderTest",
+        "inFlightPassIsRetainedAfterPeerFailsTest",
+        "synthesisFailureRetainsAllPassesTest"
       ]
     },
     {
@@ -10425,7 +10600,7 @@
     },
     {
       "path": "formal/models/vetting_review_batches.qnt",
-      "sha256": "1e0a45b5b7a85899f81bb59a635cff56c55b20febf53d9dc20435c787461408e",
+      "sha256": "92bd4d90a4839d82d842f60e4186fd71edda24205f53b978fd9b2b82869af44d",
       "sources": [
         "workers/vetting/review-plan.ts",
         "workers/vetting/scanners.ts"
@@ -10469,6 +10644,26 @@
         "laterSignoutDoesNotRewriteAuditTest",
         "revokeDuringIOKeepsBytesPrivateTest",
         "signoutBetweenPartsStopsNextPartTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting_terminal_outcomes.qnt",
+      "sha256": "94e3cc0845ee444bb34b669ca6c317b0f88772d0c987c9a1ac83caa4a20a9c8f",
+      "sources": [
+        "workers/vetting/acquire.ts",
+        "workers/vetting/queue.ts",
+        "workers/vetting/run.ts",
+        "workers/vetting/scanners.ts"
+      ],
+      "scenarios": [
+        "cleanCannotRecordFailedRetentionTest",
+        "incompleteCanRecordFailedRetentionTest",
+        "missingRepositoryIsTerminalIncompleteTest",
+        "movedRepositoryIsTerminalIncompleteTest",
+        "primaryDeclineSkipsSpecialistTest",
+        "repositoryOutageRemainsPendingTest",
+        "serviceFailureMayRecoverTest",
+        "specialistDeclineIsIncompleteTest"
       ]
     },
     {
