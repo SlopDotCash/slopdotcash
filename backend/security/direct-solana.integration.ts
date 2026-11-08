@@ -3,11 +3,11 @@
  *   bun backend/security/direct-solana.integration.ts
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { closeSync, mkdtempSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startLocalSolanaValidator } from "../../scripts/local-solana-validator.mjs";
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import {
   prepareSolanaDirect,
@@ -29,24 +29,32 @@ const directory = mkdtempSync(join(tmpdir(), "slop-direct-solana-"));
 const port = Number(process.env.SLOP_DIRECT_SOLANA_TEST_PORT ?? "29899");
 const rpcUrl = `http://127.0.0.1:${port}`;
 const log = openSync(join(directory, "validator.log"), "w");
-const validator = spawn(
-  "solana-test-validator",
-  [
-    "--reset",
-    "--quiet",
-    "--ledger",
-    join(directory, "ledger"),
-    "--rpc-port",
-    String(port),
-    "--faucet-port",
-    String(port + 41),
-    "--dynamic-port-range",
-    `${port + 2}-${port + 31}`,
-    "--bind-address",
-    "127.0.0.1",
-  ],
-  { stdio: ["ignore", log, log] },
-);
+let launched: Awaited<ReturnType<typeof startLocalSolanaValidator>>;
+try {
+  launched = await startLocalSolanaValidator({
+    rpcPort: port,
+    receiptPath: join(directory, "container-receipt.json"),
+    args: [
+      "--reset",
+      "--quiet",
+      "--ledger",
+      join(directory, "ledger"),
+      "--rpc-port",
+      String(port),
+      "--faucet-port",
+      String(port + 41),
+      "--dynamic-port-range",
+      `${port + 2}-${port + 31}`,
+      "--bind-address",
+      "127.0.0.1",
+    ],
+    stdio: ["ignore", log, log],
+  });
+} catch (error) {
+  closeSync(log);
+  throw error;
+}
+const validator = launched.process;
 const connection = new Connection(rpcUrl, {
   commitment: "confirmed",
   confirmTransactionInitialTimeout: 180_000,
@@ -339,14 +347,9 @@ try {
   );
 } finally {
   connection._rpcWebSocket.close();
-  validator.kill("SIGTERM");
-  await Promise.race([
-    new Promise((resolve) => {
-      if (validator.exitCode !== null) resolve(null);
-      else validator.once("exit", resolve);
-    }),
-    sleep(5_000),
-  ]);
-  if (validator.exitCode === null) validator.kill("SIGKILL");
-  closeSync(log);
+  try {
+    await launched.close();
+  } finally {
+    closeSync(log);
+  }
 }

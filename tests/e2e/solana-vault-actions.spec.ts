@@ -1,17 +1,17 @@
 /** Real local validator and public fixture wallets. No live RPC or funds. */
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -26,6 +26,7 @@ import {
 import { verifySolanaVaultCreation } from "../../contracts/solana/owner-creation";
 import { buildInitializeVaultInstructions } from "../../contracts/solana/owner-instructions";
 import { message } from "../../contracts/solana/transactions";
+import { startLocalSolanaValidator } from "../../scripts/local-solana-validator.mjs";
 import { formatBaseUnits } from "../../src/lib/base-units.mjs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import {
@@ -35,6 +36,7 @@ import {
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
 import { CONTRIBUTION } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   type Diagnostics,
   escapeRegExp,
@@ -78,11 +80,12 @@ const rotation = enabled
   ? web3.Keypair.fromSeed(hash("slop-browser-local-rotation"))
   : null;
 const connection = enabled ? new web3.Connection(rpcUrl, "confirmed") : null;
-let validator: ChildProcess;
+let validator: Awaited<ReturnType<typeof startLocalSolanaValidator>>;
 let ledger = "";
 let deployment: EscrowDeployment;
 let config: SolanaEscrowConfig;
 let project: (typeof PROJECTS)[number];
+let unrelatedTransaction = "";
 
 test.skip(
   process.env.SLOP_E2E_SOLANA_VAULT !== "1",
@@ -90,13 +93,18 @@ test.skip(
 );
 test.describe.configure({ mode: "serial", timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
-test.beforeAll(async () => {
+test.beforeAll(async ({ browserName }, testInfo) => {
   const idl = JSON.parse(
     readFileSync(`${root}/contracts/solana/idl/slop_escrow.json`, "utf8"),
   );
   const programId = new web3.PublicKey(idl.address);
-  const binary = `${root}/contracts/solana/target/deploy/slop_escrow.so`;
-  ledger = mkdtempSync(join(tmpdir(), "slop-browser-validator-"));
+  const binary = realpathSync(
+    `${root}/contracts/solana/target/deploy/slop_escrow.so`,
+  );
+  // The copied browser fixture can live outside the container runtime's
+  // shared paths. Keep disposable input in the shared home, and mount the
+  // resolved build artifact read-only without changing its directory.
+  ledger = mkdtempSync(join(homedir(), ".slop-browser-validator-"));
   // A real local mint at the canonical devnet address preserves the production
   // USDC policy without using public funds or weakening asset verification.
   const mint = new web3.PublicKey(ESCROW_NETWORKS["solana-devnet"].asset);
@@ -128,9 +136,13 @@ test.beforeAll(async () => {
       },
     }),
   );
-  validator = spawn(
-    "solana-test-validator",
-    [
+  validator = await startLocalSolanaValidator({
+    rpcPort,
+    readonlyMounts: [binary, mintFile],
+    receiptPath: testInfo.outputPath(
+      `${browserName}-solana-validator-receipt.json`,
+    ),
+    args: [
       "--reset",
       "--quiet",
       "--ledger",
@@ -149,39 +161,13 @@ test.beforeAll(async () => {
       binary,
       owner.publicKey.toBase58(),
     ],
-    { stdio: "ignore" },
-  );
-  for (let i = 0; i < 60; i++) {
-    try {
-      if (validator.exitCode !== null || validator.signalCode !== null)
-        throw new Error("Local validator exited during startup");
-      const identityPath = join(ledger, "validator-keypair.json");
-      if (!existsSync(identityPath)) throw new Error("Validator is starting");
-      const expectedIdentity = web3.Keypair.fromSecretKey(
-        Uint8Array.from(JSON.parse(readFileSync(identityPath, "utf8"))),
-      ).publicKey.toBase58();
-      const response = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getIdentity" }),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (
-        !response.ok ||
-        (await response.json()).result?.identity !== expectedIdentity
-      )
-        throw new Error("The RPC endpoint belongs to another validator");
-      break;
-    } catch {
-      if (validator.exitCode !== null || i === 59)
-        throw new Error("Local validator startup failed");
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
+    stdio: "ignore",
+  });
   const airdrop = await connection.requestAirdrop(
     owner.publicKey,
     100 * web3.LAMPORTS_PER_SOL,
   );
+  unrelatedTransaction = airdrop;
   await connection.confirmTransaction(airdrop, "confirmed");
   const provider = new anchor.AnchorProvider(
     connection,
@@ -326,11 +312,10 @@ test.beforeAll(async () => {
   } as typeof project;
 });
 test.afterAll(async () => {
-  if (validator && validator.exitCode === null) {
-    const stopped = new Promise((resolve) => validator.once("exit", resolve));
-    validator.kill("SIGTERM");
-    await stopped;
-  }
+  // A rejected start can include uncertain engine cleanup. Keep its mounted
+  // input for diagnosis; only a returned handle can confirm safe removal.
+  if (!validator) return;
+  await validator.close();
   if (ledger) {
     rmSync(ledger, { recursive: true, force: true });
     rmSync(`${ledger}-usdc.json`, { force: true });
@@ -587,6 +572,126 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await actions
     .getByLabel("Transaction signature from your wallet")
     .fill("1".repeat(64));
+  await actions
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(actions.getByRole("status")).toContainText(
+    "Waiting for finalized chain evidence",
+  );
+  expect(sends).toHaveLength(1);
+  await page.screenshot({
+    path: info.outputPath("solana-unknown-signature-pending.png"),
+    fullPage: true,
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await connect();
+  const recovery = actions.getByLabel("Transaction signature from your wallet");
+  await expect(recovery).toHaveValue("1".repeat(64));
+  await expect(recovery).toBeEditable();
+  await expect(
+    actions.getByRole("button", {
+      name: "Confirm deposit in wallet",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    actions.getByRole("button", {
+      name: "I checked my wallet; this request was not sent",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(sends).toHaveLength(1);
+  const pendingKey = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
+  const retained = await page.evaluate(
+    (key) => sessionStorage.getItem(key),
+    pendingKey,
+  );
+  if (!retained) throw new Error("The recovery candidate was not saved");
+  expect(JSON.parse(retained).hashSource).toBe("recovery");
+  // A quota failure must retain the candidate in memory without offering a
+  // second send. The next successful check saves it for reload recovery.
+  await page.evaluate((key) => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) {
+        Storage.prototype.setItem = original;
+        throw new DOMException("Storage is full", "QuotaExceededError");
+      }
+      return original.call(this, name, value);
+    };
+  }, pendingKey);
+  await actions
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(actions.getByRole("status")).toContainText(
+    "could not be saved on this device",
+  );
+  await expect(recovery).toHaveValue("1".repeat(64));
+  await expect(recovery).toBeEditable();
+  expect(sends).toHaveLength(1);
+  await actions
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  // Records from before hash provenance existed retain an editable candidate.
+  await page.evaluate((key) => {
+    const text = sessionStorage.getItem(key);
+    if (!text) throw new Error("The recovery record is missing");
+    const value = JSON.parse(text);
+    delete value.hashSource;
+    sessionStorage.setItem(key, JSON.stringify(value));
+  }, pendingKey);
+  await page.reload({ waitUntil: "networkidle" });
+  await connect();
+  await expect(recovery).toHaveValue("1".repeat(64));
+  await expect(recovery).toBeEditable();
+  // A malformed provenance marker cannot enable a new funding action.
+  await page.evaluate((key) => {
+    const text = sessionStorage.getItem(key);
+    if (!text) throw new Error("The recovery record is missing");
+    const value = JSON.parse(text);
+    value.hashSource = "unrecognized";
+    sessionStorage.setItem(key, JSON.stringify(value));
+  }, pendingKey);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(actions.getByRole("alert")).toContainText(
+    "saved transaction cannot be read",
+  );
+  await expect(
+    actions.getByRole("button", {
+      name: "Confirm deposit in wallet",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.evaluate(({ key, value }) => sessionStorage.setItem(key, value), {
+    key: pendingKey,
+    value: retained,
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await connect();
+  await expect(recovery).toHaveValue("1".repeat(64));
+  await recovery.focus();
+  await expect(recovery).toBeFocused();
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("solana-recovery-candidate-editable.png"),
+    fullPage: true,
+  });
+  const restoreText = await enlargeText(page.locator("body"));
+  try {
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: info.outputPath("solana-recovery-candidate-200-percent.png"),
+      fullPage: true,
+    });
+  } finally {
+    await restoreText();
+  }
+  await connection.confirmTransaction(unrelatedTransaction, "finalized");
+  await recovery.fill(unrelatedTransaction);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
