@@ -20,9 +20,9 @@ source snapshot hash list.
 
 | Gate at this source checkpoint | Observed result |
 | --- | --- |
-| Combined LemmaScript proof | Passed: all 33 modules and 168 selected functions; 23,995 isolated obligations, zero errors, stable recorded inputs. |
-| Full repository `verify` | Running after the proof gate; no completed repository result is claimed. |
-| Complete browser matrix | The two preview lanes finished 650 tests: 630 passed, 18 skipped and two failed the same stale signed-out navigation expectation. The focused correction passed eight tests; Pages passed six tests. Registry remains pending. This is not a clean rerun of all 650 preview tests. |
+| Combined LemmaScript proof | Local and hosted checks passed: all 33 modules and 168 selected functions; 23,995 isolated obligations, zero errors. All selected source/proof inputs match. |
+| Full repository `verify` | Failed at two formal phase deadlines. Both unchanged targeted reruns passed. The later lint, unit, integration, build and format commands passed separately; this is not a successful full `verify`. |
+| Browser acceptance | All 741 original normal-lane cases were observed: 693 passed, 46 skipped and two failed stale navigation expectations. Corrected and opt-in runs provide passing evidence for the navigation cases and all 42 functional normal-lane skips. Four intentional desktop duplicate-reflow skips remain; their mobile executions passed. This is assembled evidence, not one clean full-matrix rerun. |
 | Complete Quint exploration | Passed: all 302 bounded model graphs and all seven declared temporal properties, with no filtered or skipped models and stable mapped input hashes. |
 | Native Solana fee conversion | JUP and SOL passed on the unchanged source after the guest-clock correction described below. |
 | Native EVM contracts and keeper | The complete `test:contracts:evm` command passed with unchanged source hashes. |
@@ -76,6 +76,39 @@ counts recorded for every selected source:
 | `workers/fee-converter/verified-jupiter-wire.ts` | 35 | 15,551 |
 | **Total** | **168** | **23,995** |
 
+### Hosted proof and repository continuation
+
+The hosted proof job in
+[Actions run 42518917199](https://github.com/SlopDotCash/slopdotcash/actions/runs/42518917199)
+passed the same 33 modules, 168 selected functions and 23,995 obligations.
+Its receipt SHA-256 is
+`ddcadbe5f7cfe010e424744334e83f173a389b8fee52ded7e2b1d68fee361357`.
+All selected source and proof hashes match the local proof receipt. The only
+recorded input differences are the generated project registry and project
+revisions from the local D1 preparation. This hosted result establishes the
+proof job, not a production deployment or every job in the workflow.
+
+The full local `bun run verify` command failed in two formal-check phases:
+`native_budget` typechecking and the `notification_schema_upgrade` scenario
+run exceeded their 90-second deadlines. The first also reported `kill EPERM`
+during cleanup. The report retained 901 successful phases out of 903 and
+unchanged inputs. Both models then passed their ordinary targeted typecheck,
+scenario and simulation phases without a source or deadline change. The
+original failure remains a failure; those reruns do not turn the full command
+into a pass. Browser work overlapped the failed phases, but the evidence does
+not establish CPU contention or a particular process-ownership cause.
+
+The diagnostic record is
+`evidence/formal-timeouts/diagnostic-receipt.json`. The subsequent
+`evidence/lemmascript-selection/remaining-gates-receipt.json` is explicitly a
+continuation, not a full-verify receipt. Its SHA-256 is
+`b310b252ec9595bc7f70b2949807d8ec6dab3fe74b242377f9c38ab56bd4218b`.
+Lint and formatting passed. The unit-test command completed with 1,881 passes,
+six skips, zero failures and 22,308 assertions. All 16
+integration drivers passed, and the build verified 140 output files. The
+recorded application head and proof inputs remained unchanged. There is no
+successful complete rerun of `verify` in this checkpoint.
+
 ### Browser and model checks
 
 The focused navigation rerun used test-only correction `d370b48d7` from upstream
@@ -85,10 +118,68 @@ byte-identical to the `bd4d58ef6` build, with manifest digest
 This eight-test pass addresses the stale expectation; it does not erase the
 original failures or substitute for an entire preview-matrix rerun.
 
+The ordinary registry lanes passed 57 cases and skipped 28 gated cases.
+The initial DEV sign-in attempt failed four cases; the follow-up passed all
+four after test-harness commit `9537c4b45`, which selected the pinned browser
+and isolated its cache. The first private-intake attempt reported eight
+passes, one failure, four intentional chain skips and five cases not run. After test-only ordering fix `7d247b240`,
+the follow-up passed 14 cases with four explicit chain-gated skips.
+
+Test tag correction `61149b6a723db7cfa9f836b01376d1995c5d1b57` restored ten
+owner-creation cases to the private-intake selection without changing the
+ordinary registry identity set. A separate flagged owner/chain run passed
+all 14 selected cases with zero skips or failures. Its union with the corrected
+14-case private run covers all 28 intended cases, with no missing or extra
+identities, as recorded in `evidence/browser-final/intake-union.json`.
+This is case coverage across runs, not one new full-matrix pass. Both native-ETH
+bounty browser variants then passed with explicit local-chain flags. No
+application-source change is attributed to these test-harness or tag fixes.
+
+The final browser aggregate is `evidence/browser-final/final-browser-receipt.json`,
+SHA-256 `25aa4c498b80b5e26c85339517420cd362141e8b40fce5980c98d9d65d3262f5`.
+Its original 741 normal-lane results remain 693 passes, 46 skips and two stale
+navigation expectation failures. Later runs covered all 42 functional skips.
+The four remaining raw skips are intentional desktop duplicates in
+`payout-wallet-picker.spec.ts`: open-modal and wallet-change reflow checks at
+320 pixels with 200-percent text and at the 160-pixel zoom approximation.
+Each passed in its designated mobile run. This aggregate includes the original
+failures, focused corrections and opt-in runs; it is not one all-green fresh
+matrix. All reserved ports and DEV ports were released, owned validator
+containers were absent, and no owned chain or ETH child process survived.
+Screenshots, videos, traces and exact per-case outcomes remain retained.
+
+The three gated translator tests also passed separately with 15 assertions:
+the real pipeline rejected the false invariant and accepted the literal and
+fold examples. The log hash is
+`720279fefb755b38a9cfc5583906e16eb37c38e8e6dd20f316813abdef28f671`.
+This closes the three translator skips from the ordinary unit run. Its three
+remaining skips are the Windows path, Windows Git Bash and native sandbox
+platform cases; these are not reported as executed.
+
+The opt-in vault run discovered exactly 14 requested Chromium desktop/mobile
+cases: eight EVM and six Solana. Its first attempt passed 11, failed one
+desktop Solana case in the SDK's legacy confirmation wait, and did not run two
+later cases in that serial group. The original failure and cleanup timeout
+remain retained. The unchanged desktop Solana group then passed all three
+cases with zero skips. An external HTTP monitor observed successful finalized
+transactions with null errors during this focused rerun. The earlier timeout
+did not reproduce, so no speculative source fix or timeout increase was made.
+
+All 14 unique vault cases therefore have passing evidence across the two
+runs; this is not one clean 14-case run. Each selected passing case retained
+zero unexpected browser diagnostics. The existing accessibility, keyboard,
+200-percent text and transaction/recovery checks passed. All three owned
+Solana containers reached `stopped` and were absent afterward; the owned
+Anvil, preview, RPC and helper ports were closed. The fixture source commits,
+served manifests, videos, screenshots, diagnostics and exact per-case outcomes
+are retained in `evidence/vault-browser/final-result.json` and its artifacts.
+The tests used fresh historical-data fixtures and local throwaway funds, not
+production D1 state or live payment authority.
+
 The frozen-source `bun run formal:verify` run completed all 302 model graphs
 in 18 minutes 13 seconds. TLC generated 175,107,207 states and retained
 5,607,158 distinct states in total across those separate graphs. All 754 mapped
-source, model and tool hashes remained stable. The receipt is
+source hashes, plus the model and tool hashes, remained stable. The receipt is
 `evidence/formal/verification.json`, SHA-256
 `0bb41d62895eb4a43590e45f78e019fb3f967ce242ec770b2b951cb36f1ca65d`;
 its per-model bounds are retained in `evidence/formal-final/bounds-index.json`.
@@ -135,8 +226,9 @@ storage was changed. Fresh local clones on the same source then passed:
 | JUP | 30,000,000 input units produced 7,145,684 USDC micro-units, above the 7,109,955 minimum, with zero input left. Native cost was 2,044,280 lamports against a 5,000,000 reserve. |
 | SOL | A 105,005,000-lamport earned-fee claim finalized; 100,000,000 lamports produced 8,938,385 USDC micro-units, above the 8,891,825 minimum, with zero wrapped input left. Claim and swap costs were 5,000 and 4,083,560 lamports, each within its 5,000,000 reserve. |
 
-Both transactions used v0 messages with one lookup table. Reopening the D1
-journal and repeating execution retained one finalized conversion. The SOL
+Both conversion transactions used v0 messages with one lookup table.
+Reopening the D1 journal and repeating execution retained one finalized
+conversion. The SOL
 fixture also checked unchanged principal and zero remaining accrued fees.
 Only RPC/WebSocket pairs 28799/28800 and 28999/29000 were published, on IPv4
 loopback. Both validators reported the pinned executable hash and were removed;
@@ -158,9 +250,12 @@ The native records are in the validation worktree under
 not mainnet transfers. They do not establish production activation, remote
 provider availability, whole-application correctness or implementation
 refinement. The combined runtime proof and bounded model exploration are
-complete at the recorded checkpoint. Browser, repository, hosted CI, merge
-and deployment outcomes remain separate gates until their terminal evidence
-is recorded.
+complete at the recorded checkpoint, including the hosted LemmaScript proof
+job. Browser case coverage is assembled from the recorded original and
+follow-up runs. A successful complete `verify` rerun on the final rebased head,
+final integration and merge, and deployment outcomes remain separate gates
+until their terminal evidence is recorded. This checkpoint does not certify
+the later combined application/model head.
 
 ## Reproduction
 
