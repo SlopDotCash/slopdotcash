@@ -33,6 +33,18 @@ import {
 
 export const CYCLE_INDEX_SCHEMA_VERSION = "1" as const;
 
+/**
+ * The one display label for a cycle share, matching the percent format the
+ * project leaderboard and profile pages already use for this field. An
+ * unrecorded share is not a zero share: it reads "Share not recorded", the
+ * same label the profile payment history gives the same null state.
+ */
+export function cycleShareLabel(sharePartsPerMillion: number | null): string {
+  return sharePartsPerMillion === null
+    ? "Share not recorded"
+    : `${(sharePartsPerMillion / 10_000).toFixed(2)}%`;
+}
+
 export interface CycleFileReference {
   sha256: string;
   url: string;

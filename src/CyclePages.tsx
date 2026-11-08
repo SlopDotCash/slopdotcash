@@ -1,7 +1,7 @@
 import { CalendarDays, CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
-import type { CycleIndexEntry } from "./lib/cycle-index";
+import { type CycleIndexEntry, cycleShareLabel } from "./lib/cycle-index";
 import { errorMessage } from "./lib/errors";
 import { cycleSettlementReminder } from "./lib/funding-reminders";
 import {
@@ -160,7 +160,7 @@ export function CyclePage({
           : null;
   const headlineAmount = record
     ? record.kind === "external-prize-share"
-      ? `${(record.reward.sharePartsPerMillion ?? 0) / 10_000}%`
+      ? cycleShareLabel(record.reward.sharePartsPerMillion)
       : formatMicroUsdc(
           record.state === "paid"
             ? record.reward.paidMinor
@@ -173,7 +173,7 @@ export function CyclePage({
           view.reward.projectedPrincipalMinor,
           project.rewardAsset,
         )
-      : `${(view?.reward.totalSharePartsPerMillion ?? 0) / 10_000}%`;
+      : cycleShareLabel(view?.reward.totalSharePartsPerMillion ?? 0);
   return (
     <main className="shell route-main cycle-page route-cycle">
       <DataNotice state={state} retry={retry} />
@@ -384,7 +384,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                     <td>
                       {cycle.kind === "external-prize-share" ? (
                         <span>
-                          {(contributor.sharePartsPerMillion ?? 0) / 10_000}%
+                          {cycleShareLabel(contributor.sharePartsPerMillion)}
                         </span>
                       ) : (
                         <>
@@ -590,7 +590,7 @@ export function CycleArchivePage({
                   <div>
                     <dt>External prize share</dt>
                     <dd>
-                      {(cycle.reward.sharePartsPerMillion ?? 0) / 10_000}%
+                      {cycleShareLabel(cycle.reward.sharePartsPerMillion)}
                     </dd>
                   </div>
                 </dl>
