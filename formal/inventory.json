@@ -5814,15 +5814,15 @@
     },
     {
       "path": "workers/fee-converter/store.ts",
-      "sha256": "c62ed119ed2b6c572c9f95893c95f2a4e392575e358729d69d6e2af7510972e5",
+      "sha256": "a0d4b5a9a80e49dba33bb0ce2828928f6b4df00890133d3b534bbcd879187c47",
       "models": [
         "formal/models/earned_fee_history.qnt",
         "formal/models/fee_lease_journal.qnt",
         "formal/models/native_budget.qnt"
       ],
       "candidateLines": [
-        46, 47, 76, 200, 202, 212, 219, 227, 229, 236, 249, 258, 262, 271, 275,
-        278, 285, 338, 348, 384, 405, 411, 415, 416, 421, 464, 476
+        52, 53, 82, 206, 208, 218, 225, 233, 235, 242, 255, 264, 268, 277, 281,
+        284, 291, 344, 354, 390, 411, 417, 421, 422, 427, 471, 491
       ],
       "review": "mapped-abstraction"
     },
@@ -5843,8 +5843,9 @@
     },
     {
       "path": "workers/fee-converter/verified-native-liability.ts",
-      "sha256": "e3791817fc05aa4a27700fcaebe71734745eb2c356fe19e123d0ee861e1dc98b",
+      "sha256": "28020a9a6110cb7be8c230456e2bc174869c9d8746d14b48b3ea8abb6bf2ce6f",
       "models": [
+        "formal/models/earned_fee_history.qnt",
         "formal/models/fee_lease_journal.qnt",
         "formal/models/fee_nonce_reuse.qnt",
         "formal/models/native_budget.qnt"
@@ -8667,10 +8668,11 @@
     },
     {
       "path": "formal/models/earned_fee_history.qnt",
-      "sha256": "5995bba5c4758840a17c92604b7fd3ee76ab579a6acd29b5c00d8e7111563422",
+      "sha256": "76fa877829d84e592c718c09d411bea3d541a52c26d8a5f4872249beb5b96f7d",
       "sources": [
         "workers/fee-converter/direct-fees-fixture.ts",
-        "workers/fee-converter/store.ts"
+        "workers/fee-converter/store.ts",
+        "workers/fee-converter/verified-native-liability.ts"
       ],
       "scenarios": [
         "evmNonceLiabilityTest",
