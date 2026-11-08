@@ -325,6 +325,43 @@ async function solanaDirectOrRefuse<T>(prepare: () => Promise<T>): Promise<T> {
     throw error;
   }
 }
+/** The wallets and consent observed before planning must still match at commit. */
+export function directPreparationFence(
+  caseId: string,
+  reporterId: string,
+  payerId: string,
+  intent: DirectIntent,
+) {
+  const currentWallet =
+    "EXISTS(SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.record_sha256=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry')";
+  const consent = {
+    rail: "direct",
+    network: intent.network,
+    asset: intent.asset,
+    recipient: intent.recipient,
+  };
+  return {
+    requireSql: `${currentWallet} AND ${currentWallet} AND EXISTS(SELECT 1 FROM security_payment_consents WHERE case_id=? AND reporter_github_id=? AND deployment=?)`,
+    requireValues: [
+      intent.recipient.id,
+      intent.recipient.digest,
+      reporterId,
+      intent.chain,
+      intent.payer.id,
+      intent.payer.digest,
+      payerId,
+      intent.chain,
+      caseId,
+      reporterId,
+      JSON.stringify(consent),
+    ],
+    unmet: {
+      code: "payment_preparation_changed",
+      message: "The payment wallets or consent changed. Review the payment again.",
+    },
+  };
+}
+
 export function insertDirectIntent(
   db: Database,
   caseId: string,
@@ -332,10 +369,11 @@ export function insertDirectIntent(
   key: string,
   intent: DirectIntent,
   at: string,
+  current: ReturnType<typeof directPreparationFence>,
 ) {
   return db
     .prepare(
-      "INSERT INTO security_direct_payments(case_id,network,intent,prepared_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM security_case_events WHERE case_id=? AND case_revision=? AND idempotency_key=? AND kind='prepare-payment')",
+      `INSERT INTO security_direct_payments(case_id,network,intent,prepared_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM security_case_events WHERE case_id=? AND case_revision=? AND idempotency_key=? AND kind='prepare-payment') AND ${current.requireSql}`,
     )
     .bind(
       caseId,
@@ -345,6 +383,7 @@ export function insertDirectIntent(
       caseId,
       revision,
       key,
+      ...current.requireValues,
     );
 }
 export async function issuedSolanaPlans(
