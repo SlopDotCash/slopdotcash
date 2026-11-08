@@ -11,10 +11,10 @@
 module ui_vault_recovery {
   var s:{pending:bool,hash:int,origin:str,draft:int,busy:bool,inflight:int,
     storedHash:int,storedOrigin:str,storedPending:bool,invalid:bool,
-    wallet:bool,error:bool,verified:bool,sends:int}
+    wallet:bool,error:bool,verified:bool,userCleared:bool,sends:int}
   action init=s'={pending:true,hash:0,origin:"none",draft:0,busy:false,inflight:0,
     storedHash:0,storedOrigin:"none",storedPending:true,invalid:false,
-    wallet:false,error:false,verified:false,sends:1}
+    wallet:false,error:false,verified:false,userCleared:false,sends:1}
   val editable=s.pending and s.origin!="wallet" and not(s.busy)
   val canSend=not(s.pending) and not(s.invalid)
   val canClear=s.pending and s.hash==0 and s.draft==0 and not(s.busy)
@@ -45,11 +45,25 @@ module ui_vault_recovery {
     s'=s.with("pending",s.storedPending and s.storedOrigin!="bad")
       .with("hash",s.storedHash).with("origin",s.storedOrigin).with("draft",s.storedHash)
       .with("invalid",s.storedOrigin=="bad").with("wallet",false).with("error",s.storedOrigin=="bad")}
-  action sendNextAction=all{canSend,s.verified,s.sends==1,s'=s.with("sends",2)}
+  // These buttons require a user's assertion about wallet activity. That
+  // assertion is not chain proof and can permit another send after reload
+  // loses a candidate whose storage write failed. Preserve that policy.
+  action userConfirmsUnsent(storageClears:bool):bool=all{canClear,
+    s'=if(storageClears)s.with("pending",false).with("storedPending",false)
+      .with("userCleared",true).with("draft",0).with("hash",0).with("origin","none")
+      .with("storedHash",0).with("storedOrigin","none")
+      else s.with("error",true)}
+  action userClearsUnreadable(storageClears:bool):bool=all{s.invalid,
+    s'=if(storageClears)s.with("invalid",false).with("storedPending",false)
+      .with("userCleared",true).with("error",false).with("draft",0).with("hash",0).with("origin","none")
+      .with("storedHash",0).with("storedOrigin","none")
+      else s.with("error",true)}
+  action sendNextAction=all{canSend,s.sends==1,s'=s.with("sends",2)}
   action step={nondet c=0.to(3).oneOf()
     any{connect,walletReturned,legacyRecord,edit(c),check,pendingResult(true),pendingResult(false),
-      mismatch,unavailable,finalized(true),finalized(false),corruptMarker,reload,sendNextAction,s'=s}}
-  val invariant=all{s.sends<=2,s.sends==2 implies s.verified,
+      mismatch,unavailable,finalized(true),finalized(false),corruptMarker,reload,
+      userConfirmsUnsent(true),userConfirmsUnsent(false),userClearsUnreadable(true),userClearsUnreadable(false),sendNextAction,s'=s}}
+  val invariant=all{s.sends<=2,s.sends==2 implies(s.verified or s.userCleared),
     (s.pending or s.invalid) implies not(canSend),
     s.pending and s.hash>0 implies not(canClear),
     s.pending and s.origin=="recovery" and not(s.busy) implies editable}
@@ -71,4 +85,13 @@ module ui_vault_recovery {
     .expect(s.invalid and not(canSend) and not(editable) and s.sends==1)
   run failedStorageClearCannotEnableAnotherSendTest=init.then(connect).then(edit(2)).then(check).then(finalized(false))
     .expect(s.pending and s.error and not(canSend) and s.sends==1)
+  run failedCandidateWriteReloadNeedsHumanAssertionTest=init.then(connect).then(edit(1)).then(check).then(pendingResult(false))
+    .then(reload).expect(s.hash==0 and s.draft==0 and canClear and not(canSend))
+    .then(userConfirmsUnsent(true)).then(sendNextAction).expect(s.sends==2 and s.userCleared and not(s.verified))
+  run retainedCandidateHasNoUnsentResetTest=init.then(connect).then(edit(1)).then(check).then(pendingResult(true))
+    .then(reload).expect(not(canClear)).then(userConfirmsUnsent(true).fail())
+  run failedHumanResetKeepsPendingTest=init.then(userConfirmsUnsent(false))
+    .expect(s.pending and not(canSend) and not(s.userCleared))
+  run unreadableResetIsUserAssertionNotFinalityTest=init.then(legacyRecord).then(corruptMarker).then(reload)
+    .then(userClearsUnreadable(true)).then(reload).then(sendNextAction).expect(s.sends==2 and s.userCleared and not(s.verified))
 }

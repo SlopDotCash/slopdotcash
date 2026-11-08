@@ -85,9 +85,16 @@ candidate -> pending -> reload -> correction -> exact finalized deposit,
 without a second send, plus legacy records, malformed markers and a quota
 failure. It checks keyboard focus, accessibility and 200% text in the recovery
 state. The shared EVM path is included in the existing Anvil browser suite.
-`ui_vault_recovery` adds eight scenarios for these states. It models settled
+`ui_vault_recovery` adds twelve scenarios for these states. It models settled
 checks and local storage, not unmounted/obsolete callback composition or
 arbitrary browser storage durability. Signature truth remains external.
+In particular, a candidate write failure followed by reload can restore the
+earlier empty-hash intent. The existing explicit "wallet confirms nothing was
+sent" action can then clear it. Clearing an unreadable record likewise rests
+on the user's assertion, not chain evidence. Both paths and failed clears are
+modeled; they do not establish unconditional absence of duplicate sends. The
+fix blocks a blind retry while an intent remains pending, and preserves the
+existing human recovery policy rather than converting it into a chain proof.
 
 ## Validation record at the integration checkpoint
 
@@ -104,7 +111,9 @@ launcher: native/SPL/Token-2022 exact transfers and three private award/API
 scenarios. Their receipts confirm the exact 2.1.21 binary and stopped owned
 containers. The two caller models pass scenarios and 500x60 sampled traces;
 TLC completed 28 vault-caller states and 90 direct-caller states. The recovery
-model passes eight scenarios, 500x60 traces, and 1,042 TLC states.
+model's final twelve-scenario user-reset refinement passes 500x60 traces and
+TLC's complete 1,240-state graph (27,065 generated states, depth 13). It records
+the explicit user-assertion boundary rather than treating a reset as finality.
 
 The final combined **14-case Solana/Anvil browser matrix is running** at this
 checkpoint. It is not a passing result yet. Source hashes and exact completed
