@@ -470,16 +470,20 @@ to 2026-12-05, inside the 2026-11 commitment window, so the `monthly`
 scenario takes the `keeper-v2` path. Anvil keeps every historical state in
 memory (`--prune-history`): its disk-persisted states lose locally deployed
 bytecode, which breaks finalized-block reads of the test vaults. The local
-Solana validator runs only `key-recovery` (see the known blocker below).
+Solana extended suite still runs only `key-recovery`.
 
-## Known blockers
+The Solana section 21 local runner uses immutable run-scoped deployment
+declarations derived from its verified program, Config, owner and initialized
+projects. These are local test inputs, not a second project registry. Each
+local tick checks the loopback RPC genesis and deployed program and project
+facts before it calls the existing snapshot, scanner, ledger, recovery and
+dispatch components. The executor still checks the exact local chain and
+wallet binding. The production network parser continues to refuse
+`solana-localnet`; public devnet continues to use the project registry and
+payments Worker cron.
 
-The payments Worker finds vaults only in the project registry, and the
-registry names registry networks only. The executor admits a local Solana
-validator only as `solana-localnet` and compares that name with the
-obligation. Thus no `solana-localnet` vault can reach dispatch, and on
-`solana-localnet` the section 21 runner stops before it signs, with that
-reason. The extended suite on `solana-localnet` runs only `key-recovery`,
-which needs no registry or dispatch, and records that deviation. The local
-proof of the other Solana scenarios stays open until a maintainer decides how
-a local Solana validator enters the registry.
+This is local component and contract acceptance. It does not qualify the
+production registry cron or a public network. The local extended monthly and
+fault scenarios remain unqualified; `--suite extended` records its
+`key-recovery`-only deviation. Do not infer those scenarios passed from a
+section 21 local result.
