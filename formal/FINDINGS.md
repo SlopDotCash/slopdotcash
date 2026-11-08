@@ -106,3 +106,9 @@ Model/source corrections and verification limits are recorded in
 `backend-runner-review-audit.md`, `binding-veto-audit.md`,
 `runner-cancellation-audit.md` and `direct-payment-composition-audit.md`.
 Final combined-head checks remain separate from these scoped results.
+
+The further local source review found an older private-case GET could overwrite
+a newer action response because `useSecurityData.replace` did not advance its
+read generation. The correction advances that generation. Its runtime evidence
+is still pending; this is a source-confirmed pre-existing race, not a newly
+executed reproduction. See `direct-payment-composition-audit.md`.

@@ -172,3 +172,20 @@ finite result does not prove longer histories or exact stored contents.
 Combined final-head verification and hosted checks remain required. The wider
 state audit is still open. No production release, provider delivery, live-wallet
 authority or settlement availability is claimed.
+
+## Local refinements held for coordinated review
+
+A further source-only review found that `useSecurityData.replace` did not
+advance the active read generation. An older GET success or error could
+therefore overwrite a newer action result. The local correction invalidates
+those older reads before replacing the view. The hook had this behavior on
+the development base; it was not introduced by the earlier state-review PR.
+
+The local models also now distinguish captured actor/generation storage slots
+from the currently displayed recovery rows. The synchronous storage write loop
+is one transition with zero, one or all writes, not interleaved UI edits. The
+runner model includes rejected startup and late sibling cleanup.
+
+These changes are committed locally and are being held outside the published
+PR heads during the coordinated review batch. No new checks were run. They do
+not close the outstanding runtime, browser or model-verification requirements.
