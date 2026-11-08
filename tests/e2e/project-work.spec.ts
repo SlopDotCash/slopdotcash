@@ -152,7 +152,7 @@ test("old work stays dated and an empty queue does not claim availability", asyn
   await expect(work.getByRole("link")).toHaveCount(0);
 });
 
-test("suggestions stay bounded and long titles reflow", async ({
+test("all eligible suggestions stay reachable and long titles reflow", async ({
   page,
   diagnostics,
 }) => {
@@ -174,8 +174,10 @@ test("suggestions stay bounded and long titles reflow", async ({
   await page.goto("/projects/eliza");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
   const work = page.getByRole("region", { name: "Suggested work" });
-  await expect(work.getByRole("link")).toHaveCount(4);
-  await expect(work).not.toContainText("Suggested issue 3");
+  await expect(work.getByRole("link")).toHaveCount(5);
+  await expect(
+    work.getByRole("link", { name: /Suggested issue 3/ }),
+  ).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(

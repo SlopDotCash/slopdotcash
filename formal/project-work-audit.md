@@ -4,15 +4,15 @@
 `ProjectPage` call in `src/App.tsx`, and the public data state supplied by
 `src/lib/use-snapshot.ts`. It models loading, valid empty/nonempty results,
 errors, retries, retained data after refresh failure, stale timestamps, and
-active/paused project changes. Counts range from zero to four for each list;
-the panel shows at most three of each kind.
+active/paused project changes. Counts range from zero to four for each list in this finite model. The panel
+shows every policy-qualified item and adds no display-count limit.
 
 The panel filters the validated snapshot by the project's repository IDs and
 selects only entries whose selection status is `candidate`. It does not use the
 reward-cycle view because a future pool start can leave that view absent while
 current work remains available. The browser
 suite `tests/e2e/project-work.spec.ts` checks blocked and foreign-project
-exclusion, the list bounds, loading/error/retry, empty/stale states, paused
+exclusion, all same-kind suggestions, loading/error/retry, empty/stale states, paused
 projects, future reward-cycle starts, keyboard links, accessibility, and text reflow.
 
 The model assumes the existing snapshot loader supplies only a complete valid

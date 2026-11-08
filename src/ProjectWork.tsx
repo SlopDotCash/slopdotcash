@@ -23,13 +23,11 @@ export function ProjectWork({
           state.snapshot.workQueue.issues,
           state.snapshot.workQueue.pullRequests,
         ].flatMap((queue) =>
-          queue
-            .filter(
-              (item) =>
-                repositories.has(item.repository) &&
-                item.selection.status === "candidate",
-            )
-            .slice(0, 3),
+          queue.filter(
+            (item) =>
+              repositories.has(item.repository) &&
+              item.selection.status === "candidate",
+          ),
         )
       : [];
   return (
