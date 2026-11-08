@@ -50,6 +50,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Complete enforcement action planning](lemmascript-enforcement-plans.md)
 - [Complete text byte partitioning](lemmascript-text-parts.md)
 - [Accepted source selection and ownership operations](lemmascript-source-ownership.md)
+- [Complete retained history graph coverage](lemmascript-history-coverage.md)
 - [Signed Solana wire parser](lemmascript-solana-wire-research.md)
 - [Retained-copy ancestry and unique hunk bindings](lemmascript-retained-binding.md)
 - [Repository access and setup decisions](lemmascript-setup-research.md)
