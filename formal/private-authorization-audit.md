@@ -1,5 +1,17 @@
 # Private authorization model review
 
+Source-only update at `120c7a22` corrects the callback and expiry projection.
+`completeAuthorization` can accept a callback without the SameSite=Strict site
+cookie, but binds the new encrypted grant to the original flow session. A
+present callback account and the provider identity must still match the
+original actor. `readGrant` independently checks the current session, actor,
+submission and the newly issued grant lifetime. The flow and grant have
+separate expiry windows; reading a grant does not consume it. These revisions
+were **not checked or tested**, following the user instruction to skip checks
+and focus on pushing. The evidence below applies only to the earlier model
+revision and must not be read as validation of this update. See
+[the source-only review](backend-source-review.md).
+
 The prior `api_private_authorization` invariant required only a grant to exist
 when it was used. Removing its session-binding guard still passed. The model
 now records the session, actor, submission and time at each successful use,
