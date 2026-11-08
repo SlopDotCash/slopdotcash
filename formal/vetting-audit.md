@@ -19,6 +19,8 @@ its finite model.
 | `vetting_execution_provenance` | Isolated runner client, evidence parser, inspection, filesystem phases and provenance binding | Bound artifact/interpreter/image, complete phase references, source content/mode identity; successful execution never releases quarantine |
 | `vetting_flag_admission` | GitHub standing read, file/expire/withdraw, ban-at-write guard | Two eligible members, immutable account identity, no new flag after ban, expiry does not undo an existing pause |
 | `vetting_disposition` (corrected) | `dispositionProblems`, `scanProblems`, result composition | Current v2 clean needs a primary and conditionally a specialist; legacy v1 consistency differs and its clean evidence path currently refuses |
+| `vetting_terminal_outcomes` | Repository identity response, `reviewDeclined`, primary/specialist orchestration and evidence retention | One assessment and two passes; a missing/moved source or provider decline can settle incomplete, while service failures remain retryable |
+| `vetting_failed_review_provenance` | `reviewInventory` concurrent batch completion, failure selection and synthesis failure | Three batches, two concurrent calls and one synthesis; every returned pass remains bound to the whole inventory |
 
 The source evidence graph additionally checks the retained report, source and
 final inventories, dependency locks, artifact parents, isolated execution
@@ -41,8 +43,11 @@ publish clean admission.
 `review-plan.ts` previously treated an earlier retry's missing usage/cost as
 zero when the last retry had evidence. A real `reviewInventory` transport
 regression returned a known 100-input-token aggregate after an unreadable
-503 attempt. The aggregate now stays null unless all attempts have usage/cost.
-The full existing review-plan suite passes: 14 tests, 1,382 assertions. This is
+503 attempt. A successful retry now keeps that aggregate null unless all
+attempts have usage/cost. A terminal failed review may retain the observed
+subtotal as failure diagnostics; it does not claim complete accounting.
+The reviewed upstream integration passes the review-plan suite: 15 tests,
+1,388 assertions. This is
 an accounting/transport test with synthetic responses, not evidence of model
 quality, security classification or real provider completion.
 
@@ -64,6 +69,53 @@ No live scan, provider quality qualification, secret use, storage deletion,
 key change, sandbox release, production deployment or activation is claimed.
 The finite models do not exhaust the possible bytes, file formats, adversarial
 source texts, runtime processes or external failures handled by these modules.
+
+## Upstream terminal outcomes, f4f02c250
+
+The `3223535..f4f02c250` review changes behavior, not just source hashes.
+`acquireQueuedAssessment` observes the repository identity response without
+following a redirect. A 404 or any 3xx becomes a bound acquisition refusal.
+`scanOne` publishes that refusal as incomplete; 429/5xx and transport failures
+continue through the retry path. The existing acquisition model ends before
+this orchestration decision. `vetting_terminal_outcomes` models both outcomes.
+
+`stop-refusal` and `incomplete-content_filter`, including batch or synthesis
+labels, now make a failed review terminal incomplete. A primary decline skips
+the specialist. A specialist decline retains both reviews. Other failed
+reviews and exhausted batch budgets stay pending. Accepted publication removes
+the item from the queue; an incomplete result can still record quarantine when
+private evidence storage fails. A clean result cannot use that exception.
+The model assumes an accepted publication; it does not replace the separate
+publication journal and transport recovery models.
+
+Failed batch and synthesis reports now name the whole inspected inventory and
+include every outcome that returned, including an already-running peer after
+another batch failed. Failure selection uses batch index order, not completion
+time. `vetting_failed_review_provenance` models that join and selected failure;
+it represents cached outcomes as already resolved calls and does not prove the
+cache serialization or complete report schema.
+
+Conformance uses the existing upstream tests in `scripts/vetting-scan-service.test.ts`
+for primary, batch and specialist declines, missing/moved repositories, later
+passes making no model call, service recovery and failed evidence retention.
+`scripts/vetting-queue.test.ts` checks manual identity redirects and the recorded
+rename path. `workers/vetting/review-plan.test.ts` retains the retry receipt and
+batch/synthesis failure regressions. These are real local orchestration,
+database and HTTP-fixture checks, not provider-quality qualification. The
+concurrent failure-selection model additionally records a bounded source
+inspection; that exact completion-order permutation lacks a generated replay.
+
+The new models passed all 12 named scenarios and 1,000 seeded traces of up to
+60 transitions each. TLC exhausted 69 states for `vetting_terminal_outcomes`
+and 85 for `vetting_failed_review_provenance`, with the bounds above. The
+review-plan suite initially hit the ad-hoc runner's default five-second timeout
+in one cache test; rerunning with the repository's required 30-second timeout
+passed all 15 tests. This is not evidence of unbounded termination or a complete
+implementation-refinement proof.
+The nine focused scan-service workflows passed 72 assertions, including all
+new decline/missing/moved paths and the existing outage and evidence-retention
+paths. All seven queue acquisition tests also passed. The provider and GitHub
+responses in these runs are local fixtures.
 
 ## Qualification wrappers and fixed configuration
 

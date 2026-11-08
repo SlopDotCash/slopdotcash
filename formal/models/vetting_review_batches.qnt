@@ -3,6 +3,9 @@
 // Three batches and a synthesis; two attempts abstract the actual maximum
 // three. Complete batches resume from cache only for identical profile/input.
 // An unknown failed-call cost keeps the aggregate unknown after recovery.
+// Failure here means a retryable service failure. Provider-declined content is
+// terminal incomplete in vetting_terminal_outcomes; failed report input/pass
+// provenance is in vetting_failed_review_provenance.
 module vetting_review_batches {
   var s: { done: Set[int], attempts: int, budget: int, active: int,
     unknown: bool, synthesized: bool, knownTotal: bool, generation: int }

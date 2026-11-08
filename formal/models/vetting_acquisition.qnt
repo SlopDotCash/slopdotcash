@@ -5,6 +5,8 @@
 // @source workers/vetting/review-plan.ts
 // Pinned manifest/source/template integrity and complete batch review. Three
 // batches represent an arbitrary finite partition, not a repository size cap.
+// Refuse stops acquisition before queue mutation. The worker's distinction
+// between retry and terminal incomplete is in vetting_terminal_outcomes.
 module vetting_acquisition {
   var s: { phase: str, queued: bool, manifest: bool, source: bool, templates: bool,
     reviewed: Set[int], gaps: bool, modelCompleted: bool, published: bool }

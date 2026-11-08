@@ -21,6 +21,7 @@ for every statement in that file.
 | `bot_producer_provenance` | Structured route, `assessValue`, producer identity, prompt evidence projection and exact model identity | Two provider attempts; admission before fallback; subscription declaration cannot create API receipt |
 | `bot_historical_import` | Private `publishSubscription` RPC, `importSubscriptionAssessment`, fixed/configured cutoff and optional merge reconstruction | One import; every source must be historical; deployed producer and source binding required |
 | `bot_accepted_census` | `collectAcceptedCommitCensus`, recursive search partition and `collectValueGroup` discovery | Three immutable source IDs; unique/disjoint partitions conserve count, moving count stays incomplete |
+| `bot_commit_census_fallback` | Per-PR commit listing and `compareRangeCommits` fallback | One PR, three required commits from four identities; exact page counts, pinned heads, uniqueness and inclusion of every listed commit |
 | `bot_value_dispute_binding` | Current single/joint dispute selection, retained dispute read, actor identity checks | Three retained revisions; later correction never retargets an opened dispute |
 | `bot_review_admission` | `route`, config/closure contracts | Eligibility boolean classes; a reopened, draft, closed or bot item cannot enter review; security scope cannot close |
 | `bot_notice_delivery` | Failure/spend notice claim, `deliverNotice`, receipt append | Three scaled milestones; one send per claim, accepted versus ambiguous retained |
@@ -52,6 +53,30 @@ verdict, make a provider call, qualify model quality, or claim live-GitHub
 availability. The valid and corrupted publication cases both pass after the
 change. Four existing source/group/census/live-registry suites also pass:
 37 tests, 191 assertions in the combined targeted run.
+
+## Upstream commit-listing recovery, f4f02c250
+
+The collector now distinguishes a 250-commit PR listing with a larger reported
+total from an arbitrary incomplete response. GitHub documents the [PR commit limit](https://docs.github.com/en/rest/pulls/pulls#list-commits-on-a-pull-request)
+and [paginated comparisons](https://docs.github.com/en/rest/commits/commits#compare-two-commits).
+The `3223535..f4f02c250` implementation requests the pinned
+base/head comparison only when the listing contains exactly 250 unique commits
+and reports a larger total. Every compare page must retain that total and have
+the exact expected size. Every SHA must be valid and unique, and the completed
+comparison must include all previously listed commits. A mismatch leaves the
+census incomplete; adding a merge commit cannot repair missing source coverage.
+
+`bot_commit_census_fallback` scales the ceiling to two commits and the full
+census to three. It checks recovery, arbitrary shortfall, missing heads, moving
+totals, missing listed commits, short final pages and cross-page duplicates.
+The existing PR-search partition model is unchanged in scope. The upstream
+`value-census-commit-limit.test.ts` exercises the real collector with 300 commits,
+250 listed commits and three compare pages, plus refusal cases. Its transport
+is a deterministic GitHub fixture, not a live-GitHub availability or API-limit
+qualification. Hash syntax and provider truth remain explicit abstractions.
+All seven named scenarios and 1,000 seeded traces of up to 60 transitions
+passed. TLC exhausted 144 states under these scaled bounds. All five upstream
+commit-limit regressions passed through the collector.
 
 ## Limits that remain material
 

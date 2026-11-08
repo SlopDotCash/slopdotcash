@@ -2,6 +2,8 @@
 // @source workers/slopbot/value-group-collection.ts
 // A paginated census pins count and unique immutable PR IDs. Recursive search
 // partitions must not overlap and must conserve the parent result count.
+// Commit pagination within each PR, including the 250-commit listing fallback,
+// is separate from this PR-search partition in bot_commit_census_fallback.
 module bot_accepted_census {
   var s: { left: Set[int], right: Set[int], expected: int, valid: bool,
     leftDone: bool, rightDone: bool, complete: bool }
