@@ -39,6 +39,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Jupiter decoder research](lemmascript-jupiter-research.md)
 - [Native liability and retained expiry agreement](lemmascript-native-liability.md)
 - [Complete accepted-work claim partition](lemmascript-work-unit-partition.md)
+- [Complete base58 conversion](lemmascript-base58-research.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
 The inventory enumerates first-party JavaScript and TypeScript function bodies
@@ -99,6 +100,7 @@ maintenance surface without improving the selected acceptance result.
 | Public-resource retention | `transientHttpStatus`; `use-public-resource` | Transient/server failures differ from 4xx authorization/refusal responses |
 | Cache/time boundaries | `freshCacheAge`, `identityPollDelay`; `use-snapshot`, `identity-flow` | Half-open freshness interval and poll delay bounded by both allowed interval and remaining lifetime |
 | Funding/display | `fundingReminderVisible`, `roundedUsdcCents` | Suppression for terminal/inapplicable funding states and exact half-up minor-unit display |
+| Base58 conversion | `verified-base58`; browser/worker codec and Solana adapter | Exact radix value, digit range, leading zeros, alphabet inverse and roundtrip composition; original byte-carry bitwise loop retained, native adapters remain reviewed boundaries |
 | Decimal amount input | `verified-decimal`; shared `base-units` entry point and vault/project/bounty callers | Exact ASCII decimal decoding, power-of-ten scaling and fractional range; proved uint128 whole-length refusal |
 | Native receipt costs | `executionGasCost`, `nativeFeeTotal`, `normalizedNativeDelta`, `solanaNativeFee` | Exact execution/blob/data/operator totals; payer-only SOL normalization; native principal excluded before the final cost comparison |
 | Fee-conversion arithmetic | `workers/fee-converter/verified-arithmetic` | Exact directional division, slippage floor, cap intersection, strict requote reduction, reserve/rent accounting, price-impact ceiling and replacement percentage rounding |
@@ -251,8 +253,7 @@ wallet control, or chain finality.
 
 The detailed reports rank remaining sequence/collection and parser candidates.
 Remaining work includes end-to-end identity/order refinement, upstream review
-eligibility, the native identity mapping around monthly replacements, full Jupiter and
-base58 decoding, display formatting, and effectful intake/notification authority.
+eligibility, the native identity mapping around monthly replacements, full Jupiter decoding, display formatting, and effectful intake/notification authority.
 Those need larger loop/sequence proofs and explicit parser semantics. They are
 recorded as unproved, not replaced with assumptions or marked complete merely
 because the source appears in the inventory.
