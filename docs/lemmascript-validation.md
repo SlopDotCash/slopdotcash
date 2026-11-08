@@ -176,8 +176,8 @@ validated assessed-size limit, validated positive bands and the single existing
 policy minimum. The theorem does not assume the uncapped sum fits a number.
 
 `firstMaximumIndex` returns the first maximum for every nonempty supplied list.
-The review caller uses it after its original chronological sort, so equal
-highest bands retain the earlier source. The Pages deployment selector uses it
+Its initial use for review-source selection is superseded by the complete
+reviewer-group scan below. The Pages deployment selector uses it
 after all its existing clean-commit, branch, project, stage, time and URL checks.
 Equal deployment timestamps retain the first matching result. The empty result
 still returns `undefined`. These changes do not prove upstream identity,
@@ -308,6 +308,14 @@ the concurrent state-review work. A source merge alone establishes neither
 production release nor complete application refinement.
 
 ## Combined checkpoint still under review
+
+The reviewer extension proves the complete distinct-actor order, first highest
+source per actor and bounded credited count. The production caller keeps the
+validated timestamp/review-ID order and immutable-ID mapping, with original
+source objects and grouped repeated/beyond-limit IDs. Its 164 isolated
+obligations, 15 workflow tests and 1,018 actual-caller comparisons passed before
+integration. See [the reviewer report](lemmascript-reviewer-selection.md) for
+the ordering/identity adapter limits and measured performance.
 
 The bucket extension proves exact signed totals and ordered, bounded debit
 consumption across arbitrary finite indexed buckets. Its actual caller

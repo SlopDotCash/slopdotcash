@@ -44,7 +44,7 @@ prove the dependency. No external axioms are used for the integrated kernels.
 | P1 | `identity-flow.ts`: `requestIdentityAssertion` | Poll no later than the remaining expiry; retain bounded server interval; reject invalid authorizations; no wrong-audience assertions. Implemented arithmetic through `identityPollDelay`; real time, async cancellation and audience checking remain outside this proof. |
 | P1 | `use-snapshot.ts`: `cachedSnapshot` | Cache is fresh only in the half-open age interval; reject backward clock movement and exact expiry. Implemented interval through `freshCacheAge`; registry identity, subscription ownership and cancellation stay in original code. |
 | P1 | `reward-amount.ts`: `formatMicroUsdc` | Exact nearest-cent display without float conversion. Implemented BigInt `roundedUsdcCents`; Intl and text formatting remain runtime behavior. |
-| P1 | `scoring-policy.ts`: `allocatePullRequestReviewCredit` | One source per reviewer, first five qualifying reviewers, highest band per reviewer, conservation of one capped review pool | Excellent sequence proof candidate. Date parsing, source validation and upstream exclusion checks must remain explicit. |
+| P1 | `scoring-policy.ts`: `allocatePullRequestReviewCredit` | One source per reviewer, first five qualifying reviewers, highest band per reviewer, conservation of one capped review pool | Implemented with the complete indexed reviewer scan and weighted allocator. Date parsing, immutable-ID mapping, source validation and upstream exclusion checks remain explicit. |
 | P1 | `global-leaderboard.ts`, `project-view.ts`, `points.ts`, `payout-points.ts`, `points-summary.ts` | Immutable actor grouping; exclude archived overlap; separate Points, score, payable money and private cases | Map/list algorithms are candidates; complete evidence joins and aggregation overflow need explicit contracts. |
 | P1 | `received-totals.ts`, `allocation-funding.ts`, `allocation-funding-basis.mjs` | Direct plus vault totals reconcile; only exact supported stablecoins contribute dollar totals; no double counting | BigInt kernels fit. Asset/network lookup and observed transfer evidence remain independent boundaries. |
 | P1 | `security-program-draft.ts`, `security-bounty-proposal.ts`, `payout-consent.ts`, `project-capabilities.mjs` | Fail closed on payment availability and consent; distinguish bounty-only and monthly work | Extract checked decision functions only when inputs already establish identity, policy revision and authority. Do not model authorization as an unconstrained trusted boolean. |
@@ -209,15 +209,18 @@ typecheck, and the existing project/amount/monthly workflows passed.
 
 ## Review-pool and source selection extension
 
-The current review-credit caller uses `cappedTotal` for its minimum/size-bounded
+The review-credit caller uses `cappedTotal` for its minimum/size-bounded
 pool. The proof caps every intermediate addition and does not require the sum
 of all supplied safe integer bands to fit a number. The existing policy minimum
-is passed from its one canonical constant. `firstMaximumIndex` selects the first
-highest band after the original chronological sort; repeated equal-band reviews
-keep the same source object and order. Duplicate-source rejection, timestamp
-validation, actor grouping and the first-five eligibility rule remain unchanged
-and outside these two numerical/sequence contracts.
+is passed from its one canonical constant. The later reviewer-group kernel
+selects the first highest band and first five distinct actors after the
+validated chronological sort; repeated equal-band reviews keep the same source
+object and order. Duplicate-source rejection, timestamp validation and the
+immutable-ID adapter remain outside the numerical/sequence contracts.
 
-Penalty aggregation remains unproved. A scalar subtraction proof alone would
-not establish the safe integer domain of the accumulated actor/project/month
-buckets. No new assertion about the entire penalty journal is made.
+The [aggregation implementation](lemmascript-aggregation-research.md)
+uses complete signed bucket summation and
+ordered debit consumption. The [reviewer implementation](lemmascript-reviewer-selection.md)
+also proves distinct first-occurrence order and the first highest source per
+actor. The original date/identity adapter and external source validity remain
+separate from these sequence proofs.
