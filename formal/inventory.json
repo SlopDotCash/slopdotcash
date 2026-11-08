@@ -427,7 +427,10 @@
     {
       "path": "backend/points/x.ts",
       "sha256": "6fc6edf791d173291a7f823341611ab5f6d51e338ed38f8539e316108e140fc2",
-      "models": ["formal/models/api_x_connection.qnt"],
+      "models": [
+        "formal/models/api_x_connection.qnt",
+        "formal/models/ui_public_x_profile.qnt"
+      ],
       "candidateLines": [
         17, 18, 27, 31, 38, 65, 102, 103, 104, 114, 115, 130, 133, 170, 189,
         209, 222, 243, 290, 292, 302, 306, 325, 330, 336, 339, 354
@@ -4089,7 +4092,8 @@
         "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt"
+        "formal/models/ui_project_work.qnt",
+        "formal/models/ui_public_x_profile.qnt"
       ],
       "candidateLines": [
         13, 15, 283, 293, 303, 314, 323, 324, 325, 326, 327, 329, 330, 389, 444,
@@ -4422,6 +4426,7 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
       "candidateLines": [
@@ -4503,7 +4508,10 @@
     {
       "path": "src/ProfilePage.tsx",
       "sha256": "5bf0875fb615cf1c3f32f83ce5d34460613a3b1eb11cb6cb4cd0e35878eaac67",
-      "models": ["formal/models/ui_resources.qnt"],
+      "models": [
+        "formal/models/ui_public_x_profile.qnt",
+        "formal/models/ui_resources.qnt"
+      ],
       "candidateLines": [
         1, 35, 36, 39, 40, 44, 48, 52, 57, 61, 69, 74, 81, 82, 85, 98, 99, 100,
         105, 110, 122, 129, 136, 140, 145, 148, 155, 158, 168, 267, 269, 272,
@@ -11921,6 +11929,36 @@
         "pausedTest",
         "retainedTest",
         "retryTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_public_x_profile.qnt",
+      "sha256": "dc26f417e3633e32383781ad443c7146b8b13ca1989a91e89c2109d042a82d41",
+      "sources": [
+        "backend/points/x.ts",
+        "src/App.tsx",
+        "src/Points.tsx",
+        "src/ProfilePage.tsx"
+      ],
+      "scenarios": [
+        "abortedReadDoesNotShowErrorTest",
+        "actorChangeHasNoSynchronousSuccessGuardTest",
+        "currentActorResponseReplacesOldQueuedSuccessTest",
+        "invalidIdentityTest",
+        "lateNullCanReplaceCurrentActorAccountTest",
+        "lateSuccessDoesNotWriteNewInstanceTest",
+        "laterPrivacyChangeDoesNotEraseObservedReplyTest",
+        "loadingHasNoLinkTest",
+        "missingLinkIsMissingTest",
+        "missingMemberIsMissingTest",
+        "newMountObservesCurrentPrivacyTest",
+        "normalizedRouteKeyDoesNotRestartReadTest",
+        "previewDoesNotRequestTest",
+        "privateLinkIsMissingTest",
+        "privateMemberIsMissingTest",
+        "publicLinkReadyTest",
+        "unavailableReadTest",
+        "viewerChangeDoesNotRefreshPublicLinkTest"
       ]
     },
     {

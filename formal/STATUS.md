@@ -61,7 +61,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 323 finite models and 1,671 named scenarios, with zero
+839 production sources, 324 finite models and 1,689 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -429,3 +429,12 @@ parent refreshes. A departed callback cannot update the replacement parent.
 `ui_points_disputes` adds 26 unexecuted scenarios; the extended real-browser
 workflow is also unexecuted. See `points-dispute-ui-audit.md`. Exact-source
 browser, accessibility and walkthrough evidence remain required.
+
+
+## Public X profile read model
+
+`ui_public_x_profile` adds18unexecuted scenarios for the existing public
+lookup, visibility observation, missing/error outcomes, callback lifetime
+and profile-key changes. It adds no connection controls and makes no claim
+that the public read represents current provider ownership. See
+`public-x-profile-audit.md` for the source semantics and remaining bounds.

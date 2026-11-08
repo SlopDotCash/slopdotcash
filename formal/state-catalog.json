@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "32d9ddcdb0f3e059414e08002c796917956a9d05706266d86633978037609ac0",
+  "inventorySha256": "2546fc5b1e4822e4c229223e57584576b7437b928664e5de4eb0156d8412ff37",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -90,7 +90,10 @@
       "name": "status",
       "kind": "string-union",
       "values": ["cancelled", "connected", "failed"],
-      "models": ["formal/models/api_x_connection.qnt"],
+      "models": [
+        "formal/models/api_x_connection.qnt",
+        "formal/models/ui_public_x_profile.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -2001,7 +2004,8 @@
         "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt"
+        "formal/models/ui_project_work.qnt",
+        "formal/models/ui_public_x_profile.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2020,7 +2024,8 @@
         "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt"
+        "formal/models/ui_project_work.qnt",
+        "formal/models/ui_public_x_profile.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2039,7 +2044,8 @@
         "formal/models/ui_points_disputes.qnt",
         "formal/models/ui_project_discovery.qnt",
         "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt"
+        "formal/models/ui_project_work.qnt",
+        "formal/models/ui_public_x_profile.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2121,9 +2127,10 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
-      "lexicallyUnmentionedValues": ["loading"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2135,9 +2142,10 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
-      "lexicallyUnmentionedValues": ["absent", "loading", "unavailable"],
+      "lexicallyUnmentionedValues": ["unavailable"],
       "review": "candidate-only"
     },
     {
@@ -2149,9 +2157,10 @@
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
-      "lexicallyUnmentionedValues": ["loading", "preview"],
+      "lexicallyUnmentionedValues": ["preview"],
       "review": "candidate-only"
     },
     {
