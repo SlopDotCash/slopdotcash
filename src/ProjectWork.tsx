@@ -1,5 +1,4 @@
 import { CircleDot, GitPullRequest } from "lucide-react";
-import type { ProjectView } from "./lib/project-view";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 import { ExternalLinkAnchor, formatDateTime, stale } from "./Presentation";
@@ -8,20 +7,28 @@ import { ExternalLinkAnchor, formatDateTime, stale } from "./Presentation";
 export function ProjectWork({
   project,
   state,
-  view,
   retry,
 }: {
   project: ProjectDefinition;
   state: DataState;
-  view: ProjectView | undefined;
   retry: () => void;
 }) {
   if (project.status !== "active") return null;
+  // Reward-cycle views may not exist yet. Work discovery uses the snapshot
+  // independently so a future pool start cannot hide current work.
+  const repositories = new Set(project.repositories.map(({ id }) => id));
   const items =
-    state.status === "ready" && view
-      ? [view.workQueue.issues, view.workQueue.pullRequests].flatMap((queue) =>
+    state.status === "ready"
+      ? [
+          state.snapshot.workQueue.issues,
+          state.snapshot.workQueue.pullRequests,
+        ].flatMap((queue) =>
           queue
-            .filter((item) => item.selection.status === "candidate")
+            .filter(
+              (item) =>
+                repositories.has(item.repository) &&
+                item.selection.status === "candidate",
+            )
             .slice(0, 3),
         )
       : [];

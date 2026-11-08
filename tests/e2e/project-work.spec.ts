@@ -257,3 +257,34 @@ test("a paused project does not advertise snapshot work", async ({
     page.getByRole("region", { name: "Suggested work" }),
   ).toHaveCount(0);
 });
+
+test("work remains available before a project's reward cycle starts", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  await serve(page);
+  await page.route("**/data/fixture-project-registry.json", async (route) => {
+    const response = await route.fetch();
+    const registry = await response.json();
+    registry.projects = registry.projects.map(
+      (project: { id: string; reward: Record<string, unknown> }) =>
+        project.id === "eliza"
+          ? {
+              ...project,
+              reward: {
+                ...project.reward,
+                rewardStartAt: "2099-01-01T00:00:00.000Z",
+              },
+            }
+          : project,
+    );
+    await route.fulfill({ json: registry });
+  });
+  await page.goto("/projects/eliza");
+  const work = page.getByRole("region", { name: "Suggested work" });
+  await expect(work.getByRole("link")).toHaveCount(2);
+  await expect(
+    page.getByRole("region", { name: "Contributor standings" }),
+  ).toHaveCount(0);
+});

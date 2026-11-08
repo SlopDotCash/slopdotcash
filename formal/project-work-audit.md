@@ -7,11 +7,13 @@ errors, retries, retained data after refresh failure, stale timestamps, and
 active/paused project changes. Counts range from zero to four for each list;
 the panel shows at most three of each kind.
 
-The existing `ProjectView.workQueue` owns project filtering. The panel selects
-only entries whose validated selection status is `candidate`. The browser
+The panel filters the validated snapshot by the project's repository IDs and
+selects only entries whose selection status is `candidate`. It does not use the
+reward-cycle view because a future pool start can leave that view absent while
+current work remains available. The browser
 suite `tests/e2e/project-work.spec.ts` checks blocked and foreign-project
 exclusion, the list bounds, loading/error/retry, empty/stale states, paused
-projects, keyboard links, accessibility, and text reflow.
+projects, future reward-cycle starts, keyboard links, accessibility, and text reflow.
 
 The model assumes the existing snapshot loader supplies only a complete valid
 snapshot and rejects superseded requests. It abstracts network payloads,
