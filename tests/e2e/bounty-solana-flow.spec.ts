@@ -229,7 +229,7 @@ async function exerciseNativeSolana(
   );
   await owner.page.addInitScript(installWallet);
   try {
-    const suffix = projectSuffix();
+    const suffix = `${projectSuffix()}-${scenario}`;
     const id = `sol-bounty-${suffix}`;
     const repository = `e2e-security/${id}`;
     const installed = await fetch(
