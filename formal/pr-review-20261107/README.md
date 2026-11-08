@@ -1,6 +1,6 @@
 # Scoped PR state review
 
-The four `pr_review_*` models in `formal/models/` describe the state changes accepted in the 7 November 2026
+The five `pr_review_*` models in `formal/models/` describe the state changes accepted in the 7 November 2026
 PR review. They do not model the whole application. The email re-verification
 candidate is excluded: its native concurrency test restored withdrawn consent,
 so it was not accepted in this batch.
@@ -27,11 +27,12 @@ Use `--model=pr_review_<name>` with `scripts/check-formal.mjs` for one model.
 | `../models/pr_review_identities.qnt` | `backend/points/handler.ts`, join and reopen; `backend/payments/wallet-registration.ts`, `registerPaymentWallet` | `backend/points/membership-identity.test.ts`: a new node spelling keeps the stored actor, closed state and explicit reopen requirement. `backend/payments/wallet-replacement.test.ts`: login changes keep the same claim and do not add a successor. |
 | `../models/pr_review_recovery.qnt` | `scripts/generate-leaderboard.ts`, `executeNodeBatch` in retained-source availability collection | `scripts/leaderboard-source-recovery.test.ts`: a recoverable oversized batch splits without losing source IDs; unrelated provider failure is not evidence of source deletion. |
 | `../models/pr_review_retry.qnt` | `workers/vetting/review-plan.ts`, `withEarlierAttempts` | `workers/vetting/review-plan.test.ts`: a failed final retry keeps known diagnostic subtotals; successful results require complete corresponding receipts for aggregate totals. |
+| `../models/pr_review_run_identity.qnt` | `backend/trace/handler.ts`, `assertRunIdentity` and its call in `createRun` | `scripts/trace-run-identity.test.ts`: an unknown project is refused with 404 and creates nothing; a foreign repository is refused with 422 and creates nothing; a canonical path and an alias are accepted. |
 
 Run the implementation regressions, separately from the models:
 
 ```sh
-bun test --timeout 30000 workers/identity/failed-callback.test.ts backend/points/membership-identity.test.ts backend/payments/wallet-replacement.test.ts scripts/leaderboard-source-recovery.test.ts workers/vetting/review-plan.test.ts
+bun test --timeout 30000 workers/identity/failed-callback.test.ts backend/points/membership-identity.test.ts backend/payments/wallet-replacement.test.ts scripts/leaderboard-source-recovery.test.ts workers/vetting/review-plan.test.ts scripts/trace-run-identity.test.ts
 ```
 
 ## Bounds and assumptions
@@ -42,12 +43,19 @@ bun test --timeout 30000 workers/identity/failed-callback.test.ts backend/points
 | Identity | One numeric GitHub identity, two node IDs, logins and addresses, at most three wallet claims | 3 | 57 |
 | Recovery | Four immutable source IDs, two-item batches, binary splitting, at most three limit failures | 2 | 72 |
 | Retry | Three sequential attempts, known/missing usage and cost, failed diagnostics versus complete successful totals | 5 | See the integrated verification receipt |
+| Run identity | One project registration flag, three repository kinds (foreign, canonical, alias) | 4 | not run |
 
 The identity service is assumed to attest the numeric actor correctly. Database
 batches are atomic. Cryptography, live GitHub/provider responses, provider cost
 truth and Cloudflare durability are external boundaries. Retry amounts abstract
 nonnegative receipts; they do not prove machine-number bounds or billing totals.
 The recovery model omits transport payloads but preserves every source identity.
+
+The run-identity row has no TLC state count: `formal:verify` does not complete on
+the review machine, so only `formal:check` covers that model. Its invariant is
+deliberately weak, so the named scenarios carry the refusal evidence; deleting
+either half of the `accepted` guard fails `unknownProjectRefusedTest` or
+`foreignRepositoryRefusedTest`.
 
 TLC disables deadlock checks. Named scenarios show reachable useful results,
 not fairness or liveness. The observed state counts apply to these model bytes;
@@ -59,6 +67,6 @@ parsing reuse, field-set comparison, retained-journal reuse and monthly-view reu
 need output-equivalence checks; Inbox query batching needs native database and
 authority-change checks. Mission-ready selection and flag-evidence character
 count changes retain their existing eligibility and write gates. Their focused
-implementation regressions remain required. They are not covered by the four
+implementation regressions remain required. They are not covered by the five
 transition models. Broader STATE-01 through STATE-05 coverage remains separate
 work and is not claimed complete here.
