@@ -1,3 +1,4 @@
+// @source workers/slopbot/verified-source-ownership.ts
 // @source workers/slopbot/value-consumption.ts
 // @source workers/slopbot/value-work-unit-consumption.ts
 // Public consumers pin throughSequence and totalRecords. Three pages abstract
