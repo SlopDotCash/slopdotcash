@@ -6844,12 +6844,22 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "aaa5d0e79cc0cfbff92285ab4f7e78af04830cdb5792ffd06e9049ee8d41a4fe",
+      "sha256": "01dc2e4e9550417baa050f9870cc9b1ec5c87e0dc6eee51b5b8ed513eb47bacb",
       "models": [
         "formal/models/bot_value_pipeline.qnt",
         "formal/models/bot_work_partition.qnt"
       ],
-      "candidateLines": [119],
+      "candidateLines": [120],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/verified-work-unit.ts",
+      "sha256": "966ae9299850cc09cce62e89eee8a1146acf622ac6039ee515deabd0661e0e7d",
+      "models": [
+        "formal/models/bot_value_pipeline.qnt",
+        "formal/models/bot_work_partition.qnt"
+      ],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -8099,7 +8109,7 @@
     },
     {
       "path": "formal/models/bot_value_pipeline.qnt",
-      "sha256": "4d71371463c7b2aee07826395e63fa81602184dc0d33c8a494de2623bd07795d",
+      "sha256": "dd1a1ebcf347f2a782f30d3f2d99637dab75772de254294f487f38478744af4c",
       "sources": [
         "migrations/0046_slopbot_work_unit_journal.sql",
         "migrations/0053_slopbot_value_source_leases.sql",
@@ -8113,7 +8123,8 @@
         "workers/slopbot/value-work-unit-journal.ts",
         "workers/slopbot/value-work-unit-publication.ts",
         "workers/slopbot/value-work-unit-review.ts",
-        "workers/slopbot/value-work-unit.ts"
+        "workers/slopbot/value-work-unit.ts",
+        "workers/slopbot/verified-work-unit.ts"
       ],
       "scenarios": [
         "expiredPublicationReusesInferenceTest",
@@ -8159,11 +8170,12 @@
     },
     {
       "path": "formal/models/bot_work_partition.qnt",
-      "sha256": "2b78f51c7b50a97db11e7a0d003773165b568ff5a827fb91d20aeb74764cd387",
+      "sha256": "e0c5cbca3d79753e25a20d1da45e31b3fdd4094bc15fb1b74ad3eeceb8451142",
       "sources": [
         "src/lib/value-assessment.ts",
         "workers/slopbot/value-work-unit-review.ts",
-        "workers/slopbot/value-work-unit.ts"
+        "workers/slopbot/value-work-unit.ts",
+        "workers/slopbot/verified-work-unit.ts"
       ],
       "scenarios": [
         "partialPartitionNotPublishedTest",

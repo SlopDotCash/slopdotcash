@@ -1,3 +1,4 @@
+// @source workers/slopbot/verified-work-unit.ts
 // @source workers/slopbot/value-work-unit.ts
 // @source workers/slopbot/value-work-unit-review.ts
 // @source src/lib/value-assessment.ts
