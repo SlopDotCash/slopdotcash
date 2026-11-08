@@ -640,4 +640,28 @@ contract ReferralDistributorTest is ReferralBase {
         require(distributor.totalClaimed() == uint256(second) + uint256(bob), "total");
         require(distributor.totalClaimed() <= distributor.activeTotal(), "never over the posted total");
     }
+
+    function test_voidRootPreservesHighestNonVoidedTotalAcrossNonMonotonicEpochs() public {
+        (bytes32 root0,,) = tree2(300 * ONE, 200 * ONE);
+        (bytes32 root1,,) = tree2(100 * ONE, 50 * ONE);
+        (bytes32 root2,,) = tree2(400 * ONE, 200 * ONE);
+
+        // Epoch 0 posts 500 * ONE (<= CAP) -> highWaterTotal == 500 * ONE
+        post(0, root0, 500 * ONE);
+        require(distributor.highWaterTotal() == 500 * ONE, "epoch 0 highWaterTotal");
+
+        // Epoch 1 posts a lower total (150 * ONE >= totalClaimed == 0) -> highWaterTotal stays 500 * ONE
+        vm.warp(block.timestamp + distributor.postSpacing());
+        post(1, root1, 150 * ONE);
+        require(distributor.highWaterTotal() == 500 * ONE, "epoch 1 preserves highWaterTotal");
+
+        // Epoch 2 posts 600 * ONE (within 500 * ONE + CAP) and is then voided by the owner
+        vm.warp(block.timestamp + distributor.postSpacing());
+        post(2, root2, 600 * ONE);
+        vm.prank(OWNER);
+        distributor.voidRoot(2);
+
+        // After voiding epoch 2, highWaterTotal must still reflect epoch 0 (500 * ONE), not regress to epoch 1 (150 * ONE)
+        require(distributor.highWaterTotal() == 500 * ONE, "voiding epoch 2 preserves highest non-voided total");
+    }
 }
