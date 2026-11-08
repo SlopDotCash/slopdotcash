@@ -1,6 +1,92 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 
+// Playwright starts its browsers and web servers in separate POSIX groups.
+// Capture numeric ownership while the launcher is alive, before interrupting
+// it. Never infer ownership from a port, command name, or a reparented process.
+function processTable() {
+  const result = spawnSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], {
+    encoding: "utf8",
+    timeout: 5000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (result.error || result.status !== 0)
+    throw new Error("Could not read process ownership for cleanup");
+  const rows = new Map();
+  for (const line of result.stdout.split("\n")) {
+    if (!line.trim()) continue;
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/u.exec(line);
+    if (!match) throw new Error("Invalid process ownership record");
+    const [, pid, parent, group, state, started] = match;
+    rows.set(Number(pid), {
+      pid: Number(pid),
+      parent: Number(parent),
+      group: Number(group),
+      state,
+      started,
+    });
+  }
+  return rows;
+}
+
+function descendantGroups(root) {
+  const rows = processTable();
+  if (!rows.has(root) || /^[ZX]/u.test(rows.get(root).state))
+    throw new Error("Launcher exited before ownership capture");
+  const owned = new Set([root]);
+  let size;
+  do {
+    size = owned.size;
+    for (const row of rows.values())
+      if (owned.has(row.parent)) owned.add(row.pid);
+  } while (owned.size !== size);
+  return new Map(
+    [...rows.values()]
+      .filter(
+        (row) =>
+          row.pid !== root && row.group === row.pid && owned.has(row.pid),
+      )
+      .map((row) => [
+        row.group,
+        [...rows.values()].filter(
+          (member) => member.group === row.group && owned.has(member.pid),
+        ),
+      ]),
+  );
+}
+
+function stopDescendantGroups(groups) {
+  if (!groups.size) return [];
+  const rows = processTable();
+  const failures = [];
+  for (const [group, captured] of groups) {
+    const members = [...rows.values()].filter((row) => row.group === group);
+    if (!members.length) continue;
+    const leader = rows.get(group);
+    const capturedLeader = captured.find((row) => row.pid === group);
+    // A reused leader or no surviving captured member does not authorize a
+    // signal. This also excludes a group inherited from an unrelated parent.
+    if (
+      (leader && leader.started !== capturedLeader.started) ||
+      !captured.some((before) =>
+        members.some(
+          (after) =>
+            before.pid === after.pid && before.started === after.started,
+        ),
+      )
+    ) {
+      failures.push(`Could not confirm ownership of process group ${group}`);
+      continue;
+    }
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") failures.push(error.message);
+    }
+  }
+  return failures;
+}
+
 /** A killed Linux process can remain in its group until its parent reaps it. */
 function hasRunningGroupMembers(group) {
   try {
@@ -74,6 +160,7 @@ export function runE2ePhase({
     let cleanupTimer;
     let cleanupPoll;
     let interruptTimer;
+    let detachedGroups = new Map();
     const finish = (status) => {
       if (settled) return;
       settled = true;
@@ -104,6 +191,14 @@ export function runE2ePhase({
               `[${label}] process cleanup failed: ${result.error?.message ?? `taskkill exited ${result.status}`}\n`,
             );
         } else {
+          try {
+            for (const failure of stopDescendantGroups(detachedGroups))
+              stderr.write(`[${label}] process cleanup failed: ${failure}\n`);
+          } catch (error) {
+            stderr.write(
+              `[${label}] process cleanup failed: ${error.message}\n`,
+            );
+          }
           try {
             process.kill(-child.pid, "SIGKILL");
           } catch (error) {
@@ -142,6 +237,13 @@ export function runE2ePhase({
         // Playwright owns web servers in separate process groups. Let its
         // interrupt handler close them before falling back to group cleanup.
         try {
+          detachedGroups = descendantGroups(child.pid);
+        } catch (error) {
+          stderr.write(
+            `[${label}] process ownership capture failed: ${error.message}\n`,
+          );
+        }
+        try {
           process.kill(child.pid, interruptSignal);
           interruptTimer = setTimeout(() => stopProcessTree(1), 5000);
           return;
@@ -178,7 +280,12 @@ export function runE2ePhase({
         const waitForGroupExit = () => {
           if (settled) return;
           try {
-            if (!hasRunningGroupMembers(child.pid)) {
+            if (
+              !hasRunningGroupMembers(child.pid) &&
+              [...detachedGroups.keys()].every(
+                (group) => !hasRunningGroupMembers(group),
+              )
+            ) {
               finish(timedOut ? 1 : (status ?? 1));
               return;
             }

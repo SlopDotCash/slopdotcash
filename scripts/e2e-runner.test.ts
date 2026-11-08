@@ -122,6 +122,61 @@ test("a completed phase preserves successful and failed child exit codes", async
   }
 });
 
+for (const trigger of ["cancellation", "deadline"]) {
+  test.skipIf(process.platform === "win32")(
+    `a ${trigger} stops a detached managed server without signaling a sibling`,
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), "slop-phase-detached-"));
+      const ready = join(directory, "ready");
+      const sibling = createServer();
+      await new Promise<void>((resolve) =>
+        sibling.listen(0, "127.0.0.1", resolve),
+      );
+      const descendant = `const fs = require("node:fs"); const server = require("node:net").createServer(); server.listen(0, "127.0.0.1", () => { fs.writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ pid: process.pid, port: server.address().port })); fs.renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)}); });`;
+      // This is Playwright's relevant process shape: a separately detached
+      // managed server, and a launcher whose graceful teardown does not finish.
+      const launcher = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { detached: true, stdio: "ignore" }); process.on("SIGINT", () => {}); setInterval(() => {}, 1000);`;
+      const runner = pathToFileURL(
+        join(process.cwd(), "scripts/run-e2e-phase.mjs"),
+      ).href;
+      const options = {
+        label: `detached-${trigger}`,
+        args: ["-e", launcher],
+        cwd: directory,
+        timeoutMs: trigger === "deadline" ? 5000 : 20_000,
+        interruptSignal: "SIGINT",
+      };
+      const script = `import { existsSync } from "node:fs"; import { runE2ePhase } from ${JSON.stringify(runner)}; const controller = new AbortController(); const timer = ${trigger === "cancellation" ? `setInterval(() => { if (existsSync(${JSON.stringify(ready)})) controller.abort(); }, 25)` : "null"}; process.exitCode = await runE2ePhase({ ...${JSON.stringify(options)}, command: process.execPath, env: process.env, signal: controller.signal }); clearInterval(timer);`;
+      const phase = Bun.spawn(["node", "--input-type=module", "-e", script], {
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      let pid: number | undefined;
+      try {
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(ready) && Date.now() < deadline) await pause(25);
+        expect(existsSync(ready)).toBe(true);
+        const server = JSON.parse(readFileSync(ready, "utf8"));
+        pid = server.pid;
+        await expect(expectPortReusable(server.port)).rejects.toHaveProperty(
+          "code",
+          "EADDRINUSE",
+        );
+        expect(await phase.exited).toBe(1);
+        await expectPortReusable(server.port);
+        expect(sibling.listening).toBe(true);
+        pid = undefined;
+      } finally {
+        if (pid !== undefined) stopDescendant(pid);
+        await phase.exited;
+        await new Promise<void>((resolve) => sibling.close(() => resolve()));
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+}
+
 for (const exitStatus of [0, 7])
   for (const stdio of ["inherit", "ignore"]) {
     test.skipIf(process.platform === "win32")(

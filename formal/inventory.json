@@ -3697,15 +3697,15 @@
     },
     {
       "path": "scripts/run-e2e-phase.mjs",
-      "sha256": "d662a1f916f4aa53864d3f6c0e208b1e2041be0db5439e280ec7d471d48a9ea4",
+      "sha256": "4cf44919ee35a4e08e3232706ca1bd54e209d26d2dc8675d65a2b35571c73e1d",
       "models": [
         "formal/models/evidence_capture.qnt",
         "formal/models/formal_process.qnt",
         "formal/models/integration_pipeline.qnt"
       ],
       "candidateLines": [
-        26, 29, 36, 39, 40, 44, 77, 85, 102, 104, 121, 128, 146, 167, 168, 171,
-        173, 175, 182, 186, 193, 198
+        13, 20, 25, 34, 112, 115, 122, 125, 126, 130, 164, 172, 189, 191, 216,
+        223, 248, 269, 270, 273, 275, 277, 289, 293, 300, 305
       ],
       "review": "mapped-abstraction"
     },
@@ -9533,7 +9533,7 @@
     },
     {
       "path": "formal/models/formal_process.qnt",
-      "sha256": "6cce23f9d6d3932e693d004afa5eaea301c24cebc00effeb4ebdf1ccbaf604a4",
+      "sha256": "b1e99b28390ebe027fe5db19bc862d70399fb658fa969908aa27a92ea33eaf48",
       "sources": [
         "scripts/check-formal.mjs",
         "scripts/check-lemmascript.mjs",
@@ -9542,14 +9542,17 @@
       ],
       "scenarios": [
         "canceledCleanupCannotPassTest",
+        "changedGroupCannotBeKilledTest",
         "cleanSuccessTest",
         "cleanupFailureIsExplicitTest",
         "cooperativeBrowserInterruptClosesServerTest",
         "exitedLauncherStillOwnsChildTest",
         "failureCannotPublishSuccessTest",
+        "forcedBrowserCleanupStopsCapturedGroupTest",
         "normalBrowserClosesManagedServerTest",
         "timeoutKillsDescendantTest",
-        "uncooperativeBrowserCannotClaimCleanupTest"
+        "uncooperativeBrowserCannotClaimCleanupTest",
+        "unknownGroupCannotBeKilledTest"
       ]
     },
     {
