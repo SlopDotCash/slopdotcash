@@ -16,6 +16,7 @@
       "path": ".github/workflows/deploy.yml",
       "sha256": "2476fa4e6a35a8decb0190b86452dedbd76b56659d97a77f308539c47a0c70f5",
       "models": [
+        "formal/models/ci_browser_runtime.qnt",
         "formal/models/ci_coverage.qnt",
         "formal/models/release_publication.qnt"
       ],
@@ -28,9 +29,12 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "68879c3d4de72ff25e1cb46d2625f565f98eacc9ae16043f9719477f17a7ecf8",
-      "models": ["formal/models/ci_coverage.qnt"],
-      "candidateLines": [181],
+      "sha256": "bff5cd2c8dd05f5cd8929714eb0f7448e3f6e84492a6aa36aada234bb671ac2d",
+      "models": [
+        "formal/models/ci_coverage.qnt",
+        "formal/models/solana_container_lifecycle.qnt"
+      ],
+      "candidateLines": [184],
       "review": "mapped-abstraction"
     },
     {
@@ -260,6 +264,7 @@
       "path": "backend/payments/handler.ts",
       "sha256": "6926d8210f6cb1012f0891eb1f8b59f8fef40ab9edafc5692f2f9c2d207a0fba",
       "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/binding_consent_renewal.qnt",
         "formal/models/effective_wallet_history.qnt",
         "formal/models/payment_history.qnt"
@@ -325,7 +330,10 @@
     {
       "path": "backend/payments/possession.ts",
       "sha256": "08d9d2fc2272dfb9146032559babe2e35679d444afae276b7ee3e11e01ea7908",
-      "models": ["formal/models/payment_binding.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/payment_binding.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -364,6 +372,7 @@
       "path": "backend/payments/wallet-registration.ts",
       "sha256": "597181cfccedaf7057b67258e18d1b0b3f1264e1b14ad919459bb45b307ed2bc",
       "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/effective_wallet_history.qnt",
         "formal/models/payment_binding.qnt",
         "formal/models/pr_review_identities.qnt"
@@ -829,6 +838,7 @@
       "path": "backend/trace/cloudflare-persistence.ts",
       "sha256": "d40607d1d94f188ba74b9fe7b916c426bf2255f81c83043c761b5a2b2ce1318e",
       "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/api_trace.qnt",
         "formal/models/api_wallet_claims.qnt",
         "formal/models/operator_intake_renewal.qnt"
@@ -1686,7 +1696,10 @@
     {
       "path": "migrations/0011_payments.sql",
       "sha256": "076232ab09dc40e5656850985b441d696c4903b50d847912cfea27eeb9c601f3",
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
       "candidateLines": [
         1, 7, 10, 17, 18, 26, 32, 40, 41, 43, 44, 48, 50, 59, 61, 63, 75, 77
       ],
@@ -2482,7 +2495,10 @@
     {
       "path": "migrations/0100_effective_payment_wallets.sql",
       "sha256": "c7d4482cb21971396657db276ffcd476228f2cb55e71db634d9fe3e2a29b1a11",
-      "models": ["formal/models/effective_wallet_history.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/effective_wallet_history.qnt"
+      ],
       "candidateLines": [2],
       "review": "mapped-abstraction"
     },
@@ -2649,8 +2665,11 @@
     },
     {
       "path": "playwright.config.ts",
-      "sha256": "cf5e3afe734262cd4681c71710245bb039b4043c2547d4f724f618f3274801f0",
-      "models": ["formal/models/dev_server_lifecycle.qnt"],
+      "sha256": "8f3a3e52452961ea9e663e585788089f68b9175fe46c594192be10810b00b7d2",
+      "models": [
+        "formal/models/ci_browser_runtime.qnt",
+        "formal/models/dev_server_lifecycle.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -2756,16 +2775,19 @@
     },
     {
       "path": "scripts/child-environment.mjs",
-      "sha256": "a9914e969024a6ac131cc83a477a98504909c93bcd19208942e0e6985b353026",
-      "models": [],
-      "candidateLines": [43, 54, 56],
-      "review": "reviewed-no-independent-state",
+      "sha256": "4f9ca5ede116387430cfd37919920c777a742bab25f9ce07bc1dc624a0b5be62",
+      "models": ["formal/models/solana_container_lifecycle.qnt"],
+      "candidateLines": [44, 55, 57],
+      "review": "mapped-abstraction",
       "statelessReason": "Per-invocation environment projection with explicit overrides. It neither launches a process nor changes the parent environment; process authority belongs to callers."
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "ccbad501aff90a4043950e06a6f49931e77a00b9cc824015ed9342d79328495d",
-      "models": ["formal/models/ci_coverage.qnt"],
+      "sha256": "c891d017dad0f01a8f0f6c6fe658a6792ecba5e3f123bdf369722b09b0356039",
+      "models": [
+        "formal/models/ci_browser_runtime.qnt",
+        "formal/models/ci_coverage.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -3148,6 +3170,16 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Static excluded-directory names shared by proof snapshot and inventory scanners; no updates or cross-call state transition."
+    },
+    {
+      "path": "scripts/local-solana-validator.mjs",
+      "sha256": "3988d60df9628adec8267669dc11ff51c412e07ec62e25f2d82ccef995987e7e",
+      "models": ["formal/models/solana_container_lifecycle.qnt"],
+      "candidateLines": [
+        4, 25, 37, 49, 159, 167, 170, 240, 253, 265, 276, 278, 282, 302, 307,
+        310, 337, 372, 394, 406
+      ],
+      "review": "mapped-abstraction"
     },
     {
       "path": "scripts/path-containment.ts",
@@ -3536,10 +3568,11 @@
     },
     {
       "path": "scripts/run-e2e.mjs",
-      "sha256": "1699911690300c141259a2c7fbf483886eb8f8a1d502efe1c6d90f3674e04ef4",
+      "sha256": "9c23546ea2321cef41c53853962082695a9722b0f85f4e2b21facd398d34268b",
       "models": ["formal/models/evidence_capture.qnt"],
       "candidateLines": [
-        56, 58, 179, 253, 277, 279, 414, 439, 508, 509, 522, 537, 543, 560, 604
+        56, 58, 179, 253, 280, 282, 381, 434, 459, 528, 529, 542, 557, 563, 580,
+        624
       ],
       "review": "mapped-abstraction"
     },
@@ -4016,19 +4049,20 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "sha256": "53ee7ac4a984061e0552d33827087c793d81a345240a0ed73a36eb0ed7aa0055",
+      "sha256": "66ba04d6eecc6027f6e8283b8d330ad3ab685dc8759532f3301b0c3d353b2968",
       "models": [
         "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt"
+        "formal/models/ui_email_actions.qnt",
+        "formal/models/ui_email_parent.qnt"
       ],
       "candidateLines": [
-        6, 8, 19, 25, 34, 35, 36, 37, 47, 48, 49, 50, 51, 53, 56, 73, 74, 78,
-        79, 80, 103, 105, 114, 119, 130, 144, 145, 148, 149, 163, 169, 173, 179,
-        188, 206, 207, 210, 215, 220, 221, 225, 227, 258, 259, 262, 264, 266,
-        273, 284, 289, 299, 301, 302, 305, 306, 315, 316, 345, 360, 362, 364,
-        370, 375, 381, 386, 388, 389, 404, 421, 423, 424, 463, 465, 466, 468,
-        470, 473, 555, 566, 603, 644, 645, 646, 649, 667, 697, 740, 761, 770,
-        787, 801, 804
+        6, 8, 19, 25, 34, 35, 36, 37, 47, 48, 49, 50, 51, 53, 56, 85, 86, 90,
+        91, 92, 121, 123, 132, 137, 149, 156, 170, 172, 175, 177, 191, 196, 200,
+        206, 215, 233, 234, 238, 244, 249, 250, 254, 256, 287, 289, 292, 295,
+        297, 304, 315, 320, 330, 332, 333, 336, 337, 346, 347, 370, 372, 382,
+        397, 399, 401, 408, 414, 421, 429, 431, 432, 447, 464, 466, 467, 508,
+        510, 511, 513, 515, 518, 600, 614, 651, 692, 693, 694, 697, 715, 745,
+        788, 809, 818, 835, 849, 852
       ],
       "review": "mapped-abstraction"
     },
@@ -4171,25 +4205,28 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "4a0978a61680eb3a30c32e6ecade5b7ba0c8a4ef22671383d767a2faaaf28f76",
+      "sha256": "1eade5fdacc7e637fb1a5c0f53afadacc667ddc83b61019500b1020ea54ee976",
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_email_parent.qnt",
         "formal/models/ui_session.qnt"
       ],
       "candidateLines": [
-        14, 18, 82, 97, 98, 99, 101, 107, 116, 125, 128, 136, 137, 139, 140,
-        156, 158, 205, 206, 207, 210, 211, 212, 228, 234, 241, 249, 259, 266,
-        273, 287, 307, 324, 341, 342, 343, 348, 372, 373, 378, 381, 382, 383,
-        384, 385, 387, 388, 404, 410, 467, 468, 473, 475, 505, 506, 507, 509,
-        511, 514, 523, 525, 527, 529, 531, 534, 535, 539, 541, 543, 553, 554,
-        559, 561, 573, 574, 604, 608, 609, 619, 620, 631, 633, 640, 644, 649,
-        650, 674, 680, 732, 733, 734, 735, 737, 738, 750, 824, 837, 842, 851,
-        921, 959, 965, 975, 988, 989, 992, 993, 994, 995, 997, 998, 1001, 1002,
-        1013, 1022, 1060, 1061, 1062, 1071, 1155, 1165, 1170, 1188, 1190, 1192,
-        1195, 1196, 1197, 1199, 1267, 1271, 1373, 1374, 1375, 1405, 1406, 1445,
-        1447, 1448, 1449, 1451, 1458, 1460, 1464, 1466, 1468, 1477, 1478, 1484,
-        1490, 1495, 1504, 1505, 1506, 1507, 1509, 1510, 1513, 1514, 1516, 1517,
-        1521, 1529, 1530, 1531, 1532, 1535, 1539, 1550, 1551, 1556
+        14, 18, 83, 98, 99, 100, 102, 108, 118, 127, 130, 138, 139, 141, 142,
+        158, 160, 207, 208, 209, 212, 213, 214, 215, 232, 238, 245, 253, 263,
+        270, 277, 291, 311, 328, 346, 347, 348, 353, 377, 378, 383, 386, 387,
+        388, 389, 390, 392, 393, 409, 415, 472, 473, 478, 480, 510, 511, 512,
+        514, 516, 519, 528, 530, 532, 534, 536, 539, 540, 544, 546, 548, 558,
+        559, 564, 566, 578, 579, 609, 613, 614, 624, 625, 636, 638, 645, 649,
+        654, 655, 679, 685, 737, 738, 739, 740, 742, 743, 755, 829, 842, 847,
+        856, 926, 964, 970, 980, 989, 994, 996, 999, 1005, 1006, 1017, 1026,
+        1034, 1036, 1037, 1045, 1048, 1049, 1050, 1051, 1053, 1054, 1057, 1058,
+        1069, 1078, 1102, 1106, 1115, 1137, 1138, 1139, 1148, 1232, 1242, 1247,
+        1265, 1267, 1269, 1272, 1273, 1274, 1276, 1344, 1348, 1450, 1451, 1452,
+        1482, 1483, 1522, 1524, 1525, 1526, 1528, 1535, 1537, 1541, 1543, 1545,
+        1554, 1555, 1561, 1567, 1572, 1581, 1582, 1583, 1584, 1586, 1587, 1590,
+        1591, 1593, 1594, 1598, 1606, 1607, 1608, 1609, 1612, 1616, 1627, 1628,
+        1633
       ],
       "review": "mapped-abstraction"
     },
@@ -4706,7 +4743,10 @@
     {
       "path": "src/lib/github-actor.ts",
       "sha256": "0865c01c45cb01928f2e09ca9db87316e154bf612032ecd4c9cd04a5fb6d5728",
-      "models": ["formal/models/ui_exclusion_identity.qnt"],
+      "models": [
+        "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_exclusion_identity.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure canonical node-ID decoding and stable actor sorting. No retained state or I/O; format equivalence is consumed by exclusion/admission models."
@@ -5002,6 +5042,7 @@
       "path": "src/lib/project-api.ts",
       "sha256": "5f5a8f66c2c9b80d7e4d37fff3df81882d53b7308e3cd0d475f4b079afca90ac",
       "models": [
+        "formal/models/ui_email_parent.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_session.qnt",
         "formal/models/ui_transport.qnt"
@@ -5751,17 +5792,17 @@
     },
     {
       "path": "workers/fee-converter/solana.ts",
-      "sha256": "7800c90563b627886deb2b3fa73d1ff3c6a5ca71341f6c97df5a91287a5be76c",
+      "sha256": "84d1da5800c74c5727bef7b17ed78fd99c85b36fb7578715b89fec00b36ed696",
       "models": [
         "formal/models/fee_conversion.qnt",
         "formal/models/fee_lease_journal.qnt",
         "formal/models/fee_wallet_handoff.qnt"
       ],
       "candidateLines": [
-        22, 119, 128, 426, 454, 456, 470, 675, 732, 740, 751, 761, 897, 900,
-        903, 904, 1057, 1059, 1068, 1071, 1140, 1141, 1143, 1144, 1147, 1149,
-        1187, 1204, 1232, 1233, 1430, 1443, 1444, 1445, 1446, 1447, 1464, 1469,
-        1471, 1488, 1494, 1497, 1507, 1510, 1517
+        23, 120, 129, 381, 409, 411, 425, 630, 687, 695, 706, 716, 852, 855,
+        858, 859, 1012, 1014, 1023, 1026, 1095, 1096, 1098, 1099, 1102, 1104,
+        1142, 1159, 1187, 1188, 1385, 1398, 1399, 1400, 1401, 1402, 1419, 1424,
+        1426, 1443, 1449, 1452, 1462, 1465, 1472
       ],
       "review": "mapped-abstraction"
     },
@@ -5801,6 +5842,17 @@
         "formal/models/fee_lease_journal.qnt",
         "formal/models/fee_nonce_reuse.qnt",
         "formal/models/native_budget.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/fee-converter/verified-solana-wire.ts",
+      "sha256": "c10c0b94ba811918b81fa43a95846b9840aead9e38cfa5ff0452de44203821ea",
+      "models": [
+        "formal/models/fee_conversion.qnt",
+        "formal/models/fee_lease_journal.qnt",
+        "formal/models/fee_wallet_handoff.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -6833,9 +6885,9 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-consumption.ts",
-      "sha256": "3a70c8b92f38153ae2fba48dbc3f8708b90f3bb6d8747a48edddf10027b3ed04",
+      "sha256": "8e4aa113c3b3883c477348fd1cfb31a30f6a2b9557a72f844976648ee356e432",
       "models": ["formal/models/bot_value_history.qnt"],
-      "candidateLines": [188, 212, 213, 214, 219, 240, 243, 249, 266, 294, 295],
+      "candidateLines": [209, 233, 234, 235, 240, 261, 264, 270, 287, 315, 316],
       "review": "mapped-abstraction"
     },
     {
@@ -6872,12 +6924,23 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "01dc2e4e9550417baa050f9870cc9b1ec5c87e0dc6eee51b5b8ed513eb47bacb",
+      "sha256": "34e129c5ac4e9fda8b79caa9c82cdf54c8a43b4e4ab4d515d1ebe33ce4673ebe",
       "models": [
         "formal/models/bot_value_pipeline.qnt",
         "formal/models/bot_work_partition.qnt"
       ],
-      "candidateLines": [120],
+      "candidateLines": [124],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/verified-source-ownership.ts",
+      "sha256": "8ea7944e1a7112df7a6150228b7c9dbd44f1c3afa366c072fd6c383cb0154887",
+      "models": [
+        "formal/models/bot_value_history.qnt",
+        "formal/models/bot_value_pipeline.qnt",
+        "formal/models/bot_work_partition.qnt"
+      ],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -7123,10 +7186,10 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "22cccfc3a9a6e6d39ccfc4a27dca41e323c02a1a20c78450a078331abd78331a",
+      "sha256": "779da62e2a1c44aaf02dc360fff543117006edb9cd60351816208645377386db",
       "models": ["formal/models/vetting_disposition.qnt"],
       "candidateLines": [
-        240, 248, 249, 1710, 1711, 1892, 1952, 1973, 2040, 2056
+        241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050
       ],
       "review": "mapped-abstraction"
     },
@@ -7244,6 +7307,16 @@
         "formal/models/pr_review_retry.qnt",
         "formal/models/vetting_acquisition.qnt",
         "formal/models/vetting_failed_review_provenance.qnt",
+        "formal/models/vetting_review_batches.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/vetting/verified-text-parts.ts",
+      "sha256": "2b7278da2440ce7ab080e40cce316bc908dc185d7ce6f8e2f9ef354c8263b4fa",
+      "models": [
+        "formal/models/vetting_disposition.qnt",
         "formal/models/vetting_review_batches.qnt"
       ],
       "candidateLines": [],
@@ -7426,6 +7499,37 @@
         "workers/notify/verified-delivery.ts"
       ],
       "scenarios": ["ambiguousTest", "deliveredTest", "optOutTest"]
+    },
+    {
+      "path": "formal/models/api_payment_wallet_protocol.qnt",
+      "sha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "sources": [
+        "backend/payments/handler.ts",
+        "backend/payments/possession.ts",
+        "backend/payments/wallet-registration.ts",
+        "backend/trace/cloudflare-persistence.ts",
+        "migrations/0011_payments.sql",
+        "migrations/0100_effective_payment_wallets.sql"
+      ],
+      "scenarios": [
+        "completedReplayIsRefusedTest",
+        "consumedBeforeAuthorizationTest",
+        "exactExpiryRefusesNewRequestTest",
+        "failedBatchRequiresFreshChallengeTest",
+        "foreignActorCannotRegisterOrUseChallengeTest",
+        "lostResponseRetainsAuthorizationTest",
+        "newConsentCannotRewriteFirstAuthorizationTest",
+        "oldClaimAndMismatchedChallengeRefusedTest",
+        "replacementAfterReadStillConsumesButCannotAuthorizeTest",
+        "replacementDuringConsumedGapCannotAuthorizeOldClaimTest",
+        "replacementRetainsClaimHistoryTest",
+        "requestUsesCapturedTimeAcrossAwaitTest",
+        "sameWalletRegistrationIsIdempotentTest",
+        "signedSuccessorBecomesEffectiveWithoutErasingHistoryTest",
+        "simultaneousReplayHasOneConsumptionWinnerTest",
+        "unsignedSuccessorRetainsAuthorizedDestinationTest",
+        "wrongWalletAndAlteredMessageDoNotConsumeTest"
+      ]
     },
     {
       "path": "formal/models/api_points_disputes.qnt",
@@ -8123,10 +8227,11 @@
     },
     {
       "path": "formal/models/bot_value_history.qnt",
-      "sha256": "d6426ea092bb29a94c025896581a4c465b2c2473fd40b717af6197eaeb67d331",
+      "sha256": "51e434adf22427c7bb6281228f41c9022c3ec25d0515c90b7d7d92f6e5e86de4",
       "sources": [
         "workers/slopbot/value-consumption.ts",
-        "workers/slopbot/value-work-unit-consumption.ts"
+        "workers/slopbot/value-work-unit-consumption.ts",
+        "workers/slopbot/verified-source-ownership.ts"
       ],
       "scenarios": [
         "missingNotZeroTest",
@@ -8150,7 +8255,7 @@
     },
     {
       "path": "formal/models/bot_value_pipeline.qnt",
-      "sha256": "dd1a1ebcf347f2a782f30d3f2d99637dab75772de254294f487f38478744af4c",
+      "sha256": "b8ffb82e9bb2d89754bb95b5de7b1870d2065ef82933748da9766cb2a93b07d9",
       "sources": [
         "migrations/0046_slopbot_work_unit_journal.sql",
         "migrations/0053_slopbot_value_source_leases.sql",
@@ -8165,6 +8270,7 @@
         "workers/slopbot/value-work-unit-publication.ts",
         "workers/slopbot/value-work-unit-review.ts",
         "workers/slopbot/value-work-unit.ts",
+        "workers/slopbot/verified-source-ownership.ts",
         "workers/slopbot/verified-work-unit.ts"
       ],
       "scenarios": [
@@ -8211,11 +8317,12 @@
     },
     {
       "path": "formal/models/bot_work_partition.qnt",
-      "sha256": "e0c5cbca3d79753e25a20d1da45e31b3fdd4094bc15fb1b74ad3eeceb8451142",
+      "sha256": "751e6dcb77f5b493bed0cc6a2c95cb8c4cee237a4bb358ba00c5e8cb40aa0be1",
       "sources": [
         "src/lib/value-assessment.ts",
         "workers/slopbot/value-work-unit-review.ts",
         "workers/slopbot/value-work-unit.ts",
+        "workers/slopbot/verified-source-ownership.ts",
         "workers/slopbot/verified-work-unit.ts"
       ],
       "scenarios": [
@@ -8301,8 +8408,23 @@
       ]
     },
     {
+      "path": "formal/models/ci_browser_runtime.qnt",
+      "sha256": "d6ab9f352209b64003f2d1f00d3d6b5febc961117d644e6ac6544202b35c26cc",
+      "sources": [
+        ".github/workflows/deploy.yml",
+        "playwright.config.ts",
+        "scripts/ci-scope.mjs"
+      ],
+      "scenarios": [
+        "failedDownloadCannotPassTest",
+        "lostFirefoxFailsAtLaunchTest",
+        "pagesRequiresOnlyChromiumTest",
+        "previewInstallsBothEnginesTest"
+      ]
+    },
+    {
       "path": "formal/models/ci_coverage.qnt",
-      "sha256": "68769a23f3d38184de0b5e37aab3cae29122eec098435cd5870bb9c8abaed97d",
+      "sha256": "053baacb14cf23b21f6680d99e3671060d2b084d71ef35bcf769dc7f9c692b4f",
       "sources": [
         ".github/workflows/deploy.yml",
         ".github/workflows/escrow-tests.yml",
@@ -8310,7 +8432,7 @@
         ".github/workflows/windows-installer.yml",
         "scripts/ci-scope.mjs"
       ],
-      "scenarios": ["releaseCoverageTest"]
+      "scenarios": ["fixtureSelectsChainCoverageTest", "releaseCoverageTest"]
     },
     {
       "path": "formal/models/contract_build_profile.qnt",
@@ -8696,7 +8818,7 @@
     },
     {
       "path": "formal/models/fee_conversion.qnt",
-      "sha256": "8141cfcffa9e84d2576d9f22855e66085d2d54a3c38cb6b9b3fb28e0f56c2ead",
+      "sha256": "d1a0eac761496a8150d5b135dea46f763aac43c72d009b4780c9300bd0fc5510",
       "sources": [
         "backend/fee-conversions/handler.ts",
         "migrations/0022_fee_conversions.sql",
@@ -8708,7 +8830,8 @@
         "workers/fee-converter/core.ts",
         "workers/fee-converter/dry-run.ts",
         "workers/fee-converter/evm.ts",
-        "workers/fee-converter/solana.ts"
+        "workers/fee-converter/solana.ts",
+        "workers/fee-converter/verified-solana-wire.ts"
       ],
       "scenarios": [
         "convertedTest",
@@ -8719,7 +8842,7 @@
     },
     {
       "path": "formal/models/fee_lease_journal.qnt",
-      "sha256": "f69fbfee056ce3421ef12932173b4b1911a2f0574170b89dd57e7c59fb6a9a0f",
+      "sha256": "e157a7450b5500933309e4e7c66718add7451f924e6a80820613292ed8be433e",
       "sources": [
         "migrations/0092_fee_native_gas.sql",
         "workers/fee-converter/core.ts",
@@ -8727,7 +8850,8 @@
         "workers/fee-converter/native-gas.ts",
         "workers/fee-converter/solana.ts",
         "workers/fee-converter/store.ts",
-        "workers/fee-converter/verified-native-liability.ts"
+        "workers/fee-converter/verified-native-liability.ts",
+        "workers/fee-converter/verified-solana-wire.ts"
       ],
       "scenarios": [
         "businessTerminalDoesNotReleaseNativeLiabilityTest",
@@ -8781,13 +8905,14 @@
     },
     {
       "path": "formal/models/fee_wallet_handoff.qnt",
-      "sha256": "104966dc58a63559b039b1626781b084a683865ce656de9d8df8193265ebfa0e",
+      "sha256": "7b3af85bfb0e37e4fdb530c21d6111e2af2a2a9c64507c480fce4741d95f2473",
       "sources": [
         "workers/fee-converter/config.ts",
         "workers/fee-converter/core.ts",
         "workers/fee-converter/evm.ts",
         "workers/fee-converter/index.ts",
-        "workers/fee-converter/solana.ts"
+        "workers/fee-converter/solana.ts",
+        "workers/fee-converter/verified-solana-wire.ts"
       ],
       "scenarios": [
         "changedWalletCannotRewriteRetainedOutputTest",
@@ -9845,6 +9970,25 @@
       ]
     },
     {
+      "path": "formal/models/solana_container_lifecycle.qnt",
+      "sha256": "0ad38199c76be3bd6ab74d4274a099994cead15c4404e50c9e1a5e564a021b38",
+      "sources": [
+        ".github/workflows/escrow-tests.yml",
+        "scripts/child-environment.mjs",
+        "scripts/local-solana-validator.mjs"
+      ],
+      "scenarios": [
+        "abruptExitRetainsOwnershipTest",
+        "cancellationAwaitsCreateTest",
+        "cancellationAwaitsStartTest",
+        "cancellationDuringReadyWriteTest",
+        "pinnedReadyTest",
+        "portRefusalStopsOwnedTest",
+        "receiptFailureStillRemovesTest",
+        "unknownCreateCannotClaimStoppedTest"
+      ]
+    },
+    {
       "path": "formal/models/solana_expiry.qnt",
       "sha256": "a4489f1c400ba2ec8b2e830f0ef68924e4ab01d879365be2af8dbfd9dbe4eb9b",
       "sources": [
@@ -10211,6 +10355,34 @@
         "newLinkCompletesTest",
         "oldFailureLeavesNewLinkTest",
         "oldSuccessLeavesNewLinkTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_email_parent.qnt",
+      "sha256": "5fbeaf93927efaee733a1663718fba5b3b1abce09c1550297343f58c753587ea",
+      "sources": [
+        "src/InboxEmail.tsx",
+        "src/Points.tsx",
+        "src/lib/github-actor.ts",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "childMismatchWaitsForNewParentBindingTest",
+        "childSignoutCannotRestoreItsOldDraftTest",
+        "failureRetainsDraftUntilSameActorRetryTest",
+        "failureRetryDifferentActorClearsDraftTest",
+        "knownOtherActorClearsOldDraftTest",
+        "knownSignoutClearsDraftTest",
+        "laterMatchingPointsRestoresFreshEditorTest",
+        "localSignoutClearsBeforeParentReadTest",
+        "parentPendingBlocksBeforeChildRefreshTest",
+        "pointsActorCanRefuseRetainedParentTest",
+        "sameActorPendingKeepsEditableDraftTest",
+        "samePointsActorKeepsDraftTest",
+        "unauthorizedResponseCannotRestoreItsOldDraftTest",
+        "unboundFailureHasRecoveryWithoutEditorTest",
+        "unchangedUnknownMemberRetainsOnlyItsConfirmedDraftTest",
+        "unknownMemberIdChangeDoesNotRetainDraftTest"
       ]
     },
     {
@@ -10811,13 +10983,14 @@
     },
     {
       "path": "formal/models/vetting_disposition.qnt",
-      "sha256": "601f204e4f79520dea4c40a8a3096cd73dce55ca82c1c403aee795c739086b68",
+      "sha256": "85d28b7c77ef8181d71dab466c72c500ae8e71f31af0a719cf42ef677c75c5a3",
       "sources": [
         "backend/vetting/result.ts",
         "backend/vetting/scan-result.ts",
         "backend/vetting/verified-reuse.ts",
         "workers/vetting/bounded-scan.ts",
-        "workers/vetting/publication.ts"
+        "workers/vetting/publication.ts",
+        "workers/vetting/verified-text-parts.ts"
       ],
       "scenarios": [
         "completeReviewTest",
@@ -11034,12 +11207,13 @@
     },
     {
       "path": "formal/models/vetting_review_batches.qnt",
-      "sha256": "58b35f9d600ed1bf5d90044a198c5fe2be381e18dd5a11e61384399afd08bc17",
+      "sha256": "c2d2da22118ed741aa6166080453f87363ab5c4480673739975d5bee1eea325e",
       "sources": [
         "workers/verified-budget.ts",
         "workers/vetting/review-plan.ts",
         "workers/vetting/scanners.ts",
-        "workers/vetting/verified-review-batches.ts"
+        "workers/vetting/verified-review-batches.ts",
+        "workers/vetting/verified-text-parts.ts"
       ],
       "scenarios": [
         "newInputCannotReuseCompletedBatchTest",

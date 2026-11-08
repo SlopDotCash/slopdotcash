@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "3ac05692ea2f322d80bcdddc453294373fcf81ff7ff8b876363e182801e47b11",
+  "inventorySha256": "4f186c47af8bfe0763812aa557748c70a7d8aee7f04872936f393fe3a535a263",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -463,7 +463,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
       "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
     },
@@ -473,7 +476,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["held", "paid", "processing", "ready", "submitted"],
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -483,7 +489,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["failed", "finalized", "prepared", "submitted", "unknown"],
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api_payment_wallet_protocol.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "failed",
         "finalized",
@@ -1995,7 +2004,8 @@
       "values": ["expired", "queued", "sending", "sent", "unknown"],
       "models": [
         "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt"
+        "formal/models/ui_email_actions.qnt",
+        "formal/models/ui_email_parent.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "expired",
@@ -2014,7 +2024,8 @@
       "values": ["unavailable", "unverified"],
       "models": [
         "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt"
+        "formal/models/ui_email_actions.qnt",
+        "formal/models/ui_email_parent.qnt"
       ],
       "lexicallyUnmentionedValues": ["unavailable", "unverified"],
       "review": "candidate-only"
@@ -2027,7 +2038,8 @@
       "values": ["loading", "signed-out"],
       "models": [
         "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt"
+        "formal/models/ui_email_actions.qnt",
+        "formal/models/ui_email_parent.qnt"
       ],
       "lexicallyUnmentionedValues": ["loading", "signed-out"],
       "review": "candidate-only"
@@ -2054,43 +2066,41 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 207,
+      "line": 209,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_email_parent.qnt",
         "formal/models/ui_session.qnt"
       ],
-      "lexicallyUnmentionedValues": ["loading", "ready"],
+      "lexicallyUnmentionedValues": ["loading"],
       "review": "candidate-only"
     },
     {
       "path": "src/Points.tsx",
-      "line": 527,
+      "line": 532,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_email_parent.qnt",
         "formal/models/ui_session.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "absent",
-        "loading",
-        "ready",
-        "unavailable"
-      ],
+      "lexicallyUnmentionedValues": ["absent", "loading", "unavailable"],
       "review": "candidate-only"
     },
     {
       "path": "src/Points.tsx",
-      "line": 1405,
+      "line": 1482,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_email_parent.qnt",
         "formal/models/ui_session.qnt"
       ],
       "lexicallyUnmentionedValues": ["loading", "preview"],
@@ -3439,7 +3449,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 679,
+      "line": 680,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],

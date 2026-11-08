@@ -43,6 +43,9 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Payment evidence agreement and counters](lemmascript-payment-evidence.md)
 - [Review grouping and JSON string sizing](lemmascript-review-batching.md)
 - [Complete restriction and appeal folds](lemmascript-enforcement-research.md)
+- [Complete text byte partitioning](lemmascript-text-parts.md)
+- [Accepted source selection and ownership operations](lemmascript-source-ownership.md)
+- [Signed Solana wire parser](lemmascript-solana-wire-research.md)
 - [Final candidate dispositions and remaining active algorithms](lemmascript-candidate-dispositions.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
@@ -115,6 +118,9 @@ maintenance surface without improving the selected acceptance result.
 | Reviewer grouping | `verified-reviewers`; review-credit caller | Complete distinct first-occurrence order, first highest-band source per actor, and first-five count; validated date sorting and immutable actor-to-index mapping remain explicit adapter obligations |
 | Review grouping | `verified-review-batches`; complete review planner | Exact JSON string byte size, longest fitting alias prefix, complete ordered greedy groups and outside-alias binding; native object serialization, hashing and source ordering remain boundaries |
 | Restrictions and appeals | `backend/projects/verified-enforcement`; actual project restriction derivation | Complete chronological episode, exact active-ban pairs, pending project/account appeals and final status/appeal composition; source order and authority remain external |
+| Text byte partitioning | `verified-text-parts`; inventory and review splitting | Exact newline/continuation cut policy, increasing bounded ends and complete byte coverage; native UTF-8 conversion remains explicit |
+| Source selection and ownership | `verified-source-ownership`; Slopbot discovery and history reads | Complete accepted-commit index order and exact per-record refusal/retire/remove/set operations; native maps, paging, hashes and final ancestry remain boundaries |
+| Signed Solana transactions | `verified-solana-wire`; actual parseTransaction | Complete compact-prefix, legacy/v0, instruction/lookup parsing, spans, static program and global reference checks with preserved error order; crypto/RPC identity remain separate |
 | Evidence partition | `verified-partition`; private evidence registration, reads and backup | Positive bounded parts, contiguous offsets, correct final part and complete total, without a total-size cap |
 | Native daily liabilities | `verified-native-liability`; real gas reservation | Today's recorded costs plus the largest unresolved maximum per exact wallet/nonce bucket, including the proposed attempt; preserves liabilities across midnight |
 | Retained expiry agreement | `verified-expiry`; Solana recovery and gas journal | Both histories complete and positive, with exact transaction, anchor, horizon, count and digest agreement; provider truth and completeness remain separate |

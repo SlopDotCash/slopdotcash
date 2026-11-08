@@ -24,3 +24,6 @@ src/lib/verified-base58.ts
 backend/payments/verified-evidence.ts
 workers/vetting/verified-review-batches.ts
 backend/projects/verified-enforcement.ts
+workers/vetting/verified-text-parts.ts
+workers/slopbot/verified-source-ownership.ts
+workers/fee-converter/verified-solana-wire.ts

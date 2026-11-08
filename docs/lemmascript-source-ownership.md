@@ -1,7 +1,7 @@
 # Accepted commits and work-unit source ownership
 
 This cohort starts at `4008930a58beeb65ee3eda9316453a8b6633159f` in an
-isolated worktree. SCR-06 and the existing Slopbot work-unit contract require
+isolated worktree. PRD sections5 and7 and the existing Slopbot work-unit contract require
 one accepted source scope and no duplicate source or claim ownership. This
 change proves two existing algorithms used by discovery and journal reading.
 It adds no acceptance policy or new refusal. No production defect is claimed.
