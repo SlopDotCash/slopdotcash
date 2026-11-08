@@ -91,6 +91,27 @@ describe("a container image run during install", () => {
       expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([RUNS]);
   });
 
+  // A shell line continuation can split the command anywhere. The pipe rule
+  // already reads `\` plus newline, so the container rule does the same.
+  test("a line continuation does not break the command", () => {
+    for (const line of [
+      "docker \\\n  run --rm img:1 ./install\n",
+      "docker \\\n  --config /tmp/cfg \\\n  run --rm img:1 ./install\n",
+      "docker \\\n  compose run web ./install\n",
+      "docker compose \\\n  run web ./install\n",
+    ])
+      expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([RUNS]);
+  });
+
+  test("a continued command that is not a run stays clean", () => {
+    for (const line of [
+      "docker \\\n  ps\n",
+      "docker \\\n  build -t app .\n",
+      "docker compose \\\n  up -d\n",
+    ])
+      expect(findingsOf("setup.sh", `#!/bin/sh\n${line}`)).toEqual([]);
+  });
+
   // A manifest is read twice, as the file and as its extracted scripts, so the
   // same act is reported on both items. `curl | sh` in a hook already does this.
   test("an install hook in a manifest is read the same way", () => {

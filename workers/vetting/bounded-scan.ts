@@ -398,9 +398,11 @@ const RULES: Rule[] = [
     // are already an install surface, so they stay out. `container run` and
     // `compose run` are the long spellings of the same command, and the CLI
     // takes global flags before the subcommand, so the flag gap is skipped on
-    // both sides of it. podman and nerdctl take the same shapes.
+    // both sides of it. A backslash-newline can break the command anywhere,
+    // the same continuation the pipe rule reads. podman and nerdctl take the
+    // same shapes.
     pattern: new RegExp(
-      String.raw`(?:^|[\s;|&()'"\x60])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?["']?(?:[^\s;|&()'"\x60]*\/)?(?:docker|podman|nerdctl)(?:\.exe)?(?:-compose)?["']?(?:\s+(?:(?:container|compose)\b|-{1,2}[^\s;|&()'"\x60]+(?:\s+[^\s;|&()'"\x60]+)?))*\s+run\b`,
+      String.raw`(?:^|[\s;|&()'"\x60])(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?["']?(?:[^\s;|&()'"\x60]*\/)?(?:docker|podman|nerdctl)(?:\.exe)?(?:-compose)?["']?(?:(?:\s*\\[ \t]*\r?\n[ \t]*|\s+)(?:(?:container|compose)\b|-{1,2}[^\s;|&()'"\x60]+(?:(?:\s*\\[ \t]*\r?\n[ \t]*|\s+)[^\s;|&()'"\x60]+)?))*(?:\s*\\[ \t]*\r?\n[ \t]*|\s+)run\b`,
       "iu",
     ),
     summary: "Pulls a container image and runs it during install",
