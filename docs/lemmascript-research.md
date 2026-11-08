@@ -224,6 +224,15 @@ prove the translation itself sound.
 
 ## Boundaries and follow-on research
 
+The runtime refactors have measured costs as well as proof benefits. The
+allocation adapter adds work for distinct-remainder inputs. The complete
+TokenMetadata reader showed about 25–28% overhead in two fixed-callsite cases,
+with small absolute per-call costs and a faster many-pair case. The monthly
+freeze refactor adds intermediate records and had variable tail latency in
+paired runs. Reviewer selection improved in the measured cases. The detailed
+reports retain input sizes, raw results and limits; none is a general production
+latency claim. These tradeoffs must remain visible during review.
+
 The selected pure contracts are deductive checks over their stated domains,
 not finite simulations. They do not prove all frontend/backend functions,
 all JavaScript semantics, crypto primitives, safe sandbox execution, live
