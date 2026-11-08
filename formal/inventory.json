@@ -441,14 +441,14 @@
     },
     {
       "path": "backend/projects/enforcement.ts",
-      "sha256": "106038500a15010774c97949b3aaa6e7304c3a352c8a83dd01ad1cd1cc0bd168",
+      "sha256": "cc8e739ecfffdf9e5c84c27e116aa823c4739dcacc56d2f59d214666759ff52d",
       "models": [
         "formal/models/api_project_enforcement.qnt",
         "formal/models/vetting_flag_reinstatement.qnt"
       ],
       "candidateLines": [
-        5, 41, 57, 85, 99, 121, 151, 169, 245, 287, 348, 355, 375, 488, 527,
-        530, 532, 562, 574, 583, 619, 627, 640, 662, 669, 685, 724
+        5, 48, 64, 122, 142, 196, 254, 315, 322, 342, 455, 494, 497, 499, 529,
+        541, 550, 586, 594, 607, 629, 636, 652, 691
       ],
       "review": "mapped-abstraction"
     },
@@ -522,6 +522,16 @@
       "sha256": "67246198e6cca8f8498d25215f9a11a17460d26c0361ce3130d8dd6411ccc5cb",
       "models": ["formal/models/vault_creation.qnt"],
       "candidateLines": [62, 318, 444],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/projects/verified-enforcement.ts",
+      "sha256": "d56cb5522579362b3f55a9230e049a2b5f3483e9b45ddad44193af3a98c58b15",
+      "models": [
+        "formal/models/api_project_enforcement.qnt",
+        "formal/models/vetting_flag_reinstatement.qnt"
+      ],
+      "candidateLines": [16, 34, 45, 52, 60, 77, 79, 85, 274, 276, 292, 300],
       "review": "mapped-abstraction"
     },
     {
@@ -7177,7 +7187,7 @@
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "124b970f27e46af35e883d563da0b13d9ff00dafeee505f5f5da71489307f8b5",
+      "sha256": "0e0083bcb1277f643816960f24c915ba985cf520f8a00f0cb28707b670d59b53",
       "models": [
         "formal/models/pr_review_retry.qnt",
         "formal/models/vetting_acquisition.qnt",
@@ -7185,8 +7195,8 @@
         "formal/models/vetting_review_batches.qnt"
       ],
       "candidateLines": [
-        14, 91, 445, 505, 522, 525, 526, 535, 542, 543, 578, 601, 669, 676, 696,
-        718, 746, 774
+        14, 95, 438, 498, 515, 518, 519, 528, 535, 536, 571, 594, 662, 669, 689,
+        711, 739, 767
       ],
       "review": "mapped-abstraction"
     },
@@ -7224,6 +7234,18 @@
       "path": "workers/vetting/service.ts",
       "sha256": "339868ec6c4cb63b0d57f4cc381f1208fe640b662236ab5a09a87bd77c727d3c",
       "models": ["formal/models/vetting_service_auth.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/vetting/verified-review-batches.ts",
+      "sha256": "6123018135c43674e0025cd974be0238023c435c668676b804bdcaece0bf7172",
+      "models": [
+        "formal/models/pr_review_retry.qnt",
+        "formal/models/vetting_acquisition.qnt",
+        "formal/models/vetting_failed_review_provenance.qnt",
+        "formal/models/vetting_review_batches.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7496,11 +7518,12 @@
     },
     {
       "path": "formal/models/api_project_enforcement.qnt",
-      "sha256": "cf3e5d1fb65ee2a8a78dab2184c5abf3aedd39267f7241ad3b9e5dcd8dc86098",
+      "sha256": "c4389791a9d097467058bbbfd5ab9128b1ebbe20fab61a5fe36779d40882dcee",
       "sources": [
         "backend/projects/account-bans.ts",
         "backend/projects/edge-cache.ts",
         "backend/projects/enforcement.ts",
+        "backend/projects/verified-enforcement.ts",
         "migrations/0023_project_enforcements.sql",
         "migrations/0027_project_enforcement_owner_appeals.sql",
         "migrations/0032_project_system_enforcement.sql",
@@ -9421,8 +9444,11 @@
     },
     {
       "path": "formal/models/pr_review_retry.qnt",
-      "sha256": "0bb8b23da2bafd6f4c3a043ac50461b2a06c372df39b97c365c8c8655d242f8f",
-      "sources": ["workers/vetting/review-plan.ts"],
+      "sha256": "e97ab17665dfea156da1d92d7ad313545a34b52646c47d9fee795814ea99a376",
+      "sources": [
+        "workers/vetting/review-plan.ts",
+        "workers/vetting/verified-review-batches.ts"
+      ],
       "scenarios": [
         "failureWithKnownSubtotalEndsEarlyTest",
         "missingFinalReceiptTest",
@@ -10729,13 +10755,14 @@
     },
     {
       "path": "formal/models/vetting_acquisition.qnt",
-      "sha256": "2b1d5b225fdb5fee7fde504d741dc27a4c750a7a996b87be1be244ee5912cde8",
+      "sha256": "37234cc6b64ac416e151fc2d9dedd54e86707e9f65f6285190cb6c69509e13fd",
       "sources": [
         "workers/vetting/acquire.ts",
         "workers/vetting/assembly-manifest.ts",
         "workers/vetting/queue.ts",
         "workers/vetting/review-plan.ts",
-        "workers/vetting/run.ts"
+        "workers/vetting/run.ts",
+        "workers/vetting/verified-review-batches.ts"
       ],
       "scenarios": [
         "acquisitionFailureDoesNotConsumeQueueTest",
@@ -10857,8 +10884,11 @@
     },
     {
       "path": "formal/models/vetting_failed_review_provenance.qnt",
-      "sha256": "bfd71df54c3ecbe6330aeb3d437f7daa948e6ab9ad4c20499d8a03364fd53114",
-      "sources": ["workers/vetting/review-plan.ts"],
+      "sha256": "70eb3a34394d0a80f14e1596a207a9211bebb8e61bd5992b53d71f7778019fac",
+      "sources": [
+        "workers/vetting/review-plan.ts",
+        "workers/vetting/verified-review-batches.ts"
+      ],
       "scenarios": [
         "exhaustedBudgetDoesNotInventReportTest",
         "firstFailureUsesBatchOrderTest",
@@ -10892,9 +10922,10 @@
     },
     {
       "path": "formal/models/vetting_flag_reinstatement.qnt",
-      "sha256": "4dec3ec399509e332584e00d6f408fafa664d2abef8292e686879e7ac20832a7",
+      "sha256": "bbbaa37db58e31b44d19ac365732374a2d54828a1d2fbaa299c5fa497e56c8e1",
       "sources": [
         "backend/projects/enforcement.ts",
+        "backend/projects/verified-enforcement.ts",
         "backend/vetting/flags.ts",
         "backend/vetting/persistence.ts",
         "migrations/0060_contributor_flags.sql"
@@ -11003,11 +11034,12 @@
     },
     {
       "path": "formal/models/vetting_review_batches.qnt",
-      "sha256": "4423a9935f7d892b75d09bf88d821fe72c128db505e7274a91744fda567dca50",
+      "sha256": "58b35f9d600ed1bf5d90044a198c5fe2be381e18dd5a11e61384399afd08bc17",
       "sources": [
         "workers/verified-budget.ts",
         "workers/vetting/review-plan.ts",
-        "workers/vetting/scanners.ts"
+        "workers/vetting/scanners.ts",
+        "workers/vetting/verified-review-batches.ts"
       ],
       "scenarios": [
         "newInputCannotReuseCompletedBatchTest",

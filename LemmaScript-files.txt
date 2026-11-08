@@ -22,3 +22,5 @@ workers/fee-converter/verified-expiry.ts
 workers/slopbot/verified-work-unit.ts
 src/lib/verified-base58.ts
 backend/payments/verified-evidence.ts
+workers/vetting/verified-review-batches.ts
+backend/projects/verified-enforcement.ts

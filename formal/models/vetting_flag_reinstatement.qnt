@@ -1,3 +1,4 @@
+// @source backend/projects/verified-enforcement.ts
 // @source migrations/0060_contributor_flags.sql
 // @source backend/vetting/flags.ts
 // @source backend/vetting/persistence.ts
