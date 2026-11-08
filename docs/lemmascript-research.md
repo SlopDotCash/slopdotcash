@@ -81,7 +81,8 @@ maintenance surface without improving the selected acceptance result.
 | --- | --- | --- |
 | Ordinary payment policy | `verified-money`: `ordinaryFeeAmount`, `ordinaryFeeMatches`; `payments/contracts` | Upward 2% rounding, zero for nonpositive projections, exact historical floor compatibility and no third accepted fee |
 | Private-bounty policy | `bountyFeeAmount`; `payments/contracts` | Exact 25/75 split after the existing positive, bounded and divisible-by-four checks |
-| Allocation arithmetic | `weightedShare`; project, review-budget, quality, funding-review and review-credit allocators | Nonnegative bounded floor quota, remainder bounds, and exact quotient/remainder conservation per contributor |
+| Allocation arithmetic | `weightedShare`; project, review-budget, quality, funding-review allocators | Nonnegative bounded floor quota, remainder bounds, and exact quotient/remainder conservation per contributor |
+| Complete review-credit allocation | `verified-review-allocation`; `scoring-policy.allocateReviewCredit` | Exact conservation, bounded floor-or-ceiling shares and largest-remainder order with original-index ties for one to five reviewers |
 | Contributor allocations | `verified-frontend`: `allocationDisposition` | Recorded-transfer precedence, closure refusal, registered-wallet scheduling, and deadline-dependent unclaimed state |
 | Private draft retention | `draftStillNeeded`; `intake-drafts` | Keep only unresolved locally submitted cases; recorded advisories and terminal refusals release the draft |
 | Public-resource retention | `transientHttpStatus`; `use-public-resource` | Transient/server failures differ from 4xx authorization/refusal responses |
@@ -94,14 +95,24 @@ maintenance surface without improving the selected acceptance result.
 
 `weightedShare` proves `amount * totalWeight + remainder = total * weight`,
 `0 <= remainder < totalWeight`, and `0 <= amount <= total` under nonnegative
-weights and a positive total. All five callers use this exact implementation.
-Their existing sorting, actor uniqueness, aggregation and residual-distribution
-code is preserved. The proof does **not** claim complete list conservation,
-ordering determinism, correct identity joins or absence of every allocator bug.
-Those are strong next candidates for deeper sequence proofs; existing workflow
-tests and Quint checks remain necessary. `allocateIntegerTotal` receives its
-nonnegative weights through the existing validated scoring path; this is a
-reviewed caller assumption, not a newly proved public input validator.
+weights and a positive total. Project, review-budget, quality and funding-review
+callers use this implementation. Their actor uniqueness, aggregation, sorting
+and residual distribution remain outside the per-term proof.
+
+The review-credit caller now uses the complete `allocateReviewShares` loop
+proof. For one through five positive weights it proves exact pool conservation,
+nonnegative bounded shares, floor-or-ceiling quotas, largest-remainder
+selection and original-index tie order. Five is the existing reviewer cap,
+not an added product restriction. BigInt pool and weight magnitudes are not
+bounded in the proof. The public wrapper keeps its safe-integer guards and
+existing errors, and each result is bounded by its safely representable pool.
+
+Neither proof establishes actor identity, reviewer eligibility, source time,
+or score authority. Those remain in the existing selection code and the
+Quint-generated workflow replay. The unrestricted project/funding allocators
+still need whole-list proofs. `allocateIntegerTotal` receives nonnegative
+weights through the existing validated scoring path; this is a reviewed caller
+assumption, not a newly proved public input validator.
 
 ### Confirmed defect: scientific gas-price rounding
 
@@ -148,6 +159,8 @@ the change.
 4. Rejects rewritten generated declarations, executable changes, assumptions,
    unchecked includes, bodyless axioms and verifier-disabling attributes.
 5. Requires positive completed Dafny verification results with zero errors.
+   `--isolate-assertions` splits every assertion into a separate check; no
+   assertion or function is filtered out.
    Unsupported syntax, missing tools, timeout and output overflow fail closed.
 6. Records command, duration, exit result, source and artifact hashes under
    ignored `evidence/lemmascript/`, and rejects input drift during verification.
@@ -167,8 +180,8 @@ provider behavior, database transactions, economic policy, deployment,
 wallet control, or chain finality.
 
 The detailed reports rank remaining sequence/collection and parser candidates.
-Highest follow-on work is complete largest-remainder conservation with actor
-uniqueness, review selection and penalty aggregation, monthly allocation
+Highest follow-on work is unrestricted largest-remainder conservation with
+actor uniqueness, review selection and penalty aggregation, monthly allocation
 replacement invariants, byte decoder bounds, and intake/notification selection.
 Those need larger loop/sequence proofs and explicit parser semantics. They are
 recorded as unproved, not replaced with assumptions or marked complete merely

@@ -2636,9 +2636,9 @@
     },
     {
       "path": "scripts/check-lemmascript.mjs",
-      "sha256": "4c7cbec052cc6eadd02a9a75dd1687f1b3bf7ee6abb9aab79fff63a9be5e816f",
+      "sha256": "69ab48c9a71221d84a6cc20bbfd12f1e82314e2a438f6db0a96860a9d077c247",
       "models": ["formal/models/formal_toolchain.qnt"],
-      "candidateLines": [35, 89, 101, 104, 112, 119, 273],
+      "candidateLines": [35, 89, 101, 104, 112, 119, 280],
       "review": "mapped-abstraction"
     },
     {
@@ -5141,7 +5141,7 @@
     },
     {
       "path": "src/lib/scoring-policy.ts",
-      "sha256": "c92ada9e60ca56b6ad33570cdb5233da17edf4ae858e6022af58b3b9d4f532c9",
+      "sha256": "65522dfe0f026d957de3a02d1f2bb571609b78a025652252b29a974c19008ca8",
       "models": [
         "formal/models/review_credit.qnt",
         "formal/models/ui_review_pool.qnt"
@@ -5324,6 +5324,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure bigint arithmetic kernels for weighted shares and ordinary/bounty fees. No I/O, mutation or lifecycle; precondition proofs are separate from state refinement and callers enforce input admissibility."
+    },
+    {
+      "path": "src/lib/verified-review-allocation.ts",
+      "sha256": "c736bbe1792ddff5399caf654ee787e6bfbe5adebbf816521c8b7121e9862aa2",
+      "models": ["formal/models/ui_review_pool.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/vetting-contracts.ts",
@@ -9904,11 +9911,12 @@
     },
     {
       "path": "formal/models/ui_review_pool.qnt",
-      "sha256": "478090e79f6d49500c817b060207df95fa96a3520dc42fa5e2736f4c0771139c",
+      "sha256": "bcc6fadc38491487cc1b7988efaefcb7a6a37d4a7649d54e9e1056bbcd8b1d91",
       "sources": [
         "src/lib/leaderboard.ts",
         "src/lib/points.ts",
-        "src/lib/scoring-policy.ts"
+        "src/lib/scoring-policy.ts",
+        "src/lib/verified-review-allocation.ts"
       ],
       "scenarios": [
         "advancingWindowKeepsSharesTest",

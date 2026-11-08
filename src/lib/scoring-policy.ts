@@ -10,12 +10,14 @@
  */
 import { isExactUtc } from "./record-validation.mjs";
 import { VALUE_RUBRIC_VERSION } from "./value-assessment";
-import { weightedShare } from "./verified-money";
+import {
+  allocateReviewShares,
+  MAX_CREDITED_REVIEWERS,
+} from "./verified-review-allocation";
+
+export { MAX_CREDITED_REVIEWERS } from "./verified-review-allocation";
 
 export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
-
-/** PRD section 7: up to the first five distinct qualifying reviewers. */
-export const MAX_CREDITED_REVIEWERS = 5 as const;
 
 /**
  * Owner decisions of 24 and 25 October 2026.
@@ -119,29 +121,10 @@ export function allocateReviewCredit(
     throw new RangeError(
       `Review credit needs one to ${MAX_CREDITED_REVIEWERS} positive integer weights`,
     );
-  const pool = BigInt(poolThirds);
-  const total = weights.reduce((sum, weight) => sum + BigInt(weight), 0n);
-  const terms = weights.map((weight) =>
-    weightedShare(pool, BigInt(weight), total),
-  );
-  const shares = terms.map((term) => term.amount);
-  const remainders = terms.map((term) => term.remainder);
-  let left = pool - shares.reduce((sum, share) => sum + share, 0n);
-  const order = weights
-    .map((_, index) => index)
-    .sort((a, b) =>
-      remainders[a] === remainders[b]
-        ? a - b
-        : (remainders[b] as bigint) > (remainders[a] as bigint)
-          ? 1
-          : -1,
-    );
-  for (const index of order) {
-    if (left === 0n) break;
-    shares[index] = (shares[index] as bigint) + 1n;
-    left -= 1n;
-  }
-  return shares.map(Number);
+  return allocateReviewShares(
+    BigInt(poolThirds),
+    weights.map((weight) => BigInt(weight)),
+  ).map(Number);
 }
 
 export interface QualifyingReview<Actor extends { id: string }> {

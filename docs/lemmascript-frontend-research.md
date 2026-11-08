@@ -156,9 +156,12 @@ The full module still verifies: 11 generated declarations, zero errors.
 Review of the shared monetary extraction found no changed fee behavior.
 `payoutFee` validates positive bounded gross and exact divisibility before the
 bounty kernel. `acceptsPayoutFee` still runs that validator before checking the
-legacy ordinary fee. All five weighted-allocation call sites preserve their
-original division/remainder arithmetic and tie ordering. Their whole-list
-conservation and caller contracts remain outside the per-term proof.
+legacy ordinary fee. The project, review-budget, quality and funding-review call sites preserve
+their division/remainder arithmetic and tie ordering. Their whole-list
+conservation and caller contracts remain outside the per-term proof. The
+review-credit caller now uses a complete loop proof for its existing maximum
+of five reviewers; conservation, quota and tie order are proved for that
+algorithm. Reviewer identity and eligibility remain separate caller obligations.
 
 The existing allocation-locale, quality-allocation-locale,
 funding-review-allocation-locale, joint-value-scoring, monthly-reward preparation,

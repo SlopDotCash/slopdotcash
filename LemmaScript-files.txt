@@ -5,3 +5,4 @@ src/lib/verified-frontend.ts
 workers/fee-converter/verified-arithmetic.ts
 
 workers/verified-policy.ts
+src/lib/verified-review-allocation.ts

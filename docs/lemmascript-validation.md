@@ -17,13 +17,44 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The four proof modules contain 25 selected runtime functions. Dafny reports
-60 verified declarations: 16 money, 11 frontend, 28 fee-converter and 5 worker
-policy declarations. A declaration count includes generated proof obligations
-and supporting lemmas; it is not a count of application functions or a coverage
-percentage. All checked obligations require zero errors. The default timeout
-is 30 seconds per prover obligation; the runner also bounds each subprocess and
-kills the subprocess group on timeout.
+The five proof modules contain 27 selected runtime functions. The check now
+uses Dafny's `--isolate-assertions` option, which proves every assertion in a
+separate obligation. It does not filter or skip assertions. The completed run
+reports 700 verified obligations: 96 money, 40 frontend, 202 fee-converter,
+26 worker policy, and 336 review-allocation obligations, with zero errors.
+These counts cannot be compared directly with the earlier 60 declaration
+checks because the proof splitting changed. Neither count is a function
+coverage percentage.
+
+The default timeout is 30 seconds per prover obligation; the runner also
+bounds each subprocess and kills the subprocess group on timeout. Explicit
+nonnegative quotient assertions were added to two existing division lemmas
+so their proofs do not depend on facts from another assertion group.
+
+### Complete review-credit allocation
+
+`allocateReviewCredit` now calls the verified `allocateReviewShares` runtime
+function. The existing input guards and refusal messages are unchanged. The
+proof covers every positive weight list of length one through five and every
+nonnegative BigInt pool: exact conservation, nonnegative bounded amounts,
+floor-or-ceiling quotas, largest-remainder priority, and original-index ties.
+The public wrapper requires a positive safe-integer pool and positive
+safe-integer weights. Every output is bounded by the pool, so its conversion
+back to a JavaScript number is exact within that domain.
+
+The five-entry bound is the existing published reviewer cap. This proof does
+not apply to the separate project/funding/quality allocators, which accept
+larger lists. The scan algorithm does at most five passes over five entries;
+it preserves the previous sort's result without changing reviewer selection.
+
+Against the prior implementation, 140,904 valid-input comparisons matched,
+including equal remainders and maximum-safe-integer pools and weights. Nine
+invalid-input cases retained the exact error class and message. The existing
+Quint-generated review-pool replay, joint scoring, review eligibility,
+review deduplication and self-review workflows passed: 16 tests, zero failures,
+1,604 assertions. Typecheck and the strict regenerated-source/proof-integrity
+gate also passed. These local results are separate from the combined PR's
+final current-head CI and browser evidence.
 
 ## Local publication inputs
 

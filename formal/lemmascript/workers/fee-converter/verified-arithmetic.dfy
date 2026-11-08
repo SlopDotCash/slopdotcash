@@ -252,6 +252,8 @@ lemma DivisionBounds(n: int, d: int)
   ensures JSTruncDiv(n, d) * d <= n
   ensures n < (JSTruncDiv(n, d) + 1) * d
 {
+  assert n / d >= 0;
+  assert JSTruncDiv(n, d) == n / d;
   assert n == (n / d) * d + n % d;
   assert 0 <= n % d < d;
 }

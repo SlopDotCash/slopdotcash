@@ -227,7 +227,14 @@ try {
     const names = requireProofObligations(source, generated);
     obligations.push({ source: file, functions: names });
     const output = await run(
-      [lsc, "check", "--backend=dafny", "--time-limit=30", file],
+      [
+        lsc,
+        "check",
+        "--backend=dafny",
+        "--time-limit=30",
+        "--extra-flags=--isolate-assertions",
+        file,
+      ],
       label,
     );
     if (!/finished with [1-9][0-9]* verified, 0 errors/.test(output)) {
