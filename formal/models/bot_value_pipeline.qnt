@@ -1,3 +1,4 @@
+// @source workers/slopbot/verified-work-unit.ts
 // @source workers/slopbot/value-consumer.ts
 // @source workers/slopbot/value-group-collection.ts
 // @source workers/slopbot/value-source-leases.ts

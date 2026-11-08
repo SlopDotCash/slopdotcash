@@ -38,6 +38,7 @@ backend/workers, and tooling/financial/release systems. Their detailed reports:
 - [Original clean-scan reuse](lemmascript-scan-reuse.md)
 - [Jupiter decoder research](lemmascript-jupiter-research.md)
 - [Native liability and retained expiry agreement](lemmascript-native-liability.md)
+- [Complete accepted-work claim partition](lemmascript-work-unit-partition.md)
 - [Deterministic source/function inventory](lemmascript-inventory.json)
 
 The inventory enumerates first-party JavaScript and TypeScript function bodies
@@ -115,6 +116,7 @@ maintenance surface without improving the selected acceptance result.
 | Token-2022 extension parsing | `contracts/solana/verified-token-extensions`; mint and token-account readers | Complete header/payload and metadata field/vector traversal with bounded reads, allowed unique types, exact error precedence and zero-only trailing padding; preserves original bytes without copying |
 | Monthly frozen records | `verified-money.freezeMonthlyAmounts`; monthly snapshot builder | Complete ordered nonzero award records, exact recipient/source strings, both fee modes and gross/net/fee total conservation; JSON/hash and authority remain caller responsibilities |
 | Monthly replacements | `verified-monthly-replacement`; current allocation and change validation | Ordered last replacement, exact metadata preservation, first unknown recipient, self-change and excluded-positive refusals; native recipient mapping and sort remain explicit |
+| Accepted-work partition | `workers/slopbot/verified-work-unit`; real review validation | Every distinct source claim appears exactly once in a nonempty unit; unknown, duplicate and omitted claims refuse. The caller retains exact immutable IDs and evidence authority. |
 | Original scan reuse | `backend/vetting/verified-reuse`; lookup and intake | Exact cached/original identity, restriction freshness, explicit or legacy source inventory and complete retained-evidence matching; database flag coverage and Unicode normalization remain external |
 | Private intake decisions | `backend/security/verified-intake`; actual qualification and recovery gates | Human-review precedence, explicit unknown/refused states, invalid-clock refusal and strictly expired running-screen recovery |
 
