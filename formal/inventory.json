@@ -1274,12 +1274,12 @@
     },
     {
       "path": "contracts/solana/adapter.ts",
-      "sha256": "a30162fbbc96fd68def4d82ac822702d436e190f92a7de4e96c9f19d9828c1be",
+      "sha256": "cab280fa64775ff9de995830a961c80759175b0a010d2ae4d47692349325e4b1",
       "models": ["formal/models/chain_evidence.qnt"],
       "candidateLines": [
-        39, 60, 65, 67, 196, 212, 239, 247, 266, 274, 288, 298, 316, 359, 378,
-        387, 432, 439, 440, 443, 697, 703, 706, 708, 713, 737, 872, 873, 901,
-        930, 943, 951, 958, 987, 1002
+        42, 63, 68, 70, 184, 200, 227, 235, 254, 262, 276, 286, 304, 347, 366,
+        375, 420, 427, 428, 431, 685, 691, 694, 696, 701, 725, 860, 861, 889,
+        918, 931, 939, 946, 975, 990
       ],
       "review": "mapped-abstraction"
     },
@@ -4500,7 +4500,7 @@
     },
     {
       "path": "src/lib/base58.ts",
-      "sha256": "9f18c04d002b6f63091ecbdac0287c15b5781fa423915ab84c3f0d671062c2e1",
+      "sha256": "0e6673bdd39f94851dfe132947c73aafe0944a5564cff56b6ca6cab6a90ea217",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -5437,6 +5437,14 @@
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/verified-base58.ts",
+      "sha256": "2d5f176709ee64bbbf39f750b2c72e441de02760210d924a5acbb92225741ce8",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure exact radix and alphabet conversion over supplied bytes/digits. Local loops do not retain application state or perform I/O. Native byte/string adapters, wallet authority, signed messages and chain finality remain explicit caller boundaries."
     },
     {
       "path": "src/lib/verified-decimal.ts",
