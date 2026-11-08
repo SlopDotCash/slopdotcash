@@ -101,6 +101,7 @@ import {
   reopenSource,
 } from "./reopen-source";
 import { route } from "./routing";
+import { suppressRefutedSha256Claim } from "./sha256-claim";
 import {
   affectedValueActor,
   currentValueDispute,
@@ -1468,6 +1469,13 @@ async function runReview(
       objective_defect: null,
       limitations: [...context.limitations, ...verdict.limitations],
     };
+  // Issue #1930 part 1, claim level: a summary sentence may call a 64-hex
+  // value "not a sha256 hex value", a format claim the value itself
+  // contradicts. Remove only that sentence before the category drives any
+  // label, hold or closure decision; the verdict and every other sentence
+  // stand (PR #2260's whole-verdict downgrade was closed for discarding
+  // more than the false claim).
+  verdict = suppressRefutedSha256Claim(verdict) ?? verdict;
   const category: Category = verdict.category;
   // Contributor work is stopped on a paused, flagged or removed project; only
   // a security finding is published there (PRD section 5).
