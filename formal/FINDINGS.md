@@ -124,4 +124,8 @@ The same unvalidated local follow-up also addresses:
   `owner-recovery-lifetime-audit.md`. New attempt identity and exact-value
   removal preserve the newer marker and retain the existing user-reset boundary.
 
-These are source-confirmed paths, not passing runtime regressions.
+Inbox and owner-attempt paths remain source-confirmed corrections without
+passing runtime regressions. Direct recovery has since been independently
+reproduced and validated against the actual private API, migrated SQLite and
+local Anvil; see `direct-recovery-completion-audit.md`. The original full
+application branch has not been revalidated with these combined changes.

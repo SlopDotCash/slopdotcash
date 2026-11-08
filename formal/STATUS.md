@@ -1,9 +1,30 @@
 # State review status
 
-The goal remains active and incomplete. Work targets `origin/development` in
-`slopdotcash-quint-current`, including upstream
-`f4f02c250e4cd1a1db2021c3cb182df96c5cd2de`. The older dirty
-`/Users/shawwalters/slopdotcash` checkout is preserved.
+## Current delivery and acceptance boundary
+
+The goal is active and incomplete. PR
+[2414](https://github.com/SlopDotCash/slopdotcash/pull/2414) merged into
+`development` at `7f8b920bbc5056416c3f0dd1c7d5c354d44771e4`. This is not a
+production deployment or completion of the application-wide state review.
+The older dirty `/Users/shawwalters/slopdotcash` checkout is preserved.
+
+The review chat owns the remaining published batch: PR 1873, then PR 2427,
+then PR 2426. At the 8 November handoff, PR 2427 was published on a
+`development` base at `7faa63997d8bce3fbe4ad412ae2805fed993f22c`; PR 2426
+remained held at `bd4d58ef66b326a4e85b1728b972e9bf6e56fd65`. These are
+recorded checkpoints, not mutable-branch completion claims. Later commits
+must be assessed against their own source and model hashes.
+
+The separate local `codex/quint-observation-fixes` branch holds the newer
+completion-race corrections below. Do not replace the held published heads
+with this branch during the review batch. Preserve the broader 168-target,
+33-module proof manifest when integrating; this local branch still has the
+earlier proof selection. Regenerate the combined inventories after rebasing.
+
+The user resumed the goal after requesting that this chat skip checks and
+focus on pushing. That constraint remains in effect: no new checks are run
+here. Independently produced evidence is identified as such and is not
+reported as a passing run of this combined local branch.
 
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
@@ -27,6 +48,11 @@ authored fixes from PRs 2252 and 2313 and upstream PRs 2400, 2401, 2403 and 2404
 are preserved. Production settings, keys and activation flags were not changed.
 
 ## Observed validation
+
+The following early checkpoints are historical. Newer independent evidence
+for the held PR 2426 head is recorded in `docs/lemmascript-validation.md` on
+that branch, including all 302 finite models and 168 selected function proofs.
+Those results do not certify this branch's additional models or runtime fixes.
 
 - The frozen `0bc96c5aafab7d1e8c23ae798335f5cb2dced706` checkpoint passed all
   262 finite TLC checks through the pinned local parser. Its receipt confirms
@@ -130,8 +156,9 @@ suite passed its first three lifecycle cases before cancellation. The local
 acceptance run passed the six-decimal asset and part of the nine-decimal asset,
 then stopped with cleanup. Final factory TLC and binding-veto verification also
 remain incomplete. The binding model's last added scenario was not rerun.
-No final whole-head verification, full repeated wallet matrix, merge, production
-deployment or activation is claimed. The original state-correctness goal remains
+At that checkpoint, no final whole-head verification, full repeated wallet
+matrix, merge, production deployment or activation was claimed. PR 2414 has
+since merged as recorded above. The original state-correctness goal remains
 open; passing finite models does not prove absence of all application errors.
 
 ## Reviewed recovery and runner follow-up
@@ -197,6 +224,24 @@ generation in the case transaction; and owner commitment/release verification
 can clear only the captured pending attempt. Wallet-returned evidence can still
 update its owned attempt after unmount, but cannot overwrite a retry. Optional
 attempt IDs preserve legacy records. Cleared/replaced late hashes remain in
-wallet activity, not a new local history store. These revisions and their
-authored models have no new execution evidence. Published PR heads remain
-unchanged during the coordinated review batch.
+wallet activity, not a new local history store. Inbox and owner-attempt
+corrections still need runtime and model execution evidence. Published PR heads
+remain owned by the review chat during the coordinated review batch.
+
+The direct-recovery correction was independently reproduced and validated in
+the isolated `slopdotcash-lemma-recovery-fence` worktree. The original API
+returned 200 and appended a stale successor after a wallet change during the
+chain read; the corrected API returned 409 without changing the case, events
+or successors. Its five direct-payment integration scenarios passed. The
+initial model bound also failed: a composed history reaches revision 5. The
+corrected bound and all nine scenarios passed, with 3,416 distinct and 16,955
+generated states at depth 13. The regression and bound correction are now
+included locally. See `direct-recovery-completion-audit.md` for scope and
+evidence limits. This isolated evidence is not a whole-branch result.
+
+Source review also extended the existing registry publication model to cover
+bounded pair retries, first-deployment fallback, a disappearing API, and
+partial or complete file bytes left after write failure. These ten scenarios
+are unexecuted. No registry output or application behavior changed. See
+`registry-snapshot-completion-audit.md`; it explicitly excludes concurrent
+local writers and does not claim atomic publication.
