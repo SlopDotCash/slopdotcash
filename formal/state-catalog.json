@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "733284fd1e5dcec0dd75f0c6dcd0497da1da79312fa598d666b78d08949985f6",
+  "inventorySha256": "386a8d84c57240b456dbf08d043975649560d6bb6c7e6e1bdd5e913f77b1cd8d",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -253,6 +253,7 @@
       "models": [
         "formal/models/api_bounty_reservation.qnt",
         "formal/models/api_private_case.qnt",
+        "formal/models/api_private_case_roles.qnt",
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/security_payment_projection.qnt"
       ],
@@ -268,6 +269,7 @@
       "models": [
         "formal/models/api_bounty_reservation.qnt",
         "formal/models/api_private_case.qnt",
+        "formal/models/api_private_case_roles.qnt",
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/security_payment_projection.qnt"
       ],

@@ -8,7 +8,7 @@ The goal remains active and incomplete. Work targets `origin/development` in
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-806 production sources, 295 finite models and 1,227 named scenarios, with zero
+806 production sources, 296 finite models and 1,245 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 235 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -44,7 +44,7 @@ are preserved. Production settings, keys and activation flags were not changed.
   all-rule accessibility check and removal of both bodies on account change.
   Final combined whole-head checks remain in progress.
 - The prior six selected LemmaScript modules passed together: 29 functions and
-  855 proof obligations. The current census finds 9,600 runtime functions;
+  855 proof obligations. The current census finds 9,601 runtime functions;
   unselected functions remain unproved. Broader proof-only research is isolated.
 - The earlier Solana run passed two production-delay and 25 lifecycle cases;
   all 17 rebuilt JavaScript bundles matched. Local fixtures and build-tool

@@ -674,6 +674,7 @@
       "models": [
         "formal/models/api_bounty_reservation.qnt",
         "formal/models/api_private_case.qnt",
+        "formal/models/api_private_case_roles.qnt",
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/security_payment_projection.qnt"
       ],
@@ -732,7 +733,10 @@
     {
       "path": "backend/security/project-access.ts",
       "sha256": "c5d4892f08a8f5a2b64e9562a298e0bb042263df967da0ac2ba6f95ca0942289",
-      "models": ["formal/models/api_private_case.qnt"],
+      "models": [
+        "formal/models/api_private_case.qnt",
+        "formal/models/api_private_case_roles.qnt"
+      ],
       "candidateLines": [19, 22, 23],
       "review": "mapped-abstraction"
     },
@@ -6318,7 +6322,7 @@
     },
     {
       "path": "workers/slopbot/closure-eligibility.ts",
-      "sha256": "6bd87c93ebfa2e9bddf0f69882bf74032e302bea1e1dc7b04203bb809805abab",
+      "sha256": "e7bc00d9960be689b331ce9256a8858a6074e9cbd95b610f0e5ed087daed99e9",
       "models": [
         "formal/models/bot_closure_membership.qnt",
         "formal/models/bot_moderation.qnt"
@@ -6478,7 +6482,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "012e6a751b5500a7fb24b930cc16c17b90823c4ca8fc9b92430a4af2eafcc5ad",
+      "sha256": "87dd18eef36a2b1fd0b4d3ad12d7c1d321e054667d36b2738e4fe7cd7cc17963",
       "models": [
         "formal/models/bot_author_admission.qnt",
         "formal/models/bot_close_capacity.qnt",
@@ -6486,7 +6490,7 @@
         "formal/models/bot_moderation.qnt"
       ],
       "candidateLines": [
-        3, 152, 266, 281, 290, 300, 303, 495, 649, 798, 827, 837, 973, 978, 983,
+        3, 153, 267, 282, 291, 301, 304, 496, 650, 799, 828, 838, 973, 978, 983,
         985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
         1090, 1141, 1163, 1164, 1173, 1262, 1264, 1284, 1303, 1380, 1385, 1456,
         1571, 1578, 1579, 1614, 1631, 1634, 1635, 1797, 1802, 1864, 1877, 1882,
@@ -6499,7 +6503,10 @@
     {
       "path": "workers/slopbot/routing.ts",
       "sha256": "98db28acdd4768c5e7e2ee9b12e6f398fdf01f1f98d8c23b7fe2378e7cac27f1",
-      "models": ["formal/models/bot_review_admission.qnt"],
+      "models": [
+        "formal/models/bot_closure_membership.qnt",
+        "formal/models/bot_review_admission.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7437,7 +7444,7 @@
     },
     {
       "path": "formal/models/api_private_authorization.qnt",
-      "sha256": "fcea5b343dfaf1d549603b0588285d4be73ae782cc765b4e8942e45f6f755abf",
+      "sha256": "dbdf12b0ccb25840ac57a9ef02c89adfe495b8ef40eb735986dcb37e766ea0bc",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/intake-grant.ts",
@@ -7445,6 +7452,10 @@
       ],
       "scenarios": [
         "boundGrantTest",
+        "changedActorRefusedTest",
+        "changedSubmissionRefusedTest",
+        "expiredGrantRefusedTest",
+        "sameActorNewSessionRefusedTest",
         "switchedAccountTest",
         "switchedReportTest"
       ]
@@ -7463,6 +7474,30 @@
         "migrations/0061_security_automatic_intake.sql"
       ],
       "scenarios": ["appealTest", "disclosureTest", "relatedAwardTest"]
+    },
+    {
+      "path": "formal/models/api_private_case_roles.qnt",
+      "sha256": "959fc2b40c46724da402264b429e3480a854f7fa12e5a29dd185ea5924ac568e",
+      "sources": [
+        "backend/security/handler.ts",
+        "backend/security/project-access.ts"
+      ],
+      "scenarios": [
+        "appealReviewTest",
+        "financeAfterAwardTest",
+        "financeBeforeAwardRefusedTest",
+        "maintainerDecisionTest",
+        "moderatorWithoutCaseReviewRefusedTest",
+        "pendingRelatedAwardRefusedTest",
+        "relatedAwardReviewTest",
+        "reporterCannotDecideTest",
+        "reporterCannotDiscloseTest",
+        "reporterReadTest",
+        "revokedMaintainerRefusedTest",
+        "revokedTriagerReadRefusedTest",
+        "strangerReadRefusedTest",
+        "triagerCannotDecideTest"
+      ]
     },
     {
       "path": "formal/models/api_private_case_transaction.qnt",
@@ -7808,10 +7843,11 @@
     },
     {
       "path": "formal/models/bot_closure_membership.qnt",
-      "sha256": "86139cf30a2fc8ba4c0254d3b8a0d64e594d5899aa9deb51d55d52a139ad41bd",
+      "sha256": "2f9ac370770f3e0ebd13edc13a6cd2ad99a0cf7cf1eca31fd85209772e24e39a",
       "sources": [
         "backend/points/handler.ts",
-        "workers/slopbot/closure-eligibility.ts"
+        "workers/slopbot/closure-eligibility.ts",
+        "workers/slopbot/routing.ts"
       ],
       "scenarios": [
         "closedMembershipTest",
