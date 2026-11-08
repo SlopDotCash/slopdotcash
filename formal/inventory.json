@@ -5760,7 +5760,7 @@
     },
     {
       "path": "workers/fee-converter/solana-expiry.ts",
-      "sha256": "2fb15afe93215bd3a6974123136407679986cbeeb11f1cca8e27ebcc8538b7aa",
+      "sha256": "b327c3873757a838b2415be9b2bebf66ac3216419d00038e147881f5d4cdcccf",
       "models": ["formal/models/solana_expiry.qnt"],
       "candidateLines": [28, 59, 128, 141, 163],
       "review": "mapped-abstraction"
@@ -5830,9 +5830,9 @@
     },
     {
       "path": "workers/fee-converter/verified-expiry.ts",
-      "sha256": "3f900643992d3021c8d02560eb132e3305477cd5bc1b78773da84850ee6d25e2",
+      "sha256": "4c57516608636d009854016a2def8ecd4666dfc4490cbeef1278f058a827c04d",
       "models": ["formal/models/solana_expiry.qnt"],
-      "candidateLines": [],
+      "candidateLines": [73],
       "review": "mapped-abstraction"
     },
     {
@@ -9998,7 +9998,7 @@
     },
     {
       "path": "formal/models/solana_expiry.qnt",
-      "sha256": "a4489f1c400ba2ec8b2e830f0ef68924e4ab01d879365be2af8dbfd9dbe4eb9b",
+      "sha256": "9b71e1d27f8b3b27dbb0c04eb9c621987f7c494badc9493c37b042890fb9440e",
       "sources": [
         "migrations/0095_fee_solana_expiry.sql",
         "workers/fee-converter/native-gas.ts",

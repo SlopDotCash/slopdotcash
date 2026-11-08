@@ -17,8 +17,8 @@
   ],
   "counts": {
     "files": 671,
-    "functions": 9671,
-    "selectedContractTargets": 106,
+    "functions": 9673,
+    "selectedContractTargets": 108,
     "unprovedFunctions": 9565,
     "nonTypeScriptFiles": 52
   },
@@ -8744,7 +8744,7 @@
 {"name":"associatedAccountCreations","kind":"FunctionDeclaration","line":246,"sha256":"8e32a4a83dab8183a7089bdaccff7db43382948904b99e45169c1ceb40f14471","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"<ArrowFunction@264>","kind":"ArrowFunction","line":264,"sha256":"5091301dac749d3bf01ca8da5c17f8670b8a04c730b9e68f62d5f150ffc64e72","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/fee-converter/solana-expiry.ts","sha256":"2fb15afe93215bd3a6974123136407679986cbeeb11f1cca8e27ebcc8538b7aa","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/fee-converter/solana-expiry.ts","sha256":"b327c3873757a838b2415be9b2bebf66ac3216419d00038e147881f5d4cdcccf","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"matchingCompletedCoverage","kind":"FunctionDeclaration","line":29,"sha256":"399a4fd1eb4d75180a8589a738b5a5293a5d564c4178869ad22927751945e60c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"digest","kind":"FunctionDeclaration","line":46,"sha256":"d01b13057fcdfe438b6eda682139c9d58c0ff21241d32b721ee6e67cb9212bb5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@49>","kind":"ArrowFunction","line":49,"sha256":"f863e2e02bc54d0b3caf4cb16b1f91577e54ffb1461d972074f92a38726fcdba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -8752,7 +8752,7 @@
 {"name":"<ArrowFunction@73>","kind":"ArrowFunction","line":73,"sha256":"f4f1e456af1d421e285c41e9e035e483277807194e10eed74fc61ab4ab8a1412","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"recoveryOperator","kind":"FunctionDeclaration","line":88,"sha256":"227164f03c53eb06f500f74ebf7ae9e6236738355d9a99a60ecbf0d6d568206c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"slot","kind":"FunctionDeclaration","line":98,"sha256":"9a490bc36a96037f0a7a5f9ed5eab71af43ce5f5938a12142c6d83da82423493","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"proveSolanaExpiry","kind":"FunctionDeclaration","line":101,"sha256":"be925fee11fed218e8dc4d17adb074b4b9f7f631e179f4f87099ea19c3ad22e1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+{"name":"proveSolanaExpiry","kind":"FunctionDeclaration","line":101,"sha256":"008fbe4ebc66ae819acbc5bb1aac61f2f3d0bcfd50991b3c2bf5402eb3abe990","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
 {"path":"workers/fee-converter/solana-native-route.ts","sha256":"280b69d9abdef4329741cc78c6928e812d71217dd416465ae0ea804cc0dd3813","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"short","kind":"FunctionDeclaration","line":22,"sha256":"4a6295182179cef780b2bf41920377c93023af522e9da9c239947837fa5c4981","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -8910,8 +8910,10 @@
 {"name":"ceilPercent","kind":"FunctionDeclaration","line":128,"sha256":"9d6db55238ba4c59858c4c9725c6f1693b1cae79ffe807782855e79c1f2fd98f","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"solanaNativeFee","kind":"FunctionDeclaration","line":138,"sha256":"dde9e56ea9c4c4afe83345db1cf6b1f5ca5edcd6f8882e0fe5bd2f733233c27f","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
-{"path":"workers/fee-converter/verified-expiry.ts","sha256":"3f900643992d3021c8d02560eb132e3305477cd5bc1b78773da84850ee6d25e2","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"matchingExpiryCoverage","kind":"FunctionDeclaration","line":22,"sha256":"05414f175a6ac0106f4dd98efbdca72b86400ed93fb9baddb8b48da5d5589f43","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
+{"path":"workers/fee-converter/verified-expiry.ts","sha256":"4c57516608636d009854016a2def8ecd4666dfc4490cbeef1278f058a827c04d","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"matchingExpiryCoverage","kind":"FunctionDeclaration","line":22,"sha256":"05414f175a6ac0106f4dd98efbdca72b86400ed93fb9baddb8b48da5d5589f43","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"containsExpirySignature","kind":"FunctionDeclaration","line":58,"sha256":"bb6c54023d0d9ffdc06c4c93d1f69736adc7ac790ba4c32d079f414c2682ba4f","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"expiryTraversalStep","kind":"FunctionDeclaration","line":82,"sha256":"46dace579aceb3681ab278bbd41e4f061d3b7141d4c9172cb5335e83e71652ed","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
 {"path":"workers/fee-converter/verified-native-liability.ts","sha256":"e3791817fc05aa4a27700fcaebe71734745eb2c356fe19e123d0ee861e1dc98b","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"nativeDailyLiability","kind":"FunctionDeclaration","line":18,"sha256":"065da195239fa77ff87c7e5b50ef63b922ff4d1189033c2c2bbf42f60bc2ff34","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
