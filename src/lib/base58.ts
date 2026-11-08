@@ -3,7 +3,7 @@ import {
   base58Digit,
   convertRadixDigits,
   decodeBase58Digits,
-} from "./verified-base58";
+} from "./verified-base58.ts";
 
 export function encodeBase58Bytes(bytes: Uint8Array): string {
   return convertRadixDigits(Array.from(bytes), 256n, 58n)
