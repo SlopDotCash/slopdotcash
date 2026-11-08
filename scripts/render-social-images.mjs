@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Renders the 1200x630 social preview images from the Blackout design source:
- * brand/tokens.json, public/slop-mark.svg and the self-hosted site fonts.
+ * src/brand-tokens.ts, public/slop-mark.svg and the self-hosted site fonts.
  *
  * Usage: node scripts/render-social-images.mjs
  *
@@ -14,11 +14,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { brandTokens as tokens } from "../src/brand-tokens.ts";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const tokens = JSON.parse(
-  readFileSync(join(repositoryRoot, "brand", "tokens.json"), "utf8"),
-);
 const mark = readFileSync(join(repositoryRoot, "public", "slop-mark.svg"));
 
 function fontDataUrl(path) {
