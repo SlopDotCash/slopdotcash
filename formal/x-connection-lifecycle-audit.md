@@ -18,7 +18,8 @@ link write and cleanup use that hash, so it cannot link through the new flow
 or delete that new flow. Duplicate callbacks do not acquire an already claimed
 flow. A foreign actor's reserved X identity cannot be reassigned. Disconnect
 removes the public link and active flow while retaining the identity claim.
-No new participation points are created.
+The permanent claim retains its verification marker after callback-local
+captures are cleared. No new participation points are created.
 
 The model explicitly preserves the current time semantics. The ten-minute
 flow deadline is checked when claiming a pending callback; a claimed flow may

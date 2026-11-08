@@ -8150,7 +8150,7 @@
     },
     {
       "path": "formal/models/api_x_connection.qnt",
-      "sha256": "f7502e11c6a7bea2c2a720df64863e8c2bac491ff9c2ff688158f52d691459dc",
+      "sha256": "486394316a37f424eac76c4495f8240cf3c07298fc00e7a966743a8d325ef65a",
       "sources": ["backend/points/x.ts", "migrations/0009_points_social.sql"],
       "scenarios": [
         "cleanupFailureDoesNotUndoCommittedLinkTest",

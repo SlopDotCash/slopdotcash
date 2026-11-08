@@ -8,20 +8,20 @@
 module api_x_connection {
   type State = {phase:str,flow:int,flowState:str,flowExpired:bool,starts:int,
     sessionPresent:bool,sessionExpired:bool,callback:int,token:bool,verified:bool,
-    boundLive:bool,owner:int,linked:bool,publicLink:bool,recorded:bool,
+    boundLive:bool,owner:int,reservationVerified:bool,linked:bool,publicLink:bool,recorded:bool,
     outcome:str,response:str,revokeAttempted:bool,providerRevoked:bool,
     replayRejected:bool,invalidRejected:bool,points:int}
   var s:State
   action init=s'={phase:"idle",flow:0,flowState:"absent",flowExpired:false,starts:0,
     sessionPresent:true,sessionExpired:false,callback:0,token:false,verified:false,
-    boundLive:false,owner:0,linked:false,publicLink:false,recorded:false,
+    boundLive:false,owner:0,reservationVerified:false,linked:false,publicLink:false,recorded:false,
     outcome:"none",response:"none",revokeAttempted:false,providerRevoked:false,
     replayRejected:false,invalidRejected:false,points:0}
   def finished(state:State,response:str):State=state.with("phase","finished")
     .with("response",response).with("callback",0).with("token",false)
     .with("verified",false).with("boundLive",false).with("outcome","none")
-  action priorClaim(owner:int):bool=all{s.phase=="idle",s.starts==0,owner>=1,owner<=2,
-    s'=s.with("owner",owner)}
+  action priorClaim(owner:int):bool=all{s.phase=="idle",s.starts==0,s.owner==0,owner>=1,owner<=2,
+    s'=s.with("owner",owner).with("reservationVerified",true)}
   // A new start deletes this actor's older flows, including processing ones.
   action start=all{s.sessionPresent,not(s.sessionExpired),s.starts<2,
     s'=s.with("starts",s.starts+1).with("flow",s.starts+1)
@@ -51,9 +51,9 @@ module api_x_connection {
   // A deleted session or superseded flow refuses at execution. Time passing
   // after verifiedAt was bound is not another expiry check in this source.
   action commit(databaseWorks:bool):bool=all{s.phase=="write",
-    val allowed=databaseWorks and s.sessionPresent and s.boundLive and s.flow==s.callback
+    val allowed=databaseWorks and s.verified and s.sessionPresent and s.boundLive and s.flow==s.callback
       and s.flowState=="processing" and s.owner!=2
-    s'=if(allowed)s.with("phase","cleanup").with("owner",1).with("linked",true)
+    s'=if(allowed)s.with("phase","cleanup").with("owner",1).with("reservationVerified",true).with("linked",true)
       .with("publicLink",true).with("recorded",true).with("outcome","connected")
       else s.with("phase","cleanup").with("outcome","failed")}
   action cleanup(databaseWorks:bool):bool=all{s.phase=="cleanup",
@@ -71,7 +71,8 @@ module api_x_connection {
     tokenReply(true),tokenReply(false),identityReply(true),identityReply(false),
     commit(true),commit(false),cleanup(true),cleanup(false),revoke(true),revoke(false),disconnect,s'=s}
   val invariant=all{s.starts<=2,s.owner>=0,s.owner<=2,s.points==0,
-    s.linked implies(s.owner==1 and s.publicLink),
+    s.owner>0 implies s.reservationVerified,
+    s.linked implies(s.owner==1 and s.publicLink and s.reservationVerified),
     s.owner==2 implies not(s.recorded),
     s.response=="connected" implies s.recorded,
     s.phase=="finished" implies(not(s.token) and s.callback==0)}
