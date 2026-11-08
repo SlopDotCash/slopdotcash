@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
@@ -9,6 +9,14 @@ import {
   sendMonthlyRelease,
 } from "./lib/monthly-release-actions";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
+import {
+  clearPendingAttempt,
+  createPendingAttempt,
+  type PendingAttempt,
+  updatePendingAttempt,
+  updatePendingRecord,
+  validPendingAttemptId,
+} from "./lib/pending-attempt";
 import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
 import {
@@ -17,7 +25,7 @@ import {
 } from "./OwnerPresentation";
 import { NoWalletFound, WalletConnection } from "./Presentation";
 
-type Pending = { planId: string; hash: string | null };
+type Pending = PendingAttempt & { planId: string; hash: string | null };
 const HELD: Record<string, string> = {
   "allocation-unavailable":
     "The complete original allocation is unavailable. The reserve stays held.",
@@ -35,25 +43,36 @@ export default function OwnerReserveRelease({
   view: MonthlyOwnerView;
 }) {
   const key = `${releaseStoragePrefix(view.projectId)}${view.period}:${view.deployment?.network}`;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [initial] = useState(() => {
+    let raw: string | null = null;
     try {
-      const raw = sessionStorage.getItem(key);
-      if (!raw) return { pending: null, error: "" };
+      raw = sessionStorage.getItem(key);
+      if (raw === null) return { pending: null, error: "", raw };
       const parsed = JSON.parse(raw) as Pending;
       if (
+        !validPendingAttemptId(parsed.attemptId) ||
         !/^[a-f0-9]{64}$/.test(parsed.planId) ||
         (parsed.hash !== null && typeof parsed.hash !== "string")
       )
         throw new Error();
-      return { pending: parsed, error: "" };
+      return { pending: parsed, error: "", raw };
     } catch {
       return {
         pending: null,
+        raw,
         error:
           "The saved release cannot be read. Check wallet activity before another request.",
       };
     }
   });
+  const storedPending = useRef<Pending | null>(initial.pending);
   const [pending, setPending] = useState<Pending | null>(initial.pending);
   const [plan, setPlan] = useState<ReadyMonthlyRelease | null>(null);
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
@@ -72,9 +91,22 @@ export default function OwnerReserveRelease({
     );
   };
 
-  function save(value: Pending) {
-    sessionStorage.setItem(key, JSON.stringify(value));
-    setPending(value);
+  function save(value: Pending, previous?: Pending) {
+    const stored = previous
+      ? updatePendingAttempt(key, previous, value)
+      : createPendingAttempt(key, value);
+    if (!stored) return false;
+    storedPending.current = value;
+    if (mounted.current) setPending(value);
+    return true;
+  }
+  function clear(value: Pending) {
+    if (!mounted.current) return false;
+    if (!clearPendingAttempt(key, value))
+      throw new Error("The saved request changed. Reload before continuing.");
+    storedPending.current = null;
+    setPending(null);
+    return true;
   }
   const amount = plan?.prepared.evidence.releasedGross;
   return (
@@ -90,6 +122,11 @@ export default function OwnerReserveRelease({
           disabled={busy}
           onClick={() =>
             void run(async () => {
+              if (!mounted.current) return;
+              if (sessionStorage.getItem(key) !== initial.raw)
+                throw new Error(
+                  "The saved request changed. Reload before continuing.",
+                );
               sessionStorage.removeItem(key);
               setStorageError(false);
             })
@@ -132,19 +169,30 @@ export default function OwnerReserveRelease({
             disabled={busy || !hash.trim()}
             onClick={() =>
               void run(async () => {
+                const captured = storedPending.current;
+                if (!captured)
+                  throw new Error(
+                    "The saved request changed. Reload before continuing.",
+                  );
                 const result = await requestMonthlyRelease(view, {
                   planId: pending.planId,
                   transactionId: hash.trim(),
                 });
+                if (!mounted.current) return;
                 if (result.status === "pending") {
-                  save({ ...pending, hash: hash.trim() });
+                  const candidate = { ...pending, hash: hash.trim() };
+                  if (!updatePendingRecord(key, captured, candidate))
+                    throw new Error(
+                      "The saved request changed. Reload before continuing.",
+                    );
+                  storedPending.current = candidate;
+                  setPending(candidate);
                   setNotice("Waiting for the transaction to finalize.");
                   return;
                 }
                 if (result.status !== "failed" && result.status !== "finalized")
                   throw new Error("The transaction status is unavailable.");
-                sessionStorage.removeItem(key);
-                setPending(null);
+                clear(captured);
                 setPlan(null);
                 setNotice(
                   result.status === "finalized"
@@ -159,12 +207,13 @@ export default function OwnerReserveRelease({
           {!pending.hash && (
             <UnsentTransactionRecovery
               disabled={busy}
-              onClear={() => {
-                sessionStorage.removeItem(key);
-                setPending(null);
-                setPlan(null);
-                setNotice("Local request cleared after your wallet check.");
-              }}
+              onClear={() =>
+                void run(async () => {
+                  clear(storedPending.current ?? pending);
+                  setPlan(null);
+                  setNotice("Local request cleared after your wallet check.");
+                })
+              }
             />
           )}
         </PendingTransaction>
@@ -178,6 +227,7 @@ export default function OwnerReserveRelease({
               void run(async () => {
                 setPlan(null);
                 const result = await requestMonthlyRelease(view);
+                if (!mounted.current) return;
                 if (result.status === "held") {
                   setPlan(null);
                   setNotice(
@@ -211,7 +261,10 @@ export default function OwnerReserveRelease({
                   legend="Connect the vault owner's wallet"
                   empty={<NoWalletFound solana={family === "solana"} />}
                   onConnect={(provider) =>
-                    void run(async () => setWallet(await provider.connect()))
+                    void run(async () => {
+                      const connected = await provider.connect();
+                      if (mounted.current) setWallet(connected);
+                    })
                   }
                 />
               ) : (
@@ -221,12 +274,44 @@ export default function OwnerReserveRelease({
                   disabled={busy}
                   onClick={() =>
                     void run(async () => {
+                      const intent: Pending = {
+                        attemptId: crypto.randomUUID(),
+                        planId: plan.planId,
+                        hash: null,
+                      };
                       const transactionId = await sendMonthlyRelease(
                         plan,
                         wallet,
-                        () => save({ planId: plan.planId, hash: null }),
+                        () => {
+                          if (!mounted.current)
+                            throw new Error(
+                              "The wallet view was closed. Review before sending.",
+                            );
+                          if (!save(intent))
+                            throw new Error(
+                              "The saved request changed. Reload before continuing.",
+                            );
+                        },
                       );
-                      save({ planId: plan.planId, hash: transactionId });
+                      try {
+                        if (!save({ ...intent, hash: transactionId }, intent)) {
+                          if (mounted.current)
+                            setNotice(
+                              `Submitted: ${transactionId}. The saved request was cleared or replaced. Keep this identifier with your wallet activity.`,
+                            );
+                          return;
+                        }
+                      } catch {
+                        if (mounted.current) {
+                          setPending({ ...intent, hash: transactionId });
+                          setHash(transactionId);
+                          setNotice(
+                            `Submitted: ${transactionId}. Browser storage could not save it. Keep this identifier with your wallet activity.`,
+                          );
+                        }
+                        return;
+                      }
+                      if (!mounted.current) return;
                       setHash(transactionId);
                       setNotice(
                         "Submitted. Check the transaction to verify the release.",

@@ -106,3 +106,36 @@ Model/source corrections and verification limits are recorded in
 `backend-runner-review-audit.md`, `binding-veto-audit.md`,
 `runner-cancellation-audit.md` and `direct-payment-composition-audit.md`.
 Final combined-head checks remain separate from these scoped results.
+
+The further local source review found an older private-case GET could overwrite
+a newer action response because `useSecurityData.replace` did not advance its
+read generation. The correction advances that generation. Its runtime evidence
+is still pending; this is a source-confirmed pre-existing race, not a newly
+executed reproduction. See `direct-payment-composition-audit.md`.
+
+The same unvalidated local follow-up also addresses:
+
+- Inbox focus reads could supersede a pending mutation and suppress its final
+  readback; see `inbox-mutation-focus-audit.md`.
+- Direct recovery could commit a captured successor wallet after a later wallet
+  replacement; see `direct-recovery-completion-audit.md`. The prior result was
+  stale recovery metadata, not a demonstrated unauthorized payment.
+- A departed owner verification could clear a newer retry's marker; see
+  `owner-recovery-lifetime-audit.md`. New attempt identity and exact-value
+  removal preserve the newer marker and retain the existing user-reset boundary.
+
+Inbox and owner-attempt paths remain source-confirmed corrections without
+passing runtime regressions. Direct recovery has since been independently
+reproduced and validated against the actual private API, migrated SQLite and
+local Anvil; see `direct-recovery-completion-audit.md`. The original full
+application branch has not been revalidated with these combined changes.
+
+The continued source pass adds initial direct-payment preparation fencing,
+revision-aware case responses with equal-revision refresh, owned vault and
+monthly-setting recovery snapshots, and per-nonce direct-payment journal
+merges. See `direct-preparation-completion-audit.md`,
+`private-action-lifetimes-audit.md`, `owner-recovery-lifetime-audit.md`, and
+`direct-bounty-journal-audit.md`. These are separate source-confirmed fixes;
+their presence in this list does not claim passing browser or combined-head
+evidence. Model authoring errors found by independent checks are retained in
+their audits alongside their corrections.

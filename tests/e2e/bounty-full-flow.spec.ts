@@ -940,6 +940,16 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await maintainer.reload({ waitUntil: "networkidle" });
     await expect(recoveredHash).toHaveValue(wrongHash);
     expect(walletSends).toHaveLength(1);
+    // Clearing the recovery field is an explicit choice, even when a saved
+    // candidate exists. It must not silently verify that older candidate.
+    await recoveredHash.fill("");
+    await expect(
+      savedFee.getByRole("button", {
+        name: "Verify submitted payments",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(walletSends).toHaveLength(1);
     await recoveredHash.fill(feeTransaction);
     let lost = false;
     const actionUrl = `${new URL(maintainer.url()).origin}/api/v1/security-cases/${caseId}/actions`;
@@ -1312,14 +1322,37 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await payerControls
       .getByRole("button", { name: "Connect MetaMask", exact: true })
       .click();
-    loseFirstWalletResponse = true;
+    loseFirstWalletResponse = false;
+    // The wallet returns a real mined hash, but the browser refuses exactly
+    // its journal write. Verification must retain that in-memory evidence.
+    await maintainer.evaluate(() => {
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (
+          this === sessionStorage &&
+          key.startsWith("slop:bounty-send:v1:") &&
+          Object.values(
+            JSON.parse(value) as Record<string, { hash: string | null }>,
+          ).some((entry) => entry.hash !== null)
+        ) {
+          Storage.prototype.setItem = original;
+          throw new DOMException(
+            "Fixture journal quota refusal",
+            "QuotaExceededError",
+          );
+        }
+        return original.call(this, key, value);
+      };
+    });
     await payerControls
       .getByRole("button", { name: "Pay remaining transfers", exact: true })
       .click();
-    await expect(payerControls.getByRole("alert")).toBeVisible();
+    await expect(payerControls.getByRole("alert")).toContainText(
+      "Browser storage could not save it",
+    );
     expect(walletSends).toHaveLength(4);
     const secondFee = walletSends[3].hash;
-    await payerControls.getByRole("textbox").fill(secondFee);
+    await expect(payerControls.getByRole("textbox")).toHaveValue(secondFee);
     await payerControls
       .getByRole("button", { name: "Verify submitted payments", exact: true })
       .click();
@@ -1336,6 +1369,16 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await expect(payerControls.getByRole("textbox")).toHaveValue(
       secondResearcher,
     );
+    // The send panel hides verification for an explicitly cleared field;
+    // it must not fall back to its otherwise valid stored transaction hash.
+    await payerControls.getByRole("textbox").fill("");
+    await expect(
+      payerControls.getByRole("button", {
+        name: "Verify submitted payments",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await payerControls.getByRole("textbox").fill(secondResearcher);
     await rotateReporterWallet(chain.reporter);
     await maintainer.reload({ waitUntil: "networkidle" });
     const savedPayments = maintainer.getByRole("region", {

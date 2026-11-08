@@ -59,18 +59,24 @@ for (const scenario of [
   );
   // Model Base's zero additional local-chain costs explicitly. Anvil is not
   // an OP Stack node; production verifiers never infer zero from absent fees.
+  let receiptHook: ((transactionId: string) => void) | null = null;
+  let preparationHook: (() => Promise<void>) | null = null;
   const feeRpc = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
       const body = await request.text();
-      const query = JSON.parse(body) as { method: string };
+      const query = JSON.parse(body) as { method: string; params?: string[] };
       const upstream = await fetch(rpcUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
       });
       const value = await upstream.json();
+      if (query.method === "eth_getTransactionCount" && preparationHook)
+        await preparationHook();
+      if (query.method === "eth_getTransactionReceipt" && receiptHook)
+        receiptHook(query.params?.[0] ?? "");
       if (query.method === "eth_getTransactionReceipt" && value.result)
         value.result.l1Fee = "0x0";
       return Response.json(value);
@@ -365,14 +371,14 @@ for (const scenario of [
         )
         .run(id, OWNER.githubId, `${id}-seed`, stamp);
     }
-    function rotateReporter(target: string, label: string) {
+    function rotateWallet(actor: typeof OWNER, target: string, label: string) {
       const prior = sqlite
         .query<{ id: string }, [string]>(
           "SELECT id FROM effective_payment_wallet_claims WHERE github_user_id=?",
         )
-        .get(REPORTER.githubId);
+        .get(actor.githubId);
       assert.ok(prior);
-      const nextClaim = `claim-reporter-${label}`;
+      const nextClaim = `claim-${actor.githubId}-${label}`;
       sqlite
         .prepare(
           "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain,supersedes_claim_id) SELECT ?,github_user_id,github_login,?,source,source_body_sha256,observed_at,?,created_at,chain,id FROM wallet_claims WHERE id=?",
@@ -385,7 +391,7 @@ for (const scenario of [
         .run(
           `challenge-${label}`,
           nextClaim,
-          REPORTER.githubId,
+          actor.githubId,
           new Date(Date.now() + 86400000).toISOString(),
           stamp,
         );
@@ -395,11 +401,14 @@ for (const scenario of [
         )
         .run(
           nextClaim,
-          REPORTER.githubId,
+          actor.githubId,
           stamp,
           `challenge-${label}`,
           "verified-local-fixture",
         );
+    }
+    function rotateReporter(target: string, label: string) {
+      rotateWallet(REPORTER, target, label);
     }
     async function prepareCase(id: string, rootCause: string) {
       seedCase(id, rootCause);
@@ -432,6 +441,124 @@ for (const scenario of [
           )
           .get(id)?.intent ?? "null",
       ) as DirectIntent;
+    }
+    // Pause only the final planning RPC response. The request and its result
+    // still come from the actual Anvil node; concurrent changes use migrated
+    // SQLite and the same API as the rest of this workflow.
+    for (const changed of ["reporter", "payer", "consent"] as const) {
+      sqlite.exec("SAVEPOINT initial_preparation_race");
+      const raceId = `sc_initial_preparation_${changed}`;
+      const state = () => ({
+        revision: sqlite
+          .query<{ revision: number }, [string]>(
+            "SELECT revision FROM security_cases WHERE id=?",
+          )
+          .get(raceId)?.revision,
+        events: sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT COUNT(*) n FROM security_case_events WHERE case_id=?",
+          )
+          .get(raceId)?.n,
+        intents: sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT COUNT(*) n FROM security_direct_payments WHERE case_id=?",
+          )
+          .get(raceId)?.n,
+      });
+      try {
+        seedCase(raceId, "root-four");
+        assert.equal(
+          (
+            await act(OWNER, raceId, "award", {
+              decision: "amount",
+              grossMinor: gross,
+              paymentDeadline: new Date(Date.now() + 86400000).toISOString(),
+              confirmation: true,
+              reason:
+                "Review initial payment preparation against current wallets.",
+            })
+          ).status,
+          200,
+        );
+        assert.equal(
+          (
+            await act(REPORTER, raceId, "consent-payment", {
+              network,
+              confirmation: true,
+            })
+          ).status,
+          200,
+        );
+        const before = state();
+        let afterMutation: ReturnType<typeof state> | undefined;
+        preparationHook = async () => {
+          preparationHook = null;
+          rotateWallet(
+            changed === "payer" ? OWNER : REPORTER,
+            wrong,
+            `initial-${changed}`,
+          );
+          if (changed === "consent") {
+            assert.equal(
+              (
+                await act(REPORTER, raceId, "consent-payment", {
+                  network,
+                  confirmation: true,
+                })
+              ).status,
+              200,
+            );
+          }
+          afterMutation = state();
+        };
+        const completed = await act(OWNER, raceId, "prepare-payment", {
+          network,
+          confirmation: true,
+        });
+        const after = state();
+        console.log(
+          JSON.stringify({
+            scenario,
+            initialPreparationRace: changed,
+            before,
+            afterMutation,
+            after,
+            status: completed.status,
+            error: completed.body.error,
+          }),
+        );
+        assert.ok(
+          afterMutation,
+          "The real nonce RPC response must trigger the concurrent change",
+        );
+        assert.equal(completed.status, 409, JSON.stringify(completed.body));
+        assert.equal(
+          completed.body.error,
+          changed === "consent"
+            ? "stale_revision"
+            : "payment_preparation_changed",
+        );
+        assert.equal(
+          after.intents,
+          0,
+          "A stale initial plan must not create an intent",
+        );
+        assert.equal(
+          after.revision,
+          afterMutation.revision,
+          "Refused preparation must not advance the case",
+        );
+        assert.equal(
+          after.events,
+          afterMutation.events,
+          "Refused preparation must not append an event",
+        );
+        if (changed !== "consent") assert.deepEqual(afterMutation, before);
+      } finally {
+        preparationHook = null;
+        sqlite.exec("ROLLBACK TO initial_preparation_race");
+        sqlite.exec("RELEASE initial_preparation_race");
+      }
     }
     const caseId = "sc_direct_payment_1";
     seedCase(caseId, "root-one");
@@ -886,6 +1013,64 @@ for (const scenario of [
         "a mined but unfinalized cancellation cannot redirect funds",
       );
       await rpc("anvil_mine", ["0x80"]);
+      // A wallet can change without changing the case revision while the
+      // cancellation proof is awaiting its provider. No stale successor may
+      // commit, even though the captured wallet had valid earlier consent.
+      sqlite.exec("SAVEPOINT recovery_wallet_race");
+      const priorRevision = sqlite
+        .query<{ revision: number }, [string]>(
+          "SELECT revision FROM security_cases WHERE id=?",
+        )
+        .get(next)?.revision;
+      const priorEvents = sqlite
+        .query<{ n: number }, [string]>(
+          "SELECT COUNT(*) n FROM security_case_events WHERE case_id=?",
+        )
+        .get(next)?.n;
+      let rotatedDuringProof = false;
+      receiptHook = (transactionId) => {
+        if (transactionId !== cancellationHash) return;
+        receiptHook = null;
+        rotateReporter(recipient, "during-cancellation-proof");
+        rotatedDuringProof = true;
+      };
+      try {
+        const stale = await act(OWNER, next, "recover-payment", {
+          confirmation: true,
+          cancellationTransactionId: cancellationHash,
+        });
+        assert.equal(rotatedDuringProof, true);
+        assert.equal(stale.status, 409, JSON.stringify(stale.body));
+        assert.equal(stale.body.error, "payment_recovery_changed");
+        assert.equal(
+          sqlite
+            .query<{ n: number }, [string]>(
+              "SELECT COUNT(*) n FROM security_direct_payment_revisions WHERE case_id=?",
+            )
+            .get(next)?.n,
+          0,
+        );
+        assert.equal(
+          sqlite
+            .query<{ revision: number }, [string]>(
+              "SELECT revision FROM security_cases WHERE id=?",
+            )
+            .get(next)?.revision,
+          priorRevision,
+        );
+        assert.equal(
+          sqlite
+            .query<{ n: number }, [string]>(
+              "SELECT COUNT(*) n FROM security_case_events WHERE case_id=?",
+            )
+            .get(next)?.n,
+          priorEvents,
+        );
+      } finally {
+        receiptHook = null;
+        sqlite.exec("ROLLBACK TO recovery_wallet_race");
+        sqlite.exec("RELEASE recovery_wallet_race");
+      }
       const recovered = await act(OWNER, next, "recover-payment", {
         confirmation: true,
         cancellationTransactionId: cancellationHash,

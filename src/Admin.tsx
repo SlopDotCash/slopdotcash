@@ -26,7 +26,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
 import "./operations-design.css";
 import "./admin-design.css";
@@ -160,6 +167,13 @@ function ProjectEditor({
   onCancel: () => void;
 }) {
   const draftKey = `slop:admin-project:${project.id}:${project.revision}`;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [restored] = useState(() => {
     try {
       return JSON.parse(sessionStorage.getItem(draftKey) ?? "null") as {
@@ -206,17 +220,26 @@ function ProjectEditor({
   };
   const [status, setStatus] = useState(restored?.status ?? project.status);
   const [reason, setReason] = useState(restored?.reason ?? "");
+  const draft = JSON.stringify({
+    text,
+    skill,
+    asset,
+    assetSelected,
+    status,
+    reason,
+  });
+  const currentDraft = useRef(draft);
+  useLayoutEffect(() => {
+    currentDraft.current = draft;
+  }, [draft]);
   useEffect(() => {
     try {
-      sessionStorage.setItem(
-        draftKey,
-        JSON.stringify({ text, skill, asset, assetSelected, status, reason }),
-      );
+      sessionStorage.setItem(draftKey, draft);
       setDraftError(false);
     } catch {
       setDraftError(true);
     }
-  }, [draftKey, text, skill, asset, assetSelected, status, reason]);
+  }, [draftKey, draft]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const skillStarted = CONTRIBUTION_FIELDS.some(
@@ -349,6 +372,7 @@ function ProjectEditor({
       setError(errorMessage(caught));
       return;
     }
+    const submittedDraft = draft;
     setBusy(true);
     setError(null);
     projectApiRequest(
@@ -358,13 +382,23 @@ function ProjectEditor({
     ).then(
       () => {
         try {
-          sessionStorage.removeItem(draftKey);
+          if (sessionStorage.getItem(draftKey) === submittedDraft)
+            sessionStorage.removeItem(draftKey);
         } catch {
           // A saved revision has a new draft key; storage failure cannot undo it.
+        }
+        if (!mounted.current) return;
+        setBusy(false);
+        if (currentDraft.current !== submittedDraft) {
+          setError(
+            "The submitted revision was saved. Your newer edits remain in this editor. Keep a copy before reloading the latest project revision.",
+          );
+          return;
         }
         onSaved(SAVED_NOTE);
       },
       (caught: unknown) => {
+        if (!mounted.current) return;
         setBusy(false);
         setError(errorMessage(caught));
       },
