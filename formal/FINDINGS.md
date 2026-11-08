@@ -1,0 +1,108 @@
+# Reproduced discrepancies
+
+This index lists defects corrected during the current-development review,
+including failures reproduced in intermediate review candidates and test
+infrastructure. It does not attribute every row to the original development
+revision. The area audits identify the source checkpoint, bounds, before/after
+evidence and model links.
+The tests below use application entry points, real local databases or browser
+flows as appropriate. A local provider fixture does not establish live service
+availability. The full combined validation remains incomplete; this is not a
+claim that all application state errors have been eliminated.
+
+| Boundary | Incorrect transition | Corrected behavior / regression |
+| --- | --- | --- |
+| Account closure | Retained closed membership still authorized automatic closure; removing all participation also blocked advisory review | Require active membership for closure while retaining recorded participation for advisory routing; `workers/slopbot/closure-eligibility.test.ts` |
+| Identity expiry | Delayed OAuth completion or persistence outlived its authorization | Check expiry at completion and persistence; `workers/identity/expiry-boundary.test.ts` |
+| Local migrations | Schema commit could survive without its migration marker | Schema, foreign-key check and marker commit together; `scripts/dev-migrations.test.ts` |
+| Independent API configuration | Malformed payment configuration broke unrelated account requests | Parse payment configuration at the payment boundary; `scripts/api-config-isolation.test.ts` |
+| Bot source context | Review context could use content inconsistent with its claimed Git blob | Verify content before inclusion; `workers/slopbot/value-context-integrity.test.ts` |
+| Usage uncertainty | A later known cost erased an earlier unknown cost | Preserve unknown aggregate cost; `workers/vetting/review-plan.test.ts` |
+| Publication authority | A pause or quarantine could occur after the last read but before insertion | Check current policy in the insert transaction; `workers/slopbot/value-publication-fence.test.ts` |
+| Publication lease | A worker could publish after losing its processing or source lease | Check token and lease at database execution time; `workers/slopbot/value-pipeline.test.ts` |
+| Stream completion | Cancellation during a pending completion write recorded two terminal outcomes | Record one terminal outcome; `scripts/vetting-api.test.ts` |
+| Stream authority | Sign-out during an object read could still release the bytes | Recheck live session and actor before each part and before enqueue; `scripts/vetting-api.test.ts` |
+| Evidence registration | Competing identical registrations could turn a successful write into an internal error | Read back the atomic winner, accepting identity and refusing conflict; `scripts/vetting-api.test.ts` |
+| Private report revision | A decision based on an old report could succeed after the report changed | Advance case and report revisions together; `backend/security/report-intake.test.ts` |
+| Session response | An incomplete session object was accepted as authenticated | Validate the identity fields; `tests/e2e/ui-state-boundaries.spec.ts` |
+| Session return | Admin or owner controls retained an earlier tab's authority | Revalidate on focus, visible return and page restore, fencing older replies; `tests/e2e/ui-session-focus.spec.ts` |
+| Passive deadlines | Freshness, wallet registration and award review could remain open without user input | Refresh at the deadline, including a late passive effect; `tests/e2e/ui-state-boundaries.spec.ts` |
+| Calendar transitions | Review, recovery and monthly views could retain earlier time labels | Refresh the relevant deadline or UTC calendar boundary; `tests/e2e/ui-clock-transitions.spec.ts` |
+| Discarded image | A late bitmap could restore and persist a discarded draft | Invalidate the departed decode and close its bitmap; `tests/e2e/project-save.spec.ts` |
+| Published cycle | An unpaid state could display a paid timestamp and settlement file | Refuse the contradictory public record; `tests/e2e/ui-state-boundaries.spec.ts` |
+| Payout exclusion identity | Two node-ID encodings for one actor could overlap inconsistently | Compare the validated numeric actor identity; `scripts/project-self-service.test.ts` |
+| Token metadata network | A wrong-network Solana RPC could admit mainnet-labeled metadata | Verify genesis before mint metadata; `scripts/project-registry-api.test.ts` |
+| Readiness evidence | Empty EVM finality data or invalid Solana slots could look ready | Require the actual finalized shape and safe integer slot; `scripts/payout-readiness-proof.test.ts` |
+| Payment successor | A stale failure update reopened a newly submitted successor | Refuse reopening while any active attempt remains; `workers/payments/reconcile.integration.ts` |
+| Gas cost parsing | Scientific notation could understate gas and admit an uneconomic quote | Parse supported decimal notation exactly; `workers/fee-converter/fee-converter.test.ts` |
+| Fee-wallet handoff | An old wallet's valid conversion could be finalized with zero output | Keep the retained wallet binding and hold incompatible configuration; `workers/fee-converter/native-gas.test.ts` |
+| Missing receipt | An advanced nonce alone could permanently fail a successful conversion | Hold until canonical receipt evidence identifies the outcome; `workers/fee-converter/native-gas.test.ts` |
+| GitHub pagination | A repeated cursor could spend requests without making progress | Refuse the repeated cursor; `scripts/leaderboard-search-slices.test.ts` |
+| Development shutdown | A delayed health failure could spawn a child after server closure | Fence child startup after shutdown; `scripts/dev-backend-lifecycle.test.ts` |
+| Main branch CI | An empty PR file list could select only smoke checks on a main push | Require full checks for that release path; `scripts/ci-scope.test.ts` |
+| Formal evidence | An unchanged model could pass while its mapped source changed | Bind and recheck source hashes; `scripts/formal-source-binding.test.ts` |
+| Historical Points | A later explicit zero could be undone by retained-history recovery | Record the maintainer's zero as an explicit provenance decision; `scripts/points-import.test.ts` |
+| Forwarded report | A reporter could erase a maintainer's forward decision by revising a held report | Close that revision window until an authorized request for information; `backend/security/report-intake.test.ts` |
+| Payout presentation | Attempt uncertainty hid a held queue and suggested progress without a wallet or owner commitment | Preserve queue precedence and show the required next action; `backend/security/handler.test.ts` |
+| Payout hold recovery | A cron pre-step could reopen a hold while an old wallet attempt was still active | Keep the hold until the prior attempt is retired; `backend/security/handler.test.ts` |
+| Attempt history | Equal timestamps could select a retired attempt, and a new attempt without a hash could hide an earlier submitted transaction | Use append order to break ties and retain the most recent known transaction; `backend/security/handler.test.ts` |
+| Duplicate retirement | A delayed second cancellation reopened a successor's submitted or held outbox | Reopen only when the same atomic batch retired the old attempt; real SQLite and native D1 workflows in `formal/unsigned-retirement-audit.md` |
+| Provider-call ownership | A GitHub check or queued ownership read could outlive the worker lease and still start paid inference | Recheck ownership after remote checks and at database execution time; actual consumer/provider traces in `formal/value-precall-audit.md` |
+| Queued allocation cutoff | A pre-deadline allocation check could commit a queued edit after the automatic cutoff | Enforce the cutoff in the INSERT using database execution time; real SQLite and native D1 evidence in `formal/monthly-cutoff-audit.md` |
+| Feed deadline | A native HTTP body could fulfill after timeout with partial JSON and take the integrity-error path | Retain the request deadline through headers and body classification; 200-request before/after HTTP reproduction in `formal/feed-deadline-audit.md` |
+| Verifier network boundary | A localhost client option still started a wildcard gRPC listener | Use the pinned local parser command and TLC without a server; `formal/local-verifier-audit.md` |
+| Verifier literal meaning | The upstream fold rewrite could change a string and accept a false invariant | Preserve lexical string/comment boundaries; a real initial-state counterexample is required by the translator regression |
+| Verifier child lifetime | Parent-only timeouts could leave Java running | Supervise and stop the owned process group, retain failure and clean its stage directory; `formal/local-verifier-audit.md` |
+| Signed Points totals | Accepted large negative adjustments could publish an inexact number | Sum signed buckets exactly and refuse an unsafe final total; `formal/aggregation-audit.md` |
+| Close capacity | Concurrent reviews could both pass the daily repository or new-author cap | Reserve capacity in the database before an external close; retain uncertain attempts and release only confirmed refusals; `formal/bot-audit.md` |
+| Close recovery | A late close response or failed follow-up could lose completion or let an old worker publish | Retain immutable attempt evidence and require the current review claim for follow-up work; `workers/slopbot/penalty-appeal.test.ts` |
+| Reopen circuit breaker | A maintainer reversal could trip the breaker while a close waited for its reservation write | Recheck the same seven-day reversal predicate in the reservation statement; `workers/slopbot/penalty-appeal.test.ts` |
+| Project draft ownership | A delayed publication in one tab could erase a newer draft in another | Give each live editor a locked durable slot; clear only its own slot and retain closed-tab recovery; `formal/draft-storage-audit.md` |
+| Draft save feedback | An older saved status could describe a newer pending payload, and early wizard steps hid storage failures | Bind acknowledgement to the rendered payload and show backup feedback at every step; `tests/e2e/project-draft-storage.spec.ts` |
+| Private-report reflow | Enlarged text made the native action selector overflow a narrow viewport | Let the selector shrink within its label; `formal/private-intake-reflow-audit.md` |
+| Private-report navigation | Long report text was not keyboard-scrollable; an intermediate focus fix gave two open regions the same name | Focus the scroll region and bind its name to the individual report headings; `tests/e2e/security-bounty.spec.ts` |
+| Email editor composition | A same-account background identity check destroyed a private-session user's email draft | Retain only the actor-bound email subtree while blocking writes; clear it on confirmed identity change or sign-out; `formal/email-editor-audit.md` |
+| Report filter reflow | The real paid-flow mobile check found that enlarged filter text widened the page beyond its viewport | Allow the filter label and native selector to shrink; `formal/private-intake-reflow-audit.md` |
+| Browser engine preparation | New preview Firefox cases were selected without installing Firefox | Include both engines in the preview plan; `formal/ci-browser-audit.md` |
+| Validator cancellation | An intermediate contained launcher could finish cleanup before an outstanding create or ready-receipt write | Await owned mutations and serialize receipt writes; refuse a ready result after cancellation; `formal/solana-container-audit.md` |
+| Wallet evidence correction | An unobserved user-entered transaction ID became fixed and could not be corrected after reload | Retain the pending intent while keeping user-entered evidence editable; preserve the separate explicit-user-reset boundary; `formal/solana-callers-audit.md` |
+| Live fixture wallet writes | A second runtime changed wallet rows while Pages had the same local D1 database open | Seed before Pages starts and use the real registration/challenge/authorization API afterward; `formal/fixture-wallet-audit.md` |
+| Fixture calendar | Wallet workflows assumed the default month still selected September 2026 | Select the retained fixture month through the actual calendar controls before commitment checks; `tests/e2e/award-month.ts` |
+| Release proof gate | The newly added standalone proof jobs did not block the publish workflow's quality result | Require both same-SHA proof jobs in that workflow's dependency graph and quality result; `formal/release-proof-gate-audit.md` |
+| Referral history | Voiding a lower latest root lost an earlier higher live total and incorrectly tightened later posting capacity | Restore the per-epoch prior maximum; `formal/referral-control-audit.md` |
+| Local acceptance finality | A confirmed project was read as finalized and the local acceptance run failed before dispatch | Wait resumably for the commit to finalize; `formal/local-solana-acceptance-audit.md` |
+
+The forwarded-report and payout corrections reuse
+[PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and
+[PR 2313](https://github.com/SlopDotCash/slopdotcash/pull/2313), including their
+original commits and authors. Their regressions were reproduced against the
+combined application before integration. The later integration also preserves
+the account, recovery and calculation changes merged by
+[PR 2403](https://github.com/SlopDotCash/slopdotcash/pull/2403).
+
+Additional local-tool fixes keep Wrangler's update request from hanging test
+setup, serve deterministic local avatar fixtures, and exclude generated native
+validator/dependency trees from the proof source walk while still refusing
+symbolic links in actual source. See [the archived validation record](https://github.com/SlopDotCash/slopdotcash/blob/22b0fd511aa8cc8c8e5810fdb979b40a03c5a5f9/docs/lemmascript-validation.md).
+
+The source inventory and area audits also include reviewed transitions that
+needed no implementation change. They remain bounded abstractions unless an
+audit explicitly supplies stronger conformance evidence.
+
+## Reviewed follow-up
+
+The monthly recovery and runner defects below were first identified by source
+inspection and then reproduced during independent review. Their earlier failed
+runs remain separate from passing corrected runs.
+
+- A pending lookup fixed an entered monthly-setting transaction ID across reload,
+  hiding the correction input. Real desktop/mobile Anvil workflows now prove
+  correction, finality, unchanged cap and send counts, and fixed wallet IDs.
+- Integration, security-payment and browser cancellation did not own all cleanup.
+  Actual process probes exposed and then verified the managed-browser-server
+  correction, including timeout and first-failure preservation.
+
+Model/source corrections and verification limits are recorded in
+`backend-runner-review-audit.md`, `binding-veto-audit.md`,
+`runner-cancellation-audit.md` and `direct-payment-composition-audit.md`.
+Final combined-head checks remain separate from these scoped results.

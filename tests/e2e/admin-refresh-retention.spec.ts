@@ -1,4 +1,5 @@
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
@@ -135,9 +136,7 @@ for (const retryStatus of [200, 401, 403]) {
       path: info.outputPath(`retained-${retryStatus}.png`),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    const restoreEnlargedText1 = await enlargeText(page.locator("body"));
     await expect(
       page
         .getByRole("alert")
@@ -153,9 +152,7 @@ for (const retryStatus of [200, 401, 403]) {
       path: info.outputPath(`retained-${retryStatus}-200.png`),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "1";
-    });
+    await restoreEnlargedText1();
     retried = true;
     const retry = page
       .getByRole("alert")

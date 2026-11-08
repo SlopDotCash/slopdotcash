@@ -54,6 +54,7 @@ type Intake = {
   canForward: boolean;
   canRetryScreening: boolean;
   canReview: boolean;
+  canRevise: boolean;
   reason: string | null;
 };
 type Submission = {
@@ -2025,7 +2026,16 @@ describe("durable private report controls", () => {
         expect(required(active.body.submission).intake.canRetryScreening).toBe(
           false,
         );
-        t.advance(16 * 60 * 1000);
+        t.advance(15 * 60 * 1000);
+        const boundary = await t.call(
+          REPORTER,
+          "GET",
+          `security-submissions/${original.id}`,
+        );
+        expect(
+          required(boundary.body.submission).intake.canRetryScreening,
+        ).toBe(false);
+        t.advance(60 * 1000);
       }
       const retained = await t.call(
         REPORTER,
@@ -2199,6 +2209,82 @@ describe("durable private report controls", () => {
     expect(t.notices(OWNER)).toHaveLength(1);
     expect(t.screeningCalls()).toBe(1);
   });
+
+  test.each(["spam", "needs-information"] as const)(
+    "a maintainer forward over a %s screen closes the reporter revision window",
+    async (screening) => {
+      const t = fixture();
+      t.decision(screening);
+      const accepted = await t.create();
+      const created = required(accepted.body.submission);
+      expect(created.intake.state).toBe(screening);
+      expect(created.intake.canRevise).toBe(true);
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${created.id}/review`,
+        {
+          expectedRevision: created.intake.revision,
+          decision: "forward",
+          reason: "The maintainer independently reproduced the finding.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      const view = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${created.id}`,
+      );
+      const cleared = required(view.body.submission);
+      expect(cleared.intake.canForward).toBe(true);
+      expect(cleared.intake.routingState).toBe("routed");
+      expect(cleared.intake.canRevise).toBe(false);
+      const revised = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${created.id}/report`,
+        {
+          expectedRevision: cleared.intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Appended after routing.`,
+          },
+        },
+      );
+      expect(revised.status).toBe(409);
+      expect(revised.body.error).toBe("report_not_editable");
+      // The routing decision and the routed state survive the refused edit.
+      expect(
+        t.sqlite
+          .query(
+            "SELECT review_decision, routed_at, report_version FROM security_submission_intake WHERE submission_id=?",
+          )
+          .get(created.id),
+      ).toEqual({
+        review_decision: "forward",
+        routed_at: "2026-10-27T12:00:00.000Z",
+        report_version: 1,
+      });
+      // Asking for information again reopens the window.
+      const held = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${created.id}/review`,
+        {
+          expectedRevision: cleared.intake.revision,
+          decision: "request-information",
+          reason: "One more reproduction detail is required.",
+        },
+      );
+      expect(held.status).toBe(200);
+      const reopened = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${created.id}`,
+      );
+      expect(required(reopened.body.submission).intake.canRevise).toBe(true);
+    },
+  );
 
   test("a stale model answer cannot override the owner's information request or block revision", async () => {
     const t = fixture();
@@ -2414,4 +2500,146 @@ test("durable-intake migration preserves funded historical receipts and immutabl
     sqlite.exec("UPDATE security_cases SET award_gross_minor='2000000'"),
   ).toThrow();
   expect(() => sqlite.exec("DELETE FROM security_cases")).toThrow();
+});
+
+// The case revision is the browser's optimistic concurrency token. A new
+// private report version must invalidate an owner's already-prepared decision.
+test("a report revision invalidates a concurrent decision prepared from the previous version", async () => {
+  const t = fixture();
+  t.decision("needs-information");
+  const accepted = await t.create("case-report-revision-race");
+  const submission = required(accepted.body.submission);
+  const before = required(
+    (await t.call(OWNER, "GET", `security-cases/${submission.caseId}`)).body
+      .case,
+  );
+  const batch = t.deps.db.batch.bind(t.deps.db);
+  let revised = false;
+  t.deps.db.batch = async (statements) => {
+    if (!revised) {
+      revised = true;
+      const response = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/report`,
+        {
+          expectedRevision: submission.intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Corrected reproduction changes the finding.`,
+          },
+        },
+      );
+      expect(response.status).toBe(200);
+    }
+    return batch(statements);
+  };
+  try {
+    const decision = await t.call(
+      OWNER,
+      "POST",
+      `security-cases/${submission.caseId}/actions`,
+      {
+        expectedRevision: before.revision,
+        idempotencyKey: "decision-for-previous-report",
+        action: "decide",
+        outcome: "confirmed",
+        severity: "critical",
+        loss: "verified-potential",
+        inScope: true,
+        reason: "The owner completed the isolated reproduction.",
+        relatedParty: false,
+        rootCauseKey: "previous-report-root-cause",
+      },
+    );
+    expect(revised).toBe(true);
+    expect(decision.status).toBe(409);
+    expect(decision.body.error).toBe("stale_revision");
+    expect(
+      t.sqlite
+        .query("SELECT receipt_state FROM security_cases WHERE id=?")
+        .get(submission.caseId),
+    ).toEqual({ receipt_state: "received" });
+    expect(
+      t.sqlite
+        .query(
+          "SELECT report_version FROM security_submission_intake WHERE submission_id=?",
+        )
+        .get(submission.id),
+    ).toEqual({ report_version: 2 });
+    expect(
+      t.sqlite
+        .query(
+          "SELECT COUNT(*) n FROM security_case_events WHERE case_id=? AND kind='decide'",
+        )
+        .get(submission.caseId),
+    ).toEqual({ n: 0 });
+  } finally {
+    t.deps.db.batch = batch;
+  }
+});
+
+// Failure after taking the case revision must roll back both state machines.
+test("failed report-version insertion rolls back the case revision and both event histories", async () => {
+  const t = fixture();
+  t.decision("needs-information");
+  const accepted = await t.create("report-version-rollback");
+  const submission = required(accepted.body.submission);
+  const before = t.sqlite
+    .query("SELECT revision FROM security_cases WHERE id=?")
+    .get(submission.caseId);
+  const revise = () =>
+    t.call(REPORTER, "POST", `security-submissions/${submission.id}/report`, {
+      expectedRevision: submission.intake.revision,
+      report: {
+        ...REPORT,
+        description: `${REPORT.description} Corrected reproduction.`,
+      },
+    });
+  t.sqlite.run(
+    "CREATE TRIGGER reject_report_revision BEFORE INSERT ON security_intake_reports WHEN NEW.version>1 BEGIN SELECT RAISE(ABORT,'local storage unavailable'); END",
+  );
+  expect((await revise()).status).toBe(500);
+  expect(
+    t.sqlite
+      .query("SELECT revision FROM security_cases WHERE id=?")
+      .get(submission.caseId),
+  ).toEqual(before);
+  expect(
+    t.sqlite
+      .query(
+        "SELECT report_version,revision FROM security_submission_intake WHERE submission_id=?",
+      )
+      .get(submission.id),
+  ).toEqual({ report_version: 1, revision: submission.intake.revision });
+  expect(
+    t.sqlite
+      .query(
+        "SELECT COUNT(*) n FROM security_case_events WHERE case_id=? AND kind='report-revised'",
+      )
+      .get(submission.caseId),
+  ).toEqual({ n: 0 });
+  expect(
+    t.sqlite
+      .query(
+        "SELECT COUNT(*) n FROM security_intake_events WHERE submission_id=? AND kind='report-revised'",
+      )
+      .get(submission.id),
+  ).toEqual({ n: 0 });
+  t.sqlite.run("DROP TRIGGER reject_report_revision");
+  expect((await revise()).status).toBe(200);
+  expect(
+    t.sqlite
+      .query("SELECT revision FROM security_cases WHERE id=?")
+      .get(submission.caseId),
+  ).toEqual({
+    revision: required(before as { revision: number }).revision + 1,
+  });
+  expect(
+    t.sqlite
+      .query(
+        "SELECT report_version FROM security_submission_intake WHERE submission_id=?",
+      )
+      .get(submission.id),
+  ).toEqual({ report_version: 2 });
 });

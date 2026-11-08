@@ -1,15 +1,24 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
+import { handlePointsApi } from "../../backend/points/handler";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { renderProjectSkill } from "../../src/lib/project-skill.mjs";
+import {
+  ME,
+  OTHER,
+  seedAccountClosure,
+} from "../../tests/account-closure-fixture";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   closureEligibility,
   hasRecordedSkillRun,
+  isActiveMember,
   isMember,
 } from "./closure-eligibility";
+import { labelOnlyConfig } from "./contracts";
+import { route } from "./routing";
 
 const NOW = "2026-10-30T14:00:00.000Z";
 const databases: { close(): void }[] = [];
@@ -89,6 +98,79 @@ function setupRenamedProject() {
     .run(btoa("04:User42"), "42", "contributor", NOW);
   return { db, sqlite, definition };
 }
+
+test("closing an account removes automatic-closure membership without deleting its history", async () => {
+  const at = "2026-10-23T12:00:00.000Z";
+  const { db, sqlite, tokens } = await seedAccountClosure(at, false);
+  databases.push(sqlite);
+  expect(await isMember(db, Number(ME.github))).toBe(true);
+  const response = await handlePointsApi(
+    new Request("https://slop.cash/api/v1/points/account/close", {
+      method: "POST",
+      headers: {
+        origin: "https://slop.cash",
+        "content-type": "application/json",
+        cookie: `__Host-slop_points=${tokens.me}`,
+      },
+      body: JSON.stringify({ login: ME.login }),
+    }),
+    {
+      db,
+      now: () => new Date(at),
+      rateLimitSecret: "closure-state-test".repeat(4),
+      identity: {
+        fetch: async () => {
+          throw new Error("No identity exchange is needed for account closure");
+        },
+      },
+    },
+  );
+  expect(response.status).toBe(200);
+  const member = await isActiveMember(db, Number(ME.github));
+  expect(member).toBe(false);
+  expect(
+    closureEligibility({
+      itemKind: "pull_request",
+      exemption: "not-exempt",
+      member,
+      recordedSkillRun: true,
+    }).eligible,
+  ).toBe(false);
+  expect(await isMember(db, Number(ME.github))).toBe(true);
+  expect(
+    route({
+      config: { ...labelOnlyConfig(), audience: "participants" },
+      itemKind: "pull_request",
+      itemOpen: true,
+      draft: false,
+      merged: false,
+      authorType: "User",
+      authorIsSelf: false,
+      scope: "contributor",
+      exemption: "not-exempt",
+      markerPresent: false,
+      participant: await isMember(db, Number(ME.github)),
+      closure: closureEligibility({
+        itemKind: "pull_request",
+        exemption: "not-exempt",
+        member,
+        recordedSkillRun: true,
+      }),
+      humanReopenedThisRevision: false,
+      authorCapReached: false,
+    }),
+  ).toMatchObject({
+    review: true,
+    mayClose: false,
+    penaltyEligible: false,
+  });
+  expect(await isMember(db, Number(OTHER.github))).toBe(true);
+  expect(
+    sqlite
+      .query("SELECT closed_at FROM points_members WHERE github_id=?")
+      .get(ME.github),
+  ).toEqual({ closed_at: at });
+});
 
 test("matches a recorded Slop run across a repository rename or transfer", async () => {
   const { db, sqlite, definition } = setupRenamedProject();

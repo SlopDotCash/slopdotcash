@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "./errors";
 import { ProjectApiError } from "./project-api";
+import { transientHttpStatus } from "./verified-frontend";
 
 export type PublicResourceState<T> =
   | { status: "loading" }
@@ -20,7 +21,7 @@ export type PublicResourceState<T> =
  */
 function isTransientFailure(error: unknown): boolean {
   if (error instanceof ProjectApiError)
-    return error.status === 0 || error.status >= 500;
+    return transientHttpStatus(error.status);
   return true;
 }
 

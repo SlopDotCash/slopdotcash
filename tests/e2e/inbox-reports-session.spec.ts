@@ -30,6 +30,7 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
   page,
 }) => {
   let actor = "42";
+  let markRequests = 0;
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;
@@ -39,6 +40,7 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
     if (path === "/api/v1/projects")
       return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
     if (path === "/api/v1/notifications/read") {
+      markRequests++;
       await pending;
       return route.fulfill({ json: { ok: true } });
     }
@@ -105,7 +107,8 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
     });
     await page
       .getByRole("button", { name: "Mark shown as read", exact: true })
-      .click();
+      .dblclick();
+    await expect.poll(() => markRequests).toBe(1);
     await expect(
       page.getByText("Private account 42 finding", { exact: true }),
     ).toBeHidden();
@@ -119,6 +122,7 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
       page.getByText("Private account 43 finding", { exact: true }),
     ).toBeVisible();
     await expect(notifications).toHaveCount(0);
+    expect(markRequests).toBe(1);
   } finally {
     release();
   }

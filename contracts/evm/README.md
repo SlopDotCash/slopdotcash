@@ -512,18 +512,21 @@ escrow: it holds one ERC-20 (the program token), has no factory, no proxy, no
 project id and no vault role, and the escrow never calls it.
 
 - A bounded poster calls `postRoot(index, root, newTotal)` once per epoch.
-  The index must be the next one, no root may be pending, at least
+  The index must be the next one, at least
   `postSpacing` must have passed since the last non-voided post, the total
   may not fall below what was already claimed or exceed the highest total
-  ever posted by more than `epochCap`, and the balance plus what was already
-  claimed must cover it. Claims against the root open `CLAIM_DELAY` (7 days)
-  later. The sum of all claims never exceeds the active root's declared
-  total, so a root the owner does not void can redirect at most the unclaimed
-  part of the previous total plus one `epochCap`.
-- The owner may `voidRoot(index)` inside that window. A voided epoch keeps its
-  index, the previous live root stays claimable, and the next post carries
-  the corrected totals. `pause` freezes a pending root's window and blocks
-  posts, claims and rescue; `unpause` gives the root the time it had left.
+  still present in non-voided history by more than `epochCap`, and the balance
+  plus what was already claimed must cover it. Claims against the latest
+  non-voided root are immediate (`CLAIM_DELAY` is zero). The sum of all claims
+  never exceeds that root's declared total. There is no protected intervention
+  window before a malicious posted root can be claimed.
+- The owner may `voidRoot(index)` only for the latest epoch and only before
+  its first successful claim. A voided epoch keeps its index, the previous
+  live root becomes claimable again, and the next post carries the corrected
+  totals. The spacing clock returns to the latest non-voided post; the growth
+  cap returns to the highest remaining total, which can belong to an older
+  epoch. `pause` blocks posts, claims and rescue but still allows that void.
+  `unpause` restores immediate claims and restarts the rescue delay.
   The owner can also change the poster, hand over ownership in two steps,
   and `rescue(to)` the whole balance only after `RESCUE_DELAY` (365 days)
   with no root going live and no unpause, which ends the program.
@@ -535,12 +538,12 @@ project id and no vault role, and the escrow never calls it.
   nobody holds a recipient list. `currentRoot()` and `claimableAt(index)`
   report the live root and each window without a transaction.
 
-`test/ReferralDistributor.t.sol` (19 tests) covers claims after the delay,
-double claims, cumulative differences, void inside and after the window, cap,
-shrink and funding checks, one pending root at a time, post spacing, roles,
-pause with a frozen window, rescue timing, proof binding to `msg.sender`,
-claims bound to the declared total, failed transfers, a three-leaf tree and
-a fuzz over two epochs. `script/DeployReferralDistributorRobinhoodTestnet.s.sol`
+`test/ReferralDistributor.t.sol` covers immediate claims, double claims,
+cumulative differences, void before a successful claim, cap, shrink and
+funding checks, post spacing, roles, pause and rescue timing, proof binding to
+`msg.sender`, claims bound to the declared total, failed transfers, a
+three-leaf tree and a fuzz over two epochs. `test/ReferralControlRegression.t.sol`
+also checks lower-total history and repeated voids. `script/DeployReferralDistributorRobinhoodTestnet.s.sol`
 deploys it on chain id 46630 with `integration/MockReferralToken.sol`; see
 [`docs/referral-distributor-testnet-runbook.md`](../../docs/referral-distributor-testnet-runbook.md)
 (prepare only; nothing has been deployed). The AI-assisted internal review is

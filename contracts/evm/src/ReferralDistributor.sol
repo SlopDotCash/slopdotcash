@@ -58,6 +58,8 @@ contract ReferralDistributor {
     /// @notice When the active root went live, or deployment; rescue counts from the later of this and lastUnpausedAt.
     uint64 public lastLiveAt;
     uint64 public lastUnpausedAt;
+    /// @dev Restore the previous maximum on void without scanning all older totals.
+    mapping(uint256 => uint256) private priorHighWaterTotal;
 
     event RootPosted(uint256 indexed epoch, bytes32 root, uint256 total, uint64 claimableAt);
     event RootVoided(uint256 indexed epoch, bytes32 root);
@@ -208,6 +210,7 @@ contract ReferralDistributor {
         if (newTotal > highWaterTotal + epochCap) revert CapExceeded();
         if (token.balanceOf(address(this)) + totalClaimed < newTotal) revert Underfunded();
         uint64 now64 = uint64(block.timestamp);
+        priorHighWaterTotal[index] = highWaterTotal;
         epochs.push(Epoch({root: root, total: newTotal, postedAt: now64, voided: false}));
         lastLivePostedAt = now64;
         latestRootClaimed = false;
@@ -227,21 +230,22 @@ contract ReferralDistributor {
         if (last.voided) revert AlreadyVoided();
         if (latestRootClaimed) revert WindowClosed();
         last.voided = true;
-        // The spacing and high-water marks follow the latest non-voided post.
-        (lastLivePostedAt, highWaterTotal) = previousLiveMarks(index);
+        // Spacing follows the latest live post; the cap restores its prior maximum.
+        lastLivePostedAt = previousLivePostTime(index);
+        highWaterTotal = priorHighWaterTotal[index];
         activate();
         emit RootVoided(index, last.root);
     }
 
-    /// @dev Post time and declared total of the latest non-voided epoch before `index`, or the active values.
-    function previousLiveMarks(uint256 index) internal view returns (uint64 postedAt, uint256 total) {
+    /// @dev Post time of the latest non-voided epoch before `index`.
+    function previousLivePostTime(uint256 index) internal view returns (uint64 postedAt) {
         uint256 i = index;
         while (i > 0) {
             i -= 1;
             Epoch storage candidate = epochs[i];
-            if (!candidate.voided) return (candidate.postedAt, candidate.total);
+            if (!candidate.voided) return candidate.postedAt;
         }
-        return (0, 0);
+        return 0;
     }
 
     /// @notice Blocks posts, claims and rescue. An unclaimed latest root remains voidable.

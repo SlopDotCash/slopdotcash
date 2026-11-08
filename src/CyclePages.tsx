@@ -17,6 +17,7 @@ import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
 import type { CycleIndexState } from "./lib/use-cycle-index";
 import type { DataState } from "./lib/use-snapshot";
+import { useTimeBoundary } from "./lib/use-time-boundary";
 import {
   awaitingApproval,
   cycleContributorStateLabel,
@@ -48,7 +49,28 @@ export function CyclePage({
   state: DataState;
   retry: () => void;
 }) {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/u.test(cycleId)) {
+  const validCycleId = /^\d{4}-(0[1-9]|1[0-2])$/u.test(cycleId);
+  const record =
+    state.status === "ready"
+      ? state.cycleIndex.cycles.find(
+          (cycle) =>
+            cycle.projectId === project.id && cycle.cycleId === cycleId,
+        )
+      : undefined;
+  const ownerCutoff = validCycleId
+    ? monthlyCutoff(PRD_MONTHLY_SCHEDULE, cycleId)
+    : null;
+  useTimeBoundary(
+    record?.state === "review" && record.reviewEndsAt
+      ? Date.parse(record.reviewEndsAt)
+      : null,
+  );
+  useTimeBoundary(ownerCutoff?.getTime() ?? null);
+  const [year, month] = cycleId.split("-").map(Number);
+  useTimeBoundary(
+    validCycleId ? Date.UTC(year, month, 1) - 7 * 24 * 60 * 60 * 1000 : null,
+  );
+  if (!validCycleId) {
     return <NotFound title="Cycle unavailable" />;
   }
   const notice = (noticeState: DataState) => (
@@ -60,9 +82,6 @@ export function CyclePage({
     </main>
   );
   if (state.status !== "ready") return notice(state);
-  const record = state.cycleIndex.cycles.find(
-    (cycle) => cycle.projectId === project.id && cycle.cycleId === cycleId,
-  );
   // A paused project is not collected; its recorded cycles still render.
   const collected = project.repositories.every((repository) =>
     state.snapshot.repositories.some(
@@ -111,7 +130,6 @@ export function CyclePage({
   const reviewClosed = record ? awaitingApproval(record) : false;
   // From 2026-11, owners change allocations until the monthly cutoff instead
   // of a 14-day review (PRD section 6). Earlier records keep their review.
-  const ownerCutoff = monthlyCutoff(PRD_MONTHLY_SCHEDULE, cycleId);
   const currentStage =
     record?.state === "paid" || record?.state === "settlement-planned"
       ? 3

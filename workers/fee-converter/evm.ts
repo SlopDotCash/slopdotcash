@@ -54,6 +54,13 @@ import type {
   SendStatus,
 } from "./core";
 import type { NativeGasJournal, RecordedNativeSend } from "./native-gas";
+import {
+  ceilPercent,
+  minimumOutput,
+  priceImpactCeiling,
+  roundedDivision,
+  spendableNative,
+} from "./verified-arithmetic";
 
 const KYBER_API = "https://aggregator-api.kyberswap.com";
 /** KyberSwap's address for the chain's native currency, used to price gas. */
@@ -134,9 +141,6 @@ function assertNonceFree(nonce: number, nonceFloor: number) {
       `fee-wallet nonce ${nonce} is held by an open journaled send; next free nonce is ${nonceFloor}`,
     );
 }
-
-const ceilPercent = (value: bigint, percent: bigint) =>
-  (value * percent + 99n) / 100n;
 
 const DESCRIPTION = {
   type: "tuple",
@@ -222,12 +226,21 @@ export function usdMicro(
   const text = String(value);
   const match = /^(\d+)(?:\.(\d+))?(?:e-(\d+))?$/u.exec(text);
   if (!match) return null;
-  if (match[3]) return 0n; // exponent form only appears for tiny values
-  const fraction = (match[2] ?? "").padEnd(6, "0");
-  const whole = BigInt(match[1]) * 1_000_000n + BigInt(fraction.slice(0, 6));
-  const rest =
-    direction === "up" && /[1-9]/u.test((match[2] ?? "").slice(6)) ? 1n : 0n;
-  return whole + rest;
+  const fraction = match[2] ?? "";
+  const digits = match[1] + fraction;
+  // A negative exponent larger than this text can only be sub-micro. Handle
+  // it before building any bigint power, so hostile exponents cannot request
+  // an unbounded power of ten or round positive gas cost down to zero.
+  const exponent = match[3] === undefined ? 0 : Number(match[3]);
+  const discarded = fraction.length + exponent - 6;
+  if (discarded >= digits.length)
+    return direction === "up" && /[1-9]/u.test(digits) ? 1n : 0n;
+  if (discarded <= 0) return BigInt(digits) * 10n ** BigInt(-discarded);
+  return roundedDivision(
+    BigInt(digits),
+    10n ** BigInt(discarded),
+    direction === "up",
+  );
 }
 
 interface KyberRoute {
@@ -796,7 +809,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
           blockTag: "finalized",
         });
         const reserve = BigInt(config.nativeBudget?.perTransaction ?? "0");
-        return balance > reserve ? balance - reserve : 0n;
+        return spendableNative(balance, reserve);
       }
       return client.readContract({
         address: token as Address,
@@ -835,11 +848,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       // Rounded up so a cap is never undercounted, as on Solana.
       const priceImpactBps =
         inUsd !== null && outUsd !== null && inUsd > 0n
-          ? Number(
-              inUsd > outUsd
-                ? ((inUsd - outUsd) * 10_000n + inUsd - 1n) / inUsd
-                : 0n,
-            )
+          ? Number(priceImpactCeiling(inUsd, outUsd))
           : null;
       const gasUsd = usdMicro(summary.gasUsd);
       // Ethereum has no separate L1 posting fee. Base needs both estimates;
@@ -855,8 +864,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         route: "kyberswap",
         amountIn: amount,
         amountOut,
-        minAmountOut:
-          (amountOut * BigInt(10_000 - limits.maxSlippageBps)) / 10_000n,
+        minAmountOut: minimumOutput(amountOut, BigInt(limits.maxSlippageBps)),
         priceImpactBps,
         gasCostMicro,
         summary: {
@@ -1124,19 +1132,27 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         await assertRecordedClaim(row);
         return { kind: "rebroadcast", rawTx: latestRaw };
       }
-      // Our nonce consumed in a finalized block by another transaction means
-      // this send can never land.
+      // A finalized nonce advance proves consumption, not which transaction
+      // won. Our swap can already have succeeded while both hash lookups lag.
+      // Keep every send open until its own canonical receipt is available;
+      // otherwise immutable failed history would hide a later success.
       const finalizedNonce = await client.getTransactionCount({
         address: wallet,
         blockTag: "finalized",
       });
       if (row.evmNonce !== null && finalizedNonce > row.evmNonce)
-        // A claim may itself have consumed the nonce while its hash lookups
-        // are unavailable. Only its receipt proves what entered the wallet.
-        // It is not replaced: the nonce is already spent.
-        return row.kind === "claim" || row.kind === "approval"
-          ? { kind: "pending", mined: true }
-          : { kind: "failed", reason: "nonce used by another transaction" };
+        return { kind: "pending", mined: true };
+      // An included transaction can also precede finality while hash lookups
+      // are unavailable. Its successful execution may predate the deadline;
+      // do not turn that uncertainty into immutable expiry failure.
+      if (
+        row.evmNonce !== null &&
+        (await client.getTransactionCount({
+          address: wallet,
+          blockTag: "latest",
+        })) > row.evmNonce
+      )
+        return { kind: "pending", mined: true };
       // Past the router deadline the swap reverts even if it is mined later.
       if (deadlinePassed)
         return {

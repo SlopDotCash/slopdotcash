@@ -148,7 +148,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
         `UPDATE identity_oauth_flows
          SET status = 'callback_complete', github_actor_id = ?, github_login = ?,
              callback_completed_at = ?, github_node_id = ?
-         WHERE id = ? AND status = 'callback_processing'`,
+         WHERE id = ? AND status = 'callback_processing' AND expires_at > ?`,
       )
       .bind(
         githubActorId,
@@ -156,6 +156,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
         completedAt,
         githubNodeId ?? null,
         flowId,
+        completedAt,
       )
       .run();
     return (result.meta?.changes ?? 0) === 1;
@@ -234,9 +235,9 @@ export class D1IdentityPersistence implements IdentityPersistence {
       .prepare(
         `UPDATE identity_oauth_flows
          SET status = 'assertion_issued', assertion_issued_at = ?
-         WHERE id = ? AND status = 'callback_complete'`,
+         WHERE id = ? AND status = 'callback_complete' AND expires_at > ?`,
       )
-      .bind(issuedAt, flowId)
+      .bind(issuedAt, flowId, issuedAt)
       .run();
     return (result.meta?.changes ?? 0) === 1;
   }

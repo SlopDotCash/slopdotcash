@@ -8,6 +8,11 @@ import {
   Wallet,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ProjectDraftStore,
+  useProjectDraftSave,
+  useProjectDraftStore,
+} from "./lib/project-draft-store";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
 import { RewardAssetFields } from "./RewardAssetFields";
@@ -79,6 +84,7 @@ import {
   PRIVATE_BOUNTY_TESTING,
   privateBountyTerms,
 } from "./lib/security-bounty-proposal";
+import { useUtcDay } from "./lib/use-time-boundary";
 import { ChangeReview } from "./OwnerPresentation";
 import { PendingProjectApplications } from "./PendingProjectApplications";
 import {
@@ -95,7 +101,7 @@ const LEGACY_PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
 const PROPOSAL_STEP_KEY = `${LEGACY_PROPOSAL_STEP_KEY}:v2`;
 /**
  * The referrer named by a `?ref=<login>` link (PRJ-05). It is kept apart
- * from the draft so a resumed draft keeps it, and cleared after submission.
+ * in the draft backup so a resumed editor keeps it without changing other tabs.
  */
 const REFERRER_KEY = "slop:project-referrer:v1";
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
@@ -341,34 +347,23 @@ function proposalErrors(p: Proposal): FieldErrors {
 }
 
 /** The `?ref=` login from the current link, else the one stored earlier. */
-function initialReferrer(): string | null {
+function initialReferrer(saved: unknown): string | null {
   try {
     const fromLink = new URLSearchParams(window.location.search).get("ref");
     if (fromLink !== null) {
       const login = fromLink.trim();
       if (GITHUB_LOGIN.test(login)) {
-        localStorage.setItem(REFERRER_KEY, login);
         return login;
       }
     }
-    const stored = localStorage.getItem(REFERRER_KEY);
-    return stored !== null && GITHUB_LOGIN.test(stored) ? stored : null;
+    return typeof saved === "string" && GITHUB_LOGIN.test(saved) ? saved : null;
   } catch {
     return null;
   }
 }
 
-function forgetReferrer() {
+function readDraft(stored: string | null): Proposal | null {
   try {
-    localStorage.removeItem(REFERRER_KEY);
-  } catch {
-    // Nothing stored, or storage is unavailable; the page state is cleared.
-  }
-}
-
-function readDraft(): Proposal | null {
-  try {
-    const stored = localStorage.getItem(PROPOSAL_DRAFT_KEY);
     if (!stored) return null;
     const value: unknown = JSON.parse(stored);
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -386,6 +381,19 @@ function readDraft(): Proposal | null {
   } catch {
     return null;
   }
+}
+
+function legacyProposalDraft(): string | null {
+  const proposal = readDraft(localStorage.getItem(PROPOSAL_DRAFT_KEY));
+  const referrer = localStorage.getItem(REFERRER_KEY);
+  if (!proposal && !referrer) return null;
+  const step = localStorage.getItem(PROPOSAL_STEP_KEY);
+  const oldStep = localStorage.getItem(LEGACY_PROPOSAL_STEP_KEY);
+  return JSON.stringify({
+    proposal: proposal ?? EMPTY_PROPOSAL,
+    referrer,
+    step: step !== null ? Number(step) : Math.max(0, Number(oldStep ?? 1) - 1),
+  });
 }
 
 /** One repository control: account choices, with URL entry for other public repos. */
@@ -749,36 +757,55 @@ function FundingFields({
 }
 
 export default function ProjectProposalPage() {
+  const store = useProjectDraftStore(PROPOSAL_DRAFT_KEY, legacyProposalDraft);
+  return store ? (
+    <ProjectProposalForm draftStore={store} />
+  ) : (
+    <main className="shell route-main proposal-page">
+      <p role="status">Loading saved draft…</p>
+    </main>
+  );
+}
+
+function ProjectProposalForm({
+  draftStore,
+}: {
+  draftStore: ProjectDraftStore;
+}) {
+  useUtcDay();
+  const [imageRevision, setImageRevision] = useState(0);
   const [sessionRevision, setSessionRevision] = useState(0);
   const projectSession = useProjectSession(sessionRevision);
+  const [saved] = useState(() => {
+    try {
+      return JSON.parse(draftStore.initial ?? "null") as {
+        proposal?: unknown;
+        step?: unknown;
+        referrer?: unknown;
+      } | null;
+    } catch {
+      return null;
+    }
+  });
   const [proposal, setProposal] = useState<Proposal>(
-    () => readDraft() ?? EMPTY_PROPOSAL,
+    () => readDraft(JSON.stringify(saved?.proposal ?? null)) ?? EMPTY_PROPOSAL,
   );
   const [extraRuleFields, setExtraRuleFields] = useState(() =>
     SKILL_RULE_FIELDS.filter(
       (field) => field !== "requiredTests" && proposal[field] !== "",
     ),
   );
-  const [referrer, setReferrer] = useState<string | null>(initialReferrer);
+  const [referrer, setReferrer] = useState<string | null>(() =>
+    initialReferrer(saved?.referrer),
+  );
   const [step, setStep] = useState(() => {
-    try {
-      const stored = localStorage.getItem(PROPOSAL_STEP_KEY);
-      const legacy = localStorage.getItem(LEGACY_PROPOSAL_STEP_KEY);
-      const index =
-        stored !== null
-          ? Number(stored)
-          : legacy !== null
-            ? Math.max(0, Number(legacy) - 1)
-            : 0;
-      return readDraft() &&
-        Number.isInteger(index) &&
-        index >= 0 &&
-        index < SETUP_STEPS.length
-        ? index
-        : 0;
-    } catch {
-      return 0;
-    }
+    const index = saved?.step;
+    return typeof index === "number" &&
+      Number.isInteger(index) &&
+      index >= 0 &&
+      index < SETUP_STEPS.length
+      ? index
+      : 0;
   });
   const [attempted, setAttempted] = useState<boolean[]>(
     SETUP_STEPS.map(() => false),
@@ -797,7 +824,6 @@ export default function ProjectProposalPage() {
     repository: string;
     attempt: number;
   } | null>(null);
-  const [saveFailed, setSaveFailed] = useState(false);
   const lookupController = useRef<AbortController | null>(null);
   const suggestedText = useRef({
     name: "",
@@ -805,15 +831,19 @@ export default function ProjectProposalPage() {
     goal: "",
     criteria: "",
   });
-  useEffect(() => {
-    try {
-      localStorage.setItem(PROPOSAL_DRAFT_KEY, JSON.stringify(proposal));
-      localStorage.setItem(PROPOSAL_STEP_KEY, String(step));
-      setSaveFailed(false);
-    } catch {
-      setSaveFailed(true);
-    }
-  }, [proposal, step]);
+  const draftPayload = useMemo(() => {
+    const empty =
+      step === 0 &&
+      referrer === null &&
+      (Object.keys(EMPTY_PROPOSAL) as ProposalField[]).every(
+        (field) => proposal[field] === EMPTY_PROPOSAL[field],
+      );
+    return empty ? null : JSON.stringify({ proposal, step, referrer });
+  }, [proposal, step, referrer]);
+  const { saving: draftSaving, failed: saveFailed } = useProjectDraftSave(
+    draftStore,
+    draftPayload,
+  );
   // One cancellable lookup for new choices, pasted URLs and restored drafts.
   useEffect(() => {
     const repository = normalizeRepositoryInput(proposal.repository);
@@ -1075,7 +1105,7 @@ export default function ProjectProposalPage() {
             ?.native.symbol ?? REWARD_ASSET_NETWORKS.base.native.symbol)
         : (REWARD_ASSET_NETWORKS[p.settlementChain as RewardAssetNetwork]
             ?.stablecoin.symbol ?? "USDC");
-  const manifest = useMemo(() => {
+  const manifest = (() => {
     const now = new Date();
     const repository = p.repository || "owner/repository";
     const bounty =
@@ -1242,7 +1272,7 @@ export default function ProjectProposalPage() {
         issues: `https://github.com/${repository}/issues`,
       },
     };
-  }, [p, slug, funding, projectSession, valid]);
+  })();
   const bounty = manifest.securityBounty;
   const bountyAmounts = bounty
     ? bountyAmountPreview(bounty.amount, p.monthlyPool, bounty.split)
@@ -1258,7 +1288,6 @@ export default function ProjectProposalPage() {
       }
   >({ status: "idle" });
   function clearReferrer() {
-    forgetReferrer();
     setReferrer(null);
   }
   function submit() {
@@ -1274,7 +1303,7 @@ export default function ProjectProposalPage() {
       p.fundingMode === "bounty" ? p.monthlyPool.trim() : null,
     ).then(
       ({ project, setup }) => {
-        forgetReferrer();
+        setReferrer(null);
         setSubmission({
           status: "submitted",
           projectId: project.id,
@@ -1331,6 +1360,7 @@ export default function ProjectProposalPage() {
     if (submission.status === "submitting") return;
     lookupController.current?.abort();
     setProposal(EMPTY_PROPOSAL);
+    setImageRevision((revision) => revision + 1);
     setExtraRuleFields([]);
     setSubmission({ status: "idle" });
     suggestedText.current = { name: "", headline: "", goal: "", criteria: "" };
@@ -1344,6 +1374,10 @@ export default function ProjectProposalPage() {
   const draftNote = saveFailed ? (
     <p className="field-error" role="alert">
       Draft could not save. Keep this page open.
+    </p>
+  ) : draftSaving ? (
+    <p className="proposal-note" role="status">
+      Saving draft…
     </p>
   ) : null;
   const navigation = (
@@ -1505,6 +1539,7 @@ export default function ProjectProposalPage() {
           <>
             <div className="setup-project-identity">
               <ProjectImageField
+                key={imageRevision}
                 compact
                 ownerLogin={p.stewardLogin}
                 value={p.image}
@@ -1847,13 +1882,11 @@ export default function ProjectProposalPage() {
                     ) : null}
                   </p>
                 ) : null}
-                {draftNote}
               </div>
-            ) : (
-              draftNote
-            )}
+            ) : null}
           </>
         ) : null}
+        {draftNote}
         {navigation}
       </form>
     </main>
@@ -1934,10 +1967,31 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         )}
       </main>
     );
-  return <ProjectUpdateForm project={project} />;
+  return <ProjectUpdateDraft project={project} />;
 }
 
-function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
+function ProjectUpdateDraft({ project }: { project: ProjectDefinition }) {
+  const key = `slop:project-update:v2:${project.id}`;
+  const store = useProjectDraftStore(key, () => localStorage.getItem(key));
+  return store ? (
+    <ProjectUpdateForm project={project} draftStore={store} />
+  ) : (
+    <main className="shell route-main manage-page">
+      <RoutePageHeader title="Project settings" />
+      <p role="status">Loading saved draft…</p>
+    </main>
+  );
+}
+
+function ProjectUpdateForm({
+  project,
+  draftStore,
+}: {
+  project: ProjectDefinition;
+  draftStore: ProjectDraftStore;
+}) {
+  useUtcDay();
+  const [imageRevision, setImageRevision] = useState(0);
   const session = useProjectSession();
   const [base, setBase] = useState<{
     revision: number;
@@ -2015,10 +2069,9 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
       ]),
     ) as Record<SkillRuleField, string>),
   };
-  const key = `slop:project-update:v2:${project.id}`;
   const [saved] = useState(() => {
     try {
-      const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
+      const value: unknown = JSON.parse(draftStore.initial ?? "null");
       return value && typeof value === "object" && !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : null;
@@ -2049,23 +2102,20 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
   // request is in flight. Compared on success so those edits survive.
   const latestDraft = useRef(draft);
   latestDraft.current = draft;
-  const [saveFailed, setSaveFailed] = useState(false);
-  useEffect(() => {
-    try {
-      if (draft === null) localStorage.removeItem(key);
-      else
-        localStorage.setItem(
-          key,
-          JSON.stringify({
+  const draftPayload = useMemo(
+    () =>
+      draft === null
+        ? null
+        : JSON.stringify({
             ...draft,
             baseRevision: draftRevision ?? base?.revision ?? null,
           }),
-        );
-      setSaveFailed(false);
-    } catch {
-      setSaveFailed(true);
-    }
-  }, [draft, key, draftRevision, base?.revision]);
+    [draft, draftRevision, base?.revision],
+  );
+  const { saving: draftSaving, failed: saveFailed } = useProjectDraftSave(
+    draftStore,
+    draftPayload,
+  );
   const value: UpdateDraft = { ...initial, ...(draft ?? {}) };
   const staleDraft =
     base !== null &&
@@ -2378,7 +2428,11 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
       >
         <details className="proposal-advanced" open>
           <summary>Project listing</summary>
-          <ProjectImageField value={value.image} onChange={set("image")} />
+          <ProjectImageField
+            key={imageRevision}
+            value={value.image}
+            onChange={set("image")}
+          />
           <TextField
             error={shown("headline")}
             label="Short description"
@@ -2498,6 +2552,7 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
               className="button secondary-button"
               onClick={() => {
                 setDraft(null);
+                setImageRevision((revision) => revision + 1);
                 setDraftRevision(null);
                 setAttempted(false);
                 setSubmission({ state: "idle" });
@@ -2594,10 +2649,12 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
               ) : null}
             </p>
           ) : null}
-          <p className="proposal-note">
+          <p className="proposal-note" role="status">
             {saveFailed
               ? "This browser cannot save the draft."
-              : "Draft saved on this device."}
+              : draftSaving
+                ? "Saving draft…"
+                : "Draft saved on this device."}
           </p>
         </div>
       </form>

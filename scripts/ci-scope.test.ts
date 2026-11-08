@@ -11,6 +11,53 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const selector = resolve("scripts/ci-scope.mjs");
+
+test("a main push selects the complete release browser, installer and sandbox gates", () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-main-release-scope-"));
+  try {
+    const event = join(directory, "event.json");
+    const output = join(directory, "output");
+    writeFileSync(event, JSON.stringify({ ref: "refs/heads/main" }));
+    execFileSync("node", [selector], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: "push",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_EVENT_PATH: event,
+        GITHUB_OUTPUT: output,
+      },
+    });
+    const values = Object.fromEntries(
+      readFileSync(output, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+    );
+    expect(
+      JSON.parse(values.browser_matrix).include.map(
+        (lane: { lane: string }) => lane.lane,
+      ),
+    ).toEqual(["preview-1", "preview-2", "pages", "registry-1", "registry-2"]);
+    // The selected preview suites include Firefox; installing Chromium alone
+    // passed setup but made every Firefox test fail before opening a page.
+    expect(
+      JSON.parse(values.browser_matrix)
+        .include.filter((lane: { server: string }) => lane.server === "preview")
+        .map((lane: { browsers: string }) => lane.browsers),
+    ).toEqual(["chromium firefox", "chromium firefox"]);
+    expect(values.installer).toBe("true");
+    expect(values.sandbox).toBe("true");
+    expect(values.evm).toBe("true");
+    expect(values.solana).toBe("true");
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 for (const path of [
   "skills/slop/SKILL.md",
   "src/lib/project-skill.mjs",
@@ -174,6 +221,26 @@ test("unrelated documentation does not select native EVM accounting", () => {
   expect(scopeFor({ "README.md": "Updated documentation.\n" }).evm).toBe(
     "false",
   );
+});
+
+test("Solana fixture and fee changes select their actual chain job", () => {
+  for (const path of [
+    "scripts/local-solana-validator.mjs",
+    "tests/direct-bounty-solana-chain.ts",
+    "tests/e2e/solana-vault-actions.spec.ts",
+    "workers/fee-converter/solana-local.integration.ts",
+    "backend/fee-conversions/handler.ts",
+    "scripts/escrow-acceptance/solana-local.ts",
+    "scripts/escrow-acceptance.ts",
+  ]) {
+    expect(scopeFor({ [path]: "export {};\n" }).solana).toBe("true");
+  }
+  expect(scopeFor({ "README.md": "Updated documentation.\n" }).solana).toBe(
+    "false",
+  );
+  expect(
+    scopeFor({ "scripts/escrow-acceptance/local.ts": "export {};\n" }).evm,
+  ).toBe("true");
 });
 
 const registryLanes = (lanes: string[]) =>

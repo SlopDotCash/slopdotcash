@@ -249,14 +249,22 @@ export async function probeRpc(
         BigInt(policy.chainId ?? -1)
       )
         return "wrong-chain";
-      return (await call(url, "eth_getBlockByNumber", ["finalized", false]))
+      const head = (await call(url, "eth_getBlockByNumber", [
+        "finalized",
+        false,
+      ])) as { number?: unknown; hash?: unknown } | null;
+      return head &&
+        typeof head.number === "string" &&
+        /^0x(?:0|[1-9a-f][0-9a-f]*)$/iu.test(head.number) &&
+        typeof head.hash === "string" &&
+        /^0x[0-9a-f]{64}$/iu.test(head.hash)
         ? "finalized"
         : "no-finalized-head";
     }
     if ((await call(url, "getGenesisHash", [])) !== policy.genesisHash)
       return "wrong-chain";
     const slot = await call(url, "getSlot", [{ commitment: "finalized" }]);
-    return typeof slot === "number" && slot > 0
+    return typeof slot === "number" && Number.isSafeInteger(slot) && slot > 0
       ? "finalized"
       : "no-finalized-head";
   } catch {

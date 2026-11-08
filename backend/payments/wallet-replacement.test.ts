@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
@@ -106,6 +110,108 @@ async function fixture() {
     },
   };
 }
+
+test("generated Quint wallet histories match real registration, authorization and dispatch", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-wallet-model-"));
+  try {
+    execFileSync(
+      "node",
+      [
+        resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
+        "run",
+        "formal/models/effective_wallet_history.qnt",
+        "--backend=typescript",
+        "--seed=20261107",
+        "--max-samples=25",
+        "--max-steps=12",
+        "--n-traces=25",
+        `--out-itf=${join(directory, "wallet-{seq}.json")}`,
+      ],
+      { stdio: "pipe" },
+    );
+    const wallets = [first, second, third];
+    const paths = readdirSync(directory);
+    expect(paths).toHaveLength(25);
+    for (const [traceIndex, file] of paths.entries()) {
+      const trace = JSON.parse(
+        readFileSync(join(directory, file), "utf8"),
+        (_key, value) =>
+          value && typeof value === "object" && "#bigint" in value
+            ? Number(value["#bigint"])
+            : value,
+      ) as {
+        states: { s: { head: number; authorized: { "#set": number[] } } }[];
+      };
+      const f = await fixture();
+      const claims: string[] = [];
+      let previousHead = 0;
+      let previousAuthorized: number[] = [];
+      try {
+        for (const { s } of trace.states) {
+          const authorized = s.authorized["#set"];
+          if (s.head !== previousHead) {
+            expect(s.head).toBe(previousHead + 1);
+            claims.push(await f.register(wallets[s.head - 1]));
+          }
+          const newlyAuthorized = authorized.filter(
+            (id) => !previousAuthorized.includes(id),
+          );
+          for (const id of newlyAuthorized) {
+            expect(id).toBe(s.head);
+            expect(
+              (
+                await f.call(
+                  "wallets/authorize",
+                  await f.consent(claims[id - 1], wallets[id - 1]),
+                )
+              ).status,
+            ).toBe(200);
+          }
+          const effective = authorized.length
+            ? Math.max(...authorized)
+            : s.head;
+          const actual = await f.current();
+          expect(actual).toHaveLength(effective > 0 ? 1 : 0);
+          if (effective > 0) {
+            expect(actual[0].claimId).toBe(claims[effective - 1]);
+            expect(actual[0].authorized).toBe(authorized.length > 0);
+          }
+          previousHead = s.head;
+          previousAuthorized = authorized;
+        }
+        const id = `quint-wallet-${traceIndex}`;
+        f.award(id);
+        let destination: string | undefined;
+        const result = await dispatchPayment(
+          f.database,
+          {
+            async submit(input) {
+              destination = input.destination;
+              return { transactionId: `quint-submission-${traceIndex}` };
+            },
+          },
+          id,
+          now,
+        );
+        expect(result).toBe(
+          previousAuthorized.length ? "submitted" : "unavailable",
+        );
+        if (previousAuthorized.length)
+          expect(destination).toBe(
+            wallets[Math.max(...previousAuthorized) - 1].address.toLowerCase(),
+          );
+        else expect(destination).toBeUndefined();
+        expect(
+          f.sqlite.query("SELECT count(*) n FROM wallet_claims").get(),
+        ).toEqual({ n: previousHead });
+      } finally {
+        f.sqlite.close();
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("unsigned replacements preserve the authorized wallet and dispatch, then valid signature switches once", async () => {
   const f = await fixture();

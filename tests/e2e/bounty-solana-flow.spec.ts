@@ -7,6 +7,7 @@ import {
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
 
 const tokens = JSON.parse(
@@ -418,19 +419,15 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
     expect((await balance(info.fee)) - beforeFee).toBe(10_000_000n);
     expect(await balance(info.recoveryAddress)).toBe(0n);
     await expectAccessible(owner.page);
-    if ((owner.page.viewportSize()?.width ?? 0) >= 640) {
-      await owner.page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await owner.page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-      await owner.page.evaluate(() => {
-        document.documentElement.style.zoom = "1";
-      });
-    }
+
+    const restoreEnlargedText1 = await enlargeText(owner.page.locator("body"));
+    expect(
+      await owner.page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await restoreEnlargedText1();
+
     await owner.page
       .locator(".security-payment-panel")
       .scrollIntoViewIfNeeded();

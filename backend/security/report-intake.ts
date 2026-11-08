@@ -42,14 +42,14 @@ import {
   settle,
   submissionView,
 } from "./submissions";
+import {
+  type IntakeScreeningState,
+  intakeReviewState,
+  qualifiedIntake,
+  recoverableIntakeScreening,
+} from "./verified-intake";
 
-export type IntakeState =
-  | "queued"
-  | "running"
-  | "legitimate"
-  | "needs-information"
-  | "spam"
-  | "unavailable";
+export type IntakeState = IntakeScreeningState;
 export type StoredIntake = {
   submission_id: string;
   case_id: string;
@@ -208,17 +208,28 @@ export async function storedIntake(
     .first<StoredIntake>();
 }
 export function intakeQualified(row: StoredIntake): boolean {
-  return (
-    row.review_decision === "forward" ||
-    (row.review_decision === null && row.screening_state === "legitimate")
-  );
+  return qualifiedIntake({
+    review: intakeReviewState(row.review_decision),
+    screening: row.screening_state,
+  });
 }
 function screeningRecoverable(row: StoredIntake, now: Date): boolean {
-  return (
-    ["queued", "unavailable"].includes(row.screening_state) ||
-    (row.screening_state === "running" &&
-      now.getTime() - Date.parse(row.screening_started_at ?? row.received_at) >
-        LOST_SCREEN_MS)
+  if (row.screening_state !== "running")
+    return recoverableIntakeScreening(
+      { state: row.screening_state },
+      BigInt(LOST_SCREEN_MS),
+    );
+  const nowMs = now.getTime();
+  const startedMs = Date.parse(row.screening_started_at ?? row.received_at);
+  return recoverableIntakeScreening(
+    {
+      state: "running",
+      clock:
+        Number.isFinite(nowMs) && Number.isFinite(startedMs)
+          ? { kind: "known", now: BigInt(nowMs), started: BigInt(startedMs) }
+          : { kind: "invalid" },
+    },
+    BigInt(LOST_SCREEN_MS),
   );
 }
 function intakeView(
@@ -254,9 +265,10 @@ function intakeView(
     canRevise:
       reporter &&
       (row.review_decision === "request-information" ||
-        ["needs-information", "spam", "unavailable"].includes(
-          row.screening_state,
-        )) &&
+        (row.review_decision === null &&
+          ["needs-information", "spam", "unavailable"].includes(
+            row.screening_state,
+          ))) &&
       submission.advisory_ghsa === null,
   };
 }
@@ -1232,9 +1244,10 @@ export async function actStoredIntake(
       row.advisory_ghsa !== null ||
       !(
         stored.review_decision === "request-information" ||
-        ["needs-information", "spam", "unavailable"].includes(
-          stored.screening_state,
-        ) ||
+        (stored.review_decision === null &&
+          ["needs-information", "spam", "unavailable"].includes(
+            stored.screening_state,
+          )) ||
         (await loadCase(deps, stored.case_id))?.receipt_state ===
           "needs-information"
       )
@@ -1268,28 +1281,51 @@ export async function actStoredIntake(
     const version = stored.report_version + 1;
     await admitPublicWork(deps, actor.githubId);
     const object = await storeReport(deps, id, version, report);
+    // The case revision is the owner's optimistic concurrency token too.
+    // Claim it before changing intake state, then chain each dependent write
+    // to the preceding statement so a lost race appends no partial history.
+    const eventKey = await sha256Hex(
+      encoder.encode(
+        JSON.stringify({
+          submissionId: id,
+          reportVersion: version,
+          digest: object.digest,
+        }),
+      ),
+    );
     const result = await deps.db.batch([
       deps.db
         .prepare(
-          "UPDATE security_submission_intake SET report_version=?,screening_state='queued',routed_at=NULL,screening_reason=NULL,screening_started_at=NULL,screening_finished_at=NULL,review_decision=NULL,review_reason=NULL,reviewed_at=NULL,reviewed_by=NULL,revision=revision+1 WHERE submission_id=? AND revision=? AND EXISTS(SELECT 1 FROM security_submissions s WHERE s.id=security_submission_intake.submission_id AND s.state IN ('draft','failed') AND s.advisory_ghsa IS NULL) AND EXISTS(SELECT 1 FROM security_cases c WHERE c.id=security_submission_intake.case_id AND c.receipt_state IN ('received','needs-information','triaging') AND c.award_state NOT IN ('approved','reserved'))",
+          "UPDATE security_cases SET revision=revision+1,updated_at=? WHERE id=? AND revision=? AND receipt_state IN ('received','needs-information','triaging') AND award_state NOT IN ('approved','reserved') AND EXISTS(SELECT 1 FROM security_submission_intake i JOIN security_submissions s ON s.id=i.submission_id WHERE i.submission_id=? AND i.case_id=security_cases.id AND i.revision=? AND s.state IN ('draft','failed') AND s.advisory_ghsa IS NULL)",
+        )
+        .bind(at, record.id, record.revision, id, stored.revision),
+      deps.db
+        .prepare(
+          "INSERT INTO security_case_events(case_id,case_revision,kind,actor_github_id,actor_role,idempotency_key,reason,evidence_reference,detail,at) SELECT ?,?,'report-revised',?,'reporter',?,NULL,NULL,?,? WHERE changes()=1",
+        )
+        .bind(
+          record.id,
+          record.revision + 1,
+          actor.githubId,
+          eventKey,
+          JSON.stringify({ reportVersion: version }),
+          at,
+        ),
+      deps.db
+        .prepare(
+          "UPDATE security_submission_intake SET report_version=?,screening_state='queued',routed_at=NULL,screening_reason=NULL,screening_started_at=NULL,screening_finished_at=NULL,review_decision=NULL,review_reason=NULL,reviewed_at=NULL,reviewed_by=NULL,revision=revision+1 WHERE changes()=1 AND submission_id=? AND revision=?",
         )
         .bind(version, id, stored.revision),
       deps.db
         .prepare(
-          "INSERT INTO security_intake_reports(submission_id,version,object_key,content_sha256,byte_count,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=? AND report_version=?)",
+          "INSERT INTO security_intake_reports(submission_id,version,object_key,content_sha256,byte_count,created_at) SELECT ?,?,?,?,?,? WHERE changes()=1",
         )
-        .bind(
-          id,
-          version,
-          object.key,
-          object.digest,
-          object.bytes,
-          at,
-          id,
-          stored.revision + 1,
-          version,
-        ),
-      intakeEvent(deps, stored, "report-revised", actor.githubId, at),
+        .bind(id, version, object.key, object.digest, object.bytes, at),
+      deps.db
+        .prepare(
+          "INSERT INTO security_intake_events(submission_id,revision,kind,actor_github_id,at) SELECT ?,?,'report-revised',?,? WHERE changes()=1",
+        )
+        .bind(id, stored.revision + 1, actor.githubId, at),
     ]);
     if (result[0].meta?.changes !== 1)
       fail(

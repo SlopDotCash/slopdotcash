@@ -7,7 +7,19 @@
  */
 import { isBaseUnits } from "../escrow-policy.mjs";
 import { sha256Hex } from "../sha256";
-import { ordinaryFee } from "./contracts";
+import { sumAmounts } from "../verified-allocation";
+import { freezeMonthlyAmounts } from "../verified-money";
+import {
+  type MonthlyAllocation,
+  type MonthlyBaseRow,
+  monthlyChangePolicy,
+  replaceMonthlyAllocations,
+} from "../verified-monthly-replacement";
+
+export type {
+  MonthlyAllocation,
+  MonthlyBaseRow,
+} from "../verified-monthly-replacement";
 
 const PERIOD = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const ACTOR = /^[1-9][0-9]{0,19}$/;
@@ -83,12 +95,6 @@ export function monthlyCutoff(
   );
 }
 
-export interface MonthlyBaseRow {
-  githubUserId: string;
-  login: string;
-  grossBase: string;
-  sourceDigest: string;
-}
 export interface MonthlyBase {
   projectId: string;
   period: string;
@@ -98,9 +104,6 @@ export interface MonthlyBase {
   rows: MonthlyBaseRow[];
 }
 
-export interface MonthlyAllocation extends MonthlyBaseRow {
-  proposedGrossBase: string;
-}
 export interface MonthlyAllocationChange {
   sequence: number;
   githubUserId: string;
@@ -112,18 +115,28 @@ export function currentAllocations(
   rows: readonly MonthlyBaseRow[],
   changes: readonly MonthlyAllocationChange[],
 ): MonthlyAllocation[] {
-  const current = new Map(
-    rows.map((row) => [
-      row.githubUserId,
-      { ...row, proposedGrossBase: row.grossBase },
-    ]),
-  );
-  for (const change of [...changes].sort((a, b) => a.sequence - b.sequence)) {
-    const row = current.get(change.githubUserId);
-    if (!row) throw new Error("Allocation change names an unknown recipient");
-    row.grossBase = change.grossBase;
+  const initial: MonthlyAllocation[] = [];
+  const indices = new Map<string, number>();
+  for (const row of rows) {
+    const index = indices.get(row.githubUserId);
+    const allocation = { ...row, proposedGrossBase: row.grossBase };
+    if (index === undefined) {
+      indices.set(row.githubUserId, initial.length);
+      initial.push(allocation);
+    } else initial[index] = allocation;
   }
-  return [...current.values()].sort((a, b) =>
+  const result = replaceMonthlyAllocations(
+    initial,
+    [...changes]
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((change) => ({
+        index: indices.get(change.githubUserId) ?? -1,
+        grossBase: change.grossBase,
+      })),
+  );
+  if (result.unknownAt >= 0)
+    throw new Error("Allocation change names an unknown recipient");
+  return result.rows.sort((a, b) =>
     a.githubUserId.localeCompare(b.githubUserId),
   );
 }
@@ -147,23 +160,33 @@ export function assertAllocationChange(
       "Enter a whole number of token base units.",
     );
   const amount = BigInt(change.grossBase);
-  if (change.githubUserId === change.actorId)
+  const policy = monthlyChangePolicy(
+    change.githubUserId,
+    change.actorId,
+    amount,
+    change.githubUserId !== change.actorId &&
+      amount > 0n &&
+      excludedGithubUserIds.has(change.githubUserId),
+  );
+  if (policy === 1)
     throw new MonthlyAllocationError("You cannot change your own allocation.");
-  if (amount > 0n && excludedGithubUserIds.has(change.githubUserId))
+  if (policy === 2)
     throw new MonthlyAllocationError(
       "This person has a payout exclusion for this month.",
     );
-  if (!allocations.some((row) => row.githubUserId === change.githubUserId))
+  const replacements = allocations.flatMap((row, index) =>
+    row.githubUserId === change.githubUserId
+      ? [{ index, grossBase: change.grossBase }]
+      : [],
+  );
+  if (replacements.length === 0)
     throw new MonthlyAllocationError(
       "This person has no allocation this month.",
     );
-  const total = allocations.reduce(
-    (sum, row) =>
-      sum +
-      (row.githubUserId === change.githubUserId
-        ? amount
-        : BigInt(row.grossBase)),
-    0n,
+  const total = sumAmounts(
+    replaceMonthlyAllocations(allocations, replacements).rows.map((row) =>
+      BigInt(row.grossBase),
+    ),
   );
   if (total > BigInt(capBase))
     throw new MonthlyAllocationError(
@@ -212,23 +235,24 @@ export function buildExecutionSnapshot(input: {
   /** Rebuild a month frozen before fees rounded up, whose rows hold floor(gross / 50). */
   legacyFloorFee?: boolean;
 }): { snapshot: MonthlyExecutionSnapshot; text: string; sha256: string } {
-  const feeOf = (gross: bigint) =>
-    input.legacyFloorFee ? gross / 50n : ordinaryFee(gross);
-  let total = 0n;
-  const awards: MonthlyExecutionAward[] = [];
-  for (const row of input.allocations) {
-    const gross = BigInt(row.grossBase);
-    if (gross === 0n) continue;
-    total += gross;
-    awards.push({
+  const frozen = freezeMonthlyAmounts(
+    input.allocations.map((row) => ({
       githubUserId: row.githubUserId,
       login: row.login,
-      grossBase: gross.toString(),
-      feeBase: feeOf(gross).toString(),
-      netBase: (gross - feeOf(gross)).toString(),
+      gross: BigInt(row.grossBase),
       sourceDigest: row.sourceDigest,
-    });
-  }
+    })),
+    input.legacyFloorFee ?? false,
+  );
+  const awards: MonthlyExecutionAward[] = frozen.awards.map((row) => ({
+    githubUserId: row.githubUserId,
+    login: row.login,
+    grossBase: row.gross.toString(),
+    feeBase: row.fee.toString(),
+    netBase: row.net.toString(),
+    sourceDigest: row.sourceDigest,
+  }));
+  const total = frozen.total;
   if (total > BigInt(input.base.capBase))
     throw new MonthlyAllocationError(
       "The month's allocations exceed its monthly amount.",

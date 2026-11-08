@@ -13,6 +13,7 @@ import {
   VETTING_DISPOSITIONS,
   type VettingDisposition,
 } from "../../src/lib/vetting-contracts";
+import { scanNeedsSpecialist } from "../../workers/verified-policy";
 import { PROJECT_ID } from "../http";
 import {
   ARTIFACT_ANALYSES,
@@ -36,6 +37,10 @@ import {
   type VettingArtifact,
   type VettingResult,
 } from "./result";
+import {
+  type ReuseScanEvidence,
+  reusableSourceInventory,
+} from "./verified-reuse";
 
 export const VETTING_SCAN_SCHEMA = "slop-vetting-result-v2";
 /** Template inputs are scanned apart from repository paths. */
@@ -479,16 +484,16 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
  */
 export function specialistRequired(result: VettingScanResult): boolean {
   const primary = result.primaryReview;
-  return (
-    primary.verdict !== "no-findings" ||
-    primary.risk !== "low" ||
-    SCAN_THREATS.some((threat) => result.checks[threat] === "flagged") ||
+  return scanNeedsSpecialist(
+    primary.verdict,
+    primary.risk,
+    SCAN_THREATS.some((threat) => result.checks[threat] === "flagged"),
     result.findings.some((finding) =>
       ["medium", "high", "critical"].includes(finding.severity),
-    ) ||
+    ),
     // A binary or download that is not yet released after a clean analysis
     // needs a specialist to analyze it.
-    result.artifacts.some((artifact) => artifact.state !== "released")
+    result.artifacts.some((artifact) => artifact.state !== "released"),
   );
 }
 
@@ -572,12 +577,20 @@ export function isScanResult(
 
 /** Legacy native results lack a retained pre-execution binding and cannot reuse. */
 export function scanSourceInventory(result: VettingScanResult): string | null {
-  return (
-    result.assessed.sourceInventorySha256 ??
-    (result.execution === null && result.artifacts.length === 0
-      ? result.assessed.inputManifestSha256
-      : null)
-  );
+  return reusableSourceInventory(scanSourceInventoryInput(result));
+}
+
+/** Keep absent source bindings distinct from native execution or artifacts. */
+export function scanSourceInventoryInput(
+  result: VettingScanResult,
+): ReuseScanEvidence {
+  return {
+    assessed: result.assessed,
+    hasExecution: result.execution !== null,
+    artifacts: result.artifacts,
+    policyVersion: result.policyVersion,
+    scan: result.scan,
+  };
 }
 
 /** The disposition rules of the result's own schema. */

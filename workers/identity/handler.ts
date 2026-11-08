@@ -1,6 +1,6 @@
 import { type ApiError, cookieValue, fail } from "../../backend/http";
 import { readLimitedBody } from "../../backend/trace/validation";
-import brand from "../../brand/tokens.json" with { type: "json" };
+import { brandTokens as brand } from "../../src/brand-tokens";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type DeploymentTier,
@@ -444,7 +444,10 @@ async function pollFlow(
     if (!flow.githubNodeId)
       fail(502, "identity_incomplete", "GitHub identity is incomplete");
     if (
-      !(await deps.persistence.markAssertionIssued(flow.id, now.toISOString()))
+      !(await deps.persistence.markAssertionIssued(
+        flow.id,
+        deps.now().toISOString(),
+      ))
     )
       fail(410, "flow_consumed", "Identity flow was already consumed");
     return json(200, {
@@ -487,7 +490,7 @@ async function pollFlow(
   }
   const issued = await deps.persistence.markAssertionIssued(
     flow.id,
-    now.toISOString(),
+    deps.now().toISOString(),
   );
   if (!issued) fail(410, "flow_consumed", "Identity flow was already consumed");
   return json(200, {

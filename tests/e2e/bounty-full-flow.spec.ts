@@ -7,17 +7,15 @@ import type {
 } from "@playwright/test";
 import { rewardFields } from "../../src/lib/project-proposal";
 import { privateBountyTerms } from "../../src/lib/security-bounty-proposal";
-import {
-  connectLocalDirectEvmFixture,
-  rotateVerifiedBountyWallet,
-  seedVerifiedBountyWallets,
-} from "../direct-bounty-chain";
+import { authorizeFixtureWallet } from "../authorize-fixture-wallet";
+import { connectLocalDirectEvmFixture } from "../direct-bounty-chain";
 import {
   E2E_SECURITY_ACCOUNTS,
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { capturedNotifyEmails } from "../notify-worker-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   escapeRegExp,
   expect,
@@ -90,18 +88,8 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(async () => {
   if (!enabled) return;
   const endpoint = process.env.SLOP_E2E_DIRECT_RPC_URL;
-  const persist = process.env.SLOP_E2E_PERSIST_TO;
-  if (!endpoint || !persist)
-    throw new Error("Missing local direct-payment fixture");
+  if (!endpoint) throw new Error("Missing local direct-payment fixture");
   chain = await connectLocalDirectEvmFixture(Number(new URL(endpoint).port));
-  seedVerifiedBountyWallets(persist, [
-    { ...owner, address: chain.payer },
-    {
-      githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
-      githubLogin: "e2e-reporter-a",
-      address: chain.reporter,
-    },
-  ]);
 });
 
 async function signedIn(
@@ -495,6 +483,20 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
   const [maintainer, researcher, finance, otherMaintainer] = actors.map(
     (entry) => entry.page,
   );
+  const rotateReporterWallet = (address: string) =>
+    authorizeFixtureWallet(
+      (path, body) =>
+        api(request, researcher, "reporter-a", "POST", path, body),
+      {
+        chain: "base",
+        address,
+        sign: (message) =>
+          chain.request<string>("personal_sign", [
+            `0x${Buffer.from(message, "utf8").toString("hex")}`,
+            address,
+          ]),
+      },
+    );
   const emailActors = [
     { role: "security", page: maintainer },
     { role: "reporter-a", page: researcher },
@@ -860,11 +862,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect(
       (await readCase("security")).settlement?.confirmedTransactionIds,
     ).toHaveLength(0);
-    rotateVerifiedBountyWallet(process.env.SLOP_E2E_PERSIST_TO as string, {
-      githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
-      githubLogin: "e2e-reporter-a",
-      address: chain.recoveryAddress,
-    });
+    await rotateReporterWallet(chain.recoveryAddress);
     await researcher.reload({ waitUntil: "networkidle" });
     expect((await readCase("security")).settlement?.recovery?.mode).toBe(
       "consent-required",
@@ -1057,18 +1055,14 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     }
     consumedCancellation = null;
     await expectAccessible(maintainer);
-    await maintainer.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    const restoreEnlargedText1 = await enlargeText(maintainer.locator("body"));
     const cancelButton = cancellation.getByRole("button", {
       name: "Cancel old transfer",
       exact: true,
     });
     await cancelButton.focus();
     await maintainer.keyboard.press("Enter");
-    await maintainer.evaluate(() => {
-      document.documentElement.style.zoom = "1";
-    });
+    await restoreEnlargedText1();
     await expect(
       cancellation.getByRole("button", {
         name: "Verify cancellation",
@@ -1198,20 +1192,16 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect((await readCase("reporter-a")).settlement?.ownerRequest).toBeNull();
     await expectAccessible(maintainer);
     await expectAccessible(researcher);
-    if ((maintainer.viewportSize()?.width ?? 0) >= 640) {
-      await maintainer.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await maintainer.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-      await expectAccessible(maintainer);
-      await maintainer.evaluate(() => {
-        document.documentElement.style.zoom = "1";
-      });
-    }
+
+    const restoreEnlargedText2 = await enlargeText(maintainer.locator("body"));
+    expect(
+      await maintainer.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expectAccessible(maintainer);
+    await restoreEnlargedText2();
+
     await maintainer.evaluate(() => window.scrollTo(0, 0));
     await maintainer.screenshot({
       path: test.info().outputPath("paid-owner.png"),
@@ -1346,11 +1336,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     await expect(payerControls.getByRole("textbox")).toHaveValue(
       secondResearcher,
     );
-    rotateVerifiedBountyWallet(process.env.SLOP_E2E_PERSIST_TO as string, {
-      githubId: E2E_SECURITY_ACCOUNTS["reporter-a"],
-      githubLogin: "e2e-reporter-a",
-      address: chain.reporter,
-    });
+    await rotateReporterWallet(chain.reporter);
     await maintainer.reload({ waitUntil: "networkidle" });
     const savedPayments = maintainer.getByRole("region", {
       name: "Submitted payment recovery",

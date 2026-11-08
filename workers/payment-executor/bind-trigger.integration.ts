@@ -22,7 +22,9 @@ import { Database } from "bun:sqlite";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseTransaction } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -47,6 +49,7 @@ import {
   bindStoredDestination,
   type JournalStore,
   pendingStoredBindings,
+  runStoredBindings,
 } from "./core";
 import worker, { PaymentSignerJournal, runDestinationBindings } from "./index";
 
@@ -680,6 +683,134 @@ try {
   assert.equal(overLimitSignatures, 0);
   assert.deepEqual(bindEntries(), []);
   assert.equal(await nonce(attester), 0);
+
+  // Replay the Quint authority handoff through the real signing core and
+  // Anvil contract. The old signature is delayed across registrar rotation:
+  // it cannot be rebroadcast by the service, but its eventual reverted
+  // receipt must retire the held journal without changing the binding.
+  const traceDirectory = mkdtempSync(join(tmpdir(), "slop-rotation-trace-"));
+  const rotationSnapshot = await rpc("evm_snapshot", []);
+  const beforeRotationJournal = journalDb
+    .query<{ key: string; value: string }, []>("SELECT key,value FROM journal")
+    .all();
+  try {
+    execFileSync(
+      "node",
+      [
+        `${root}node_modules/@informalsystems/quint/dist/src/cli.js`,
+        "test",
+        `${root}formal/models/authority_rotation.qnt`,
+        "--backend=typescript",
+        "--seed=1",
+        "--match=^delayedOldAuthorityRevertsAndReconcilesTest$",
+        `--out-itf=${join(traceDirectory, "trace-{test}-{seq}.json")}`,
+      ],
+      { stdio: "pipe" },
+    );
+    type ModelInteger = { "#bigint": string };
+    const trace = JSON.parse(
+      readFileSync(
+        join(
+          traceDirectory,
+          "trace-delayedOldAuthorityRevertsAndReconcilesTest-0.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      states: {
+        s: {
+          current: ModelInteger;
+          pending: ModelInteger;
+          bindingVersion: ModelInteger;
+          held: boolean;
+        };
+      }[];
+    };
+    const checkRotationState = async (index: number) => {
+      const expected = trace.states[index].s;
+      const key = (value: ModelInteger) =>
+        value["#bigint"] === "1"
+          ? attester
+          : value["#bigint"] === "2"
+            ? payer
+            : `0x${"0".repeat(40)}`;
+      assert.equal(
+        `0x${(await read(factory, "identityAuthority()")).slice(-40)}`,
+        key(expected.current),
+        `authority at trace state ${index}`,
+      );
+      assert.equal(
+        `0x${(await read(factory, "pendingIdentityAuthority()")).slice(-40)}`,
+        key(expected.pending),
+        `pending authority at trace state ${index}`,
+      );
+      const [, version] = words(await read(vault, "bindings(uint64)", ["123"]));
+      assert.equal(version.toString(), expected.bindingVersion["#bigint"]);
+      assert.equal(
+        (await pendingStoredBindings(journal)).length > 0,
+        expected.held,
+      );
+    };
+    const rotationEnvironment = {
+      PAYMENTS_DB: db,
+      PAYMENT_DEPLOYMENTS: env.PAYMENT_DEPLOYMENTS,
+      PAYMENT_RPC_URLS: env.PAYMENT_RPC_URLS,
+      JOURNAL: journal,
+      SIGNER: privateKeyToAccount(attesterKey),
+    };
+    await checkRotationState(2); // wallet consent exists, no signature yet.
+    dropBroadcast = true;
+    await assert.rejects(
+      bindStoredDestination(rotationEnvironment, boundedCandidate),
+    );
+    const [oldAttempt] = bindEntries();
+    assert(oldAttempt);
+    await checkRotationState(3);
+    await send(
+      factory,
+      "proposeIdentityAuthority(address)",
+      [payer],
+      registrar,
+    );
+    await checkRotationState(4);
+    await send(factory, "executeIdentityAuthorityRotation()", [], registrar);
+    await mine(64);
+    await checkRotationState(5);
+    const sendsBeforeRotationRetry = bindingBroadcasts;
+    const heldReport = await runStoredBindings(rotationEnvironment, []);
+    assert.equal(heldReport.failed, 1);
+    assert.equal(bindingBroadcasts, sendsBeforeRotationRetry);
+    await checkRotationState(5);
+    dropBroadcast = false;
+    // Deliver the original outside the service to model an in-flight request.
+    await rpc("eth_sendRawTransaction", [oldAttempt.rawTransaction]);
+    await mine(1);
+    const revertedReceipt = (await rpc("eth_getTransactionReceipt", [
+      oldAttempt.transactionId,
+    ])) as { status: string };
+    assert.equal(revertedReceipt.status, "0x0");
+    await checkRotationState(6);
+    await mine(64);
+    const reconciled = await runStoredBindings(rotationEnvironment, []);
+    assert.equal(reconciled.failed, 0);
+    assert.equal(bindingBroadcasts, sendsBeforeRotationRetry);
+    assert.equal(await journal.get(oldAttempt.key), null);
+    assert.ok(
+      await journal.get(
+        `${oldAttempt.key}:reverted:${oldAttempt.transactionId}`,
+      ),
+    );
+    await checkRotationState(9);
+  } finally {
+    dropBroadcast = false;
+    await rpc("evm_revert", [rotationSnapshot]);
+    journalDb.exec("DELETE FROM journal");
+    for (const row of beforeRotationJournal)
+      journalDb
+        .prepare("INSERT INTO journal VALUES(?,?)")
+        .run(row.key, row.value);
+    rmSync(traceDirectory, { recursive: true, force: true });
+  }
 
   // Failure: an uncertain send. The broadcast is lost twice. The attester
   // journals one signed binding before its first broadcast; each later run

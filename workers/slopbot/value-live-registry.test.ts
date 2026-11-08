@@ -496,7 +496,9 @@ function recordRename(
 }
 
 async function indirectAcceptance(renamed: boolean) {
-  setSystemTime(new Date("2026-11-04T00:00:00.000Z"));
+  // Lease checks include SQLite's execution clock; source timestamps remain
+  // fixed after the configured valuation start, but leases use current time.
+  setSystemTime();
   const { db, sqlite, project } = liveRegistration();
   const rename = renamed ? recordRename(sqlite, project) : null;
   const valueJob = rename?.renamedJob ?? job;

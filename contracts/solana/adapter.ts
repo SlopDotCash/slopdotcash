@@ -1,7 +1,10 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { PaymentChainAdapter } from "../../backend/payments/ledger";
-import { decodeBase58Bytes } from "../../src/lib/base58";
+import {
+  encodeBase58Bytes as base58,
+  decodeBase58Bytes,
+} from "../../src/lib/base58";
 import {
   acceptsPayoutFee,
   type PayoutPolicy,
@@ -100,21 +103,6 @@ export const CONFIG_DISCRIMINATOR = hex(
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const decode = (value: string) =>
   Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-function base58(bytes: Uint8Array): string {
-  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  let value = 0n;
-  for (const byte of bytes) value = value * 256n + BigInt(byte);
-  let result = "";
-  while (value > 0n) {
-    result = alphabet[Number(value % 58n)] + result;
-    value /= 58n;
-  }
-  for (const byte of bytes) {
-    if (byte !== 0) break;
-    result = `1${result}`;
-  }
-  return result;
-}
 const uint = (bytes: Uint8Array, offset: number) =>
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(
     offset,

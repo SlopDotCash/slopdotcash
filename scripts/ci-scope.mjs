@@ -3,7 +3,12 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
 const pr = event.pull_request;
-const full = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+// A trusted main push can deploy. It needs every release gate even though a
+// push event has no pull-request changed-file list to drive selective checks.
+const full =
+  process.env.GITHUB_EVENT_NAME === "workflow_dispatch" ||
+  (process.env.GITHUB_EVENT_NAME === "push" &&
+    process.env.GITHUB_REF === "refs/heads/main");
 const promotion =
   pr?.base.ref === "main" &&
   pr.head.ref === "development" &&
@@ -56,8 +61,9 @@ const lane = (name, server, browsers, shard, grep = "") => ({
 const lanes = [];
 if (ui)
   lanes.push(
-    lane("preview-1", "preview", "chromium", "1/2"),
-    lane("preview-2", "preview", "chromium", "2/2"),
+    // Preview includes the draft and email identity cases in both engines.
+    lane("preview-1", "preview", "chromium firefox", "1/2"),
+    lane("preview-2", "preview", "chromium firefox", "2/2"),
     lane("pages", "pages", "chromium", "1/1"),
   );
 // Root skill edits change raw Markdown and discovery bytes checked by Pages.
@@ -98,13 +104,13 @@ for (const [key, value] of Object.entries({
     !pr ||
     (!promotion &&
       changed(
-        /^contracts\/solana\/|^backend\/security\/|^migrations\/|^src\/lib\/security-bounty\.|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
+        /^contracts\/solana\/|^backend\/(security|fee-conversions)\/|^workers\/fee-converter\/|^migrations\/|^src\/lib\/security-bounty\.|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/(ci-scope\.mjs$|local-solana-validator\.|escrow-acceptance(?:\/|\.ts$))|^tests\/(direct-bounty-solana-chain\.ts$|e2e\/solana-vault-actions\.spec\.ts$)/u,
       )),
   evm:
     !pr ||
     (!promotion &&
       changed(
-        /^contracts\/evm\/|^backend\/(security|payments|fee-conversions)\/|^workers\/fee-converter\/|^migrations\/|^src\/lib\/security-bounty\.|^scripts\/run-security-payments\.mjs$|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
+        /^contracts\/evm\/|^backend\/(security|payments|fee-conversions)\/|^workers\/fee-converter\/|^migrations\/|^src\/lib\/security-bounty\.|^scripts\/(run-security-payments\.mjs$|escrow-acceptance(?:\/|\.ts$))|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
       )),
 }))
   appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);

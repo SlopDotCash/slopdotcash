@@ -210,16 +210,8 @@ test("large private evidence downloads with a single-use browser grant @registry
   expect(
     cookies.some((cookie) => cookie.name === "__Secure-vetting-read-grant"),
   ).toBe(false);
-  // Keep mobile reflow at the existing 320 CSS-pixel minimum. Use the
-  // repository's 200% text enlargement check there, and CSS zoom elsewhere.
-  const mobile = (page.viewportSize()?.width ?? 0) < 640;
-  const restoreText = mobile
-    ? await enlargeText(page.locator("body"))
-    : undefined;
-  if (!mobile)
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+  // Enlarge text at the current CSS viewport; this is not browser zoom.
+  const restoreText = await enlargeText(page.locator("body"));
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
@@ -233,14 +225,13 @@ test("large private evidence downloads with a single-use browser grant @registry
   ).toBe(true);
   await expectAccessible(page);
   await page.screenshot({
-    path: info.outputPath("large-evidence-zoom.png"),
+    path: info.outputPath("large-evidence-text-200.png"),
     fullPage: false,
   });
   await page.evaluate(() => {
-    document.documentElement.style.zoom = "1";
     scrollTo(0, 0);
   });
-  await restoreText?.();
+  await restoreText();
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>

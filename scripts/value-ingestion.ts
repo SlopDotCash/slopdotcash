@@ -59,16 +59,25 @@ export class ValueFeedUnavailableError extends Error {
 /** Process exit status for a value feed outage (EX_TEMPFAIL). */
 export const VALUE_FEED_UNAVAILABLE_EXIT_CODE = 75;
 
+/** A native fetch body may fulfill with a prefix after its request expires. */
+function assertFeedDeadline(signal: AbortSignal): void {
+  if (signal.aborted) throw new ValueFeedUnavailableError(signal.reason);
+}
+
 /** Any failure to read an answered body (interrupted, reset or timed out) is
  * an outage. Malformed JSON in a complete body is an integrity failure and
  * stops the publication. */
-async function readFeedJson<T>(response: Response): Promise<T> {
+async function readFeedJson<T>(
+  response: Response,
+  signal: AbortSignal,
+): Promise<T> {
   let text: string;
   try {
     text = await response.text();
   } catch (error) {
     throw new ValueFeedUnavailableError(error);
   }
+  assertFeedDeadline(signal);
   return JSON.parse(text) as T;
 }
 
@@ -122,16 +131,18 @@ async function fetchHistoryPage(
   url.searchParams.set("pull", String(pull));
   url.searchParams.set("after", String(after));
   if (through !== null) url.searchParams.set("through", String(through));
+  const signal = AbortSignal.timeout(30_000);
   let response: Response;
   try {
     response = await transport(url, {
       redirect: "manual",
       cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
+      signal,
     });
   } catch (error) {
     throw new ValueFeedUnavailableError(error);
   }
+  assertFeedDeadline(signal);
   if (
     response.status === 408 ||
     response.status === 429 ||
@@ -158,6 +169,7 @@ async function fetchHistoryPage(
     }
     chunks.push(result.value);
   }
+  assertFeedDeadline(signal);
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {
@@ -272,16 +284,18 @@ async function fetchPenaltyRecords(
     url.searchParams.set("project", projectId);
     url.searchParams.set("after", after);
     if (history) url.searchParams.set("history", "1");
+    const signal = AbortSignal.timeout(30_000);
     let response: Response;
     try {
       response = await transport(url, {
         redirect: "manual",
         cache: "no-store",
-        signal: AbortSignal.timeout(30_000),
+        signal,
       });
     } catch (error) {
       throw new ValueFeedUnavailableError(error);
     }
+    assertFeedDeadline(signal);
     // A Slopbot release without this route (404) is an outage too: keep the
     // last published snapshot instead of publishing scores without debits.
     if (
@@ -298,7 +312,7 @@ async function fetchPenaltyRecords(
       project?: unknown;
       records?: unknown;
       nextAfter?: unknown;
-    }>(response);
+    }>(response, signal);
     if (
       !(
         body?.schemaVersion ===
@@ -733,16 +747,18 @@ export async function loadParticipationBans(
   github: Pick<GitHubClient, "get">,
   transport: Fetch = fetch,
 ): Promise<Map<string, string>> {
+  const signal = AbortSignal.timeout(30_000);
   let response: Response;
   try {
     response = await transport(ACCOUNT_BAN_FEED, {
       redirect: "manual",
       cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
+      signal,
     });
   } catch (error) {
     throw new ValueFeedUnavailableError(error);
   }
+  assertFeedDeadline(signal);
   // 404 covers the release window before the route is deployed.
   if (
     response.status === 404 ||
@@ -755,6 +771,7 @@ export async function loadParticipationBans(
     throw new Error("The account ban feed is unavailable");
   const body = await readFeedJson<{ schemaVersion?: unknown; bans?: unknown }>(
     response,
+    signal,
   );
   if (
     body?.schemaVersion !== "slop-account-bans:v1" ||

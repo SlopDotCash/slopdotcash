@@ -127,9 +127,17 @@ export async function reconcileFailedAttempts(
           .bind(attempt.id),
         db
           .prepare(
-            "UPDATE payment_outbox SET state='ready',updated_at=?,lease_token=NULL,lease_until=NULL WHERE obligation_id=? AND state IN ('submitted','held') AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved')",
+            // Another reconciler may already have retired this attempt, after
+            // which dispatch submitted a successor. An old receipt must not
+            // reopen the successor's outbox or trigger another broadcast.
+            "UPDATE payment_outbox SET state='ready',updated_at=?,lease_token=NULL,lease_until=NULL WHERE obligation_id=? AND state IN ('submitted','held') AND EXISTS(SELECT 1 FROM payment_obligations WHERE id=? AND state='reserved') AND NOT EXISTS(SELECT 1 FROM payment_attempts WHERE obligation_id=? AND state IN ('prepared','submitted','unknown'))",
           )
-          .bind(now.toISOString(), attempt.obligationId, attempt.obligationId),
+          .bind(
+            now.toISOString(),
+            attempt.obligationId,
+            attempt.obligationId,
+            attempt.obligationId,
+          ),
       ]);
     } catch (error) {
       failures.push(error);

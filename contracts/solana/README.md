@@ -340,6 +340,25 @@ records remain permanently allocated to prevent account recreation replay.
 
 ## Local build and end-to-end tests
 
+Validator workflows require a local Docker or Podman engine and the reviewed
+Agave 2.1.21 image. From the repository root, prepare its exact digest:
+
+```sh
+validator_image="$(node --input-type=module -e 'import { SOLANA_TEST_IMAGE } from "./scripts/local-solana-validator.mjs"; console.log(SOLANA_TEST_IMAGE)')"
+docker pull --platform linux/amd64 "$validator_image"
+```
+
+For Podman, use `podman pull` and set `SLOP_SOLANA_CONTAINER_RUNTIME=podman`
+when running the workflow. Keep the connection local. The shared launcher
+checks the actual image/binary and publishes only its RPC and WebSocket ports
+on `127.0.0.1`; it does not fall back to a host validator or pull an image.
+On macOS, the selected temporary directory and declared fixture files must
+already be shared with the engine's VM. The launcher mounts those inputs read
+only and does not change VM sharing. Native Solana CLI and Anchor tools are
+still needed for program preparation and client commands. Per-instance
+receipts distinguish ready, stopped and unconfirmed cleanup; retain a failed
+receipt before retrying. See [the lifecycle audit](../../formal/solana-container-audit.md).
+
 Run `npm run build` here to build the actual SBF binary and its IDL.
 Run `npm run test:e2e` to load that binary into an isolated local validator and
 execute the SPL payment, durable executor, and unsigned owner-plan workflows.

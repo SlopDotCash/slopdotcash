@@ -1,0 +1,7 @@
+{
+  "proof-dir": "formal/lemmascript",
+  "extern-default": "impure",
+  "string-semantics": "javascript-utf16",
+  "dafny-library": "local",
+  "run-log": false
+}

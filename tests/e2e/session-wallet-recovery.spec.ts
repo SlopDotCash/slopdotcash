@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS } from "../../src/lib/projects.mjs";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
@@ -127,14 +128,12 @@ test("vault setup removes owner controls after the session ends", async ({
   await setup.screenshot({
     path: test.info().outputPath("1935-session-ended.png"),
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(page.locator("body"));
   await expect(
     setup.getByRole("link", { name: "Sign in with GitHub" }),
   ).toBeVisible();
   await setup.screenshot({
-    path: test.info().outputPath("1935-session-ended-200percent.png"),
+    path: test.info().outputPath("1935-session-ended-text-200.png"),
   });
 });
 
@@ -179,15 +178,11 @@ test("Settings wallet cards survive direct-payment history failure", async ({
   await wallets.screenshot({
     path: test.info().outputPath("1913-settings-wallets.png"),
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  const restoreEnlargedText2 = await enlargeText(page.locator("body"));
   await wallets.screenshot({
-    path: test.info().outputPath("1913-settings-wallets-200percent.png"),
+    path: test.info().outputPath("1913-settings-wallets-text-200.png"),
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "1";
-  });
+  await restoreEnlargedText2();
   const connect = wallets.getByRole("button").first();
   await connect.focus();
   await page.keyboard.press("Enter");

@@ -1,8 +1,16 @@
+import { sumAmounts } from "../../src/lib/verified-allocation";
 import {
   proveSolanaExpiry,
   type RecoveryRpc,
   recoveryOperator,
 } from "./solana-expiry";
+import {
+  minimumOutput,
+  rentIncrease,
+  solanaNativeFee,
+  spendableNative,
+} from "./verified-arithmetic";
+import { parseSolanaWire } from "./verified-solana-wire";
 /**
  * Solana fee-wallet client. Routes come from the Jupiter Swap API. Each
  * Jupiter transaction is parsed before signing: the fee wallet is the only
@@ -167,17 +175,6 @@ export function solanaEscrowConfig(
   };
 }
 
-function compactLength(bytes: Uint8Array, offset: number): [number, number] {
-  let value = 0;
-  for (let shift = 0, i = 0; i < 3; i++, shift += 7) {
-    const byte = bytes[offset + i];
-    if (byte === undefined) throw new Error("truncated transaction");
-    value |= (byte & 0x7f) << shift;
-    if ((byte & 0x80) === 0) return [value, offset + i + 1];
-  }
-  throw new Error("invalid compact length");
-}
-
 export interface ParsedTransaction {
   signatureCount: number;
   messageOffset: number;
@@ -194,86 +191,51 @@ export interface ParsedTransaction {
 
 /** Parse the entire signed wire message, including every v0 address lookup. */
 export function parseTransaction(raw: Uint8Array): ParsedTransaction {
-  const [signatureCount, afterCount] = compactLength(raw, 0);
-  const messageOffset = afterCount + signatureCount * 64;
-  let offset = messageOffset;
-  const take = (count: number) => {
-    if (
-      !Number.isSafeInteger(count) ||
-      count < 0 ||
-      offset + count > raw.length
-    )
-      throw new Error("truncated transaction");
-    const part = raw.slice(offset, offset + count);
-    offset += count;
-    return part;
-  };
-  const length = () => {
-    const [n, next] = compactLength(raw, offset);
-    offset = next;
-    return n;
-  };
-  if (messageOffset >= raw.length || raw.length > 1232)
-    throw new Error("invalid transaction size");
-  const legacy = (raw[offset] & 0x80) === 0;
-  if (!legacy && take(1)[0] !== 0x80)
-    throw new Error("unsupported message version");
-  const [requiredSignatures, readonlySigned, readonlyUnsigned] = take(3);
-  const keyCount = length();
-  if (
-    keyCount < requiredSignatures ||
-    signatureCount !== requiredSignatures ||
-    readonlySigned > requiredSignatures ||
-    readonlyUnsigned > keyCount - requiredSignatures
-  )
-    throw new Error("invalid transaction signer header");
-  const staticKeys = Array.from({ length: keyCount }, () =>
-    solanaBase58(take(32)),
+  const result = parseSolanaWire(raw);
+  if (result.kind === "failure") {
+    const errors = [
+      "",
+      "truncated transaction",
+      "invalid compact length",
+      "invalid transaction size",
+      "unsupported message version",
+      "invalid transaction signer header",
+      "program id outside the static keys",
+      "invalid transaction account indexes or trailing bytes",
+    ];
+    throw new Error(errors[result.error]);
+  }
+  const parsed = result.value;
+  const staticKeys = Array.from({ length: parsed.keyCount }, (_, index) =>
+    solanaBase58(
+      raw.slice(
+        parsed.staticStart + index * 32,
+        parsed.staticStart + (index + 1) * 32,
+      ),
+    ),
   );
-  const blockhashOffset = offset;
-  take(32);
-  const programs: string[] = [],
-    instructions: ParsedTransaction["instructions"] = [];
-  const instructionCount = length();
-  for (let i = 0; i < instructionCount; i++) {
-    const programIndex = take(1)[0];
-    // Invoked programs stay in static keys, so no table can substitute a router.
-    if (programIndex >= staticKeys.length)
-      throw new Error("program id outside the static keys");
-    const accounts = [...take(length())],
-      data = take(length());
-    programs.push(staticKeys[programIndex]);
-    instructions.push({ program: staticKeys[programIndex], accounts, data });
-  }
-  const lookups: ParsedTransaction["lookups"] = [];
-  if (!legacy) {
-    const count = length();
-    for (let i = 0; i < count; i++) {
-      const address = solanaBase58(take(32)),
-        writable = [...take(length())],
-        readonly = [...take(length())];
-      lookups.push({ address, writable, readonly });
-    }
-  }
-  const total =
-    keyCount +
-    lookups.reduce((n, t) => n + t.writable.length + t.readonly.length, 0);
-  if (
-    offset !== raw.length ||
-    total > 256 ||
-    instructions.some((i) => i.accounts.some((index) => index >= total))
-  )
-    throw new Error("invalid transaction account indexes or trailing bytes");
+  const instructions = parsed.instructions.map((instruction) => ({
+    program: staticKeys[instruction.program],
+    accounts: [
+      ...raw.slice(instruction.accounts.start, instruction.accounts.end),
+    ],
+    data: raw.slice(instruction.data.start, instruction.data.end),
+  }));
+  const lookups = parsed.lookups.map((lookup) => ({
+    address: solanaBase58(raw.slice(lookup.address.start, lookup.address.end)),
+    writable: [...raw.slice(lookup.writable.start, lookup.writable.end)],
+    readonly: [...raw.slice(lookup.readonly.start, lookup.readonly.end)],
+  }));
   return {
-    signatureCount,
-    messageOffset,
-    requiredSignatures,
-    readonlySigned,
-    readonlyUnsigned,
+    signatureCount: parsed.signatureCount,
+    messageOffset: parsed.messageOffset,
+    requiredSignatures: parsed.requiredSignatures,
+    readonlySigned: parsed.readonlySigned,
+    readonlyUnsigned: parsed.readonlyUnsigned,
     staticKeys,
-    blockhashOffset,
-    programs,
-    legacy,
+    blockhashOffset: parsed.blockhashOffset,
+    programs: instructions.map((instruction) => instruction.program),
+    legacy: parsed.legacy,
     lookups,
     instructions,
   };
@@ -307,8 +269,10 @@ function signedMinimumOutput(quote: JupiterQuote): bigint {
   // The API can round its display threshold up by one base unit. /swap
   // encodes quoted output and slippage, not that threshold. Retain only
   // the conservative floor we can bind to those signed instruction fields.
-  const minimum =
-    (BigInt(quote.outAmount) * BigInt(10000 - quote.slippageBps)) / 10000n;
+  const minimum = minimumOutput(
+    BigInt(quote.outAmount),
+    BigInt(quote.slippageBps),
+  );
   const advertised = BigInt(quote.otherAmountThreshold);
   if (advertised < minimum || advertised > minimum + 1n)
     throw new Error(
@@ -336,7 +300,8 @@ export function solanaNativeCost(
   accounts: readonly number[],
   nativePrincipal = 0n,
 ): bigint {
-  let actual = nativeInteger(meta.fee);
+  const fee = nativeInteger(meta.fee);
+  const rent: bigint[] = [];
   const nativeToken = "So11111111111111111111111111111111111111112";
   const tokenNative = (balances: TokenBalance[], index: number) => {
     const b = balances.find(
@@ -353,14 +318,15 @@ export function solanaNativeCost(
       tokenNative(meta.postTokenBalances, index);
     if (before < 0n || after < 0n)
       throw new Error("Solana native rent receipt is inconsistent");
-    if (after > before) actual += after - before;
+    rent.push(rentIncrease(before, after));
   }
-  const walletDebit =
-    nativeInteger(meta.preBalances[0]) -
-    nativeInteger(meta.postBalances[0]) -
-    nativePrincipal;
-  if (walletDebit > actual) actual = walletDebit;
-  return actual;
+  return solanaNativeFee(
+    fee,
+    sumAmounts(rent),
+    nativeInteger(meta.preBalances[0]),
+    nativeInteger(meta.postBalances[0]),
+    nativePrincipal,
+  );
 }
 
 export function createSolanaClient(options: SolanaClientOptions): ChainClient {
@@ -1175,10 +1141,10 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           wallet,
           { commitment: "finalized" },
         ]);
-        const spendable =
-          nativeInteger(result.value) -
-          BigInt(config.nativeBudget?.perTransaction ?? "0");
-        return spendable > 0n ? spendable : 0n;
+        return spendableNative(
+          nativeInteger(result.value),
+          BigInt(config.nativeBudget?.perTransaction ?? "0"),
+        );
       }
       const mint = await admittedMint(token);
       // A reviewed route debits only the canonical associated account. A

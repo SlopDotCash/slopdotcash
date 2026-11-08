@@ -55,6 +55,7 @@ import {
   Waiting,
   waitPolicy,
 } from "../../../scripts/escrow-acceptance/shared";
+import { LocalSolanaAcceptance } from "../../../scripts/escrow-acceptance/solana-local";
 import type { EscrowDeployment } from "../../../src/lib/escrow-policy.mjs";
 import { lookupAttempt } from "../../../workers/payment-executor/core";
 import { PaymentSignerJournal } from "../../../workers/payment-executor/index";
@@ -925,19 +926,43 @@ export function solanaServices(
 ) {
   const { network, genesisHash } = ctx;
   const projection = new Projection(directory);
-  // The dispatcher finds each vault in the project registry, as in
-  // production; only the signer roles keep a pinned deployment list.
-  const registry = new AcceptanceRegistry(directory);
+  // Public devnet retains the real project-registry cron. Local validator
+  // declarations cannot enter the production registry or its network parser.
+  const registry =
+    network === "solana-devnet" ? new AcceptanceRegistry(directory) : undefined;
+  const local =
+    network === "solana-localnet"
+      ? new LocalSolanaAcceptance(projection.sqlite, {
+          network,
+          runId: ctx.run.runId,
+          rpcUrl,
+          genesisHash,
+          programId: ctx.programId.toBase58(),
+          codeSha256: ctx.codeSha256,
+          upgradeAuthority: ctx.upgradeAuthority,
+          owner: ctx.keys.owner.publicKey.toBase58(),
+          identityAuthority: ctx.identity.publicKey.toBase58(),
+          feeRecipient: ctx.feeRecipient.toBase58(),
+          rotationAuthority: ctx.rotationAuthority.toBase58(),
+          rotationDelaySeconds: ctx.rotationDelay.toString(),
+          networkDomain: ctx.networkDomain,
+        })
+      : undefined;
   const env: PaymentsWorkerEnvironment = {
     PAYMENTS_DB: projection.db,
-    REGISTRY_DB: registry.db,
+    REGISTRY_DB: registry?.db ?? projection.db,
     PAYMENT_NETWORKS: JSON.stringify([network]),
     PAYMENT_RPC_URLS: JSON.stringify({ [network]: rpcUrl }),
     PAYMENT_SOLANA_GENESIS: JSON.stringify({ [network]: genesisHash }),
   };
   let pinnedDeployments = "[]";
   const refresh = () => {
-    pinnedDeployments = JSON.stringify(registry.record(projects()));
+    const current = projects();
+    if (!local && !registry)
+      throw new Error("Solana acceptance network unavailable");
+    pinnedDeployments = JSON.stringify(
+      local ? local.record(current) : registry?.record(current),
+    );
   };
   const attesterJournal = projection.journal("attester");
   const relayerJournal = projection.journal("relayer");
@@ -1063,6 +1088,7 @@ export function solanaServices(
     registry,
     env,
     refresh,
+    tick: () => (local ? local.tick(env) : runPaymentsCron(env)),
     attesterJournal,
     relayerJournal,
     pinned: () => pinnedDeployments,
@@ -1164,7 +1190,7 @@ export async function runSolana(
   const divisor = unitDivisor();
   if (network === "solana-localnet") {
     const note =
-      "solana-localnet runs the executor engines with the local-chain flag, as contracts/solana/integration/executor.e2e.mjs does; solana-devnet uses the hosted PaymentSignerJournal routing.";
+      "solana-localnet uses immutable run-scoped deployment declarations and the real scanner, ledger, recovery, dispatch and executor engines with the local-chain flag. This is local component/contract acceptance, not production registry cron qualification. solana-devnet uses the registry and hosted PaymentSignerJournal routing.";
     if (!run.deviations.includes(note)) run.deviations.push(note);
   }
   const services = solanaServices(ctx, directory, () =>
@@ -1176,7 +1202,7 @@ export async function runSolana(
         deployment: a.deployment as unknown as EscrowDeployment,
       })),
   );
-  const { projection, env, relayerJournal, deps } = services;
+  const { projection, relayerJournal, deps } = services;
   const refreshDeployments = services.refresh;
   const relayer = services.relayer;
   const policyWait = waitPolicy();
@@ -1187,14 +1213,6 @@ export async function runSolana(
     untilReady(step, policyWait, deadline, report);
 
   try {
-    // The payments Worker finds vaults only in the project registry, which
-    // names registry networks only. The executor admits a loopback validator
-    // only as solana-localnet and checks that name against the obligation,
-    // so no solana-localnet vault can reach dispatch. Stop before signing.
-    if (network === "solana-localnet")
-      throw new Error(
-        "The project registry has no solana-localnet network, so the payments Worker cannot dispatch a solana-localnet vault",
-      );
     for (const [index, mint] of mints.entries()) {
       // Classic SPL Token mints only; the adapter refuses other owners.
       const decimals = await solanaMintDecimals({ rpcUrl }, mint.toBase58());
@@ -1418,6 +1436,14 @@ export async function runSolana(
       };
     await persist();
 
+    // The local tick verifies the project at finalized commitment. A confirmed
+    // commit can still be ahead of that view, including the project's creation.
+    // Keep this as a resumable wait; never weaken the adapter's finality gate.
+    if (network === "solana-localnet")
+      await ready(() =>
+        chain.waitFinalized(steps["commit-walletless"].transactionId),
+      );
+
     // 4-5. Register, co-sign the binding, and let the cron dispatch.
     for (const role of ["registered", "walletless"] as const)
       await payThroughDispatch(
@@ -1578,7 +1604,7 @@ export async function runSolana(
 
     // 9. The cached vault_snapshots row equals the finalized chain counters.
     await ready(() => chain.waitFinalized(claim.transactionId));
-    for (let tick = 0; tick < 3; tick++) await runPaymentsCron(env);
+    for (let tick = 0; tick < 3; tick++) await services.tick();
     const totals = await readVaultTotals({
       rpcUrl,
       network,
@@ -1643,7 +1669,7 @@ export async function runSolana(
       deps,
     );
     await ready(async () => {
-      const errors = await runPaymentsCron(env);
+      const errors = await services.tick();
       const obligation = projection.obligation(award.id);
       if (obligation?.state === "paid") return;
       // The relayer refuses until the wallet co-signs its binding; the

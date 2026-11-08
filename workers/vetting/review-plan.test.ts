@@ -832,6 +832,32 @@ const unreadableReview = () =>
     usage: { input_tokens: 7, output_tokens: 3 },
   });
 
+test("a retry preserves unknown usage and cost from an unreadable provider attempt", async () => {
+  // This exercises transport accounting only. The synthetic reply does not
+  // qualify model correctness or a security disposition.
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  let seen = 0;
+  const source = provider((input) =>
+    input === plan.batches[0].evidence && seen++ === 0
+      ? new Response("unavailable", { status: 503 })
+      : null,
+  );
+  const result = await reviewInventory({
+    inspection,
+    profile,
+    fetch: source.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(result.evidence?.review.status).toBe("completed");
+  expect(result.evidence?.passes?.[0].attempts).toBe(2);
+  expect(result.evidence?.passes?.[0].usage).toBeNull();
+  expect(result.evidence?.usage).toBeNull();
+  expect(result.evidence?.cost).toBeNull();
+});
+
 test("a batch call that returns an unreadable review is retried before the review fails", async () => {
   const inspection = inspectRepository({ files: largeRepository() });
   const plan = planReview(inspection);
@@ -927,4 +953,5 @@ test("a later retry without a receipt keeps the earlier usage and cost", async (
     output: 3,
   });
   expect(failed.evidence?.cost?.nanoUsd).toBe("48");
+  expect(failed.evidence?.review.status).toBe("failed");
 });

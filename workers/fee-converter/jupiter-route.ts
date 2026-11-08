@@ -6,6 +6,12 @@ import {
   verifySolanaAccountProof,
 } from "./solana-accounts";
 import { assertNativeWrap } from "./solana-native-route";
+import {
+  invalidRouteRole,
+  routeAmountsMatch,
+  routeBindingError,
+  routeValue,
+} from "./verified-jupiter-policy";
 
 export interface JupiterRouteExpectation {
   program: string;
@@ -46,32 +52,28 @@ export function assertJupiterRoute(
   const route = decodeJupiterRoute(instruction.data);
   if (instruction.accounts.length < route.accounts.length)
     throw new Error("Jupiter route account list is incomplete");
-  const writable = (index: number) => {
-    if (index < parsed.requiredSignatures)
-      return index < parsed.requiredSignatures - parsed.readonlySigned;
-    if (index < parsed.staticKeys.length)
-      return index < parsed.staticKeys.length - parsed.readonlyUnsigned;
-    return index < parsed.staticKeys.length + proof.loadedWritable.length;
-  };
-  const roles = new Map<string, string>();
-  route.accounts.forEach((role, position) => {
-    const index = instruction.accounts[position];
-    if (
-      !keys[index] ||
-      (role.writable && !role.optional && !writable(index)) ||
-      (role.signer && index !== 0)
-    )
-      throw new Error(`Jupiter route ${role.name} has incorrect privileges`);
-    roles.set(role.name, keys[index]);
-  });
-  const required = (name: string, value: string) => {
-    if (roles.get(name) !== value)
-      throw new Error(`Jupiter route ${name} differs from the reviewed swap`);
-  };
-  const optional = (name: string, value: string) => {
-    if (roles.has(name)) required(name, value);
-  };
-  required("user_transfer_authority", expected.wallet);
+  const invalid = invalidRouteRole(
+    route.accounts,
+    instruction.accounts,
+    keys,
+    parsed.requiredSignatures,
+    parsed.readonlySigned,
+    parsed.staticKeys.length,
+    parsed.readonlyUnsigned,
+    proof.loadedWritable.length,
+  );
+  if (invalid >= 0)
+    throw new Error(
+      `Jupiter route ${route.accounts[invalid].name} has incorrect privileges`,
+    );
+  const roles = route.accounts.map((role, position) => ({
+    name: role.name,
+    value: keys[instruction.accounts[position]],
+  }));
+  if (routeValue(roles, "user_transfer_authority") !== expected.wallet)
+    throw new Error(
+      "Jupiter route user_transfer_authority differs from the reviewed swap",
+    );
   const source = ata(
     expected.inputMint,
     expected.wallet,
@@ -82,68 +84,32 @@ export function assertJupiterRoute(
     expected.wallet,
     expected.outputProgram,
   );
-  required(
-    roles.has("user_source_token_account")
-      ? "user_source_token_account"
-      : "source_token_account",
-    source,
+  const bindingError = routeBindingError(
+    roles,
+    {
+      ...expected,
+      source,
+      destination,
+    },
+    route.name.startsWith("shared_"),
   );
-  required(
-    roles.has("user_destination_token_account")
-      ? "user_destination_token_account"
-      : "destination_token_account",
-    destination,
-  );
-  optional("source_mint", expected.inputMint);
-  required("destination_mint", expected.outputMint);
-  optional("source_token_program", expected.inputProgram);
-  optional("destination_token_program", expected.outputProgram);
-  optional("program", expected.program);
-  if (roles.has("token_program"))
-    required(
-      "token_program",
-      route.name.startsWith("shared_")
-        ? expected.outputProgram
-        : expected.inputProgram,
-    );
-  if (
-    roles.has("user_destination_token_account") &&
-    roles.has("destination_token_account")
-  ) {
-    const extraDestination = roles.get("destination_token_account");
-    if (
-      extraDestination !== expected.program &&
-      extraDestination !== destination
-    )
-      throw new Error("Jupiter route redirects output to another account");
-  }
-  if (roles.has("platform_fee_account"))
-    required("platform_fee_account", expected.program);
-  if (roles.has("token_2022_program")) {
-    const token2022 = roles.get("token_2022_program");
-    if (
-      token2022 !== expected.program &&
-      token2022 !== expected.inputProgram &&
-      token2022 !== expected.outputProgram
-    )
-      throw new Error("Jupiter route has a foreign token program");
-  }
+  if (bindingError !== "") throw new Error(bindingError);
   const args = route.args;
   if (
-    args.in_amount !== expected.amountIn ||
-    args.quoted_out_amount !== expected.quotedOut ||
-    args.slippage_bps !== expected.slippageBps ||
     !Number.isInteger(expected.slippageBps) ||
-    expected.slippageBps < 0 ||
-    expected.slippageBps > 10000 ||
-    args.platform_fee_bps !== 0 ||
-    (args.positive_slippage_bps !== undefined &&
-      args.positive_slippage_bps !== 0) ||
-    expected.amountIn <= 0n ||
-    expected.quotedOut <= 0n ||
-    expected.minimumOut <= 0n ||
-    (expected.quotedOut * BigInt(10000 - expected.slippageBps)) / 10000n <
-      expected.minimumOut
+    !routeAmountsMatch(
+      args.in_amount as bigint,
+      args.quoted_out_amount as bigint,
+      args.slippage_bps as number,
+      args.platform_fee_bps as number,
+      (args.positive_slippage_bps === undefined
+        ? 0
+        : args.positive_slippage_bps) as number,
+      expected.amountIn,
+      expected.quotedOut,
+      expected.slippageBps,
+      expected.minimumOut,
+    )
   )
     throw new Error(
       "Jupiter instruction amounts, fees or slippage differ from the reviewed swap",

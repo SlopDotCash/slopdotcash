@@ -1,5 +1,6 @@
 import { ESCROW_NETWORKS } from "./escrow-policy.mjs";
 import type { PaymentChain, PaymentsAccount } from "./payments/contracts";
+import { allocationDisposition } from "./verified-frontend";
 
 /**
  * The contributor token allocation that Slop Cash S.P. sends from its own
@@ -120,18 +121,17 @@ export function contributorAllocationState(
   wallets: PaymentsAccount["wallets"],
   now: number,
 ): ContributorAllocationState {
-  if (recipient.transactionId) return "sent";
-  if (allocation.closed) return "unclaimed";
+  if (recipient.transactionId)
+    return allocationDisposition(true, allocation.closed, false, false);
+  if (allocation.closed)
+    return allocationDisposition(false, true, false, false);
   const closesAt = Date.parse(allocation.registrationClosesAt);
-  if (
-    wallets.some(
-      (w) =>
-        w.chain === allocation.chain &&
-        w.authorized &&
-        typeof w.firstAuthorizedAt === "string" &&
-        Date.parse(w.firstAuthorizedAt) < closesAt,
-    )
-  )
-    return "scheduled";
-  return now < closesAt ? "awaiting-wallet" : "unclaimed";
+  const registeredWallet = wallets.some(
+    (w) =>
+      w.chain === allocation.chain &&
+      w.authorized &&
+      typeof w.firstAuthorizedAt === "string" &&
+      Date.parse(w.firstAuthorizedAt) < closesAt,
+  );
+  return allocationDisposition(false, false, registeredWallet, now < closesAt);
 }

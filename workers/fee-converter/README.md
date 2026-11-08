@@ -297,13 +297,16 @@ at most one `submitted` or `unknown` row per network and token. Reconciliation
 decides each unresolved row:
 
 - **EVM.** A finalized receipt with verified token movement settles the row.
-  A swap can fail when its nonce was consumed or its router deadline passed.
-  A claim with missing hash lookups stays pending even when its nonce was
-  consumed: the missing claim could be the transaction that consumed it.
+  A swap can fail after its router deadline when its nonce is still unused.
+  A send with missing hash lookups stays pending when its nonce was consumed:
+  that send could itself be the transaction that consumed the nonce.
   Only the node's "not found" answer counts as no receipt or transaction.
   A failed lookup logs `fee_conversion_reconcile_error` and leaves the row
   open. A valid unsent claim uses the recorded bytes after a fresh deployment
   check.
+  A retained send for another configured fee wallet stays open and blocks a
+  new send for that token. Recover it under its original wallet configuration;
+  changing the configuration does not change its recorded recipient or nonce.
 - **Solana.** A finalized signature with a verified receipt settles the row.
   A swap with no status fails after its recorded `lastValidBlockHeight`.
   A claim with no status remains pending after expiry, because expiry does not
@@ -739,7 +742,9 @@ approval signatures, persisted bytes, database reopen, finality before a fresh
 swap, matching token proceeds, lost-send recovery and refusal after a claim
 loses its network lease. It is not live Kyber, Circle or production evidence.
 
-The Solana check uses a local `solana-test-validator` (default port 28899).
+The Solana check uses the reviewed Agave 2.1.21 container through the shared
+local launcher (default RPC port 28899). Prepare the pinned image and local
+engine as described in the [Solana test setup](../../contracts/solana/README.md#local-build-and-end-to-end-tests).
 It captures real Jupiter V2 quote and unsigned swap responses, resolves their
 lookup tables at finalized commitment, and clones the route's public programs
 and accounts. The default input is classic SPL JUP.
@@ -756,7 +761,10 @@ and normalizes fixture rent epochs; lookup addresses and authority stay intact.
 Generated throwaway wallets
 exercise a real local receipt, the normal native budget, signing journal,
 finalized conversion, restart reconciliation and duplicate refusal.
-These checks require `anvil` and `solana-test-validator` on `PATH`. Public
+The EVM checks require `anvil` on `PATH`; the Solana check requires the prepared
+local container engine and image. Its selected `TMPDIR` must be accessible to
+that engine. Cleanup preserves both a primary workflow failure and any cleanup
+failure. Public
 mainnet access is read-only; every signed transaction is sent only to the
 local validator. Local results do not qualify a production deployment.
 

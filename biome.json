@@ -20,7 +20,8 @@
       "!data/points/history.json",
       "!data/profiles/seed.json",
       "!src/lib/project-registry.generated.mjs",
-      "!src/lib/project-revisions.generated.json"
+      "!src/lib/project-revisions.generated.json",
+      "!docs/lemmascript-inventory.json"
     ]
   },
   "formatter": {

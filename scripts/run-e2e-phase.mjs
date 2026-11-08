@@ -52,8 +52,14 @@ export function runE2ePhase({
   cwd,
   env,
   timeoutMs = 40 * 60_000,
+  signal,
+  interruptSignal,
+  onStdout,
+  onStderr,
 }) {
   return new Promise((resolvePhase) => {
+    const stdout = onStdout ? { write: onStdout } : process.stdout;
+    const stderr = onStderr ? { write: onStderr } : process.stderr;
     const child = spawn(command, args, {
       cwd,
       env,
@@ -62,21 +68,26 @@ export function runE2ePhase({
     });
     let settled = false;
     let timedOut = false;
+    let aborted = false;
     let cleaningUp = false;
     let cleanupTimer;
     let cleanupPoll;
+    let interruptTimer;
     const finish = (status) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(cleanupTimer);
       clearTimeout(cleanupPoll);
-      resolvePhase(status);
+      clearTimeout(interruptTimer);
+      signal?.removeEventListener("abort", onAbort);
+      resolvePhase(timedOut || aborted ? 1 : status);
     };
     const stopProcessTree = (failureStatus) => {
       if (cleaningUp || settled) return;
       cleaningUp = true;
       clearTimeout(timer);
+      clearTimeout(interruptTimer);
       if (child.pid) {
         if (process.platform === "win32") {
           const result = spawnSync(
@@ -88,7 +99,7 @@ export function runE2ePhase({
             },
           );
           if (result.error || result.status !== 0)
-            process.stderr.write(
+            stderr.write(
               `[${label}] process cleanup failed: ${result.error?.message ?? `taskkill exited ${result.status}`}\n`,
             );
         } else {
@@ -96,7 +107,7 @@ export function runE2ePhase({
             process.kill(-child.pid, "SIGKILL");
           } catch (error) {
             if (error.code !== "ESRCH")
-              process.stderr.write(
+              stderr.write(
                 `[${label}] process cleanup failed: ${error.message}\n`,
               );
           }
@@ -107,7 +118,7 @@ export function runE2ePhase({
       // cleanup complete. Closed pipes alone do not prove descendants exited.
       // Keep this wait bounded if a descendant escaped the process group.
       cleanupTimer = setTimeout(() => {
-        process.stderr.write(`[${label}] process cleanup did not finish\n`);
+        stderr.write(`[${label}] process cleanup did not finish\n`);
         child.stdout.destroy();
         child.stderr.destroy();
         finish(failureStatus || 1);
@@ -115,15 +126,41 @@ export function runE2ePhase({
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      process.stderr.write(
-        `[${label}] exceeded the ${timeoutMs}ms phase deadline\n`,
-      );
-      stopProcessTree(1);
+      stderr.write(`[${label}] exceeded the ${timeoutMs}ms phase deadline\n`);
+      interruptOrStop();
     }, timeoutMs);
-    prefixLines(child.stdout, label, process.stdout);
-    prefixLines(child.stderr, label, process.stderr);
+    function onAbort() {
+      aborted = true;
+      stderr.write(`[${label}] canceled\n`);
+      interruptOrStop();
+    }
+    function interruptOrStop() {
+      if (settled || cleaningUp || interruptTimer) return;
+      clearTimeout(timer);
+      if (interruptSignal && process.platform !== "win32" && child.pid) {
+        // Playwright owns web servers in separate process groups. Let its
+        // interrupt handler close them before falling back to group cleanup.
+        try {
+          process.kill(child.pid, interruptSignal);
+          interruptTimer = setTimeout(() => stopProcessTree(1), 5000);
+          return;
+        } catch (error) {
+          if (error.code !== "ESRCH")
+            stderr.write(`[${label}] interrupt failed: ${error.message}\n`);
+        }
+      }
+      stopProcessTree(1);
+    }
+    if (onStdout) {
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", onStdout);
+    } else prefixLines(child.stdout, label, stdout);
+    if (onStderr) {
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", onStderr);
+    } else prefixLines(child.stderr, label, stderr);
     child.on("error", (error) => {
-      process.stderr.write(`[${label}] ${error.message}\n`);
+      stderr.write(`[${label}] ${error.message}\n`);
       finish(1);
     });
     child.on("exit", (status) => {
@@ -134,7 +171,7 @@ export function runE2ePhase({
         stopProcessTree(timedOut ? 1 : (status ?? 1));
     });
     child.on("close", (status, signal) => {
-      if (signal) process.stderr.write(`[${label}] terminated by ${signal}\n`);
+      if (signal) stderr.write(`[${label}] terminated by ${signal}\n`);
       if (cleaningUp && process.platform !== "win32" && child.pid) {
         const waitForGroupExit = () => {
           if (settled) return;
@@ -146,7 +183,7 @@ export function runE2ePhase({
           } catch (error) {
             if (error.code === "ESRCH") finish(timedOut ? 1 : (status ?? 1));
             else
-              process.stderr.write(
+              stderr.write(
                 `[${label}] process cleanup could not verify exit: ${error.message}\n`,
               );
             return;
@@ -158,5 +195,7 @@ export function runE2ePhase({
       }
       finish(timedOut ? 1 : (status ?? 1));
     });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }

@@ -85,6 +85,7 @@ import {
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
+import { useTimeBoundary } from "./lib/use-time-boundary";
 import { CopyButton, CopyIdentifier } from "./Operations";
 import {
   ExternalLinkAnchor,
@@ -1238,6 +1239,7 @@ const EVENT_LABELS: Record<string, string> = {
   triage: "Triage state changed",
   "next-action": "Next action set",
   "request-information": "Owner asked for information",
+  "report-revised": "Reporter revised the report",
   decide: "Finding decided",
   award: "Award decided",
   remediation: "Remediation state changed",
@@ -1603,8 +1605,17 @@ function PrivateReportDetail({
               </button>
             </p>
           ) : null}
-          <h4>{detail.value.report.summary}</h4>
-          <pre className="security-report-text">
+          <h4 id={`report-summary-${submission.id}`}>
+            {detail.value.report.summary}
+          </h4>
+          {/* biome-ignore lint/a11y/useSemanticElements: This named scroll region must preserve the report's preformatted text. */}
+          <pre
+            className="security-report-text"
+            role="region"
+            aria-labelledby={`submission-${submission.id} report-summary-${submission.id}`}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the complete private report.
+            tabIndex={0}
+          >
             {detail.value.report.description}
           </pre>
           {detail.value.report.severity ? (
@@ -1694,6 +1705,11 @@ function SubmissionCard({
   onOpenCase: (caseId: string) => void;
 }) {
   const privateRequest = usePrivateRequest();
+  useTimeBoundary(
+    submission.state === "uncertain" && submission.reconcileAfter
+      ? Date.parse(submission.reconcileAfter)
+      : null,
+  );
   const [draft, setDraft] = useState<ReportDraft>(
     () => loadDraft(submission.id) ?? EMPTY_DRAFT,
   );

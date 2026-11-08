@@ -1,0 +1,3 @@
+{
+  "workers/slopbot/entrypoint.ts": "Only re-exports the default worker and named RPC entrypoint classes. Request, scheduled and queue transitions are in index.ts; private import and readiness transitions are in the exported implementations."
+}

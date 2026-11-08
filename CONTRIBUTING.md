@@ -351,16 +351,40 @@ retain required checks. Do not add artificial application tests for prose.
 
 ## Quality gate
 
+Follow [PRD section 12](docs/slop-product-requirements.md#12-state-correctness-and-quint-verification)
+for every explicit or implicit state change. Update its Quint model, source
+mapping, assumptions and reachable scenarios. Exercise the real affected
+success, refusal, failure, retry, expiry, cancellation, concurrent and recovery
+paths. Fix discrepancies between the model and code. Models supplement the
+required browser, database, provider and chain evidence; they do not replace it.
+Check composed parent/child and cross-subsystem flows, including identity
+changes and the lifetime of pending work.
+
+Run `bun run formal:check` and `bun run formal:verify`. Report the tool version,
+model-checker backend, finite bounds, actual results and remaining coverage gaps.
+Do not present a sampled or abstract check as proof that all application state
+errors are absent. The application-wide review remains open until all required
+source mappings and implementation evidence are complete.
+
 Install the pinned toolchain and run the complete repository check:
 
 ```bash
 bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 bun run leaderboard:generate
 bun run verify
 bun run format:check
 bun run test:e2e
 ```
+
+`lemmascript:setup` downloads and checks the pinned Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH` before running `verify`. `verify` checks the selected
+executable contracts as well as the application checks. For a contract change,
+follow the source, proof and inventory process in
+[the LemmaScript report](https://github.com/SlopDotCash/slopdotcash/blob/22b0fd511aa8cc8c8e5810fdb979b40a03c5a5f9/docs/lemmascript-research.md). These contracts do not
+replace the Quint or real workflow evidence above.
 
 The committed registry snapshot is empty. Award and skill validation need the
 synced project identities. Do not commit the generated snapshot.

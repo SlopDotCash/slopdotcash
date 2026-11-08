@@ -27,6 +27,13 @@ import { quarantinedScanMessage } from "../vetting/summary";
 import type { RepositoryControl } from "./contracts";
 import type { ProjectRestriction } from "./enforcement";
 import { type GithubFetch, githubJson } from "./github-lookup";
+import {
+  type AuthorityAccess,
+  classifyAccessHeader,
+  decideSetupAuthority,
+  type SetupRole,
+  type SetupText,
+} from "./verified-setup";
 
 /**
  * Reads the Slopbot installation and the account's repository permission
@@ -52,7 +59,11 @@ export type AccessCheck =
   | { state: "read"; access: RepositoryAccess }
   | { state: "retry"; message: string };
 
-const GITHUB_PERMISSIONS = new Set(["admin", "write", "read", "none"]);
+function setupText(value: unknown): SetupText {
+  return typeof value === "string"
+    ? { kind: "text", value }
+    : { kind: "other" };
+}
 
 /** Strictly parses the Slopbot repository-access answer. */
 export function parseRepositoryAccess(value: unknown): RepositoryAccess {
@@ -60,35 +71,36 @@ export function parseRepositoryAccess(value: unknown): RepositoryAccess {
     throw new TypeError("Repository access is not an object");
   const body = value as Record<string, unknown>;
   const keys = Object.keys(body).sort().join(",");
-  if (body.installation === "missing" && keys === "installation")
-    return { installation: "missing" };
   const installationId = body.installationId;
-  if (
-    typeof installationId !== "number" ||
-    !Number.isSafeInteger(installationId) ||
-    installationId < 1
-  )
+  const roleName = body.roleName;
+  const role: SetupRole =
+    roleName === null
+      ? { kind: "none" }
+      : typeof roleName === "string" && /^[A-Za-z0-9 _-]{1,64}$/u.test(roleName)
+        ? { kind: "role", value: roleName }
+        : { kind: "invalid" };
+  const header = classifyAccessHeader(
+    keys,
+    setupText(body.installation),
+    typeof installationId === "number" &&
+      Number.isSafeInteger(installationId) &&
+      installationId >= 1
+      ? { kind: "id", value: installationId }
+      : { kind: "invalid" },
+    setupText(body.permission),
+    role,
+  );
+  if (header.kind === "missing") return { installation: "missing" };
+  if (header.kind === "bad-id")
     throw new TypeError("Repository access has no installation id");
-  if (
-    body.installation === "suspended" &&
-    keys === "installation,installationId"
-  )
-    return { installation: "suspended", installationId };
-  if (
-    body.installation === "installed" &&
-    (keys === "installation,installationId,permission,roleName" ||
-      keys === "installation,installationId,permission,repository,roleName") &&
-    typeof body.permission === "string" &&
-    GITHUB_PERMISSIONS.has(body.permission) &&
-    (body.roleName === null ||
-      (typeof body.roleName === "string" &&
-        /^[A-Za-z0-9 _-]{1,64}$/u.test(body.roleName)))
-  )
+  if (header.kind === "suspended")
+    return { installation: "suspended", installationId: header.id };
+  if (header.kind === "installed")
     return {
       installation: "installed",
-      installationId,
-      permission: body.permission as "admin" | "write" | "read" | "none",
-      roleName: body.roleName as string | null,
+      installationId: header.id,
+      permission: header.permission as "admin" | "write" | "read" | "none",
+      roleName: header.role.kind === "role" ? header.role.value : null,
       ...(body.repository === undefined
         ? {}
         : { repository: parseRepositoryIdentity(body.repository) }),
@@ -130,11 +142,39 @@ export async function readRepositoryAccess(
   }
 }
 
-/** GitHub maps maintain to write; admin includes it. */
-function writes(access: RepositoryAccess): boolean {
-  return (
-    access.installation === "installed" &&
-    (access.permission === "admin" || access.permission === "write")
+function authorityAccess(access: AccessCheck): AuthorityAccess {
+  if (access.state === "retry")
+    return { kind: "retry", message: access.message };
+  if (access.access.installation !== "installed")
+    return {
+      kind: "read",
+      installation: access.access.installation,
+      permission: "",
+      role: { kind: "none" },
+    };
+  return {
+    kind: "read",
+    installation: access.access.installation,
+    permission: access.access.permission,
+    role:
+      access.access.roleName == null
+        ? { kind: "none" }
+        : { kind: "role", value: access.access.roleName },
+  };
+}
+
+function repositoryAuthority(
+  access: AccessCheck,
+  actor: GithubActor,
+  repository: string,
+  flagger: boolean,
+): SetupAuthority {
+  return decideSetupAuthority(
+    authorityAccess(access),
+    actor.githubLogin,
+    repository,
+    `Install Slopbot on ${repository} to confirm your access. ${slopbotInstallScopeNote(repository)}`,
+    flagger,
   );
 }
 
@@ -150,22 +190,7 @@ export function setupAuthority(
   actor: GithubActor,
   repository: string,
 ): SetupAuthority {
-  if (access.state === "retry")
-    return { state: "retry", message: access.message };
-  if (access.access.installation !== "installed")
-    return {
-      state: "denied",
-      message: `Install Slopbot on ${repository} to confirm your access. ${slopbotInstallScopeNote(repository)}`,
-    };
-  if (writes(access.access))
-    return {
-      state: "verified",
-      message: `@${actor.githubLogin} has ${access.access.roleName ?? access.access.permission} access to ${repository}.`,
-    };
-  return {
-    state: "denied",
-    message: `@${actor.githubLogin} has ${access.access.permission} access to ${repository}. Write, maintain or admin access is required. Ask a maintainer with that access to finish setup.`,
-  };
+  return repositoryAuthority(access, actor, repository, false);
 }
 
 /** An unavailable installation cannot prove that a flagger is not a maintainer. */
@@ -174,13 +199,7 @@ export function flaggerAuthority(
   actor: GithubActor,
   repository: string,
 ): SetupAuthority {
-  if (access.state === "read" && access.access.installation !== "installed")
-    return {
-      state: "retry",
-      message:
-        "Slopbot must be available to check current repository permission.",
-    };
-  return setupAuthority(access, actor, repository);
+  return repositoryAuthority(access, actor, repository, true);
 }
 
 /** The funding summary, separate from readiness. */

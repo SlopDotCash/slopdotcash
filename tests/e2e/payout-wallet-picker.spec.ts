@@ -590,11 +590,14 @@ test("mixed standard and legacy discovery keeps every distinct wallet", async ({
 });
 
 // The repository's 200% text-enlargement fixture at the 320px reflow width,
-// plus a 160 CSS px layout, which is what native 200% browser zoom gives a
-// 320px screen.
+// plus a stronger 160 CSS px layout approximation. This is not native browser zoom.
 for (const scenario of [
   { name: "320px with 200% text", width: 320, textScale: 2 },
-  { name: "320px at 200% browser zoom", width: 160, textScale: 1 },
+  {
+    name: "160 CSS px viewport (zoom-layout approximation)",
+    width: 160,
+    textScale: 1,
+  },
 ]) {
   test(`open modal reflows at ${scenario.name}`, async ({ page }, info) => {
     test.skip(
@@ -923,7 +926,11 @@ test("rejecting the account picker stops the change", async ({ page }) => {
 
 for (const scenario of [
   { name: "320px with 200% text", width: 320, textScale: 2 },
-  { name: "320px at 200% browser zoom", width: 160, textScale: 1 },
+  {
+    name: "160 CSS px viewport (zoom-layout approximation)",
+    width: 160,
+    textScale: 1,
+  },
 ]) {
   test(`wallet change confirmation reflows at ${scenario.name}`, async ({
     page,

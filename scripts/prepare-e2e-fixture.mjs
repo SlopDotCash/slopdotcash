@@ -58,7 +58,9 @@ function overlayFixtures(workspace) {
   copyFixtureHistory(workspace);
 }
 
-export async function prepareE2eFixture() {
+export async function prepareE2eFixture({ runCommand = run } = {}) {
+  // The browser coordinator supplies its abort-aware phase runner. Standalone
+  // callers retain the original synchronous command implementation.
   // On Windows the temporary directory can be an 8.3 short path
   // (C:\Users\LONGNA~1\...). A recursive watch on a short path, such as the
   // local Vite server's, stops Node with a libuv assertion
@@ -70,9 +72,9 @@ export async function prepareE2eFixture() {
   try {
     copyWorkingTree(repositoryRoot, workspace);
     overlayFixtures(workspace);
-    run("git", ["init", "-q"], workspace);
-    run("git", ["add", "-A"], workspace);
-    run(
+    await runCommand("git", ["init", "-q"], workspace);
+    await runCommand("git", ["add", "-A"], workspace);
+    await runCommand(
       "git",
       [
         "-c",
@@ -120,7 +122,7 @@ export async function prepareE2eFixture() {
         readFileSync(join(fixtures, "leaderboard-2026-10-16.json.gz")),
       ),
     );
-    run(
+    await runCommand(
       "bun",
       ["scripts/prepare-pr-ledger.ts", ledger, "public/data/leaderboard.json"],
       workspace,
@@ -136,7 +138,7 @@ export async function prepareE2eFixture() {
       join(workspace, "public", "data", "fixture-project-registry.json"),
       `${JSON.stringify({ schemaVersion: "1", projects: RAW_PROJECT_DEFINITIONS })}\n`,
     );
-    run("bun", ["run", "build"], workspace, {
+    await runCommand("bun", ["run", "build"], workspace, {
       ...process.env,
       // The caller may build the live registry with a different profile input.
       // This isolated workspace must use the matching frozen profile inventory.
@@ -145,12 +147,16 @@ export async function prepareE2eFixture() {
     });
     return workspace;
   } catch (error) {
-    await rm(workspace, {
-      recursive: true,
-      force: true,
-      maxRetries: 10,
-      retryDelay: 200,
-    });
+    try {
+      await rm(workspace, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
+    } catch (cleanupError) {
+      console.error("Fixture workspace cleanup failed", cleanupError);
+    }
     throw error;
   }
 }
