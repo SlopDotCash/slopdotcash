@@ -192,7 +192,8 @@ primary or specialist review leaves the assessment pending, and the next pass
 retries it. Repository size is never a refusal. A policy refusal of the bound
 assignment, such as an invalid tree path, a repository identity mismatch or a
 registered repository that GitHub reports missing (404: deleted, hidden or
-private; a rate limit or outage still retries),
+private) or redirects (3xx: renamed or transferred before a revision records
+the current path; a rate limit or outage still retries),
 instead publishes an incomplete result and notifies each owner once. It
 records the fixed refusal reason. Every
 surface is unsupported, every threat check is not run, and the configured
