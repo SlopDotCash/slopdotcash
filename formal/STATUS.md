@@ -45,6 +45,21 @@ Full combined code/model/browser verification remains pending; focused passes
 do not close this goal.
 
 The parallel current-development LemmaScript work has been integrated locally.
-Its four selected pure-kernel proof modules passed together; unselected functions
+Its five selected pure-kernel proof modules passed together (27 functions and
+700 assertions); unselected functions
 remain unproved. No production deployment, live payment or provider activation
 has been performed.
+
+
+The latest composition pass adds queued retirement, provider-call ownership
+and monthly-cutoff checks. The census now maps 798 production sources to 253
+finite models, with zero unmapped files. These mappings do not establish full
+refinement. The new real SQL/HTTP workflows reproduced each failure before its
+correction, including native workerd D1 for retirement and allocation cutoff.
+
+The earlier `b2cf0141c` checkpoint passed all 753 type/scenario/simulation
+stages for its 251 models with stable source hashes. Its remaining combined
+verification was superseded during integration and is not a full pass.
+Final combined validation must use the new model and source hashes. Browser
+validation also exposed CSS-zoom probes that could read geometry before layout;
+those test-method corrections and their affected runs are recorded separately.

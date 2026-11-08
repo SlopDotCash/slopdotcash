@@ -112,14 +112,14 @@ An isolated copy reproduced a proof-runner failure after a contract dependency
 install: a `contracts/solana/node_modules` directory link was rejected as source.
 Both scanners now use the same non-production directory exclusions before
 link inspection. With that directory link present, inventory generation and
-all four real proof modules pass. A link to an actual source file still fails
+all four then-selected real proof modules pass. A link to an actual source file still fails
 closed. No dependency source or generated native build output enters the proof
 snapshot. This check used the pinned tools, not a mocked verifier.
 
 The native Solana validator also creates links under its generated
 `contracts/solana/.local` tree. That exact directory is excluded by the shared
 source walker. A repeat with the real validator files present passes the
-inventory and all four proofs, while both entry points still reject a
+inventory and all four then-selected proofs, while both entry points still reject a
 temporary link in `src/`. The CI artifact retains receipts and tool logs only;
 the local source mirror is not uploaded.
 

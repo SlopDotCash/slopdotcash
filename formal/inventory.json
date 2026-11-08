@@ -239,7 +239,10 @@
     {
       "path": "backend/payments/dispatch.ts",
       "sha256": "fce0c6562bed2596cea0a876d5ebeafe44855e891fef54e3fcae8dbb1017d447",
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/payment_dispatch.qnt",
+        "formal/models/payment_unsigned_retirement.qnt"
+      ],
       "candidateLines": [
         23, 33, 36, 39, 49, 56, 63, 64, 72, 74, 86, 91, 93, 97, 108, 109, 112,
         117, 119, 125, 130, 132, 138, 146, 148
@@ -305,16 +308,17 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "b2dbf81c8ef48bcc2e90cdfc92cd8e77f064feaa3a58a54f5bc555adeed29f1c",
+      "sha256": "cfb0111d0f96eafc34960c28cf1cdc1bf2d2af7ce999da1859da51d7e4775400",
       "models": [
         "formal/models/monthly_coordinator.qnt",
+        "formal/models/monthly_cutoff_queue.qnt",
         "formal/models/monthly_reserve.qnt",
         "formal/models/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
         73, 103, 111, 207, 299, 410, 439, 441, 455, 465, 474, 480, 498, 606,
-        610, 633, 638, 661, 708, 735, 744, 764, 836, 928, 982, 1023, 1081, 1150,
-        1169, 1177, 1190, 1196, 1227, 1253, 1259, 1263, 1318, 1335
+        610, 633, 638, 661, 708, 735, 744, 764, 836, 928, 982, 1023, 1083, 1157,
+        1176, 1184, 1197, 1203, 1234, 1260, 1266, 1270, 1325, 1342
       ],
       "review": "mapped-abstraction"
     },
@@ -2084,7 +2088,10 @@
     {
       "path": "migrations/0062_monthly_allocations.sql",
       "sha256": "aa41612673339e3cbf30432faeaeaea0bda02b7cabd93e3780ad004cf358e863",
-      "models": ["formal/models/monthly_coordinator.qnt"],
+      "models": [
+        "formal/models/monthly_coordinator.qnt",
+        "formal/models/monthly_cutoff_queue.qnt"
+      ],
       "candidateLines": [30, 32, 44, 46, 59, 61, 72, 74, 92, 99, 102, 119, 121],
       "review": "mapped-abstraction"
     },
@@ -5790,6 +5797,7 @@
         "formal/models/binding_consent_renewal.qnt",
         "formal/models/monthly_execution_recovery.qnt",
         "formal/models/payment_binding.qnt",
+        "formal/models/payment_unsigned_retirement.qnt",
         "formal/models/signed_send.qnt"
       ],
       "candidateLines": [
@@ -5913,12 +5921,15 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "de800905d20787573bba1ee03621f9170eecfdd3cf29fda8dd86ca0fb27ecaec",
-      "models": ["formal/models/monthly_reserve.qnt"],
+      "sha256": "a3c2a182f53fddd832ca836d370355e8f2d04425a094c71e048b7ef0e9ee4c74",
+      "models": [
+        "formal/models/monthly_reserve.qnt",
+        "formal/models/payment_unsigned_retirement.qnt"
+      ],
       "candidateLines": [
-        80, 107, 124, 127, 133, 134, 138, 165, 175, 179, 181, 184, 195, 196,
-        198, 200, 202, 208, 211, 214, 218, 230, 231, 233, 234, 239, 289, 336,
-        347, 368, 376, 379, 410, 490, 590, 591, 650, 651
+        80, 107, 124, 127, 133, 134, 138, 165, 175, 179, 181, 185, 187, 198,
+        199, 201, 203, 205, 211, 214, 217, 221, 233, 234, 236, 237, 242, 292,
+        339, 350, 371, 379, 382, 413, 493, 593, 594, 653, 654
       ],
       "review": "mapped-abstraction"
     },
@@ -6313,14 +6324,14 @@
     },
     {
       "path": "workers/slopbot/value-consumer.ts",
-      "sha256": "af8dbd2b0b1da51baed721b8083c1738addcef5abf281ca2bc00c83d24c19cc7",
+      "sha256": "838b8e98e6dedeca8f18f2f1c4cb0bf0ff269c35557a3c99ecb0757a5813b6d7",
       "models": [
         "formal/models/bot_value_freshness.qnt",
         "formal/models/bot_value_pipeline.qnt"
       ],
       "candidateLines": [
-        45, 61, 62, 76, 126, 132, 135, 178, 251, 262, 285, 295, 311, 312, 320,
-        325, 326, 328, 338, 339, 343
+        45, 61, 62, 76, 126, 132, 135, 178, 256, 267, 290, 300, 316, 317, 325,
+        330, 331, 333, 343, 344, 348
       ],
       "review": "mapped-abstraction"
     },
@@ -6475,16 +6486,16 @@
     },
     {
       "path": "workers/slopbot/value-processing.ts",
-      "sha256": "c769465c6603c269d149bdb0658b83f05c5460c27a316baabc5d19f246b08cfb",
+      "sha256": "1b7a074415c41fab9b84d6809e4d618cfee1c71a0c552c761ef4e6edf3a264e7",
       "models": [
         "formal/models/api_incomplete_assessments.qnt",
         "formal/models/bot_value_pipeline.qnt",
         "formal/models/bot_value_request.qnt"
       ],
       "candidateLines": [
-        19, 35, 37, 52, 53, 64, 86, 87, 94, 98, 99, 100, 101, 123, 146, 154,
-        155, 156, 158, 159, 162, 163, 173, 174, 175, 187, 204, 207, 232, 253,
-        255, 267, 268
+        19, 35, 37, 52, 53, 64, 86, 87, 94, 98, 99, 100, 101, 123, 147, 155,
+        156, 157, 159, 160, 163, 164, 174, 175, 176, 188, 205, 208, 233, 254,
+        256, 268, 269
       ],
       "review": "mapped-abstraction"
     },
@@ -6552,7 +6563,7 @@
     },
     {
       "path": "workers/slopbot/value-source-leases.ts",
-      "sha256": "5489ef1df2b1ab2389647a3fdd2a9dce874feaa5078fae6ec8634e2ecea85bd1",
+      "sha256": "17befef2df6756616508d1245ee5d4d7844f9661f1236d92e039c921b7d23588",
       "models": [
         "formal/models/bot_source_leases.qnt",
         "formal/models/bot_value_pipeline.qnt"
@@ -7763,7 +7774,7 @@
     },
     {
       "path": "formal/models/bot_value_pipeline.qnt",
-      "sha256": "2e07691ff54aed19db4a52a6da286f99c5eb9b313ab30a590dc8cc5cc5a944f1",
+      "sha256": "4d71371463c7b2aee07826395e63fa81602184dc0d33c8a494de2623bd07795d",
       "sources": [
         "migrations/0046_slopbot_work_unit_journal.sql",
         "migrations/0053_slopbot_value_source_leases.sql",
@@ -7782,6 +7793,7 @@
       "scenarios": [
         "expiredPublicationReusesInferenceTest",
         "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest",
+        "leaseExpiryDuringPreCallCheckPreventsSpendTest",
         "missingGroupCannotSpendTest",
         "overlappingConsumerWaitsThenReadsCurrentTest",
         "unrecordedUsageCannotBecomeRetainedTest",
@@ -8653,6 +8665,21 @@
       ]
     },
     {
+      "path": "formal/models/monthly_cutoff_queue.qnt",
+      "sha256": "2d8868abac12592902242e1a795fd4a2932e9b602b1040cd260f5d9fdd73a527",
+      "sources": [
+        "backend/payments/monthly.ts",
+        "migrations/0062_monthly_allocations.sql"
+      ],
+      "scenarios": [
+        "beforeCutoffCommitTest",
+        "currentOptInRejectsLateEditTest",
+        "currentOptOutAllowsLateEditTest",
+        "frozenMonthRejectsEditTest",
+        "queuedAcrossCutoffTest"
+      ]
+    },
+    {
       "path": "formal/models/monthly_execution_recovery.qnt",
       "sha256": "45d740e3f67f186b45a97cb034efd6ce28b2e1d7083f091bad13b7b7c6194daf",
       "sources": [
@@ -8853,6 +8880,22 @@
       "scenarios": [
         "appendDoesNotMoveReadBoundaryTest",
         "freshReadFindsLaterTest"
+      ]
+    },
+    {
+      "path": "formal/models/payment_unsigned_retirement.qnt",
+      "sha256": "cdff0cbad89fe19866c1f8354219d40cb33ef0d812920e42a16a39b1e8817bdb",
+      "sources": [
+        "backend/payments/dispatch.ts",
+        "workers/payment-executor/core.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "retirementKeepsOldLeaseTest",
+        "staleRetirementKeepsHeldTest",
+        "staleRetirementKeepsPaidTest",
+        "staleRetirementKeepsPreparedTest",
+        "staleRetirementKeepsSubmittedTest"
       ]
     },
     {

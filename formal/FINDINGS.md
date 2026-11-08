@@ -44,6 +44,10 @@ claim that all application state errors have been eliminated.
 | Payout hold recovery | A cron pre-step could reopen a hold while an old wallet attempt was still active | Keep the hold until the prior attempt is retired; `backend/security/handler.test.ts` |
 | Attempt history | Equal timestamps could select a retired attempt, and a new attempt without a hash could hide an earlier submitted transaction | Use append order to break ties and retain the most recent known transaction; `backend/security/handler.test.ts` |
 
+| Duplicate retirement | A delayed second cancellation reopened a successor's submitted or held outbox | Reopen only when the same atomic batch retired the old attempt; real SQLite and native D1 workflows in `formal/unsigned-retirement-audit.md` |
+| Provider-call ownership | A GitHub check or queued ownership read could outlive the worker lease and still start paid inference | Recheck ownership after remote checks and at database execution time; actual consumer/provider traces in `formal/value-precall-audit.md` |
+| Queued allocation cutoff | A pre-deadline allocation check could commit a queued edit after the automatic cutoff | Enforce the cutoff in the INSERT using database execution time; real SQLite and native D1 evidence in `formal/monthly-cutoff-audit.md` |
+
 The forwarded-report and payout corrections reuse
 [PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and
 [PR 2313](https://github.com/SlopDotCash/slopdotcash/pull/2313), including their

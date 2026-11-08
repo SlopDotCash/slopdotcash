@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "0805b52c57ad4181cd966c903ae6620f644efe66b65db13e1fba06e112f80fd6",
+  "inventorySha256": "67b37c706634fd4787b73ff319d0d08dfddf879a5ec1a9ef452c22fc6ca13608",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -44,6 +44,7 @@
       "values": ["failed", "finalized", "pending"],
       "models": [
         "formal/models/monthly_coordinator.qnt",
+        "formal/models/monthly_cutoff_queue.qnt",
         "formal/models/monthly_reserve.qnt",
         "formal/models/monthly_source_conflict.qnt"
       ],
@@ -52,12 +53,13 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1271,
+      "line": 1278,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
         "formal/models/monthly_coordinator.qnt",
+        "formal/models/monthly_cutoff_queue.qnt",
         "formal/models/monthly_reserve.qnt",
         "formal/models/monthly_source_conflict.qnt"
       ],
@@ -2981,6 +2983,7 @@
         "formal/models/binding_consent_renewal.qnt",
         "formal/models/monthly_execution_recovery.qnt",
         "formal/models/payment_binding.qnt",
+        "formal/models/payment_unsigned_retirement.qnt",
         "formal/models/signed_send.qnt"
       ],
       "lexicallyUnmentionedValues": ["required"],
