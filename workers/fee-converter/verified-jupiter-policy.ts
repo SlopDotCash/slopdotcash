@@ -83,6 +83,7 @@ export interface RouteExpectedKeys {
 /** Exact first account-binding refusal, or the empty string on success. */
 //@ verify
 //@ requires forall(i, 0 <= i && i < bindings.length ==> bindings[i].value != "")
+//@ requires expected.wallet != "" && expected.source != "" && expected.destination != "" && expected.inputMint != "" && expected.outputMint != "" && expected.inputProgram != "" && expected.outputProgram != "" && expected.program != ""
 //@ ensures \result == RouteBindingError(bindings, expected, shared)
 export function routeBindingError(
   bindings: readonly RouteBinding[],

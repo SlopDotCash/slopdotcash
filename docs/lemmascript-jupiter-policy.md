@@ -41,7 +41,10 @@ Native ATA derivation and returned source/destination/route values are unchanged
 `verifySolanaAccountProof` checks every resolved key as canonical base58 and
 ties its order to the signed message and retained lookup records. These keys
 are nonempty. The role lookup therefore uses the empty string exclusively
-for absence. Instruction indices and header counts come from the checked
+for absence. The expectation's keys must also be nonempty: the sole-signer
+check binds the wallet, route selection binds the program, and native ATA
+derivation checks the input/output mint and token-program keys before the
+binding kernel runs. Instruction indices and header counts come from the checked
 transaction parser; loaded-writable counts come from the retained proof.
 Those integer/range and identity boundaries are prerequisites of the pure
 privilege contract, not supplied claims that the swap is authorized.
