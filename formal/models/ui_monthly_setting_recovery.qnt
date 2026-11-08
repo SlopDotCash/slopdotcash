@@ -47,14 +47,21 @@ module ui_monthly_setting_recovery {
   // Failure does not assert that the monthly setting changed.
   action resolved(storageClears:bool):bool=all{s.busy,s.inflight==2,
     s'=if(storageClears)s.with("busy",false).with("pending",false)
-      .with("storedPending",false).with("draft",0).with("settled",true)
+      .with("storedPending",false).with("hash",0).with("origin","none")
+      .with("draft",0).with("settled",true)
       else s.with("busy",false).with("error",true)}
-  action corruptMarker=all{not(s.busy),s'=s.with("storedOrigin","invalid")}
+  action corruptMarker=all{s.storedPending,not(s.busy),s'=s.with("storedOrigin","invalid")}
+  // Removed storage has no remaining record fields. In particular, an old
+  // invalid marker cannot reappear after either successful clear path.
+  val storedValid=s.storedPending and s.storedOrigin!="invalid"
+  val storedInvalid=s.storedPending and s.storedOrigin=="invalid"
   action reload=all{not(s.busy),
-    s'=s.with("pending",s.storedPending and s.storedOrigin!="invalid")
-      .with("hash",s.storedHash).with("origin",s.storedOrigin).with("draft",s.storedHash)
-      .with("wallet",false).with("invalid",s.storedOrigin=="invalid")
-      .with("error",s.storedOrigin=="invalid").with("warning",false)}
+    s'=s.with("pending",storedValid)
+      .with("hash",if(storedValid)s.storedHash else 0)
+      .with("origin",if(storedValid)s.storedOrigin else "none")
+      .with("draft",if(storedValid)s.storedHash else 0)
+      .with("wallet",false).with("invalid",storedInvalid)
+      .with("error",storedInvalid).with("warning",false)}
   action userConfirmsUnsent(storageClears:bool):bool=all{canClear,
     s'=if(storageClears)s.with("pending",false).with("storedPending",false).with("userCleared",true)
       else s.with("error",true)}
@@ -96,4 +103,13 @@ module ui_monthly_setting_recovery {
     .expect(s.invalid and not(canSend))
   run transientCheckErrorKeepsCandidateTest=init.then(legacyRecord).then(connect).then(edit(2)).then(check).then(unavailable)
     .expect(s.pending and editable and s.hash==1 and s.draft==2)
+  run clearedUnreadableRecordStaysAbsentAfterReloadTest=init.then(legacyRecord).then(corruptMarker).then(reload)
+    .then(userClearsUnreadable(true)).then(reload)
+    .expect(not(s.pending) and not(s.invalid) and not(s.error) and s.hash==0 and s.origin=="none" and s.draft==0 and canSend)
+  run resolvedRecordDoesNotResurrectAfterReloadTest=init.then(connect).then(edit(2)).then(check).then(resolved(true)).then(reload)
+    .expect(not(s.pending) and not(s.invalid) and s.hash==0 and s.origin=="none" and s.draft==0 and s.settled)
+  run confirmedUnsentRecordDoesNotResurrectAfterReloadTest=init.then(edit(1)).then(userConfirmsUnsent(true)).then(reload)
+    .expect(not(s.pending) and not(s.invalid) and s.hash==0 and s.origin=="none" and s.draft==0 and s.userCleared)
+  run failedUnreadableClearRemainsBlockedAfterReloadTest=init.then(legacyRecord).then(corruptMarker).then(reload)
+    .then(userClearsUnreadable(false)).then(reload).expect(s.invalid and s.error and not(canSend))
 }
