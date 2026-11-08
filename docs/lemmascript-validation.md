@@ -303,3 +303,29 @@ records unproved callers, collections, parser semantics and external systems.
 Quint model coverage and combined integration results are tracked separately by
 the concurrent state-review work. A source merge alone establishes neither
 production release nor complete application refinement.
+
+## Combined checkpoint still under review
+
+The follow-up at `d543fa204` passed all nine strict source/proof modules:
+43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
+correction requires the final combined source gate to run again.
+
+The complete browser attempt at `3649142e0` was not green. The Pages lane
+passed six checks. Preview passed 343 checks before its 35-minute limit, with
+211 reported skipped. Registry passed 17 checks, had six unexpected results
+and reported 62 skipped before the same limit. Unexpected results included
+three individual test timeouts, a missing revision confirmation, cancelled
+asset requests and a cancelled notification read. These need current-head
+investigation and reruns; passing subsets do not close the browser requirement.
+
+The source gate was interrupted during model checks and is not a completed
+`verify` result. Exhaustive model checking was also stopped after the local
+Apalache process was observed listening on all network interfaces despite a
+localhost client endpoint. A separate in-process comparison found the pinned
+CLI translator's output byte-identical to the original command service for
+plain, nested-fold and temporal models. That comparison supports a server-free
+transport correction; it does not replace the required final model runs.
+
+The integration remains open until the current development branch, corrected
+verifier launch, full source gate, browser checks and GitHub review/merge state
+are verified together.
