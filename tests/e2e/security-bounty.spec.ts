@@ -3332,12 +3332,55 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       fullPage: true,
     });
 
+    const textResizeLayout = () =>
+      page.evaluate(() => ({
+        viewport: window.innerWidth,
+        document: document.documentElement.scrollWidth,
+        overflow: [...document.querySelectorAll<HTMLElement>("body *")]
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {
+              tag: element.tagName,
+              classes: element.className,
+              width: rect.width,
+              right: rect.right,
+              scrollWidth: element.scrollWidth,
+              whiteSpace: style.whiteSpace,
+              fontSize: style.fontSize,
+            };
+          })
+          .filter((element) => element.right > window.innerWidth + 1),
+      }));
+    const beforeTextResize = await textResizeLayout();
     await enlargeText(page.locator("body"));
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
+    const afterTextResize = await textResizeLayout();
+    await test.info().attach("private-intake-text-resize-layout", {
+      body: JSON.stringify({
+        before: beforeTextResize,
+        after: afterTextResize,
+      }),
+      contentType: "application/json",
+    });
+    expect(afterTextResize.document).toBeLessThanOrEqual(
+      afterTextResize.viewport,
+    );
+    const reportText = report.getByRole("region", {
+      name: "Private report text",
+    });
+    await reportText.focus();
+    await expect(reportText).toBeFocused();
+    if (
+      await reportText.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      )
+    ) {
+      await reportText.press("PageDown");
+      await expect
+        .poll(() => reportText.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(0);
+      await reportText.press("Home");
+    }
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("slop-report-inbox-text-200.png"),
@@ -4905,8 +4948,11 @@ test("an Inbox focus recheck clears the account changed in another tab @registry
   await page.goto(`/inbox?submission=${submission.id}`, {
     waitUntil: "networkidle",
   });
-  await page.getByText("Read private report", { exact: true }).click();
-  await expect(page.getByText(description, { exact: true })).toBeVisible();
+  const report = page.locator(
+    `[aria-labelledby="submission-${submission.id}"]`,
+  );
+  await report.getByText("Read private report", { exact: true }).click();
+  await expect(report.getByText(description, { exact: true })).toBeVisible();
   const secondPage = await context.newPage();
   await secondPage.bringToFront();
   await signIn(secondPage, TOKENS[second]);
