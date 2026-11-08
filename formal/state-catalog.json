@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "8e938cc4aa01cb372d1365925c3828db23b09d7ebdf3840a2da5b017a8c2f435",
+  "inventorySha256": "9c67e3a991a7699092316a220613941e5a50e94ac71fc060bbf19592292c7339",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1786,7 +1786,8 @@
       "models": [
         "formal/models/github_census.qnt",
         "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt"
+        "formal/models/pr_review_recovery.qnt",
+        "formal/models/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged", "open"],
       "review": "candidate-only"
@@ -1805,7 +1806,8 @@
       "models": [
         "formal/models/github_census.qnt",
         "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt"
+        "formal/models/pr_review_recovery.qnt",
+        "formal/models/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "merged-pull-requests",
@@ -1824,7 +1826,8 @@
       "models": [
         "formal/models/github_census.qnt",
         "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt"
+        "formal/models/pr_review_recovery.qnt",
+        "formal/models/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged"],
       "review": "candidate-only"
@@ -1838,7 +1841,8 @@
       "models": [
         "formal/models/github_census.qnt",
         "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt"
+        "formal/models/pr_review_recovery.qnt",
+        "formal/models/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
       "review": "candidate-only"
@@ -1868,11 +1872,14 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 396,
+      "line": 410,
       "name": "outcomes",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
-      "models": ["formal/models/value_ingestion.qnt"],
+      "models": [
+        "formal/models/value_feed_deadline.qnt",
+        "formal/models/value_ingestion.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "headRefOid",
         "id",

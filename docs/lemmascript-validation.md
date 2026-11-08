@@ -293,8 +293,10 @@ cannot re-enable these requests and that credentials remain absent.
 
 ## Evidence limits
 
-No live transaction, provider call, signer activation, payment, deployment or
-DNS change is part of this change. No current TSX layout or text was changed.
+Chain writes in this follow-up use local test validators. The Solana setup
+reads public route and RPC data before cloning. No production signer
+activation, payment, deployment or DNS change is part of this change.
+No current TSX layout or text was changed.
 The frontend browser checks concern preserved state behavior. Formal contracts
 cover the selected kernels under their stated domains; the research report
 records unproved callers, collections, parser semantics and external systems.
