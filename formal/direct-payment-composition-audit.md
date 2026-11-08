@@ -178,3 +178,39 @@ states, depth 16 and about 1,946,451 states still queued. The six-minute
 deadline stopped the run with no reported violation. Both timeout receipts
 are retained outside the source tree. This result does not permit a claim
 that the submitted-recovery model passed finite verification.
+
+## Property-specific storage quotient
+
+A separate review found that `stored` cell values feed only later `stored`
+writes in this model. No guard, visible row, identity check, authorization,
+phase or result depends on those cell values. The invariant reads only the
+list length, which remains two. The default finite `step` now selects a
+projection flag on every storage-writing transition, replacing these two
+cell values with zero. Initial cells are zero and other transitions preserve
+them. This is a quotient for the stated invariant and non-storage control
+state, not a proof about persisted contents. The projection is applied inside
+the writer, because the TLC backend does not support sequential action
+composition in the step relation.
+
+`concreteStep` retains the two-invocation/two-identifier transition relation.
+`unboundedStep` retains repeated invocations and three identifiers. Both keep
+the exact modeled stored cells, as do all named scenarios, including partial
+writes, captured rows and the failure-then-success retry. Their separate
+500-trace, 60-step simulations are concrete evidence rather than a storage
+proof. The earlier six-minute timeout above remains the result for the graph
+which retained all stored contents; it is not relabeled as a pass.
+
+The field-level quotient completed its first finite run in 101.9 seconds:
+4,819,932 distinct states, 83,119,123 generated states, depth 29 and an empty
+queue. No invariant violation was found. This is a pass only for the stated
+property quotient and finite invocation/identifier bounds. It does not turn
+the earlier full-content timeouts into passes, prove exact stored cells, or
+establish implementation refinement. The original three-minute verification
+budget is restored; simulation stages remain bounded at 90 seconds.
+
+The final quotient was repeated with that original 180-second limit and
+completed in 99.98 seconds with the same 4,819,932 distinct states,
+83,119,123 generated states, depth 29 and empty queue. Model and mapped source
+hashes stayed unchanged during the run. Exact stored cells remain outside
+this finite result; all 13 concrete scenarios and the separate 500-trace
+`concreteStep` and `unboundedStep` simulations pass with those cells retained.
