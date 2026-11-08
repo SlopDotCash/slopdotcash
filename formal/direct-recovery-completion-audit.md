@@ -57,3 +57,11 @@ checks, not proof of implementation refinement or live chain availability.
 The before/after logs, full integration output and model receipt remain under
 ignored `evidence/recovery-fence/` and `evidence/formal/` in the isolated
 validation worktree.
+
+The isolated validation used the broader proof branch plus this recovery fix.
+Its model, handler, wallet-registration and migration hashes match the local
+follow-up. The full `direct-payments.ts` hash does not: that proof branch
+extracts EVM recovery planning into `verified-direct-recovery.ts`. The
+completion-fence code matches by source comparison, but this is not a byte-for-
+byte whole-file or whole-branch validation claim. Preserve the extracted proof
+implementation when rebasing and repeat the combined-head checks separately.
