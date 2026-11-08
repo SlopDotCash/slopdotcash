@@ -192,10 +192,12 @@ test("grant recovery saves the local draft and stays busy until navigation", asy
     "POST",
     `/api/v1/security-submissions/${id}/send`,
   );
+  const noDocumentNavigation =
+    /^net::ERR_ABORTED GET http:\/\/127\.0\.0\.1:\d+\/fixture\/authorize$/u;
+  diagnostics.allow(noDocumentNavigation);
   let current = submission();
   let grant = false;
   let authorizations = 0;
-  let releaseNavigation: (() => void) | undefined;
   await page.addInitScript(
     ({ id }) => {
       sessionStorage.setItem(
@@ -225,15 +227,12 @@ test("grant recovery saves the local draft and stays busy until navigation", asy
     },
     { id },
   );
-  await page.route("**/fixture/authorize", async (route) => {
-    await new Promise<void>((resolve) => {
-      releaseNavigation = resolve;
-    });
-    await route.fulfill({
-      contentType: "text/html",
-      body: "<h1>Fixture GitHub authorization</h1>",
-    });
-  });
+  // HTTP 204 is a controlled navigation that leaves the old document active.
+  // A held main-frame response would suspend both DOM evaluation and rendering,
+  // so it cannot test whether useAction remains busy after the redirect call.
+  await page.route("**/fixture/authorize", (route) =>
+    route.fulfill({ status: 204 }),
+  );
   const card = await mount(
     page,
     () => current,
@@ -277,72 +276,58 @@ test("grant recovery saves the local draft and stays busy until navigation", asy
       throw new Error(`Unexpected action: ${path}`);
     },
   );
-  try {
-    await card
-      .getByRole("button", { name: "Submit privately", exact: true })
-      .click();
-    const authorize = card.getByRole("button", {
-      name: "Authorize GitHub to submit as you",
-      exact: true,
-    });
-    await expect(authorize).toBeVisible();
-    await page.evaluate(() => {
-      (window as Window & { rejectDraftWrite?: boolean }).rejectDraftWrite =
-        true;
-    });
-    await authorize.click();
-    await expect(
-      card.getByText(
-        /This browser could not keep your report during GitHub authorization/,
-      ),
-    ).toBeVisible();
-    expect(authorizations).toBe(0);
-    await page.evaluate(() => {
-      (window as Window & { rejectDraftWrite?: boolean }).rejectDraftWrite =
-        false;
-    });
-    const navigating = page.waitForRequest("**/fixture/authorize");
-    await authorize.click({ noWaitAfter: true });
-    await navigating;
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        ),
-    );
-    await expect(authorize).toBeDisabled();
-    await expect(
-      card.getByRole("button", { name: "Submit privately", exact: true }),
-    ).toBeDisabled();
-    expect(authorizations).toBe(1);
-    grant = true;
-    releaseNavigation?.();
-    await expect(
-      page.getByRole("heading", { name: "Fixture GitHub authorization" }),
-    ).toBeVisible();
-    await page.goto(`/inbox?submission=${id}`, { waitUntil: "networkidle" });
-    await expect(
-      card.getByRole("textbox", { name: "Summary", exact: true }),
-    ).toHaveValue("Synthetic grant recovery");
-    await card
-      .getByRole("button", { name: "Submit privately", exact: true })
-      .click();
-    await expect(
-      card.getByRole("button", { name: "Check again", exact: true }),
-    ).toBeVisible();
-    await expect(
-      card.getByRole("textbox", { name: "Summary", exact: true }),
-    ).toHaveCount(0);
-    await card
-      .getByRole("button", { name: "Check again", exact: true })
-      .click();
-    await expect(
-      card.getByRole("link", { name: "GHSA-xxxx-yyyy-zzzz", exact: true }),
-    ).toBeVisible();
-    await expect(
-      card.getByRole("button", { name: "Check again", exact: true }),
-    ).toHaveCount(0);
-  } finally {
-    releaseNavigation?.();
-  }
+  await card
+    .getByRole("button", { name: "Submit privately", exact: true })
+    .click();
+  const authorize = card.getByRole("button", {
+    name: "Authorize GitHub to submit as you",
+    exact: true,
+  });
+  await expect(authorize).toBeVisible();
+  await page.evaluate(() => {
+    (window as Window & { rejectDraftWrite?: boolean }).rejectDraftWrite = true;
+  });
+  await authorize.click();
+  await expect(
+    card.getByText(
+      /This browser could not keep your report during GitHub authorization/,
+    ),
+  ).toBeVisible();
+  expect(authorizations).toBe(0);
+  await page.evaluate(() => {
+    (window as Window & { rejectDraftWrite?: boolean }).rejectDraftWrite =
+      false;
+  });
+  const navigating = page.waitForResponse("**/fixture/authorize");
+  await authorize.click({ noWaitAfter: true });
+  expect((await navigating).status()).toBe(204);
+  await expect.poll(() => diagnostics.count(noDocumentNavigation)).toBe(1);
+  await expect(authorize).toBeDisabled();
+  await expect(
+    card.getByRole("button", { name: "Submit privately", exact: true }),
+  ).toBeDisabled();
+  expect(authorizations).toBe(1);
+  grant = true;
+  // Stand in for the completed provider round trip. No grant or external
+  // GitHub delivery is claimed by this component fixture.
+  await page.goto(`/inbox?submission=${id}`, { waitUntil: "networkidle" });
+  await expect(
+    card.getByRole("textbox", { name: "Summary", exact: true }),
+  ).toHaveValue("Synthetic grant recovery");
+  await card
+    .getByRole("button", { name: "Submit privately", exact: true })
+    .click();
+  await expect(
+    card.getByRole("button", { name: "Check again", exact: true }),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("textbox", { name: "Summary", exact: true }),
+  ).toHaveCount(0);
+  await card.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect(
+    card.getByRole("link", { name: "GHSA-xxxx-yyyy-zzzz", exact: true }),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Check again", exact: true }),
+  ).toHaveCount(0);
 });

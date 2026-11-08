@@ -35,6 +35,27 @@ uses the actual status. Existing private-intake browser and real-handler tests
 provide separate backend/authorization evidence. No controlled response proves
 live GitHub delivery, model screening quality or a payment.
 
+The first corrected-status run passed eight projection/control cases but its
+two grant cases timed out. The test held the main-frame authorization response
+while waiting for animation frames in the old document. Removing that wait
+alone still left a circular wait: Playwright's locator assertion waits for a
+pending navigation to finish. An isolated captured-element check also waited
+on that context. These were test sequencing failures, not evidence that the
+application redirect was stuck.
+
+The grant test now gives its synthetic navigation HTTP 204, which leaves the
+old document active. It checks that both controls remain disabled after that
+response, then manually simulates the completed provider return. Chromium's
+expected `ERR_ABORTED` for this one no-document navigation is declared by exact
+path and asserted exactly once. The draft-storage refusal, one authorization
+request, restored draft, send and receipt reconciliation assertions remain.
+This proves the component's terminal busy state and return behavior with
+controlled responses; it does not prove an actual provider round trip.
+The corrected ten-case suite passed for Chromium desktop and mobile, with no
+skipped or flaky cases, through the normal repository wrapper and a fresh
+fixture build. The two grant cases completed in 2.9 seconds each. Pinned Bun
+1.3.14 and Node 24.15.0, typecheck and the focused Biome check also passed.
+
 Focused browser and final combined results are kept under ignored
 `evidence/formal/private-report-composition/`. These are bounded models and
 entry-point checks, not proof of mechanical implementation refinement.
