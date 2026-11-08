@@ -169,3 +169,12 @@ distinct states, 77,352,325 generated states, depth 15 and a nonempty queue.
 No violation was reported before termination. This is **incomplete finite
 verification**, not a pass. The wider three-identifier, uncapped-invocation
 simulation is also not proof for arbitrary retry histories.
+
+The verification-stage budget was then raised from three to six minutes;
+type, scenario and simulation stages retain their 90-second budget. No model
+guard or domain changed for that run. It also remains incomplete: the last
+progress report contained 8,625,458 distinct states, 110,585,697 generated
+states, depth 16 and about 1,946,451 states still queued. The six-minute
+deadline stopped the run with no reported violation. Both timeout receipts
+are retained outside the source tree. This result does not permit a claim
+that the submitted-recovery model passed finite verification.
