@@ -238,6 +238,7 @@ export default defineConfig({
       testMatch: [
         "**/evidence-download.spec.ts",
         "**/email-preferences.spec.ts",
+        "**/email-editor-focus.spec.ts",
         "**/bounty-full-flow.spec.ts",
         "**/project-draft-storage.spec.ts",
       ],
@@ -250,6 +251,7 @@ export default defineConfig({
       name: "firefox-mobile",
       testMatch: [
         "**/email-preferences.spec.ts",
+        "**/email-editor-focus.spec.ts",
         "**/bounty-full-flow.spec.ts",
         "**/project-draft-storage.spec.ts",
       ],

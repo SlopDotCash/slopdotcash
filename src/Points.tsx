@@ -33,6 +33,7 @@ import {
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
+import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
@@ -107,6 +108,7 @@ type PointsContext = {
   state: State;
   me: Membership | null;
   session: "loading" | "ready" | "error";
+  signoutRevision: number;
   refreshSession: () => void;
   refresh: () => void;
   requestPoints: () => void;
@@ -209,6 +211,7 @@ export function PointsProvider({
   );
   const [attempt, setAttempt] = useState(0);
   const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [signoutRevision, setSignoutRevision] = useState(0);
   const [requested, setRequested] = useState(false);
   const loadedAttempt = useRef<{
     attempt: number;
@@ -221,6 +224,7 @@ export function PointsProvider({
     sessionRequest.current?.abort();
     sessionRequest.current = null;
     setMe(value);
+    if (value === null) setSignoutRevision((revision) => revision + 1);
     setSession("ready");
   }, []);
   const shouldLoad = enabled || requested;
@@ -324,6 +328,7 @@ export function PointsProvider({
         state,
         me,
         session,
+        signoutRevision,
         refreshSession: () => setSessionAttempt((value) => value + 1),
         setMe: updateMembership,
         refresh: () => setAttempt((a) => a + 1),
@@ -980,12 +985,63 @@ export function LoginPage() {
   );
 }
 export function AccountPage() {
-  const { me, session } = usePoints();
+  const { me, session, signoutRevision } = usePoints();
+  const [accountAttempt, setAccountAttempt] = useState(0);
   const accountSession = useProjectSession(
-    me?.actor.id ?? "signed-out",
+    `${me?.actor.id ?? "signed-out"}:${signoutRevision}:${accountAttempt}`,
     session !== "loading",
   );
   const signedIn = me !== null || accountSession.status === "signed-in";
+  const checkedEmailActor =
+    accountSession.status === "signed-in"
+      ? accountSession.session.githubId
+      : null;
+  const [lastEmailSession, setLastEmailSession] = useState({
+    actor: checkedEmailActor,
+    member: me?.actor.id ?? null,
+    signoutRevision,
+  });
+  if (
+    (accountSession.status === "signed-in" ||
+      accountSession.status === "signed-out") &&
+    (lastEmailSession.actor !== checkedEmailActor ||
+      lastEmailSession.member !== (me?.actor.id ?? null) ||
+      lastEmailSession.signoutRevision !== signoutRevision)
+  )
+    setLastEmailSession({
+      actor: checkedEmailActor,
+      member: me?.actor.id ?? null,
+      signoutRevision,
+    });
+  const pointsActor = me ? githubUserIdFromNodeId(me.actor.id) : null;
+  // Keep only the local email editor during a pending check. An independently
+  // confirmed membership change must also drop it, before this check returns.
+  const pendingMemberMatches =
+    signoutRevision === lastEmailSession.signoutRevision &&
+    (me === null ||
+      (pointsActor !== null
+        ? pointsActor === lastEmailSession.actor
+        : me.actor.id === lastEmailSession.member));
+  const emailActor =
+    accountSession.status === "checking" || accountSession.status === "error"
+      ? pendingMemberMatches
+        ? lastEmailSession.actor
+        : null
+      : checkedEmailActor;
+  const emailActorMatchesMember =
+    pointsActor === null || pointsActor === emailActor;
+  const emailFailure =
+    accountSession.status === "error"
+      ? "The account check failed."
+      : accountSession.status === "signed-in" && !emailActorMatchesMember
+        ? "The inbox account changed. Retry."
+        : undefined;
+  const emailViewKey =
+    emailActor && emailActorMatchesMember
+      ? emailActor
+      : me !== null && emailFailure !== undefined
+        ? `unverified:${me.actor.id}`
+        : null;
   const [walletEntry, setWalletEntry] = useState(
     () => window.location.hash === "#wallets",
   );
@@ -1029,14 +1085,35 @@ export function AccountPage() {
           )}
         </section>
       ) : null}
-      {signedIn ? (
+      {me !== null || emailActor ? (
         <section
           id="notifications"
           className="points-panel"
           aria-labelledby="notifications-heading"
         >
           <h2 id="notifications-heading">Email preferences</h2>
-          <InboxEmail headingId="notifications-heading" />
+          {emailViewKey ? (
+            <InboxEmail
+              key={emailViewKey}
+              headingId="notifications-heading"
+              accountActor={
+                emailActor && emailActorMatchesMember ? emailActor : undefined
+              }
+              accountChecking={accountSession.status === "checking"}
+              accountError={emailFailure}
+              onAccountRetry={() => setAccountAttempt((value) => value + 1)}
+            />
+          ) : accountSession.status === "signed-out" ? (
+            <p>
+              Your session expired.{" "}
+              <a href={loginHref("/account#notifications")}>
+                Sign in with GitHub
+              </a>
+              .
+            </p>
+          ) : (
+            <p role="status">Checking your account…</p>
+          )}
         </section>
       ) : null}
     </main>

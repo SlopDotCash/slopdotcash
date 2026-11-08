@@ -304,3 +304,13 @@ records the source-specific repository lookup, replacement email action and
 shared snapshot cache refinements. The additional source/model mappings do
 not change the earlier distinction between a bounded model and proof of the
 whole implementation.
+
+
+## Email editor composition follow-up
+
+The follow-up at `1f0dafd45` reproduced a parent recheck unmounting a valid
+private-session-only reporter's email editor. `email-editor-audit.md` records
+the corrected actor-keyed editor lifetime, explicit local-signout boundary,
+error/retry behavior and `ui_email_parent` composition model. It keeps local
+draft retention distinct from authenticated write authority; other account
+controls do not inherit this retention rule.

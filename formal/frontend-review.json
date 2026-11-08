@@ -145,8 +145,8 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "lines": 839,
-      "models": ["ui_email.qnt", "ui_email_actions.qnt"],
+      "lines": 887,
+      "models": ["ui_email.qnt", "ui_email_actions.qnt", "ui_email_parent.qnt"],
       "statelessReason": null,
       "status": "modeled-abstraction",
       "refinementProved": false
@@ -270,8 +270,12 @@
     },
     {
       "path": "src/Points.tsx",
-      "lines": 1597,
-      "models": ["ui_session.qnt", "ui_calendar_views.qnt"],
+      "lines": 1674,
+      "models": [
+        "ui_session.qnt",
+        "ui_calendar_views.qnt",
+        "ui_email_parent.qnt"
+      ],
       "statelessReason": null,
       "status": "modeled-abstraction",
       "refinementProved": false
