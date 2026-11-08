@@ -94,3 +94,66 @@ export function normalizedNativeDelta(
 ): bigint {
   return after - before + (payer ? fee : 0n);
 }
+
+/** Parsed rows retain the exact recipient and source strings of the proposal. */
+export interface MonthlyAmountRow {
+  githubUserId: string;
+  login: string;
+  gross: bigint;
+  sourceDigest: string;
+}
+
+export interface FrozenAmountAward extends MonthlyAmountRow {
+  fee: bigint;
+  net: bigint;
+}
+
+export interface FrozenAmounts {
+  awards: FrozenAmountAward[];
+  total: bigint;
+}
+
+/** Every nonzero proposal row becomes one award, in the original row order. */
+//@ verify
+//@ ensures \result.awards == FrozenRows(rows, legacyFloorFee)
+//@ ensures \result.total == RowTotal(rows)
+//@ ensures \result.total == AwardTotal(\result.awards)
+//@ ensures \result.total == AwardNetTotal(\result.awards) + AwardFeeTotal(\result.awards)
+//@ ensures \result.awards.length == NonzeroRows(rows)
+//@ ensures forall(i, 0 <= i && i < \result.awards.length ==> \result.awards[i].gross != 0 && \result.awards[i].fee == FrozenFee(\result.awards[i].gross, legacyFloorFee) && \result.awards[i].gross == \result.awards[i].fee + \result.awards[i].net)
+//@ ensures forall(i, 0 <= i && i < \result.awards.length && \result.awards[i].gross > 0 ==> 0 <= \result.awards[i].fee && \result.awards[i].fee <= \result.awards[i].gross && \result.awards[i].net >= 0)
+export function freezeMonthlyAmounts(
+  rows: MonthlyAmountRow[],
+  legacyFloorFee: boolean,
+): FrozenAmounts {
+  const awards: FrozenAmountAward[] = [];
+  let total = 0n;
+  let i = 0;
+  while (i < rows.length) {
+    //@ invariant 0 <= i && i <= rows.length
+    //@ invariant awards == FrozenRows(rows.slice(0, i), legacyFloorFee)
+    //@ invariant total == RowTotal(rows.slice(0, i))
+    //@ invariant total == AwardTotal(awards)
+    //@ invariant total == AwardNetTotal(awards) + AwardFeeTotal(awards)
+    //@ invariant awards.length == NonzeroRows(rows.slice(0, i))
+    //@ invariant forall(k, 0 <= k && k < awards.length ==> awards[k].gross != 0 && awards[k].fee == FrozenFee(awards[k].gross, legacyFloorFee) && awards[k].gross == awards[k].fee + awards[k].net)
+    //@ invariant forall(k, 0 <= k && k < awards.length && awards[k].gross > 0 ==> 0 <= awards[k].fee && awards[k].fee <= awards[k].gross && awards[k].net >= 0)
+    const row = rows[i];
+    if (row.gross !== 0n) {
+      const fee = legacyFloorFee
+        ? row.gross / 50n
+        : ordinaryFeeAmount(row.gross);
+      awards.push({
+        githubUserId: row.githubUserId,
+        login: row.login,
+        gross: row.gross,
+        sourceDigest: row.sourceDigest,
+        fee,
+        net: row.gross - fee,
+      });
+      total += row.gross;
+    }
+    i += 1;
+  }
+  return { awards, total };
+}

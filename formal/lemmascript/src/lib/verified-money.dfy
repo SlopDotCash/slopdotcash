@@ -17,6 +17,12 @@ function JSTruncDiv(a: int, b: int): int
 
 datatype WeightedShare = WeightedShare(amount: int, remainder: int)
 
+datatype MonthlyAmountRow = MonthlyAmountRow(githubUserId: string, login: string, gross: int, sourceDigest: string)
+
+datatype FrozenAmountAward = FrozenAmountAward(fee: int, net: int, githubUserId: string, login: string, gross: int, sourceDigest: string)
+
+datatype FrozenAmounts = FrozenAmounts(awards: seq<FrozenAmountAward>, total: int)
+
 function weightedShare(total: int, weight: int, totalWeight: int): WeightedShare
   requires (total >= 0)
   requires (weight >= 0)
@@ -150,6 +156,60 @@ lemma normalizedNativeDelta_ensures(before: int, after: int, fee: int, payer: bo
 {
 }
 
+method freezeMonthlyAmounts(rows: seq<MonthlyAmountRow>, legacyFloorFee: bool) returns (res: FrozenAmounts)
+  ensures (res.awards == FrozenRows(rows, legacyFloorFee))
+  ensures (res.total == RowTotal(rows))
+  ensures (res.total == AwardTotal(res.awards))
+  ensures (res.total == (AwardNetTotal(res.awards) + AwardFeeTotal(res.awards)))
+  ensures (|res.awards| == NonzeroRows(rows))
+  ensures forall i: int :: ((0 <= i) ==> (i < |res.awards|) ==> (((res.awards[i].gross != 0) && (res.awards[i].fee == FrozenFee(res.awards[i].gross, legacyFloorFee))) && (res.awards[i].gross == (res.awards[i].fee + res.awards[i].net))))
+  ensures forall i: int :: ((0 <= i) ==> (i < |res.awards|) ==> (res.awards[i].gross > 0) ==> (((0 <= res.awards[i].fee) && (res.awards[i].fee <= res.awards[i].gross)) && (res.awards[i].net >= 0)))
+{
+  var awards: seq<FrozenAmountAward> := [];
+  var total := 0;
+  var i := 0;
+  while (i < |rows|)
+    invariant (0 <= i)
+    invariant (i <= |rows|)
+    invariant (awards == FrozenRows(rows[0..i], legacyFloorFee))
+    invariant (total == RowTotal(rows[0..i]))
+    invariant (total == AwardTotal(awards))
+    invariant (total == (AwardNetTotal(awards) + AwardFeeTotal(awards)))
+    invariant (|awards| == NonzeroRows(rows[0..i]))
+    invariant forall k: int :: ((0 <= k) ==> (k < |awards|) ==> (((awards[k].gross != 0) && (awards[k].fee == FrozenFee(awards[k].gross, legacyFloorFee))) && (awards[k].gross == (awards[k].fee + awards[k].net))))
+    invariant forall k: int :: ((0 <= k) ==> (k < |awards|) ==> (awards[k].gross > 0) ==> (((0 <= awards[k].fee) && (awards[k].fee <= awards[k].gross)) && (awards[k].net >= 0)))
+  {
+    var row := rows[i];
+    assert FrozenRows(rows[..i+1], legacyFloorFee) ==
+      FrozenRows(rows[..i], legacyFloorFee) +
+        (if row.gross == 0 then [] else
+          [FrozenAmountAward(FrozenFee(row.gross, legacyFloorFee),
+            row.gross - FrozenFee(row.gross, legacyFloorFee),
+            row.githubUserId, row.login, row.gross, row.sourceDigest)]) by {
+      assert rows[..i+1][..i] == rows[..i];
+      assert rows[..i+1][i] == row;
+    }
+    assert RowTotal(rows[..i+1]) == RowTotal(rows[..i]) + row.gross by {
+      assert rows[..i+1][..i] == rows[..i];
+      assert rows[..i+1][i] == row;
+    }
+    assert NonzeroRows(rows[..i+1]) == NonzeroRows(rows[..i]) +
+      (if row.gross == 0 then 0 else 1) by {
+      assert rows[..i+1][..i] == rows[..i];
+      assert rows[..i+1][i] == row;
+    }
+    if (row.gross != 0) {
+      var i_t0 := ordinaryFeeAmount(row.gross);
+      var fee := (if legacyFloorFee then JSTruncDiv(row.gross, 50) else i_t0);
+      awards := (awards + [FrozenAmountAward(fee, (row.gross - fee), row.githubUserId, row.login, row.gross, row.sourceDigest)]);
+      total := (total + row.gross);
+    }
+    i := (i + 1);
+  }
+  assert rows[..i] == rows by {}
+  return FrozenAmounts(awards, total);
+}
+
 lemma MultiplyMonotone(lower: int, upper: int, factor: int)
   requires lower <= upper
   requires factor >= 0
@@ -171,4 +231,52 @@ lemma DivisionBounds(n: int, d: int)
   assert JSTruncDiv(n, d) == n / d;
   assert n == (n / d) * d + n % d;
   assert 0 <= n % d < d;
+}
+
+function FrozenFee(gross: int, legacyFloorFee: bool): int
+{
+  if legacyFloorFee then JSTruncDiv(gross, 50) else ordinaryFeeAmount(gross)
+}
+
+function FrozenRows(rows: seq<MonthlyAmountRow>, legacyFloorFee: bool): seq<FrozenAmountAward>
+  decreases |rows|
+{
+  if |rows| == 0 then []
+  else
+    var row := rows[|rows|-1];
+    FrozenRows(rows[..|rows|-1], legacyFloorFee) +
+      (if row.gross == 0 then [] else
+        [FrozenAmountAward(FrozenFee(row.gross, legacyFloorFee),
+          row.gross - FrozenFee(row.gross, legacyFloorFee),
+          row.githubUserId, row.login, row.gross, row.sourceDigest)])
+}
+
+function RowTotal(rows: seq<MonthlyAmountRow>): int
+  decreases |rows|
+{
+  if |rows| == 0 then 0 else RowTotal(rows[..|rows|-1]) + rows[|rows|-1].gross
+}
+
+function AwardTotal(awards: seq<FrozenAmountAward>): int
+  decreases |awards|
+{
+  if |awards| == 0 then 0 else AwardTotal(awards[..|awards|-1]) + awards[|awards|-1].gross
+}
+
+function AwardNetTotal(awards: seq<FrozenAmountAward>): int
+  decreases |awards|
+{
+  if |awards| == 0 then 0 else AwardNetTotal(awards[..|awards|-1]) + awards[|awards|-1].net
+}
+
+function AwardFeeTotal(awards: seq<FrozenAmountAward>): int
+  decreases |awards|
+{
+  if |awards| == 0 then 0 else AwardFeeTotal(awards[..|awards|-1]) + awards[|awards|-1].fee
+}
+
+function NonzeroRows(rows: seq<MonthlyAmountRow>): int
+  decreases |rows|
+{
+  if |rows| == 0 then 0 else NonzeroRows(rows[..|rows|-1]) + (if rows[|rows|-1].gross == 0 then 0 else 1)
 }
