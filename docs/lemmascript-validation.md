@@ -379,6 +379,12 @@ recorded in `evidence/lemmascript-selection/combined-59-test-receipt.json`.
 It is not a final combined `verify`, browser or deployment result, and does not
 change the status of the earlier interrupted run described below.
 
+After the monthly replacement and scan-reuse integration, their combined real
+API/SQLite workflows pass 171 tests and 1,806 assertions with zero failures.
+One existing disposable-sandbox case is skipped. This run takes 330.70 seconds;
+`evidence/lemmascript-selection/combined-65-workflow-receipt.json` records the
+source and log hash. It also predates the final Quint-parent rebase.
+
 The complete browser attempt at `3649142e0` was not green. The Pages lane
 passed six checks. Preview passed 343 checks before its 35-minute limit, with
 211 reported skipped. Registry passed 17 checks, had six unexpected results
