@@ -1118,10 +1118,15 @@ function usePrivateRequest() {
 
 function useSecurityData<T>(
   path: string | null,
-): [Loaded<T>, () => void, (value: T) => void] {
+): [
+  Loaded<T>,
+  () => void,
+  (value: T, accept?: (previous: T) => boolean) => void,
+] {
   const privateRequest = usePrivateRequest();
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
   const generation = useRef(0);
+  const accepted = useRef<{ value: T } | null>(null);
   const load = useCallback(() => {
     if (path === null) return;
     const current = ++generation.current;
@@ -1131,8 +1136,10 @@ function useSecurityData<T>(
     );
     privateRequest<T>("GET", path).then(
       (value) => {
-        if (generation.current === current)
+        if (generation.current === current) {
+          accepted.current = { value };
           setState({ status: "ready", value });
+        }
       },
       (error: unknown) => {
         if (generation.current !== current) return;
@@ -1159,9 +1166,12 @@ function useSecurityData<T>(
     };
   }, [load]);
   const replace = useCallback(
-    (value: T) => {
+    (value: T, accept?: (previous: T) => boolean) => {
+      if (accepted.current !== null && accept && !accept(accepted.current.value))
+        return;
       // An action result supersedes every read started before it.
       generation.current += 1;
+      accepted.current = { value };
       setState({ status: "ready", value });
     },
     [],
@@ -3334,8 +3344,18 @@ function CaseDetail({
 }) {
   const privateRequest = usePrivateRequest();
   const recoveryAction = useAction();
-  const [state, reload, replace] = useSecurityData<{ case: SecurityCase }>(
+  const [state, reload, replaceData] = useSecurityData<{
+    case: SecurityCase;
+  }>(
     `security-cases/${encodeURIComponent(caseId)}`,
+  );
+  const replace = useCallback(
+    (value: { case: SecurityCase }) =>
+      replaceData(
+        value,
+        (previous) => value.case.revision >= previous.case.revision,
+      ),
+    [replaceData],
   );
   const [note, setNote] = useState<string | null>(null);
   if (state.status === "loading")
