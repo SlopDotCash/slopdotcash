@@ -41,14 +41,14 @@ import {
   settle,
   submissionView,
 } from "./submissions";
+import {
+  type IntakeScreeningState,
+  intakeReviewState,
+  qualifiedIntake,
+  recoverableIntakeScreening,
+} from "./verified-intake";
 
-export type IntakeState =
-  | "queued"
-  | "running"
-  | "legitimate"
-  | "needs-information"
-  | "spam"
-  | "unavailable";
+export type IntakeState = IntakeScreeningState;
 export type StoredIntake = {
   submission_id: string;
   case_id: string;
@@ -187,17 +187,28 @@ export async function storedIntake(
     .first<StoredIntake>();
 }
 export function intakeQualified(row: StoredIntake): boolean {
-  return (
-    row.review_decision === "forward" ||
-    (row.review_decision === null && row.screening_state === "legitimate")
-  );
+  return qualifiedIntake({
+    review: intakeReviewState(row.review_decision),
+    screening: row.screening_state,
+  });
 }
 function screeningRecoverable(row: StoredIntake, now: Date): boolean {
-  return (
-    ["queued", "unavailable"].includes(row.screening_state) ||
-    (row.screening_state === "running" &&
-      now.getTime() - Date.parse(row.screening_started_at ?? row.received_at) >
-        LOST_SCREEN_MS)
+  if (row.screening_state !== "running")
+    return recoverableIntakeScreening(
+      { state: row.screening_state },
+      BigInt(LOST_SCREEN_MS),
+    );
+  const nowMs = now.getTime();
+  const startedMs = Date.parse(row.screening_started_at ?? row.received_at);
+  return recoverableIntakeScreening(
+    {
+      state: "running",
+      clock:
+        Number.isFinite(nowMs) && Number.isFinite(startedMs)
+          ? { kind: "known", now: BigInt(nowMs), started: BigInt(startedMs) }
+          : { kind: "invalid" },
+    },
+    BigInt(LOST_SCREEN_MS),
   );
 }
 function intakeView(
