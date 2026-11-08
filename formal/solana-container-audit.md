@@ -46,12 +46,20 @@ those events are explicit external recovery boundaries.
 
 `solana_container_lifecycle.qnt` models one container, one pending mutation,
 create/start acknowledgement, cancellation, port and binary refusal, receipt
-failure, removal, and unknown/abrupt outcomes. Seven named scenarios and 1,000
+failure, removal, and unknown/abrupt outcomes. Eight named scenarios and 1,000
 sampled traces of 30 steps pass. These checks do not prove engine behavior or
 implementation refinement. The real `tests/solana-container-cancel.workflow.mjs`
 delays actual create and start calls, sends SIGTERM, confirms the launcher stays
 alive until acknowledgement, then verifies absence and closed ports. Both
 phases pass with the local Podman runtime.
+
+A second real-engine regression pauses the final ready receipt write and sends
+SIGTERM. Before correction, startup resolved with an instance already stopping.
+Startup now checks cancellation after that write, and per-instance receipt
+writes execute in order so an earlier ready write cannot overwrite a later
+cleanup state. `tests/solana-container-receipt.workflow.mjs` controls only that
+filesystem delay; the engine and cleanup remain real. The corrected trace
+does not return an instance and retains the final stopped receipt.
 
 ## Observed host and file boundaries
 

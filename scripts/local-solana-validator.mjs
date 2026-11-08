@@ -158,12 +158,18 @@ export async function startLocalSolanaValidator({
     })),
     state: "prepared",
   };
-  const save = async () => {
+  let receiptWrite = Promise.resolve();
+  const save = () => {
     if (!receiptPath) return;
-    await mkdir(dirname(receiptPath), { recursive: true });
-    await writeFile(receiptPath, `${JSON.stringify(record, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    const bytes = `${JSON.stringify(record, null, 2)}\n`;
+    const write = async () => {
+      await mkdir(dirname(receiptPath), { recursive: true });
+      await writeFile(receiptPath, bytes, { mode: 0o600 });
+    };
+    // A prior failed write must not skip cleanup's later receipt attempt.
+    // Captured state is published in call order, so ready cannot overwrite stop.
+    receiptWrite = receiptWrite.then(write, write);
+    return receiptWrite;
   };
   await save();
   const createCommand = [
@@ -390,6 +396,7 @@ export async function startLocalSolanaValidator({
     record.binary = binary;
     record.binarySha256 = SOLANA_TEST_BINARY_SHA256;
     await save();
+    if (closing) throw new Error("Validator startup was canceled");
     return { process: child, close, receipt: record };
   } catch (error) {
     if (closing) {
