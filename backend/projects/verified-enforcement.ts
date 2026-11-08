@@ -304,3 +304,433 @@ export function foldEnforcementStatus(
     last: episode.last,
   };
 }
+
+export interface AccountBanSource {
+  accountId: string;
+  moderator: HistoryActor;
+}
+
+export interface EnforcementDecisionInput {
+  action: string;
+  actorId: string;
+  actorRole: string;
+  hasActorRole: boolean;
+  state: string;
+  appeal: string;
+  records: EnforcementHistoryRow[];
+  restrictedBy: string[];
+  bannedAccounts: string[];
+  activeBans: AccountBanSource[];
+  responsibleAccounts: string[];
+  manifestStatus: string;
+  manifestTier: string;
+  listedBefore: boolean;
+}
+
+export type EnforcementDecision =
+  | { kind: "refused"; status: number; code: string; message: string }
+  | {
+      kind: "plan";
+      stateAfter: string;
+      appealAfter: string;
+      bansMaintainer: boolean;
+      revision: string;
+    };
+
+//@ verify
+//@ ensures -1 <= \result && \result < records.length
+//@ ensures \result == LastRestriction(records)
+function latestRestrictionSource(
+  records: readonly EnforcementHistoryRow[],
+): number {
+  let i = records.length - 1;
+  while (i >= 0) {
+    //@ invariant -1 <= i && i < records.length
+    //@ invariant LastRestriction(records) == LastRestriction(records.slice(0, i + 1))
+    if (records[i].action === "ban" || records[i].action === "quarantine")
+      return i;
+    i -= 1;
+  }
+  return -1;
+}
+
+//@ verify
+//@ ensures \result == OpenAccountIds(records, banned, accounts)
+function openAccountIds(
+  records: readonly EnforcementHistoryRow[],
+  banned: readonly string[],
+  accounts: readonly string[],
+): string[] {
+  const result: string[] = [];
+  let i = 0;
+  while (i < accounts.length) {
+    //@ invariant 0 <= i && i <= accounts.length
+    //@ invariant result == OpenAccountIds(records, banned, accounts.slice(0, i))
+    const account = accounts[i];
+    if (containsAccount(banned, account)) {
+      if (openAccountAppealSource(records, account) >= 0) {
+        if (!containsAccount(result, account)) result.push(account);
+      }
+    }
+    i += 1;
+  }
+  return result;
+}
+
+/**
+ * Exact project-moderator conflict, including every kept appellant. A newer
+ * request does not make an earlier appellant independent, and the actor who
+ * placed a restriction cannot decide it. Preserve placing-actor refusal first.
+ */
+//@ verify
+//@ ensures \result == ProjectModeratorConflict(records, restrictedBy, actor)
+function projectModeratorConflict(
+  records: readonly EnforcementHistoryRow[],
+  restrictedBy: readonly string[],
+  actor: string,
+): number {
+  const placed = containsAccount(restrictedBy, actor);
+  const appeals = selectProjectAppeals(records, true, { kind: "all" });
+  let appealed = false;
+  let i = 0;
+  while (i < appeals.indices.length) {
+    //@ invariant 0 <= i && i <= appeals.indices.length
+    //@ invariant appealed <==> ActorInSources(records, appeals.indices.slice(0, i), actor)
+    const source = records[appeals.indices[i]].actor;
+    if (source.kind === "actor" && source.id === actor) appealed = true;
+    i += 1;
+  }
+  return placed ? 1 : appealed ? 2 : 0;
+}
+
+/** A selected account and the moderator who banned it cannot decide its appeal. */
+//@ verify
+//@ ensures \result <==> AccountModeratorIndependent(bans, accounts, actor)
+function accountModeratorIndependent(
+  bans: readonly AccountBanSource[],
+  accounts: readonly string[],
+  actor: string,
+): boolean {
+  if (containsAccount(accounts, actor)) return false;
+  let i = 0;
+  while (i < bans.length) {
+    //@ invariant 0 <= i && i <= bans.length
+    //@ invariant forall(k, 0 <= k && k < i ==> !BanConflict(bans[k], accounts, actor))
+    if (containsAccount(accounts, bans[i].accountId)) {
+      const moderator = bans[i].moderator;
+      if (moderator.kind === "actor" && moderator.id === actor) return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+/** A complete action plan over actual history and actor identities. */
+//@ verify
+//@ requires input.action == "quarantine" || input.action == "ban" || input.action == "request_reinstatement" || input.action == "reinstate_accounts" || input.action == "reinstate" || input.action == "deny_reinstatement"
+//@ ensures \result == ActionPlan(input)
+//@ ensures \result.kind == "refused" ==> \result.status == 403 || \result.status == 409
+//@ ensures \result.kind == "plan" ==> \result.revision == "none" || \result.revision == "retired" || \result.revision == "community"
+//@ ensures \result.kind == "plan" && \result.bansMaintainer ==> input.action == "ban" && MaliciousDecision(input)
+//@ ensures \result.kind == "plan" && \result.revision == "community" ==> input.action == "reinstate" && input.listedBefore && \result.stateAfter == "clear" && \result.appealAfter == "granted"
+export function planEnforcementAction(
+  input: EnforcementDecisionInput,
+): EnforcementDecision {
+  const latest = latestRestrictionSource(input.records);
+  const deciding =
+    input.state === "banned" &&
+    latest >= 0 &&
+    input.records[latest].action === "ban" &&
+    input.records[latest].actorRole === "vetting-service";
+  if (input.action === "quarantine" || input.action === "ban") {
+    if (input.action === "quarantine" && input.state !== "clear")
+      return {
+        kind: "refused",
+        status: 409,
+        code: "already_restricted",
+        message: `The project is already ${input.state}`,
+      };
+    if (input.action === "ban" && input.state === "banned" && !deciding)
+      return {
+        kind: "refused",
+        status: 409,
+        code: "already_restricted",
+        message: "The project is already banned",
+      };
+    // A malicious decision may close a kept project appeal and re-ban account
+    // appellants. Each appeal it closes needs its own independent reviewer.
+    let closesProjectAppeal = false;
+    let reBanned: string[] = [];
+    if (deciding) {
+      if (input.appeal === "requested") {
+        const kept = selectProjectAppeals(input.records, true, { kind: "all" });
+        if (kept.indices.length > 0) closesProjectAppeal = true;
+        else {
+          const open = openAccountIds(
+            input.records,
+            input.bannedAccounts,
+            input.bannedAccounts,
+          );
+          closesProjectAppeal = open.length === 0;
+        }
+      }
+      reBanned = openAccountIds(
+        input.records,
+        input.bannedAccounts,
+        input.responsibleAccounts,
+      );
+    }
+    if (closesProjectAppeal) {
+      const conflict = projectModeratorConflict(
+        input.records,
+        input.restrictedBy,
+        input.actorId,
+      );
+      if (conflict !== 0)
+        return {
+          kind: "refused",
+          status: 403,
+          code: "independent_review_required",
+          message:
+            conflict === 1
+              ? "A moderator who did not place this restriction must decide the appeal"
+              : "Another moderator must decide an appeal its author filed",
+        };
+    }
+    if (!accountModeratorIndependent(input.activeBans, reBanned, input.actorId))
+      return {
+        kind: "refused",
+        status: 403,
+        code: "independent_review_required",
+        message:
+          "A moderator who did not ban this account must decide its appeal.",
+      };
+    return {
+      kind: "plan",
+      stateAfter: input.action === "ban" ? "banned" : "quarantined",
+      appealAfter:
+        input.appeal !== "requested"
+          ? "none"
+          : closesProjectAppeal || reBanned.length > 0
+            ? "denied"
+            : "requested",
+      bansMaintainer: deciding,
+      revision: "retired",
+    };
+  }
+  let project = false;
+  if (input.state !== "clear") {
+    const pending = selectProjectAppeals(input.records, false, { kind: "all" });
+    project = pending.indices.length > 0;
+  }
+  if (input.action === "request_reinstatement") {
+    const isAccountAppeal =
+      containsAccount(input.bannedAccounts, input.actorId) &&
+      (!input.hasActorRole || input.actorRole === "banned-account");
+    if (input.state === "clear" && !isAccountAppeal)
+      return {
+        kind: "refused",
+        status: 409,
+        code: "not_restricted",
+        message: "The project has no restriction to appeal",
+      };
+    let open = project;
+    if (isAccountAppeal)
+      open = openAccountAppealSource(input.records, input.actorId) >= 0;
+    if (open)
+      return {
+        kind: "refused",
+        status: 409,
+        code: "appeal_open",
+        message: "A reinstatement request is already open",
+      };
+    return {
+      kind: "plan",
+      stateAfter: input.state,
+      appealAfter: "requested",
+      bansMaintainer: false,
+      revision: "none",
+    };
+  }
+  if (input.action === "reinstate_accounts") {
+    // An account release leaves the project appeal for its own decision.
+    if (input.appeal !== "requested" || input.bannedAccounts.length === 0)
+      return {
+        kind: "refused",
+        status: 409,
+        code: "no_open_appeal",
+        message: "Record an appeal before reinstating an account",
+      };
+    if (!project) {
+      let i = 0;
+      while (i < input.responsibleAccounts.length) {
+        //@ invariant 0 <= i && i <= input.responsibleAccounts.length
+        //@ invariant forall(k, 0 <= k && k < i ==> !UnappealedSelected(input.records, input.bannedAccounts, input.responsibleAccounts[k]))
+        const account = input.responsibleAccounts[i];
+        if (
+          containsAccount(input.bannedAccounts, account) &&
+          openAccountAppealSource(input.records, account) < 0
+        )
+          return {
+            kind: "refused",
+            status: 409,
+            code: "no_open_appeal",
+            message: "Record an appeal before reinstating an account",
+          };
+        i += 1;
+      }
+    }
+    if (
+      !accountModeratorIndependent(
+        input.activeBans,
+        input.responsibleAccounts,
+        input.actorId,
+      )
+    )
+      return {
+        kind: "refused",
+        status: 403,
+        code: "independent_review_required",
+        message:
+          "A moderator who did not ban this account must decide its appeal.",
+      };
+    const kept = selectProjectAppeals(input.records, true, { kind: "all" });
+    const open = openAccountIds(
+      input.records,
+      input.bannedAccounts,
+      input.bannedAccounts,
+    );
+    let remaining = false;
+    let i = 0;
+    while (i < open.length) {
+      //@ invariant 0 <= i && i <= open.length
+      //@ invariant remaining <==> exists(k, 0 <= k && k < i && !AccountListed(input.responsibleAccounts, open[k]))
+      if (!containsAccount(input.responsibleAccounts, open[i]))
+        remaining = true;
+      i += 1;
+    }
+    return {
+      kind: "plan",
+      stateAfter: input.state,
+      appealAfter:
+        (input.state !== "clear" && kept.indices.length > 0) || remaining
+          ? "requested"
+          : "granted",
+      bansMaintainer: false,
+      revision: "none",
+    };
+  }
+  // An account-only appeal cannot authorize project reinstatement. A denial
+  // without a project appeal decides the open accounts instead.
+  if (
+    input.state === "clear" ||
+    (input.action === "reinstate" ? !project : input.appeal !== "requested")
+  )
+    return {
+      kind: "refused",
+      status: 409,
+      code: "no_open_appeal",
+      message: "Record a reinstatement request before a decision",
+    };
+  if (input.action === "reinstate" || project) {
+    const conflict = projectModeratorConflict(
+      input.records,
+      input.restrictedBy,
+      input.actorId,
+    );
+    if (conflict !== 0)
+      return {
+        kind: "refused",
+        status: 403,
+        code: "independent_review_required",
+        message:
+          conflict === 1
+            ? "A moderator who did not place this restriction must decide the appeal"
+            : "Another moderator must decide an appeal its author filed",
+      };
+  } else {
+    const open = openAccountIds(
+      input.records,
+      input.bannedAccounts,
+      input.bannedAccounts,
+    );
+    if (!accountModeratorIndependent(input.activeBans, open, input.actorId))
+      return {
+        kind: "refused",
+        status: 403,
+        code: "independent_review_required",
+        message:
+          "A moderator who did not ban this account must decide its appeal.",
+      };
+  }
+  if (input.action === "deny_reinstatement") {
+    if (deciding)
+      return {
+        kind: "refused",
+        status: 409,
+        code: "malicious_decision_required",
+        message:
+          "A confirmed malicious result needs a decision: ban the project and its maintainer, or reinstate it",
+      };
+    return {
+      kind: "plan",
+      stateAfter: input.state,
+      appealAfter: "denied",
+      bansMaintainer: false,
+      revision: "none",
+    };
+  }
+  // Clearing a pending paused/retired revision would restore the old active
+  // listing. That revision must land before reinstatement can clear it.
+  if (input.manifestStatus !== "paused" || input.manifestTier !== "retired")
+    return {
+      kind: "refused",
+      status: 409,
+      code: "revision_pending",
+      message:
+        "Append the paused, retired revision of this restriction before reinstatement",
+    };
+  return {
+    kind: "plan",
+    stateAfter: "clear",
+    appealAfter: "granted",
+    bansMaintainer: false,
+    revision:
+      input.listedBefore && input.manifestTier === "retired"
+        ? "community"
+        : "none",
+  };
+}
+
+export type RestrictionStart =
+  | { kind: "absent" }
+  | { kind: "at"; value: string };
+export type ScanReinstatementDecision =
+  | { kind: "unchanged" }
+  | { kind: "reinstate"; stateAfter: string; appealAfter: string };
+
+/** A fresh matching scan lifts only the latest contributor-flags quarantine. */
+//@ verify
+//@ ensures \result == FlagScanPlan(records, state, appeal, since, requestedAt, content, currentContent)
+export function planFlagScanReinstatement(
+  records: readonly EnforcementHistoryRow[],
+  state: string,
+  appeal: string,
+  since: RestrictionStart,
+  requestedAt: string,
+  content: string,
+  currentContent: string,
+): ScanReinstatementDecision {
+  if (state !== "quarantined" || since.kind === "absent")
+    return { kind: "unchanged" };
+  const latest = latestRestrictionSource(records);
+  if (latest < 0 || records[latest].actorRole !== "contributor-flags")
+    return { kind: "unchanged" };
+  if (requestedAt < since.value || content !== currentContent)
+    return { kind: "unchanged" };
+  return {
+    kind: "reinstate",
+    stateAfter: "clear",
+    appealAfter: appeal === "requested" ? "granted" : "none",
+  };
+}
