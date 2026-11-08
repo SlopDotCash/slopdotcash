@@ -1680,9 +1680,12 @@ async function ownerSetupWorkflow(
       await page.request.post(`${origin}/__fixture`, {
         data: { permitted: true },
       });
-      // Private balances never resolve through the public funding route. Async
-      // config and parse errors must retain its established JSON response.
-      for (const data of [fundingBody, Buffer.from("{")]) {
+      // Private balances never resolve through the public funding route.
+      // Invalid input is rejected before any registry configuration lookup.
+      for (const [data, status, error] of [
+        [fundingBody, 503, "payments_unavailable"],
+        [Buffer.from("{"), 400, "invalid_funding_action"],
+      ] as const) {
         const rejected = await page.request.post(
           `${origin}/api/v1/payments/projects/${project.id}/solana-funding`,
           {
@@ -1690,10 +1693,8 @@ async function ownerSetupWorkflow(
             data,
           },
         );
-        expect(rejected.status()).toBe(503);
-        expect(await rejected.json()).toEqual({
-          error: "payments_unavailable",
-        });
+        expect(rejected.status()).toBe(status);
+        expect(await rejected.json()).toEqual({ error });
       }
       const scan = await page.request.post(`${origin}/__fixture`, {
         data: { scanSecurity: true },

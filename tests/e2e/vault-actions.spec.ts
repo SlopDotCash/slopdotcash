@@ -1677,7 +1677,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
   }
 });
 
-test("owner funds a separate bounty vault with private balances and no monthly reward", async ({
+test("owner registers a separate bounty vault through the API and funds it privately", async ({
   diagnostics,
   page,
 }, info) => {
@@ -1904,32 +1904,41 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       name: "Set up bounty vault",
       exact: true,
     });
-    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    // New bounty-vault creation is not offered by the current owner UI. The
+    // retained setup API still admits existing vaults used by private funding.
+    await expect(setup).toHaveCount(0);
     await expect(
-      setup.getByRole("combobox", { name: /^Automatic monthly payment/ }),
+      page.getByRole("combobox", { name: /^Automatic monthly payment/ }),
     ).toHaveCount(0);
-    const reviewButton = setup.getByRole("button", {
-      name: "Review vault creation",
+    const input = {
+      expectedRevision: 1,
+      claimId: claim.claimId,
+      network: "base-sepolia",
+      automatic: false,
+      payoutPolicy: "security-bounty",
+    };
+    const reviewed = await api(`project-vaults/${id}`, {
+      ...input,
+      step: "review",
     });
-    await expect(reviewButton).toBeEnabled();
-    await reviewButton.focus();
-    await expect(reviewButton).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(setup).toContainText(
-      "Security bounty: 75% researcher, 25% Slop",
+    expect(reviewed.review.family).toBe("evm");
+    expect(reviewed.review.payoutPolicy).toBe("security-bounty");
+    expect(reviewed.review.cap).toBe("0");
+    expect(reviewed.review.automatic).toBe(false);
+    expect(reviewed.review.transaction.from.toLowerCase()).toBe(donor);
+    sends.push(
+      await rpc("eth_sendTransaction", [
+        { ...reviewed.review.transaction, gas: "0x600000" },
+      ]),
     );
-    await page.screenshot({
-      path: info.outputPath("bounty-vault-review.png"),
-      fullPage: true,
+    await rpc("anvil_mine", ["0x40"]);
+    await api(`project-vaults/${id}`, {
+      ...input,
+      step: "register",
+      transactionId: sends[0],
     });
-    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
-    await expect.poll(() => sends.length).toBe(1);
     await page.reload({ waitUntil: "networkidle" });
     await openProjectSecuritySettings(page);
-    await rpc("anvil_mine", ["0x40"]);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
     await expect(setup).toHaveCount(0);
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     const created =

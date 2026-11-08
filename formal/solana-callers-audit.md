@@ -134,7 +134,7 @@ hashes and exact results are recorded under ignored
 No production handler, economic policy, signing authority, chain identifier,
 program bytes or expected transaction result was changed. Local synthetic-chain
 evidence is not public-network availability, deployment or production funding.
-# Resumed fixture corrections
+## Resumed fixture corrections
 
 The next combined run passed four cases and failed four, with six not reached.
 Its two EVM failures occurred after reload selected the current calendar month;
@@ -146,3 +146,18 @@ through that API, retain wrong-signature and retained-domain checks, and then
 exercise the existing private funding/withdrawal UI. This does not restore a
 removed product control or change bounty policy. Final repeated results remain
 required; prior failures stay in the isolated lane's evidence.
+
+The next full matrix passed ten cases and failed four: both viewports reached
+the retained Solana bounty flow's incorrect malformed-input expectation, and
+the EVM bounty flow still used the removed creation control. The public funding
+route correctly returns `400 invalid_funding_action` for malformed JSON before
+resolving configuration. A well-formed private-vault request through that public
+route remains refused with `503 payments_unavailable`. The fixture now asserts
+both results separately. The EVM fixture also uses the retained review and
+registration API before exercising the current private funding controls.
+
+All four corrected Solana/EVM bounty cases passed in Chromium desktop/mobile,
+including actual local-chain transfers, private balance refresh, temporary
+failure retention, authority refusal and accessibility. Their evidence is under
+`evidence/formal/resumed-vault/bounty-corrected-results/`. This focused pass does
+not replace the required final combined matrix or public-network acceptance.
