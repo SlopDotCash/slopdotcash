@@ -202,6 +202,7 @@
       "models": [
         "formal/models/api_inbox.qnt",
         "formal/models/api_mail_delivery.qnt",
+        "formal/models/points_dispute_decision.qnt",
         "formal/models/points_dispute_intake.qnt",
         "formal/models/points_dispute_lease.qnt"
       ],
@@ -400,6 +401,7 @@
       "sha256": "deeed15066a2a88aff6a959b49d481fe258d0ddcf7587cb8543996737f75722a",
       "models": [
         "formal/models/api_points_disputes.qnt",
+        "formal/models/points_dispute_decision.qnt",
         "formal/models/points_dispute_intake.qnt",
         "formal/models/points_dispute_lease.qnt"
       ],
@@ -2740,6 +2742,7 @@
       "sha256": "bbaed8641ab21f7652df9d8a4284d4ab60a588794cdbb11970a6c81f70a6287c",
       "models": [
         "formal/models/api_points_disputes.qnt",
+        "formal/models/points_dispute_decision.qnt",
         "formal/models/points_dispute_intake.qnt",
         "formal/models/points_dispute_lease.qnt"
       ],
@@ -10245,6 +10248,33 @@
         "exactProbeReadyTest",
         "wrongChainRefusedTest",
         "wrongRegistryRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points_dispute_decision.qnt",
+      "sha256": "3dc4c5020078bba5849b731597a63f701abf22667b05c1e9fe5fcb1f8a3ba804",
+      "sources": [
+        "backend/notifications/events.ts",
+        "backend/points/disputes.ts",
+        "migrations/0114_points_dispute_intake.sql"
+      ],
+      "scenarios": [
+        "admittedRetryMayCompleteAfterResolutionTest",
+        "changedReasonCannotReplaceDecisionTest",
+        "decisionFailureDoesNotNotifyTest",
+        "decisionRequiresEscalationTest",
+        "firstModeratorCommitWinsTest",
+        "identicalDecisionRetryIsIdempotentTest",
+        "independentModeratorCanReadReviewTest",
+        "malformedDecisionDoesNotWriteTest",
+        "matchingOutcomeFromAnotherModeratorConflictsTest",
+        "moderatorCannotReadBeforeEscalationTest",
+        "recipientCanReadTriageTest",
+        "recipientCanRetryBeforeEscalationTest",
+        "recipientCannotDecideOwnDisputeTest",
+        "resolvedDisputeRefusesNewRetryTest",
+        "resolvedReadRemovesDecisionControlTest",
+        "unrelatedActorCannotReadTest"
       ]
     },
     {

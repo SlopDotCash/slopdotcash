@@ -1,8 +1,9 @@
-# Points dispute worker ownership
+# Points dispute intake, worker ownership and decisions
 
 This separate follow-up starts from `a8b0f8226`. It adds a source-reviewed
 model without changing application behavior. No parser, test, simulation or
-verifier was run here. All fifteen named scenarios are unexecuted.
+verifier was run here. The initial fifteen worker scenarios and the additional intake and decision
+scenarios are unexecuted.
 
 `api_points_disputes` represents intake, escalation and independent resolution.
 It does not represent the worker lease. The new `points_dispute_lease` models
@@ -68,6 +69,32 @@ retained dispute. The source tests cover identical retry after a correction,
 a correction between source read and insertion, first-statement retention,
 authority and notification deduplication. Database rollback and admission
 classes remain explicit assumptions until their exact scenarios are executed.
-Neither model yet establishes all detail-read, pagination, retry-response or
-concurrent moderator-decision interleavings. The older `api_points_disputes`
-model's single happy-path scenario does not close those remaining flows.
+The intake and worker models do not establish detail reads, pagination or
+moderator decisions. The decision model below adds a separate finite boundary
+for those stateful decisions; pagination remains outside these models.
+
+## Independent decisions and delayed retry responses
+
+`points_dispute_decision` adds sixteen unexecuted scenarios. One recipient and
+two independent moderators make at most two requests. Only the recipient can
+read before escalation. After escalation, configured independent moderators
+can read and decide; listing the recipient as a moderator does not permit
+self-resolution. A successful decision and the resolved notification share an
+atomic batch. Competing decisions retain the first result, actor and reason.
+An exact retry succeeds; a different actor, result or reason conflicts.
+
+Retry admission and completion are separate. A retry admitted while unresolved
+may return accepted after another request resolves the dispute. That observed
+202 response does not reverse the decision or mean that triage has run. The
+worker model independently refuses a resolved row. Likewise a detail response
+is an observation at its read, not a promise of continued decision authority.
+
+The source's moderator set is a request dependency. The model treats moderator
+membership as captured for each request; it does not add a new cross-request
+role revocation protocol. Each model uses the same immutable-source and
+first-decision boundary, but these are manually composed abstractions, not a
+mechanical proof of the complete handler. Cursor parsing, list pagination,
+malformed JSON, arbitrary body sizes and asynchronous response transport
+remain separate grammar/read-path acceptance requirements. Existing handler
+tests cover moderation independence, resolved reads, exact/conflicting
+retries and simultaneous moderator decisions. Those tests were only read here.
