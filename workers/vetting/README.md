@@ -190,7 +190,10 @@ or spend provider tokens as a deployment fallback.
 A service failure publishes nothing: an unavailable source or a failed
 primary or specialist review leaves the assessment pending, and the next pass
 retries it. Repository size is never a refusal. A policy refusal of the bound
-assignment, such as an invalid tree path or a repository identity mismatch,
+assignment, such as an invalid tree path, a repository identity mismatch or a
+registered repository that GitHub reports missing (404: deleted, hidden or
+private) or redirects (3xx: renamed or transferred before a revision records
+the current path; a rate limit or outage still retries),
 instead publishes an incomplete result and notifies each owner once. It
 records the fixed refusal reason. Every
 surface is unsupported, every threat check is not run, and the configured
@@ -371,6 +374,17 @@ without an error type). Timeouts,
 model mismatches and stop reasons are not retried. Each retry waits 2 s times
 its attempt number, counts against a cache's `maxCallsPerPass`, and adds its
 usage and cost to the call it retried; the pass records `attempts`.
+
+A review the provider declines (`stop-refusal` or
+`incomplete-content_filter`, in a single call, any batch or the synthesis)
+is the one failed review that is not a service failure: the same pinned
+content is declined again on every pass, and a batched review would spend
+its whole call budget each time. The scan publishes once as incomplete,
+with that review recorded as `failed` against the assessed inventory and
+no further model call (no specialist after a declined primary review). The
+pass report shows `published` with the declined review's category as
+`reason`. Like every incomplete result it does not establish clearance;
+an administrator can queue a fresh scan.
 
 Estimated primary-review input at 3 bytes per token (real tokenizers report
 fewer), measured on the real acquisitions of 28 October 2026:

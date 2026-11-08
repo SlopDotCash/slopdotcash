@@ -157,7 +157,9 @@ export async function acquireQueuedAssessment(
     return baseFetch(input, {
       ...init,
       headers: Object.fromEntries(headers),
-      redirect: "error",
+      // No read follows a redirect. The repository identity read alone asks
+      // for the redirect response itself, to refuse a moved repository.
+      redirect: init?.redirect === "manual" ? "manual" : "error",
       signal: AbortSignal.any([
         deadline,
         ...(init?.signal ? [init.signal] : []),
@@ -201,13 +203,34 @@ export async function acquireQueuedAssessment(
   const currentPath = new URL(
     manifest.repositories[0].githubUrl,
   ).pathname.replace(/^\/|\/$/gu, "");
-  const repositoryIdentity = json(
-    await bytes(fetcher, `https://api.github.com/repos/${currentPath}`, {
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-      "user-agent": "slop-vetting-acquisition",
-    }),
+  const identityResponse = await fetcher(
+    `https://api.github.com/repos/${currentPath}`,
+    {
+      method: "GET",
+      headers: {
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "slop-vetting-acquisition",
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+    },
   );
+  // GitHub answers 404 for a deleted, hidden or private repository: the
+  // pinned public source cannot be acquired, so a retry of the same pin
+  // cannot pass. Rate limits and outages stay retryable.
+  if (identityResponse.status === 404) {
+    await identityResponse.body?.cancel();
+    throw refusal(new AcquisitionRefusal("Repository not found on GitHub"));
+  }
+  // GitHub redirects a renamed or transferred repository. The manifest still
+  // names the old path, so the pinned source is not acquired until a revision
+  // records the current one; the same pin is redirected on every pass.
+  if (identityResponse.status >= 300 && identityResponse.status < 400) {
+    await identityResponse.body?.cancel();
+    throw refusal(new AcquisitionRefusal("Repository moved on GitHub"));
+  }
+  const repositoryIdentity = json(await pinnedBytes(identityResponse));
   if (
     !Number.isSafeInteger(repositoryIdentity.id) ||
     String(repositoryIdentity.id) !== manifest.authority.repositoryId ||

@@ -10,7 +10,8 @@
  * A service failure (an unavailable queue, source or provider) publishes
  * nothing and leaves the assessment pending, so the next pass retries it.
  * A bound acquisition-policy refusal publishes an incomplete result instead;
- * no source inspection or model review is claimed.
+ * no source inspection or model review is claimed. A review the provider
+ * declines also publishes an incomplete result, naming the failed review.
  * A clean result is never published without its retained evidence. An
  * incomplete result records quarantine even when evidence storage fails.
  * A published attempt is journaled and never sent again; an uncertain or
@@ -58,6 +59,7 @@ import {
 import { type ReviewCache, reviewInventory } from "./review-plan";
 import {
   PINNED_SCANNER_PROFILES,
+  reviewDeclined,
   type ScannerProfile,
   validateProfile,
 } from "./scanners";
@@ -136,6 +138,11 @@ export type AssessmentOutcome =
       outcome: "accepted" | "rejected" | "unknown";
       specialist: boolean;
       evidence: "retained" | "failed";
+      /**
+       * Set only when a provider declined a review, which ends the scan
+       * incomplete: the declined review's fixed failure category.
+       */
+      reason?: string;
     }
   | {
       assessmentId: string;
@@ -561,13 +568,19 @@ async function scanOne(
           cache: config.review?.cache,
         })
       ).evidence;
-    // A failed review is a service failure, never an incomplete scan. A
+    // A failed review is a service failure and retries next pass, except a
+    // review the provider declined: the same pinned content is declined
+    // again, so the scan publishes as incomplete with the failed review. A
     // batched review that ran out of its per-pass budget resumes next pass.
     const primary = await review(config.primary);
     if (primary === null)
       return { assessmentId, state: "retry", step: "review-batches" };
-    if (primary.review.status !== "completed")
-      return reviewRetry(assessmentId, "primary-review", primary.failure);
+    let declined: string | undefined;
+    if (primary.review.status !== "completed") {
+      if (!reviewDeclined(primary.failure))
+        return reviewRetry(assessmentId, "primary-review", primary.failure);
+      declined = primary.failure;
+    }
     const runId = `scan_${(config.randomId ?? randomUUID)().replaceAll("-", "")}`;
     const queued = { ...assessment, repository: inputs.repository };
     const compose = (specialist: typeof primary | null) =>
@@ -586,12 +599,15 @@ async function scanOne(
       });
     let composed = compose(null);
     let specialist = false;
-    if (composed.needsSpecialist) {
+    if (declined === undefined && composed.needsSpecialist) {
       const second = await review(config.specialist);
       if (second === null)
         return { assessmentId, state: "retry", step: "review-batches" };
-      if (second.review.status !== "completed")
-        return reviewRetry(assessmentId, "specialist-review", second.failure);
+      if (second.review.status !== "completed") {
+        if (!reviewDeclined(second.failure))
+          return reviewRetry(assessmentId, "specialist-review", second.failure);
+        declined = second.failure;
+      }
       composed = compose(second);
       specialist = true;
     }
@@ -659,6 +675,7 @@ async function scanOne(
       outcome: receipt.outcome,
       specialist,
       evidence: retained ? "retained" : "failed",
+      ...(declined === undefined ? {} : { reason: declined }),
     };
   } finally {
     await rm(directory, { recursive: true, force: true });

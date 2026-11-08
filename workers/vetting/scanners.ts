@@ -128,6 +128,20 @@ const STOP_REASONS = new Set([
   "stop_sequence",
 ]);
 const INCOMPLETE_REASONS = new Set(["max_output_tokens", "content_filter"]);
+/** The provider declined to review the supplied content (Messages and Responses). */
+const DECLINED: ReadonlySet<string> = new Set([
+  "stop-refusal",
+  "incomplete-content_filter",
+]);
+/**
+ * True when a failed review, single or batched (`batch-<n>-of-<count>:` or
+ * `synthesis:` prefix), ended because the provider declined the content.
+ * The same pinned content is declined again on every pass, so the scanner
+ * records the scan as incomplete instead of retrying it.
+ */
+export const reviewDeclined = (failure: string | undefined): boolean =>
+  failure !== undefined &&
+  DECLINED.has(failure.slice(failure.indexOf(":") + 1));
 class ReviewFailure extends Error {
   constructor(readonly category: ReviewFailureCategory) {
     super(category);
