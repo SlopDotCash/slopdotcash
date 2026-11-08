@@ -15,8 +15,8 @@ previously separate completion fixes. The preserved source heads are:
 | Private Points UI | `08a837c84` |
 
 The assembly is based on corrective head `22b0fd511`, not the later
-`d528a8b00` development cleanup. Final alignment waits for the reviewer's
-corrective integration and handoff. All earlier standalone branches remain
+cleanup-aware development merge `69229342`. Final alignment waits for the
+reviewer's merged-source verification and handoff. All earlier standalone branches remain
 available. No application, parser, simulation, verifier or browser checks ran
 in this lane; regenerated inventories and source comparisons do not prove
 this combined candidate works. Independent evidence below retains its exact
@@ -61,9 +61,21 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-839 production sources, 326 finite models and 1,727 named scenarios, with zero
+839 production sources, 330 finite models and 1,791 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
+
+The latest source-only batch adds four models and 64 unexecuted scenarios.
+Earnings now stops departed wallet continuations, binds each wallet action to
+its initiating account, and sends that expected actor to the payments API.
+Owner vault setup retains only its own pending creation and registration
+record. Referral claims serialize cooperating browser views with Web Locks
+and compare saved records before replacing or clearing them. The authored
+browser and handler regressions have not run. See
+`earnings-wallet-lifetime-audit.md`, `earnings-actor-binding-audit.md`,
+`owner-vault-setup-audit.md`, and `referral-claim-lifetime-audit.md`.
+The regenerated function inventory lists 9,886 bodies in 684 files and the
+same 168 selected contracts; it does not prove the remaining bodies.
 
 ## Integrated corrections
 

@@ -182,3 +182,30 @@ refuses that mismatch before grant creation or audit. Reader error paths also
 clear on authoritative refusal and recheck identity before retaining other
 errors. The new handler/SQLite assertions cover the refused write boundary;
 they have not been executed here.
+
+## Separate wallet lifetime and account corrections
+
+Source inspection found that Earnings and owner vault setup could open a
+wallet prompt after leaving their view. Their later callbacks could also
+start another chain or replace a newer recovery record. The new lifetime and
+record guards stop those continuations while retaining already accepted
+server facts and owned transaction evidence.
+
+Earnings also lacked an initiating-account check before registering a newly
+connected wallet. If its session changed from A to B while connection waited,
+the normal API could register and authorize B's new claim from A's old view.
+Fresh browser observations and the API's optional expected-actor admission
+now preserve that boundary. Existing per-claim signature checks remain in
+force. The change does not cancel an already open prompt or reverse an
+accepted A request.
+
+Referral claims shared one localStorage recovery slot without serialization
+or record ownership. A late wallet result could overwrite or clear a later
+request. A per-key Web Lock, UUID ownership and exact-record cleanup preserve
+cooperating browser views and refuse changed records. The source retains
+legacy and unknown outcomes and does not activate a referral program.
+
+Four new models contain 64 unexecuted scenarios. New or extended browser and
+handler workflows are also unexecuted. These are source-confirmed corrections,
+not passing runtime reproductions or a complete application-state proof.
+The four area audits describe their finite bounds and remaining acceptance.

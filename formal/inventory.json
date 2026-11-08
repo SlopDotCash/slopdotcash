@@ -165,6 +165,7 @@
       "sha256": "e651ccb0701b9d09071310442b0a37b34f0aff6740a7ce02c3e465c97b05b6c0",
       "models": [
         "formal/models/api_request_composition.qnt",
+        "formal/models/ui_earnings_actor_binding.qnt",
         "formal/models/vetting_evidence_access.qnt"
       ],
       "candidateLines": [
@@ -277,17 +278,18 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "6926d8210f6cb1012f0891eb1f8b59f8fef40ab9edafc5692f2f9c2d207a0fba",
+      "sha256": "16f7037d09661dce09789c615702906f9acad12b4f85f63fe4cef54cee702feb",
       "models": [
         "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/binding_consent_renewal.qnt",
         "formal/models/effective_wallet_history.qnt",
         "formal/models/monthly_owner_completion.qnt",
-        "formal/models/payment_history.qnt"
+        "formal/models/payment_history.qnt",
+        "formal/models/ui_earnings_actor_binding.qnt"
       ],
       "candidateLines": [
-        104, 184, 251, 295, 300, 347, 369, 375, 398, 420, 613, 634, 648, 768,
-        824, 862, 871, 882, 1021, 1084, 1101, 1191, 1192, 1246
+        106, 186, 253, 297, 302, 349, 371, 377, 400, 422, 622, 643, 657, 777,
+        833, 871, 880, 891, 1030, 1093, 1110, 1200, 1201, 1255
       ],
       "review": "mapped-abstraction"
     },
@@ -395,6 +397,7 @@
         "formal/models/effective_wallet_history.qnt",
         "formal/models/payment_binding.qnt",
         "formal/models/pr_review_identities.qnt",
+        "formal/models/ui_earnings_actor_binding.qnt",
         "formal/models/ui_private_case_revisions.qnt"
       ],
       "candidateLines": [68],
@@ -4189,12 +4192,16 @@
     },
     {
       "path": "src/Earnings.tsx",
-      "sha256": "1e92796caa39e42e7a97ceb83c987cba96ab4b6f8eb83c87110ac1247bda70bd",
-      "models": ["formal/models/ui_wallet_choice.qnt"],
+      "sha256": "1e5977ea7b569761c69aba284b0c8eb49ac620bf6ead73a4c2fec9bce2b46ec6",
+      "models": [
+        "formal/models/ui_earnings_actor_binding.qnt",
+        "formal/models/ui_earnings_wallet_lifetime.qnt",
+        "formal/models/ui_wallet_choice.qnt"
+      ],
       "candidateLines": [
-        11, 105, 107, 111, 145, 153, 169, 195, 208, 210, 211, 212, 213, 214,
-        215, 216, 217, 225, 229, 236, 240, 278, 286, 303, 319, 354, 527, 551,
-        555, 579, 581, 587, 605, 613, 632, 646, 777, 789, 850
+        11, 118, 122, 126, 130, 164, 172, 188, 214, 227, 229, 230, 231, 232,
+        233, 234, 235, 236, 245, 261, 269, 273, 329, 337, 373, 400, 451, 636,
+        660, 664, 688, 690, 696, 714, 722, 741, 755, 886, 898, 959
       ],
       "review": "mapped-abstraction"
     },
@@ -4381,12 +4388,16 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "5597cc5dbbed211cae48e2f234740c48cc8e1a63b46287de2aa64003747fd29a",
-      "models": ["formal/models/ui_transaction.qnt"],
+      "sha256": "abf227005d8b1a5ec7662834369b801dd3ba2784c5addb93349f113dfd6ae8ff",
+      "models": [
+        "formal/models/ui_owner_vault_setup.qnt",
+        "formal/models/ui_transaction.qnt"
+      ],
       "candidateLines": [
-        1, 26, 49, 51, 57, 60, 91, 93, 95, 98, 100, 104, 105, 106, 107, 108,
-        109, 112, 113, 114, 115, 125, 126, 128, 130, 182, 190, 309, 317, 330,
-        336, 337, 341, 357, 378, 381, 562, 573, 592, 607, 619
+        1, 15, 33, 56, 58, 64, 67, 99, 103, 105, 110, 117, 118, 120, 124, 125,
+        126, 127, 128, 129, 132, 133, 134, 135, 145, 146, 148, 150, 216, 218,
+        228, 238, 334, 384, 403, 411, 415, 417, 429, 440, 441, 445, 464, 485,
+        488, 688, 699, 721, 726, 741, 756
       ],
       "review": "mapped-abstraction"
     },
@@ -4648,12 +4659,15 @@
     },
     {
       "path": "src/ReferralClaims.tsx",
-      "sha256": "e5c58635dfd1859442f00a3d0c60909032d900da6ed2e98a2f2b0776ead5b234",
-      "models": ["formal/models/ui_transaction.qnt"],
+      "sha256": "172f3bf2cd764d430725589f847b13fdacac79a93b6ae7270b4f3b5e05f85c4e",
+      "models": [
+        "formal/models/ui_referral_claim_lifetime.qnt",
+        "formal/models/ui_transaction.qnt"
+      ],
       "candidateLines": [
-        1, 17, 25, 26, 30, 43, 54, 55, 56, 57, 58, 59, 63, 66, 68, 71, 77, 89,
-        138, 148, 154, 183, 192, 212, 213, 222, 223, 225, 226, 233, 234, 236,
-        237, 253, 254, 255, 257, 272, 359
+        1, 11, 24, 32, 34, 42, 79, 80, 81, 82, 83, 84, 88, 93, 102, 105, 108,
+        115, 127, 190, 215, 225, 231, 275, 282, 292, 321, 363, 399, 422, 430,
+        431, 440, 441, 443, 444, 451, 452, 454, 455, 471, 472, 473, 475, 566
       ],
       "review": "mapped-abstraction"
     },
@@ -5277,12 +5291,14 @@
     },
     {
       "path": "src/lib/pending-attempt.ts",
-      "sha256": "8613b212874742f051a092a1a1755b4f31b3f11136381c6ad9e17134263bd6e2",
+      "sha256": "404f1c5f90868a9594690fb0af942311ea782a5ccf365e1b6cc901e2dc875e3b",
       "models": [
         "formal/models/ui_owner_recovery_lifetime.qnt",
+        "formal/models/ui_owner_vault_setup.qnt",
+        "formal/models/ui_referral_claim_lifetime.qnt",
         "formal/models/ui_solana_payment_pending.qnt"
       ],
-      "candidateLines": [40, 64],
+      "candidateLines": [44, 68],
       "review": "mapped-abstraction"
     },
     {
@@ -5672,6 +5688,7 @@
       "sha256": "a5162d0931e0f6dc42043c176457fbf206dabc2045489ff99304f11ee7af6647",
       "models": [
         "formal/models/solana_owner_action.qnt",
+        "formal/models/ui_owner_vault_setup.qnt",
         "formal/models/ui_vault_recovery.qnt"
       ],
       "candidateLines": [96, 99, 235, 236, 237, 239, 240],
@@ -5718,7 +5735,10 @@
     {
       "path": "src/lib/use-payout-wallets.ts",
       "sha256": "20b19c38549dab4b35a68558455a3411552d099c6ab9822077b252ede2384493",
-      "models": ["formal/models/ui_wallet_choice.qnt"],
+      "models": [
+        "formal/models/ui_owner_vault_setup.qnt",
+        "formal/models/ui_wallet_choice.qnt"
+      ],
       "candidateLines": [9, 172, 173, 184, 462, 478, 479, 498, 500, 501, 504],
       "review": "mapped-abstraction"
     },
@@ -11424,6 +11444,51 @@
       ]
     },
     {
+      "path": "formal/models/ui_earnings_actor_binding.qnt",
+      "sha256": "c3ca8019e378eb9c9b7063b380b13d9e65fb8bd6c4890b545544b5d671abc46c",
+      "sources": [
+        "backend/http.ts",
+        "backend/payments/handler.ts",
+        "backend/payments/wallet-registration.ts",
+        "src/Earnings.tsx"
+      ],
+      "scenarios": [
+        "acceptedAAuthorizationCannotStartBChainTest",
+        "acceptedRegistrationIsRetainedOnSwapTest",
+        "changedChallengeActorCannotSignTest",
+        "connectionReturnAfterActorSwapStopsTest",
+        "differentAccountReadClearsOldDataTest",
+        "headerCatchesSwapAfterFreshCheckTest",
+        "lateSignatureCannotAuthorizeBTest",
+        "sameAccountMayAuthorizeTest",
+        "signOutClearsAccountBeforePromptTest",
+        "unavailableSessionDoesNotAdvanceTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_earnings_wallet_lifetime.qnt",
+      "sha256": "a29cae739d4efdf4dad1013aa950fae1c65d2e6ec01790d2e9626c7d7859c9ce",
+      "sources": ["src/Earnings.tsx"],
+      "scenarios": [
+        "acceptedAuthorizationSurvivesDepartureTest",
+        "acceptedRegistrationSurvivesLostResponseTest",
+        "confirmedMatchingWalletSkipsNewSignaturesTest",
+        "currentConnectionFailureTest",
+        "currentTwoChainSuccessTest",
+        "departedBeforeRegistrationRefusesStartTest",
+        "departedChallengeCannotPromptTest",
+        "departedConnectionStopsRegistrationTest",
+        "departedRegistrationKeepsAcceptedRowTest",
+        "departedSignatureCannotAuthorizeTest",
+        "invalidChallengeRefusesSignatureTest",
+        "keepSavedStartsNoRegistrationTest",
+        "oldConnectionCannotResetNewInstanceBusyTest",
+        "replacedOperationCannotResetBusyTest",
+        "replacementConsentStartsNewOperationTest",
+        "replacementNeedsConsentTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_email.qnt",
       "sha256": "61f08c34ad3389623fe38662562fb4ae885553b41661558f1137b1273deb9b1f",
       "sources": ["src/InboxEmail.tsx"],
@@ -11733,6 +11798,36 @@
       ]
     },
     {
+      "path": "formal/models/ui_owner_vault_setup.qnt",
+      "sha256": "c3f4eaf453bc62e0a13b27c15da4d725faa04c75c0dccf056d9ae5f74873d84c",
+      "sources": [
+        "src/OwnerVaultSetup.tsx",
+        "src/lib/pending-attempt.ts",
+        "src/lib/solana-vault-actions.ts",
+        "src/lib/use-payout-wallets.ts"
+      ],
+      "scenarios": [
+        "changedChoiceInvalidatesWaitingReviewTest",
+        "connectReviewCreateRegisterTest",
+        "departedConnectDoesNotPublishWalletTest",
+        "departedFreshReviewDoesNotPromptTest",
+        "departedRegistrationDoesNotNotifyParentTest",
+        "departedReviewDoesNotPublishReviewTest",
+        "departedWalletCheckDoesNotStartReviewTest",
+        "departedWalletMayRetainOwnedHashTest",
+        "existingVaultRecoversWithoutConnectingTest",
+        "failedHashWriteKeepsRecoveryInputTest",
+        "legacyRequestCanRegisterTest",
+        "oldDeclineDoesNotEraseNewReservationTest",
+        "oldHashDoesNotReplaceNewReservationTest",
+        "parentCallbackFailureKeepsRecoveryRecordTest",
+        "pendingRegistrationRetainsRequestTest",
+        "storageFailureDoesNotPromptTest",
+        "supersededRegistrationCannotClearChangedHashTest",
+        "supersededReviewCannotReplaceCurrentReviewTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_payout_consent.qnt",
       "sha256": "e8b60bb1f1b267de75f4a722e69e5bbcb81064ac244e78d6a7ba0b4e14a43948",
       "sources": ["src/PayoutConsent.tsx", "src/lib/payout-consent.ts"],
@@ -12007,6 +12102,33 @@
         "noPrematurePaidTest",
         "reportRevisionHistoryTest",
         "verifiedTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_referral_claim_lifetime.qnt",
+      "sha256": "552b000c3b961446aef3fe572a9fb59471e684d23e34b12f8b23f36d0113c42f",
+      "sources": ["src/ReferralClaims.tsx", "src/lib/pending-attempt.ts"],
+      "scenarios": [
+        "activeWalletBlocksResetTest",
+        "activeWalletResetRefusesTest",
+        "changedBytesRejectLateDeclineTest",
+        "departedPreflightCannotPromptTest",
+        "departedPreflightPromptRefusesTest",
+        "failedHashWriteRetainsCapturedMarkerTest",
+        "failedInitialStorageCannotPromptTest",
+        "insufficientClaimedAmountCannotClearTest",
+        "lateDeclineClearsOwnMarkerTest",
+        "lateOwnedHashPersistsTest",
+        "legacyMarkerCanBeVerifiedTest",
+        "newerCapturedBytesRefuseOldVerificationTest",
+        "olderLegacyCannotConfirmNewerLocalClaimTest",
+        "replacedUuidRejectsLateHashTest",
+        "secondViewCannotOverlapPreflightTest",
+        "terminatedContextAllowsExplicitRecoveryTest",
+        "unknownResultRetainsMarkerTest",
+        "unreadableMarkerCannotStartSendTest",
+        "unreadableMarkerRequiresExplicitResetTest",
+        "unsupportedLocksRefuseMutationTest"
       ]
     },
     {
