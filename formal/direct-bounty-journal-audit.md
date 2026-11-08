@@ -41,12 +41,35 @@ matching in-memory entry and reports the hash for manual retention. If a newer
 entry owns the nonce, the old completion does not replace it and instead
 reports its submitted hash. No whole key is cleared by these operations.
 
+## Failed-write readback correction
+
+Source review found that rereading storage during `check()` could replace a
+known in-memory wallet hash with the earlier null marker after its write had
+failed. The check now carries that known hash into the fresh record only when
+request ID and exact transaction still match and the stored hash is null. A
+newer stored hash is retained. If persistence still fails, the known in-memory
+hash remains and a notice tells the user to retain it; verification is not
+called with an empty list. Displayed and submitted hash selection now use the
+same precedence: an unedited input uses the saved candidate or known hash;
+an explicitly cleared input selects no hash. Clearing the visible input cannot
+silently resubmit an earlier saved candidate. The known hash remains retained
+in the journal even when a user clears the input.
+
+A final synchronous mounted check immediately precedes nonce reservation.
+Unmount during the last wallet RPC therefore cannot start a new prompt. An
+already-open prompt may still complete and merge its own evidence after
+unmount; it cannot touch another reservation.
+
 ## Model and limits
 
 `direct_bounty_journal.qnt` models two instances, two nonces and three prompt
-identities. Seven authored scenarios describe cross-leg merging, same-nonce
+identities. Fifteen authored scenarios describe cross-leg merging, same-nonce
 ABA completion/rejection, duplicate-prompt refusal, failed marker/hash writes
-and a retained legacy candidate. None has been executed.
+and a retained legacy candidate. Follow-up scenarios cover check after a failed
+hash write, repeated storage failure, newer stored evidence, same-nonce
+replacement, component departure, and an explicitly cleared recovery input.
+The legacy retention assertion and refused replacement use separate scenarios
+so the refused action is terminal. None has been executed.
 
 The synchronous read/modify/write assumption covers cooperative component
 instances in one JavaScript context. It is not a cross-process storage lock,

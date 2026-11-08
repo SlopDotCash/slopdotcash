@@ -27,6 +27,12 @@ const same = (left: string, right: string) =>
 const bytes = (transaction: DirectEvmTransaction) =>
   JSON.stringify(transaction);
 
+function selectedHash(entry: Entry, recovered: string | undefined): string | null {
+  const hash =
+    recovered !== undefined ? recovered.trim() : entry.candidate ?? entry.hash;
+  return hash && HASH.test(hash) ? hash : null;
+}
+
 function readJournal(key: string, payer: string): Journal {
   const saved = sessionStorage.getItem(key);
   const entries = saved ? (JSON.parse(saved) as Journal) : {};
@@ -209,6 +215,7 @@ export function DirectBountyPayment({
           await request("eth_estimateGas", [transaction]);
           await checkIdentity();
           await checkWallet(transaction);
+          if (!mounted.current) throw new Error("The payment view was closed.");
           const requestId = crypto.randomUUID();
           remember((latest) => {
             if (latest[transaction.nonce])
@@ -298,38 +305,72 @@ export function DirectBountyPayment({
   const hashes = transactions.flatMap((transaction) => {
     const entry = journal[transaction.nonce];
     if (!entry || bytes(entry.transaction) !== bytes(transaction)) return [];
-    const hash =
-      recovered[transaction.nonce]?.trim() ?? entry.candidate ?? entry.hash;
-    return hash && HASH.test(hash) ? [hash] : [];
+    const hash = selectedHash(entry, recovered[transaction.nonce]);
+    return hash ? [hash] : [];
   });
   const check = () =>
     void run(async () => {
       await checkIdentity(true);
-      const entries = remember((latest) => {
-        const next = { ...latest };
-        for (const transaction of transactions) {
-          const entry = latest[transaction.nonce];
-          if (entry && bytes(entry.transaction) !== bytes(transaction))
-            throw new Error("The saved payment differs from this request.");
-          const hash = recovered[transaction.nonce]?.trim();
-          if (entry && hash && HASH.test(hash)) {
-            const expected = journal[transaction.nonce];
-            if (!expected || expected.requestId !== entry.requestId)
-              throw new Error(
-                "The saved wallet request changed. Reload before checking this hash.",
-              );
-            next[transaction.nonce] = { ...entry, candidate: hash };
-          }
-        }
-        return next;
+      const knownHashes = transactions.flatMap((transaction) => {
+        const entry = journal[transaction.nonce];
+        return entry?.hash && bytes(entry.transaction) === bytes(transaction)
+          ? [entry.hash]
+          : [];
       });
+      let entries: Journal;
+      try {
+        entries = remember((latest) => {
+          const next = { ...latest };
+          for (const transaction of transactions) {
+            let entry = latest[transaction.nonce];
+            const expected = journal[transaction.nonce];
+            if (entry && bytes(entry.transaction) !== bytes(transaction))
+              throw new Error("The saved payment differs from this request.");
+            if (expected?.hash && !entry?.hash) {
+              // A wallet result can be known in memory after quota/access
+              // failure. Carry it forward only for the exact same prompt.
+              if (
+                !entry ||
+                !expected.requestId ||
+                entry.requestId !== expected.requestId ||
+                bytes(expected.transaction) !== bytes(entry.transaction)
+              )
+                throw new Error(
+                  "The saved wallet request changed. Reload before checking this hash.",
+                );
+              entry = { ...entry, hash: expected.hash };
+              next[transaction.nonce] = entry;
+            }
+            const hash = recovered[transaction.nonce]?.trim();
+            if (entry && hash && HASH.test(hash)) {
+              if (
+                !expected ||
+                expected.requestId !== entry.requestId ||
+                bytes(expected.transaction) !== bytes(entry.transaction)
+              )
+                throw new Error(
+                  "The saved wallet request changed. Reload before checking this hash.",
+                );
+              next[transaction.nonce] = { ...entry, candidate: hash };
+            }
+          }
+          return next;
+        });
+      } catch (cause) {
+        if (knownHashes.length)
+          setNotice(
+            `The saved request could not be updated. Keep the known wallet transaction hash${knownHashes.length === 1 ? "" : "es"}: ${knownHashes.join(", ")}.`,
+          );
+        throw cause;
+      }
       const currentHashes = transactions.flatMap((transaction) => {
         const entry = entries[transaction.nonce];
         if (!entry || bytes(entry.transaction) !== bytes(transaction)) return [];
-        const hash =
-          recovered[transaction.nonce]?.trim() ?? entry.candidate ?? entry.hash;
-        return hash && HASH.test(hash) ? [hash] : [];
+        const hash = selectedHash(entry, recovered[transaction.nonce]);
+        return hash ? [hash] : [];
       });
+      if (currentHashes.length === 0)
+        throw new Error("Enter the matching transaction hash from your wallet.");
       await verify(currentHashes);
       setNotice("Finalized evidence verified.");
     });
