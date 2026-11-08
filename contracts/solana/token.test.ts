@@ -114,6 +114,65 @@ test("Token-2022 refuses the first invalid TLV with the original diagnostic prio
   );
 });
 
+test("TokenMetadata walks all string fields and key/value pairs without adding UTF-8 policy", () => {
+  const word = (value: number) => {
+    const bytes = new Uint8Array(4);
+    new DataView(bytes.buffer).setUint32(0, value, true);
+    return bytes;
+  };
+  const field = (bytes: number[]) =>
+    Buffer.concat([word(bytes.length), Uint8Array.from(bytes)]);
+  const payload = Buffer.concat([
+    new Uint8Array(64),
+    field([255, 254]),
+    field([128]),
+    field([]),
+    word(2),
+    field([255]),
+    field([0]),
+    field([]),
+    field([254]),
+    new Uint8Array(5),
+  ]);
+  const bytes = new Uint8Array(170 + payload.length);
+  bytes[44] = 6;
+  bytes[45] = 1;
+  bytes[165] = 1;
+  new DataView(bytes.buffer).setUint16(166, 19, true);
+  new DataView(bytes.buffer).setUint16(168, payload.length, true);
+  bytes.set(payload, 170);
+  expect(readTokenMint(account(bytes)).extensions).toEqual([19]);
+  expect(readTokenMint(account(bytes)).decimals).toBe(6);
+});
+
+test("TokenMetadata refuses oversized u32 fields, incomplete pairs and nonzero suffixes", () => {
+  const payload = new Uint8Array(88); // Three empty strings and one empty pair.
+  new DataView(payload.buffer).setUint32(76, 1, true);
+  const read = (value: Uint8Array) => {
+    const bytes = new Uint8Array(170 + value.length);
+    bytes[45] = 1;
+    bytes[165] = 1;
+    new DataView(bytes.buffer).setUint16(166, 19, true);
+    new DataView(bytes.buffer).setUint16(168, value.length, true);
+    bytes.set(value, 170);
+    return readTokenMint(account(bytes));
+  };
+  expect(read(payload).extensions).toEqual([19]);
+  for (const offset of [64, 68, 72, 76, 80, 84]) {
+    const changed = payload.slice();
+    new DataView(changed.buffer).setUint32(offset, 0xffffffff, true);
+    expect(() => read(changed)).toThrow("Malformed token metadata");
+  }
+  for (const length of [72, 75, 79, 83, 87])
+    expect(() => read(payload.slice(0, length))).toThrow(
+      "Malformed token metadata",
+    );
+  const suffix = new Uint8Array(89);
+  suffix.set(payload);
+  suffix[88] = 1;
+  expect(() => read(suffix)).toThrow("Malformed token metadata");
+});
+
 test("maintainer token submission admits a synthetic mint from raw state but cannot hide a transfer hook in JSON parsing", async () => {
   let bytes = fixture;
   const reader = rpcTokenMetadataReader(

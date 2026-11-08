@@ -95,3 +95,66 @@ export function decodeTokenExtensions(
   }
   return { error: 0, at, type: 0, records };
 }
+
+//@ verify
+//@ type bytes number[]
+//@ requires 0 <= at && at + 3 < bytes.length
+//@ requires forall(i, 0 <= i && i < bytes.length ==> 0 <= bytes[i] && bytes[i] <= 255)
+//@ ensures \result == U32(bytes, at)
+//@ ensures 0 <= \result && \result <= 4294967295
+function littleEndian32(bytes: Uint8Array, at: number): number {
+  return (
+    bytes[at] +
+    (bytes[at + 1] << 8) +
+    (bytes[at + 2] << 16) +
+    bytes[at + 3] * 16777216
+  );
+}
+
+/** Validate every declared metadata field and require zero-only trailing padding. */
+//@ verify
+//@ type bytes number[]
+//@ requires bytes.length <= 9007199254740991
+//@ requires forall(i, 0 <= i && i < bytes.length ==> 0 <= bytes[i] && bytes[i] <= 255)
+//@ ensures \result <==> MetadataValid(bytes)
+export function metadataPayloadValid(bytes: Uint8Array): boolean {
+  if (bytes.length < 72) return false;
+  let at = 64;
+  let i = 0;
+  while (i < 3) {
+    //@ invariant 0 <= i && i <= 3
+    //@ invariant 64 <= at && at <= bytes.length
+    //@ invariant WalkFields(bytes, 64, 3) == WalkFields(bytes, at, 3 - i)
+    if (bytes.length - at < 4) return false;
+    const length =
+      bytes[at] +
+      (bytes[at + 1] << 8) +
+      (bytes[at + 2] << 16) +
+      bytes[at + 3] * 16777216;
+    if (length > bytes.length - at - 4) return false;
+    at += 4 + length;
+    i += 1;
+  }
+  if (bytes.length - at < 4) return false;
+  const count = littleEndian32(bytes, at);
+  at += 4;
+  if (count > bytes.length / 8) return false;
+  //@ ghost let start: number = at
+  const fields = count * 2;
+  i = 0;
+  while (i < fields) {
+    //@ invariant 0 <= i && i <= fields
+    //@ invariant start <= at && at <= bytes.length
+    //@ invariant WalkFields(bytes, start, fields) == WalkFields(bytes, at, fields - i)
+    if (bytes.length - at < 4) return false;
+    const length =
+      bytes[at] +
+      (bytes[at + 1] << 8) +
+      (bytes[at + 2] << 16) +
+      bytes[at + 3] * 16777216;
+    if (length > bytes.length - at - 4) return false;
+    at += 4 + length;
+    i += 1;
+  }
+  return zeroSuffix(bytes, at);
+}
