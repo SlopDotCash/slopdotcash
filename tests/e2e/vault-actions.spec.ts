@@ -31,6 +31,7 @@ import {
   CONTRIBUTION,
 } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
+import { selectAwardMonth } from "./award-month";
 import {
   escapeRegExp,
   expect,
@@ -649,6 +650,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await selectAwardMonth(page, "2026-09");
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
   ).toContainText("September 2026");

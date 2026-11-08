@@ -115,10 +115,21 @@ model's final twelve-scenario user-reset refinement passes 500x60 traces and
 TLC's complete 1,240-state graph (27,065 generated states, depth 13). It records
 the explicit user-assertion boundary rather than treating a reset as finality.
 
-The final combined **14-case Solana/Anvil browser matrix is running** at this
-checkpoint. It is not a passing result yet. Source hashes and exact completed
-results are recorded under ignored `evidence/formal/solana-callers/`; this
-document does not substitute for the final run receipt.
+The first combined **14-case Solana/Anvil matrix finished with four failures
+and ten cases not run**. Both desktop and mobile completed the recovery,
+deposit and withdrawal checks, then failed the same later fixture assumption:
+the test expected September 2026 without selecting it, while the actual
+November clock correctly opened October. The unchanged Anvil workflow reached
+the same calendar assertion. These failures are retained separately.
+
+Both tests now use the shared `tests/e2e/award-month.ts` helper to select their
+recorded September fixture with actual previous/next month buttons. Each click
+waits for a changed month, with a finite 120-click bound. No clock is mocked and
+the existing commitment assertions remain. The recovery check also submits the
+strict unrelated-signature check with Tab and Enter. A subsequent complete
+matrix is pending; no full-matrix pass is claimed at this checkpoint. Source
+hashes and exact results are recorded under ignored
+`evidence/formal/solana-callers/`; this document does not replace the run receipt.
 
 No production handler, economic policy, signing authority, chain identifier,
 program bytes or expected transaction result was changed. Local synthetic-chain

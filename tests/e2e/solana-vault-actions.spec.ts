@@ -37,6 +37,7 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
+import { selectAwardMonth } from "./award-month";
 import {
   type Diagnostics,
   escapeRegExp,
@@ -692,9 +693,13 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   }
   await connection.confirmTransaction(unrelatedTransaction, "finalized");
   await recovery.fill(unrelatedTransaction);
-  await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
+  await recovery.press("Tab");
+  const checkTransaction = actions.getByRole("button", {
+    name: "Check transaction",
+    exact: true,
+  });
+  await expect(checkTransaction).toBeFocused();
+  await checkTransaction.press("Enter");
   await expect(actions.getByRole("alert")).toContainText(
     "does not match the pending wallet action",
   );
@@ -892,6 +897,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   );
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await selectAwardMonth(page, "2026-09");
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
   ).toContainText("September 2026");
