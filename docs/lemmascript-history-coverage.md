@@ -115,11 +115,10 @@ retained-hunk theorem. Simple merge/binary field equality wrappers would not
 prove the Git reconstruction, patch or cryptographic acquisition on which
 those records depend.
 
-`finalizedRouteCredit` remains a useful active payment candidate: its complete
-pre/post account-index join, exact input/minimum-output check and unrelated
-holding protection are not proved by the signed parser, Jupiter policy or
-native delta helper. A future kernel should use actual account records and
-keep signature, ATA and provider evidence separate.
+The separate [route-credit cohort](lemmascript-route-credit.md) now covers
+`finalizedRouteCredit`'s complete pre/post account-index join, exact
+input/minimum-output check and unrelated-holding protection. Signature, ATA
+and provider evidence remain separate.
 
 The EVM recovery planner is proved; successor record construction, complete
 award/source joins and frontend archived/open source selection are separate
