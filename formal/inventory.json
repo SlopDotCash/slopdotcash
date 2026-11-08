@@ -9912,7 +9912,7 @@
     },
     {
       "path": "formal/models/monthly_owner_completion.qnt",
-      "sha256": "4741bd9e218739da6b9da9495c32892a8293d86d8206cd18b4a0dc937f30aaf4",
+      "sha256": "9923966ea2ab2aa4c330768e3986fc9807d137be5ab3f2021e440623019939be",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/monthly.ts",
@@ -9926,6 +9926,8 @@
         "currentAllocationCommitsTest",
         "currentEnableCommitsTest",
         "currentOffAllowsAllocationAfterCutoffTest",
+        "cutoffPrecedesCompetingAllocationRefusalTest",
+        "cutoffPrecedesFrozenMonthRefusalTest",
         "delayedEnableCannotOvertakeOptOutTest",
         "disableRefusesChangedAuthorityTest",
         "enableRefusesChangedAuthorityTest",
