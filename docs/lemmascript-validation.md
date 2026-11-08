@@ -1,5 +1,167 @@
 # LemmaScript validation record
 
+## Current application-source checkpoint
+
+This section records validation of application commit
+`bd4d58ef66b326a4e85b1728b972e9bf6e56fd65` and tree
+`98f425d815a23511029a596263305ada3cee22eb`. It does not certify a later merge
+head. Documentation-only changes do not replace the recorded source identity.
+The historical checkpoints below remain useful evidence but do not certify
+this larger source set.
+
+The manifest contains 33 modules and 168 selected production functions.
+Independent read-only review counted the same 168 generated postcondition
+targets, checked every generated/proof pair for integrity, and found no
+material runner, workflow or source-binding issue. The inventory separately
+records 9,625 unproved functions; discovery is not proof coverage. The compiler,
+prover and installed dependency contents remain trusted tools. Their package
+versions are pinned, but their installed binary contents are not part of the
+source snapshot hash list.
+
+| Gate at this source checkpoint | Observed result |
+| --- | --- |
+| Combined LemmaScript proof | Passed: all 33 modules and 168 selected functions; 23,995 isolated obligations, zero errors, stable recorded inputs. |
+| Full repository `verify` | Running after the proof gate; no completed repository result is claimed. |
+| Complete browser matrix | The two preview lanes finished 650 tests: 630 passed, 18 skipped and two failed the same stale signed-out navigation expectation. The focused correction passed eight tests; Pages passed six tests. Registry remains pending. This is not a clean rerun of all 650 preview tests. |
+| Complete Quint exploration | Passed: all 302 bounded model graphs and all seven declared temporal properties, with no filtered or skipped models and stable mapped input hashes. |
+| Native Solana fee conversion | JUP and SOL passed on the unchanged source after the guest-clock correction described below. |
+| Native EVM contracts and keeper | The complete `test:contracts:evm` command passed with unchanged source hashes. |
+
+### Complete runtime proof at this checkpoint
+
+The full unfiltered `bun run lemmascript:check` gate passed with 23,995 verified
+obligations and zero errors. The recorded input hashes remained unchanged.
+The receipt is `evidence/lemmascript/1794168363587-25012/result.json`, SHA-256
+`3c59ce6b79e679684fa21b1d8225f7462082f229a5db0a03e456c4f2cc93feb5`.
+The final Jupiter module contributed 15,551 obligations and took 1,037.046
+seconds in this combined run. The per-obligation limit remained 30 seconds;
+the one-module 3,600-second wall limit and all other 180-second wall limits
+were unchanged. This table lists the actual functions and successful obligation
+counts recorded for every selected source:
+
+| Runtime source | Functions | Obligations |
+| --- | ---: | ---: |
+| `src/lib/verified-money.ts` | 8 | 256 |
+| `src/lib/verified-frontend.ts` | 7 | 40 |
+| `workers/fee-converter/verified-arithmetic.ts` | 11 | 231 |
+| `workers/verified-policy.ts` | 4 | 26 |
+| `src/lib/verified-partition.ts` | 2 | 65 |
+| `workers/verified-budget.ts` | 3 | 5 |
+| `src/lib/verified-allocation.ts` | 4 | 662 |
+| `src/lib/verified-decimal.ts` | 3 | 193 |
+| `src/lib/verified-selection.ts` | 2 | 71 |
+| `src/lib/verified-aggregation.ts` | 2 | 155 |
+| `src/lib/verified-reviewers.ts` | 1 | 164 |
+| `workers/notify/verified-delivery.ts` | 3 | 41 |
+| `backend/security/verified-intake.ts` | 3 | 32 |
+| `contracts/solana/verified-token-extensions.ts` | 6 | 631 |
+| `src/lib/verified-monthly-replacement.ts` | 2 | 85 |
+| `backend/vetting/verified-reuse.ts` | 4 | 64 |
+| `workers/fee-converter/verified-native-liability.ts` | 3 | 256 |
+| `workers/fee-converter/verified-expiry.ts` | 3 | 123 |
+| `workers/slopbot/verified-work-unit.ts` | 1 | 281 |
+| `src/lib/verified-base58.ts` | 3 | 704 |
+| `backend/payments/verified-evidence.ts` | 6 | 58 |
+| `workers/vetting/verified-review-batches.ts` | 3 | 229 |
+| `backend/projects/verified-enforcement.ts` | 14 | 879 |
+| `workers/vetting/verified-text-parts.ts` | 2 | 205 |
+| `workers/slopbot/verified-source-ownership.ts` | 5 | 364 |
+| `workers/fee-converter/verified-solana-wire.ts` | 6 | 891 |
+| `workers/slopbot/verified-retained-binding.ts` | 5 | 536 |
+| `backend/projects/verified-setup.ts` | 2 | 67 |
+| `workers/fee-converter/verified-jupiter-policy.ts` | 4 | 83 |
+| `backend/security/verified-direct-recovery.ts` | 2 | 207 |
+| `workers/fee-converter/verified-route-credit.ts` | 4 | 332 |
+| `src/lib/verified-global-joins.ts` | 5 | 508 |
+| `workers/fee-converter/verified-jupiter-wire.ts` | 35 | 15,551 |
+| **Total** | **168** | **23,995** |
+
+### Browser and model checks
+
+The focused navigation rerun used test-only correction `d370b48d7` from upstream
+`1b33fcd2db727091292738f1d8db035a04305869`. Its served application assets were
+byte-identical to the `bd4d58ef6` build, with manifest digest
+`f8412967b3940a0888d5e75d0ef4322d2fbc593eb5f068c441142145872330b8`.
+This eight-test pass addresses the stale expectation; it does not erase the
+original failures or substitute for an entire preview-matrix rerun.
+
+The frozen-source `bun run formal:verify` run completed all 302 model graphs
+in 18 minutes 13 seconds. TLC generated 175,107,207 states and retained
+5,607,158 distinct states in total across those separate graphs. All 754 mapped
+source, model and tool hashes remained stable. The receipt is
+`evidence/formal/verification.json`, SHA-256
+`0bb41d62895eb4a43590e45f78e019fb3f967ce242ec770b2b951cb36f1ca65d`;
+its per-model bounds are retained in `evidence/formal-final/bounds-index.json`.
+These are finite bounded state-space results. The TLC backend disables
+deadlock checking, so terminal progress is covered only by the explicit
+scenarios and declared properties. The run does not prove implementation
+refinement and does not include the later recovery or UI completion models.
+
+### Prepared data and exact-source limits
+
+The repository check uses the documented public snapshot adapter for local
+pull-request validation. It does not perform a new complete live GitHub
+collection. The recorded 34,251,751-byte leaderboard input and prepared
+`public/data/leaderboard.json` share SHA-256
+`eb245381bbb0f21bf76c7214b95682ad272a80d64b2936ce1c18c13c8983efb7`.
+The D1 registry synchronization succeeded. Its generated registry and revision
+hashes are `968d6aa069be8c90cd721368677031e02bdfbcdbb2ddbcc53731fe3c0e36bae4`
+and `bb1e5ae0cf430410f29572962f984cfb260622cedb0570131fd3b1758eb647f9`.
+The ignored `evidence/lemmascript-selection/final-data-receipt.json` binds these
+prepared inputs to the application-source checkpoint. Source identity and
+prepared data are separate inputs; neither is proof of current provider truth.
+
+### Exact-source native acceptance
+
+A separate worktree at the recorded application commit used Bun 1.3.14,
+Node 24.15.0 and the pinned contained Agave 2.1.21 validator. Root dependencies
+were reused read-only. The nested Solana SDK was installed in that worktree
+from its committed lockfile with lifecycle scripts disabled. The test ELF and
+IDL were reused only after their hashes and all six tracked Rust/Cargo/Anchor
+build inputs matched the previously qualified source. This is not a fresh
+release build or a deployed-program attestation.
+
+Both initial Solana attempts failed before swap submission with Whirlpool
+`InvalidTimestamp` 6022. The actual local Clock sysvar and VM clock were about
+2,339 seconds behind the host and finalized mainnet clock, while the cloned
+pool contained a newer reward timestamp. Those failed runs remain recorded as
+failures. After both VM owners confirmed no running containers, the guest
+clock alone was synchronized. Its measured lag fell from 2,339.16 seconds to
+1.16 seconds. No host clock, application source, machine configuration or
+storage was changed. Fresh local clones on the same source then passed:
+
+| Local flow | Finalized result |
+| --- | --- |
+| JUP | 30,000,000 input units produced 7,145,684 USDC micro-units, above the 7,109,955 minimum, with zero input left. Native cost was 2,044,280 lamports against a 5,000,000 reserve. |
+| SOL | A 105,005,000-lamport earned-fee claim finalized; 100,000,000 lamports produced 8,938,385 USDC micro-units, above the 8,891,825 minimum, with zero wrapped input left. Claim and swap costs were 5,000 and 4,083,560 lamports, each within its 5,000,000 reserve. |
+
+Both transactions used v0 messages with one lookup table. Reopening the D1
+journal and repeating execution retained one finalized conversion. The SOL
+fixture also checked unchanged principal and zero remaining accrued fees.
+Only RPC/WebSocket pairs 28799/28800 and 28999/29000 were published, on IPv4
+loopback. Both validators reported the pinned executable hash and were removed;
+all four ports were closed afterward. The ignored native receipts retain the
+failed runs, corrected-clock runs, chain records and listener evidence.
+
+The EVM command passed its adapter, nested native ETH, monthly-reserve and
+payment-keeper workflows in 46.85 seconds with Foundry 1.7.1. The 100-award
+monthly scenario materialized 98 new awards and kept the highest bounded
+transaction at 220,733 gas below its 500,000 ceiling. The keeper completed
+19 scenarios, eight payments and 16 signatures, including restart, lost-send,
+replacement, replay and budget refusal. Ports 29146, 29149, 29247 and 29350 were
+observed on loopback and closed after completion. Source hashes were unchanged
+and the isolated worktree remained tracked-clean.
+
+The native records are in the validation worktree under
+`evidence/native-final/final-result.json` and
+`evidence/native-final/evm/final-result.json`. They use throwaway local funds,
+not mainnet transfers. They do not establish production activation, remote
+provider availability, whole-application correctness or implementation
+refinement. The combined runtime proof and bounded model exploration are
+complete at the recorded checkpoint. Browser, repository, hosted CI, merge
+and deployment outcomes remain separate gates until their terminal evidence
+is recorded.
+
 ## Reproduction
 
 The initial research started from development commit
@@ -19,10 +181,10 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The current implementation manifest has 33 modules and 168 selected functions.
-The latest completed combined proof checkpoint below predates that scope; it
-contains twenty-three modules and 88
-selected runtime functions. Dafny's `--isolate-assertions` option proves every
+### Historical 88-function checkpoint
+
+The following earlier combined checkpoint contains twenty-three modules and
+88 selected runtime functions. The current 33-module result is recorded above. Dafny's `--isolate-assertions` option proves every
 assertion in a separate obligation; it does not filter assertions. The run
 completed 4,607 obligations with zero errors:
 
@@ -52,9 +214,9 @@ completed 4,607 obligations with zero errors:
 | Review groups and JSON sizes | 3 | 229 |
 | Restrictions and appeals | 8 | 421 |
 
-The subsequent modules and extensions have individual complete strict proof
-receipts. They are integrated, but this table does not claim a combined run
-at the 168-function source head:
+The later modules and extensions first had individual complete strict proof
+receipts. This table preserves those cohort results; the combined 168-function
+result is recorded in the current checkpoint above:
 
 | Later module or extension | Current functions in module | Current obligations in module |
 | --- | ---: | ---: |
