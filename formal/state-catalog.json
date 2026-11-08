@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "f05377cccc20cca6fb22d02dd15b87bd373477f83021ddd7b418e2e25d905b14",
+  "inventorySha256": "733284fd1e5dcec0dd75f0c6dcd0497da1da79312fa598d666b78d08949985f6",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1680,9 +1680,10 @@
       "values": ["queued", "sending", "sent", "unknown"],
       "models": [
         "formal/models/api_email_consent.qnt",
+        "formal/models/email_enrollment_delivery.qnt",
         "formal/models/notification_schema_upgrade.qnt"
       ],
-      "lexicallyUnmentionedValues": ["queued", "sending", "unknown"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2141,15 +2142,10 @@
       ],
       "models": [
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "abandoned",
-        "failed",
-        "receipt-verified",
-        "submitted",
-        "submitting"
-      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2167,16 +2163,10 @@
       ],
       "models": [
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "legitimate",
-        "needs-information",
-        "queued",
-        "running",
-        "spam",
-        "unavailable"
-      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2187,6 +2177,7 @@
       "values": ["pending", "routed"],
       "models": [
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
       "lexicallyUnmentionedValues": ["pending", "routed"],
@@ -2270,12 +2261,14 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
-      "lexicallyUnmentionedValues": ["disabled", "forbidden", "unavailable"],
+      "lexicallyUnmentionedValues": ["disabled", "forbidden"],
       "review": "candidate-only"
     },
     {
@@ -2289,12 +2282,14 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
-      "lexicallyUnmentionedValues": ["complete", "running", "unavailable"],
+      "lexicallyUnmentionedValues": ["complete"],
       "review": "candidate-only"
     },
     {
@@ -2308,12 +2303,14 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
-      "lexicallyUnmentionedValues": ["complete", "running", "unavailable"],
+      "lexicallyUnmentionedValues": ["complete"],
       "review": "candidate-only"
     },
     {
@@ -2327,10 +2324,12 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
       "lexicallyUnmentionedValues": ["return", "uphold"],
       "review": "candidate-only"
@@ -2346,10 +2345,12 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
@@ -2379,10 +2380,12 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "cancellation-required",
@@ -2412,12 +2415,14 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
-      "lexicallyUnmentionedValues": ["ok", "unavailable"],
+      "lexicallyUnmentionedValues": ["ok"],
       "review": "candidate-only"
     },
     {
@@ -2431,12 +2436,14 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
-      "lexicallyUnmentionedValues": ["forward", "request-information"],
+      "lexicallyUnmentionedValues": ["request-information"],
       "review": "candidate-only"
     },
     {

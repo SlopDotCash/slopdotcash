@@ -14,43 +14,48 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "2476fa4e6a35a8decb0190b86452dedbd76b56659d97a77f308539c47a0c70f5",
+      "sha256": "73609a9d46747db5ee398cd63da9e0ac596b0030f10e843442e8d9a78df5a969",
       "models": [
         "formal/models/ci_browser_runtime.qnt",
         "formal/models/ci_coverage.qnt",
+        "formal/models/release_proof_gate.qnt",
         "formal/models/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 291, 438, 576, 806, 834, 872, 888, 898,
-        899, 988, 1088, 1090, 1091, 1255, 1338, 1491, 1493, 1523, 1619, 1641,
-        1712, 1723, 1748, 1817, 1830, 1843, 1852, 1853, 1854
+        27, 59, 154, 186, 191, 192, 240, 291, 438, 502, 503, 517, 527, 592, 822,
+        850, 888, 904, 914, 915, 1004, 1104, 1106, 1107, 1271, 1354, 1507, 1509,
+        1539, 1635, 1657, 1728, 1739, 1764, 1833, 1846, 1859, 1868, 1869, 1870
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "bff5cd2c8dd05f5cd8929714eb0f7448e3f6e84492a6aa36aada234bb671ac2d",
+      "sha256": "ca875cfffd5407058841351f8472a5bed412098370a3490a93574302b1a6eeae",
       "models": [
         "formal/models/ci_coverage.qnt",
         "formal/models/solana_container_lifecycle.qnt"
       ],
-      "candidateLines": [184],
+      "candidateLines": [186],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "b56f9d53aba5a3bb403cd1ebbab1b2a22209b2ce24104fcc52a334f2bc40d363",
+      "sha256": "f9f6d0ad8b07d58bdc676b15a7d3b63521ef35e7a3377cd72420acd508b92ded",
       "models": [
         "formal/models/ci_coverage.qnt",
-        "formal/models/formal_toolchain.qnt"
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/release_proof_gate.qnt"
       ],
       "candidateLines": [1, 39, 47],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/lemmascript.yml",
-      "sha256": "48c91e4ae4bfd07f1f09d39c1bd7d0a2f67ab6eeb34e1a716f65d8808b9aa9fe",
-      "models": ["formal/models/formal_toolchain.qnt"],
+      "sha256": "e960384c74048874abcc84737ebd50ba8f807376d00c4786c25772a6468e846f",
+      "models": [
+        "formal/models/formal_toolchain.qnt",
+        "formal/models/release_proof_gate.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -181,7 +186,10 @@
     {
       "path": "backend/notifications/email.ts",
       "sha256": "4407051c3087756a75cd3ff182bdcdce23b597e5fdeef7514413a696aed4e484",
-      "models": ["formal/models/api_email_consent.qnt"],
+      "models": [
+        "formal/models/api_email_consent.qnt",
+        "formal/models/email_enrollment_delivery.qnt"
+      ],
       "candidateLines": [
         79, 81, 101, 102, 192, 213, 214, 239, 266, 268, 271, 272, 279, 281, 282,
         283, 284, 286, 362, 385, 438, 468, 480, 482, 485, 487
@@ -1415,25 +1423,31 @@
     },
     {
       "path": "contracts/solana/scripts/acceptance-extended.ts",
-      "sha256": "07d5d6352ccb6ad1a9caa71fbd070577b1089e7f5b6613decc6c6b95a41ed0a6",
-      "models": ["formal/models/acceptance_run.qnt"],
+      "sha256": "85d9ed32a3b9618b2429d8993d1cbb97597a0a4343a63714e5f80ff2152907db",
+      "models": [
+        "formal/models/acceptance_run.qnt",
+        "formal/models/local_solana_acceptance.qnt"
+      ],
       "candidateLines": [
-        72, 186, 501, 530, 532, 535, 552, 553, 611, 642, 674, 714, 753, 757,
-        821, 909, 1004, 1041, 1062, 1098, 1110, 1438, 1519, 1596, 1597, 1602,
-        1657, 1659, 1667, 1668, 1742, 1751, 1753, 1784, 1786, 1809, 1813, 1815,
-        1816, 1817, 1819, 1824, 1827, 1854, 1857, 1863
+        71, 185, 500, 529, 531, 534, 551, 552, 610, 641, 673, 713, 752, 756,
+        820, 908, 1003, 1040, 1061, 1097, 1109, 1437, 1518, 1595, 1596, 1601,
+        1656, 1658, 1666, 1667, 1741, 1750, 1752, 1783, 1785, 1808, 1812, 1814,
+        1815, 1816, 1818, 1823, 1826, 1853, 1856, 1862
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "contracts/solana/scripts/acceptance.ts",
-      "sha256": "8e487129fbc75e21d4dee00a45b002e9680e51812814354742866e110d7b1ecc",
-      "models": ["formal/models/acceptance_run.qnt"],
+      "sha256": "4a1412fbadfb00267dcaa4e455d528ff5ea0dbe649bae70c7f04fb331b483906",
+      "models": [
+        "formal/models/acceptance_run.qnt",
+        "formal/models/local_solana_acceptance.qnt"
+      ],
       "candidateLines": [
-        78, 280, 503, 514, 559, 560, 565, 566, 571, 577, 595, 601, 602, 603,
-        605, 606, 608, 610, 614, 628, 633, 636, 703, 709, 810, 822, 826, 830,
-        884, 1016, 1041, 1225, 1231, 1247, 1250, 1256, 1478, 1515, 1522, 1579,
-        1588, 1615, 1648, 1672, 1696, 1701, 1706, 1707, 1712, 1726
+        79, 281, 504, 515, 560, 561, 566, 567, 572, 578, 596, 602, 603, 604,
+        606, 607, 609, 611, 615, 629, 634, 637, 704, 710, 811, 823, 827, 831,
+        885, 1041, 1066, 1243, 1249, 1265, 1268, 1274, 1496, 1533, 1540, 1597,
+        1606, 1633, 1666, 1690, 1714, 1719, 1724, 1725, 1730, 1744
       ],
       "review": "mapped-abstraction"
     },
@@ -2582,6 +2596,7 @@
       "sha256": "6f5f04d2c40e078215d5e444e59bcbfa2bc2a94f5a7d19fe3725e329ef11dc0b",
       "models": [
         "formal/models/api_email_consent.qnt",
+        "formal/models/email_enrollment_delivery.qnt",
         "formal/models/notification_schema_upgrade.qnt"
       ],
       "candidateLines": [22, 40, 42, 46, 48, 55, 58, 59, 60, 61, 63, 66],
@@ -2618,7 +2633,10 @@
     {
       "path": "migrations/0116_email_preference_revision.sql",
       "sha256": "5c94ab94eaa6a6918535ff9fdbb73b84bcc1c6ded1d6e33600c72dace57a36b1",
-      "models": ["formal/models/api_email_consent.qnt"],
+      "models": [
+        "formal/models/api_email_consent.qnt",
+        "formal/models/email_enrollment_delivery.qnt"
+      ],
       "candidateLines": [5, 6, 8],
       "review": "mapped-abstraction"
     },
@@ -2759,7 +2777,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "c891d017dad0f01a8f0f6c6fe658a6792ecba5e3f123bdf369722b09b0356039",
+      "sha256": "8cd1f9d5ff8691514cd31ab40bf5d6dad64dc7cdd569eba7b7a1bd0c6589e305",
       "models": [
         "formal/models/ci_browser_runtime.qnt",
         "formal/models/ci_coverage.qnt"
@@ -2993,6 +3011,13 @@
         1172, 1187, 1190, 1216, 1230, 1241, 1254, 1268, 1269, 1272, 1275, 1287,
         1291
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/escrow-acceptance/solana-local.ts",
+      "sha256": "56718c86a8f6a67e8d011a028181d2218901e6c14084ed36fab075d414af0441",
+      "models": ["formal/models/local_solana_acceptance.qnt"],
+      "candidateLines": [58, 59, 60, 61, 72, 117, 207],
       "review": "mapped-abstraction"
     },
     {
@@ -4268,6 +4293,7 @@
       "sha256": "e3539cbfcb5c4d00dabd3cc465dcd1891c009cffa918761273604342fbe056df",
       "models": [
         "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
       "candidateLines": [12, 29, 37, 68, 83, 85, 88, 105, 135, 136, 145, 149],
@@ -4421,10 +4447,12 @@
         "formal/models/ui_intake_handoff.qnt",
         "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_identity.qnt",
+        "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt"
+        "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt"
       ],
       "candidateLines": [
         27, 31, 137, 222, 229, 252, 254, 261, 274, 275, 277, 284, 288, 302, 305,
@@ -4811,7 +4839,10 @@
     {
       "path": "src/lib/intake-drafts.ts",
       "sha256": "3b0318b31ee735338a61e65e59f4aa18d95d9e1b540d42608c0ad36a66143828",
-      "models": ["formal/models/ui_private_intake.qnt"],
+      "models": [
+        "formal/models/ui_private_intake.qnt",
+        "formal/models/ui_submission_controls.qnt"
+      ],
       "candidateLines": [41, 71],
       "review": "mapped-abstraction"
     },
@@ -5389,6 +5420,7 @@
       "models": [
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
+        "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [1, 5, 10, 11],
@@ -5863,7 +5895,10 @@
     {
       "path": "workers/notify/enrollment.ts",
       "sha256": "0fc346476417fd177e212520403158a208f7c1c4f1fa0a68ddb3ead77fe67d04",
-      "models": ["formal/models/api_email_consent.qnt"],
+      "models": [
+        "formal/models/api_email_consent.qnt",
+        "formal/models/email_enrollment_delivery.qnt"
+      ],
       "candidateLines": [36, 38, 90, 93, 95, 98, 105, 121, 125, 127, 147],
       "review": "mapped-abstraction"
     },
@@ -8529,6 +8564,30 @@
       ]
     },
     {
+      "path": "formal/models/email_enrollment_delivery.qnt",
+      "sha256": "99e0d9535f868be09e9e5cd5406c5c39db4dbce93979cbe575fdc9daacefbebd",
+      "sources": [
+        "backend/notifications/email.ts",
+        "migrations/0111_verified_notification_email.sql",
+        "migrations/0116_email_preference_revision.sql",
+        "workers/notify/enrollment.ts"
+      ],
+      "scenarios": [
+        "admittedBeforeExpiryCanCommitAfterTest",
+        "expiredMailReadCannotStartTest",
+        "expiredReadCannotStartTest",
+        "lateCompletionCannotChangeVerifiedDestinationTest",
+        "lostServiceResponseDoesNotOverwriteClaimTest",
+        "malformedDoesNotCreateTest",
+        "preferenceRevisionFencesVerificationTest",
+        "recentAddressHistoryLimitsNewRequestTest",
+        "replacementCancelsOldLinkTest",
+        "replayDuringPauseDoesNotResendTest",
+        "unknownIsNotVerifiedTest",
+        "wrongActorDoesNotConsumeTest"
+      ]
+    },
+    {
       "path": "formal/models/escrow_balances.qnt",
       "sha256": "3d48bd29b42218ca95337b0f1f777ad08f04e72125369a0d4ed822a0dd03a885",
       "sources": [
@@ -9042,6 +9101,29 @@
       "scenarios": [
         "failureDoesNotSkipRemainingTest",
         "unfinishedCannotPassTest"
+      ]
+    },
+    {
+      "path": "formal/models/local_solana_acceptance.qnt",
+      "sha256": "88a3805a5bb5e2e56f111e1c46986ceffa105efd4fede0fe0a127adc1c34c647",
+      "sources": [
+        "contracts/solana/scripts/acceptance-extended.ts",
+        "contracts/solana/scripts/acceptance.ts",
+        "scripts/escrow-acceptance/solana-local.ts"
+      ],
+      "scenarios": [
+        "callerMutationCannotRetargetBoundRunTest",
+        "changedDeclarationRollsBackTest",
+        "changedGenesisStopsBeforeDelegationTest",
+        "changedRunCannotResumeTest",
+        "invalidProgramStopsBeforeDelegationTest",
+        "localWorkflowDelegatesEachDeclaredProjectTest",
+        "mismatchedEnvironmentStopsBeforeDelegationTest",
+        "oneProjectFailurePreservesOtherDelegationTest",
+        "publicGenesisCannotUseLocalPathTest",
+        "publicNetworkCannotUseLocalPathTest",
+        "remoteRpcCannotUseLocalPathTest",
+        "snapshotFailureDoesNotFabricateSuccessfulTickTest"
       ]
     },
     {
@@ -9708,8 +9790,26 @@
       ]
     },
     {
+      "path": "formal/models/release_proof_gate.qnt",
+      "sha256": "29fe07174982b714c4404167008123d006d216ddc0d078f0c4606e2e911a0472",
+      "sources": [
+        ".github/workflows/deploy.yml",
+        ".github/workflows/formal.yml",
+        ".github/workflows/lemmascript.yml"
+      ],
+      "scenarios": [
+        "bothProofJobsAreRequiredTest",
+        "cancelledProofDoesNotAuthorizePublicationTest",
+        "cannotPublishWhileProofsArePendingTest",
+        "failedFunctionProofBlocksPublicationTest",
+        "failedModelBlocksPublicationTest",
+        "mismatchedCheckoutCannotPassTest",
+        "skippedProofDoesNotAuthorizePublicationTest"
+      ]
+    },
+    {
       "path": "formal/models/release_publication.qnt",
-      "sha256": "9d725688fb79604d4506ac82c842d4d2f13606b7ac1313af29dfcf6dfb219939",
+      "sha256": "51b98ea19c62c922f456ef01d40a9578d260b433186818c236a51ded1530b3e4",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
@@ -9722,6 +9822,7 @@
       "scenarios": [
         "exactReleaseTest",
         "partialServicePublicationTest",
+        "pendingProofCannotQualifyTest",
         "retainedSnapshotIsExplicitTest",
         "supersededBeforeWriteTest"
       ]
@@ -10497,6 +10598,20 @@
       ]
     },
     {
+      "path": "formal/models/ui_private_report_projection.qnt",
+      "sha256": "039b7ccbd2d52429da2fbe76524dfade06c99646c50a8182f85181301eb479da",
+      "sources": ["src/PrivateReportSummary.tsx", "src/SecurityBounty.tsx"],
+      "scenarios": [
+        "automaticScreeningKeepsSeparateGithubFailureTest",
+        "completedGithubCanStillNeedReporterEvidenceTest",
+        "humanClearanceIsNotAnAwardTest",
+        "notificationRetryIsDistinctFromScreeningRetryTest",
+        "routingPendingPrecedesHumanAndGithubStatusTest",
+        "savedOptionalGithubDraftDoesNotDemandDeliveryTest",
+        "uncertainReceiptStillNeedsAttentionAfterScreeningTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_private_report_scroll.qnt",
       "sha256": "fcff79e5fb18e031943ca31b739433b92ec6fb839d79da9c004d4c15badf8b7f",
       "sources": ["src/SecurityBounty.tsx"],
@@ -10785,6 +10900,28 @@
       ]
     },
     {
+      "path": "formal/models/ui_submission_controls.qnt",
+      "sha256": "5cc14ddc19b83e64019b45fe0e67d3592bb5f26a0b11cef87db6c8f3f2adc728",
+      "sources": [
+        "src/SecurityBounty.tsx",
+        "src/lib/intake-drafts.ts",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "absentAuthorizeUsesHistoricalRoleFallbackTest",
+        "directDraftUsesVerificationOnlyTest",
+        "explicitAuthorizeFalseOverridesRoleFallbackTest",
+        "grantRequiredKeepsDraftAndRequestsAuthorizationTest",
+        "intakeRetryUsesIntakeRevisionTest",
+        "reconcileRefusalDoesNotInventAbsenceTest",
+        "redirectStaysBusyUntilNewDocumentTest",
+        "returnedGrantCanSendWithoutChangingReportTest",
+        "terminalFailureHasNoResendTest",
+        "uncertainUsesReconcileNotResendTest",
+        "unsavedLegacyDraftCannotLeaveForGithubTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_tab_scope.qnt",
       "sha256": "bdeb39b0b1528bbc17a2597e8e136289aca4d786b3f48bdc1851058beeb59ab9",
       "sources": ["src/DirectBountyPayment.tsx", "src/OwnerCommitment.tsx"],
@@ -10842,7 +10979,7 @@
     },
     {
       "path": "formal/models/ui_vault_recovery.qnt",
-      "sha256": "adecefa7ec975b7d94f6ef27c4c777dab5975978476e603ef64262181422ab89",
+      "sha256": "536c39dd535281bbb2efa8e4f0743e2880cff1cbaceef6f62b51a4929975f395",
       "sources": [
         "contracts/solana/wallet-transactions.ts",
         "src/VaultActions.tsx",
@@ -10850,11 +10987,15 @@
       ],
       "scenarios": [
         "corruptMarkerFailsClosedTest",
+        "failedCandidateWriteReloadNeedsHumanAssertionTest",
+        "failedHumanResetKeepsPendingTest",
         "failedStorageClearCannotEnableAnotherSendTest",
         "failedWriteRetainsMemoryFenceTest",
         "legacyEvidenceCanBeCorrectedTest",
+        "retainedCandidateHasNoUnsentResetTest",
         "transientCheckFailureKeepsEvidenceTest",
         "unknownCandidateStaysEditableAfterReloadTest",
+        "unreadableResetIsUserAssertionNotFinalityTest",
         "unrelatedEvidenceRefusedBeforeMatchingFinalityTest",
         "walletReturnedEvidenceCannotBeEditedTest"
       ]
