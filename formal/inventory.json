@@ -637,7 +637,7 @@
     },
     {
       "path": "backend/security/direct-payments.ts",
-      "sha256": "6d622e43dcce0f1d906be28ab2fb9e37dbfbcf0f1c071a566273cf95eddd3e6c",
+      "sha256": "31c955800fde42b5ddb1218797122ae6817e094d893b4b0e7b507e6280b95c77",
       "models": [
         "formal/models/api_award_recovery.qnt",
         "formal/models/bounty_payment.qnt",
@@ -645,10 +645,10 @@
         "formal/models/direct_solana_retirement.qnt"
       ],
       "candidateLines": [
-        271, 334, 392, 441, 489, 492, 494, 602, 741, 746, 795, 810, 824, 943,
-        959, 964, 983, 1030, 1031, 1038, 1058, 1069, 1076, 1077, 1078, 1082,
-        1094, 1111, 1154, 1158, 1189, 1267, 1273, 1274, 1280, 1311, 1322, 1381,
-        1386
+        275, 338, 396, 445, 493, 496, 498, 606, 745, 750, 799, 814, 828, 943,
+        959, 964, 968, 979, 981, 1031, 1032, 1039, 1059, 1070, 1077, 1078, 1079,
+        1083, 1095, 1112, 1155, 1159, 1190, 1268, 1274, 1275, 1281, 1312, 1323,
+        1382, 1387
       ],
       "review": "mapped-abstraction"
     },
@@ -811,6 +811,13 @@
         1105, 1121, 1145, 1147, 1159, 1219, 1236, 1238, 1241, 1250, 1269, 1277,
         1285, 1306, 1324, 1328
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/verified-direct-recovery.ts",
+      "sha256": "72569734be958001bb636d2b057ce8e33fc9bff944d261b242317a65f25c6e49",
+      "models": ["formal/models/direct_payment_recovery.qnt"],
+      "candidateLines": [29, 31, 32, 37, 47, 52, 56, 71, 75, 83, 88, 89],
       "review": "mapped-abstraction"
     },
     {
@@ -8745,9 +8752,10 @@
     },
     {
       "path": "formal/models/direct_payment_recovery.qnt",
-      "sha256": "3e3e3b0a42403139c1618052892302a865ff87e8bd12273562e6d2b842077166",
+      "sha256": "be53e2883d1746a59b34322805f74ddd4e2edd35c9b74ab2b56eceef805a5963",
       "sources": [
         "backend/security/direct-payments.ts",
+        "backend/security/verified-direct-recovery.ts",
         "migrations/0112_direct_payment_recovery.sql",
         "migrations/0113_direct_unpaid_leg_recovery.sql"
       ],
