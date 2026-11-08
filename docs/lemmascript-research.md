@@ -98,6 +98,8 @@ maintenance surface without improving the selected acceptance result.
 | Native budgets and review timeout | `verified-budget`; fee converter, referral poster, payment keeper and vetting review plan | Exact existing positive/daily-budget acceptance and capped review-call timeout |
 | Slopbot/scanner/referral policy | `workers/verified-policy` | Exact closure admission, published penalty debit, specialist escalation and referral cap arithmetic; external identity and evidence remain caller responsibilities |
 | Activity mail consent | `workers/notify/verified-delivery`; real activity dispatch | Exact retry/suppress/send selection from missing, pilot or registered destination, essential notice, explicit preferences and pinned versions; optional mail requires matching consent and registered essential mail requires security consent |
+| Score and Points buckets | `verified-aggregation`; score debits, Points reconciliation and displayed totals | Exact signed accumulation and ordered per-bucket debit conservation; safe conversion back to the public number schema, including negative-total overflow refusal |
+| Token-2022 extension parsing | `contracts/solana/verified-token-extensions`; mint and token-account readers | Complete header/payload traversal with bounded reads, allowed unique types, exact error precedence and zero-only trailing padding; preserves original bytes without copying |
 
 ### Allocation claim boundary
 

@@ -19,12 +19,15 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The nine proof modules contain 43 selected runtime functions. The check uses
+The completed combined proof checkpoint contains twelve modules and 52
+selected runtime functions, including the notification, bucket and token-parser
+extensions below. The check uses
 Dafny's `--isolate-assertions` option, which proves every assertion in a separate
 obligation. It does not filter or skip assertions. The completed run reports
-1,435 verified obligations: 142 money, 40 frontend, 231 fee-converter, 26 worker
-policy, 65 evidence-partition, 5 budget/timeout, 662 complete-allocation and 193
-decimal-parsing and 71 bounded-selection obligations, with zero errors. These counts cannot be compared directly with
+2,094 verified obligations: 142 money, 40 frontend, 231 fee-converter, 26 worker
+policy, 65 evidence-partition, 5 budget/timeout, 662 complete-allocation, 193
+decimal-parsing, 71 bounded-selection, 155 bucket-aggregation, 41 notification
+and 463 token-parser obligations, with zero errors. These counts cannot be compared directly with
 the earlier 60 declaration checks because the proof splitting changed.
 Neither count is a function coverage percentage.
 
@@ -306,17 +309,42 @@ production release nor complete application refinement.
 
 ## Combined checkpoint still under review
 
+The bucket extension proves exact signed totals and ordered, bounded debit
+consumption across arbitrary finite indexed buckets. Its actual caller
+comparison covers score, project/global views, Points import and reversal.
+It also fixes a schema-accepted retained Points journal whose negative total
+previously rounded outside the safe-number range. The corrected projection
+uses the existing overflow refusal. See [the aggregation report](lemmascript-aggregation-research.md)
+for the constructed-input limit and remaining identity/order obligations.
+The extension passed 155 isolated proof obligations, 16 workflow tests and
+1,320 actual-caller comparisons before integration.
+
+The Token-2022 extension proves complete header/payload traversal, ordered
+records, allowed unique types, exact refusals and zero-only trailing bytes.
+It retains the native `Uint8Array`; its explicit proof mapping covers only
+length and bounded indexed reads. See [the parser report](lemmascript-token-extensions-research.md)
+for the supported semantics and benchmark method. Its 463 isolated obligations,
+20 affected tests and 17,878 public-reader comparisons passed before integration.
+Metadata contents, RPC truth and cryptographic identity remain separate.
+
 The notification extension adds three actual dispatch functions and 41 isolated
 proof obligations. The original API/SQLite/Worker workflows passed 37 tests and
 275 assertions on the extension. Its exact domain and caller obligations are in
 [the notification report](lemmascript-notification-prototype.md). It preserves
 the distinction between no preference, unset security preference, unavailable
 pilot destination and a registered destination with its own pinned version.
-These additional contracts require the final complete proof run after integration.
+These contracts pass in the combined twelve-module run. The complete repository
+gate and browser checks remain separate requirements.
 
 The follow-up at `d543fa204` passed all nine strict source/proof modules:
 43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
 correction requires the final combined source gate to run again.
+The later combined proof receipt is
+`evidence/lemmascript/1794152588788-64929/result.json`; all twelve modules pass
+with stable source hashes, and the combined typecheck passes. The rebased
+server-free translator's 14 gated regression tests also pass, including a real
+TLC counterexample for the false literal invariant. These results do not turn
+the interrupted whole-repository run below into a pass.
 
 The complete browser attempt at `3649142e0` was not green. The Pages lane
 passed six checks. Preview passed 343 checks before its 35-minute limit, with

@@ -1,5 +1,6 @@
 // @source scripts/generate-points.ts
 // @source src/lib/points.ts
+// @source src/lib/verified-aggregation.ts
 // One retained evaluator award: original amount 2, explicit partial amount 1.
 // Historical retirement eligibility is fixed by validated timestamp/digest/rule
 // facts; incident represents their exact conjunction, otherZero a mismatch.
