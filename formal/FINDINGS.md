@@ -38,6 +38,19 @@ claim that all application state errors have been eliminated.
 | Development shutdown | A delayed health failure could spawn a child after server closure | Fence child startup after shutdown; `scripts/dev-backend-lifecycle.test.ts` |
 | Main branch CI | An empty PR file list could select only smoke checks on a main push | Require full checks for that release path; `scripts/ci-scope.test.ts` |
 | Formal evidence | An unchanged model could pass while its mapped source changed | Bind and recheck source hashes; `scripts/formal-source-binding.test.ts` |
+| Historical Points | A later explicit zero could be undone by retained-history recovery | Record the maintainer's zero as an explicit provenance decision; `scripts/points-import.test.ts` |
+| Forwarded report | A reporter could erase a maintainer's forward decision by revising a held report | Close that revision window until an authorized request for information; `backend/security/report-intake.test.ts` |
+| Payout presentation | Attempt uncertainty hid a held queue and suggested progress without a wallet or owner commitment | Preserve queue precedence and show the required next action; `backend/security/handler.test.ts` |
+| Payout hold recovery | A cron pre-step could reopen a hold while an old wallet attempt was still active | Keep the hold until the prior attempt is retired; `backend/security/handler.test.ts` |
+| Attempt history | Equal timestamps could select a retired attempt, and a new attempt without a hash could hide an earlier submitted transaction | Use append order to break ties and retain the most recent known transaction; `backend/security/handler.test.ts` |
+
+The forwarded-report and payout corrections reuse
+[PR 2252](https://github.com/SlopDotCash/slopdotcash/pull/2252) and
+[PR 2313](https://github.com/SlopDotCash/slopdotcash/pull/2313), including their
+original commits and authors. Their regressions were reproduced against the
+combined application before integration. The later integration also preserves
+the account, recovery and calculation changes merged by
+[PR 2403](https://github.com/SlopDotCash/slopdotcash/pull/2403).
 
 Additional local-tool fixes keep Wrangler's update request from hanging test
 setup, serve deterministic local avatar fixtures, and exclude generated native

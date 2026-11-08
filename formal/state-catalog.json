@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "91d043b59924fddc2ad00c7d40042b07253305df5b1c5c66b00875a7f4a4e4b8",
+  "inventorySha256": "09619393e44a96a30e1ae1e2457c757bfd70d8c34cde8953b2f3841a3bae59ec",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -248,23 +248,25 @@
       "models": [
         "formal/models/api_bounty_reservation.qnt",
         "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api_private_case_transaction.qnt",
+        "formal/models/security_payment_projection.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/handler.ts",
-      "line": 3960,
+      "line": 3979,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
       "models": [
         "formal/models/api_bounty_reservation.qnt",
         "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api_private_case_transaction.qnt",
+        "formal/models/security_payment_projection.qnt"
       ],
-      "lexicallyUnmentionedValues": ["disabled", "forbidden", "ready"],
+      "lexicallyUnmentionedValues": ["disabled", "forbidden"],
       "review": "candidate-only"
     },
     {
@@ -297,6 +299,7 @@
         "formal/models/api_private_assessment.qnt",
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/api_private_intake.qnt",
+        "formal/models/api_report_forward_revision.qnt",
         "formal/models/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -312,9 +315,10 @@
         "formal/models/api_private_assessment.qnt",
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/api_private_intake.qnt",
+        "formal/models/api_report_forward_revision.qnt",
         "formal/models/api_submission_recovery.qnt"
       ],
-      "lexicallyUnmentionedValues": ["forward", "request-information"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1779,7 +1783,8 @@
       "values": ["closed", "merged", "open"],
       "models": [
         "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt"
+        "formal/models/ingestion_retry.qnt",
+        "formal/models/pr_review_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged", "open"],
       "review": "candidate-only"
@@ -1797,7 +1802,8 @@
       ],
       "models": [
         "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt"
+        "formal/models/ingestion_retry.qnt",
+        "formal/models/pr_review_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "merged-pull-requests",
@@ -1815,7 +1821,8 @@
       "values": ["closed", "merged"],
       "models": [
         "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt"
+        "formal/models/ingestion_retry.qnt",
+        "formal/models/pr_review_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged"],
       "review": "candidate-only"
@@ -1828,7 +1835,8 @@
       "values": ["complete", "suppressed-limit"],
       "models": [
         "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt"
+        "formal/models/ingestion_retry.qnt",
+        "formal/models/pr_review_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
       "review": "candidate-only"
@@ -2470,7 +2478,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4594,
+      "line": 4621,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],

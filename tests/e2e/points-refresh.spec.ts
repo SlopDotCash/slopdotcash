@@ -148,14 +148,21 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
     /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/points\.json$/u,
   );
   await page.clock.install({ time: new Date(at) });
+  await page.clock.pauseAt(new Date(at));
   await page.goto(`${fixture.site}/contributors/${actor.login}`, {
     waitUntil: "networkidle",
   });
   const total = page.locator(".profile-totals strong").last();
   await expect(total).toHaveText("10");
   expect(fixture.reads()).toBe(1);
-  await page.clock.fastForward(61_000);
   fixture.fail();
+  // Midnight refreshes the visible journal without navigation. Make the
+  // outage precede that read so this is a failed refresh, not a fresh cache.
+  await page.clock.fastForward(61_000);
+  await expect(
+    page.getByRole("button", { name: "Retry points", exact: true }),
+  ).toBeVisible();
+  expect(fixture.reads()).toBe(2);
   await page
     .getByRole("banner")
     .getByRole("link", { name: "Slop home", exact: true })
@@ -169,7 +176,7 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
   await expect(
     page.getByText("Points may be outdated.", { exact: true }),
   ).toBeVisible();
-  expect(fixture.reads()).toBe(2);
+  expect(fixture.reads()).toBe(3);
   await page.screenshot({
     path: info.outputPath("points-stale.png"),
     fullPage: true,

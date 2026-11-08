@@ -26,7 +26,7 @@ Use `--model=pr_review_<name>` with `scripts/check-formal.mjs` for one model.
 | `../models/pr_review_signin.qnt` | `workers/identity/handler.ts`, `oauthCallback`: claim, decrypt or exchange failure, completion and expiry | `workers/identity/failed-callback.test.ts`: a consumed verifier that cannot decrypt produces a failed flow and poll status 410; it cannot complete later. |
 | `../models/pr_review_identities.qnt` | `backend/points/handler.ts`, join and reopen; `backend/payments/wallet-registration.ts`, `registerPaymentWallet` | `backend/points/membership-identity.test.ts`: a new node spelling keeps the stored actor, closed state and explicit reopen requirement. `backend/payments/wallet-replacement.test.ts`: login changes keep the same claim and do not add a successor. |
 | `../models/pr_review_recovery.qnt` | `scripts/generate-leaderboard.ts`, `executeNodeBatch` in retained-source availability collection | `scripts/leaderboard-source-recovery.test.ts`: a recoverable oversized batch splits without losing source IDs; unrelated provider failure is not evidence of source deletion. |
-| `../models/pr_review_retry.qnt` | `workers/vetting/review-plan.ts`, `withEarlierAttempts` | `workers/vetting/review-plan.test.ts`: a final receipt-less retry keeps the known earlier usage and cost; the failed outcome remains failed. |
+| `../models/pr_review_retry.qnt` | `workers/vetting/review-plan.ts`, `withEarlierAttempts` | `workers/vetting/review-plan.test.ts`: a failed final retry keeps known diagnostic subtotals; successful results require complete corresponding receipts for aggregate totals. |
 
 Run the implementation regressions, separately from the models:
 
@@ -41,7 +41,7 @@ bun test --timeout 30000 workers/identity/failed-callback.test.ts backend/points
 | Sign-in | One flow, time 0–3, nondeterministic success/failure | 3 | 17 |
 | Identity | One numeric GitHub identity, two node IDs, logins and addresses, at most three wallet claims | 3 | 57 |
 | Recovery | Four immutable source IDs, two-item batches, binary splitting, at most three limit failures | 2 | 72 |
-| Retry | Three sequential attempts, known/missing usage and cost, unit receipt amounts | 2 | 43 |
+| Retry | Three sequential attempts, known/missing usage and cost, failed diagnostics versus complete successful totals | 5 | See the integrated verification receipt |
 
 The identity service is assumed to attest the numeric actor correctly. Database
 batches are atomic. Cryptography, live GitHub/provider responses, provider cost

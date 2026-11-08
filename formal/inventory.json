@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
-  "baseline": "e3d7dea64f1171f5761033069b98de4fd5cc1e77",
+  "baseline": "ccc37c36e3f557e7bddf32a95830f29f4876ff9c",
+  "reviewStartedAt": "e3d7dea64f1171f5761033069b98de4fd5cc1e77",
   "meaning": "Current production source census with lexical state candidates and model links. A mapping is not a complete branch or semantic refinement proof. Pending is unfinished review work.",
   "exclusions": "Dependencies, generated build outputs, test/fixture trees, declarations and integration test entry points are not production state machines. Generated registry source remains inventoried through its generator.",
   "sources": [
@@ -209,9 +210,9 @@
     },
     {
       "path": "backend/notifications/incomplete-assessments.ts",
-      "sha256": "b129b916d004d9a844d511e9b78605e1451cc5c95f03f2987a091347abaccb73",
+      "sha256": "ca59dbc3f8ba434beb3e3559a66e3c1066dea959ed5ddb1e33cb191ffa2df11a",
       "models": ["formal/models/api_incomplete_assessments.qnt"],
-      "candidateLines": [71, 162, 212],
+      "candidateLines": [71, 162, 218],
       "review": "mapped-abstraction"
     },
     {
@@ -347,12 +348,13 @@
     },
     {
       "path": "backend/payments/wallet-registration.ts",
-      "sha256": "6378147d8f6bcf1e261174728357518742167d994042f7bc41c62ff813aa9e68",
+      "sha256": "597181cfccedaf7057b67258e18d1b0b3f1264e1b14ad919459bb45b307ed2bc",
       "models": [
         "formal/models/effective_wallet_history.qnt",
-        "formal/models/payment_binding.qnt"
+        "formal/models/payment_binding.qnt",
+        "formal/models/pr_review_identities.qnt"
       ],
-      "candidateLines": [72],
+      "candidateLines": [68],
       "review": "mapped-abstraction"
     },
     {
@@ -364,15 +366,16 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "ab42ad501452985ca8b81fc9c0b2f3bf1f819d69ea78cf6c65a270893e830744",
+      "sha256": "42e5b63cef64789c55a40262e36a4d35f1a907eacec473ab98bf6b2f724c9eac",
       "models": [
         "formal/models/api_accounts.qnt",
         "formal/models/bot_closure_membership.qnt",
+        "formal/models/pr_review_identities.qnt",
         "formal/models/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        41, 42, 135, 229, 234, 239, 243, 313, 341, 345, 348, 351, 354, 359, 364,
-        368, 391, 407
+        41, 42, 135, 235, 240, 245, 249, 319, 347, 351, 354, 357, 360, 365, 370,
+        374, 397, 413
       ],
       "review": "mapped-abstraction"
     },
@@ -642,21 +645,22 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "f971e86845cfcbafc7b0fd21c76268de7b1987614e651c84676230c2ec32b745",
+      "sha256": "ca29315df0d873378141c7834fd81a88c3103c2972551358b338d175faf30f53",
       "models": [
         "formal/models/api_bounty_reservation.qnt",
         "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api_private_case_transaction.qnt",
+        "formal/models/security_payment_projection.qnt"
       ],
       "candidateLines": [
         198, 280, 284, 369, 381, 382, 430, 565, 586, 682, 683, 734, 736, 743,
-        796, 804, 806, 860, 925, 992, 998, 1020, 1022, 1030, 1048, 1114, 1280,
-        1306, 1454, 1497, 1516, 1521, 1550, 1639, 1657, 1718, 1738, 1771, 1777,
-        1793, 1923, 1965, 1966, 1968, 1970, 1990, 2092, 2112, 2131, 2225, 2226,
-        2241, 2254, 2279, 2350, 2354, 2399, 2424, 2623, 2748, 3095, 3121, 3146,
-        3199, 3366, 3369, 3370, 3409, 3418, 3438, 3484, 3535, 3536, 3538, 3581,
-        3643, 3672, 3678, 3684, 3714, 3751, 3762, 3780, 3786, 3865, 3873, 3875,
-        3890, 3997, 4000, 4032, 4041, 4047, 4059, 4062, 4063, 4091, 4095, 4098
+        796, 804, 806, 879, 944, 1011, 1017, 1039, 1041, 1049, 1067, 1133, 1299,
+        1325, 1473, 1516, 1535, 1540, 1569, 1658, 1676, 1737, 1757, 1790, 1796,
+        1812, 1942, 1984, 1985, 1987, 1989, 2009, 2111, 2131, 2150, 2244, 2245,
+        2260, 2273, 2298, 2369, 2373, 2418, 2443, 2642, 2767, 3114, 3140, 3165,
+        3218, 3385, 3388, 3389, 3428, 3437, 3457, 3503, 3554, 3555, 3557, 3600,
+        3662, 3691, 3697, 3703, 3733, 3770, 3781, 3799, 3805, 3884, 3892, 3894,
+        3909, 4016, 4019, 4051, 4060, 4066, 4078, 4081, 4082, 4110, 4114, 4117
       ],
       "review": "mapped-abstraction"
     },
@@ -682,13 +686,14 @@
     },
     {
       "path": "backend/security/payments.ts",
-      "sha256": "5b2c198979a77d46af31dbd2ed9fccd1647905f7ae95475520e8a254a3ec5506",
+      "sha256": "040dd1a89a9e8863d3d9d7d0497f34b4bf44175d9dc170d66ea0031943c2594b",
       "models": [
         "formal/models/api_award_recovery.qnt",
-        "formal/models/bounty_payment.qnt"
+        "formal/models/bounty_payment.qnt",
+        "formal/models/security_payment_projection.qnt"
       ],
       "candidateLines": [
-        13, 18, 35, 72, 184, 193, 207, 240, 250, 251, 291, 292, 294, 310
+        13, 18, 35, 72, 184, 193, 207, 240, 250, 251, 291, 292, 294, 298, 315
       ],
       "review": "mapped-abstraction"
     },
@@ -718,17 +723,18 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "ea81f3c1fca773af7ec44a66f317a2ab8eff5c27b48c99733b1772dc5c9e40bf",
+      "sha256": "08712c7c0342f751e94f67912c45ade700fc61fd09b16258ee12b9cffbf9f92d",
       "models": [
         "formal/models/api_private_assessment.qnt",
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/api_private_intake.qnt",
+        "formal/models/api_report_forward_revision.qnt",
         "formal/models/api_submission_recovery.qnt"
       ],
       "candidateLines": [
-        80, 117, 144, 163, 168, 211, 218, 257, 366, 373, 461, 503, 513, 528,
-        535, 553, 564, 577, 579, 605, 640, 650, 652, 834, 852, 863, 868, 873,
-        942, 1079, 1156, 1171, 1201, 1236, 1242, 1256, 1261, 1273, 1278, 1283
+        80, 117, 144, 163, 168, 211, 218, 258, 367, 374, 462, 504, 514, 529,
+        536, 554, 565, 578, 580, 606, 641, 651, 653, 835, 853, 864, 869, 874,
+        943, 1080, 1157, 1172, 1202, 1238, 1244, 1258, 1263, 1275, 1280, 1285
       ],
       "review": "mapped-abstraction"
     },
@@ -874,15 +880,15 @@
     },
     {
       "path": "backend/vetting/flags.ts",
-      "sha256": "05e63e947ee9d9b9879913938979de4a4ae7bfdd60a271e7055a2552491e1ce4",
+      "sha256": "330edd700538980bd3d15c8bc9635af9c350e2100a5518a79dc6d5dd7b1427f7",
       "models": [
         "formal/models/vetting_flag_admission.qnt",
         "formal/models/vetting_flag_reinstatement.qnt"
       ],
       "candidateLines": [
         85, 101, 108, 123, 170, 183, 217, 218, 219, 224, 245, 252, 262, 271,
-        291, 343, 344, 345, 350, 351, 353, 387, 388, 405, 474, 480, 517, 565,
-        598
+        291, 343, 344, 345, 350, 351, 353, 387, 388, 405, 477, 483, 520, 568,
+        601
       ],
       "review": "mapped-abstraction"
     },
@@ -2951,9 +2957,9 @@
     },
     {
       "path": "scripts/formal-inventory.mjs",
-      "sha256": "b89ce5b83713ab0aeb4cb7acce5fe4d9cda19434ff35b84621d2e98efcdc71d0",
+      "sha256": "fb3844eb24e75af3c72b54895666ab0be103ebe2006c00467cc29a0365426841",
       "models": ["formal/models/formal_toolchain.qnt"],
-      "candidateLines": [11, 83, 88, 102, 103, 125, 127, 144, 147, 149, 151],
+      "candidateLines": [11, 83, 88, 102, 103, 126, 128, 145, 148, 150, 152],
       "review": "mapped-abstraction"
     },
     {
@@ -2965,10 +2971,11 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "fdb53a7103e5f4ac97e2665a3c51d545ce6dc14cdf69d222721e4ec8791bc79b",
+      "sha256": "cd3bb4fba94f09742afc0f975e32e46f55e85071c269362c868b1b95c1e57ee7",
       "models": [
         "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt"
+        "formal/models/ingestion_retry.qnt",
+        "formal/models/pr_review_recovery.qnt"
       ],
       "candidateLines": [
         23, 178, 189, 198, 265, 276, 278, 281, 380, 468, 489, 525, 556, 620,
@@ -2977,21 +2984,22 @@
         1907, 1910, 1912, 1923, 2141, 2144, 2452, 2471, 2569, 2582, 2593, 2594,
         2771, 2773, 2965, 2981, 2993, 3000, 3026, 3036, 3040, 3044, 3048, 3103,
         3122, 3149, 3166, 3200, 3201, 3203, 3219, 3236, 3237, 3238, 3247, 3252,
-        3432, 3790, 3812, 3821, 3871, 3906, 3912, 3919, 3988, 4072, 4224, 4439,
-        4449, 4451, 4464, 4493, 4495, 4496, 4500, 4504, 4559, 4613, 4664, 4667
+        3432, 3790, 3812, 3821, 3871, 3906, 3912, 3919, 3988, 4073, 4225, 4440,
+        4450, 4452, 4465, 4494, 4496, 4497, 4501, 4505, 4560, 4614, 4665, 4668
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "e7fe44e082fb5b5af74df0336635a1bcdcd59cb751b5e0087332607b128141ca",
+      "sha256": "a4a3fe41dd4f77c1046bc29231e5b9121b13c5f6b1133f50f3244a1730dad238",
       "models": [
         "formal/models/journal_publication.qnt",
-        "formal/models/points_journal.qnt"
+        "formal/models/points_journal.qnt",
+        "formal/models/points_retained_provenance.qnt"
       ],
       "candidateLines": [
         2, 35, 62, 99, 121, 124, 137, 144, 153, 161, 169, 247, 253, 256, 259,
-        260, 261, 262, 351, 613, 620, 621, 623, 628, 632, 636
+        260, 261, 262, 351, 626, 633, 634, 636, 641, 645, 649
       ],
       "review": "mapped-abstraction"
     },
@@ -3176,12 +3184,12 @@
     },
     {
       "path": "scripts/prepare-monthly-rewards.ts",
-      "sha256": "28c9af67020b8c195a3eb660e7ae4268a58096600c1e424fc58202e237089533",
+      "sha256": "f30ab672a7a0569f068a4f3ff1dd7ef113190d16461d4d71237f5fa2b20a048b",
       "models": [
         "formal/models/monthly_coordinator.qnt",
         "formal/models/monthly_reserve.qnt"
       ],
-      "candidateLines": [14, 81, 82, 83, 167, 178, 213, 228, 278],
+      "candidateLines": [14, 79, 80, 81, 149, 160, 194, 209, 259],
       "review": "mapped-abstraction"
     },
     {
@@ -3442,7 +3450,7 @@
     },
     {
       "path": "scripts/run-integration.mjs",
-      "sha256": "d04042e5a29b657d1e99b011eb1e26bb96d7c8a392c60323c4b992d80ff8450c",
+      "sha256": "1753afb27501853ab0044959528b43cc0fc31b6a3072d4a80d796ba0f93b6b16",
       "models": ["formal/models/dev_server_lifecycle.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -3568,10 +3576,10 @@
     },
     {
       "path": "scripts/test-payout-browser.mjs",
-      "sha256": "e1f40c7d14d86b4f35fb5b261ac46301468ca840b76fb0e0e0fd6805ac7ceaa1",
+      "sha256": "1479242528620d4fc41955cef8b3da7c02ad542e423af0ba8b8fd051d84411ef",
       "models": ["formal/models/dev_server_lifecycle.qnt"],
       "candidateLines": [
-        3, 29, 70, 80, 122, 131, 143, 148, 162, 165, 205, 207, 246
+        3, 29, 70, 80, 87, 93, 132, 141, 153, 158, 172, 175, 212, 214, 253
       ],
       "review": "mapped-abstraction"
     },
@@ -4684,7 +4692,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "ec12e161c47980844770589b0c998c64f5e6aaf7b4905827d4e76dfeec92350e",
+      "sha256": "5bc4495cfdf03845ff374fb6f3a44a7749e1352e4b4fb2e13fa38fdc809a936e",
       "models": [
         "formal/models/legacy_score_caps.qnt",
         "formal/models/ui_review_pool.qnt",
@@ -4693,15 +4701,15 @@
         "formal/models/ui_snapshot_contract.qnt"
       ],
       "candidateLines": [
-        290, 291, 314, 320, 940, 1003, 1029, 1240, 1301, 1311, 1317, 1319, 1321,
-        1323, 1330, 1415, 1449, 1454, 1472, 1569, 2111, 2129, 2201, 2210, 2228,
-        2237, 2245, 2267, 2282, 2291, 2299, 2343, 2393, 2443, 2496, 2513, 2514,
-        2517, 2518, 2622, 2624, 2625, 2629, 2632, 2640, 2642, 2660, 2913, 2968,
-        3147, 3338, 3363, 3435, 3444, 3540, 3606, 3943, 3954, 3983, 4044, 4058,
-        4381, 4594, 4795, 4908, 4933, 5058, 5064, 5770, 5772, 5795, 5799, 5803,
-        5808, 5946, 5955, 5965, 5966, 6014, 6049, 6055, 6075, 6080, 6087, 6095,
-        6097, 6123, 6126, 6140, 6142, 6163, 6165, 6169, 6172, 6177, 6367, 6369,
-        6628, 6672, 6735, 6736, 7536, 7552, 7562, 7573, 7626, 7627, 7654, 7861
+        290, 291, 315, 321, 962, 1025, 1051, 1262, 1323, 1333, 1339, 1341, 1343,
+        1345, 1352, 1437, 1471, 1476, 1494, 1591, 2133, 2151, 2223, 2232, 2250,
+        2259, 2267, 2289, 2304, 2313, 2321, 2365, 2415, 2465, 2518, 2535, 2536,
+        2539, 2540, 2644, 2646, 2647, 2651, 2654, 2662, 2664, 2682, 2943, 2998,
+        3174, 3365, 3390, 3462, 3471, 3567, 3633, 3970, 3981, 4010, 4071, 4085,
+        4408, 4621, 4822, 4935, 4960, 5085, 5091, 5797, 5799, 5822, 5826, 5830,
+        5835, 5973, 5982, 5992, 5993, 6041, 6076, 6082, 6102, 6107, 6114, 6122,
+        6124, 6150, 6153, 6167, 6169, 6190, 6192, 6196, 6199, 6204, 6394, 6396,
+        6655, 6699, 6762, 6763, 7563, 7579, 7589, 7600, 7653, 7654, 7681, 7888
       ],
       "review": "mapped-abstraction"
     },
@@ -4784,9 +4792,9 @@
     },
     {
       "path": "src/lib/payments/escrow-cycle.ts",
-      "sha256": "6dfc30ca3bb8737b8247b1a194a7f19510cb03c6984ec5943f0ed00d6df0a186",
+      "sha256": "e303358d5bdde2735e296f3bf3ed9ced085df74049247076e36efd731c2b941a",
       "models": ["formal/models/source_import.qnt"],
-      "candidateLines": [150],
+      "candidateLines": [173],
       "review": "mapped-abstraction"
     },
     {
@@ -4858,12 +4866,13 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "e8faa55c9f124cd18f197ef6aacd1f2168348ae1d8ab67f9456e462805efacc0",
+      "sha256": "ff931b4c37ede600ccad0972bb42c7bae140bda9d4c1eb1099602cde673bd1e3",
       "models": [
         "formal/models/points_journal.qnt",
+        "formal/models/points_retained_provenance.qnt",
         "formal/models/ui_review_pool.qnt"
       ],
-      "candidateLines": [326, 850, 857, 866],
+      "candidateLines": [333, 857, 864, 873],
       "review": "mapped-abstraction"
     },
     {
@@ -5041,7 +5050,7 @@
     },
     {
       "path": "src/lib/repositories.mjs",
-      "sha256": "57fe292849b65548619456a6a5040bf45ff41d44270e505af7397a0cbbe7476a",
+      "sha256": "0110e932d060a4d3ae7b8ef2ee5a18ee85154e0bfad5b0c5321f9b827494b764",
       "models": ["formal/models/ui_project_policy.qnt"],
       "candidateLines": [20, 22, 54],
       "review": "mapped-abstraction"
@@ -5594,12 +5603,15 @@
     },
     {
       "path": "workers/identity/handler.ts",
-      "sha256": "9e037f32232220dcd7f7d8da1b8933e483315437c7208b05dc66aefd74dbbec7",
-      "models": ["formal/models/api_identity.qnt"],
+      "sha256": "243a7f9f1f4fc374064b99a41acf91146b2ef3c866a346f48369f296ab4a87a5",
+      "models": [
+        "formal/models/api_identity.qnt",
+        "formal/models/pr_review_signin.qnt"
+      ],
       "candidateLines": [
         58, 60, 87, 93, 104, 108, 114, 115, 116, 191, 205, 210, 222, 238, 239,
-        244, 266, 274, 276, 284, 291, 293, 304, 423, 425, 428, 431, 434, 451,
-        494, 579, 580, 581, 582, 583, 590, 591, 594, 639, 677
+        244, 266, 274, 276, 284, 291, 293, 304, 426, 428, 431, 434, 437, 454,
+        497, 582, 583, 584, 585, 586, 593, 594, 597, 642, 680
       ],
       "review": "mapped-abstraction"
     },
@@ -6030,9 +6042,12 @@
     },
     {
       "path": "workers/security-payments/index.ts",
-      "sha256": "2dd7131815e150a50b996cdfc7d9509e1f69e38ad0286521c89f1b1796449af1",
-      "models": ["formal/models/payment_dispatch.qnt"],
-      "candidateLines": [19, 23, 24],
+      "sha256": "b54e8c484758f410f9b3d874420be01f495d764804a9e49c33592c10def3f530",
+      "models": [
+        "formal/models/payment_dispatch.qnt",
+        "formal/models/security_payment_projection.qnt"
+      ],
+      "candidateLines": [23, 27, 28, 29],
       "review": "mapped-abstraction"
     },
     {
@@ -6814,10 +6829,10 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "8b2bdd303e6b594558b2938e8eba5d037579fcae93e5fd8383c140d6b1e5fa3c",
+      "sha256": "8fae6122c7419958226fb6e07b41acf3caa7968475140c1d84a2a08013734fe7",
       "models": ["formal/models/vetting_disposition.qnt"],
       "candidateLines": [
-        240, 248, 249, 1692, 1693, 1867, 1927, 1948, 2015, 2031
+        240, 248, 249, 1710, 1711, 1892, 1952, 1973, 2040, 2056
       ],
       "review": "mapped-abstraction"
     },
@@ -6875,14 +6890,15 @@
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "746653ba5af0bd8c9e4633cda189bd154e56321c9c8f0557dfd0eea86424dc06",
+      "sha256": "269162a6e4501b8eced7faf9dea5ae3984e9b2fa9732b75e93f555d9c6234f24",
       "models": [
+        "formal/models/pr_review_retry.qnt",
         "formal/models/vetting_acquisition.qnt",
         "formal/models/vetting_review_batches.qnt"
       ],
       "candidateLines": [
-        13, 89, 494, 511, 514, 515, 524, 531, 532, 567, 590, 658, 665, 685, 707,
-        718, 743
+        13, 89, 443, 503, 520, 523, 524, 533, 540, 541, 576, 599, 667, 674, 694,
+        716, 727, 752
       ],
       "review": "mapped-abstraction"
     },
@@ -7235,6 +7251,18 @@
         "newApplicationWinsAliasRaceTest",
         "restrictionInvalidatesPreparedRevisionTest",
         "revisionWinsAliasRaceTest"
+      ]
+    },
+    {
+      "path": "formal/models/api_report_forward_revision.qnt",
+      "sha256": "7b5e4b906e2bf3b869b7446356449c58a5c4495616b4495635ca6dbe1aab3a2b",
+      "sources": ["backend/security/report-intake.ts"],
+      "scenarios": [
+        "caseOwnerInformationReopensTest",
+        "explicitInformationReopensTest",
+        "forwardBlocksHeldEditTest",
+        "forwardPendingRouteBlocksEditTest",
+        "staleReportCannotUndoForwardTest"
       ]
     },
     {
@@ -8865,6 +8893,54 @@
       ]
     },
     {
+      "path": "formal/models/points_retained_provenance.qnt",
+      "sha256": "0dae0dd4e4d459e0653be499efdce1113084adb03bc9d1776b2ffdb5b467db75",
+      "sources": ["scripts/generate-points.ts", "src/lib/points.ts"],
+      "scenarios": [
+        "adoptedReplayTest",
+        "explicitZeroEndsRecoveryTest",
+        "historicalOmittedTest",
+        "recoverIncidentTest",
+        "recoveryReplayTest",
+        "sameAmountAdoptionThenRevocationTest",
+        "snapshotAdoptionThenRevocationTest",
+        "unrelatedZeroNeverRecoveredTest"
+      ]
+    },
+    {
+      "path": "formal/models/pr_review_identities.qnt",
+      "sha256": "a561f8d5d2cc947e53ef6eeddc9da0994ba31009c6f6b251ba3ebcacba9e7fd7",
+      "sources": [
+        "backend/payments/wallet-registration.ts",
+        "backend/points/handler.ts"
+      ],
+      "scenarios": ["noImplicitReopenTest", "renameTest", "reopenTest"]
+    },
+    {
+      "path": "formal/models/pr_review_recovery.qnt",
+      "sha256": "140c47912b7ad070e91513ed733089ebc8acd5565871d669a35a7e89b225de05",
+      "sources": ["scripts/generate-leaderboard.ts"],
+      "scenarios": ["permanentFailureTest", "recoverLimitTest"]
+    },
+    {
+      "path": "formal/models/pr_review_retry.qnt",
+      "sha256": "0bb8b23da2bafd6f4c3a043ac50461b2a06c372df39b97c365c8c8655d242f8f",
+      "sources": ["workers/vetting/review-plan.ts"],
+      "scenarios": [
+        "failureWithKnownSubtotalEndsEarlyTest",
+        "missingFinalReceiptTest",
+        "successAfterUnknownAttemptKeepsUnknownTotalTest",
+        "successWithAllReceiptsHasCompleteTotalTest",
+        "unknownTest"
+      ]
+    },
+    {
+      "path": "formal/models/pr_review_signin.qnt",
+      "sha256": "87cb97863a3c7a23370d638dcb9b78e50f9d1c9163ded21950d3e152fe2dbfc8",
+      "sources": ["workers/identity/handler.ts"],
+      "scenarios": ["completeTest", "decryptFailureTest", "expireTest"]
+    },
+    {
       "path": "formal/models/prior_cycle_carry.qnt",
       "sha256": "870a84645f7088a32dfe79dc4d341e387239d16a98c22884a351c6324cecdb2a",
       "sources": ["scripts/prior-cycle-accrual.ts"],
@@ -9123,6 +9199,28 @@
         "optionalSymbolPreservedTest",
         "rateLimitRetriesTest",
         "wrongNetworkCannotPublishTest"
+      ]
+    },
+    {
+      "path": "formal/models/security_payment_projection.qnt",
+      "sha256": "f75f8add68ff217ab4f7c3609b4ec33c2a010ed49456636c87206f7b9870c3f7",
+      "sources": [
+        "backend/security/handler.ts",
+        "backend/security/payments.ts",
+        "workers/security-payments/index.ts"
+      ],
+      "scenarios": [
+        "heldOverridesPreparedTest",
+        "heldOverridesUnknownTest",
+        "missingWalletCannotWakeQueueTest",
+        "missingWalletHasActionTest",
+        "olderOpenAttemptStillBlocksCronTest",
+        "ownerCommitmentHasActionTest",
+        "paidProofOverridesOldHoldTest",
+        "priorClaimKeepsCronHeldTest",
+        "readyUnknownRemainsUncertainTest",
+        "retiredPriorClaimCanResumeTest",
+        "sameTimeReplacementIsLatestTest"
       ]
     },
     {
@@ -9841,13 +9939,16 @@
     },
     {
       "path": "formal/models/ui_score_selection.qnt",
-      "sha256": "f980db36a906b66b722c867b395f5f3d4073d4169733fb225c9e5beeaa9e1306",
+      "sha256": "257f1ca7516114172eb48203e6dc8cd27ff505c971326d2f3ddd8f8501a3eeb4",
       "sources": ["src/lib/leaderboard.ts"],
       "scenarios": [
         "activeReviewTest",
         "changesRequestedTest",
         "claimedTest",
         "humanGateTest",
+        "missionReadyBlockedTest",
+        "missionReadySecurityTest",
+        "missionReadyTest",
         "readyIssueTest",
         "unknownAuthorTest"
       ]

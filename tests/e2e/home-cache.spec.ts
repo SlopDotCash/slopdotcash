@@ -14,6 +14,11 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
 }) => {
   // The blocked GitHub requests.
   diagnostics.allow(/^console Failed to load resource: net::/u);
+  // This test deliberately holds the summary response. Its bounded loader
+  // may abort before the accessibility/layout review finishes on a slow host.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:\d+\/data\/points-summary\.json(?:\?[^ ]*)?$/u,
+  );
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
   let release = () => {};

@@ -411,3 +411,42 @@ number. The model's twelve-merge bound is not a production cap. Its issue,
 evidence, review and evaluation branches model category accumulation under
 representative qualifying events; this test does not prove those categories'
 source qualification. No production discrepancy was found in this follow-up.
+
+## Current-development integration: retained Points provenance
+
+The read-only review of `e3d7dea64..ccc37c36e3f557e7bddf32a95830f29f4876ff9c`
+found equivalent valid-input behavior in monthly-view reuse, repository
+lookup indexing and skipped redundant retirement recovery. The availability
+probe now uses the existing ordered batch-splitting adapter. These are scoped
+comparisons, not proof of every caller or all source refinement.
+
+`points_retained_provenance.qnt` adds eight named scenarios for the omitted
+Points history family in the `slopdotcash-quint-current` integration tree.
+It maps `applyRetainedHistoryBatch`, `retiredEvaluatorAwards`,
+`retainedHistoryCorrections`, `appendPointAwards` and
+`retainedBatchOwnedKeys`. One registered project's evaluator award has three
+representative amounts (zero, partial and original) and at most six immutable
+revisions. Exact historical timestamp/digest/rule identity is represented by
+the `incident` action; a mismatched zero uses `otherZero`. The model includes
+omission, recovery, replay, unchanged-value provenance adoption, snapshot
+adoption and later revocation. Project removal/re-addition, arbitrary award
+sets and exact timestamp/string parsing remain outside this model.
+
+This review reproduced a real application error: the exact historical
+erroneous zero, followed by a maintainer's later explicit zero and then an
+omitted entry, restored 240 Points. The unchanged zero had not received its
+new provenance. The focused confirmation predicate now records that zero
+only when its previous revision belongs to the protected retired set. A
+snapshot's unchanged zero still receives no unnecessary successor. These are
+nonfinancial Points; this correction does not alter frozen money awards.
+
+The existing `scripts/points-import.test.ts` now reads all eight named Quint
+results and compares actual award amounts, eligibility and revision counts.
+The explicit-zero branch is imported and replayed through the real migrations,
+SQLite and Points HTTP API, retaining its zero and maintainer digest. The
+broader file still checks immutable prefixes, complete coverage, and debit
+publication. On pinned Bun 1.3.14, that file plus monthly preparation passed
+14 tests / 121 assertions. The model passed type/scenario checks, 500 seeded
+60-step simulations, and exhaustive TLC over 257 distinct states. The complete
+TypeScript project check passed with Node 24.15.0 after the root-owned
+`review-plan.ts` merge was resolved.

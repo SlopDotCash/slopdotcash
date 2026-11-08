@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
+import securityPaymentsWorker from "../../workers/security-payments";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
 import type {
   SecurityAnalysisInput,
@@ -18,7 +19,6 @@ import {
   pvrState,
   type SecurityD1Database,
 } from "./handler";
-import { securityPaymentDatabase } from "./payment-database";
 
 const migrations = readdirSync("migrations")
   .filter((f) => f.endsWith(".sql"))
@@ -2095,23 +2095,24 @@ describe("reporter payment state against the payout queue", () => {
       )
       .run(id, createdAt, transactionId, state);
   };
-  // Runs the security-payments cron pre-step (workers/security-payments/
-  // index.ts) through the same table remap the worker uses, so this test
-  // exercises the statement the cron actually runs. Keep the text in sync
-  // with the worker.
+  // Exercise the actual scheduled entrypoint and its private ledger remap.
+  // An empty network setting then fails at the existing scan configuration
+  // boundary, before any RPC/executor call. The pre-step's durable result
+  // is still observed through the actual case API below.
   const runSecurityPrestep = async (env: ReturnType<typeof open>) => {
-    await securityPaymentDatabase(env.db as unknown as SecurityD1Database)
-      .prepare(
-        `INSERT INTO payment_outbox(obligation_id,state,updated_at)
-      SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w
-      ON w.github_user_id=o.github_user_id AND w.chain=o.chain
-      JOIN payment_wallet_authorizations a ON a.claim_id=w.id
-      WHERE o.state='reserved'
-      AND NOT EXISTS(SELECT 1 FROM payment_attempts attempt WHERE attempt.obligation_id=o.id AND attempt.state IN ('prepared','unknown','submitted') AND attempt.claim_id<>w.id)
-      ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'`,
-      )
-      .bind("2026-10-19T11:00:00.000Z")
-      .run();
+    await expect(
+      securityPaymentsWorker.scheduled(undefined, {
+        PAYMENTS_DB: env.db,
+        REGISTRY_DB: env.db,
+        PAYMENT_NETWORKS: "[]",
+        PAYMENT_RPC_URLS: "{}",
+        EVM_PAYMENT_EXECUTOR: {
+          async fetch() {
+            throw new Error("No fixture payment execution is authorized");
+          },
+        },
+      }),
+    ).rejects.toThrow("PAYMENT_NETWORKS must be a JSON array");
   };
 
   // The dispatcher parks the queue at held when the destination changed
@@ -2157,6 +2158,20 @@ describe("reporter payment state against the payout queue", () => {
     env.sqlite.close();
   });
 
+  test("an older open attempt keeps the cron hold even when the newest attempt failed", async () => {
+    const env = open();
+    const id = await settledCase(env);
+    authorizeNewWallet(env);
+    setQueue(env, "held", null);
+    addAttempt(env, "attempt-1", REVISION_AT, "unknown");
+    addAttempt(env, "attempt-2", "2026-10-19T10:00:00.000Z", "failed");
+    await runSecurityPrestep(env);
+    const view = await reporterView(env, id);
+    expect(view.paymentState).toBe("held");
+    expect(view.nextStep).toBe("The payment is held.");
+    env.sqlite.close();
+  });
+
   test("the pre-step frees a held queue once the prior attempt is retired", async () => {
     const env = open();
     const id = await settledCase(env);
@@ -2174,6 +2189,7 @@ describe("reporter payment state against the payout queue", () => {
   test("needs-wallet prompts wallet registration, not a payment in progress", async () => {
     const env = open();
     const id = await settledCase(env);
+    await runSecurityPrestep(env);
     const reporter = await reporterView(env, id);
     expect(reporter.paymentState).toBe("needs-wallet");
     expect(reporter.nextStep).toBe("Register and authorize a payout wallet.");
