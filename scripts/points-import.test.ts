@@ -13,7 +13,10 @@ import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import {
   appendPointAwards,
   applyPointsSnapshot,
+  assertPointsJournal,
+  emptyPointsJournal,
   latestPoints,
+  type PointAward,
   type PointsJournal,
   pointKey,
   pointMembers,
@@ -34,6 +37,75 @@ import {
 } from "./generate-points";
 
 afterEach(() => setSystemTime());
+
+test("a valid retained debit journal refuses an inexact negative Points total", () => {
+  const actor = { id: PENALIZED_AUTHOR.id, login: PENALIZED_AUTHOR.login };
+  const award = (
+    sourceId: string,
+    amount: number,
+    penalty: boolean,
+    number: number,
+  ): PointAward => ({
+    key: pointKey(
+      "asi",
+      actor.id,
+      penalty ? "slopbot-penalty" : "merged-pull-request",
+      sourceId,
+    ),
+    actor,
+    projectId: "asi",
+    category: penalty ? "slopbot-penalty" : "merged-pull-request",
+    amount,
+    occurredAt: GENERATED_AT,
+    sourceId,
+    sourceUrl: `https://github.com/SlopDotCash/asi/pull/${number}`,
+    workUnitId: penalty ? `${sourceId}:penalty` : sourceId,
+    provisional: false,
+  });
+  let journal = appendPointAwards(
+    emptyPointsJournal(GENERATED_AT),
+    [award("PR_retained_earned", 1, false, 100)],
+    "a".repeat(64),
+    "slop-score-v2",
+    GENERATED_AT,
+  );
+  for (const number of [101, 102]) {
+    const sourceId = `PR_retained_debit_${number}`;
+    const debit = award(sourceId, -Number.MAX_SAFE_INTEGER, true, number);
+    journal = appendPointAwards(
+      journal,
+      [debit],
+      "b".repeat(64),
+      "slopbot-penalties-v1",
+      GENERATED_AT,
+      new Map([
+        [
+          debit.key,
+          {
+            sourceId,
+            effectiveAt: GENERATED_AT,
+            reason: "Retained debit evidence",
+          },
+        ],
+      ]),
+      new Map([
+        [
+          debit.key,
+          {
+            category: "spam",
+            debit: Number.MAX_SAFE_INTEGER,
+            reversedAt: null,
+            reversal: null,
+          },
+        ],
+      ]),
+    );
+  }
+  // Every retained amount and its revision hash is valid. The signed total
+  // is not representable by the public Number schema and must not be rounded.
+  expect(() => assertPointsJournal(journal)).not.toThrow();
+  expect(() => pointMembers(journal)).toThrow("Points total overflow");
+});
 
 function checkpoint(): PointsJournal {
   return JSON.parse(readFileSync("data/points/history.json", "utf8"));

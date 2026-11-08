@@ -15,6 +15,7 @@ import type {
   PublishedPenalty,
   ScoreEvent,
 } from "./leaderboard-types";
+import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 
 /** Retained history is explicit evidence, never an absence-based reversal. */
 export function assertPenaltyHistory(
@@ -98,31 +99,60 @@ export function penaltyDeductions(
 ): PenaltyDeductions {
   const key = (actorId: string, repository: string, occurredAt: string) =>
     `${actorId}\0${projectOf(repository)}\0${occurredAt.slice(0, 7)}`;
-  const available = new Map<string, number>();
+  const buckets = new Map<string, number>();
+  const bucketIndex = (value: string): number => {
+    const existing = buckets.get(value);
+    if (existing !== undefined) return existing;
+    const index = buckets.size;
+    buckets.set(value, index);
+    return index;
+  };
+  const credits: { bucket: number; amount: bigint }[] = [];
   for (const event of events) {
     const bucket = key(event.actor.id, event.repository, event.occurredAt);
-    available.set(bucket, (available.get(bucket) ?? 0) + eventThirds(event));
+    credits.push({
+      bucket: bucketIndex(bucket),
+      amount: BigInt(eventThirds(event)),
+    });
   }
-  const byActor = new Map<string, number>();
-  const byPenalty = new Map<string, number>();
-  for (const penalty of [...penalties].sort(
+  const ordered = [...penalties].sort(
     (left, right) =>
       left.occurredAt.localeCompare(right.occurredAt) ||
       left.id.localeCompare(right.id),
-  )) {
-    const bucket = key(
-      penalty.actor.id,
-      penalty.repository,
-      penalty.occurredAt,
-    );
-    const applied = Math.min(penalty.debitThirds, available.get(bucket) ?? 0);
-    if (applied <= 0) continue;
-    available.set(bucket, (available.get(bucket) ?? 0) - applied);
+  );
+  const requests = ordered.map((penalty) => ({
+    bucket: bucketIndex(
+      key(penalty.actor.id, penalty.repository, penalty.occurredAt),
+    ),
+    // A nonpositive request applied nothing in the original loop.
+    amount: penalty.debitThirds > 0 ? BigInt(penalty.debitThirds) : 0n,
+  }));
+  const consumed = consumeBuckets(sumBuckets(buckets.size, credits), requests);
+  const byActor = new Map<string, number>();
+  const byPenalty = new Map<string, number>();
+  const actors = new Map<string, number>();
+  const actorCredits: { bucket: number; amount: bigint }[] = [];
+  for (let index = 0; index < ordered.length; index += 1) {
+    const penalty = ordered[index];
+    const exact = consumed.applied[index];
+    if (exact <= 0n) continue;
+    const applied = Number(exact);
+    if (!Number.isSafeInteger(applied))
+      throw new Error("Penalty total overflow");
+    if (!actors.has(penalty.actor.id))
+      actors.set(penalty.actor.id, actors.size);
+    actorCredits.push({
+      bucket: actors.get(penalty.actor.id) as number,
+      amount: exact,
+    });
     byPenalty.set(penalty.id, applied);
-    byActor.set(
-      penalty.actor.id,
-      (byActor.get(penalty.actor.id) ?? 0) + applied,
-    );
+  }
+  const actorTotals = sumBuckets(actors.size, actorCredits);
+  for (const [actor, index] of actors) {
+    const numericTotal = Number(actorTotals[index]);
+    if (!Number.isSafeInteger(numericTotal))
+      throw new Error("Penalty total overflow");
+    byActor.set(actor, numericTotal);
   }
   return { byActor, byPenalty };
 }
