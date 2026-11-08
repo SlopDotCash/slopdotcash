@@ -198,7 +198,7 @@ async function exerciseNativeSolana(
         value.startsWith("slop:bounty-solana:v1:"),
       );
       return key
-        ? (JSON.parse(sessionStorage.getItem(key)!) as {
+        ? (JSON.parse(sessionStorage.getItem(key) ?? "null") as {
             signature: string | null;
             candidate?: string;
           })
