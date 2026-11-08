@@ -394,6 +394,12 @@ test("production direct-transfers exclude testnet networks while staging retains
     for (const [network, transaction, amount] of [
       ["base-mainnet", "t-main", "1000000"],
       ["base-sepolia", "t-test", "5000000"],
+      // Non-canonical spellings of the same testnet must be excluded too.
+      ["Base-Sepolia", "t-cap", "7000000"],
+      ["BASE-SEPOLIA", "t-upper", "4000000"],
+      [" base-sepolia", "t-lead", "3000000"],
+      ["base-sepolia ", "t-trail", "2000000"],
+      ["base_sepolia", "t-under", "5000000"],
     ] as const)
       f.sqlite
         .query(
@@ -415,8 +421,8 @@ test("production direct-transfers exclude testnet networks while staging retains
       "staging",
     );
     expect(staging.status).toBe(200);
-    expect(staging.body.totalMicro).toBe("6000000");
-    expect(staging.body.transfers).toHaveLength(2);
+    expect(staging.body.totalMicro).toBe("27000000");
+    expect(staging.body.transfers).toHaveLength(7);
 
     // Paged route (browsers opt in with x-slop-direct-history: paged).
     const paged = async (tier: "staging" | "production") => {
@@ -437,8 +443,39 @@ test("production direct-transfers exclude testnet networks while staging retains
     expect(pagedProduction.body.transfers[0].network).toBe("base-mainnet");
     const pagedStaging = await paged("staging");
     expect(pagedStaging.status).toBe(200);
-    expect(pagedStaging.body.total).toBe(2);
-    expect(pagedStaging.body.totalMicro).toBe("6000000");
+    expect(pagedStaging.body.total).toBe(7);
+    expect(pagedStaging.body.totalMicro).toBe("27000000");
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("production received totals exclude non-canonically spelled testnet networks", async () => {
+  const f = fixture();
+  try {
+    for (const [network, transaction, amount] of [
+      ["base-mainnet", "t-main", "1000000"],
+      ["Base-Sepolia", "t-cap", "7000000"],
+      ["BASE-SEPOLIA", "t-upper", "4000000"],
+      [" base-sepolia", "t-lead", "3000000"],
+      ["base-sepolia ", "t-trail", "2000000"],
+      ["base_sepolia", "t-under", "5000000"],
+    ] as const)
+      f.sqlite
+        .query(
+          `INSERT INTO payment_direct_transfers VALUES(?,?,'project','2026-08','123','node123','first','base','r',?,'2026-09-03T00:00:00.000Z','b','p',?)`,
+        )
+        .run(network, transaction, amount, when);
+
+    const production = await f.read("received", "production");
+    expect(production.status).toBe(200);
+    expect(production.body.totals.directMicro).toBe("1000000");
+    expect(production.body.totals.directTransfers).toBe(1);
+
+    const staging = await f.read("received", "staging");
+    expect(staging.status).toBe(200);
+    expect(staging.body.totals.directMicro).toBe("22000000");
+    expect(staging.body.totals.directTransfers).toBe(6);
   } finally {
     f.sqlite.close();
   }

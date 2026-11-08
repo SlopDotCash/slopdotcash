@@ -18,6 +18,7 @@ import {
   ESCROW_CHAINS,
   ESCROW_NETWORKS,
   EVM_CHAINS,
+  isTestnetNetwork,
 } from "../../src/lib/escrow-policy.mjs";
 import {
   type AccountMonthlyAward,
@@ -61,19 +62,6 @@ import {
 } from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
-
-/**
- * Testnet award totals are reported only outside production; staging pays in
- * testnet stablecoins, so it keeps them. Network classification comes from
- * the escrow registry, mirroring the /received deployment-tier rule.
- */
-function isTestnetNetwork(network: string): boolean {
-  return (
-    (ESCROW_NETWORKS as Record<string, { testnet: boolean } | undefined>)[
-      network
-    ]?.testnet === true
-  );
-}
 
 function isMonthlyCommitmentInput(
   body: unknown,

@@ -32,9 +32,14 @@ export async function directTransferPage(
   // Production excludes testnet networks, mirroring the /totals, /vault, and
   // /received deployment-tier rules. Staging keeps them because it pays in
   // testnet stablecoins.
+  // The shared spelling rule lives in the JS filters; the SQL side must
+  // match it, so it normalizes case, surrounding whitespace, and
+  // underscores before comparing against the canonical registry keys.
   const testnetFilter = includeTestnets
     ? ""
-    : ` AND network NOT IN (${Object.entries(ESCROW_NETWORKS)
+    : ` AND REPLACE(LOWER(TRIM(network)), '_', '-') NOT IN (${Object.entries(
+        ESCROW_NETWORKS,
+      )
         .filter(([, v]) => v.testnet)
         .map(([k]) => `'${k.replace(/'/g, "''")}'`)
         .join(",")})`;

@@ -1,6 +1,7 @@
 import {
   ESCROW_NETWORKS,
   isEscrowChain,
+  isTestnetNetwork,
 } from "../../src/lib/escrow-policy.mjs";
 import {
   isBaseUnits,
@@ -139,7 +140,9 @@ export async function publicVaultPayments(
   // testnet stablecoins.
   const testnetFilter = includeTestnets
     ? ""
-    : ` AND o.network NOT IN (${Object.entries(ESCROW_NETWORKS)
+    : ` AND REPLACE(LOWER(TRIM(o.network)), '_', '-') NOT IN (${Object.entries(
+        ESCROW_NETWORKS,
+      )
         .filter(([, v]) => v.testnet)
         .map(([k]) => `'${k.replace(/'/g, "''")}'`)
         .join(",")})`;
@@ -294,11 +297,9 @@ export async function publicReceivedTotals(
       throw new Error("Invalid direct transfer record");
     // Production excludes testnet networks, mirroring the vault loop below.
     // Staging keeps them because it pays in testnet stablecoins.
-    if (
-      !includeTestnets &&
-      ESCROW_NETWORKS[row.network as keyof typeof ESCROW_NETWORKS]?.testnet
-    )
-      continue;
+    // The shared helper normalizes the spelling (case, whitespace,
+    // underscores) so a non-canonical spelling cannot slip through.
+    if (!includeTestnets && isTestnetNetwork(row.network)) continue;
     const value = person(row.githubUserId);
     // A disclosed transfer names its recipient; a later sign-in login wins.
     value.login = row.memberLogin ?? row.login;
@@ -311,11 +312,7 @@ export async function publicReceivedTotals(
   }
   for (const row of vaultRows) {
     const record = publicRecord(row);
-    if (
-      !includeTestnets &&
-      ESCROW_NETWORKS[record.network as keyof typeof ESCROW_NETWORKS]?.testnet
-    )
-      continue;
+    if (!includeTestnets && isTestnetNetwork(record.network)) continue;
     const value = person(row.githubUserId);
     value.login ??= row.memberLogin;
     value.vaultPayments++;

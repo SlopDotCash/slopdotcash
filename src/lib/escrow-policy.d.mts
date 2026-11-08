@@ -90,6 +90,8 @@ export declare const ESCROW_NETWORKS: Readonly<
 export declare const ESCROW_CHAINS: readonly EscrowChain[];
 export declare const EVM_CHAINS: readonly EscrowChain[];
 export declare function isEscrowChain(value: unknown): value is EscrowChain;
+export declare function normalizeNetworkName(value: unknown): string;
+export declare function isTestnetNetwork(value: unknown): boolean;
 export declare function chainFamily(chain: string): EscrowFamily;
 export declare function isMaxNativeCostWei(value: unknown): value is string;
 export declare function assertEscrowPolicy(value: unknown): EscrowPolicy;

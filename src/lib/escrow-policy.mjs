@@ -247,6 +247,20 @@ export const ESCROW_CHAINS = Object.freeze([
 export function isEscrowChain(value) {
   return ESCROW_CHAINS.includes(value);
 }
+/**
+ * Registry lookup key for a network name. Writers may spell it with
+ * different casing, surrounding whitespace, or underscores instead of the
+ * registry's hyphens, so lookups must never use the raw string.
+ */
+export function normalizeNetworkName(value) {
+  return typeof value === "string"
+    ? value.trim().toLowerCase().replaceAll("_", "-")
+    : "";
+}
+/** Whether a network name, in any spelling, is a testnet in the registry. */
+export function isTestnetNetwork(value) {
+  return ESCROW_NETWORKS[normalizeNetworkName(value)]?.testnet === true;
+}
 /** The execution family of a chain. Unknown chains throw; nothing may default to a family. */
 export function chainFamily(chain) {
   const network = Object.values(ESCROW_NETWORKS).find(
