@@ -58,8 +58,15 @@ than proving it.
 A source-only follow-up at `d6323d9f2` adds the explicit startup-rejection
 transition and two named scenarios: a late-returning sibling must be closed,
 and an earlier signal result must survive a later startup rejection. The
-model now contains seven named scenarios. **No checks were run for this
+model now contains fourteen named scenarios. **No checks were run for this
 follow-up**, and no runtime code changed.
+
+The local follow-up preserves the refusal-scenario split reviewed in PR 2427:
+an action's `.fail()` assertion ends its own scenario instead of serving as a
+state-preserving step before more actions. Startup rejection now has separate
+refusal cases for new work, late launches and premature completion, alongside
+the successful drain trace. These new scenarios are unexecuted; the parent
+PR's evidence does not certify the added startup-rejection states.
 
 ## Explicit limits
 
