@@ -1,215 +1,236 @@
-# Jupiter signed-route decoder research
+# Jupiter signed-route decoder
 
-This is a follow-up to the original parser candidate in
-[`lemmascript-tooling-research.md`](lemmascript-tooling-research.md). The source
-examined is commit `54be5f519e1565abc74da0f43c05f0571aa0c9c3`. The research uses
-LemmaScript 0.6.6, Node 24.15.0, Bun 1.3.14 and Dafny 4.11.0. It adds **zero
-verified production functions**. No runtime, schema, proof manifest or shared
-inventory changed.
+This work replaces the generic Jupiter schema interpreter with generated typed
+readers. `JUPITER_ROUTE_SCHEMA` remains the only format authority. It preserves
+all admitted formats, returned values, native byte views, errors and limits.
+The source baseline is `54be5f519e1565abc74da0f43c05f0571aa0c9c3`.
 
-The complete decoder is not a small annotation-only target in this compiler.
-It remains a high-value, unfinished candidate. A schema-derived typed decoder
-is technically plausible; the datatype experiment below confirms that the
-schema's size and union shapes alone are not a compiler blocker. This report
-defines the work needed to complete that candidate instead of substituting a
-scalar amount check for a parser proof.
+The full unfiltered deductive check passed with 15,551 verified obligations and
+zero errors across all 35 selected production functions and their defined
+helpers. The check took 1,135.75 seconds with unchanged input hashes. These
+contracts cover the decoder below; they do not prove the whole application or
+the deployed Jupiter program.
 
-## Actual production path
+## Production use and scope
 
-[`jupiter-wire.ts`](../workers/fee-converter/jupiter-wire.ts) interprets the
-canonical [`jupiter-route-schema.ts`](../workers/fee-converter/jupiter-route-schema.ts).
-[`jupiter-route.ts`](../workers/fee-converter/jupiter-route.ts) calls the decoder
-after account-proof and native-wrap checks. The same route assertion runs in:
+[`jupiter-wire.ts`](../workers/fee-converter/jupiter-wire.ts) calls
+[`decodeJupiterBytes`](../workers/fee-converter/verified-jupiter-wire.ts), maps
+its refusal code to the existing error message, and restores native byte views
+through [`jupiter-values.ts`](../workers/fee-converter/jupiter-values.ts).
+[`assertJupiterRoute`](../workers/fee-converter/jupiter-route.ts) continues to
+check account privileges, wallets, mints, amounts, fees and slippage. Its real
+callers remain:
 
 - `reviewSolanaRouteAccounts`, before preparing a signed conversion;
-- `D1ConversionStore`, when checking retained route evidence;
+- `D1ConversionStore`, when checking retained send evidence;
 - `finalizedRouteCredit`, when checking the finalized signed transaction.
 
-The parser therefore protects real preparation, retained-send and receipt
-paths. This is PRD section 6's reviewed Solana conversion and same-wallet output
-boundary. The account proof, ATA derivation, signature verification, native
-wrapping, simulation, RPC finality and balance reconciliation are separate
-parts of those paths; a byte-parser theorem would not prove them.
+This serves PRD section 6's reviewed Solana conversion and same-wallet output
+requirement. Account proofs, ATA derivation, signatures, native wrapping, RPC
+finality and balance reconciliation are separate checks. This parser does not
+prove those checks or attest the deployed Jupiter program.
 
-The existing schema contains four exact-in instruction layouts, 12 named types
-(five structs and seven enums), 239 enum variants, 167 variant fields, 13 struct
-fields and 24 top-level argument fields. `Swap` has 203 variants. The named-type
-graph has no cycle. Its maximum `read` depth is 10 when field, option, vector and
-defined-type steps are counted as the current interpreter counts them. There
-are 29 distinct field-type shapes, including ten vector, option or fixed-array
-shapes. Fixed arrays have lengths 5, 16 and 32. Primitive shapes are `u8`, `u16`,
-`u32`, `u64`, `u128`, `bool` and `bytes`.
+The canonical schema contains four exact-in instruction layouts, 12 named
+wire types, five structs, seven enums and 239 enum constructors. `Swap` contains
+203 constructors; `CandidateSwap` contains 19. The other enums contain 17 in
+total. There are 167 variant fields, 13 struct fields and 24 instruction fields.
+The type graph is acyclic. Its maximum interpreter read depth is 10. Primitive
+shapes are `u8`, `u16`, `u32`, `u64`, `u128`, `bool` and `bytes`; fixed arrays have
+length 5, 16 or 32.
 
-The four layouts must stay distinct. The first two put the route vector before
-the amount fields. The V2 layouts put it after the amount, slippage and fee
-fields. The shared-account layouts add the leading account-id byte. A fixed
-trailer reader would therefore be incorrect, including for instructions with
-appended bytes.
+The four layouts remain distinct. The original layouts place the route vector
+before amount fields. V2 places it after amount, slippage and fee fields.
+Shared-account layouts add a leading account-id byte. A fixed trailer read
+would not be correct.
 
-There is no encoded `minimumOut` field in these four layouts. The route
-assertion binds decoded `in_amount`, `quoted_out_amount` and `slippage_bps` to
-the reviewed expectation, requires zero platform/positive-slippage fees, and
-requires positive input, quote and minimum values. It checks
-`floor(quotedOut * (10000 - slippageBps) / 10000) >= minimumOut`. The expectation
-requires integer slippage from 0 through 10000. `signedMinimumOutput` in
-`solana.ts` deliberately permits the API's display threshold to be one unit
-above the encoded fields' conservative floor. A future proof must preserve
-this distinction rather than invent a minimum field in the signed bytes.
+There is no encoded `minimumOut` field. The unchanged route assertion binds
+`in_amount`, `quoted_out_amount` and `slippage_bps` to the reviewed expectation,
+requires zero platform and positive-slippage fees, and checks positive input,
+quote and minimum values. It requires integer slippage from 0 through 10000 and
+checks `floor(quotedOut * (10000 - slippageBps) / 10000) >= minimumOut`.
+`solana.ts:signedMinimumOutput` permits the API's display threshold to be one
+unit above that conservative encoded floor. This distinction is preserved.
 
-## Exact unsuccessful experiments
+## Why a generated typed parser was needed
 
-The logs and source copies are retained, uncommitted, under
-`evidence/jupiter-research/` in the research worktree. `summary.json` records the
-source and pinned-compiler hashes. These are compiler experiments, not passing
-application tests or parser proofs.
+The pinned toolchain is LemmaScript 0.6.6, Node 24.15.0, Bun 1.3.14 and Dafny
+4.11.0. Annotation-only generation of the old interpreter fails on its unknown
+heterogeneous record spread. A type-only recursive `WireValue` experiment also
+fails there. Independent probes fail on mutable multi-statement closures and
+native `Uint8Array.subarray` emission. TypeScript `throw` messages are discarded
+by extraction and the statements become `assert false`, so they cannot specify
+complete malformed-input refusal behavior.
 
-1. Adding only `//@ verify` and `//@ type data number[]` to the actual production
-   decoder fails generation: `object spread merge { ...a, ...b } needs a known
-   record type for both operands (base: unknown, override: __type)`.
-2. A type-only experiment gives `read` a recursive `WireValue` union and `fields`
-   a `Record<string, WireValue>` result. It still fails at the spread, with
-   `base: unknown, override: map<string, unknown>`. These type-only changes do
-   not provide a faithful typed construction for the heterogeneous interpreter.
-   Both generation failures recur with a strict TypeScript configuration.
-3. An isolated copy of the guarded native byte-view operation fails with
-   `Unsupported Dafny method call: .subarray() on array`. Mapping a native
-   `Uint8Array` to a sequence supports length and index reads; it does not add
-   unsupported methods. Replacing views with full-array copies is not an
-   acceptable implicit fix.
-4. An isolated copy of the shared-cursor closure fails with
-   `Unsupported: multi-statement lambda in Dafny`. The production `take`,
-   `unsigned`, `count`, `read` and `fields` closures share cursor/node state;
-   annotating their calls cannot make that state an explicit verified result.
-5. The pinned extractor drops the expression and message from each `throw`
-   (`tools/dist/extract.js`, throw-statement handling). The transformer emits
-   `assert false` (`tools/dist/transform.js`, `case "throw"`). A size-refusal
-   probe consequently fails verification with `1 verified, 1 error`, at that
-   assertion. Preconditions excluding malformed data could prove only a
-   successful-input slice; they could not prove exact refusal conditions or
-   the existing error ordering for arbitrary bytes.
+The solution replaces captured state and exceptions inside the parser with
+explicit cursor/node/depth parameters and error results. A deterministic
+[single generator](../scripts/generate-jupiter-decoder.mjs) emits the executable
+readers, their typed records, the native-value adapter and the defined Borsh
+semantics. There is no second handwritten list of swap variants.
 
-The first four issues are independent. Resolving the unknown return type alone
-does not fix the mutable closures or native view; resolving those does not
-recover the exception information erased by extraction. No opaque extern,
-assumption, axiom, verifier suppression or generated-body replacement was used.
+The generator emits 29 field-shape readers, four instruction-argument readers,
+one raw integer reader and one dispatcher: 35 production functions selected
+for verification. Helper functions are co-located so imported executable
+contracts do not become opaque externs.
 
-## Tested datatype feasibility
+## Contracts
 
-A separate, deterministic experiment derives TypeScript declarations directly
-from the existing schema: all 12 named types, every enum variant, the four
-instruction argument records, and a tagged success/error result. It uses the
-existing `variant` field as the union discriminant and a sequence model for
-`WireBytes`. There is no second manually maintained variant list.
+The raw integer reader computes the complete little-endian value, bounds every
+read, and proves its result is below `256^width`. The one-, two- and four-byte
+results convert to exact JavaScript numbers; eight- and sixteen-byte results
+stay bigint. The proof uses native byte length and indexed reads without a
+full-payload copy.
 
-With a local `strict: true` TypeScript configuration, the pinned generator and
-Dafny accept all declarations. A datatype-only identity has one verified
-obligation and zero errors under `--isolate-assertions`; the repository's
-`requireProofIntegrity` and `requireProofObligations` checks also accept it.
-This establishes representation feasibility only. It contains no decoder,
-valid-input completeness theorem, malformed-input theorem or production call.
-Its one obligation is excluded from production proof totals.
+Every typed reader returns an error, final offset, node count and value. Its
+postcondition equates the entire result with a separately generated recursive
+Borsh semantics function. That defined function also proves cursor bounds,
+node bounds, the strict node increment for each read, and value validity.
+Repeating those same postconditions on every imperative return was removed;
+the exact-result equality retains them through the defined semantics contract.
 
-The strict configuration matters. The repository root `tsconfig.json` is a
-references-only solution file. `lsc` loads that nearest file, not the compiler
-options in its referenced projects. In an initial non-strict shape experiment,
-nullable variant fields lost their `null` arm in generated declarations.
-The strict rerun retains `Option<RemainingAccountsInfo>` and `Option<int>`.
-A future parser module must have a deliberately selected strict configuration
-and generated-nullability checks. The non-strict experiment is retained as
-negative evidence, not accepted as proof of the full output domain.
+Collection loops preserve the equality between the initial parse and the
+remaining parse with its accumulated prefix. They also preserve prefix order,
+length, value validity, cursor bounds and node bounds. Fixed arrays and vectors
+have explicit loop invariants. Byte vectors return `{ start, length }`
+descriptors whose complete extents are proved to lie within the input.
 
-This is not evidence of a false proof in the current selected suite. A
-generation-only comparison of all 14 manifest modules, covering the current 59
-selected functions, produced byte-identical artifacts after adding only root
-`compilerOptions: { strict: true }`. The original files were restored. Minimal
-nullable-record functions with intentionally false postconditions were also
-tried: loose generation either failed lowering/emission or produced unresolved
-`None` references which Dafny refused; strict generation represented the null
-case and refused the false postcondition. No false acceptance was observed.
-At this revision, the repository gate already snapshots and hashes the three
-root `tsconfig*.json` files; configuration recording and effective strictness
-are different issues. A future configuration change should require effective
-strictness for the nearest config and retain every config in its `extends`
-chain as an input. The full comparison and negative probes are retained under
-`evidence/jupiter-research/strict-config/` and `nullability/`.
+The dispatcher covers every input length permitted by native `Uint8Array`;
+malformed content is not excluded by a protocol-validity precondition. Its
+existing admission limits remain:
 
-## Concrete path to complete coverage
+| Check | Preserved rule |
+| --- | --- |
+| Instruction size | 8 through 1232 bytes |
+| Discriminator | One of the four canonical eight-byte values |
+| Collection count | At most 256 |
+| Read budget | Increment before checking the 4096-node ceiling |
+| Depth | Reject above 32 before reading the node |
+| Boolean / option tag | Only 0 or 1 |
+| Enum tag | Exact admitted ordinal |
+| End of instruction | Reject every trailing byte |
+| Route plan | Require a nonempty plan after the trailing-byte check |
 
-The following is implementation work for a separate cohort, not completed work.
+The last order matters: a zero-step instruction with extra bytes still returns
+`Trailing bytes after Jupiter route`, not `Jupiter route has no steps`.
 
-1. Use `JUPITER_ROUTE_SCHEMA` as the sole schema authority. A deterministic
-   generator can emit approximately 34 reader entry points: the 29 distinct
-   field-type shapes, four instruction argument readers and one discriminator
-   dispatcher. Common cursor, budget, integer and error support is additional.
-   It must emit the 239 cases and their typed records from schema data, check
-   regenerated bytes in CI, and bind the generated module to the schema digest.
-   Do not hand-copy a second 203-case swap list or silently drop new variants.
-2. Replace captured mutation with explicit `(offset, nodes, depth)` parameters
-   and tagged success/error returns that carry the resulting cursor and node
-   count. Generate sequential field reads in the original order. Preserve
-   `++nodes` before the node/depth refusal, depth increments for fields and
-   containers, and the current collection limit. A defined-type read, enum tag
-   or length word must not accidentally add a node that the original helper
-   did not add.
-3. Preserve all existing outcomes: input length 8 through 1232, first matching
-   discriminator, bounded integer reads, count at most 256, node limit 4096,
-   depth limit 32, boolean and option tags restricted to 0/1, admitted enum
-   ordinals, exact trailing-byte refusal, then the nonempty route-plan check.
-   In particular, a zero-step route with trailing bytes currently reports the
-   trailing-byte error first. Preserve primitive result types: up to `u32` is
-   a JavaScript number; `u64` and `u128` are bigint. Byte vectors remain native
-   views, including zero-length vectors. No extra cap or UTF-8 rule is needed.
-4. Resolve the byte-view translation explicitly. One option is a separately
-   reviewed, pinned toolchain extension that lowers guarded native `subarray`
-   to the corresponding sequence slice. Prove the guards and limit the model
-   to read-only contents; alias identity or concurrent external mutation would
-   remain outside it. Do not introduce a bodyless trusted view helper. A
-   verified offset/length slice descriptor plus a native-view adapter is
-   another option: the parser can first prove the exact descriptor range and
-   consumed bytes, then the adapter constructs the view. That adapter and its
-   content/refinement boundary must still be stated and tested; the descriptor
-   theorem is not automatically a proof of the returned native views.
-5. Generate defined Borsh semantics and prove each executable reader against
-   them: every consumed index is in bounds; success yields the exact canonical
-   typed value and final offset; malformed input yields the first applicable
-   existing error. The reference relation must describe schema field order,
-   discriminants, lengths and byte values independently of a successful
-   reader's own assertions. Merely proving a returned offset lies in the
-   buffer would not establish completeness or exact decoding.
-6. Bind the decoded amount fields in the actual route assertion and prove the
-   conservative minimum formula at that call boundary. Keep account/crypto
-   checks explicit and preserve the pre-signing, retained-send and finalized
-   receipt callers. A stand-alone arithmetic predicate does not prove that
-   its arguments came from the signed bytes.
-7. Compare the original and generated decoder over all four layouts and every
-   enum variant, nested vectors/options, all primitive extrema, truncation at
-   each consumed byte, invalid tags, trailing bytes, and competing errors.
-   Preserve result shapes and error text/order. Run the real affected
-   `solana-route-prepare.test.ts` workflow and the retained-send/finalized
-   receipt tests. Add paired benchmarks at the existing 1232-byte limit before
-   deciding whether to replace the interpreter. The current tests are not
-   evidence that a future generated decoder is correct.
+Runtime enum dispatch uses a floor-midpoint tree after the unknown-tag guard.
+The functional semantics use a ceiling-midpoint partition with explicit exact
+ordinal guards at every leaf. Both derive the ordinals from the canonical
+schema. A bounded integer tag reaches its exact existing constructor;
+comparison changes introduce no reads or node increments. This reduces proof
+path depth without changing the schema's meaning.
 
-The finite schema graph means this route does not require solving arbitrary
-recursive JavaScript object unions. The strict typed-declaration probe is
-positive evidence for the generated representation. Executable decoding,
-byte-view lowering, error completeness, schema-to-source conformance and
-performance remain unimplemented and unverified. This is a substantial parser
-verification cohort, not a two-line annotation change.
+## Proof integrity and compiler configuration
 
-## Smaller candidate and current disposition
+The successful command used `lsc check --backend=dafny --time-limit=30` with
+`--extra-flags="--isolate-assertions --progress=Batch"` and no symbol filters.
+Its process wall limit was 3,600 seconds; each obligation kept the 30-second
+limit. An earlier identical-source run reached its 1,200-second wall limit
+with 12,101 successful batches and no reported errors, before all helpers had
+finished. That incomplete run is retained and does not count as proof closure.
+The complete result requires a source-specific wall-budget exception to the
+repository checker's usual 180 seconds; other modules keep their existing limit.
 
-A reusable native-byte unsigned reader could have a complete contract over
-widths 1, 2, 4, 8 and 16: exact little-endian value, range below `256^width`,
-exact consumed extent and a bound before every indexed read. It could replace
-the interpreter's `unsigned` loop without adding a full-input copy. This would
-be meaningful primitive verification, but it would leave dispatch, collection
-handling, errors, trailing bytes and signed-field binding unproved. It has not
-been implemented or counted merely to increase coverage.
+The semantics are defined functions and predicates, not axioms. Large helpers
+are opaque to keep their definitions out of unrelated solver queries. Every
+body remains verified; explicit local reveal/assert blocks prove the required
+result equalities. The integrity checker accepts only defined opaque functions
+and predicates, retains exact generated headers and executable bodies, and
+continues to reject assumptions, bodyless helpers, verifier attributes,
+duplicate declarations, opaque methods and opaque lemmas. Its adversarial
+regression suite passes 12 tests and 29 assertions.
 
-The production source was restored byte-for-byte after the annotation-only
-probe. No application or full-suite test was run for this documentation-only
-result. No signing, broadcasting, RPC mutation, deployment, push or merge took
-place. The current integration cohort can proceed independently; complete
-Jupiter parser coverage stays explicitly open with the generated-decoder plan
-above.
+A nested strict TypeScript configuration is captured with the production
+source. This matters because `lsc` reads the nearest literal `tsconfig.json`;
+the root references-only solution file does not inherit strict options from its
+referenced projects. At the baseline, all 59 selected functions in 14 modules
+generated identically with strict mode enabled. Nullable-record false-contract
+probes produced failed emission or rejected proofs, not an accepted false
+proof. The limitation is recorded accurately rather than attributed to the
+existing suite.
+
+Run from the repository root with the pinned tools:
+
+```sh
+bun scripts/generate-jupiter-decoder.mjs --write
+node node_modules/lemmascript/tools/dist/lsc.js gen --backend=dafny workers/fee-converter/verified-jupiter-wire.ts
+bun scripts/generate-jupiter-decoder.mjs --sync-proof
+bun scripts/generate-jupiter-decoder.mjs --check
+```
+
+The final command compares exact formatted generated source, native adapter and
+proof additions. It also checks the canonical schema digest. Unsupported new
+argument shapes fail for review instead of silently omitting native conversion.
+The proof builder checks that exactly one recursive step assertion is inserted
+for each collection reader, including the pinned compiler's lifted temporary
+form.
+
+## Validation and measured costs
+
+The saved public-decoder differential runs the actual old and new functions.
+The final corpus has 275,748 exact comparisons derived from 2,848 structured
+fixtures and 20,000 deterministic random-input cases. It covers all four layouts and all 239 enum
+constructors, complete primitive extrema, truncations, invalid tags, trailing
+bytes, competing refusal conditions, and vectors of length 0, 2 and 256.
+256-step V2 plans and 256 `CandidateSwapWithBps` entries exceed the existing
+1232-byte cap and retain that refusal. No cap was added to make a test pass.
+
+It also decodes views beginning 61 bytes into larger buffers and checks native
+view class, shared ArrayBuffer identity, exact absolute and relative offsets,
+length and content, including zero-length byte vectors. The corpus found no
+mismatch. The three existing `solana-route-prepare.test.ts` workflows pass with
+79 assertions against the balanced implementation. These are controlled RPC
+fixtures with real local signing and D1 execution, not live conversion evidence.
+The parser/adapter TypeScript checks and Biome checks pass.
+
+Freshness tests pass unchanged copies and reject changed generated runtime,
+canonical schema, proof, compiler-emission shape and an unsupported top-level
+byte field. The formatting dependency requires both `biome.json` and
+`.gitignore` to be included in the isolated gate's hashed source snapshot.
+
+An independent peer corpus also compared every constructor in every layout:
+7,648 comparisons, including 1,912 accepted cases, matched output values,
+refusals, account-array reference identity and offset byte views.
+
+The balanced-parser benchmark uses seven interleaved process pairs. Each case
+has 10,000 warmup calls and 50,000 timed calls at one fixed call site. Median
+microseconds per public decoder call were:
+
+| Case | Bytes | Original | Generated |
+| --- | ---: | ---: | ---: |
+| Saber | 35 | 6.28 | 2.69 |
+| HumidiFiRouterV3 | 116 | 39.06 | 14.34 |
+| JupiterRfqV2 | 296 | 13.69 | 5.86 |
+| DynamicV2 | 54 | 17.63 | 7.95 |
+
+The host was busy, including with verification. Absolute timings varied
+substantially; one Saber pair was worse for the generated decoder. All paired
+measurements are retained. These are parser-only observations, not stable
+latency guarantees or live conversion measurements. Earlier flat-dispatch
+timings are retained separately and are not the final implementation's result.
+
+The actual Worker dry-run bundle at this baseline grows from 1,151,122 to
+1,309,038 JavaScript bytes, an increase of 157,916 bytes. Deterministic gzip at
+level 9 grows from 249,635 to 258,352 bytes, an increase of 8,717 bytes. Wrangler's
+own upload estimates are retained separately. This is a measured build cost;
+no Worker was deployed.
+
+## Boundaries and receipts
+
+The generator/schema-to-reader mapping is reviewed and tested, not formally
+proved. Dafny checks the generated imperative readers against the defined
+recursive semantics. The generator, TypeScript translation, Dafny and solver
+remain trusted tools. Freshness checks and all-variant differentials help this
+boundary but are not a theorem about the generator itself.
+
+The native adapter constructs `subarray` views only after descriptor validation.
+Its host method semantics and reference identity are outside the Dafny sequence
+model. Differential evidence covers them. Input bytes are read synchronously
+without mutation; concurrent shared-buffer writes or prototype replacement are
+outside the contract. No cryptographic, RPC, signing or deployed-program premise
+is imported as an axiom.
+
+Ignored receipts, exact source snapshots, tool versions, failed experiments,
+full proof logs, differential drivers, benchmark samples and bundle files are
+retained under `evidence/jupiter-research/`. Interrupted, failed, filtered and
+datatype-only experiments do not count as full parser verification. Merge,
+hosted CI, deployment and live-conversion status remain separate gates.
