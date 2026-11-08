@@ -19,10 +19,10 @@ bun run lemmascript:setup
 bun run lemmascript:check
 ```
 
-The completed combined proof checkpoint contains twenty modules and 71
+The completed combined proof checkpoint contains twenty-three modules and 88
 selected runtime functions. Dafny's `--isolate-assertions` option proves every
 assertion in a separate obligation; it does not filter assertions. The run
-completed 3,899 obligations with zero errors:
+completed 4,607 obligations with zero errors:
 
 | Runtime module | Functions | Obligations |
 | --- | ---: | ---: |
@@ -46,6 +46,9 @@ completed 3,899 obligations with zero errors:
 | Retained expiry agreement | 1 | 43 |
 | Complete claim partition | 1 | 281 |
 | Base58 conversion | 3 | 704 |
+| Payment facts and counters | 6 | 58 |
+| Review groups and JSON sizes | 3 | 229 |
+| Restrictions and appeals | 8 | 421 |
 
 These counts cannot be compared directly with the earlier 60 declaration
 checks because the proof splitting changed. Neither count is a function
@@ -369,8 +372,8 @@ The follow-up at `d543fa204` passed all nine strict source/proof modules:
 43 runtime functions and 1,435 assertion checks. The subsequent feed-deadline
 correction requires the final combined source gate to run again.
 The latest combined proof receipt is
-`evidence/lemmascript/1794154882897-67858/result.json`; all twenty modules pass
-3,899 obligations on the integrated `f37c44ac7` checkpoint after the rebase onto Quint parent
+`evidence/lemmascript/1794155956372-51446/result.json`; all twenty-three modules pass
+4,607 obligations on the integrated `f18d89377` checkpoint after the rebase onto Quint parent
 `1f0dafd45aa172ca5b65bb22fb16da99e35fbb1a`. Source hashes are stable; combined
 typecheck, lint and format checks pass. The rebased
 server-free translator's 14 gated regression tests also pass, including a real
