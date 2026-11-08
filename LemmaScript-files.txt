@@ -33,3 +33,4 @@ workers/fee-converter/verified-jupiter-policy.ts
 backend/security/verified-direct-recovery.ts
 workers/fee-converter/verified-route-credit.ts
 src/lib/verified-global-joins.ts
+workers/fee-converter/verified-jupiter-wire.ts
