@@ -136,6 +136,7 @@ export default function OwnerCommitment({
       };
     }
   });
+  const storedPending = useRef<Pending | null>(saved.pending);
   const [pending, setPending] = useState<Pending | null>(saved.pending);
   const [storageError, setStorageError] = useState(Boolean(saved.error));
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
@@ -152,6 +153,7 @@ export default function OwnerCommitment({
       ? updatePendingAttempt(key, previous, value)
       : createPendingAttempt(key, value);
     if (!stored) return false;
+    storedPending.current = value;
     if (mounted.current) setPending(value);
     return true;
   };
@@ -159,6 +161,7 @@ export default function OwnerCommitment({
     if (!mounted.current) return false;
     if (!clearPendingAttempt(key, value))
       throw new Error("The saved request changed. Reload before continuing.");
+    storedPending.current = null;
     setPending(null);
     return true;
   };
@@ -210,6 +213,8 @@ export default function OwnerCommitment({
       let requested = false;
       try {
         const beforeSend = () => {
+          if (!mounted.current)
+            throw new Error("The wallet view was closed. Review before sending.");
           if (!remember(intent))
             throw new Error(
               "The saved request changed. Reload before continuing.",
@@ -252,6 +257,9 @@ export default function OwnerCommitment({
   const check = () =>
     run(async () => {
       if (!wallet || !pending) return;
+      const captured = storedPending.current;
+      if (!captured)
+        throw new Error("The saved request changed. Reload before continuing.");
       const hash = pending.hash ?? recoveryHash.trim();
       if (solana && !pending.solanaPlan)
         throw new Error("The saved Solana transaction is unavailable.");
@@ -268,7 +276,7 @@ export default function OwnerCommitment({
         setNotice("The commitment is not finalized yet. Check again later.");
         return;
       }
-      clear(pending);
+      clear(captured);
       setReview(null);
       setNotice(
         status === "failed"
@@ -364,7 +372,7 @@ export default function OwnerCommitment({
               disabled={busy}
               onClear={() =>
                 void run(async () => {
-                  clear(pending);
+                  clear(storedPending.current ?? pending);
                   setReview(null);
                 })
               }

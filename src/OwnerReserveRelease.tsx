@@ -72,6 +72,7 @@ export default function OwnerReserveRelease({
       };
     }
   });
+  const storedPending = useRef<Pending | null>(initial.pending);
   const [pending, setPending] = useState<Pending | null>(initial.pending);
   const [plan, setPlan] = useState<ReadyMonthlyRelease | null>(null);
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
@@ -95,6 +96,7 @@ export default function OwnerReserveRelease({
       ? updatePendingAttempt(key, previous, value)
       : createPendingAttempt(key, value);
     if (!stored) return false;
+    storedPending.current = value;
     if (mounted.current) setPending(value);
     return true;
   }
@@ -102,6 +104,7 @@ export default function OwnerReserveRelease({
     if (!mounted.current) return false;
     if (!clearPendingAttempt(key, value))
       throw new Error("The saved request changed. Reload before continuing.");
+    storedPending.current = null;
     setPending(null);
     return true;
   }
@@ -166,6 +169,11 @@ export default function OwnerReserveRelease({
             disabled={busy || !hash.trim()}
             onClick={() =>
               void run(async () => {
+                const captured = storedPending.current;
+                if (!captured)
+                  throw new Error(
+                    "The saved request changed. Reload before continuing.",
+                  );
                 const result = await requestMonthlyRelease(view, {
                   planId: pending.planId,
                   transactionId: hash.trim(),
@@ -173,17 +181,18 @@ export default function OwnerReserveRelease({
                 if (!mounted.current) return;
                 if (result.status === "pending") {
                   const candidate = { ...pending, hash: hash.trim() };
-                  if (!updatePendingRecord(key, pending, candidate))
+                  if (!updatePendingRecord(key, captured, candidate))
                     throw new Error(
                       "The saved request changed. Reload before continuing.",
                     );
+                  storedPending.current = candidate;
                   setPending(candidate);
                   setNotice("Waiting for the transaction to finalize.");
                   return;
                 }
                 if (result.status !== "failed" && result.status !== "finalized")
                   throw new Error("The transaction status is unavailable.");
-                clear(pending);
+                clear(captured);
                 setPlan(null);
                 setNotice(
                   result.status === "finalized"
@@ -200,7 +209,7 @@ export default function OwnerReserveRelease({
               disabled={busy}
               onClear={() =>
                 void run(async () => {
-                  clear(pending);
+                  clear(storedPending.current ?? pending);
                   setPlan(null);
                   setNotice("Local request cleared after your wallet check.");
                 })
@@ -274,6 +283,10 @@ export default function OwnerReserveRelease({
                         plan,
                         wallet,
                         () => {
+                          if (!mounted.current)
+                            throw new Error(
+                              "The wallet view was closed. Review before sending.",
+                            );
                           if (!save(intent))
                             throw new Error(
                               "The saved request changed. Reload before continuing.",

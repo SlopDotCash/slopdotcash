@@ -1,4 +1,4 @@
-# Owner request recovery across component lifetimes
+# Wallet request recovery across component lifetimes
 
 This correction starts at `1fb9a74e0`. It is based on source inspection only.
 The user directed the team to skip checks and focus on pushing. No test,
@@ -69,7 +69,7 @@ parent/keyed-child and multi-leg boundaries are not proved by this model.
 
 ## Model boundary
 
-`ui_owner_recovery_lifetime.qnt` models two instances sharing one same-tab
+The initial `ui_owner_recovery_lifetime.qnt` models two instances sharing one same-tab
 storage slot, an original attempt (including a legacy form), one retry with a
 fresh ID, a check per instance, pending/finalized-failure/finalized-success
 outcomes, one wallet result per attempt, storage failures, and explicit user
@@ -95,3 +95,61 @@ ordinary restored pending record. Tail scenarios use the departed first
 instance and a second instance; the same-attempt evidence-change scenario
 checks in the second instance while the first wallet promise returns. This
 does not change runtime code or add execution evidence.
+
+## Follow-up from `6f5aee920`
+
+The same source-confirmed ordering remained in `VaultActions.tsx` and
+`AutomaticMonthlyPayment.tsx`. Both removed their shared logical slot after
+an awaited check, wrote returned hashes without attempt ownership, and could
+deliver a departed component's `onFinalized` callback. A newer mounted view
+could verify the old transaction first, advance from approval to deposit or
+retry a failed transaction, and record its new request before the old callback
+removed that request. The existing keys bind network/vault (and the asset for
+deposit/withdrawal); they intentionally span successive requests, so the key
+alone cannot distinguish those attempts.
+
+Those two components now reuse the optional attempt ID, empty-slot creation,
+exact-record completion update/removal, still-owned wallet-result update, and
+departed-verification guard. Legacy records and the distinction between fixed
+wallet-returned identifiers and editable recovery candidates are preserved.
+Token approval still reports approval only; only a finalized deposit or
+withdrawal calls its transfer-completion callback. A finalized monthly setting
+calls its setting callback, without claiming a payment. Wallet-decline tails
+can remove only their own exact original marker. Layout and styles are unchanged.
+
+The owner-flow audit also identified a storage-failure mismatch introduced by
+using the in-memory request as the removal snapshot. If the wallet returns H
+but saving H fails, the component retains H in memory while the stored record
+still has no hash. A later exact successful check of H then failed the local
+record comparison, even though nobody replaced the attempt. All four callers
+now retain the last successfully stored record separately. A check captures
+that record before its await; successful verification may clear it only if
+that exact stored value is still present. New evidence or a different attempt
+written during the wait still causes refusal. A failed write does not advance
+the stored snapshot, and a failed removal does not clear the local request.
+
+The shared model now has five action kinds: owner commitment, reserve release,
+vault approval, vault transfer, and monthly setting. It keeps the existing
+per-instance wallet-busy rule and separates in-memory hash evidence from each
+instance's last successful stored snapshot. Five further scenarios cover
+verification after a failed hash write, approval without transfer, completed
+transfer, a departed approval check after a retry, and a setting completion
+without payment. A separate preflight state also models navigation during the
+earlier asynchronous review: each `beforeSend` now checks the mounted lifetime
+before creating a record or requesting the wallet. This does not block a hash
+from an already-open wallet promise from updating its still-owned record.
+Departed-preflight refusal and cleanup have separate scenarios.
+
+Every expected refusal is terminal in its named scenario. The previous busy
+scenario chained `.fail()` and then read state; that structure is removed,
+with check, clear and preparation refusals split into independent scenarios.
+Its **23 named scenarios and all changed source are
+unvalidated**. No tests, syntax/type/lint/format checks, models or browser runs
+were executed for this follow-up.
+
+These are still same-tab control-flow models. Exact EVM/Solana transaction
+matching and finality remain in the unchanged adapters. Explicit clearing or
+replacement ends ownership of a slot; a later wallet result cannot recreate
+it, and no additional history storage is introduced. Old client versions,
+separate tabs, malicious storage mutation, and unbounded retries remain outside
+this finite source-level argument.
