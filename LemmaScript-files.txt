@@ -21,3 +21,4 @@ workers/fee-converter/verified-native-liability.ts
 workers/fee-converter/verified-expiry.ts
 workers/slopbot/verified-work-unit.ts
 src/lib/verified-base58.ts
+backend/payments/verified-evidence.ts

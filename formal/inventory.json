@@ -285,10 +285,10 @@
     },
     {
       "path": "backend/payments/ledger.ts",
-      "sha256": "339c1162075b8876e7601d1eef135974666fb32182b0671185480a4026b26df2",
+      "sha256": "b35c578b2293d454a04e23ef63a49e1118d9549151ed4da3286e1c5879b0f542",
       "models": ["formal/models/payment_dispatch.qnt"],
       "candidateLines": [
-        32, 52, 132, 140, 155, 174, 219, 224, 240, 260, 270, 277, 284
+        39, 94, 174, 182, 197, 261, 274, 279, 295, 315, 325, 332, 339
       ],
       "review": "mapped-abstraction"
     },
@@ -361,9 +361,19 @@
     },
     {
       "path": "backend/payments/vault-snapshots.ts",
-      "sha256": "72ebfd03248e0e32d47c70acfba7311dbf1232c41da48fd4bbdc1f2514bb86ea",
+      "sha256": "1e385f301c8d112de8e2ec2fdefd58caab8ed1c10916e363e91131f0b58c0230",
       "models": ["formal/models/chain_evidence.qnt"],
-      "candidateLines": [11, 61, 111, 123, 129],
+      "candidateLines": [12, 62, 124, 136, 142],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/payments/verified-evidence.ts",
+      "sha256": "7618a7ced8cd7e408ba7255e0bf838891b7cf20202e31d409cd8d1b97876470f",
+      "models": [
+        "formal/models/chain_evidence.qnt",
+        "formal/models/payment_dispatch.qnt"
+      ],
+      "candidateLines": [94, 134, 135, 150],
       "review": "mapped-abstraction"
     },
     {
@@ -8432,11 +8442,12 @@
     },
     {
       "path": "formal/models/chain_evidence.qnt",
-      "sha256": "61689a532998c466eb46d345c05cef876ca5d2cd619451a39d979ef2c0a4e1a4",
+      "sha256": "dec3692972ec76f2ffc0a2f16173c82dc606bb4ff2ea0b30fa26f4ace44506ea",
       "sources": [
         "backend/payments/evm-adapter.ts",
         "backend/payments/solana-funding.ts",
         "backend/payments/vault-snapshots.ts",
+        "backend/payments/verified-evidence.ts",
         "contracts/evm/adapter.ts",
         "contracts/solana/adapter.ts",
         "contracts/solana/wallet-transactions.ts"
@@ -9667,10 +9678,11 @@
     },
     {
       "path": "formal/models/payment_dispatch.qnt",
-      "sha256": "fdbfb54b2609aacedbd875e5de01136626178ea9351650fcbe1c6acdabc11b56",
+      "sha256": "42eca2c80f310b671ca7fe922a31ba249cfb23d1863b3d97cf7ddf00eec83e94",
       "sources": [
         "backend/payments/dispatch.ts",
         "backend/payments/ledger.ts",
+        "backend/payments/verified-evidence.ts",
         "migrations/0011_payments.sql",
         "migrations/0017_robinhood_chain.sql",
         "migrations/0021_multi_asset_vault_snapshots.sql",
