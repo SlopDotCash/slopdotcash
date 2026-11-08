@@ -100,3 +100,13 @@ recovery. Desktop passed; mobile reached exact paid finality and then failed a
 200% text-width assertion. Its failure is retained separately and is not a
 successful whole-lane result. Final application, browser and native workflow
 validation use their own source-bound receipts.
+
+The corrected contained lane at application-source commit `76a37544e` then
+passed both Chromium desktop and mobile cases with zero unexpected, flaky or
+skipped results. It used real wallet registration/challenge/authorization for
+rotation, exercised uncertain submission recovery, reconciled exact finalized
+balances, and checked accessibility and 200% text reflow. The source hashes
+were unchanged during the run. Teardown left the owned container absent, both
+host listeners closed, and all 18 pre-existing containers retained. Its ignored
+receipt and videos are under `evidence/formal/bounty-solana-ui-final/`. These
+are isolated local-chain results, not hosted, production or native-zoom proof.

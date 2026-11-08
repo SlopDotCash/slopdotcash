@@ -87,3 +87,10 @@ to 320 and the grid/select to 292, with no content removed. The filter's state
 and choices are unchanged; pixel geometry is browser evidence, not a new claim
 of Quint refinement. The real chain workflow rerun supplies the final runtime
 and accessibility evidence separately from the captured-DOM reproduction.
+
+The corrected native-SOL browser workflow subsequently passed on Chromium
+desktop and mobile without retry. The existing final 200% text-width and axe
+assertions passed alongside actual finalized payment and recovery. The
+application-source hashes were unchanged during that run. This is text-resize
+evidence; it does not extend the earlier separate native Chrome zoom record.
+The corrected Anvil run is tracked independently.
