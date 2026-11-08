@@ -51,8 +51,10 @@ export interface MonthlyReview {
 }
 
 /**
- * The project's recorded monthly amount in the vault asset's base units.
- * The vault must use that asset and its recorded decimals.
+ * The project's recorded monthly amount in the vault asset's base units,
+ * raised to the highest month-specific cap the manifest pins for an
+ * individual month (`reward.cycleCaps`). The vault must use that asset and
+ * its recorded decimals.
  */
 export function vaultMonthlyCap(
   project: Pick<ProjectDefinition, "reward" | "rewardAsset">,
@@ -81,7 +83,18 @@ export function vaultMonthlyCap(
     );
   if (!CANONICAL_UINT.test(project.reward.monthlyCapMinor))
     throw new Error("The project's monthly amount is invalid.");
-  return BigInt(project.reward.monthlyCapMinor);
+  // The proposal, the owner's allocation cap and the frozen total all
+  // resolve an individual month's own pinned cap, and the vault admits a
+  // month only when its gross total fits the vault's one monthly cap. The
+  // standing target therefore covers the highest pinned month as well as
+  // the monthly amount; a pin at or below the amount changes nothing, and
+  // no month can commit more than its own resolved cap.
+  let cap = BigInt(project.reward.monthlyCapMinor);
+  for (const entry of project.reward.cycleCaps ?? []) {
+    const pinned = BigInt(entry.monthlyCapMinor);
+    if (pinned > cap) cap = pinned;
+  }
+  return cap;
 }
 /** On uses the project's monthly amount; off keeps the cap the vault already holds. */
 export function monthlyTarget(
