@@ -154,7 +154,10 @@ models: for (const file of files) {
           TMP: stageDirectory,
           TEMP: stageDirectory,
         },
-        timeoutMs: verify ? 180_000 : 90_000,
+        // Large finite UI graphs exceeded three minutes after exploring
+        // millions of states. Keep a six-minute verification-stage budget;
+        // type, scenario and simulation checks retain their shorter limit.
+        timeoutMs: verify ? 360_000 : 90_000,
         signal: cancellation.signal,
         onStdout: collect,
         onStderr: collect,
