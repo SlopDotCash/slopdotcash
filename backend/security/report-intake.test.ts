@@ -1938,7 +1938,16 @@ describe("durable private report controls", () => {
         expect(required(active.body.submission).intake.canRetryScreening).toBe(
           false,
         );
-        t.advance(16 * 60 * 1000);
+        t.advance(15 * 60 * 1000);
+        const boundary = await t.call(
+          REPORTER,
+          "GET",
+          `security-submissions/${original.id}`,
+        );
+        expect(
+          required(boundary.body.submission).intake.canRetryScreening,
+        ).toBe(false);
+        t.advance(60 * 1000);
       }
       const retained = await t.call(
         REPORTER,
