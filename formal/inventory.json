@@ -6996,9 +6996,9 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-consumption.ts",
-      "sha256": "8e4aa113c3b3883c477348fd1cfb31a30f6a2b9557a72f844976648ee356e432",
+      "sha256": "a563e09ca245e841b6f6112c42e9cdec29853040f258dd6d32e3655c598e0105",
       "models": ["formal/models/bot_value_history.qnt"],
-      "candidateLines": [209, 233, 234, 235, 240, 261, 264, 270, 287, 315, 316],
+      "candidateLines": [210, 281, 284, 290, 307, 335, 336],
       "review": "mapped-abstraction"
     },
     {
@@ -7046,7 +7046,10 @@
     {
       "path": "workers/slopbot/verified-retained-binding.ts",
       "sha256": "b43e6fb821227f46bd5aa7dd6395d30b99bff370c038fa4040786f491fc878ff",
-      "models": ["formal/models/bot_retained_acceptance.qnt"],
+      "models": [
+        "formal/models/bot_retained_acceptance.qnt",
+        "formal/models/bot_value_history.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -8347,10 +8350,11 @@
     },
     {
       "path": "formal/models/bot_value_history.qnt",
-      "sha256": "51e434adf22427c7bb6281228f41c9022c3ec25d0515c90b7d7d92f6e5e86de4",
+      "sha256": "9c77d2c2802edbb0e942ef10b43bfa683700a0fae8b9683e41ee47210603aae5",
       "sources": [
         "workers/slopbot/value-consumption.ts",
         "workers/slopbot/value-work-unit-consumption.ts",
+        "workers/slopbot/verified-retained-binding.ts",
         "workers/slopbot/verified-source-ownership.ts"
       ],
       "scenarios": [
