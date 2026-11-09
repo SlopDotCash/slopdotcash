@@ -50,6 +50,21 @@ export interface SolanaSigner {
   address: string;
   signMessage(message: Uint8Array): Promise<Uint8Array>;
 }
+/** The signer's strict Ed25519 signature over `message`, or a refusal. */
+export async function verifiedSignerSignature(
+  signer: SolanaSigner,
+  message: Uint8Array,
+): Promise<Uint8Array> {
+  const signature = await signer.signMessage(message);
+  if (
+    signature.length !== 64 ||
+    !ed25519.verify(signature, message, bytes(signer.address), {
+      zip215: false,
+    })
+  )
+    throw new Error("Invalid signer response");
+  return signature;
+}
 export interface SolanaExecutorEnvironment {
   PAYMENTS_DB: D1Database;
   PAYMENT_DEPLOYMENTS: string;
@@ -372,14 +387,7 @@ async function send(
         throw new Error("Expired attempt disappeared from durable journal");
       if (existing)
         await store.put(`${key}:expired:${existing.generation}`, existing);
-      const signature = await env.SOLANA_SIGNER.signMessage(msg);
-      if (
-        signature.length !== 64 ||
-        !ed25519.verify(signature, msg, bytes(env.SOLANA_SIGNER.address), {
-          zip215: false,
-        })
-      )
-        throw new Error("Invalid signer response");
+      const signature = await verifiedSignerSignature(env.SOLANA_SIGNER, msg);
       // A co-signed binding leaves the second signature slot empty until the
       // destination wallet signs the same bytes.
       const raw = cosigner

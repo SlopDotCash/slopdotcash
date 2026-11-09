@@ -40,6 +40,7 @@ import {
   preflightSolanaDeployment,
   readSolanaAccount,
   solanaTransactionStatus,
+  verifiedSignerSignature,
 } from "./solana";
 
 const discriminator = (name: string) =>
@@ -128,14 +129,7 @@ async function submit(
     if (retired && !existing) throw new Error("Monthly attempt disappeared");
     if (existing)
       await store.put(`${key}:retired:${existing.generation}`, existing);
-    const signature = await env.SOLANA_SIGNER.signMessage(msg);
-    if (
-      signature.length !== 64 ||
-      !ed25519.verify(signature, msg, bytes(env.SOLANA_SIGNER.address), {
-        zip215: false,
-      })
-    )
-      throw new Error("Invalid signer response");
+    const signature = await verifiedSignerSignature(env.SOLANA_SIGNER, msg);
     const raw = concat(Uint8Array.of(1), signature, msg);
     if (raw.length > 1232) throw new Error("Monthly transaction too large");
     const candidate: Attempt = {
