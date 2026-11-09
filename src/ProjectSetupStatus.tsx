@@ -190,7 +190,8 @@ export function ProjectSetupStatusPanel({
               </button>
             ) : null}
             {setup.nextAction.kind !== "none" &&
-            setup.nextAction.kind !== "restricted" ? (
+            setup.nextAction.kind !== "restricted" &&
+            setup.nextAction.kind !== "complete_skill_fields" ? (
               <button
                 className="button secondary-button"
                 disabled={busy}

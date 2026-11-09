@@ -14,18 +14,21 @@
 // flag-only quarantine, only when no active id lies outside the snapshot
 // (assessmentCoversActiveFlags), only when it was requested at or after the
 // latest restriction, only for a fresh (not reused) result, and only at the
-// live revision. Withdrawal is not a clean scan; exemptions do not override
-// a restriction; confirmed malice is decided by a moderator elsewhere
-// (api_project_enforcement), so it is absorbing here.
+// live revision. Withdrawal is not a clean scan. An admission exemption is
+// not modeled: project_flags_scan_reinstatement_valid (0060) and
+// planFlagScanReinstatement (verified-enforcement.ts:715) contain no
+// exemption term, so it cannot affect these transitions. Confirmed malice is
+// decided by a moderator elsewhere (api_project_enforcement), so it is
+// absorbing here.
 module vetting_flag_reinstatement {
   type S = { reporterOf: int -> int, active: Set[int], resolved: Set[int], nextId: int,
     restriction: str, pauseEpoch: int, captured: Set[int], scanEpoch: int,
-    revision: int, scannedRevision: int, pending: bool, exempt: bool, everBanned: bool }
+    revision: int, scannedRevision: int, pending: bool, everBanned: bool }
   var s: S
   val ids = Set(1, 2, 3)
   action init = s' = { reporterOf: ids.mapBy(_ => 0), active: Set(), resolved: Set(), nextId: 1,
     restriction: "clear", pauseEpoch: 0, captured: Set(), scanEpoch: 0,
-    revision: 1, scannedRevision: 0, pending: false, exempt: false, everBanned: false }
+    revision: 1, scannedRevision: 0, pending: false, everBanned: false }
   def reporters(x: S, flags: Set[int]): Set[int] = flags.map(id => x.reporterOf.get(id))
   action file(reporter: int): bool = all {
     Set(1, 2).contains(reporter), s.nextId <= 3,
@@ -45,7 +48,6 @@ module vetting_flag_reinstatement {
     s' = s.with("pending", true).with("captured", s.active).with("scanEpoch", s.pauseEpoch)
       .with("scannedRevision", s.revision) }
   action revise = all { s.revision == 1, s' = s.with("revision", 2) }
-  action admissionExemption = s' = s.with("exempt", true)
   action completeClean(reused: bool): bool = all { s.pending,
     val covered = s.active.subseteq(s.captured)
     val restore = s.restriction == "quarantined" and not(reused) and covered
@@ -60,7 +62,7 @@ module vetting_flag_reinstatement {
     s' = s.with("pending", false).with("restriction", "banned").with("everBanned", true) }
   action step = any {
     file(1), file(2), close(1), close(2), close(3), requestScan, revise,
-    admissionExemption, completeClean(true), completeClean(false), incomplete, confirmedMalice,
+    completeClean(true), completeClean(false), incomplete, confirmedMalice,
   }
   val invariant = all {
     // Two distinct active reporters always restrict the project.
@@ -91,8 +93,6 @@ module vetting_flag_reinstatement {
     .then(completeClean(true)).expect(s.restriction == "quarantined" and s.active.size() == 0)
   run expiryAllowsRefileTest = init.then(file(1)).then(close(1)).then(file(1))
     .expect(s.active == Set(2) and s.restriction == "clear")
-  run exemptionDoesNotOverrideRestrictionTest = init.then(file(1)).then(file(2))
-    .then(admissionExemption).expect(s.restriction == "quarantined")
   run cleanScanDoesNotUndoBanTest = init.then(requestScan).then(confirmedMalice)
     .then(requestScan).then(completeClean(false)).expect(s.restriction == "banned")
 }
