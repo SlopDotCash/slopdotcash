@@ -7467,7 +7467,10 @@
     {
       "path": "workers/vetting/bounded-scan.ts",
       "sha256": "55bc8ac92c851a700eefa2682a51eb481e8def285ab12f76e3bb9f4e1adafe16",
-      "models": ["formal/models/vetting_disposition.qnt"],
+      "models": [
+        "formal/models/vetting_disposition.qnt",
+        "formal/models/vetting_env_dump.qnt"
+      ],
       "candidateLines": [
         241, 249, 250, 1717, 1718, 1899, 1959, 1980, 2047, 2063
       ],
@@ -11972,6 +11975,17 @@
         "failedFinishAuditErrorsStreamTest",
         "failureAuditThenCancelTest",
         "finishAuditThenCancelTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting_env_dump.qnt",
+      "sha256": "6af8dd273533cdc7427693682e38b820de252856b98310b36aa3d61d60fd4a99",
+      "sources": ["workers/vetting/bounded-scan.ts"],
+      "scenarios": [
+        "bareEnvInInstallTest",
+        "dumpOutsideInstallTest",
+        "printenvIsNotBareEnvTest",
+        "singleVariableIsNotADumpTest"
       ]
     },
     {
