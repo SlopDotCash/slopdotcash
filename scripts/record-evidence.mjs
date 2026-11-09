@@ -5,7 +5,6 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -28,13 +27,15 @@ import {
   assertImmutableAssetCache,
   assertLiveLedgerReady,
   assertSecurityHeaders,
-  assertTlsSession,
   PRODUCTION_HOSTNAME,
   PRODUCTION_ORIGIN,
   parseEvidenceMode,
+  probeProductionTls,
+  readEvidenceResponseBytes,
   REMOTE_ARTIFACT_PATHS,
   shouldBuildForEvidence,
   verifyRemoteArtifacts,
+  withEvidenceResponse,
 } from "./evidence-contract.mjs";
 import { sha256Hex as hash } from "./sha256.mjs";
 
@@ -178,34 +179,19 @@ async function waitForServer(baseUrl, server, state, expectedFingerprint) {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
       continue;
     }
-    if (!response.ok) {
-      throw new Error(
-        `[Slop] owned preview returned ${response.status} for the build fingerprint`,
-      );
-    }
-    if (!response.body) {
-      throw new Error("[Slop] owned preview omitted the build fingerprint");
-    }
-    const reader = response.body.getReader();
-    const digest = createHash("sha256");
-    let receivedBytes = 0;
-    try {
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        receivedBytes += chunk.value.byteLength;
-        if (receivedBytes > MAX_PREVIEW_MANIFEST_BYTES) {
-          await reader.cancel("preview manifest exceeded size limit");
-          throw new Error(
-            "[Slop] owned preview build fingerprint is oversized",
-          );
-        }
-        digest.update(chunk.value);
+    const servedFingerprint = await withEvidenceResponse(response, async () => {
+      if (!response.ok) {
+        throw new Error(
+          `[Slop] owned preview returned ${response.status} for the build fingerprint`,
+        );
       }
-    } finally {
-      reader.releaseLock();
-    }
-    const servedFingerprint = digest.digest("hex");
+      const bytes = await readEvidenceResponseBytes(
+        response,
+        MAX_PREVIEW_MANIFEST_BYTES,
+        "[Slop] owned preview build fingerprint",
+      );
+      return hash(bytes);
+    });
     if (servedFingerprint !== expectedFingerprint) {
       throw new Error(
         "[Slop] preview served a build other than the selected dist",
@@ -247,38 +233,6 @@ async function stopPreview(server) {
   }
 }
 
-async function inspectTls() {
-  return new Promise((resolvePromise, reject) => {
-    const socket = connectTls({
-      host: PRODUCTION_HOSTNAME,
-      port: 443,
-      rejectUnauthorized: true,
-      servername: PRODUCTION_HOSTNAME,
-    });
-    socket.setTimeout(10_000);
-    socket.once("timeout", () => {
-      socket.destroy(new Error("[Slop] production TLS handshake timed out"));
-    });
-    socket.once("error", reject);
-    socket.once("secureConnect", () => {
-      const certificate = socket.getPeerCertificate();
-      const session = assertTlsSession({
-        authorizationError: socket.authorizationError,
-        authorized: socket.authorized,
-        cipher: socket.getCipher()?.name,
-        issuer: certificate.issuer?.CN,
-        protocol: socket.getProtocol(),
-        subject: certificate.subject?.CN,
-        subjectAltName: certificate.subjectaltname,
-        validFrom: certificate.valid_from,
-        validTo: certificate.valid_to,
-      });
-      socket.end();
-      resolvePromise(session);
-    });
-  });
-}
-
 function hashedAssetPath(indexHtml) {
   const match = indexHtml.match(/(?:href|src)="(\/assets\/[^"?]+)"/);
   if (!match) {
@@ -293,7 +247,7 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
   const addresses = assertDnsAddresses(
     await lookup(PRODUCTION_HOSTNAME, { all: true, verbatim: true }),
   );
-  const tls = await inspectTls();
+  const tls = await probeProductionTls(connectTls);
   const httpUrl = new URL(`http://${PRODUCTION_HOSTNAME}/`);
   httpUrl.searchParams.set("verify", cacheKey);
   const redirectResponse = await fetch(httpUrl, {
@@ -302,9 +256,11 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
-  const redirect = assertHttpsRedirect(
-    redirectResponse.status,
-    redirectResponse.headers.get("location"),
+  const redirect = await withEvidenceResponse(redirectResponse, () =>
+    assertHttpsRedirect(
+      redirectResponse.status,
+      redirectResponse.headers.get("location"),
+    ),
   );
   const httpsUrl = new URL("/", PRODUCTION_ORIGIN);
   httpsUrl.searchParams.set("verify", cacheKey);
@@ -314,18 +270,19 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!httpsResponse.ok) {
-    throw new Error(
-      `[Slop] production apex returned HTTP ${httpsResponse.status}`,
-    );
-  }
-  if (new URL(httpsResponse.url).origin !== PRODUCTION_ORIGIN) {
-    throw new Error(
-      `[Slop] production HTTPS request left ${PRODUCTION_ORIGIN}`,
-    );
-  }
-  const securityHeaders = assertSecurityHeaders(httpsResponse.headers);
-  await httpsResponse.body?.cancel();
+  const securityHeaders = await withEvidenceResponse(httpsResponse, () => {
+    if (!httpsResponse.ok) {
+      throw new Error(
+        `[Slop] production apex returned HTTP ${httpsResponse.status}`,
+      );
+    }
+    if (new URL(httpsResponse.url).origin !== PRODUCTION_ORIGIN) {
+      throw new Error(
+        `[Slop] production HTTPS request left ${PRODUCTION_ORIGIN}`,
+      );
+    }
+    return assertSecurityHeaders(httpsResponse.headers);
+  });
   const assetUrl = new URL(assetPath, PRODUCTION_ORIGIN);
   assetUrl.searchParams.set("verify", cacheKey);
   const assetResponse = await fetch(assetUrl, {
@@ -334,13 +291,14 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!assetResponse.ok) {
-    throw new Error(
-      `[Slop] production asset returned HTTP ${assetResponse.status}`,
-    );
-  }
-  const assetCacheControl = assertImmutableAssetCache(assetResponse.headers);
-  await assetResponse.body?.cancel();
+  const assetCacheControl = await withEvidenceResponse(assetResponse, () => {
+    if (!assetResponse.ok) {
+      throw new Error(
+        `[Slop] production asset returned HTTP ${assetResponse.status}`,
+      );
+    }
+    return assertImmutableAssetCache(assetResponse.headers);
+  });
   return {
     asset: {
       cacheControl: assetCacheControl,

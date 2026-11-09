@@ -3241,15 +3241,21 @@
     {
       "path": "scripts/evidence-bundle.mjs",
       "sha256": "728080118e1a7c7e856b840660ee6248909b5fb583903aac535cc04bfe485da0",
-      "models": ["formal/models/evidence_capture.qnt"],
+      "models": [
+        "formal/models/evidence_capture.qnt",
+        "formal/models/evidence_transport.qnt"
+      ],
       "candidateLines": [215, 222, 224, 227, 228, 242, 247, 264],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/evidence-contract.mjs",
-      "sha256": "2b4bafc9054e2ff96d35a66d4ec1a1812800cf2e2cab645c489964ee805a6690",
-      "models": ["formal/models/evidence_capture.qnt"],
-      "candidateLines": [291, 292, 293, 316, 443, 477],
+      "sha256": "c3789a6e4ae63d3ec66b2038c34a383cbdcc479befa1496e7568b24db788d57b",
+      "models": [
+        "formal/models/evidence_capture.qnt",
+        "formal/models/evidence_transport.qnt"
+      ],
+      "candidateLines": [292, 293, 294, 317, 468, 568, 602],
       "review": "mapped-abstraction"
     },
     {
@@ -3708,11 +3714,14 @@
     },
     {
       "path": "scripts/record-evidence.mjs",
-      "sha256": "a02cddc4da0a6c3270ca5907034b2e89475f44a4e3543b93bf93d464a099d4db",
-      "models": ["formal/models/evidence_capture.qnt"],
+      "sha256": "07a4e1d23d676e006708b692f64bf8983b5d32754154a9513a8fe0f3ae10c313",
+      "models": [
+        "formal/models/evidence_capture.qnt",
+        "formal/models/evidence_transport.qnt"
+      ],
       "candidateLines": [
-        4, 90, 127, 128, 130, 163, 165, 178, 183, 203, 224, 258, 306, 319, 339,
-        347, 351, 532, 554, 576, 579, 587, 615, 627, 634, 682
+        4, 91, 128, 129, 131, 164, 166, 179, 185, 210, 261, 276, 297, 305, 309,
+        490, 512, 534, 537, 545, 573, 585, 592, 640
       ],
       "review": "mapped-abstraction"
     },
@@ -9842,6 +9851,38 @@
         "previewFailureStillAbortsStagingTest",
         "protectedAbortDoesNotDeletePublishedBundleTest",
         "setupFailureUsesOwnedFinalizersTest"
+      ]
+    },
+    {
+      "path": "formal/models/evidence_transport.qnt",
+      "sha256": "47e1600be9edece0ebc1c09cfc5ad2e1569044f68a67aab8669b681ddff5ccf6",
+      "sources": [
+        "scripts/evidence-bundle.mjs",
+        "scripts/evidence-contract.mjs",
+        "scripts/record-evidence.mjs"
+      ],
+      "scenarios": [
+        "exactBytesReleaseThenCancelTest",
+        "failedFetchCreatesNoResponseOwnershipTest",
+        "failedReadStillReleasesAndCancelsTest",
+        "failedReaderReleaseCannotPassTest",
+        "headerOnlyResponseIsCanceledTest",
+        "missingBodyRefusesWithoutInventedCleanupErrorTest",
+        "oversizedBodyKeepsSizeErrorThroughCancelFailureTest",
+        "rejectedHeadersKeepPrimaryWhenCancellationFailsTest",
+        "rejectedHeadersStillCancelBodyTest",
+        "shortBoundedBodyIsValidTest",
+        "shortExactBodyRefusesTest",
+        "successfulOperationCanFailCancellationTest",
+        "tlsCloseDeadlineCannotBecomeSuccessTest",
+        "tlsDeadlinePreservesEarlierValidationFailureTest",
+        "tlsDestroyFailureKeepsValidationErrorTest",
+        "tlsEarlyCloseRefusesTest",
+        "tlsEarlyEndRefusesTest",
+        "tlsErrorAfterHandshakeRefusesTest",
+        "tlsGetterOrValidationFailureSettlesTest",
+        "tlsSuccessWaitsForCloseTest",
+        "tlsTrafficDoesNotResetDeadlineTest"
       ]
     },
     {

@@ -482,3 +482,18 @@ only after finalizers complete. The preview's last shutdown wait must confirm
 exit. The 18-scenario model and 15 new native regression definitions remain
 unexecuted; the fixtures do not constitute browser/media acceptance. See
 `evidence-publication-audit.md`.
+
+## Evidence transport completion
+
+The TLS handshake callback could throw outside its promise and leave the
+observation pending. An early connection close also had no settlement path.
+The probe now catches callback failures, preserves the first error, requests
+socket cleanup, and waits for close before returning success. A separate
+absolute deadline prevents ongoing socket activity from extending the probe.
+
+HTTP status, header and length refusals could bypass body disposal. Each
+response now has an owned finalizer, and bounded readers release their lock
+before it runs. Cleanup failures retain the original validation or read error.
+The new finite model and native fixture definitions are unexecuted. They do not
+prove live transport behavior or a deadline for the full recorder. See
+`evidence-transport-audit.md`.

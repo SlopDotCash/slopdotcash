@@ -70,9 +70,18 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-842 production sources, 357 finite models and 2,226 named scenarios, with zero
-unmapped sources. The separate lexical catalog lists 239 declared lifecycle
+843 production sources, 362 finite models and 2,410 named scenarios, with zero
+unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
+
+The evidence-transport follow-up adds one model with 21 named scenarios and 25
+native regression definitions. TLS callback errors and early closure now settle
+the observation; success waits for close and an absolute deadline bounds the
+TLS probe. HTTP validation owns body disposal and preserves primary errors
+through reader and response cleanup. The scenarios and definitions remain
+unexecuted. The refreshed census has 10,024 function bodies in 687 runtime files,
+with 168 selected contracts. See `evidence-transport-audit.md` for the source
+mapping and separate TLS, DNS, native stream and recorder limits.
 
 The wallet source-only batch adds four models and 64 unexecuted scenarios.
 Earnings now stops departed wallet continuations, binds each wallet action to
