@@ -158,19 +158,19 @@ test("departed wallet connection cannot start payout registration", async ({ pag
   const state = await fixture(page, "connect");
   await connect(page);
   await expect.poll(() => page.evaluate(() =>
-    (window as WalletWindow).earningsWallet.calls,
+    (window as unknown as WalletWindow).earningsWallet.calls,
   )).toEqual(["eth_requestAccounts"]);
   try {
     await leave(page);
   } finally {
-    await page.evaluate(() => (window as WalletWindow).earningsWallet.releaseConnect());
+    await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.releaseConnect());
   }
   await expect.poll(() => page.evaluate(() =>
-    (window as WalletWindow).earningsWallet.connectReturned,
+    (window as unknown as WalletWindow).earningsWallet.connectReturned,
   )).toBe(true);
   await settle(page);
   expect(state.writes).toEqual([]);
-  expect(await page.evaluate(() => (window as WalletWindow).earningsWallet.calls))
+  expect(await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls))
     .toEqual(["eth_requestAccounts"]);
 });
 
@@ -187,7 +187,7 @@ test("departed challenge response cannot open a signature request", async ({ pag
   await settle(page);
   expect(state.writes.map((entry) => entry.path))
     .toEqual(["wallets/register", "wallets/challenge"]);
-  expect(await page.evaluate(() => (window as WalletWindow).earningsWallet.calls))
+  expect(await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls))
     .toEqual(["eth_requestAccounts"]);
   expect(state.saved).toEqual([]);
 });
@@ -206,7 +206,7 @@ test("an accepted confirmation survives departure without starting the next chai
   expect(state.writes.map((entry) => entry.path))
     .toEqual(["wallets/register", "wallets/challenge", "wallets/authorize"]);
   expect(state.saved).toEqual([{ chain: "base", claimId: "claim-base", address, authorized: true }]);
-  expect(await page.evaluate(() => (window as WalletWindow).earningsWallet.calls))
+  expect(await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls))
     .toEqual(["eth_requestAccounts", "personal_sign"]);
   // A new mounted view reads the accepted record; the old completion did not undo it.
   await page.goto("/account#wallets", { waitUntil: "networkidle" });
@@ -221,18 +221,18 @@ test("a silently changed account stops a connected wallet before registration", 
   await connect(page);
   await expect
     .poll(() =>
-      page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
+      page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls),
     )
     .toEqual(["eth_requestAccounts"]);
   state.changeActor("456");
   await page.evaluate(() =>
-    (window as WalletWindow).earningsWallet.releaseConnect(),
+    (window as unknown as WalletWindow).earningsWallet.releaseConnect(),
   );
   await expect(page.getByRole("alert")).toContainText("Your account changed");
   expect(state.writes).toEqual([]);
   await expect(page.getByRole("article", { name: "EVM wallet" })).toHaveCount(0);
   expect(
-    await page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
+    await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls),
   ).toEqual(["eth_requestAccounts"]);
 });
 
@@ -247,7 +247,7 @@ test("the expected actor blocks a swap between the session check and registratio
   expect(state.writes).toEqual([]);
   expect(state.saved).toEqual([]);
   expect(
-    await page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
+    await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls),
   ).toEqual(["eth_requestAccounts"]);
 });
 
@@ -267,7 +267,7 @@ test("a silently changed account cannot sign an already requested challenge", as
   ]);
   expect(state.saved).toEqual([]);
   expect(
-    await page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
+    await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls),
   ).toEqual(["eth_requestAccounts"]);
 });
 
@@ -290,7 +290,7 @@ test("accepted A authorization remains recorded without starting B's next chain"
     { chain: "base", claimId: "claim-base", address, authorized: true },
   ]);
   expect(
-    await page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
+    await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls),
   ).toEqual(["eth_requestAccounts", "personal_sign"]);
 });
 
@@ -313,7 +313,7 @@ test("wallet access loss prevents a retained account load from restoring the old
       if (this.headers.get("x-earnings-held-session") === "1") {
         const channel = new MessageChannel();
         channel.port1.onmessage = () => {
-          (window as WalletWindow).earningsLoadReplyRead = true;
+          (window as unknown as WalletWindow).earningsLoadReplyRead = true;
           channel.port1.close();
           channel.port2.close();
         };
@@ -400,7 +400,7 @@ test("wallet access loss prevents a retained account load from restoring the old
     releaseFinalSession();
     await finalSessionFinished;
     await page.waitForFunction(
-      () => (window as WalletWindow).earningsLoadReplyRead,
+      () => (window as unknown as WalletWindow).earningsLoadReplyRead,
     );
     await settle(page);
     await expect(card).toHaveCount(0);
@@ -409,7 +409,7 @@ test("wallet access loss prevents a retained account load from restoring the old
     ).toHaveCount(0);
     expect(state.writes).toEqual([]);
     expect(
-      await page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
+      await page.evaluate(() => (window as unknown as WalletWindow).earningsWallet.calls),
     ).toEqual([]);
   } finally {
     releaseFinalSession();

@@ -54,7 +54,7 @@ class SocketFixture extends EventEmitter {
   }
 }
 
-type TransportError = Error & { errors?: unknown[]; cause?: Error };
+type TransportError = Error & { errors?: unknown[]; cause?: unknown };
 
 async function failure(operation: () => Promise<unknown>): Promise<TransportError> {
   try {
@@ -253,7 +253,7 @@ test("oversize refusal remains the primary error if cancellation fails", async (
   const error = await failure(() => withEvidenceResponse(fixture.response,
     () => readEvidenceResponseBytes(fixture.response, 2, "fixture body")));
   expect(error).toBeInstanceOf(AggregateError);
-  expect(error.cause?.message).toContain("exceeded the verified body size");
+  expect((error.cause as Error | undefined)?.message).toContain("exceeded the verified body size");
   expect(error.errors?.[1]).toBe(cleanup);
   expect(fixture.response.body?.locked).toBe(false);
 });

@@ -61,7 +61,7 @@ async function selectedEvidenceKey(
 async function evidenceStorageRow(assessmentId: string, runId: string, sha256: string) {
   const row = await retained.evidence.deps.db.prepare(
     "SELECT object_key,sha256,size_bytes,storage,storage_generation FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? AND sha256=?",
-  ).bind(assessmentId, runId, sha256).first<EvidenceStorageRow>();
+  ).bind(assessmentId, runId, sha256).first<EvidenceStorageRow & { storage_generation: string | null }>();
   if (!row) throw new Error("Missing retained evidence row");
   return row;
 }

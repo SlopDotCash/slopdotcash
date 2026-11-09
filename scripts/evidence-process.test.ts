@@ -42,7 +42,7 @@ class ChildFixture extends EventEmitter {
   }
 }
 
-type ProcessError = Error & { cause?: Error; errors?: unknown[] };
+type ProcessError = Error & { cause?: unknown; errors?: unknown[] };
 
 async function failure(result: Promise<unknown>): Promise<ProcessError> {
   try {

@@ -170,7 +170,7 @@ test("an image decoded after a headline publication uses the new draft revision"
     expect(first.revision).toBe(2);
     expect(first.project.headline).toBe(headline);
     expect(first.project.image).toBeUndefined();
-    await page.evaluate(() => (window as ImageWindow).lateProjectImage.release());
+    await page.evaluate(() => (window as unknown as ImageWindow).lateProjectImage.release());
     const preview = page.getByRole("img", {
       name: "Project avatar preview",
       exact: true,
@@ -182,7 +182,7 @@ test("an image decoded after a headline publication uses the new draft revision"
     const image = await preview.getAttribute("src");
     expect(image).toMatch(/^data:image\/(?:webp|jpeg);base64,/u);
     expect(
-      await page.evaluate(() => (window as ImageWindow).lateProjectImage.closed),
+      await page.evaluate(() => (window as unknown as ImageWindow).lateProjectImage.closed),
     ).toBe(1);
     expect(
       await readProjectDraft(page, "slop:project-update:v2:eliza"),
@@ -207,7 +207,7 @@ test("an image decoded after a headline publication uses the new draft revision"
     });
   } finally {
     if (!page.isClosed())
-      await page.evaluate(() => (window as ImageWindow).lateProjectImage?.release());
+      await page.evaluate(() => (window as unknown as ImageWindow).lateProjectImage?.release());
     await api.dispose();
   }
 });

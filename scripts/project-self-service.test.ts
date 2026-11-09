@@ -472,7 +472,7 @@ test.each(["create", "stored application"] as const)(
       ]);
       expect((await t.persistence.getProject(id))?.revision).toBe(2);
       expect(committedManifestText).not.toBeNull();
-      expect((await t.persistence.getRevisionText(id, 1))?.manifestText).toBe(
+      expect<string | null | undefined>((await t.persistence.getRevisionText(id, 1))?.manifestText).toBe(
         committedManifestText,
       );
       if (flow === "stored application")

@@ -341,7 +341,7 @@ test("a queued finish refuses an expired lease even when its captured timestamp 
       ).rejects.toThrow("Value request lease is no longer owned");
       expect(held).toBe(true);
       expect(before).toHaveLength(1);
-      expect(state()).toEqual(before);
+      expect<unknown[] | undefined>(state()).toEqual(before);
       // No settled sibling is inserted, and the owner's attempts and existing
       // source-gap evidence survive the refused operation byte for byte.
       expect(await row(queue, sibling.deliveryId)).toBeNull();

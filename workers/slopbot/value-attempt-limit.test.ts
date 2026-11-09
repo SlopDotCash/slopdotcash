@@ -332,7 +332,7 @@ test("an atomic attempt refusal is retained when a free receipt arrives before i
       await db
         .prepare(`SELECT ${countedValueAttemptsSql("?1", "?2")} AS n`)
         .bind(key, PROVIDER_BUDGET_EXHAUSTED)
-        .first(),
+        .first<{ n: number }>(),
     ).toEqual({ n: 2 });
     expect(
       sqlite

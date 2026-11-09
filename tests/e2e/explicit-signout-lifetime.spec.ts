@@ -364,7 +364,7 @@ test("header signout stops a connected standalone payout wallet before registrat
   };
   await expect
     .poll(() =>
-      page.evaluate(() => (window as WalletWindow).signoutWallet.calls),
+      page.evaluate(() => (window as unknown as WalletWindow).signoutWallet.calls),
     )
     .toEqual(["eth_requestAccounts"]);
   try {
@@ -373,11 +373,11 @@ test("header signout stops a connected standalone payout wallet before registrat
       page.getByRole("dialog", { name: "Connect an EVM wallet" }),
     ).not.toBeVisible();
   } finally {
-    await page.evaluate(() => (window as WalletWindow).signoutWallet.release());
+    await page.evaluate(() => (window as unknown as WalletWindow).signoutWallet.release());
   }
   await expect
     .poll(() =>
-      page.evaluate(() => (window as WalletWindow).signoutWallet.returned),
+      page.evaluate(() => (window as unknown as WalletWindow).signoutWallet.returned),
     )
     .toBe(true);
   await settle(page);

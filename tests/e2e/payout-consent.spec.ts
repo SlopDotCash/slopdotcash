@@ -148,11 +148,11 @@ async function setup(
           state.release = () => resolve();
         });
       const fetch = window.fetch.bind(window);
-      window.fetch = (...args) => {
+      Object.assign(window, { fetch: (...args: Parameters<Window["fetch"]>) => {
         if (String(args[0]).includes("/payments/wallets/"))
           state.walletRequests++;
         return fetch(...args);
-      };
+      } });
       Object.assign(window, {
         payoutConsentFixture: state,
         ethereum: {
@@ -485,7 +485,7 @@ test("leaving payout consent during wallet connection stops late requests", asyn
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window as ConsentFixtureWindow).payoutConsentFixture.held,
+        (window as unknown as ConsentFixtureWindow).payoutConsentFixture.held,
       ),
     )
     .toBe(true);
@@ -499,13 +499,13 @@ test("leaving payout consent during wallet connection stops late requests", asyn
     page.getByRole("dialog", { name: "Authorize payout wallet" }),
   ).toHaveCount(0);
   await page.evaluate(async () => {
-    (window as ConsentFixtureWindow).payoutConsentFixture.release();
+    (window as unknown as ConsentFixtureWindow).payoutConsentFixture.release();
     // A new task runs after the released wallet continuation's microtasks.
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   const state = await page.evaluate(() => {
     const { signatures, walletRequests } =
-      (window as ConsentFixtureWindow).payoutConsentFixture;
+      (window as unknown as ConsentFixtureWindow).payoutConsentFixture;
     return { signatures, walletRequests };
   });
   expect(state).toEqual({ signatures: 0, walletRequests: 0 });
@@ -524,7 +524,7 @@ test("an account change during consent signing clears the old payout view", asyn
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window as ConsentFixtureWindow).payoutConsentFixture.held,
+        (window as unknown as ConsentFixtureWindow).payoutConsentFixture.held,
       ),
     )
     .toBe(true);
@@ -534,7 +534,7 @@ test("an account change during consent signing clears the old payout view", asyn
     }),
   );
   await page.evaluate(() =>
-    (window as ConsentFixtureWindow).payoutConsentFixture.release(),
+    (window as unknown as ConsentFixtureWindow).payoutConsentFixture.release(),
   );
   await expect(page.getByRole("alert")).toContainText("account changed");
   await expect(page.locator(".payout-row")).toHaveCount(0);
@@ -544,7 +544,7 @@ test("an account change during consent signing clears the old payout view", asyn
   expect(authorized()).toBe(0);
   expect(
     await page.evaluate(() =>
-      (window as ConsentFixtureWindow).payoutConsentFixture.walletRequests,
+      (window as unknown as ConsentFixtureWindow).payoutConsentFixture.walletRequests,
     ),
   ).toBe(1); // Challenge only; the returned signature never starts authorization.
 });
@@ -675,7 +675,7 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
   let completed = 0;
   await page.route("**/api/v1/project-session", async (route) => {
     await page.evaluate(() => {
-      const state = (window as Window & {
+      const state = (window as unknown as Window & {
         solanaBindingProvider: { returned: Uint8Array | null; mutated: boolean };
       }).solanaBindingProvider;
       if (state.returned && !state.mutated) {
@@ -759,7 +759,7 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
   ).toBeVisible();
   expect(completed).toBe(1);
   expect(await page.evaluate(() =>
-    (window as Window & { solanaBindingProvider: { mutated: boolean } })
+    (window as unknown as Window & { solanaBindingProvider: { mutated: boolean } })
       .solanaBindingProvider.mutated,
   )).toBe(true);
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);

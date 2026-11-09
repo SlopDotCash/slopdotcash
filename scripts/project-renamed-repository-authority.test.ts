@@ -31,7 +31,7 @@ test("the retired public repository relay cannot mint an installation token", ()
   const github = (async () => {
     providerCalls++;
     throw new Error("A retired route cannot call GitHub");
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
   const url = new URL("https://slopbot.internal/v1/repository-read");
   url.searchParams.set(
     "path",
@@ -257,7 +257,7 @@ function slopbotAccess(
         },
       );
     return Response.json({ message: "Not Found" }, { status: 404 });
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
   const slopbot = {
     fetch: async (request: Request) =>
       (await routeRepositoryAccess(request, env, github)) ??
@@ -340,7 +340,7 @@ for (const reusedDuringRead of [false, true]) {
         });
       }
       throw new Error(`Unexpected fixture path: ${path}`);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const url = new URL(REPOSITORY_ACCESS_URL);
     url.search = new URLSearchParams({
       repository: "example/renamed-registry",
@@ -363,7 +363,7 @@ for (const reusedDuringRead of [false, true]) {
       repository_ids: [expectedId],
       permissions: { metadata: "read" },
     });
-    expect(tokenContentType).toBe("application/json");
+    expect<string | null>(tokenContentType).toBe("application/json");
     expect(permissionTargets).toEqual([
       reusedDuringRead ? replacementId : expectedId,
     ]);
@@ -379,7 +379,7 @@ test("an unsafe repository ID never requests an installation token", async () =>
   const github = (async () => {
     requests += 1;
     throw new Error("Invalid repository IDs must be refused before GitHub");
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
   const url = new URL(REPOSITORY_ACCESS_URL);
   url.search = new URLSearchParams({
     repository: "example/renamed-registry",
