@@ -6,8 +6,8 @@
       "id": "direct-bounty-journal-safety-v4",
       "model": "formal/models/payments/direct_bounty_journal.qnt",
       "module": "direct_bounty_journal",
-      "sourceSha256": "549580117b331f06f8bb0950211c650c84a7fbffbcb51045812f0c26d3e38fa3",
-      "translatedSha256": "d7ac95341cfc3820f3e72a9a3983f3c30ed8930a24e3f9a2299c152cc3f587ad",
+      "sourceSha256": "3020aebd3ca62801dace69ab002c49c19fa9bdb71723b435b72d0e204d824dd0",
+      "translatedSha256": "1590bd9335502629e541960c97301336c752fc1b9ffa93d402bf116cefa65fed",
       "operator": "SlopJournalSafetyViewV4",
       "fields": [
         {
@@ -41,7 +41,7 @@
           "expression": "(s.touched > 0 => (\\A n \\in {1, 2} \\ {s.touched}: s.store[n] = s.before[n]))"
         }
       ],
-      "viewTlaSha256": "6d35b8e15674e4bdda50a6673e86124b84a00e7645f7fcd94403e890e6c60de0",
+      "viewTlaSha256": "b2e133f3c0a01c493a3050c5cf2a72142defa676c2fce198fc7f00d71799b553",
       "hashMode": "entry-hash-zero-or-positive",
       "memoryCandidateMode": "erase-unused-memory-candidate"
     }

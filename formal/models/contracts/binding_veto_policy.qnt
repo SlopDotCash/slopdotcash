@@ -7,12 +7,20 @@
 // binding delay0 or1, and Solana rotation delay0 or1 (EVM is always0).
 // Signature/account ownership and rotation authorization are external
 // predicates; rotation timing is explicit because it changes the veto waiver.
+// Finite reduction: the former `cancelled` and `paid` version sets are kept
+// only for the current binding version. Every guard reads membership of
+// `s.version` alone, `veto` and `pay` add only `s.version`, and `bind` moves to
+// a fresh version that neither set contains. An older version's membership is
+// therefore frozen once superseded and never read again except by the
+// disjointness invariant, which was already checked for that version while it
+// was current. `currentCancelled`/`currentPaid` (reset by `bind`) keep every
+// guard and the invariant's truth, and remove the 2^8 history subsets.
 module binding_veto_policy {
   type S={chain:str,delay:int,now:int,version:int,boundAt:int,paidVersion:int,
-    count:int,cancelled:Set[int],paid:Set[int],pending:bool,confirmed:bool,
+    count:int,currentCancelled:bool,currentPaid:bool,pending:bool,confirmed:bool,
     rotationDelay:int,rotationAt:int,award:bool,awards:int,committedAt:int}
   def initial(chain:str,delay:int,rotationDelay:int):S={chain:chain,delay:delay,now:0,version:0,boundAt:0,paidVersion:0,
-    count:0,cancelled:Set(),paid:Set(),pending:false,confirmed:false,rotationDelay:rotationDelay,rotationAt:0,
+    count:0,currentCancelled:false,currentPaid:false,pending:false,confirmed:false,rotationDelay:rotationDelay,rotationAt:0,
     award:false,awards:0,committedAt:0}
   var s:S
   action init={nondet chain=oneOf(Set("evm","solana")) nondet delay=oneOf(Set(0,1))
@@ -22,7 +30,8 @@ module binding_veto_policy {
   action zeroDelay=s'=initial("evm",0,0)
   action solanaZeroRotation=s'=initial("solana",1,0)
   action tick=all{s.now<3,s'=s.with("now",s.now+1)}
-  action bind=all{s.version<8,s'=s.with("version",s.version+1).with("boundAt",s.now)}
+  action bind=all{s.version<8,s'=s.with("version",s.version+1).with("boundAt",s.now)
+    .with("currentCancelled",false).with("currentPaid",false)}
   action commit=all{not(s.award),s.awards<2,s'=s.with("award",true).with("awards",s.awards+1).with("committedAt",s.now)}
   action proposeRotation=all{not(s.pending),s'=s.with("pending",true).with("confirmed",false)
     .with("rotationAt",s.now+s.rotationDelay)}
@@ -34,16 +43,17 @@ module binding_veto_policy {
   def commitWindow(includeAward:bool):bool = s.now<s.committedAt+s.delay and
     (if(s.chain=="evm")s.awards>0 else includeAward and s.award)
   action veto(owner:bool,includeAward:bool):bool=all{owner,s.version>0,s.version!=s.paidVersion,
-    not(s.cancelled.contains(s.version)),s.now<s.boundAt+s.delay or commitWindow(includeAward),
+    not(s.currentCancelled),s.now<s.boundAt+s.delay or commitWindow(includeAward),
     waiver or s.count<3,
-    s'=s.with("cancelled",s.cancelled.union(Set(s.version))).with("count",if(waiver)s.count else s.count+1)}
-  action pay(expected:int):bool=all{s.award,s.version>0,expected==s.version,not(s.cancelled.contains(s.version)),
+    s'=s.with("currentCancelled",true).with("count",if(waiver)s.count else s.count+1)}
+  action pay(expected:int):bool=all{s.award,s.version>0,expected==s.version,not(s.currentCancelled),
     s.now>=s.committedAt+s.delay,
-    s'=s.with("paidVersion",s.version).with("paid",s.paid.union(Set(s.version))).with("count",0).with("award",false)}
+    s'=s.with("paidVersion",s.version).with("currentPaid",true).with("count",0).with("award",false)}
   action step=any{tick,bind,commit,proposeRotation,confirmRotation,cancelRotation,executeRotation,
     veto(true,true),veto(true,false),veto(false,true),pay(s.version),pay(s.version-1),s'=s}
   val invariant=all{s.count>=0,s.count<=3,s.version<=8,s.awards<=2,
-    s.paidVersion<=s.version,s.cancelled.intersect(s.paid)==Set(),
+    s.paidVersion<=s.version,not(s.currentCancelled and s.currentPaid),
+    s.currentPaid implies s.paidVersion==s.version,
     s.confirmed implies (s.pending and s.chain=="solana"),
     not(s.pending) implies s.rotationAt==0,
     s.chain=="evm" implies s.rotationDelay==0}

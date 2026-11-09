@@ -3,6 +3,14 @@
 // Synchronous sessionStorage read/modify/write is one transition in a shared
 // JS context. Cross-tab/process storage atomicity is not asserted.
 // Authored from source only; no model execution or browser check was run.
+// Finite reduction: `step` reserves the deterministic fresh request ID
+// `used.size() + 1`. Request IDs are opaque prompt identities: every action
+// compares them only with each other or with 0 (empty/legacy), and the
+// invariant's `used` domain rule is closed under permutations of 1..3. `used`
+// only grows, so step-reachable `used` is always 1..k. Any reservation of a
+// different unused ID reaches the image of a canonical state under a
+// permutation of 1..3 that fixes 0, with the same invariant truth. Direct
+// `reserve(q,n,id,stored)` and the named scenarios still accept any ID.
 module direct_bounty_journal {
   type Entry={request:int,transaction:int,hash:int,candidate:int}
   type Held={nonce:int,request:int,transaction:int}
@@ -91,8 +99,8 @@ module direct_bounty_journal {
   // Choices belong to the action that uses them. This preserves the same
   // transition union without repeating every successor for unrelated values.
   action chooseReserve={nondet q=Set(1,2).oneOf() nondet n=Set(1,2).oneOf()
-    nondet id=Set(1,2,3).oneOf() nondet stored=Set(false,true).oneOf()
-    reserve(q,n,id,stored)}
+    nondet stored=Set(false,true).oneOf()
+    all{s.used.size()<3,reserve(q,n,s.used.size()+1,stored)}}
   action chooseReturned={nondet q=Set(1,2).oneOf() nondet stored=Set(false,true).oneOf()
     returned(q,stored)}
   action chooseRejected={nondet q=Set(1,2).oneOf() rejected(q)}
@@ -142,6 +150,12 @@ module direct_bounty_journal {
     .expect(s.store.get(1).candidate==1)
   run legacyCandidateRefusesNewPromptTest=init.then(legacy(1))
     .then(reserve(1,1,1,true).fail())
+  run canonicalFreshIdsReachSameNonceAbaTest=init.then(reserve(1,1,1,true))
+    .then(resolvedAndRemoved(1)).then(reserve(2,1,2,true)).then(returned(1,true))
+    .expect(s.store.get(1).request==2 and s.store.get(1).hash==0 and s.warning.get(1))
+  run canonicalFreshIdsExhaustAfterThreeTest=init.then(reserve(1,1,1,true)).then(rejected(1))
+    .then(reserve(1,1,2,true)).then(rejected(1)).then(reserve(1,1,3,true)).then(rejected(1))
+    .expect(s.used==Set(1,2,3) and s.store.get(1)==empty).then(chooseReserve.fail())
   run clearedInputCannotSubmitStoredCandidateTest=init.then(legacy(1))
     .then(check(1,1,true)).then(clearInput(1,1)).then(check(1,1,true))
     .expect(s.store.get(1).candidate==1 and s.checked.get(1)==0)

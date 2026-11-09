@@ -9,6 +9,7 @@
 // Value 0 means empty/invalid syntax. These are model bounds, not UI limits.
 // Exact chain receipt acceptance is an external predicate, never syntax.
 // Current verification bounds and evidence are recorded with the reconciliation.
+// Finite `step` also records the write-only `error` flag as false; see reportError.
 module ui_submitted_payment_recovery {
   type State = {parentAlive:bool,mounted:bool,boundActor:int,cookieActor:int,generation:int,
     loadScheduled:bool,activeRead:int,readActors:List[int],readGenerations:List[int],pendingReads:Set[int],
@@ -24,6 +25,10 @@ module ui_submitted_payment_recovery {
   // Each slot is one captured actor/generation group, with two stable row
   // keys. Initial storage contents are admitted by its first successful read.
   def slot(actor:int,generation:int):int=(actor-1)*2+generation-1
+  // `error` is write-only: no guard, invariant clause or other field reads it.
+  // The finite `step` passes project=true, which records it as false; named
+  // scenarios and both concrete relations keep the exact flag.
+  def reportError(state:State,project:bool,value:bool):State=state.with("error",value and not(project))
   val rowStored=if(s.rowActor>0)s.store[slot(s.rowActor,s.rowGeneration)] else List(0,0)
   val visibleHashes=s.values.select(value=>value>0 and not(s.confirmed.contains(value)))
   val canVerify=s.mounted and not(s.busy) and visibleHashes.length()>0
@@ -52,10 +57,11 @@ module ui_submitted_payment_recovery {
       else s,id)}
   action storageReply(id:int,first:int,second:int):bool=storageReplyWithProjection(id,first,second,false)
   // The effect cancels an old read but does not clear existing rows or actor.
-  action storageReadFailure(id:int):bool=all{s.pendingReads.contains(id),
+  action storageReadFailureWithProjection(id:int,project:bool):bool=all{s.pendingReads.contains(id),
     s'=finishedRead(if(s.mounted and id==s.activeRead)
-      s.with("activeRead",0).with("error",true)
+      reportError(s.with("activeRead",0),project,true)
       else s,id)}
+  action storageReadFailure(id:int):bool=storageReadFailureWithProjection(id,false)
   action generationChanges=all{s.generation==1,s.mounted,
     s'=s.with("generation",2).with("loadScheduled",true).with("activeRead",0)}
   action cookieChanges(actor:int):bool=all{actor>=0,actor<=2,s'=s.with("cookieActor",actor)}
@@ -72,14 +78,16 @@ module ui_submitted_payment_recovery {
       .with("checkRowActor",s.rowActor).with("checkRowGeneration",s.rowGeneration)
       .with("checkSlot",slot(s.rowActor,s.rowGeneration)).with("checkRows",s.values).with("checkHashes",visibleHashes)}
   action boundedBeginVerify=all{s.checks<2,beginVerify}
-  action identityReply=all{s.phase=="identity",
+  action identityReplyWithProjection(project:bool):bool=all{s.phase=="identity",
     s'=if(s.checkActor>0 and s.checkActor==s.cookieActor)
       s.with("phase","authorize")
-      else finishedCheck(s).with("error",true)}
-  action authorityReply(allowed:bool,serverGeneration:int):bool=all{s.phase=="authorize",
+      else reportError(finishedCheck(s),project,true)}
+  action identityReply=identityReplyWithProjection(false)
+  action authorityReplyWithProjection(allowed:bool,serverGeneration:int,project:bool):bool=all{s.phase=="authorize",
     s'=if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
       s.with("phase","persist")
-      else finishedCheck(s).with("error",true)}
+      else reportError(finishedCheck(s),project,true)}
+  action authorityReply(allowed:bool,serverGeneration:int):bool=authorityReplyWithProjection(allowed,serverGeneration,false)
   // The actual storage loop has no await. Represent it as one action, while
   // retaining a failure before any write or after its first valid row write.
   def writtenRows(writes:int):List[int]=List(
@@ -89,39 +97,43 @@ module ui_submitted_payment_recovery {
     val stored=s.with("store",s.store.replaceAt(s.checkSlot,
       if(project)List(0,0) else writtenRows(writes)))
     s'=if(writes==2)stored.with("phase","verify-preflight")
-      else finishedCheck(stored).with("error",true)}
+      else reportError(finishedCheck(stored),project,true)}
   action persistCandidates(writes:int):bool=persistCandidatesWithProjection(writes,false)
   // verifyExistingPayment performs another actor-bound fresh GET before POST.
-  action verifyPreflight(allowed:bool,serverGeneration:int):bool=all{s.phase=="verify-preflight",
+  action verifyPreflightWithProjection(allowed:bool,serverGeneration:int,project:bool):bool=all{s.phase=="verify-preflight",
     s'=if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
       s.with("phase","post").with("postStarted",true).with("postAuthorized",true)
-      else finishedCheck(s).with("error",true)}
-  action verificationReply(exactReceipt:bool):bool=all{s.phase=="post",
-    s'=finishedCheck(s)
+      else reportError(finishedCheck(s),project,true)}
+  action verifyPreflight(allowed:bool,serverGeneration:int):bool=verifyPreflightWithProjection(allowed,serverGeneration,false)
+  action verificationReplyWithProjection(exactReceipt:bool,project:bool):bool=all{s.phase=="post",
+    s'=reportError(finishedCheck(s)
       .with("recorded",s.recorded or exactReceipt)
-      .with("error",not(exactReceipt and s.parentAlive and s.cookieActor==s.boundActor))
-      .with("responseDelivered",exactReceipt and s.parentAlive and s.cookieActor==s.boundActor)}
+      .with("responseDelivered",exactReceipt and s.parentAlive and s.cookieActor==s.boundActor),
+      project,not(exactReceipt and s.parentAlive and s.cookieActor==s.boundActor))}
+  action verificationReply(exactReceipt:bool):bool=verificationReplyWithProjection(exactReceipt,false)
   // Removing just the fallback does not cancel its already-started promise.
   // The enclosing provider, if alive, still checks the actor on API reads.
   action leaveFallback=s'=s.with("mounted",false).with("activeRead",0)
   action closePrivateParent=s'=s.with("parentAlive",false).with("mounted",false).with("activeRead",0)
   action chooseStorageReply(maxHash:int,project:bool):bool={nondet id=1.to(2).oneOf() nondet first=0.to(maxHash).oneOf()
     nondet second=0.to(maxHash).oneOf() storageReplyWithProjection(id,first,second,project)}
-  action chooseStorageFailure={nondet id=1.to(2).oneOf() storageReadFailure(id)}
+  action chooseStorageFailure(project:bool):bool={nondet id=1.to(2).oneOf() storageReadFailureWithProjection(id,project)}
   action chooseCookie={nondet actor=0.to(2).oneOf() cookieChanges(actor)}
   action chooseEdit(maxHash:int):bool={nondet index=0.to(1).oneOf() nondet value=0.to(maxHash).oneOf() edit(index,value)}
-  action chooseAuthorityReply={nondet generation=1.to(2).oneOf() nondet allowed=Set(false,true).oneOf()
-    authorityReply(allowed,generation)}
-  action choosePreflight={nondet generation=1.to(2).oneOf() nondet allowed=Set(false,true).oneOf()
-    verifyPreflight(allowed,generation)}
+  action chooseAuthorityReply(project:bool):bool={nondet generation=1.to(2).oneOf() nondet allowed=Set(false,true).oneOf()
+    authorityReplyWithProjection(allowed,generation,project)}
+  action choosePreflight(project:bool):bool={nondet generation=1.to(2).oneOf() nondet allowed=Set(false,true).oneOf()
+    verifyPreflightWithProjection(allowed,generation,project)}
   action choosePersistence(project:bool):bool={nondet writes=0.to(2).oneOf() persistCandidatesWithProjection(writes,project)}
   // Factor independent choices so parameter-free actions are explored once.
-  action commonSteps(maxHash:int,project:bool):bool=any{readStorage,chooseStorageReply(maxHash,project),chooseStorageFailure,generationChanges,chooseCookie,
-    confirmed(1),confirmed(2),all{maxHash==3,confirmed(3)},chooseEdit(maxHash),identityReply,
-    chooseAuthorityReply,choosePersistence(project),choosePreflight,verificationReply(true),verificationReply(false),
+  action commonSteps(maxHash:int,project:bool):bool=any{readStorage,chooseStorageReply(maxHash,project),chooseStorageFailure(project),generationChanges,chooseCookie,
+    confirmed(1),confirmed(2),all{maxHash==3,confirmed(3)},chooseEdit(maxHash),identityReplyWithProjection(project),
+    chooseAuthorityReply(project),choosePersistence(project),choosePreflight(project),
+    verificationReplyWithProjection(true,project),verificationReplyWithProjection(false,project),
     leaveFallback,closePrivateParent,s'=s}
   action concreteStep=any{commonSteps(2,false),boundedBeginVerify}
-  // The finite invariant check quotients exact stored cell values only.
+  // The finite invariant check quotients exact stored cell values and the
+  // write-only error flag (always false in `step`).
   // Those values feed their own writes, never a guard or another field.
   // Actor/generation slot identity and captured write targets are retained;
   // named scenarios and both concrete relations retain actual cell values.
