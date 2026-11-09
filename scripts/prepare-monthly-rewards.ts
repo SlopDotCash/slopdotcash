@@ -22,6 +22,7 @@ import {
   type ProjectDefinition,
 } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { monthlyCutoffSeconds } from "../src/lib/verified-calendar";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
 import { currentProjectPolicies } from "./project-revision-policy.mjs";
 
@@ -49,16 +50,16 @@ function periodEndTime(period: string): number {
     throw new TypeError("cycle must be YYYY-MM");
   }
   const [yearText, monthText] = period.split("-");
-  return Date.UTC(Number(yearText), Number(monthText), 1);
+  return monthlyCutoffSeconds(Number(yearText), Number(monthText), 0) * 1000;
 }
 
 /** Returns the last fully closed UTC calendar month. */
 export function previousUtcCycleId(now = new Date()): string {
   const validNow = exactDate(now, "now");
-  const previous = new Date(
-    Date.UTC(validNow.getUTCFullYear(), validNow.getUTCMonth() - 1, 1),
-  );
-  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+  const month = validNow.getUTCMonth() + 1;
+  const year =
+    month === 1 ? validNow.getUTCFullYear() - 1 : validNow.getUTCFullYear();
+  return `${year}-${String(month === 1 ? 12 : month - 1).padStart(2, "0")}`;
 }
 
 /**

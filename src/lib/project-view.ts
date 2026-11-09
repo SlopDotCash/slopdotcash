@@ -42,6 +42,7 @@ import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 import { eventThirds, penaltyDeductions } from "./score-penalties";
 import { sumAmounts } from "./verified-allocation";
+import { monthlyCutoffSeconds, monthStartDay } from "./verified-calendar";
 import { allocateWeightedRows } from "./weighted-allocation";
 
 const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
@@ -222,10 +223,10 @@ export function cycleBounds(cycleId: string): { from: number; to: number } {
   }
   const [yearText, monthText] = cycleId.split("-");
   const year = Number(yearText);
-  const monthIndex = Number(monthText) - 1;
+  const month = Number(monthText);
   return {
-    from: Date.UTC(year, monthIndex, 1),
-    to: Date.UTC(year, monthIndex + 1, 1),
+    from: monthStartDay(year, month) * 86_400_000,
+    to: monthlyCutoffSeconds(year, month, 0) * 1000,
   };
 }
 
