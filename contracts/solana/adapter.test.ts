@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readDeploymentVaultTotals } from "../../workers/payments/index";
 import {
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
@@ -133,12 +134,14 @@ function truncatedMint(size: number): Uint8Array {
 }
 function mockRpc(accounts: {
   project: Uint8Array;
+  batchProject?: Uint8Array;
   mint: Uint8Array;
   mintOwner?: string;
   slot?: number;
   vaultAmount?: bigint;
   vault?: Uint8Array;
   vaultOwner?: string;
+  blockTime?: unknown;
 }) {
   const slot = accounts.slot ?? 123456;
   globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
@@ -155,7 +158,7 @@ function mockRpc(accounts: {
       result = {
         context: { slot },
         value: [
-          project,
+          encoded(PROGRAM, accounts.batchProject ?? accounts.project),
           encoded(accounts.mintOwner ?? TOKEN, accounts.mint),
           encoded(
             accounts.vaultOwner ?? TOKEN,
@@ -166,7 +169,7 @@ function mockRpc(accounts: {
       };
     } else if (body.method === "getBlockTime") {
       expect(body.params[0]).toBe(slot);
-      result = 1_792_000_000;
+      result = accounts.blockTime === undefined ? 1_792_000_000 : accounts.blockTime;
     } else throw new Error(`Unexpected RPC ${body.method}`);
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
   }) as typeof fetch;
@@ -179,6 +182,74 @@ const config = {
 };
 
 describe("readVaultTotals", () => {
+  test("a mint changed after discovery cannot become the returned snapshot", async () => {
+    mockRpc({ project: projectAccount(base), batchProject: projectAccount(base, new Uint8Array(32).fill(8)), mint: mintAccount(6) });
+    await expect(readVaultTotals(config)).rejects.toThrow("Project mint changed");
+  });
+
+  for (const slot of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    test(`rejects invalid batch slot ${slot} before reporting totals`, async () => {
+      mockRpc({ project: projectAccount(base), mint: mintAccount(6), slot });
+      await expect(readVaultTotals(config)).rejects.toThrow("Invalid RPC slot");
+    });
+  }
+
+  test("missing block time refuses an otherwise valid batch", async () => {
+    mockRpc({ project: projectAccount(base), mint: mintAccount(6), blockTime: null });
+    await expect(readVaultTotals(config)).rejects.toThrow("Missing finalized block time");
+  });
+
+  test("unsolicited vault tokens do not increase credited free balance", async () => {
+    mockRpc({ project: projectAccount({ ...base, deposited: 1_000n }), mint: mintAccount(6), vaultAmount: 10_000n });
+    const totals = await readVaultTotals(config);
+    expect(totals.freeBalance).toBe("370");
+    expect(totals.totalDeposited).toBe("1000");
+  });
+
+  test("the worker Solana reader returns the observed mint for the later snapshot identity gate", async () => {
+    mockRpc({ project: projectAccount(base), mint: mintAccount(6) });
+    const totals = await readDeploymentVaultTotals({
+      chain: "solana", network: config.network, vault: VAULT, asset: "different-configured-mint",
+      owner: "owner", identityAuthority: "identity", feeRecipient: "fee", codeSha256: "digest",
+      bindingDelaySeconds: "0", projectPda: PROJECT, programId: PROGRAM,
+    }, config.rpcUrl);
+    expect(totals.asset).toBe(MINT);
+    expect(totals.vault).toBe(PROJECT);
+    expect(totals.blockNumber).toBe("123456");
+  });
+
+  for (const [label, lamports, rent, succeeds] of [
+    ["exact backing", 1412, 1000, true],
+    ["one lamport short", 1411, 1000, false],
+    ["invalid rent", 1412, -1, false],
+  ] as const) {
+    test(`native totals preserve the rent and liability boundary: ${label}`, async () => {
+      const project = encoded(PROGRAM, projectAccount({ ...base, deposited: 1000n }, new Uint8Array(32)));
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        let result: unknown;
+        if (body.method === "getAccountInfo") result = { context: { slot: 1 }, value: project };
+        else if (body.method === "getMultipleAccounts") {
+          expect(body.params[0]).toEqual([PROJECT, VAULT]);
+          result = { context: { slot: 123456 }, value: [project, { owner: PROGRAM, executable: false, lamports, data: ["", "base64"] }] };
+        } else if (body.method === "getBlockTime") result = 1_792_000_000;
+        else if (body.method === "getMinimumBalanceForRentExemption") {
+          expect(body.params).toEqual([0, { commitment: "finalized" }]);
+          result = rent;
+        } else throw new Error(`Unexpected RPC ${body.method}`);
+        return Response.json({ jsonrpc: "2.0", id: 1, result });
+      }) as typeof fetch;
+      if (succeeds) {
+        const result = await readVaultTotals(config);
+        expect(result.freeBalance).toBe("370");
+        expect(result.reserved).toBe("30");
+        expect(result.decimals).toBe(9);
+      } else {
+        await expect(readVaultTotals(config)).rejects.toThrow("Native vault balance");
+      }
+    });
+  }
+
   test("reads counters and decimals from one finalized slot", async () => {
     mockRpc({
       project: projectAccount(base),

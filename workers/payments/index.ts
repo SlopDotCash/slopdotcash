@@ -609,21 +609,28 @@ export async function readDeploymentVaultTotals(
     )
       throw new Error("Reviewed chain deployment incomplete");
     const chainId = BigInt(deployment.chainId);
-    // The counters mean what the reviewed code says only for that code.
-    await verifyEvmDeployment({
-      ...deployment,
-      rpcUrl,
-      chainId,
-      factory: deployment.factory,
-      factoryCodeSha256: deployment.factoryCodeSha256,
-      registrar: deployment.registrar,
-    });
-    return readEvmVaultTotals({
+    // Read the counters first, then verify the code at their exact finalized
+    // block. A fresh "finalized" tag for verification could observe another
+    // implementation after a proxy upgrade. Do not expose totals until this
+    // matching-block verification succeeds.
+    const totals = await readEvmVaultTotals({
       rpcUrl,
       network: deployment.network,
       vault: deployment.vault,
       chainId,
     });
+    await verifyEvmDeployment(
+      {
+        ...deployment,
+        rpcUrl,
+        chainId,
+        factory: deployment.factory,
+        factoryCodeSha256: deployment.factoryCodeSha256,
+        registrar: deployment.registrar,
+      },
+      `0x${BigInt(totals.blockNumber).toString(16)}`,
+    );
+    return totals;
   }
   if (!deployment.programId || !deployment.projectPda)
     throw new Error("Solana project deployment missing");

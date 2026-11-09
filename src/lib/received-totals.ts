@@ -61,6 +61,7 @@ export function isReceivedTotals(value: unknown): value is ReceivedTotals {
     v.contributors.every(
       (c) =>
         !!c &&
+        typeof c.githubUserId === "string" &&
         /^[1-9]\d{0,15}$/u.test(c.githubUserId) &&
         (c.login === null || typeof c.login === "string") &&
         money(c.usdMicro) &&
@@ -100,6 +101,7 @@ export function isUsdMicroAsset(
   assetDecimals: number,
   includeTestnets: boolean,
 ): boolean {
+  if (!Object.hasOwn(ESCROW_NETWORKS, network)) return false;
   const definition = (
     ESCROW_NETWORKS as Record<
       string,

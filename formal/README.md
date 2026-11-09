@@ -1304,6 +1304,37 @@ tested or verified here:
   retirement have separate contracts. Retained displayed totals do not promise
   a current balance. This batch changes no runtime or interface code.
 
+- `payment_event_ingestion` adds 21 scenarios for request/deployment selection,
+  family-specific identity and configuration gates, timestamp handling and the
+  ledger handoff. An exact retained event bypasses new provider, asset and
+  policy reads only after ingestion preflight succeeds. Cold verification and
+  ledger mutation retain their separate contracts. Twenty-six actual-ingestion
+  regression cases cover refusals, retained identity matches and mismatches;
+  all are unexecuted and use retained fixtures, not live chain evidence.
+- `vault_totals_reader`, `evm_vault_totals` and `solana_vault_totals` add 10, 18
+  and 17 scenarios for wrapper ordering, pinned EVM counters, pending reserves,
+  native balances, Solana account layouts and conservation. The EVM wrapper now
+  reads counters and verifies the reviewed deployment at that exact block
+  before returning them. Previously, independent finalized observations could
+  straddle an implementation upgrade. Twenty-five regression cases are
+  unexecuted. Solana configuration/genesis and deployment identity have the
+  stated separate gates; these reader models do not invent EVM-style review.
+- `public_project_totals` and `public_vault_snapshots` add 19 and 14 scenarios
+  for reportable networks, retained coverage, no-data failures, stale rows,
+  cache hits and projection errors. Amounts and cursor state come from separate
+  observations; neither model claims an atomic snapshot across those reads.
+  The general multi-group read algorithm is an overapproximation of the D1
+  project asset lock, not permission to configure multiple project assets.
+  Eight real-handler regression cases are unexecuted.
+- `received_totals_contract` and `usd_reference_asset` add 23 and 13 scenarios
+  for the actual envelope and asset predicates. The envelope now requires a
+  string GitHub ID rather than allowing regex coercion; network classification
+  rejects inherited object names before reading the network's asset list.
+  Thirty regression cases are unexecuted. The predicates retain their existing
+  calculation scope: they do not add project-subtotal reconciliation, actor
+  uniqueness or other guarantees belonging to the aggregate producer. These
+  changes add no interface controls or production activation.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

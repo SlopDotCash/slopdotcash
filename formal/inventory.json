@@ -329,7 +329,10 @@
     {
       "path": "backend/payments/evm-adapter.ts",
       "sha256": "26b6a4284c4f6e3da1900667406ac8e47118ff9a3b10841566110690fbb37f0d",
-      "models": ["formal/models/payments/chain_evidence.qnt"],
+      "models": [
+        "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/payment_event_ingestion.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -345,6 +348,8 @@
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt",
         "formal/models/payments/payment_wallet_registration.qnt",
+        "formal/models/payments/public_project_totals.qnt",
+        "formal/models/payments/public_vault_snapshots.qnt",
         "formal/models/payments/received_totals.qnt",
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -364,6 +369,7 @@
       "sha256": "651666b54866ad0d39e53d4fe812dda21f20f440de8105ac9a3d4c252200f879",
       "models": [
         "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_event_ingestion.qnt",
         "formal/models/payments/payment_reopen_landing.qnt"
       ],
       "candidateLines": [
@@ -462,6 +468,7 @@
       "sha256": "1e8f8bbc7a3834b589e3457bc8d3da36e8b2b769ac5e0ac8039c0145a8c371cf",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/public_vault_snapshots.qnt",
         "formal/models/payments/vault_snapshot_refresh.qnt",
         "formal/models/payments/vault_snapshot_store.qnt",
         "formal/models/rewards/monthly_coordinator.qnt"
@@ -593,6 +600,7 @@
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
+        "formal/models/payments/public_vault_snapshots.qnt",
         "formal/models/payments/received_totals.qnt"
       ],
       "candidateLines": [3, 13, 65, 70, 75, 82, 102],
@@ -1388,6 +1396,8 @@
         "formal/models/contracts/vault_setup_resolution.qnt",
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/evm_binding_consent_api.qnt",
+        "formal/models/payments/evm_vault_totals.qnt",
+        "formal/models/payments/vault_totals_reader.qnt",
         "formal/models/referrals/referral_cache_projection.qnt",
         "formal/models/referrals/referral_chain_watch.qnt",
         "formal/models/rewards/monthly_release_check.qnt"
@@ -1674,7 +1684,12 @@
     {
       "path": "contracts/solana/adapter.ts",
       "sha256": "b67b18d9e5dbd8aa141ac68726ace061cf8e076a124e4ebb540528893cf11730",
-      "models": ["formal/models/payments/chain_evidence.qnt"],
+      "models": [
+        "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/payment_event_ingestion.qnt",
+        "formal/models/payments/solana_vault_totals.qnt",
+        "formal/models/payments/vault_totals_reader.qnt"
+      ],
       "candidateLines": [
         47, 68, 73, 75, 184, 200, 227, 235, 254, 262, 276, 286, 304, 347, 366,
         375, 420, 427, 428, 431, 685, 691, 694, 696, 701, 725, 866, 867, 895,
@@ -2233,7 +2248,8 @@
       "sha256": "028e708fc45161cf5db0261495927c882ecca381d921443a6985906496514230",
       "models": [
         "formal/models/api/wallet_claim_publication.qnt",
-        "formal/models/payments/payment_dispatch.qnt"
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/public_project_totals.qnt"
       ],
       "candidateLines": [
         1, 15, 20, 21, 33, 70, 89, 90, 94, 95, 99, 100, 116, 118, 119, 132, 135,
@@ -5732,6 +5748,7 @@
         "formal/models/payments/chain_range_scan.qnt",
         "formal/models/payments/payout_readiness.qnt",
         "formal/models/payments/payout_rpc_probe.qnt",
+        "formal/models/payments/usd_reference_asset.qnt",
         "formal/models/rewards/allocation_funding.qnt",
         "formal/models/rewards/escrow_policy_history.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt"
@@ -6343,8 +6360,12 @@
     },
     {
       "path": "src/lib/received-totals.ts",
-      "sha256": "e222e5a7d10cb3970ec32b97249d0658864ef347fcc7a336024ac488dab29a5b",
-      "models": ["formal/models/payments/received_totals.qnt"],
+      "sha256": "b40884aa67bf373c7473109660b99947b5f7529ded1bca4526a97eef1bfeb2df",
+      "models": [
+        "formal/models/payments/received_totals.qnt",
+        "formal/models/payments/received_totals_contract.qnt",
+        "formal/models/payments/usd_reference_asset.qnt"
+      ],
       "candidateLines": [6, 10, 18],
       "review": "mapped-abstraction",
       "statelessReason": "Pure supplied-response shape/arithmetic validator and reviewed USD-asset predicate. No fetch, mutable cache or payment transition; actual receipt indexing and public aggregation remain payment ledger responsibilities."
@@ -6739,6 +6760,7 @@
       "path": "src/lib/verified-allocation.ts",
       "sha256": "225830454c22cac66ee7acb76c375598d0677c2905409118eb885f2c7ed98418",
       "models": [
+        "formal/models/payments/received_totals_contract.qnt",
         "formal/models/rewards/monthly_allocation.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/ui/ui_review_pool.qnt"
@@ -7690,20 +7712,22 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
+      "sha256": "89f570493f923c28b7ff03349664984a3f1a9bfefb1f3df2b07b637e77491501",
       "models": [
         "formal/models/payments/payment_dispatch_queue.qnt",
+        "formal/models/payments/payment_event_ingestion.qnt",
         "formal/models/payments/payment_recovery_observation.qnt",
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/payment_worker_orchestration.qnt",
+        "formal/models/payments/vault_totals_reader.qnt",
         "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
         66, 93, 110, 113, 119, 120, 124, 151, 161, 165, 167, 171, 173, 184, 185,
         187, 189, 191, 197, 200, 203, 207, 219, 220, 222, 223, 228, 278, 325,
-        336, 357, 365, 368, 399, 479, 579, 580, 639, 640
+        336, 357, 365, 368, 399, 479, 579, 580, 612, 613, 646, 647
       ],
       "review": "mapped-abstraction"
     },
@@ -12614,6 +12638,31 @@
       ]
     },
     {
+      "path": "formal/models/payments/evm_vault_totals.qnt",
+      "sha256": "7ec7c94dcc73a92ed89e1d0d8d26f0d8b903b53863d1b36ee34eb3cce65d1b71",
+      "sources": ["contracts/evm/adapter.ts"],
+      "scenarios": [
+        "badTimestampReturnsNoPartialTotalsTest",
+        "badVaultStopsBeforeChainTest",
+        "excessWithdrawalsRefuseWithoutPendingGetterTest",
+        "insufficientVaultBalanceRefusedTest",
+        "invalidDecimalsRefusedTest",
+        "legacyBalancedReturnsNullReservedTest",
+        "malformedHeadStopsBeforeTotalsTest",
+        "malformedTokenRefusedTest",
+        "malformedTotalsHaveNoAssetReadsTest",
+        "missingPendingGetterRefusedTest",
+        "nativeBalanceMustEqualTotalsBalanceTest",
+        "nativeConservationAfterBalanceReadTest",
+        "nativeDecimalsRequireBalanceStageTest",
+        "pendingReserveConservesTest",
+        "readsStayAtCapturedBlockAfterHeadAdvanceTest",
+        "unsolicitedBalanceDoesNotIncreaseFreeTest",
+        "wrongChainStopsBeforeHeadTest",
+        "wrongPendingAmountRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/fresh_stack_admission.qnt",
       "sha256": "7c522a8b398a1bf0ea01967261d26011c538d516c14db9eaf126ee82f980c6bd",
       "sources": ["workers/payment-executor/assert-fresh-test-stack.mjs"],
@@ -12802,6 +12851,39 @@
         "unavailableChildDoesNotReadRegistryTest",
         "unavailableChildIsNotAggregateFailureTest",
         "unrelatedRegistryFailuresDoNotRejectMatchedSubmissionTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/payment_event_ingestion.qnt",
+      "sha256": "0cdbc407e1270baf03bcdc870330027757bd94bf5ad3cab2a293a6f400892f46",
+      "sources": [
+        "backend/payments/evm-adapter.ts",
+        "backend/payments/ledger.ts",
+        "contracts/solana/adapter.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "absentDeploymentRefusedTest",
+        "ambiguousDeploymentRefusedTest",
+        "cacheReadFailureIsNotAReplayTest",
+        "cachedMismatchFallsThroughToVerificationTest",
+        "exactRetainedEvidenceAvoidsNewProviderReadTest",
+        "incompleteEvmConfigRefusedTest",
+        "invalidChainIdRefusedTest",
+        "invalidRpcJsonBlocksEvenCachedEventTest",
+        "invalidTimePrecedesLedgerCacheTest",
+        "lateMatchingEvidenceNeedsFullGatePathTest",
+        "ledgerConflictDoesNotCommitTest",
+        "lostReplyKeepsCommittedEvidenceTest",
+        "missingAssetPreventsLedgerWriteTest",
+        "missingGenesisRefusedTest",
+        "missingRpcBlocksEvenCachedEventTest",
+        "missingSolanaFieldsRefusedTest",
+        "noncanonicalIdentityRefusedBeforeRpcTest",
+        "ordinaryRecordedEventTest",
+        "privatePolicyRefusalPreventsWriteTest",
+        "privateReplayAvoidsNewPolicyAuthorizationTest",
+        "requestShapeRefusedTest"
       ]
     },
     {
@@ -13165,6 +13247,60 @@
       ]
     },
     {
+      "path": "formal/models/payments/public_project_totals.qnt",
+      "sha256": "3e79ae9393e2ebf714a31434e7d0207fbae01daabef2c13424428076e57aefd1",
+      "sources": [
+        "backend/payments/handler.ts",
+        "migrations/0021_multi_asset_vault_snapshots.sql"
+      ],
+      "scenarios": [
+        "SQLTieOrderCanChooseOtherDecimalsTest",
+        "amountsWithoutCursorHaveNullCoverageTest",
+        "cursorCanAdvanceAfterAmountReadTest",
+        "cursorOnlyReturnsEmptyAssetsTest",
+        "cursorReadFailureDoesNotReturnAmountPrefixTest",
+        "differentAssetsAreNotSummedTest",
+        "firstGroupedRowProvidesDecimalsTest",
+        "firstReportableCursorWinsTest",
+        "lateMalformedAmountHidesEarlierGroupTest",
+        "laterCursorDoesNotRewriteCapturedCoverageTest",
+        "laterPaymentDoesNotRewriteCapturedAmountsTest",
+        "malformedAmountCannotReturnPartialGroupsTest",
+        "noRowsOrCursorIsUnavailableTest",
+        "paidAndReservedRemainDistinctTest",
+        "productionExcludesTestnetRowsTest",
+        "rowReadFailureReturnsNoAssetsTest",
+        "stagingIncludesTestnetRowsTest",
+        "testnetOnlyReadsAsUnindexedInProductionTest",
+        "unclassifiedNetworkIsNotAutomaticallyTestnetTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/public_vault_snapshots.qnt",
+      "sha256": "c774736e97434cd66ce122ce6a9dd31783fa7461f7a4dfff09217529a3fc7f31",
+      "sources": [
+        "backend/payments/handler.ts",
+        "backend/payments/vault-snapshots.ts",
+        "backend/projects/edge-cache.ts"
+      ],
+      "scenarios": [
+        "bodyReadFailureIsNotCachedTest",
+        "cacheHitKeepsOldPayloadAndServedAtTest",
+        "cacheMissRebuildsAfterEvictionTest",
+        "databaseFailureIsNotCachedTest",
+        "emptyProjectStillReturns200Test",
+        "failedRequestCanRetryFromDatabaseTest",
+        "matchFailureFallsBackToDatabaseTest",
+        "noCacheReadsDatabaseDirectlyTest",
+        "productionExcludesTestnetSnapshotTest",
+        "putFailureStillReturnsSuccessfulBodyTest",
+        "servedAtCapturedBeforeAwaitTest",
+        "stagingCacheCannotPopulateProductionKeyTest",
+        "stagingRetainsBothSnapshotsTest",
+        "testnetOnlyProjectReturnsEmptyProductionBodyTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/received_totals.qnt",
       "sha256": "ff6ed5d807657c3edbc761967cd0c6e993b1984ef71f913666eee162434ca065",
       "sources": [
@@ -13198,6 +13334,39 @@
         "vaultOverTwentyThousandRefusesBeforeDirectScanTest",
         "visibilityAcrossPagesIsNotOneSnapshotTest",
         "withdrawalAfterVaultPageDoesNotRetractSnapshotTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/received_totals_contract.qnt",
+      "sha256": "7ae7e4cd1c4524956f2c7992d01e89770262e78696f76ef01f7f81d466010125",
+      "sources": [
+        "src/lib/received-totals.ts",
+        "src/lib/verified-allocation.ts"
+      ],
+      "scenarios": [
+        "componentGrandTotalsAreOnlyShapeCheckedTest",
+        "contributorCountMustMatchLengthTest",
+        "duplicateActorsAreNotAnEnvelopeCheckTest",
+        "emptyEnvelopeIsKnownZeroTest",
+        "grandUsdMustSumTest",
+        "invalidDateRefusedTest",
+        "invalidGithubIdGrammarRefusedTest",
+        "invalidLoginTypeRefusedTest",
+        "invalidObjectRefusedTest",
+        "invalidRowCountRefusedTest",
+        "malformedAssetRowRefusedTest",
+        "malformedProjectRowRefusedTest",
+        "negativeAssetDecimalsAreOnlySafeIntegerCheckedTest",
+        "nonArrayContributorsRefusedTest",
+        "noncanonicalRowMoneyRefusedTest",
+        "noncanonicalTotalMoneyRefusedTest",
+        "nullContributorRefusedTest",
+        "numericGithubIdNoLongerCoercesTest",
+        "projectSubtotalsAreNotReconciledHereTest",
+        "rowComponentsMustSumTest",
+        "unsafeTotalCountRefusedTest",
+        "validEnvelopeTest",
+        "wrongSchemaRefusedTest"
       ]
     },
     {
@@ -13469,6 +13638,30 @@
       ]
     },
     {
+      "path": "formal/models/payments/solana_vault_totals.qnt",
+      "sha256": "8f324825569543a2b00b5d18591701fee375895a63d6196acf2ceaced10c1697",
+      "sources": ["contracts/solana/adapter.ts"],
+      "scenarios": [
+        "changedMintBetweenDiscoveryAndBatchRefusedTest",
+        "countersOverDepositsRefusedTest",
+        "initialProjectFailureStopsBatchTest",
+        "invalidBatchSlotReturnsNoTotalsTest",
+        "invalidMintRefusedBeforeTimeTest",
+        "missingBatchAccountRefusedTest",
+        "missingRentRefusedTest",
+        "nativeRentExcludedFromSpendableBalanceTest",
+        "nativeShapeRefusedAfterRentReadTest",
+        "rentIncreaseCanCauseShortfallTest",
+        "tokenProgramMismatchRefusedTest",
+        "tokenShortfallRefusedTest",
+        "tokenTotalsFromLaterBatchSlotTest",
+        "unavailableBlockTimeReturnsNoCountersTest",
+        "unsolicitedTokensDoNotIncreaseFreeTest",
+        "wrongVaultAuthorityRefusedTest",
+        "wrongVaultMintRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/staging_attester_release.qnt",
       "sha256": "0d32007959d0968c1d99c7d262a1c1c624cd799e9b526add5c0d7eafd781419a",
       "sources": [
@@ -13562,6 +13755,26 @@
       ]
     },
     {
+      "path": "formal/models/payments/usd_reference_asset.qnt",
+      "sha256": "71ed57f864491bc4dda54a5c3fff3303a554efa07245a5c5464a53918b932a46",
+      "sources": ["src/lib/escrow-policy.mjs", "src/lib/received-totals.ts"],
+      "scenarios": [
+        "inheritedObjectNameIsNotNetworkTest",
+        "mixedCaseHexAcceptedTest",
+        "negativeDecimalsAreNotUsdTest",
+        "networkWithoutReferenceIsNotUsdTest",
+        "productionReferenceAcceptedTest",
+        "solanaReferenceAcceptedTest",
+        "solanaReferenceRequiresExactCaseTest",
+        "testnetReferenceExcludedInProductionTest",
+        "testnetReferenceIncludedWhenRequestedTest",
+        "unknownNetworkIsNotUsdTest",
+        "uppercasePrefixDoesNotSelectHexFoldingTest",
+        "wrongAssetIsNotUsdTest",
+        "wrongDecimalsAreNotUsdTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/vault_snapshot_refresh.qnt",
       "sha256": "8818143d1fd38bd3e6acddcc7a141e152ba695b2c557c23e03fe8741a604fab8",
       "sources": ["backend/payments/vault-snapshots.ts"],
@@ -13612,6 +13825,27 @@
         "updateKeepsHistoricalServiceFeesTest",
         "writeGuardCatchesConcurrentCounterChangeTest",
         "writeGuardChecksChainTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/vault_totals_reader.qnt",
+      "sha256": "8af5c141e053bf0f7f45a6c548bfac0c24028415bb7a57416a7c0161fa625bc2",
+      "sources": [
+        "contracts/evm/adapter.ts",
+        "contracts/solana/adapter.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "evmVerifiesCapturedCountersBeforeReturnTest",
+        "failedCountersDoNotStartVerificationTest",
+        "failedVerificationNeverReturnsCountersTest",
+        "headAdvanceKeepsVerificationAtCounterBlockTest",
+        "malformedEvmChainIdRefusesBeforeVerificationTest",
+        "missingEvmFieldsRefuseBeforeVerificationTest",
+        "missingSolanaProjectOrProgramRefusesTest",
+        "solanaCounterFailureReturnsNoTotalsTest",
+        "solanaHasNoEvmVerificationStageTest",
+        "waitingForVerificationHasNoReturnedCounterResultTest"
       ]
     },
     {

@@ -96,3 +96,102 @@ test("only six-decimal reference stablecoins count as dollars, and testnets only
     ),
   ).toBe(true);
 });
+
+for (const [label, value] of [
+  ["numeric GitHub id", 32437884],
+  ["null GitHub id", null],
+  ["boolean GitHub id", true],
+  ["array-coerced GitHub id", ["32437884"]],
+  ["object GitHub id", {}],
+  ["zero GitHub id", "0"],
+  ["leading-zero GitHub id", "01"],
+  ["fractional GitHub id", "1.2"],
+  ["exponent GitHub id", "1e3"],
+  ["overlong GitHub id", "1".repeat(17)],
+] as const) {
+  test(`received totals reject ${label} without coercion`, () => {
+    expect(isReceivedTotals({
+      ...received,
+      contributors: [{ ...received.contributors[0], githubUserId: value }],
+    })).toBe(false);
+  });
+}
+
+test("received totals retain exact sixteen-digit string identities and large base units", () => {
+  const amount = "900719925474099312345678901234567890";
+  expect(isReceivedTotals({
+    ...received,
+    contributors: [{
+      ...received.contributors[0], githubUserId: "9999999999999999",
+      usdMicro: amount, directMicro: amount, vaultUsdMicro: "0",
+    }],
+    totals: { ...received.totals, usdMicro: amount, directMicro: amount },
+  })).toBe(true);
+});
+
+test("received totals require each contributor's USD components to reconcile", () => {
+  expect(isReceivedTotals({
+    ...received,
+    contributors: [{ ...received.contributors[0], directMicro: "0", vaultUsdMicro: "0" }],
+  })).toBe(false);
+});
+
+test("received envelope does not reconcile grand component and transfer counts", () => {
+  expect(isReceivedTotals({
+    ...received,
+    totals: { ...received.totals, directMicro: "0", vaultUsdMicro: "123", directTransfers: 99, vaultPayments: 99 },
+  })).toBe(true);
+});
+
+test("received envelope does not infer actor uniqueness or project-subtotal equality", () => {
+  const duplicate = { ...received.contributors[0], projects: [{ projectId: "", usdMicro: "0" }] };
+  expect(isReceivedTotals({
+    ...received,
+    contributors: [duplicate, duplicate],
+    totals: { ...received.totals, contributors: 2, usdMicro: (BigInt(duplicate.usdMicro) * 2n).toString() },
+  })).toBe(true);
+});
+
+test("received envelope asset metadata is typed but not deployment-qualified", () => {
+  expect(isReceivedTotals({
+    ...received,
+    contributors: [{ ...received.contributors[0], otherAssets: [{
+      network: "unknown-network", assetAddress: "not-a-chain-address", assetDecimals: -1, netBase: "0",
+    }] }],
+  })).toBe(true);
+});
+
+for (const [label, change] of [
+  ["noncanonical project amount", { projects: [{ projectId: "eliza", usdMicro: "01" }] }],
+  ["nonstring project identity", { projects: [{ projectId: 1, usdMicro: "0" }] }],
+  ["unsafe asset decimals", { otherAssets: [{ network: "base-mainnet", assetAddress: "asset", assetDecimals: 1.5, netBase: "0" }] }],
+  ["noncanonical asset amount", { otherAssets: [{ network: "base-mainnet", assetAddress: "asset", assetDecimals: 6, netBase: "-1" }] }],
+] as const) {
+  test(`received totals reject ${label}`, () => {
+    expect(isReceivedTotals({
+      ...received, contributors: [{ ...received.contributors[0], ...change }],
+    })).toBe(false);
+  });
+}
+
+test("received totals reject invalid generation dates and contributor counts", () => {
+  expect(isReceivedTotals({ ...received, generatedAt: "not-a-date" })).toBe(false);
+  expect(isReceivedTotals({ ...received, totals: { ...received.totals, contributors: 2 } })).toBe(false);
+});
+
+for (const value of [
+  { label: "uppercase hex prefix", network: "base-mainnet", address: "0X833589FCD6EDB6E08F4C7C32D4F71B54BDA02913", decimals: 6, testnets: false },
+  { label: "wrong reference decimals", network: "base-mainnet", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 18, testnets: false },
+  { label: "negative decimals", network: "base-mainnet", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: -1, testnets: false },
+  { label: "native asset", network: "base-mainnet", address: "0x0000000000000000000000000000000000000000", decimals: 6, testnets: false },
+  { label: "different Solana address case", network: "solana-mainnet", address: "epjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6, testnets: false },
+  { label: "network without reference assets", network: "solana-testnet", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6, testnets: true },
+  { label: "unknown network", network: "unknown-mainnet", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6, testnets: true },
+  { label: "inherited constructor name", network: "constructor", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6, testnets: true },
+  { label: "inherited prototype name", network: "__proto__", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6, testnets: true },
+  { label: "inherited object method", network: "toString", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6, testnets: true },
+]) {
+  test(`USD reference classification excludes ${value.label}`, () => {
+    expect(isUsdMicroAsset(value.network, value.address, value.decimals, value.testnets)).toBe(false);
+  });
+}
