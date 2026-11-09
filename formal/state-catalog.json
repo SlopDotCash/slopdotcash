@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "169543c0cdac0c50a1fde2cee06307fdb89966d73587ba8df948108253bdf340",
+  "inventorySha256": "eb5cd8d3bc280af6867d43461c82d02acbf6e125054de75587e5e6ecb8e84050",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1817,6 +1817,34 @@
         "formal/models/slopbot/bot_close_capacity.qnt"
       ],
       "lexicallyUnmentionedValues": ["pending"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0119_vetting_storage_generations.sql",
+      "line": 7,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["active", "retired", "retiring"],
+      "models": [
+        "formal/models/vetting/vetting_evidence_registration.qnt",
+        "formal/models/vetting/vetting_generation_retirement.qnt",
+        "formal/models/vetting/vetting_generation_storage.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0119_vetting_storage_generations.sql",
+      "line": 54,
+      "name": "outcome",
+      "kind": "sql-check",
+      "values": ["backed", "changed", "missing"],
+      "models": [
+        "formal/models/vetting/vetting_evidence_registration.qnt",
+        "formal/models/vetting/vetting_generation_retirement.qnt",
+        "formal/models/vetting/vetting_generation_storage.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -3704,6 +3732,24 @@
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
       "lexicallyUnmentionedValues": ["policySha", "sourceDigest"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/vetting-backup/core.ts",
+      "line": 82,
+      "name": "outcome",
+      "kind": "string-union",
+      "values": ["backed", "changed", "missing"],
+      "models": [
+        "formal/models/vetting/vetting_audit_retention.qnt",
+        "formal/models/vetting/vetting_backup_chain.qnt",
+        "formal/models/vetting/vetting_generation_retirement.qnt",
+        "formal/models/vetting/vetting_object_lifecycle.qnt",
+        "formal/models/vetting/vetting_observed_part.qnt",
+        "formal/models/vetting/vetting_retention.qnt",
+        "formal/models/vetting/vetting_upload_completion.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

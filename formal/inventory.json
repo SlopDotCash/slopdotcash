@@ -1082,16 +1082,19 @@
     },
     {
       "path": "backend/vetting/evidence-chunks.ts",
-      "sha256": "286cf3cd2ae5503d2d37c94d6b52ccc215ed35db59d41f795cbb81f4b262bc07",
+      "sha256": "c656ef2edcc7994beac672db14f1d3019c179ac80a1ea5226de9a50ab80a5e49",
       "models": [
         "formal/models/vetting/vetting_backup_chain.qnt",
         "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_evidence_upload.qnt",
+        "formal/models/vetting/vetting_generation_retirement.qnt",
+        "formal/models/vetting/vetting_generation_storage.qnt",
+        "formal/models/vetting/vetting_observed_part.qnt",
         "formal/models/vetting/vetting_retention.qnt",
         "formal/models/vetting/vetting_upload_completion.qnt",
         "formal/models/vetting/vetting_verified_parts.qnt"
       ],
-      "candidateLines": [45, 105, 155, 165],
+      "candidateLines": [47, 108, 116, 162, 169, 221, 224],
       "review": "mapped-abstraction"
     },
     {
@@ -1107,8 +1110,19 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/vetting/evidence-storage.ts",
+      "sha256": "a438cf792c6d1650b900bf7f0bdd1cf2a743970c169926686054dc5985d1fa5e",
+      "models": [
+        "formal/models/vetting/vetting_evidence_registration.qnt",
+        "formal/models/vetting/vetting_generation_retirement.qnt",
+        "formal/models/vetting/vetting_generation_storage.qnt"
+      ],
+      "candidateLines": [90, 96, 97, 98, 138, 139, 196, 197, 198],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/vetting/evidence.ts",
-      "sha256": "428ba8b2e01a6fb17c6b0ac7de64e6627468090f6a367c0dbbacfa9a9e221957",
+      "sha256": "cf375cc24427a0c1eadb6ce899a3a7835cad335f0d9d3163b9d6973de2883702",
       "models": [
         "formal/models/vetting/vetting_download_stream.qnt",
         "formal/models/vetting/vetting_evidence_access.qnt",
@@ -1123,10 +1137,10 @@
         "formal/models/vetting/vetting_verified_parts.qnt"
       ],
       "candidateLines": [
-        182, 183, 217, 275, 276, 278, 279, 280, 290, 295, 442, 516, 531, 580,
-        605, 639, 747, 748, 765, 1075, 1077, 1239, 1257, 1273, 1293, 1346, 1459,
-        1499, 1504, 1509, 1564, 1570, 1589, 1594, 1605, 1612, 1683, 1698, 1745,
-        2031
+        184, 185, 228, 286, 287, 289, 290, 291, 301, 306, 447, 521, 536, 585,
+        610, 644, 752, 753, 770, 1080, 1082, 1244, 1263, 1280, 1300, 1353, 1474,
+        1514, 1519, 1524, 1580, 1586, 1605, 1610, 1621, 1628, 1699, 1714, 1761,
+        2042
       ],
       "review": "mapped-abstraction"
     },
@@ -3030,6 +3044,21 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0119_vetting_storage_generations.sql",
+      "sha256": "3000c4e3bb0cbdb81abe028094fbc24741f39db8161527655f6ef53407af2908",
+      "models": [
+        "formal/models/vetting/vetting_evidence_registration.qnt",
+        "formal/models/vetting/vetting_generation_retirement.qnt",
+        "formal/models/vetting/vetting_generation_storage.qnt"
+      ],
+      "candidateLines": [
+        7, 10, 13, 20, 21, 26, 65, 66, 68, 70, 71, 73, 74, 76, 77, 81, 84, 85,
+        90, 93, 94, 96, 97, 100, 106, 107, 109, 110, 112, 113, 115, 116, 117,
+        122, 123, 128, 129, 134
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "5ce68e5d46d579908b1ba07bd7e2935b55d07c7e542e56ad651fa7544304e48f",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -3098,13 +3127,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "948a1a60583e030edb45c462c6267d1e8f6bc264b7794d988f1cb4e94bddaf06",
+      "sha256": "d2115157a2ff561c56ca62e86e9cf60861c07601dd394785ec0d9db02a06d30f",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [38, 62, 159, 161, 163, 210, 217, 269],
+      "candidateLines": [33, 42, 66, 163, 165, 167, 214, 221, 273],
       "review": "mapped-abstraction"
     },
     {
@@ -4048,12 +4077,12 @@
     },
     {
       "path": "scripts/run-integration.mjs",
-      "sha256": "1eea01a750dec4603e62fc6957472465697e9ff02dcbba8c59dd57115c1f73f6",
+      "sha256": "908707f11bdb72ea9bacab565a7aa40d0f6b73fd8bfb9325ca188063182ead0b",
       "models": [
         "formal/models/tooling/dev_server_lifecycle.qnt",
         "formal/models/tooling/integration_pipeline.qnt"
       ],
-      "candidateLines": [93, 94, 95],
+      "candidateLines": [98, 99, 100],
       "review": "mapped-abstraction"
     },
     {
@@ -7977,17 +8006,30 @@
     },
     {
       "path": "workers/vetting-backup/core.ts",
-      "sha256": "274eac0ea23d812417d8c8930113889857bdfd35240a935567d95188e35b5700",
+      "sha256": "2d3ae01da778d6017b7d7182a82519e0abdcb462c9df376379cf8b6f01a5dea3",
       "models": [
         "formal/models/vetting/vetting_audit_retention.qnt",
         "formal/models/vetting/vetting_backup_chain.qnt",
+        "formal/models/vetting/vetting_generation_retirement.qnt",
         "formal/models/vetting/vetting_object_lifecycle.qnt",
+        "formal/models/vetting/vetting_observed_part.qnt",
         "formal/models/vetting/vetting_retention.qnt",
         "formal/models/vetting/vetting_upload_completion.qnt"
       ],
       "candidateLines": [
-        16, 99, 277, 334, 335, 339, 360, 363, 406, 412, 421, 428, 431, 441, 509,
-        515, 522, 532
+        24, 184, 359, 551, 573, 581, 582, 592, 593, 595, 596, 597, 610, 611,
+        617, 618, 619, 676, 680, 688, 695, 699, 722, 731, 738, 748, 815, 821,
+        828, 838
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/vetting-backup/generation-retirement-workflow.mjs",
+      "sha256": "f7f5f7b4634ab4fafa2ba2ed0397d4c620d243dd5fd3da9691d60b99a0fa4992",
+      "models": ["formal/models/vetting/vetting_generation_retirement.qnt"],
+      "candidateLines": [
+        13, 31, 49, 71, 86, 96, 118, 125, 129, 134, 140, 141, 142, 156, 180,
+        209, 214, 225, 247, 249
       ],
       "review": "mapped-abstraction"
     },
@@ -8012,39 +8054,38 @@
     },
     {
       "path": "workers/vetting-backup/qualification-retention.ts",
-      "sha256": "76e29edb42e8408a66848e7d476657c6335e22f236cb8def7ae5677dc4f77558",
+      "sha256": "934e5a8d771c5d277d04ded056edb2f0277a66cf34954bc9eade34347a5a40cf",
       "models": ["formal/models/vetting/vetting_backup_chain.qnt"],
       "candidateLines": [
-        100, 107, 120, 126, 133, 155, 205, 221, 227, 231, 245, 315, 324, 351,
-        385, 394
+        100, 107, 120, 126, 133, 155, 196, 217, 233, 264, 266, 270, 294, 328,
+        337
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting-backup/qualification-workflow.mjs",
-      "sha256": "97d256c1642aa43236abc5b088332cb147732ab85d6b18afbae9e2ad280de643",
+      "sha256": "b31e53c05d806a7fe2fb2a2577b0dc76b5466468fe6196036125aa9d1c6d12af",
       "models": ["formal/models/vetting/vetting_backup_chain.qnt"],
       "candidateLines": [26, 41, 48, 99, 122, 126, 148],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting-backup/qualification.ts",
-      "sha256": "130920b63dc4a9d9af9482800d486dd17c37e72fe55b32b4c25c63b0201419e9",
+      "sha256": "b37f324a11e71d8653f024a86178869a0ae3439c50f4ca9ad0cb96532753abd6",
       "models": ["formal/models/vetting/vetting_backup_chain.qnt"],
       "candidateLines": [
-        35, 91, 149, 155, 170, 186, 192, 203, 218, 342, 391, 425, 449, 497, 506,
-        529, 530, 540, 568
+        36, 92, 150, 156, 171, 187, 193, 204, 219, 343, 392, 426, 450, 498, 507,
+        530, 531, 541, 569
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting-backup/workflow.mjs",
-      "sha256": "64df27e60d4caaedffcb824961e6607177cde14acbaf7fe62478a151c3661b3b",
+      "sha256": "0a2da154aaa7bd56cd00ef5c33aa5c68592983449f16a3ae7b88ca3cc9110b54",
       "models": ["formal/models/vetting/vetting_backup_chain.qnt"],
       "candidateLines": [
-        13, 30, 68, 86, 90, 133, 145, 183, 204, 221, 228, 242, 260, 273, 308,
-        325, 331, 344, 389, 399, 403, 537, 556, 597, 603, 616, 635, 651, 681,
-        688, 700, 724, 725, 727, 729
+        13, 30, 68, 86, 90, 133, 145, 183, 222, 229, 243, 261, 274, 308, 325,
+        331, 344, 352, 385, 459, 472, 484, 490
       ],
       "review": "mapped-abstraction"
     },
@@ -16333,7 +16374,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_backup_chain.qnt",
-      "sha256": "cd2da04340fdda33f0c4a5d9cd7b4b223233fa2ff4cd36d6e3e9af13495a5501",
+      "sha256": "831d90c5abaa0f2ef2373af594f1f72b2bd67b14457fe4b2bbc11446341ff9c0",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "migrations/0068_vetting_storage_cycles.sql",
@@ -16487,45 +16528,47 @@
     },
     {
       "path": "formal/models/vetting/vetting_evidence_registration.qnt",
-      "sha256": "945435ff3920ebef15cef773ccd73f724ed6471b2b4a999556e702e6ca373747",
+      "sha256": "d4e7d5669c0186dc77c6f850cf3ce7be159650c926087bf4044da5c3ad65fbb8",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
+        "backend/vetting/evidence-storage.ts",
         "backend/vetting/evidence.ts",
         "backend/vetting/handler.ts",
         "migrations/0034_vetting_private_evidence.sql",
         "migrations/0036_vetting_evidence_assembly.sql",
-        "migrations/0107_vetting_content_addressed_evidence.sql"
+        "migrations/0107_vetting_content_addressed_evidence.sql",
+        "migrations/0119_vetting_storage_generations.sql"
       ],
       "scenarios": [
         "absentStorageRefusesBeforeSignatureTest",
-        "admittedReferencePreventsNewCleanupClaimTest",
         "assemblyDigestMustNameDeclaredManifestObjectTest",
         "capturedRegistrationTimeSurvivesDelayedBatchTest",
         "changedImmutableDeclarationConflictsTest",
         "changedManifestConcurrentLoserConflictsTest",
-        "cleanupReleaseAllowsLaterRegistrationTest",
-        "cleanupTriggerRollsBackRunObjectsAndAuditTest",
         "configuredSignedRegistrationCommitsOneCompleteBatchTest",
         "duplicateDigestsCannotRegisterTest",
+        "existingRunReplayCannotRebindGenerationTest",
         "failedCatchReadKeepsCommittedHistoryTest",
         "failedHintReadOmitsObjectWithoutUndoingCommitTest",
         "foreignKeyRefusesDeletedAssessmentAfterLookupTest",
+        "generationReservationFailureRollsBackRunObjectsAndAuditTest",
         "genericFailureWithNoWinnerKeepsNoPartialRegistrationTest",
         "independentRunsKeepSeparateObjectReferencesTest",
         "invalidChunkLayoutCannotRegisterTest",
         "invalidJsonPrecedesMissingAssessmentTest",
         "invalidSignatureNeverReadsAssessmentTest",
         "lostBatchReplyCanReadBackOwnCommittedRegistrationTest",
+        "lostBatchReplyKeepsOriginalGenerationTest",
         "lostResponseRetriesAsReplayWithoutAnotherAuditTest",
         "missingAssessmentPrecedesInvalidObjectTest",
         "missingDeclaredTraceCannotRegisterTest",
+        "newRunSelectsNewGenerationTest",
         "partHintsDoNotProveWholeFileCompletionTest",
         "registrationSucceedsWithNoStoredBytesTest",
         "reorderedInputReplaysCanonicalManifestTest",
         "sameManifestConcurrentLoserReplaysWinnerTest",
         "signedBodyBoundRefusesOversizeTest",
-        "storedHintCanBeStaleBeforeResponseTest",
-        "winnerReadbackPrecedesOriginalCleanupErrorTest"
+        "storedHintCanBeStaleBeforeResponseTest"
       ]
     },
     {
@@ -16631,6 +16674,90 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_generation_retirement.qnt",
+      "sha256": "e5b9028859560116d6e7ae45c38309bb58b2741fc60115757742bb03df285ea9",
+      "sources": [
+        "backend/vetting/evidence-chunks.ts",
+        "backend/vetting/evidence-storage.ts",
+        "migrations/0119_vetting_storage_generations.sql",
+        "workers/vetting-backup/core.ts",
+        "workers/vetting-backup/generation-retirement-workflow.mjs"
+      ],
+      "scenarios": [
+        "admittedBodyWinsAbsentObservationTest",
+        "allReservedTargetsIncludeUnpublishedOldHeadTest",
+        "backedHeadAndMissingOrphanRetireTest",
+        "backedReceiptBeforeMarkerSurvivesFailureTest",
+        "changedSourceIsPreservedWithoutBackingExpectedSlotTest",
+        "conflictingOrphanBackupCannotAuthorizeMarkerTest",
+        "copyCommitSurvivesLostVerificationReplyTest",
+        "currentReferenceHoldsGenerationTest",
+        "databaseCommitSurvivesLostReplyTest",
+        "distinctSlotRequiresExactBackedHeadTest",
+        "freezeRejectsHeadPublicationTest",
+        "freezeRejectsNewPhysicalReservationTest",
+        "freezeRejectsNewReferenceTest",
+        "freshGenerationDoesNotReuseRetiredKeysTest",
+        "legacyHoldNeverFabricatesDeletionTest",
+        "markerCommitCanPrecedeFailedReadbackTest",
+        "markerWinsBeforeAdmittedBodyTest",
+        "missingDeclaredHeadDoesNotEarnDeletionReceiptTest",
+        "missingMarkerCommitSurvivesLostReplyTest",
+        "missingOutcomeIsNotBackupEvidenceTest",
+        "missingReadbackCannotInventDatabaseReceiptTest",
+        "oldHeadIsFencedBeforeGenerationRetiresTest",
+        "oldUnconditionalMissingMarkerLosesBodyNegativeControlTest",
+        "permanentReferenceHoldsGenerationTest",
+        "primaryChangedBytesDoNotBlockSnapshotAndRetirementTest",
+        "supplementalBackupRestoresOnlyWithMatchingChainTest",
+        "wrongCopiedBytesRefuseRestoreTest",
+        "wrongSnapshotAnchorRefusesRestoreTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_generation_storage.qnt",
+      "sha256": "70878e40429f75fb7a84f0b19df7388e2355a277ee4221b265ae88d95b418a6a",
+      "sources": [
+        "backend/vetting/evidence-chunks.ts",
+        "backend/vetting/evidence-storage.ts",
+        "migrations/0119_vetting_storage_generations.sql"
+      ],
+      "scenarios": [
+        "absentHeadReadOwnsNoReservationTest",
+        "concurrentFirstPublishChoosesOneTargetTest",
+        "conflictingDescriptorCannotReplaceOtherHeadTest",
+        "conflictingTargetIdentifierRefusesTest",
+        "corruptCurrentTargetUsesFreshKeyTest",
+        "corruptReadDoesNotRepairTest",
+        "exactTargetCollisionCannotOverwriteTest",
+        "existingCopyRetirementBeforeFinalFenceRefusesTest",
+        "failedPublicationWithoutWinnerPreservesFailureTest",
+        "freshTargetPublishedThenVerifiedTest",
+        "genericHeadReadFailureDoesNotWriteTest",
+        "initialActiveDatabaseFailureDoesNotWriteTest",
+        "initiallyRetiredGenerationRefusesTest",
+        "invalidPayloadReservesNothingTest",
+        "laterGenerationUsesDifferentPhysicalKeyTest",
+        "lostPublicationReplyReadsVerifiedWinnerTest",
+        "lostPutReplyRetainsUnpublishedTargetTest",
+        "lostReservationReplyReadsExactTargetTest",
+        "markerPutReturningNullNeverVerifiesAsEvidenceTest",
+        "markerReadNeverReturnsOriginalBytesTest",
+        "missingCurrentTargetUsesFreshKeyTest",
+        "persistentMarkerBlocksEarlierUnknownPutTest",
+        "reservationReadbackFailureNeverStartsPutTest",
+        "retirementAfterWinnerVerificationRefusesTest",
+        "retirementBlocksNewReservationTest",
+        "retirementBlocksPublicationTest",
+        "retiringGenerationReadCanReturnExistingBytesTest",
+        "unavailableCurrentTargetDoesNotRepairTest",
+        "unknownPutReplyDoesNotInventCommittedBytesTest",
+        "unpublishedTargetsStillNeedRetirementTest",
+        "validExistingTargetSkipsReservationTest",
+        "winnerCorruptionAfterPublicationRefusesTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_malicious_reinstatement.qnt",
       "sha256": "e9df5ae8f670b3a140e3c3a6c207f3cd6a2a8f90f56dc85ccb722d9db7b9f149",
       "sources": [
@@ -16658,7 +16785,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_object_lifecycle.qnt",
-      "sha256": "b50c1267bee774bd0f2905a6f83130fe686df4071042be99ed3bfb7d2b11a94e",
+      "sha256": "5f2643b27be97fb7abbab58589fae692b365db8d0c2cbc2a16e534d8a746c70b",
       "sources": [
         "backend/vetting/evidence-retention.ts",
         "backend/vetting/evidence.ts",
@@ -16677,6 +16804,34 @@
         "liveSiblingSurvivesCleanupTest",
         "missingBackupKeepsCleanupFenceTest",
         "sharedBytesNeedOwnCompletionTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_observed_part.qnt",
+      "sha256": "6b3929c11ec3d15245e32730376c91615e18c30627b16138de91acbca70a3194",
+      "sources": [
+        "backend/vetting/evidence-chunks.ts",
+        "workers/vetting-backup/core.ts"
+      ],
+      "scenarios": [
+        "advertisedLengthWithoutEofIsNotSuccessTest",
+        "changedBodyDoesNotVerifyDeclaredEvidenceTest",
+        "completeObservedBodyComputesOwnDigestTest",
+        "emptyMarkerNeverBecomesObservedEvidenceTest",
+        "emptyObservedBodyStillRequiresEofTest",
+        "extraFragmentAfterExactLengthRefusesTest",
+        "fractionalAdvertisedSizeRefusesTest",
+        "metadataAndExpectedDigestCanBothDifferTest",
+        "missingBodyOwnsNoReaderTest",
+        "negativeAdvertisedSizeReleasesOwnedBodyTest",
+        "outerCancellationDoesNotAbortBoundedObservationTest",
+        "overflowingFragmentIsNotPartiallyAcceptedTest",
+        "oversizedAdvertisedSizeRefusesBeforeAllocationTest",
+        "readFailureAndFailedCancelPreserveOriginalErrorTest",
+        "retirementMarkerPrecedesInvalidSizeTest",
+        "staleMetadataDoesNotBlockRawPreservationTest",
+        "truncatedBodyCannotProduceObservedDigestTest",
+        "unavailableBodyIsNotMissingTest"
       ]
     },
     {
@@ -16708,7 +16863,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_retention.qnt",
-      "sha256": "de6ad5179ee560fb1ae8a865bbf8190360a647fe470ecc416fd409e1159fe663",
+      "sha256": "f01d1e2bf0153773e0705e5818415447c4b242db62047d69221fd0608635c689",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "backend/vetting/evidence-retention.ts",
@@ -16727,6 +16882,8 @@
         "claimBlocksNewReferenceTest",
         "committedReceiptSurvivesLostReplyTest",
         "corruptBackupStopsBeforeAnyDeleteTest",
+        "currentLegacyCleanupHoldsBytesTest",
+        "currentLegacyHoldDoesNotPretendToFenceOldWriterTest",
         "deleteReplyCanFailAfterBytesWereRemovedTest",
         "earlierLayoutKeyIsOutsideLastReferenceDeletionTest",
         "failedHeadReadDoesNotRecordDeletionTest",
@@ -16817,7 +16974,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_upload_completion.qnt",
-      "sha256": "8acc01a67b4f4cc9cb7cffb9abcb9d5bf5559e72bbf7e542e1a8c493c053a4c3",
+      "sha256": "8185607c3ee1e2bf34ac878abc505fff1a26ec3f9d7e36c833d1f238068fa37d",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "backend/vetting/evidence-chunks.ts",
@@ -16860,7 +17017,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_verified_parts.qnt",
-      "sha256": "893c17f781881778396f2e255d7f8156263cd1aa9ad0e3cce66b54864178f28e",
+      "sha256": "9db6d87b78e54024b92e7075b2cd37e7df1987e8535a3201464d90aeb2af333b",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "backend/vetting/evidence.ts"
@@ -16881,6 +17038,8 @@
         "overflowCleanupFailurePreservesPrimaryTest",
         "oversizedRequestOwnsNoBodyTest",
         "readFailureAlwaysReleasesTest",
+        "retiredMarkerCancelsAndReleasesWithoutReadingTest",
+        "retiredMarkerCleanupFailurePreservesRefusalTest",
         "truncatedBodyIsNotVerifiedTest",
         "unavailableObjectDestroysWholeHasherTest",
         "unavailableObjectIsNotMissingTest",

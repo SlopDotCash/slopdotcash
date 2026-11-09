@@ -2,6 +2,7 @@
 // @source backend/vetting/evidence-storage.ts
 // @source backend/vetting/evidence-chunks.ts
 // @source migrations/0119_vetting_storage_generations.sql
+// @source workers/vetting-backup/generation-retirement-workflow.mjs
 // @evidence workers/vetting-backup/generation-retirement-workflow.mjs
 // Current forward protocol: one retiring generation, two references/declared
 // slots, three reserved physical targets (including an orphan/old head), and

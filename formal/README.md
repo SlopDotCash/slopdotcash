@@ -926,9 +926,10 @@ complete per-run backup/deletion receipt. The new D1/R2/API workflow is wired
 into the integration runner, but it and the authored route regressions have
 not run. No new model has been parsed, simulated or verified in this lane.
 
-This branch includes the changes from merged PR
-[#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) through development
-commit `ac9da9e7`. Its independently collected results cover their named source
+This branch includes the changes from merged PRs
+[#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) and
+[#2433](https://github.com/SlopDotCash/slopdotcash/pull/2433) through development
+commit `0419b40d`. Their independently collected results cover their named source
 heads, not this later source-only combination. The user instruction to skip
 checks remains in force for this lane; application-wide state assurance is
 incomplete.
