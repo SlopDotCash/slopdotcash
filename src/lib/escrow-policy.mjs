@@ -1,4 +1,5 @@
 import { isFundingAddress, isSolanaTransactionId } from "./funding-address.mjs";
+import { isCanonicalBaseUnits } from "./verified-base-units.ts";
 
 /** Asset identities for native vaults; never valid substitutes for a wallet. */
 export const EVM_NATIVE_ASSET = "0x0000000000000000000000000000000000000000";
@@ -13,11 +14,7 @@ export function isNativeAssetAddress(chain, address) {
 /** The largest base-unit amount supported by the vault accounting. */
 export const MAX_BASE_UNITS = (1n << 128n) - 1n;
 export function isBaseUnits(value) {
-  return (
-    typeof value === "string" &&
-    /^(0|[1-9][0-9]{0,38})$/.test(value) &&
-    BigInt(value) <= MAX_BASE_UNITS
-  );
+  return typeof value === "string" && isCanonicalBaseUnits(value);
 }
 
 /**
