@@ -539,12 +539,22 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   );
   let reason = "no-wrong-sum-fault",
     finalized = false;
+  let holdCheck = false;
+  let checkStarted = false;
+  let finishCheck: (() => void) | undefined;
   const requests: Record<string, unknown>[] = [];
   await page.route(
     "**/api/v1/payments/projects/eliza/monthly/2026-09/reserve-release",
-    (route) => {
+    async (route) => {
       const body = route.request().postDataJSON();
       requests.push(body);
+      if (body.planId && holdCheck) {
+        holdCheck = false;
+        checkStarted = true;
+        await new Promise<void>((resolve) => {
+          finishCheck = resolve;
+        });
+      }
       return route.fulfill({
         json: body.planId
           ? { status: finalized ? "finalized" : "pending" }
@@ -601,6 +611,37 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
   await expect(
     details.getByText("Release verified.", { exact: false }),
   ).toHaveCount(0);
+  // A pending readback from the departed component cannot replace the
+  // newer transaction evidence accepted by its replacement component.
+  holdCheck = true;
+  await details
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect.poll(() => checkStarted).toBe(true);
+  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await expect(details).toHaveCount(0);
+  await page.goBack();
+  await details.locator("summary").click();
+  await details
+    .getByLabel("Transaction hash or signature")
+    .fill(`0x${"d".repeat(64)}`);
+  await details
+    .getByRole("button", { name: "Check transaction", exact: true })
+    .click();
+  await expect(details.getByRole("status")).toHaveText(
+    "Waiting for the transaction to finalize.",
+  );
+  const releaseKey = "slop:monthly-release:v1:eliza:2026-09:base-sepolia";
+  const newerEvidence = await page.evaluate(
+    (key) => sessionStorage.getItem(key),
+    releaseKey,
+  );
+  expect(JSON.parse(newerEvidence ?? "null").hash).toBe(`0x${"d".repeat(64)}`);
+  finishCheck?.();
+  await page.waitForLoadState("networkidle");
+  expect(
+    await page.evaluate((key) => sessionStorage.getItem(key), releaseKey),
+  ).toBe(newerEvidence);
   finalized = true;
   await details
     .getByRole("button", { name: "Check transaction", exact: true })

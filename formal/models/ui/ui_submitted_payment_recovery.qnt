@@ -8,27 +8,32 @@
 // unboundedStep retains repeated attempts and all three identifier classes.
 // Value 0 means empty/invalid syntax. These are model bounds, not UI limits.
 // Exact chain receipt acceptance is an external predicate, never syntax.
-// Current verification bounds and evidence are in the composition audit.
+// Current verification bounds and evidence are recorded with the reconciliation.
 module ui_submitted_payment_recovery {
   type State = {parentAlive:bool,mounted:bool,boundActor:int,cookieActor:int,generation:int,
     loadScheduled:bool,activeRead:int,readActors:List[int],readGenerations:List[int],pendingReads:Set[int],
-    rowActor:int,rowGeneration:int,values:List[int],stored:List[int],confirmed:Set[int],
-    busy:bool,phase:str,checkActor:int,checkGeneration:int,checkRows:List[int],checkHashes:List[int],
-    error:bool,postStarted:bool,postAuthorized:bool,recorded:bool,verified:bool,checks:int}
+    rowActor:int,rowGeneration:int,values:List[int],store:List[List[int]],confirmed:Set[int],
+    busy:bool,phase:str,checkActor:int,checkGeneration:int,checkRowActor:int,checkRowGeneration:int,checkSlot:int,checkRows:List[int],checkHashes:List[int],
+    error:bool,postStarted:bool,postAuthorized:bool,recorded:bool,responseDelivered:bool,checks:int}
   var s: State
   action init=s'={parentAlive:true,mounted:true,boundActor:1,cookieActor:1,generation:1,
     loadScheduled:true,activeRead:0,readActors:List(),readGenerations:List(),pendingReads:Set(),
-    rowActor:0,rowGeneration:0,values:List(0,0),stored:List(0,0),confirmed:Set(),
-    busy:false,phase:"idle",checkActor:0,checkGeneration:0,checkRows:List(0,0),checkHashes:List(),
-    error:false,postStarted:false,postAuthorized:false,recorded:false,verified:false,checks:0}
+    rowActor:0,rowGeneration:0,values:List(0,0),store:List(List(0,0),List(0,0),List(0,0),List(0,0)),confirmed:Set(),
+    busy:false,phase:"idle",checkActor:0,checkGeneration:0,checkRowActor:0,checkRowGeneration:0,checkSlot:0,checkRows:List(0,0),checkHashes:List(),
+    error:false,postStarted:false,postAuthorized:false,recorded:false,responseDelivered:false,checks:0}
+  // Each slot is one captured actor/generation group, with two stable row
+  // keys. Initial storage contents are admitted by its first successful read.
+  def slot(actor:int,generation:int):int=(actor-1)*2+generation-1
+  val rowStored=if(s.rowActor>0)s.store[slot(s.rowActor,s.rowGeneration)] else List(0,0)
   val visibleHashes=s.values.select(value=>value>0 and not(s.confirmed.contains(value)))
   val canVerify=s.mounted and not(s.busy) and visibleHashes.length()>0
-  // Captured rows/identity belong to one async call. After that call returns,
-  // keeping them would add history which the implementation does not retain.
+  // Async captures live only until that invocation returns. Clearing them
+  // preserves behavior without retaining obsolete callback history.
   def finishedCheck(state:State):State=state.with("phase","idle").with("busy",false)
-    .with("checkActor",0).with("checkGeneration",0).with("checkRows",List(0,0)).with("checkHashes",List())
-  // A completed storage read also releases its captured metadata. Keep the
-  // list length as the request counter; no future action can reuse this ID.
+    .with("checkActor",0).with("checkGeneration",0).with("checkRowActor",0)
+    .with("checkRowGeneration",0).with("checkSlot",0)
+    .with("checkRows",List(0,0)).with("checkHashes",List())
+  // Finished read IDs cannot be reused; retain only their counter positions.
   def finishedRead(state:State,id:int):State=state.with("pendingReads",state.pendingReads.exclude(Set(id)))
     .with("readActors",state.readActors.replaceAt(id-1,0))
     .with("readGenerations",state.readGenerations.replaceAt(id-1,0))
@@ -41,7 +46,9 @@ module ui_submitted_payment_recovery {
     s'=finishedRead(if(s.mounted and id==s.activeRead and s.readActors[id-1]>0)
       s.with("activeRead",0)
         .with("rowActor",s.readActors[id-1]).with("rowGeneration",s.readGenerations[id-1])
-        .with("values",List(first,second)).with("stored",if(project)List(0,0) else List(first,second))
+        .with("values",List(first,second))
+        .with("store",s.store.replaceAt(slot(s.readActors[id-1],s.readGenerations[id-1]),
+          if(project)List(0,0) else List(first,second)))
       else s,id)}
   action storageReply(id:int,first:int,second:int):bool=storageReplyWithProjection(id,first,second,false)
   // The effect cancels an old read but does not clear existing rows or actor.
@@ -56,13 +63,14 @@ module ui_submitted_payment_recovery {
     s'=s.with("confirmed",s.confirmed.union(Set(value)))}
   // Inputs stay editable while the async action runs. Its closure retains
   // the rows and visible hashes from the render that started the action.
-  action edit(index:int,value:int):bool=all{s.mounted,index>=0,index<2,
+  action edit(index:int,value:int):bool=all{s.mounted,s.rowActor>0,index>=0,index<2,
     s'=s.with("values",s.values.replaceAt(index,value))}
-  action beginVerify=all{canVerify,
+  action beginVerify=all{canVerify,s.rowActor>0,
     s'=s.with("busy",true).with("phase","identity").with("error",false)
       .with("checks",s.checks+1)
       .with("checkActor",s.rowActor).with("checkGeneration",s.generation)
-      .with("checkRows",s.values).with("checkHashes",visibleHashes)}
+      .with("checkRowActor",s.rowActor).with("checkRowGeneration",s.rowGeneration)
+      .with("checkSlot",slot(s.rowActor,s.rowGeneration)).with("checkRows",s.values).with("checkHashes",visibleHashes)}
   action boundedBeginVerify=all{s.checks<2,beginVerify}
   action identityReply=all{s.phase=="identity",
     s'=if(s.checkActor>0 and s.checkActor==s.cookieActor)
@@ -70,18 +78,19 @@ module ui_submitted_payment_recovery {
       else finishedCheck(s).with("error",true)}
   action authorityReply(allowed:bool,serverGeneration:int):bool=all{s.phase=="authorize",
     s'=if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
-      s.with("phase","persist-first")
+      s.with("phase","persist")
       else finishedCheck(s).with("error",true)}
-  action persistFirstWithProjection(project:bool):bool=all{s.phase=="persist-first",
-    s'=s.with("stored",if(project)List(0,0) else s.stored.replaceAt(0,if(s.checkRows[0]>0)s.checkRows[0] else s.stored[0]))
-      .with("phase","persist-second")}
-  action persistSecondWithProjection(project:bool):bool=all{s.phase=="persist-second",
-    s'=s.with("stored",if(project)List(0,0) else s.stored.replaceAt(1,if(s.checkRows[1]>0)s.checkRows[1] else s.stored[1]))
-      .with("phase","verify-preflight")}
-  action persistFirst=persistFirstWithProjection(false)
-  action persistSecond=persistSecondWithProjection(false)
-  action storageFailure=all{Set("persist-first","persist-second").contains(s.phase),
-    s'=finishedCheck(s).with("error",true)}
+  // The actual storage loop has no await. Represent it as one action, while
+  // retaining a failure before any write or after its first valid row write.
+  def writtenRows(writes:int):List[int]=List(
+    if(writes>=1 and s.checkRows[0]>0)s.checkRows[0] else s.store[s.checkSlot][0],
+    if(writes==2 and s.checkRows[1]>0)s.checkRows[1] else s.store[s.checkSlot][1])
+  action persistCandidatesWithProjection(writes:int,project:bool):bool=all{s.phase=="persist",writes>=0,writes<=2,
+    val stored=s.with("store",s.store.replaceAt(s.checkSlot,
+      if(project)List(0,0) else writtenRows(writes)))
+    s'=if(writes==2)stored.with("phase","verify-preflight")
+      else finishedCheck(stored).with("error",true)}
+  action persistCandidates(writes:int):bool=persistCandidatesWithProjection(writes,false)
   // verifyExistingPayment performs another actor-bound fresh GET before POST.
   action verifyPreflight(allowed:bool,serverGeneration:int):bool=all{s.phase=="verify-preflight",
     s'=if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
@@ -91,7 +100,7 @@ module ui_submitted_payment_recovery {
     s'=finishedCheck(s)
       .with("recorded",s.recorded or exactReceipt)
       .with("error",not(exactReceipt and s.parentAlive and s.cookieActor==s.boundActor))
-      .with("verified",exactReceipt and s.parentAlive and s.cookieActor==s.boundActor)}
+      .with("responseDelivered",exactReceipt and s.parentAlive and s.cookieActor==s.boundActor)}
   // Removing just the fallback does not cancel its already-started promise.
   // The enclosing provider, if alive, still checks the actor on API reads.
   action leaveFallback=s'=s.with("mounted",false).with("activeRead",0)
@@ -105,24 +114,27 @@ module ui_submitted_payment_recovery {
     authorityReply(allowed,generation)}
   action choosePreflight={nondet generation=1.to(2).oneOf() nondet allowed=Set(false,true).oneOf()
     verifyPreflight(allowed,generation)}
-  // Do not multiply every parameter-free transition by unrelated choices.
+  action choosePersistence(project:bool):bool={nondet writes=0.to(2).oneOf() persistCandidatesWithProjection(writes,project)}
+  // Factor independent choices so parameter-free actions are explored once.
   action commonSteps(maxHash:int,project:bool):bool=any{readStorage,chooseStorageReply(maxHash,project),chooseStorageFailure,generationChanges,chooseCookie,
     confirmed(1),confirmed(2),all{maxHash==3,confirmed(3)},chooseEdit(maxHash),identityReply,
-    chooseAuthorityReply,persistFirstWithProjection(project),persistSecondWithProjection(project),storageFailure,
-    choosePreflight,verificationReply(true),verificationReply(false),
+    chooseAuthorityReply,choosePersistence(project),choosePreflight,verificationReply(true),verificationReply(false),
     leaveFallback,closePrivateParent,s'=s}
   action concreteStep=any{commonSteps(2,false),boundedBeginVerify}
-  // Only the finite invariant check quotients exact stored cell contents.
-  // They feed their own writes, never a guard or another observed field.
-  // Concrete scenarios and both concrete step relations retain those values.
-  // Initial cells are zero; projecting every writer keeps them zero without
-  // relying on action composition, which the TLC backend does not support.
+  // The finite invariant check quotients exact stored cell values only.
+  // Those values feed their own writes, never a guard or another field.
+  // Actor/generation slot identity and captured write targets are retained;
+  // named scenarios and both concrete relations retain actual cell values.
+  // Every writer applies this quotient without TLC action composition.
   action step=any{commonSteps(2,true),boundedBeginVerify}
   action unboundedStep=any{commonSteps(3,false),beginVerify}
   val invariant=all{s.readActors.length()<=2,s.readActors.length()==s.readGenerations.length(),
-    s.values.length()==2,s.stored.length()==2,s.checkRows.length()==2,
+    s.values.length()==2,s.store.length()==4,s.checkRows.length()==2,
+    s.checkSlot>=0,s.checkSlot<4,
+    s.phase!="idle" implies(s.checkActor==s.checkRowActor and s.checkActor>0
+      and s.checkSlot==slot(s.checkRowActor,s.checkRowGeneration)),
     s.postStarted implies s.postAuthorized,
-    s.verified implies(s.postStarted and s.recorded),
+    s.responseDelivered implies(s.postStarted and s.recorded),
     s.checkHashes.length()<=2,s.checks>=0,
     not(s.mounted) implies not(canVerify)}
   run staleStorageReplyDoesNotReplaceNewGenerationTest=init.then(readStorage).then(generationChanges).then(readStorage)
@@ -131,38 +143,59 @@ module ui_submitted_payment_recovery {
     .expect(s.rowGeneration==1 and s.generation==2 and s.values==List(1,0))
   run rawSessionMismatchStopsBeforeCandidateWritesTest=init.then(readStorage).then(storageReply(1,1,0))
     .then(beginVerify).then(cookieChanges(2)).then(identityReply)
-    .expect(s.error and s.stored==List(1,0) and not(s.postStarted))
+    .expect(s.error and rowStored==List(1,0) and not(s.postStarted))
   run parentActorCheckRefusesNewCookieActorTest=init.then(cookieChanges(2)).then(readStorage).then(storageReply(1,2,0))
     .then(beginVerify).then(identityReply).then(authorityReply(true,1))
     .expect(s.error and not(s.postStarted))
   run generationChangeBetweenPreflightsRefusesPostTest=init.then(readStorage).then(storageReply(1,1,0))
-    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistFirst).then(persistSecond)
+    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
     .then(verifyPreflight(true,2)).expect(s.error and not(s.postStarted))
-  run partialCandidateWriteDoesNotPostTest=init.then(readStorage).then(storageReply(1,1,1)).then(edit(0,2)).then(edit(1,2))
-    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistFirst).then(storageFailure)
-    .expect(s.stored==List(2,1) and s.error and not(s.postStarted))
+  run partialCandidateWriteDoesNotPostTest=init.then(readStorage).then(storageReply(1,1,1)).then(edit(0,2)).then(edit(1,3))
+    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(1))
+    .expect(rowStored==List(2,1) and s.error and not(s.postStarted))
   run editDuringRequestDoesNotChangeCapturedHashesTest=init.then(readStorage).then(storageReply(1,1,0))
-    .then(beginVerify).then(edit(0,2)).then(identityReply).then(authorityReply(true,1)).then(persistFirst).then(persistSecond)
-    .expect(s.values==List(2,0) and s.checkHashes==List(1) and s.stored==List(1,0))
+    .then(beginVerify).then(edit(0,2)).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
+    .expect(s.values==List(2,0) and s.checkHashes==List(1) and rowStored==List(1,0))
   run confirmedIdentifiersAreNotResubmittedTest=init.then(readStorage).then(storageReply(1,1,2)).then(confirmed(1))
     .then(beginVerify).expect(s.checkHashes==List(2))
   run fallbackDepartureMayFinishSameActorVerificationTest=init.then(readStorage).then(storageReply(1,2,0))
     .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(leaveFallback)
-    .then(persistFirst).then(persistSecond).then(verifyPreflight(true,1)).then(verificationReply(true))
-    .expect(s.verified and not(s.mounted))
+    .then(persistCandidates(2)).then(verifyPreflight(true,1)).then(verificationReply(true))
+    .expect(s.responseDelivered and not(s.mounted))
   run parentDepartureStopsFinalPreflightTest=init.then(readStorage).then(storageReply(1,2,0))
-    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistFirst).then(persistSecond)
+    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
     .then(closePrivateParent).then(verifyPreflight(true,1)).expect(s.error and not(s.postStarted))
   run parentDepartureAfterPostDoesNotDeliverSuccessTest=init.then(readStorage).then(storageReply(1,2,0))
-    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistFirst).then(persistSecond)
+    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
     .then(verifyPreflight(true,1)).then(closePrivateParent).then(verificationReply(true))
-    .expect(s.recorded and not(s.verified) and s.error)
+    .expect(s.recorded and not(s.responseDelivered) and s.error)
   run failedReloadRetainsExistingRowsTest=init.then(readStorage).then(storageReply(1,1,0))
     .then(generationChanges).then(readStorage).then(storageReadFailure(2))
     .expect(s.rowGeneration==1 and s.values==List(1,0) and s.error)
+  run oldActionWritesOnlyCapturedGenerationAfterNewReadTest=init.then(readStorage).then(storageReply(1,1,0))
+    .then(edit(0,2)).then(beginVerify).then(identityReply).then(generationChanges).then(readStorage)
+    .then(storageReply(2,3,0)).then(authorityReply(true,1)).then(persistCandidates(2))
+    .expect(s.rowGeneration==2 and s.values==List(3,0) and s.store[0]==List(2,0) and s.store[1]==List(3,0))
+    .then(verifyPreflight(true,2))
+    .expect(s.error and not(s.postStarted) and s.checkSlot==0 and s.store[0]==List(2,0) and s.store[1]==List(3,0))
+  run editsDuringVerificationKeepCapturedPostBodyTest=init.then(readStorage).then(storageReply(1,1,0))
+    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
+    .then(verifyPreflight(true,1)).then(edit(0,2))
+    .expect(s.values==List(2,0) and s.checkHashes==List(1) and s.store[0]==List(1,0))
+    .then(verificationReply(true)).expect(s.responseDelivered and s.checkHashes==List() and s.checkActor==0)
+  run deliveredResponseDoesNotKeepPrivateViewAuthorizedTest=init.then(readStorage).then(storageReply(1,2,0))
+    .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
+    .then(verifyPreflight(true,1)).then(verificationReply(true)).then(closePrivateParent)
+    .expect(s.responseDelivered and s.recorded and not(s.mounted) and not(canVerify))
   run failedAuthorizationCanRetryTest=init.then(readStorage).then(storageReply(1,1,0))
     .then(boundedBeginVerify).then(identityReply).then(authorityReply(false,1))
+    .expect(s.checkActor==0 and s.checkHashes==List())
     .then(edit(0,2)).then(boundedBeginVerify).then(identityReply).then(authorityReply(true,1))
-    .then(persistFirst).then(persistSecond).then(verifyPreflight(true,1)).then(verificationReply(true))
-    .expect(s.checks==2 and s.verified and s.stored==List(2,0))
+    .then(persistCandidates(2)).then(verifyPreflight(true,1)).then(verificationReply(true))
+    .expect(s.checks==2 and s.responseDelivered and s.store[0]==List(2,0))
+  run partialFailureKeepsCapturedGenerationSlotTest=init.then(readStorage).then(storageReply(1,1,0))
+    .then(generationChanges).then(readStorage).then(storageReply(2,2,2)).then(edit(0,3))
+    .then(beginVerify).then(identityReply).then(authorityReply(true,2)).then(persistCandidates(1))
+    .expect(s.phase=="idle" and s.checkSlot==0 and s.error and not(s.postStarted)
+      and s.store[0]==List(1,0) and s.store[1]==List(3,2))
 }

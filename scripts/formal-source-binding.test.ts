@@ -26,7 +26,11 @@ it("refuses a successful model run when its mapped implementation changes during
       join(fixture, "scripts/check-formal.mjs"),
       readFileSync(join(root, "scripts/check-formal.mjs")),
     );
-    for (const script of ["formal-models.mjs", "run-e2e-phase.mjs"])
+    for (const script of [
+      "formal-models.mjs",
+      "quint-safety-view.mjs",
+      "run-e2e-phase.mjs",
+    ])
       writeFileSync(
         join(fixture, "scripts", script),
         readFileSync(join(root, "scripts", script)),

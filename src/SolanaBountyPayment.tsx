@@ -2,17 +2,41 @@ import { useEffect, useRef, useState } from "react";
 import { encodeBase58Bytes } from "./lib/base58";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { isSolanaTransactionId } from "./lib/funding-address.mjs";
+import {
+  clearPendingAttempt,
+  createPendingAttempt,
+  type PendingAttempt,
+  updatePendingAttempt,
+  updatePendingRecord,
+  validPendingAttemptId,
+} from "./lib/pending-attempt";
 import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { NoWalletFound, WalletConnection } from "./Presentation";
 
 export type DirectSolanaPlan = { transaction: string; messageId: string };
-type Pending = {
+type Pending = PendingAttempt & {
   transaction: string;
   signature: string | null;
   candidate?: string;
 };
+
+function readPending(raw: string | null, transaction: string): Pending | null {
+  const saved = raw ? (JSON.parse(raw) as Pending) : null;
+  if (
+    saved &&
+    (!validPendingAttemptId(saved.attemptId) ||
+      saved.transaction !== transaction ||
+      (saved.signature !== null && !isSolanaTransactionId(saved.signature)) ||
+      (saved.candidate !== undefined &&
+        !isSolanaTransactionId(saved.candidate)))
+  )
+    throw new Error(
+      "The saved wallet request cannot be read. Check wallet activity before continuing.",
+    );
+  return saved;
+}
 
 /** Sends only the retained transaction through the owner's selected wallet. */
 export function SolanaBountyPayment({
@@ -38,6 +62,7 @@ export function SolanaBountyPayment({
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [actor, setActor] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const storedPending = useRef<Pending | null>(null);
   const [candidate, setCandidate] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const mounted = useRef(true);
@@ -51,19 +76,11 @@ export function SolanaBountyPayment({
         if (!mounted.current) return;
         if (!session) throw new Error("Sign in before making a payment.");
         const storageKey = `slop:bounty-solana:v1:${caseId}:${generation}:${plan.messageId}:${session.githubId}`;
-        const raw = sessionStorage.getItem(storageKey);
-        const saved = raw ? (JSON.parse(raw) as Pending) : null;
-        if (
-          saved &&
-          (saved.transaction !== plan.transaction ||
-            (saved.signature !== null &&
-              !isSolanaTransactionId(saved.signature)) ||
-            (saved.candidate !== undefined &&
-              !isSolanaTransactionId(saved.candidate)))
-        )
-          throw new Error(
-            "The saved wallet request cannot be read. Check wallet activity before continuing.",
-          );
+        const saved = readPending(
+          sessionStorage.getItem(storageKey),
+          plan.transaction,
+        );
+        storedPending.current = saved;
         setActor(session.githubId);
         setPending(saved);
         setReady(true);
@@ -80,10 +97,14 @@ export function SolanaBountyPayment({
       mounted.current = false;
     };
   }, [caseId, generation, plan.messageId, plan.transaction, setError]);
-  const remember = (value: Pending | null) => {
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
-    else sessionStorage.removeItem(key);
-    setPending(value);
+  const remember = (value: Pending, previous?: Pending) => {
+    const stored = previous
+      ? updatePendingAttempt(key, previous, value)
+      : createPendingAttempt(key, value);
+    if (!stored) return false;
+    storedPending.current = value;
+    if (mounted.current) setPending(value);
+    return true;
   };
   const guard = async (verification = false) => {
     if (!mounted.current) throw new Error("The payment view was closed.");
@@ -114,11 +135,21 @@ export function SolanaBountyPayment({
           atob(plan.transaction),
           (character) => character.charCodeAt(0),
         );
+        const intent: Pending = {
+          attemptId: crypto.randomUUID(),
+          transaction: plan.transaction,
+          signature: null,
+        };
         let requested = false;
         try {
           const signature = encodeBase58Bytes(
             await wallet.solanaSend(transaction, "solana:mainnet", () => {
-              remember({ transaction: plan.transaction, signature: null });
+              if (!mounted.current)
+                throw new Error("The payment view was closed.");
+              if (!remember(intent))
+                throw new Error(
+                  "The saved request changed. Reload before continuing.",
+                );
               requested = true;
             }),
           );
@@ -126,18 +157,41 @@ export function SolanaBountyPayment({
             throw new Error(
               "The wallet did not return a valid transaction signature.",
             );
-          const value = { transaction: plan.transaction, signature };
-          setPending(value);
+          const submitted = { ...intent, signature };
           try {
-            remember(value);
+            const current = readPending(
+              sessionStorage.getItem(key),
+              plan.transaction,
+            );
+            if (
+              !current ||
+              current.attemptId !== intent.attemptId ||
+              (current.signature !== null && current.signature !== signature) ||
+              !remember({ ...current, signature }, intent)
+            ) {
+              if (mounted.current)
+                setError(
+                  `Submitted ${signature}. The saved request was cleared or replaced. Keep this signature with your wallet activity.`,
+                );
+            }
           } catch {
+            if (mounted.current) setPending(submitted);
             throw new Error(
               `Submitted ${signature}. Keep this signature; browser storage could not save it.`,
             );
           }
         } catch (cause) {
           if ((cause as { code?: unknown } | null)?.code === 4001) {
-            remember(null);
+            if (requested) {
+              const cleared = clearPendingAttempt(key, intent);
+              if (cleared) {
+                storedPending.current = null;
+                if (mounted.current) setPending(null);
+              } else if (mounted.current)
+                throw new Error(
+                  "The saved request changed. Reload before continuing.",
+                );
+            }
             throw new Error(
               "You declined the wallet request. Nothing was sent.",
             );
@@ -157,9 +211,17 @@ export function SolanaBountyPayment({
   const signature = candidate ?? pending?.candidate ?? pending?.signature ?? "";
   const check = () =>
     void run(async () => {
-      await guard(true);
       if (!pending || !isSolanaTransactionId(signature)) return;
-      remember({ ...pending, candidate: signature });
+      const captured = storedPending.current;
+      if (!captured)
+        throw new Error("The saved request changed. Reload before continuing.");
+      await guard(true);
+      if (!mounted.current) throw new Error("The payment view was closed.");
+      const value = { ...pending, candidate: signature };
+      if (!updatePendingRecord(key, captured, value))
+        throw new Error("The saved request changed. Reload before continuing.");
+      storedPending.current = value;
+      setPending(value);
       await verify(signature);
     });
   return (

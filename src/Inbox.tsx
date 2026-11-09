@@ -143,6 +143,7 @@ export default function InboxPage() {
   const [previousPages, setPreviousPages] = useState<(string | null)[]>([]);
   const [state, setState] = useState<InboxState>({ status: "loading" });
   const { busy, error: actionError, run } = useAction();
+  const actionActive = useRef(false);
   const [message, setMessage] = useState("");
   const generation = useRef(0);
   useEffect(
@@ -226,7 +227,8 @@ export default function InboxPage() {
   useEffect(() => load(), [load]);
   useEffect(() => {
     const refresh = () => {
-      load();
+      // The active action rechecks this account and reloads after its write.
+      if (!actionActive.current) load();
     };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
@@ -243,7 +245,14 @@ export default function InboxPage() {
     action: (expectedActorId: string) => Promise<"ok" | "signed-out">,
     done: string,
   ) {
-    if (busy || recipient === null || state.status !== "ready") return;
+    if (
+      actionActive.current ||
+      busy ||
+      recipient === null ||
+      state.status !== "ready"
+    )
+      return;
+    actionActive.current = true;
     const expectedActorId = recipient;
     const previous = state;
     const current = ++generation.current;
@@ -304,7 +313,9 @@ export default function InboxPage() {
         }
       },
       (error) => errorMessage(error, UNAVAILABLE),
-    );
+    ).finally(() => {
+      actionActive.current = false;
+    });
   }
 
   return (

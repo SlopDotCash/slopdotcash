@@ -1,5 +1,4 @@
 /** Check actual runtime contracts and preserve generated implementation bodies. */
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cpSync,
@@ -17,6 +16,7 @@ import {
   requireProofObligations,
 } from "./lemmascript-integrity.mjs";
 import { isExcludedSourceDirectory } from "./lemmascript-source-directories.mjs";
+import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (process.argv.length !== 2)
@@ -32,6 +32,18 @@ const results = [];
 const obligations = [];
 const inputHashes = [];
 let failure = null;
+const cancellation = new AbortController();
+let requestedSignal = null;
+const signalHandlers = new Map(
+  ["SIGINT", "SIGTERM", "SIGHUP"].map((signal) => [
+    signal,
+    () => {
+      requestedSignal ??= signal;
+      cancellation.abort(new Error(`Proof checks canceled by ${signal}`));
+    },
+  ]),
+);
+for (const [signal, handler] of signalHandlers) process.once(signal, handler);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const sourceRoots = [
   "src",
@@ -62,74 +74,65 @@ function files(path) {
 }
 
 async function run(command, label, cwd = sandbox, timeoutMs = 180_000) {
+  cancellation.signal.throwIfAborted();
   const started = Date.now();
-  const result = await new Promise((resolveResult) => {
-    const child = spawn(command[0], command.slice(1), {
-      cwd,
-      detached: process.platform !== "win32",
-      env: {
-        ...process.env,
-        PATH: `${join(root, ".tools/dafny/dafny")}:${process.env.PATH ?? ""}`,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const chunks = [];
-    let bytes = 0;
-    let error = null;
-    const stop = (message) => {
-      error ??= message;
-      try {
-        if (child.pid && process.platform !== "win32")
-          process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch (killError) {
-        if (killError.code !== "ESRCH") error += `; ${killError.message}`;
-      }
-    };
-    const timer = setTimeout(
-      () => stop(`Verifier exceeded ${timeoutMs}ms`),
-      timeoutMs,
-    );
-    const collect = (chunk) => {
-      bytes += chunk.length;
-      if (bytes > 16 * 1024 * 1024)
-        stop("Verifier exceeded 16MiB output limit");
-      else chunks.push(chunk);
-    };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
-    child.on("error", (cause) => {
-      error ??= cause.message;
-    });
-    child.on("close", (status, signal) => {
-      clearTimeout(timer);
-      resolveResult({
-        status,
-        signal,
-        error,
-        output: Buffer.concat(chunks).toString("utf8"),
-      });
-    });
+  const chunks = [];
+  let bytes = 0;
+  let outputError = null;
+  let exited = null;
+  let childFailedBeforeCancellation = false;
+  const collect = (text) => {
+    bytes += Buffer.byteLength(text);
+    if (bytes > 16 * 1024 * 1024) {
+      outputError ??= "Verifier exceeded 16MiB output limit";
+      cancellation.abort(new Error(outputError));
+    } else chunks.push(text);
+  };
+  const phaseExitCode = await runE2ePhase({
+    label,
+    command: command[0],
+    args: command.slice(1),
+    cwd,
+    env: {
+      ...process.env,
+      PATH: `${join(root, ".tools/dafny/dafny")}:${process.env.PATH ?? ""}`,
+    },
+    timeoutMs,
+    signal: cancellation.signal,
+    onStdout: collect,
+    onStderr: collect,
+    onExit: (status, signal) => {
+      exited = { status, signal };
+      childFailedBeforeCancellation =
+        (status !== 0 || signal !== null) && !cancellation.signal.aborted;
+    },
   });
-  const output = result.output;
-  const passed = result.status === 0 && !result.error && !result.signal;
+  const error =
+    outputError ??
+    (cancellation.signal.aborted && !childFailedBeforeCancellation
+      ? cancellation.signal.reason.message
+      : null);
+  const output = chunks.join("");
+  const passed = phaseExitCode === 0 && !error;
   const log = `${label}.log`;
   writeFileSync(join(directory, log), output);
   results.push({
     command,
     label,
     passed,
-    exitCode: result.status,
-    signal: result.signal,
+    exitCode: exited?.status ?? null,
+    signal: exited?.signal ?? null,
+    phaseExitCode,
+    canceled: cancellation.signal.aborted,
+    failureBeforeCancellation: childFailedBeforeCancellation,
     durationMs: Date.now() - started,
     timeoutMs,
     log,
     sha256: hash(output),
-    error: result.error,
+    error,
   });
   console.log(`${passed ? "PASS" : "FAIL"} ${label}`);
-  if (!passed)
-    throw new Error(`${label}: ${result.error ?? output.slice(-5000)}`);
+  if (!passed) throw new Error(`${label}: ${error ?? output.slice(-5000)}`);
   return output;
 }
 
@@ -283,7 +286,9 @@ try {
 const receipt = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
-  passed: failure === null,
+  passed: failure === null && !cancellation.signal.aborted,
+  canceled: cancellation.signal.aborted,
+  requestedSignal,
   lemmascriptVersion: "0.6.6",
   dafnyVersion: "4.11.0",
   failure,
@@ -302,4 +307,6 @@ writeFileSync(
   `${JSON.stringify(receipt, null, 2)}\n`,
 );
 console.log(`Evidence: ${directory}/result.json`);
-if (failure !== null) process.exitCode = 1;
+for (const [signal, handler] of signalHandlers)
+  process.removeListener(signal, handler);
+if (failure !== null || cancellation.signal.aborted) process.exitCode = 1;

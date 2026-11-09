@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -22,6 +22,14 @@ import {
   formatBaseUnits,
   transactionUrl,
 } from "./lib/payments/contracts";
+import {
+  clearPendingAttempt,
+  createPendingAttempt,
+  type PendingAttempt,
+  updatePendingAttempt,
+  updatePendingRecord,
+  validPendingAttemptId,
+} from "./lib/pending-attempt";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -32,7 +40,7 @@ import {
 } from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
 
-type Pending = {
+type Pending = PendingAttempt & {
   version: 1;
   wallet: string;
   cap: string;
@@ -42,12 +50,12 @@ type Pending = {
   hashSource?: "wallet" | "recovery";
   solanaBlockhash?: string;
 };
-function readPending(key: string, solana: boolean): Pending | null {
-  const text = sessionStorage.getItem(key);
-  if (!text) return null;
+function readPending(text: string | null, solana: boolean): Pending | null {
+  if (text === null) return null;
   const value = JSON.parse(text) as Pending;
   if (
     value.version !== 1 ||
+    !validPendingAttemptId(value.attemptId) ||
     !isWalletAddress(solana ? "solana" : "base", value.wallet) ||
     typeof value.cap !== "string" ||
     !/^(0|[1-9][0-9]{0,38})$/.test(value.cap) ||
@@ -89,16 +97,27 @@ export function AutomaticMonthlyPayment({
   const solana = family === "solana";
   const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-monthly:v1:${deployment.network}:${deployment.vault}`;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [saved] = useState(() => {
+    let raw: string | null = null;
     try {
-      return { pending: readPending(key, solana), error: "" };
+      raw = sessionStorage.getItem(key);
+      return { pending: readPending(raw, solana), error: "", raw };
     } catch (error) {
       return {
         pending: null,
+        raw,
         error: errorMessage(error, "The wallet request failed."),
       };
     }
   });
+  const storedPending = useRef<Pending | null>(saved.pending);
   const [pending, setPending] = useState<Pending | null>(saved.pending);
   const [storageError, setStorageError] = useState(Boolean(saved.error));
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
@@ -111,10 +130,21 @@ export function AutomaticMonthlyPayment({
       ? entry.family === "solana" && entry.solanaFunding
       : entry.family === "evm",
   );
-  const remember = (value: Pending | null) => {
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
-    else sessionStorage.removeItem(key);
-    setPending(value);
+  const remember = (value: Pending, previous?: Pending) => {
+    const stored = previous
+      ? updatePendingAttempt(key, previous, value)
+      : createPendingAttempt(key, value);
+    if (!stored) return false;
+    storedPending.current = value;
+    if (mounted.current) setPending(value);
+    return true;
+  };
+  const clear = (value: Pending) => {
+    if (!mounted.current) return;
+    if (!clearPendingAttempt(key, value))
+      throw new Error("The saved request changed. Reload before continuing.");
+    storedPending.current = null;
+    setPending(null);
   };
   const { busy, error, run: act } = useAction(saved.error);
   const run = (action: () => Promise<void>) => {
@@ -126,6 +156,7 @@ export function AutomaticMonthlyPayment({
   const connect = (provider: PayoutWallet) =>
     run(async () => {
       const connection = await provider.connect();
+      if (!mounted.current) return;
       if (pending && !sameWallet(connection.address, pending.wallet))
         throw new Error(
           `Reconnect the wallet that submitted this setting: ${pending.wallet}`,
@@ -136,26 +167,21 @@ export function AutomaticMonthlyPayment({
   const inspect = () =>
     run(async () => {
       if (!wallet) throw new Error("Choose a wallet first.");
-      setReview(
-        solana
-          ? await reviewSolanaMonthlySetting(
-              project,
-              deployment,
-              wallet,
-              automatic,
-            )
-          : await reviewEvmMonthlySetting(
-              project,
-              deployment,
-              wallet,
-              automatic,
-            ),
-      );
+      const result = solana
+        ? await reviewSolanaMonthlySetting(
+            project,
+            deployment,
+            wallet,
+            automatic,
+          )
+        : await reviewEvmMonthlySetting(project, deployment, wallet, automatic);
+      if (mounted.current) setReview(result);
     });
   const send = () =>
     run(async () => {
       if (!wallet || !review?.changes || pending || storageError) return;
       const intent: Pending = {
+        attemptId: crypto.randomUUID(),
         version: 1,
         wallet: wallet.address,
         cap: review.target.cap,
@@ -169,8 +195,15 @@ export function AutomaticMonthlyPayment({
       let requested = false;
       try {
         const beforeSend = () => {
-          remember(intent);
-          setRecoveryHash("");
+          if (!mounted.current)
+            throw new Error(
+              "The wallet view was closed. Review before sending.",
+            );
+          if (!remember(intent))
+            throw new Error(
+              "The saved request changed. Reload before continuing.",
+            );
+          if (mounted.current) setRecoveryHash("");
           requested = true;
         };
         const hash = solana
@@ -182,18 +215,26 @@ export function AutomaticMonthlyPayment({
             )
           : await sendEvmMonthlySetting(deployment, wallet, review, beforeSend);
         const submitted: Pending = { ...intent, hash, hashSource: "wallet" };
-        setPending(submitted);
         try {
-          remember(submitted);
+          if (!remember(submitted, intent) && mounted.current)
+            setNotice(
+              `Submitted: ${hash}. The saved request was cleared or replaced. Keep this hash with your wallet activity.`,
+            );
         } catch {
-          setNotice(
-            `Submitted: ${hash}. Keep this hash; browser storage could not save it.`,
-          );
+          if (mounted.current) {
+            setPending(submitted);
+            setNotice(
+              `Submitted: ${hash}. Keep this hash; browser storage could not save it.`,
+            );
+          }
         }
-        setReview(null);
+        if (mounted.current) setReview(null);
       } catch (caught) {
         if ((caught as { code?: unknown } | null)?.code === 4001) {
-          remember(null);
+          if (requested) {
+            if (mounted.current) clear(intent);
+            else clearPendingAttempt(key, intent);
+          }
           throw new Error("You declined the wallet request. Nothing was sent.");
         }
         if (requested)
@@ -206,6 +247,9 @@ export function AutomaticMonthlyPayment({
   const check = () =>
     run(async () => {
       if (!pending || !wallet) return;
+      const captured = storedPending.current;
+      if (!captured)
+        throw new Error("The saved request changed. Reload before continuing.");
       // Legacy records do not identify who supplied their hash. Keep them
       // editable; only a hash returned by this wallet request is fixed.
       const hash =
@@ -225,6 +269,7 @@ export function AutomaticMonthlyPayment({
             hash,
           )
         : await checkEvmMonthlySetting(deployment, wallet, target, hash);
+      if (!mounted.current) return;
       if (result === "pending") {
         if (pending.hashSource !== "wallet") {
           const candidate: Pending = {
@@ -232,15 +277,22 @@ export function AutomaticMonthlyPayment({
             hash,
             hashSource: "recovery",
           };
-          setPending(candidate);
+          let stored;
           try {
-            remember(candidate);
+            stored = updatePendingRecord(key, captured, candidate);
           } catch {
+            setPending(candidate);
             setNotice(
               `This transaction could not be saved on this device. Keep its ${solana ? "signature" : "hash"}: ${hash}. Check it again before another action.`,
             );
             return;
           }
+          if (!stored)
+            throw new Error(
+              "The saved request changed. Reload before continuing.",
+            );
+          storedPending.current = candidate;
+          setPending(candidate);
         }
         setNotice(
           pending.hashSource === "wallet"
@@ -249,7 +301,7 @@ export function AutomaticMonthlyPayment({
         );
         return;
       }
-      remember(null);
+      clear(captured);
       setRecoveryHash("");
       setReview(null);
       if (result === "failed") {
@@ -325,6 +377,11 @@ export function AutomaticMonthlyPayment({
           disabled={busy}
           onClick={() =>
             void run(async () => {
+              if (!mounted.current) return;
+              if (sessionStorage.getItem(key) !== saved.raw)
+                throw new Error(
+                  "The saved request changed. Reload before continuing.",
+                );
               sessionStorage.removeItem(key);
               setStorageError(false);
             })
@@ -389,7 +446,7 @@ export function AutomaticMonthlyPayment({
               disabled={busy}
               onClear={() =>
                 void run(async () => {
-                  remember(null);
+                  clear(storedPending.current ?? pending);
                   setReview(null);
                   setNotice(
                     "Local request cleared. Review again before sending.",

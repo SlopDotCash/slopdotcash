@@ -106,7 +106,9 @@ function documentSection(path, heading) {
   const source = readFileSync(path, "utf8");
   const start = source.indexOf(`${heading}\n`);
   if (start < 0) {
-    throw new TypeError(`[Slop] required document section is missing: ${heading}`);
+    throw new TypeError(
+      `[Slop] required document section is missing: ${heading}`,
+    );
   }
   const depth = heading.match(/^#+/u)[0].length;
   const content = source.slice(start + heading.length + 1);
