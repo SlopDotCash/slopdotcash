@@ -1519,6 +1519,34 @@ tested or verified here:
   Real process execution, cleanup failures and deployed runner acceptance remain
   unverified; removing scratch files never removes the service-backed journal.
 
+
+- `ui_identity_cookie_order` adds 28 scenarios for overlapping authorizations,
+  captured callback cookies, scoped expiry and legacy compatibility. New OAuth
+  state cookies are keyed by the state digest. A callback expires only its own
+  cookie; a present wrong or empty scoped value cannot fall back to the legacy
+  cookie. Existing fixed-cookie flows remain accepted until expiry without
+  clearing another legacy flow's cookie. Thirteen handler/database cases are
+  unexecuted. [GitHub's OAuth flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
+  still governs exact state matching and PKCE; URL parameters and authority are
+  unchanged. Native browser delivery and production rollout remain unverified.
+- `identity_callback_completion` now has 33 scenarios. A refused completion
+  awaits failure recording and returns expired; a failed failure-recording call
+  remains an internal error. The old model incorrectly skipped that await and
+  used a conflict response. Existing expiry tests and two new handler cases
+  describe no-op/failed cleanup boundaries, all unexecuted at this revision.
+- `identity_assertion_snapshot` adds 22 scenarios for immutable input across
+  assertion insert/readback, concurrent consumption, expiry and parent issuance.
+  `createAssertion` now captures caller fields before awaiting the database, so
+  later mutation cannot redirect readback to another retained token. Twenty
+  migrated-database cases are unexecuted. Original stored times/node identity,
+  parent recreation refusal and the separate handler expiry check are preserved.
+- `github_identity_exchange` now has 26 scenarios. Both fixed-endpoint token
+  and profile requests refuse redirects and dispose non-success response bodies
+  while retaining the provider refusal if cancellation fails. Thirteen actual
+  resolver regression definitions are unexecuted. Fixed origins, native fetch,
+  GitHub identity truth and secret-memory erasure remain explicit boundaries;
+  the model does not turn an injected response into live provider acceptance.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

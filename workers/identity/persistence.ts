@@ -193,6 +193,9 @@ export class D1IdentityPersistence implements IdentityPersistence {
     assertion: IdentityAssertion,
     flowId: string | null,
   ): Promise<IdentityAssertion | null> {
+    // Keep INSERT and readback bound to the same caller-owned input even when
+    // the object is changed while the database operation is awaiting a reply.
+    const captured = { ...assertion };
     // Production polls derive the same token for one flow. A delayed poll must
     // not recreate it after issuance and expired-row cleanup. Check the parent
     // status inside the INSERT; a separate read would leave the race open.
@@ -210,13 +213,13 @@ export class D1IdentityPersistence implements IdentityPersistence {
           ON CONFLICT(token_hash) DO NOTHING`,
       )
       .bind(
-        assertion.tokenHash,
-        assertion.githubActorId,
-        assertion.githubLogin,
-        assertion.audience,
-        assertion.createdAt,
-        assertion.expiresAt,
-        assertion.githubNodeId ?? null,
+        captured.tokenHash,
+        captured.githubActorId,
+        captured.githubLogin,
+        captured.audience,
+        captured.createdAt,
+        captured.expiresAt,
+        captured.githubNodeId ?? null,
         flowId,
         flowId,
       )
@@ -224,14 +227,14 @@ export class D1IdentityPersistence implements IdentityPersistence {
     if (!result.success) return null;
     const row = await this.db
       .prepare("SELECT * FROM identity_assertions WHERE token_hash = ?")
-      .bind(assertion.tokenHash)
+      .bind(captured.tokenHash)
       .first<AssertionRow>();
     if (
       row !== null &&
-      row.token_hash === assertion.tokenHash &&
-      row.github_actor_id === assertion.githubActorId &&
-      row.github_login === assertion.githubLogin &&
-      row.audience === assertion.audience &&
+      row.token_hash === captured.tokenHash &&
+      row.github_actor_id === captured.githubActorId &&
+      row.github_login === captured.githubLogin &&
+      row.audience === captured.audience &&
       row.consumed_at === null
     ) {
       return mapAssertion(row);

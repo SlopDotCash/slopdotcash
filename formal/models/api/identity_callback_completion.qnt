@@ -4,10 +4,16 @@
 // @source migrations/0108_identity_failed_callback.sql
 // @evidence workers/identity/failed-callback.test.ts
 // @evidence workers/identity/expiry-boundary.test.ts
+// @evidence workers/identity/cookie-order.test.ts
+// @evidence workers/identity/persistence-transitions.test.ts
 // One existing flow, two callback requests, one claim, clock ranks 0..3 and
 // expiry rank 2. The route is already admitted by the outer handler. Each
 // request has a fixed state/cookie/code-validation predicate; authorization
 // denial may omit the code. URL parsing and exact error payloads are abstract.
+// clearCookieHeader refers only to the SHA-256(state)-scoped cookie. A matching
+// legacy fixed cookie remains accepted when that scoped cookie is absent, but
+// is never expired by the callback. ui_identity_cookie_order refines selection,
+// overlapping authorization, captured cookie headers and response isolation.
 // The SQL claim SELECT and conditional UPDATE are separate. Captured claim and
 // completion times, not the later wall clock, are passed to SQL. Expired cleanup
 // may delete the row between awaits. No recreation, assertion issuance or poll
@@ -151,9 +157,11 @@ module identity_callback_completion {
   }
   action completeReply(id: int, received: bool, changeCountVisible: bool): bool = {
     val request = s.requests.get(id)
+    val result = if (not(received)) ending(request, "outer-error")
+      else if (request.completeAccepted and changeCountVisible) ending(request, "html-200")
+      else request.with("phase", "fail-write").with("desired", "html-410").with("failureCause", "completion")
     all { request.phase == "complete-reply",
-      s' = s.with("requests", s.requests.set(id, ending(request,
-        if (not(received)) "outer-error" else if (request.completeAccepted and changeCountVisible) "html-200" else "html-409"))) }
+      s' = s.with("requests", s.requests.set(id, result)) }
   }
   // A rejection before a statement's effect does not roll back earlier effects.
   action awaitFailure(id: int): bool = {
@@ -230,14 +238,15 @@ module identity_callback_completion {
   run failureReplyLossRetainsFailedCommitTest = ready.then(resolved(1, "null")).then(failureWrite(1)).then(failureReply(1, false)).then(finish(1, true))
     .expect(s.rowStatus == "callback_failed" and s.requests.get(1).response == "outer-error" and invariant)
   run expiryDuringExchangeRefusesCompletionTest = ready.then(claimed(1)).then(decrypt(1, true)).then(tick).then(tick)
-    .then(resolve(1, "node")).then(completed(1)).then(finish(1, true))
-    .expect(s.rowStatus == "callback_processing" and s.requests.get(1).response == "html-409" and invariant)
+    .then(resolve(1, "node")).then(completed(1)).then(failureWrite(1)).then(failureReply(1, true)).then(finish(1, true))
+    .expect(s.rowStatus == "callback_failed" and s.requests.get(1).response == "html-410" and invariant)
   run capturedCompletionMayCommitAfterWallClockExpiryTest = ready.then(resolved(1, "node")).then(completionClock(1))
     .then(tick).then(tick).then(completeWrite(1)).then(completeReply(1, true, true)).then(finish(1, true))
     .expect(s.now == expiry and s.completedAt == 0 and s.requests.get(1).response == "html-200" and invariant)
   run cleanupBeforeCompletionRefusesWriteTest = ready.then(resolved(1, "node")).then(completionClock(1))
-    .then(tick).then(tick).then(cleanup).then(completeWrite(1)).then(completeReply(1, true, true)).then(finish(1, true))
-    .expect(not(s.present) and s.requests.get(1).response == "html-409" and invariant)
+    .then(tick).then(tick).then(cleanup).then(completeWrite(1)).then(completeReply(1, true, true))
+    .then(failureWrite(1)).then(failureReply(1, true)).then(finish(1, true))
+    .expect(not(s.present) and s.requests.get(1).response == "html-410" and invariant)
   run committedCompletionSurvivesLostReplyTest = ready.then(resolved(1, "node")).then(completionClock(1))
     .then(completeWrite(1)).then(completeReply(1, false, true)).then(finish(1, true))
     .expect(s.rowStatus == "callback_complete" and s.requests.get(1).response == "outer-error" and invariant)
@@ -266,9 +275,9 @@ module identity_callback_completion {
   run committedClaimWithoutChangeCountReturnsGoneTest = ready.then(begin(1, true, false)).then(hashReply(1, true)).then(claimRead(1))
     .then(claimWrite(1)).then(claimReply(1, true, false)).then(finish(1, true))
     .expect(s.rowStatus == "callback_processing" and not(s.cipher) and s.requests.get(1).response == "html-410" and invariant)
-  run committedCompletionWithoutChangeCountReturnsConflictTest = ready.then(resolved(1, "node")).then(completionClock(1))
-    .then(completeWrite(1)).then(completeReply(1, true, false)).then(finish(1, true))
-    .expect(s.rowStatus == "callback_complete" and s.requests.get(1).response == "html-409" and invariant)
+  run committedCompletionWithoutChangeCountReturnsGoneTest = ready.then(resolved(1, "node")).then(completionClock(1))
+    .then(completeWrite(1)).then(completeReply(1, true, false)).then(failureWrite(1)).then(failureReply(1, true)).then(finish(1, true))
+    .expect(s.rowStatus == "callback_complete" and s.requests.get(1).response == "html-410" and invariant)
   run secondCallbackCannotRecoverConsumedClaimTest = ready.then(claimed(1)).then(decrypt(1, false)).then(awaitFailure(1))
     .then(finish(1, true)).then(begin(2, true, false)).then(hashReply(2, true)).then(claimRead(2)).then(finish(2, true))
     .expect(s.claims == 1 and s.requests.get(2).response == "html-410" and invariant)
@@ -283,4 +292,13 @@ module identity_callback_completion {
     .then(awaitFailure(1)).then(finish(1, true)).expect(s.completions == 0 and s.rowStatus == "callback_processing" and invariant)
   run claimedResolverMayRemainPendingTest = ready.then(claimed(1)).then(decrypt(1, true)).then(tick).then(tick).then(tick)
     .expect(s.requests.get(1).phase == "resolve" and s.requests.get(1).response == "none" and invariant)
+  run refusedCompletionWaitsForFailureCallTest = ready.then(resolved(1, "node")).then(tick).then(tick).then(completed(1))
+    .expect(s.rowStatus == "callback_processing" and s.requests.get(1).phase == "fail-write"
+      and s.requests.get(1).desired == "html-410" and s.requests.get(1).response == "none")
+  run refusedCompletionFailureCallThrowsTest = ready.then(resolved(1, "node")).then(tick).then(tick).then(completed(1))
+    .then(awaitFailure(1)).then(finish(1, true))
+    .expect(s.rowStatus == "callback_processing" and s.requests.get(1).response == "outer-error" and not(s.requests.get(1).clearCookieHeader))
+  run refusedCompletionFailureReplyLostTest = ready.then(resolved(1, "node")).then(tick).then(tick).then(completed(1))
+    .then(failureWrite(1)).then(failureReply(1, false)).then(finish(1, true))
+    .expect(s.rowStatus == "callback_failed" and s.requests.get(1).response == "outer-error" and invariant)
 }

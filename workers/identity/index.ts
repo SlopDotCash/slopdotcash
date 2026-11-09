@@ -211,10 +211,18 @@ export async function applyIdentityRateLimit(
   }
 }
 
-async function resolveGithubIdentity(
+export async function resolveGithubIdentity(
   code: string,
   pkceVerifier: string,
-  env: Env,
+  env: Pick<
+    Env,
+    | "GITHUB_APP_CLIENT_ID"
+    | "GITHUB_APP_CLIENT_SECRET"
+    | "IDENTITY_PUBLIC_ORIGIN"
+    | "SLOP_ENVIRONMENT"
+    | "IDENTITY_ALLOW_LOOPBACK"
+  >,
+  fetchImpl: FetchLike = fetch,
 ): Promise<{
   githubActorId: string;
   githubLogin: string;
@@ -222,10 +230,12 @@ async function resolveGithubIdentity(
 } | null> {
   let accessToken = "";
   try {
-    const tokenResponse = await fetch(
+    const tokenResponse = await fetchImpl(
       "https://github.com/login/oauth/access_token",
       {
         method: "POST",
+        // A redirect must never forward the client-secret form elsewhere.
+        redirect: "manual",
         headers: {
           accept: "application/json",
           "content-type": "application/x-www-form-urlencoded",
@@ -241,7 +251,14 @@ async function resolveGithubIdentity(
         signal: AbortSignal.timeout(10_000),
       },
     );
-    if (!tokenResponse.ok) return null;
+    if (!tokenResponse.ok) {
+      try {
+        await tokenResponse.body?.cancel();
+      } catch {
+        // The provider refusal stays authoritative if disposal also fails.
+      }
+      return null;
+    }
     const tokenBody = await readBoundedJson(
       tokenResponse,
       MAX_GITHUB_RESPONSE_BYTES,
@@ -259,12 +276,21 @@ async function resolveGithubIdentity(
       return null;
     }
     accessToken = candidate;
-    const userResponse = await fetch("https://api.github.com/user", {
+    const userResponse = await fetchImpl("https://api.github.com/user", {
+      method: "GET",
+      redirect: "manual",
       headers: githubHeaders(accessToken, "slop-identity"),
       signal: AbortSignal.timeout(10_000),
     });
     accessToken = "";
-    if (!userResponse.ok) return null;
+    if (!userResponse.ok) {
+      try {
+        await userResponse.body?.cancel();
+      } catch {
+        // The provider refusal stays authoritative if disposal also fails.
+      }
+      return null;
+    }
     const user = await readBoundedJson(
       userResponse,
       MAX_GITHUB_RESPONSE_BYTES,

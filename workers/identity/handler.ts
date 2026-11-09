@@ -140,10 +140,16 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   return value as Record<string, unknown>;
 }
 
-function clearStateCookie(headers: Headers): void {
+const LEGACY_STATE_COOKIE = "__Host-slop_oauth_state";
+
+async function oauthStateCookieName(state: string): Promise<string> {
+  return `${LEGACY_STATE_COOKIE}_${await sha256Hex(state)}`;
+}
+
+function clearStateCookie(headers: Headers, name: string): void {
   headers.append(
     "set-cookie",
-    "__Host-slop_oauth_state=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+    `${name}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`,
   );
 }
 
@@ -271,7 +277,7 @@ async function authorizeBrowser(
   headers.set("location", githubUrl.toString());
   headers.append(
     "set-cookie",
-    `__Host-slop_oauth_state=${state}; Path=/; Max-Age=${OAUTH_FLOW_TTL_SECONDS}; Secure; HttpOnly; SameSite=Lax`,
+    `${await oauthStateCookieName(state)}=${state}; Path=/; Max-Age=${OAUTH_FLOW_TTL_SECONDS}; Secure; HttpOnly; SameSite=Lax`,
   );
   return new Response(null, { status: 302, headers });
 }
@@ -286,7 +292,16 @@ async function oauthCallback(
   // GitHub can reject authorization before issuing a code. The bound flow
   // must still become terminal so the original tab or terminal stops polling.
   const authorizationFailed = url.searchParams.has("error");
-  const cookieState = cookieValue(request, "__Host-slop_oauth_state");
+  // Each authorization owns its own cookie, so overlapping popups cannot
+  // replace or clear one another. Accept an already-issued legacy flow during
+  // rollout only when this flow's scoped cookie is absent, never when it fails.
+  const scopedCookieName = validCapability(state)
+    ? await oauthStateCookieName(state)
+    : null;
+  const scopedState = scopedCookieName === null
+    ? null
+    : cookieValue(request, scopedCookieName);
+  const cookieState = scopedState ?? cookieValue(request, LEGACY_STATE_COOKIE);
   if (
     !validCapability(state) ||
     cookieState === null ||
@@ -389,7 +404,10 @@ async function oauthCallback(
         ? `${localFlowOrigin(flow.id)}/login`
         : siteOf(deps),
     );
-    clearStateCookie(response.headers);
+    // A legacy cookie may now belong to another in-flight legacy flow. Leave
+    // it to its existing TTL; only expire this completed flow's scoped name.
+    if (scopedCookieName !== null)
+      clearStateCookie(response.headers, scopedCookieName);
     return response;
   } finally {
     verifier = "";

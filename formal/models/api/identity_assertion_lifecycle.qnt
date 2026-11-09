@@ -3,6 +3,7 @@
 // @source workers/identity/crypto.ts
 // @source workers/identity/contracts.ts
 // @evidence workers/identity/expiry-boundary.test.ts
+// @evidence workers/identity/persistence-transitions.test.ts
 // @evidence scripts/dev-identity-bridge.test.ts
 // @evidence backend/points/publication.test.ts
 // One existing flow, two polls, two consume calls, one cleanup sequence and

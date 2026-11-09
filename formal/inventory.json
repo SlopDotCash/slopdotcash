@@ -189,6 +189,7 @@
         "formal/models/ui/ui_admin_mutation_identity.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
+        "formal/models/ui/ui_identity_cookie_order.qnt",
         "formal/models/ui/ui_owner_private_requests.qnt",
         "formal/models/ui/ui_payout_consent_lifetime.qnt",
         "formal/models/ui/ui_project_authority.qnt",
@@ -7347,6 +7348,7 @@
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
+        "formal/models/api/identity_assertion_snapshot.qnt",
         "formal/models/api/identity_callback_completion.qnt"
       ],
       "candidateLines": [21, 34],
@@ -7364,25 +7366,26 @@
     },
     {
       "path": "workers/identity/handler.ts",
-      "sha256": "6beaf39a8dc09d936b7a73807c8dca50f4db3697ef2ed7917dc4f4f6e373b244",
+      "sha256": "076ec6ec122c70983988d8431094d267c6702d04bc4ddd30e0e0f55d96892f3e",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/github_identity_exchange.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
         "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/pr_review_signin.qnt",
-        "formal/models/tooling/dev_identity_bridge.qnt"
+        "formal/models/tooling/dev_identity_bridge.qnt",
+        "formal/models/ui/ui_identity_cookie_order.qnt"
       ],
       "candidateLines": [
-        58, 60, 87, 93, 104, 108, 114, 115, 116, 191, 205, 210, 222, 238, 239,
-        244, 266, 274, 276, 284, 291, 293, 304, 430, 432, 435, 438, 441, 458,
-        504, 630, 668
+        58, 60, 87, 93, 104, 108, 114, 115, 116, 145, 146, 197, 211, 216, 228,
+        244, 245, 250, 272, 280, 282, 290, 298, 299, 306, 308, 319, 448, 450,
+        453, 456, 459, 476, 522, 648, 686
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/identity/index.ts",
-      "sha256": "19e083fbd6750080318f65aad928b883ed2c5865a269b027791a2b969d8b9316",
+      "sha256": "dcd47e67bfda60622cc408021f0cfd7179657ae19d5879945ca7e43c50f38c07",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
         "formal/models/api/github_identity_exchange.qnt",
@@ -7391,25 +7394,27 @@
         "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
-        28, 53, 59, 89, 91, 93, 99, 119, 124, 138, 143, 302, 343, 347, 349, 358,
-        361, 369, 375, 379, 405, 417, 420, 426, 436, 437, 438, 490
+        28, 53, 59, 89, 91, 93, 99, 119, 124, 138, 143, 328, 369, 373, 375, 384,
+        387, 395, 401, 405, 431, 443, 446, 452, 462, 463, 464, 516
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/identity/persistence.ts",
-      "sha256": "8897e7283e2d1861fb1490f4854d0e7c0e863a662d895b02dc82b1edad8f5b1f",
+      "sha256": "3056a81c8c27a5d1ba1fa56548b70eb05acb8e167b2259984e147c5fccf24e4f",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
+        "formal/models/api/identity_assertion_snapshot.qnt",
         "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/identity_scheduled_maintenance.qnt",
-        "formal/models/tooling/dev_identity_bridge.qnt"
+        "formal/models/tooling/dev_identity_bridge.qnt",
+        "formal/models/ui/ui_identity_cookie_order.qnt"
       ],
       "candidateLines": [
         17, 46, 77, 79, 90, 109, 123, 130, 131, 132, 148, 149, 151, 169, 170,
-        198, 202, 208, 248, 249, 250, 264, 275, 279, 283, 287, 291
+        196, 201, 205, 211, 251, 252, 253, 267, 278, 282, 286, 290, 294
       ],
       "review": "mapped-abstraction"
     },
@@ -10171,7 +10176,7 @@
     },
     {
       "path": "formal/models/api/github_identity_exchange.qnt",
-      "sha256": "b52e1b5464c5f0997f9e53faecaa6d532b479defee910554064d3240978cddc2",
+      "sha256": "f3f91ba0f8ed2338221337c7a46e7973b5b4c535805601de95d2d43ce1da2f1d",
       "sources": ["workers/identity/handler.ts", "workers/identity/index.ts"],
       "scenarios": [
         "absentOrNonStringTokenReturnsNullTest",
@@ -10188,9 +10193,13 @@
         "nonOkTokenResponseReturnsNullTest",
         "nonOkUserResponseClearsLocalTokenBeforeFinallyTest",
         "nonUserTypeOmitsEvenAValidNodeIdTest",
+        "profileCancellationFailurePreservesNullRefusalTest",
+        "profileRedirectIsCancelledWithoutFollowingTest",
         "returnedIdentityExposesOnlyProjectedFieldsTest",
         "tokenBodyFailureThrowsInsteadOfReturningNullTest",
+        "tokenCancellationFailurePreservesNullRefusalTest",
         "tokenFetchFailureThrowsAndFinalizesTest",
+        "tokenRedirectNeverStartsProfileRequestTest",
         "tooLongTokenReturnsNullTest",
         "tooShortTokenReturnsNullTest",
         "unsupportedTokenTypeReturnsNullTest",
@@ -10286,7 +10295,7 @@
     },
     {
       "path": "formal/models/api/identity_assertion_lifecycle.qnt",
-      "sha256": "26599aa5264231f2af01efd87eb0e514fbb0b35b206b1af8c515b793a74216d8",
+      "sha256": "25c8c17d2efcde9565490574606195fec4f1b1e735627e0b75098edc6fcf5776",
       "sources": [
         "workers/identity/contracts.ts",
         "workers/identity/crypto.ts",
@@ -10328,8 +10337,40 @@
       ]
     },
     {
+      "path": "formal/models/api/identity_assertion_snapshot.qnt",
+      "sha256": "d0c449b2ad7d9899aad0e300d3f36291de4fe70ad33ecdc31772fd2b91a0f345",
+      "sources": [
+        "workers/identity/contracts.ts",
+        "workers/identity/persistence.ts"
+      ],
+      "scenarios": [
+        "actorMismatchOnExistingTokenRefusesTest",
+        "callerIdentityMutationCannotCauseFalseRefusalTest",
+        "callerMutationCannotRetargetReadbackTest",
+        "cleanupBetweenInsertAndReadbackRefusesTest",
+        "concurrentSameTokenKeepsFirstTimesTest",
+        "consumeBetweenInsertAndReadbackRefusesTest",
+        "consumedRowCannotBeReturnedTest",
+        "exactExpiryDoesNotConsumeTest",
+        "existingNodeAndTimesArePreservedTest",
+        "existingUnconsumedRowCanBeReadAfterParentIssuedTest",
+        "expiredExistingRowIsLeftForHandlerValidationTest",
+        "falseInsertResultKeepsDurableRowButReturnsNullTest",
+        "issuedParentCannotRecreateCleanedRowTest",
+        "localTokenDoesNotRequireParentTest",
+        "lostInsertReplyKeepsDurableRowTest",
+        "normalCreateReturnsExactSnapshotTest",
+        "oldMutableInputCouldReturnAnotherTokenTest",
+        "parentDeletionBeforeInsertPreventsCreationTest",
+        "parentIssueBeforeInsertPreventsCreationTest",
+        "readbackFailureDoesNotUndoInsertTest",
+        "readbackSnapshotSurvivesLaterConsumptionTest",
+        "wrongAudienceDoesNotConsumeTest"
+      ]
+    },
+    {
       "path": "formal/models/api/identity_callback_completion.qnt",
-      "sha256": "ce64d2c0e5fea1535521edaabe9b9b3f956ba31e45699f3b69d7897f32c56de6",
+      "sha256": "c54f2031e72e3f3a84eb3a19c55cc43037cb0b89176e3db297357cfaea51ddab",
       "sources": [
         "migrations/0108_identity_failed_callback.sql",
         "workers/identity/contracts.ts",
@@ -10349,7 +10390,7 @@
         "cleanupBetweenClaimReadAndWriteTest",
         "committedClaimWithoutChangeCountReturnsGoneTest",
         "committedCompletionSurvivesLostReplyTest",
-        "committedCompletionWithoutChangeCountReturnsConflictTest",
+        "committedCompletionWithoutChangeCountReturnsGoneTest",
         "completeWriteFailureDoesNotInventCompletionTest",
         "concurrentClaimSelectsHaveOneWinnerTest",
         "decryptErrorEndsClaimedFlowTest",
@@ -10364,6 +10405,9 @@
         "pointsAcceptsNodeIdentityTest",
         "pointsRejectsBasicIdentityTest",
         "privateAudienceAcceptsBasicIdentityTest",
+        "refusedCompletionFailureCallThrowsTest",
+        "refusedCompletionFailureReplyLostTest",
+        "refusedCompletionWaitsForFailureCallTest",
         "responseConstructionFailureKeepsCommitTest",
         "secondCallbackCannotRecoverConsumedClaimTest",
         "thrownResolverClearsLocalSlotTest"
@@ -17839,6 +17883,45 @@
         "diagnosticUsageTest",
         "emptyTest",
         "immutableArchiveTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_identity_cookie_order.qnt",
+      "sha256": "f6e351f3ce7863550bd7eab7c23225a0ec4cb0b120db1fc77e53b605d87dc75a",
+      "sources": [
+        "backend/http.ts",
+        "workers/identity/handler.ts",
+        "workers/identity/persistence.ts"
+      ],
+      "scenarios": [
+        "authorizationDenialFailsOnlyCapturedFlowTest",
+        "browserExpiryRemovesOnlyItsScopeTest",
+        "capturedBindingDoesNotReadLaterCookieJarTest",
+        "capturedCompletionStampSurvivesLaterClockTickTest",
+        "completedLegacyFlowCannotReplayTest",
+        "delayedAuthorizeMayRestoreOnlyAnInertConsumedScopeTest",
+        "expiredRetainedCookieCannotClaimTest",
+        "expiryDuringProviderPreventsSuccessTest",
+        "failedAuthorizeDecryptDoesNotWriteCookieTest",
+        "firstCallbackStillBindsAfterSecondAuthorizationTest",
+        "invalidQueryLeavesBothScopesUntouchedTest",
+        "lateFirstCompletionPreservesSecondFlowCookieTest",
+        "lateFirstReplyLetsSecondCallbackCompleteTest",
+        "legacyBrowserExpiryDoesNotRemoveScopedCookieTest",
+        "legacyCompletionPreservesNewScopedAuthorizationTest",
+        "matchingScopedCookieWinsOverDifferentLegacyCookieTest",
+        "missingBothCookiesCannotClaimTest",
+        "newAuthorizationsKeepIndependentCookiesTest",
+        "oldAuthorizeReplacedOtherFlowBindingTest",
+        "oldLateCallbackExpiredNewLegacyAuthorizationTest",
+        "oneFlowCompletesAndClearsOnlyItsScopeTest",
+        "outOfOrderAuthorizeHeadersDoNotOverwriteTest",
+        "presentEmptyScopedCookieCannotDowngradeTest",
+        "presentWrongScopedCookieCannotDowngradeTest",
+        "providerFailureDoesNotDeleteAnotherFlowTest",
+        "retainedLegacyCookieCanCompleteInflightFlowTest",
+        "reverseCallbackOrderKeepsBothClaimsTest",
+        "unavailableAuthorizeDoesNotWriteAnyCookieTest"
       ]
     },
     {

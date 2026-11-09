@@ -1,15 +1,18 @@
 // @source workers/identity/index.ts
 // @source workers/identity/handler.ts
 // @evidence workers/identity/failed-callback.test.ts
+// @evidence workers/identity/github-provider.test.ts
 // One resolveGithubIdentity invocation, at most one token request and one user
 // request, with finite HTTP/body/value classes. No retries. Token classes
 // abstract object shape, string length 16..512 and exact bearer/Bearer types;
 // user classes abstract positive safe-integer id, login syntax, and optional
 // type User + node-id syntax. readBoundedJson's 64KiB/error behavior is a
-// predicate. Existing callback tests inject the resolver: they do not execute
-// these real token/user fetch and parser branches.
-// Fixed provider URLs, configured callback/form/PKCE binding, TLS, redirects,
-// GitHub truth and the two
+// predicate. The provider regressions call the actual resolver with synthetic
+// HTTP replies; callback persistence is covered by the separate injected tests.
+// Both fixed-URL requests use manual redirects. Every 3xx is a non-OK refusal;
+// rejected response bodies are cancelled even when cancellation itself fails.
+// Fixed provider URLs, configured callback/form/PKCE binding, TLS, native fetch
+// obeying manual redirect policy, GitHub truth and the two
 // 10-second fetch abort signals are external transport assumptions. There is
 // no wall-clock or liveness proof. Identity return is not callback persistence.
 // localTokenHeld records one accessToken variable only. Finally clears that
@@ -24,36 +27,50 @@ module github_identity_exchange {
   var s: { phase: str, tokenRequests: int, userRequests: int, tokenClass: str,
     userClass: str, nodeClass: str, localTokenHeld: bool, otherReferencesPossible: bool,
     clearedAfterHeaders: bool, finallyRan: bool, settlements: int,
-    result: str, reason: str, fields: Set[str] }
+    result: str, reason: str, fields: Set[str], tokenBody: str, userBody: str,
+    tokenManual: bool, userManual: bool }
   action init = s' = { phase: "config", tokenRequests: 0, userRequests: 0, tokenClass: "none",
     userClass: "none", nodeClass: "none", localTokenHeld: false, otherReferencesPossible: false,
     clearedAfterHeaders: false, finallyRan: false, settlements: 0,
-    result: "pending", reason: "none", fields: Set() }
+    result: "pending", reason: "none", fields: Set(), tokenBody: "none", userBody: "none",
+    tokenManual: false, userManual: false }
   action configure(valid: bool): bool = all { s.phase == "config",
-    s' = if (valid) s.with("phase", "token-fetch").with("tokenRequests", 1)
+    s' = if (valid) s.with("phase", "token-fetch").with("tokenRequests", 1).with("tokenManual", true)
       else s.with("phase", "finally").with("result", "error").with("reason", "config") }
   action tokenResponse(ok: bool): bool = all { s.phase == "token-fetch",
-    s' = if (ok) s.with("phase", "token-body")
-      else s.with("phase", "finally").with("result", "null").with("reason", "token-http") }
+    s' = if (ok) s.with("phase", "token-body").with("tokenBody", "owned")
+      else s.with("phase", "token-dispose").with("tokenBody", "owned")
+        .with("result", "null").with("reason", "token-http") }
   action tokenFetchFailure = all { s.phase == "token-fetch",
     s' = s.with("phase", "finally").with("result", "error").with("reason", "token-fetch") }
   action readBody(decoded: bool): bool = {
     val token = s.phase == "token-body"
     all { Set("token-body", "user-body").contains(s.phase),
-      s' = if (decoded) s.with("phase", if (token) "token-value" else "user-value")
+      s' = (if (decoded) s.with("phase", if (token) "token-value" else "user-value")
         else s.with("phase", "finally").with("result", "error")
-          .with("reason", if (token) "token-body" else "user-body") }
+          .with("reason", if (token) "token-body" else "user-body"))
+        .with("tokenBody", if (token) (if (decoded) "consumed" else "read-failed") else s.tokenBody)
+        .with("userBody", if (not(token)) (if (decoded) "consumed" else "read-failed") else s.userBody) }
   }
   action validateToken(kind: str): bool = all { s.phase == "token-value", tokenClasses.contains(kind),
     s' = if (validTokens.contains(kind)) s.with("tokenClass", kind).with("phase", "user-fetch")
         .with("localTokenHeld", true).with("otherReferencesPossible", true).with("userRequests", 1)
+        .with("userManual", true)
       else s.with("tokenClass", kind).with("phase", "finally").with("result", "null").with("reason", "token-value") }
   action userResponse(ok: bool): bool = all { s.phase == "user-fetch",
     s' = s.with("localTokenHeld", false).with("clearedAfterHeaders", true)
-      .with("phase", if (ok) "user-body" else "finally")
+      .with("userBody", "owned").with("phase", if (ok) "user-body" else "user-dispose")
       .with("result", if (ok) "pending" else "null").with("reason", if (ok) "none" else "user-http") }
   action userFetchFailure = all { s.phase == "user-fetch",
     s' = s.with("phase", "finally").with("result", "error").with("reason", "user-fetch") }
+  action disposeRejectedBody(succeeded: bool): bool = {
+    val token = s.phase == "token-dispose"
+    val disposition = if (succeeded) "cancelled" else "cancel-failed"
+    all { Set("token-dispose", "user-dispose").contains(s.phase),
+      s' = s.with("phase", "finally")
+        .with("tokenBody", if (token) disposition else s.tokenBody)
+        .with("userBody", if (not(token)) disposition else s.userBody) }
+  }
   action validateUser(kind: str, node: str): bool = {
     val basic = kind == "valid"
     val fieldValues = if (basic) Set("githubActorId", "githubLogin").union(
@@ -71,7 +88,7 @@ module github_identity_exchange {
     nondet user = userClasses.oneOf()
     nondet node = nodeClasses.oneOf()
     any { configure(ok), tokenResponse(ok), tokenFetchFailure, readBody(ok), validateToken(token),
-      userResponse(ok), userFetchFailure, validateUser(user, node), settle, s' = s }
+      userResponse(ok), userFetchFailure, disposeRejectedBody(ok), validateUser(user, node), settle, s' = s }
   }
   val returnedBasic = s.phase == "done" and s.result == "identity"
   // The Points callback requires githubNodeId; this flag does not execute that
@@ -79,10 +96,13 @@ module github_identity_exchange {
   val returnedPointsEligible = returnedBasic and s.fields.contains("githubNodeId")
   val invariant = all {
     s.tokenRequests >= 0, s.tokenRequests <= 1, s.userRequests >= 0, s.userRequests <= 1,
+    s.tokenRequests == 1 implies s.tokenManual,
+    s.userRequests == 1 implies s.userManual,
     s.userRequests == 1 implies s.tokenRequests == 1 and validTokens.contains(s.tokenClass),
     s.localTokenHeld implies s.userRequests == 1 and not(s.clearedAfterHeaders) and not(s.finallyRan),
     s.clearedAfterHeaders implies not(s.localTokenHeld),
     s.phase == "done" implies s.finallyRan and not(s.localTokenHeld) and s.settlements == 1,
+    s.phase == "done" implies s.tokenBody != "owned" and s.userBody != "owned",
     s.settlements <= 1,
     s.fields.subseteq(Set("githubActorId", "githubLogin", "githubNodeId")),
     returnedBasic implies s.userClass == "valid" and s.fields.contains("githubActorId") and s.fields.contains("githubLogin"),
@@ -93,7 +113,7 @@ module github_identity_exchange {
     .expect(s.result == "error" and s.reason == "config" and s.tokenRequests == 0 and s.userRequests == 0 and invariant)
   run tokenFetchFailureThrowsAndFinalizesTest = init.then(configure(true)).then(tokenFetchFailure).then(settle)
     .expect(s.result == "error" and s.reason == "token-fetch" and s.userRequests == 0 and invariant)
-  run nonOkTokenResponseReturnsNullTest = init.then(configure(true)).then(tokenResponse(false)).then(settle)
+  run nonOkTokenResponseReturnsNullTest = init.then(configure(true)).then(tokenResponse(false)).then(disposeRejectedBody(true)).then(settle)
     .expect(s.result == "null" and s.reason == "token-http" and s.userRequests == 0 and invariant)
   run tokenBodyFailureThrowsInsteadOfReturningNullTest = init.then(configure(true)).then(tokenResponse(true))
     .then(readBody(false)).then(settle).expect(s.result == "error" and s.reason == "token-body" and invariant)
@@ -120,7 +140,7 @@ module github_identity_exchange {
     .expect(s.result == "error" and not(s.localTokenHeld) and invariant)
   run nonOkUserResponseClearsLocalTokenBeforeFinallyTest = init.then(configure(true)).then(tokenResponse(true)).then(readBody(true))
     .then(validateToken("lower-bearer")).then(userResponse(false))
-    .expect(not(s.localTokenHeld) and s.clearedAfterHeaders and not(s.finallyRan)).then(settle)
+    .expect(not(s.localTokenHeld) and s.clearedAfterHeaders and not(s.finallyRan)).then(disposeRejectedBody(true)).then(settle)
     .expect(s.result == "null" and s.reason == "user-http" and invariant)
   run userBodyFailureOccursAfterLocalClearTest = init.then(configure(true)).then(tokenResponse(true)).then(readBody(true))
     .then(validateToken("lower-bearer")).then(userResponse(true)).then(readBody(false)).then(settle)
@@ -145,8 +165,22 @@ module github_identity_exchange {
     .then(validateUser("valid", "valid-user")).then(settle)
     .expect(s.fields == Set("githubActorId", "githubLogin", "githubNodeId") and invariant)
   run localClearDoesNotClaimTokenErasureTest = init.then(configure(true)).then(tokenResponse(true)).then(readBody(true))
-    .then(validateToken("lower-bearer")).then(userResponse(false)).then(settle)
+    .then(validateToken("lower-bearer")).then(userResponse(false)).then(disposeRejectedBody(true)).then(settle)
     .expect(not(s.localTokenHeld) and s.otherReferencesPossible and invariant)
   run completedInvocationCannotRetryTest = init.then(configure(true)).then(tokenFetchFailure).then(settle)
     .expect(s.tokenRequests == 1 and invariant).then(configure(true).fail())
+  run tokenRedirectNeverStartsProfileRequestTest = init.then(configure(true)).then(tokenResponse(false))
+    .then(disposeRejectedBody(true)).then(settle)
+    .expect(s.tokenManual and s.userRequests == 0 and s.tokenBody == "cancelled" and invariant)
+  run profileRedirectIsCancelledWithoutFollowingTest = init.then(configure(true)).then(tokenResponse(true))
+    .then(readBody(true)).then(validateToken("lower-bearer")).then(userResponse(false))
+    .then(disposeRejectedBody(true)).then(settle)
+    .expect(s.userManual and s.userRequests == 1 and s.userBody == "cancelled" and invariant)
+  run tokenCancellationFailurePreservesNullRefusalTest = init.then(configure(true)).then(tokenResponse(false))
+    .then(disposeRejectedBody(false)).then(settle)
+    .expect(s.result == "null" and s.reason == "token-http" and s.tokenBody == "cancel-failed" and invariant)
+  run profileCancellationFailurePreservesNullRefusalTest = init.then(configure(true)).then(tokenResponse(true))
+    .then(readBody(true)).then(validateToken("lower-bearer")).then(userResponse(false))
+    .then(disposeRejectedBody(false)).then(settle)
+    .expect(s.result == "null" and not(s.localTokenHeld) and s.userBody == "cancel-failed" and invariant)
 }
