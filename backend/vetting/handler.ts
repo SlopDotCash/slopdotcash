@@ -33,7 +33,6 @@ import {
   exactKeys,
   fail,
   isSameOriginJsonWrite,
-  json as jsonResponse,
   PROJECT_ID,
   pathParts,
 } from "../http";
@@ -57,7 +56,7 @@ import {
   readStrictJsonObject,
 } from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
-import type { ProjectFlagStore } from "./flags";
+import { json, type ProjectFlagStore } from "./flags";
 import {
   type CloudflareVettingPersistence,
   summarize,
@@ -109,10 +108,6 @@ export type VettingApiDependencies = {
   cache?: EdgeCache;
   refreshSetup?: (projectId: string) => Promise<ProjectSetupStatus | null>;
 };
-
-function json(status: number, body: Record<string, unknown>): Response {
-  return jsonResponse(status, body, { cacheControl: "no-store" });
-}
 
 function base64Bytes(value: string): Uint8Array | null {
   const normal = value.trim().replaceAll("-", "+").replaceAll("_", "/");

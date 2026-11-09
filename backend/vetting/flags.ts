@@ -384,7 +384,8 @@ type ProjectFlagApiDependencies = {
   cache?: EdgeCache;
 };
 
-function json(status: number, body: Record<string, unknown>): Response {
+/** A vetting API response; it is never cached. */
+export function json(status: number, body: Record<string, unknown>): Response {
   return jsonResponse(status, body, { cacheControl: "no-store" });
 }
 
