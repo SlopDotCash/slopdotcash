@@ -47,7 +47,9 @@ module trace_run_creation {
     disposition: str, desired: str, response: str, priorResponse: str }
   val absent: Row = { exists: false, id: 0, actor: 0, key: 0, payload: 0,
     login: 0, created: -1, state: "absent" }
-  val idle: Request = { phase: "idle", attempt: 0, actor: 0, key: 0, payload: 0,
+  // Inactive slots still use valid map indexes if a disabled action evaluates
+  // its local bindings before the phase guard.
+  val idle: Request = { phase: "idle", attempt: 0, actor: 1, key: 1, payload: 0,
     login: 0, generatedId: 0, created: -1, insertOutcome: "none",
     snapshotId: 0, snapshotActor: 0, snapshotPayload: 0, snapshotLogin: 0,
     snapshotCreated: -1, snapshotState: "none", disposition: "none",

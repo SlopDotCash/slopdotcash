@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "d08e110f687f8a26542fb9cdd700af75df9ee4ecc5b76e17bd1d1abb8297f9fc",
+  "inventorySha256": "2f6b5ff1aa295554259ef7898b5007de323bcc5efcbeb63de6e16815f4cfb696",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -27,7 +27,8 @@
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
-        "formal/models/api/points_dispute_lease.qnt"
+        "formal/models/api/points_dispute_lease.qnt",
+        "formal/models/api/wallet_claim_publication.qnt"
       ],
       "lexicallyUnmentionedValues": ["opened"],
       "review": "candidate-only"
@@ -590,7 +591,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/payments/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
+      ],
       "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
     },
@@ -626,7 +630,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/payments/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
+      ],
       "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
     },
@@ -3068,12 +3075,11 @@
       "name": "WalletPossessionState",
       "kind": "string-union",
       "values": ["not-provable-by-signature", "proven", "unproven"],
-      "models": ["formal/models/api/api_wallet_claims.qnt"],
-      "lexicallyUnmentionedValues": [
-        "not-provable-by-signature",
-        "proven",
-        "unproven"
+      "models": [
+        "formal/models/api/api_wallet_claims.qnt",
+        "formal/models/api/wallet_possession_completion.qnt"
       ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
