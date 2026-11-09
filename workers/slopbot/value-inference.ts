@@ -87,8 +87,10 @@ export const VALUE_INFERENCE_ATTEMPT_LIMIT = 3;
  * Neither does an attempt whose every recorded call the provider refused
  * under its spending limit: it was not paid, and the request waits for the
  * provider budget instead (README "Free reviews, budget blocks, spend"). An
- * attempt with no recorded call still counts, because it may have reached the
- * provider.
+ * attempt reconciled with zero calls stopped before any provider request
+ * (for example an authority recheck refused or failed) and does not count.
+ * An unreconciled attempt with no recorded call still counts, because it may
+ * have reached the provider before a crash.
  */
 async function admitValueAttempt(
   db: D1Database,
@@ -105,7 +107,9 @@ async function admitValueAttempt(
            AND (NOT EXISTS (SELECT 1 FROM slopbot_costs c
                   WHERE c.review_key=a.attempt_id AND c.failure=?5)
              OR EXISTS (SELECT 1 FROM slopbot_costs c
-                  WHERE c.review_key=a.attempt_id AND c.failure IS NOT ?5))) < ?4
+                  WHERE c.review_key=a.attempt_id AND c.failure IS NOT ?5))
+           AND NOT EXISTS (SELECT 1 FROM slopbot_value_budget_reconciliations z
+                  WHERE z.attempt_id=a.attempt_id AND z.call_count=0)) < ?4
        AND NOT EXISTS (SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id=?1)
        RETURNING attempt_id`,
     )
