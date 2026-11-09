@@ -19,6 +19,28 @@
 // guarantee is made. Only one parent read is modeled; deadlines/fetch abortion
 // and wallet discovery are separate contracts. Both old-order controls are
 // excluded from step. All scenarios were authored without executing checks.
+//
+// Finite step reductions. Each action has a *With(..., reduce) form; direct
+// actions and named scenarios pass false and keep the exact state. step
+// passes true, which applies settle to every successor:
+// - error is write-only (only scenarios read it), so step records "none".
+// - An operation stops being current for good: begin needs an unused slot
+//   and active == 0, and every context or mount change clears active. A
+//   non-current operation only moves itself to stopped, or (admit) adds its
+//   own requested step to accepted, which keeps accepted within requests.
+//   step therefore stores every non-current operation as one stopped record.
+//   A done operation keeps only its phase and context, which the notice
+//   conjunct reads; nothing else reads it again.
+// - Within a current operation, observedActor is read only at session-reply
+//   and only by comparison with -1 and the operation actor (1 or 2), response
+//   only at http-wait, next only in the session and http phases, and the
+//   wallet/signature validity flags only before the check that reads them.
+//   step stores the unread values in one fixed form.
+// - loadSnapshot is read only when loadActive (otherwise parentReply leaves
+//   the state unchanged), and after the single context change the cookie is
+//   compared only with the fixed actor, so step stores 0 for both when unread.
+// - Operation IDs are opaque, so step begins the lowest unused slot, and
+//   cookie choices other than the actor are offered once after the change.
 module ui_payout_consent_lifetime {
   val ids = Set(1, 2)
   type Operation = { phase: str, context: int, actor: int, family: str,
@@ -39,127 +61,186 @@ module ui_payout_consent_lifetime {
   def operation(id: int): Operation = if (ids.contains(id)) s.operations.get(id) else idle
   def current(id: int): bool = s.mounted and s.active == id
     and operation(id).context == s.context
+  // Finite-step canonical form; see the header. Direct actions pass false.
+  pure def settledOperation(op: Operation, isCurrent: bool): Operation =
+    if (op.phase == "unused") op
+    else if (op.phase == "done") idle.with("phase", "done").with("context", op.context)
+    else if (not(isCurrent)) idle.with("phase", "stopped")
+    else {
+      val session = Set("session-wait", "session-reply").contains(op.phase)
+      op.with("observedActor", if (op.phase != "session-reply") -1
+          else if (op.observedActor == -1 or op.observedActor == op.actor) op.observedActor else 0)
+        .with("response", if (op.phase == "http-wait") op.response else "none")
+        .with("next", if (session or op.phase == "http-wait") op.next else "none")
+        .with("walletValid", op.walletValid or not(op.phase == "prepare-check"
+          or (session and op.next == "prepare")))
+        .with("signatureValid", op.signatureValid or not(op.phase == "write-check"
+          or (session and op.next == "write")))
+    }
+  def settle(reduce: bool, st: State): State = if (not(reduce)) st else {
+    val operations = ids.mapBy(id => settledOperation(st.operations.get(id),
+      st.mounted and st.active == id and st.operations.get(id).context == st.context))
+    st.with("operations", operations).with("error", "none")
+      .with("loadSnapshot", if (st.loadActive) st.loadSnapshot else 0)
+      .with("cookie", if (st.context == 1 or st.cookie == st.actor) st.cookie else 0)
+  }
   def stopped(id: int): State = s.with("operations", s.operations.set(id, s.operations.get(id).with("phase", "stopped")))
   def failure(id: int, kind: str): State = if (not(current(id))) stopped(id)
     else stopped(id).with("active", 0).with("busy", 0).with("error", kind)
   def accessLost(id: int): State = if (not(current(id))) stopped(id)
     else failure(id, "account").with("visibleActor", 0).with("open", false)
       .with("notice", 0).with("loadActive", false)
-  action cookie(actor: int): bool = all { Set(0, 1, 2).contains(actor), s' = s.with("cookie", actor) }
-  action open = all { s.mounted, s.visibleActor > 0, s.active == 0, s' = s.with("open", true) }
-  action close = all { s.open, s.active == 0, s' = s.with("open", false).with("error", "none") }
-  action begin(id: int, family: str): bool = all {
+  action cookieWith(actor: int, reduce: bool): bool = all { Set(0, 1, 2).contains(actor), s' = settle(reduce, s.with("cookie", actor)) }
+  action cookie(actor: int): bool = cookieWith(actor, false)
+  action openWith(reduce: bool): bool = all { s.mounted, s.visibleActor > 0, s.active == 0, s' = settle(reduce, s.with("open", true)) }
+  action open = openWith(false)
+  action closeWith(reduce: bool): bool = all { s.open, s.active == 0, s' = settle(reduce, s.with("open", false).with("error", "none")) }
+  action close = closeWith(false)
+  action beginWith(id: int, family: str, reduce: bool): bool = all {
     s.mounted, s.open, s.active == 0, ids.contains(id), Set("evm", "solana").contains(family),
     s.operations.get(id).phase == "unused", s.visibleActor == s.actor,
-    s' = s.with("active", id).with("busy", id).with("notice", 0).with("error", "none")
+    s' = settle(reduce, s.with("active", id).with("busy", id).with("notice", 0).with("error", "none")
       .with("operations", s.operations.set(id, idle.with("phase", "connect-check")
-        .with("context", s.context).with("actor", s.actor).with("family", family))) }
-  action contextChanges(actor: int): bool = all { s.mounted, s.context == 1, ids.contains(actor),
-    s' = s.with("context", 2).with("actor", actor).with("visibleActor", actor)
+        .with("context", s.context).with("actor", s.actor).with("family", family)))) }
+  action begin(id: int, family: str): bool = beginWith(id, family, false)
+  action contextChangesWith(actor: int, reduce: bool): bool = all { s.mounted, s.context == 1, ids.contains(actor),
+    s' = settle(reduce, s.with("context", 2).with("actor", actor).with("visibleActor", actor)
       .with("active", 0).with("busy", 0).with("open", false).with("notice", 0).with("error", "none")
-      .with("loadActive", false) }
-  action depart = all { s.mounted,
-    s' = s.with("mounted", false).with("active", 0).with("busy", 0).with("open", false).with("notice", 0) }
-  action explicitSignOut = all { s.mounted,
-    s' = s.with("cookie", 0).with("visibleActor", 0).with("loadActive", false)
-      .with("active", 0).with("busy", 0).with("open", false).with("notice", 0) }
-  action startSession(id: int): bool = {
+      .with("loadActive", false)) }
+  action contextChanges(actor: int): bool = contextChangesWith(actor, false)
+  action departWith(reduce: bool): bool = all { s.mounted,
+    s' = settle(reduce, s.with("mounted", false).with("active", 0).with("busy", 0).with("open", false).with("notice", 0)) }
+  action depart = departWith(false)
+  action explicitSignOutWith(reduce: bool): bool = all { s.mounted,
+    s' = settle(reduce, s.with("cookie", 0).with("visibleActor", 0).with("loadActive", false)
+      .with("active", 0).with("busy", 0).with("open", false).with("notice", 0)) }
+  action explicitSignOut = explicitSignOutWith(false)
+  action startSessionWith(id: int, reduce: bool): bool = {
     val op = s.operations.get(id)
     val nextValue = if (op.phase == "connect-check") "connect-wait"
       else if (op.phase == "prepare-check") "prepare"
       else if (op.phase == "sign-check") "sign"
       else if (op.phase == "write-check") "write" else "success"
     all { Set("connect-check", "prepare-check", "sign-check", "write-check", "success-check").contains(op.phase),
-      s' = if (current(id)) s.with("operations", s.operations.set(id, op.with("phase", "session-wait").with("next", nextValue)))
-        else stopped(id) }
+      s' = settle(reduce, if (current(id)) s.with("operations", s.operations.set(id, op.with("phase", "session-wait").with("next", nextValue)))
+        else stopped(id)) }
   }
-  action observeSession(id: int, available: bool): bool = {
+  action startSession(id: int): bool = startSessionWith(id, false)
+  action observeSessionWith(id: int, available: bool, reduce: bool): bool = {
     val op = s.operations.get(id)
-    all { op.phase == "session-wait", s' = s.with("operations", s.operations.set(id,
-      op.with("phase", "session-reply").with("observedActor", if (available) s.cookie else -1))) }
+    all { op.phase == "session-wait", s' = settle(reduce, s.with("operations", s.operations.set(id,
+      op.with("phase", "session-reply").with("observedActor", if (available) s.cookie else -1)))) }
   }
-  action finishSession(id: int): bool = {
+  action observeSession(id: int, available: bool): bool = observeSessionWith(id, available, false)
+  action finishSessionWith(id: int, reduce: bool): bool = {
     val op = s.operations.get(id)
     all { op.phase == "session-reply",
-      s' = if (not(current(id))) stopped(id)
+      s' = settle(reduce, if (not(current(id))) stopped(id)
         else if (op.observedActor == -1) failure(id, "session")
         else if (op.observedActor != op.actor) accessLost(id)
         else if (op.next == "prepare" and not(op.walletValid)) failure(id, "wallet")
         else if (op.next == "write" and not(op.signatureValid)) failure(id, "signature")
-        else s.with("operations", s.operations.set(id, op.with("phase", op.next))) }
+        else s.with("operations", s.operations.set(id, op.with("phase", op.next)))) }
   }
-  action connected(id: int, matches: bool): bool = {
+  action finishSession(id: int): bool = finishSessionWith(id, false)
+  action connectedWith(id: int, matches: bool, reduce: bool): bool = {
     val op = s.operations.get(id)
-    all { op.phase == "connect-wait", s' = if (not(current(id))) stopped(id)
-      else s.with("operations", s.operations.set(id, op.with("phase", "prepare-check").with("walletValid", matches))) }
+    all { op.phase == "connect-wait", s' = settle(reduce, if (not(current(id))) stopped(id)
+      else s.with("operations", s.operations.set(id, op.with("phase", "prepare-check").with("walletValid", matches)))) }
   }
-  action request(id: int): bool = {
+  action connected(id: int, matches: bool): bool = connectedWith(id, matches, false)
+  action requestWith(id: int, reduce: bool): bool = {
     val op = s.operations.get(id)
     all { Set("prepare", "write").contains(op.phase),
-      s' = if (not(current(id))) stopped(id)
+      s' = settle(reduce, if (not(current(id))) stopped(id)
         else s.with("operations", s.operations.set(id,
           op.with("requests", op.requests.union(Set(op.phase))).with("next", op.phase)
-            .with("response", "none").with("phase", "http-wait"))) }
+            .with("response", "none").with("phase", "http-wait")))) }
   }
-  action admit(id: int, available: bool): bool = {
+  action request(id: int): bool = requestWith(id, false)
+  action admitWith(id: int, available: bool, reduce: bool): bool = {
     val op = s.operations.get(id)
     val accepted = available and s.cookie == op.actor
     all { op.phase == "http-wait", op.response == "none",
-      s' = s.with("operations", s.operations.set(id, op.with("response",
+      s' = settle(reduce, s.with("operations", s.operations.set(id, op.with("response",
         if (not(available)) "error" else if (accepted) "ok" else "actor")
-        .with("accepted", if (accepted) op.accepted.union(Set(op.next)) else op.accepted))) }
+        .with("accepted", if (accepted) op.accepted.union(Set(op.next)) else op.accepted)))) }
   }
-  action httpReply(id: int, valid: bool): bool = {
+  action admit(id: int, available: bool): bool = admitWith(id, available, false)
+  action httpReplyWith(id: int, valid: bool, reduce: bool): bool = {
     val op = s.operations.get(id)
     all { op.phase == "http-wait", op.response != "none",
-      s' = if (not(current(id))) stopped(id)
+      s' = settle(reduce, if (not(current(id))) stopped(id)
         else if (op.response == "actor") accessLost(id)
         else if (op.response != "ok" or not(valid)) failure(id, "http")
-        else s.with("operations", s.operations.set(id, op.with("phase", if (op.next == "prepare") "verify" else "success-check"))) }
+        else s.with("operations", s.operations.set(id, op.with("phase", if (op.next == "prepare") "verify" else "success-check")))) }
   }
-  action verify(id: int, valid: bool): bool = {
+  action httpReply(id: int, valid: bool): bool = httpReplyWith(id, valid, false)
+  action verifyWith(id: int, valid: bool, reduce: bool): bool = {
     val op = s.operations.get(id)
-    all { op.phase == "verify", s' = if (not(current(id))) stopped(id)
+    all { op.phase == "verify", s' = settle(reduce, if (not(current(id))) stopped(id)
       else if (not(valid)) failure(id, "prepared")
-      else s.with("operations", s.operations.set(id, op.with("phase", "sign-check"))) }
+      else s.with("operations", s.operations.set(id, op.with("phase", "sign-check")))) }
   }
-  action prompt(id: int): bool = {
+  action verify(id: int, valid: bool): bool = verifyWith(id, valid, false)
+  action promptWith(id: int, reduce: bool): bool = {
     val op = s.operations.get(id)
-    all { op.phase == "sign", s' = if (not(current(id))) stopped(id)
-      else s.with("operations", s.operations.set(id, op.with("phase", "sign-wait").with("prompts", op.prompts + 1))) }
+    all { op.phase == "sign", s' = settle(reduce, if (not(current(id))) stopped(id)
+      else s.with("operations", s.operations.set(id, op.with("phase", "sign-wait").with("prompts", op.prompts + 1)))) }
   }
-  action signed(id: int, valid: bool): bool = {
+  action prompt(id: int): bool = promptWith(id, false)
+  action signedWith(id: int, valid: bool, reduce: bool): bool = {
     val op = s.operations.get(id)
-    all { op.phase == "sign-wait", s' = if (not(current(id))) stopped(id)
+    all { op.phase == "sign-wait", s' = settle(reduce, if (not(current(id))) stopped(id)
       else if (op.family == "solana" and not(valid)) failure(id, "signature")
-      else s.with("operations", s.operations.set(id, op.with("phase", "write-check").with("signatureValid", valid))) }
+      else s.with("operations", s.operations.set(id, op.with("phase", "write-check").with("signatureValid", valid)))) }
   }
-  action walletRejected(id: int): bool = {
+  action signed(id: int, valid: bool): bool = signedWith(id, valid, false)
+  action walletRejectedWith(id: int, reduce: bool): bool = {
     val op = s.operations.get(id)
-    all { Set("connect-wait", "sign-wait").contains(op.phase), s' = failure(id, "wallet-rejected") }
+    all { Set("connect-wait", "sign-wait").contains(op.phase), s' = settle(reduce, failure(id, "wallet-rejected")) }
   }
-  action success(id: int): bool = {
+  action walletRejected(id: int): bool = walletRejectedWith(id, false)
+  action successWith(id: int, reduce: bool): bool = {
     val op = s.operations.get(id)
-    all { op.phase == "success", s' = if (not(current(id))) stopped(id)
+    all { op.phase == "success", s' = settle(reduce, if (not(current(id))) stopped(id)
       else s.with("notice", id).with("open", false).with("active", 0).with("busy", 0)
-        .with("operations", s.operations.set(id, op.with("phase", "done"))) }
+        .with("operations", s.operations.set(id, op.with("phase", "done")))) }
   }
-  action parentLoad = all { s.mounted, not(s.loadActive), s.visibleActor > 0,
-    s' = s.with("loadActive", true).with("loadSnapshot", s.visibleActor) }
-  action parentReply = all { s.loadSnapshot > 0,
-    s' = if (s.loadActive and s.mounted) s.with("visibleActor", s.loadSnapshot).with("loadActive", false) else s }
+  action success(id: int): bool = successWith(id, false)
+  action parentLoadWith(reduce: bool): bool = all { s.mounted, not(s.loadActive), s.visibleActor > 0,
+    s' = settle(reduce, s.with("loadActive", true).with("loadSnapshot", s.visibleActor)) }
+  action parentLoad = parentLoadWith(false)
+  action parentReplyWith(reduce: bool): bool = all { s.loadSnapshot > 0,
+    s' = settle(reduce, if (s.loadActive and s.mounted) s.with("visibleActor", s.loadSnapshot).with("loadActive", false) else s) }
+  action parentReply = parentReplyWith(false)
   // Negative controls for the old unowned continuation and un-aborted load.
   action oldLatePrompt(id: int): bool = all { not(current(id)), s.operations.get(id).phase != "unused", s' = s.with("badPrompt", true) }
   action oldParentRestore = all { s.loadSnapshot > 0, s.visibleActor == 0,
     s' = s.with("visibleActor", s.loadSnapshot).with("badRestore", true) }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet family = Set("evm", "solana").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { cookie(actor), open, close, begin(id, family), contextChanges(actor), depart, explicitSignOut,
-      startSession(id), observeSession(id, yes), finishSession(id), connected(id, yes), request(id), admit(id, yes),
-      httpReply(id, yes), verify(id, yes), prompt(id), signed(id, yes), walletRejected(id), success(id), parentLoad, parentReply, s' = s }
+  action step = any {
+    // After the context change, cookie values other than the actor are equivalent.
+    { nondet actor = Set(0, 1, 2).oneOf()
+      all { s.context == 1 or actor == 0 or actor == s.actor, cookieWith(actor, true) } },
+    openWith(true), closeWith(true),
+    // Operation IDs are opaque, so step begins the lowest unused one.
+    { nondet id = ids.oneOf() nondet family = Set("evm", "solana").oneOf()
+      all { id == 1 or s.operations.get(1).phase != "unused", beginWith(id, family, true) } },
+    { nondet actor = Set(0, 1, 2).oneOf() contextChangesWith(actor, true) },
+    departWith(true), explicitSignOutWith(true),
+    { nondet id = ids.oneOf() startSessionWith(id, true) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() observeSessionWith(id, yes, true) },
+    { nondet id = ids.oneOf() finishSessionWith(id, true) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() connectedWith(id, yes, true) },
+    { nondet id = ids.oneOf() requestWith(id, true) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() admitWith(id, yes, true) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() httpReplyWith(id, yes, true) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() verifyWith(id, yes, true) },
+    { nondet id = ids.oneOf() promptWith(id, true) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() signedWith(id, yes, true) },
+    { nondet id = ids.oneOf() walletRejectedWith(id, true) },
+    { nondet id = ids.oneOf() successWith(id, true) },
+    parentLoadWith(true), parentReplyWith(true), s' = s
   }
   val invariant = all { not(s.badPrompt), not(s.badRestore), s.busy == s.active,
     s.active > 0 implies current(s.active),
