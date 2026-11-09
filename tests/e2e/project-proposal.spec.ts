@@ -278,6 +278,79 @@ async function prepareCreationReview(page: Page) {
   await expect(page.locator(".setup-actor")).toHaveText("@example-maintainer");
 }
 
+for (const oldResult of ["resolve", "reject"] as const)
+  test(`a departed draft digest cannot ${oldResult === "resolve" ? "replace" : "hide"} the current generated skill`, async ({ page }) => {
+    await prepareCreationReview(page);
+    await expect(page.getByLabel("Contributor skill SKILL.md")).toBeVisible();
+    await page.evaluate(() => {
+      const digest = crypto.subtle.digest.bind(crypto.subtle);
+      const held = {
+        waiting: false,
+        returned: false,
+        release: (_reject: boolean) => {},
+      };
+      Object.assign(window, { heldSkillDigest: held });
+      crypto.subtle.digest = async (algorithm, data) => {
+        const text = new TextDecoder().decode(data);
+        const result = await digest(algorithm, data);
+        if (text.includes('"id":"protein-delayed"') && !held.waiting) {
+          held.waiting = true;
+          const reject = await new Promise<boolean>((resolve) => {
+            held.release = resolve;
+          });
+          held.returned = true;
+          if (reject) throw new Error("Delayed draft digest failed");
+        }
+        return result;
+      };
+    });
+    const steps = page.getByRole("navigation", { name: "Setup steps" });
+    await steps.getByRole("button", { name: "Project", exact: true }).click();
+    await page.getByLabel("Project name").fill("Protein Delayed");
+    await page.getByRole("button", { name: "Next: Rewards" }).click();
+    await page.getByRole("button", { name: "Next: Review" }).click();
+    await page.waitForFunction(
+      () => (
+        window as typeof window & { heldSkillDigest: { waiting: boolean } }
+      ).heldSkillDigest.waiting,
+    );
+    await expect(
+      page.getByText("Preparing skill preview…", { exact: true }),
+    ).toBeVisible();
+    await steps.getByRole("button", { name: "Project", exact: true }).click();
+    await page.getByLabel("Project name").fill("Protein Current");
+    await page.getByRole("button", { name: "Next: Rewards" }).click();
+    await page.getByRole("button", { name: "Next: Review" }).click();
+    const preview = page.getByLabel("Contributor skill SKILL.md");
+    await expect(preview).toHaveValue(/contribute-to-protein-current/u);
+    await page.evaluate(
+      (reject) => (
+        window as typeof window & {
+          heldSkillDigest: { release(reject: boolean): void };
+        }
+      ).heldSkillDigest.release(reject),
+      oldResult === "reject",
+    );
+    await page.waitForFunction(
+      () => (
+        window as typeof window & { heldSkillDigest: { returned: boolean } }
+      ).heldSkillDigest.returned,
+    );
+    await page.evaluate(
+      () => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+    );
+    await expect(preview).toHaveValue(/contribute-to-protein-current/u);
+    await expect(preview).not.toHaveValue(/contribute-to-protein-delayed/u);
+    await expect(
+      page.getByText(
+        "Could not prepare the skill preview. Reload and try again.",
+        { exact: true },
+      ),
+    ).toHaveCount(0);
+  });
+
 test("committed proposal unmount retires creation before dispatch", async ({
   page,
 }) => {

@@ -386,15 +386,16 @@ export async function refreshReferralClaims(
     )
       throw new Error("Referral finality changed during refresh");
     snapshot.observedAt = now.toISOString();
-    // Publish the complete projection at once; a concurrent older refresh cannot overwrite it.
+    // Publish the complete projection at once. A newer failure also wins over
+    // an older success, including a failure-only row without an observed body.
     await env.REFERRAL_DB.prepare(
-      "INSERT INTO referral_claim_cache(id,body,observed_at,error_at) VALUES('program',?,?,NULL) ON CONFLICT(id) DO UPDATE SET body=excluded.body,observed_at=excluded.observed_at,error_at=NULL WHERE referral_claim_cache.observed_at IS NULL OR referral_claim_cache.observed_at < excluded.observed_at AND CAST(json_extract(referral_claim_cache.body,'$.block.number') AS INTEGER) <= CAST(json_extract(excluded.body,'$.block.number') AS INTEGER)",
+      "INSERT INTO referral_claim_cache(id,body,observed_at,error_at) VALUES('program',?,?,NULL) ON CONFLICT(id) DO UPDATE SET body=excluded.body,observed_at=excluded.observed_at,error_at=NULL WHERE (referral_claim_cache.observed_at IS NULL OR referral_claim_cache.observed_at < excluded.observed_at AND CAST(json_extract(referral_claim_cache.body,'$.block.number') AS INTEGER) <= CAST(json_extract(excluded.body,'$.block.number') AS INTEGER)) AND (referral_claim_cache.error_at IS NULL OR referral_claim_cache.error_at < excluded.observed_at)",
     )
       .bind(JSON.stringify(snapshot), snapshot.observedAt)
       .run();
   } catch {
     await env.REFERRAL_DB.prepare(
-      "INSERT INTO referral_claim_cache(id,body,observed_at,error_at) VALUES('program',NULL,NULL,?) ON CONFLICT(id) DO UPDATE SET error_at=excluded.error_at WHERE referral_claim_cache.observed_at IS NULL OR referral_claim_cache.observed_at <= excluded.error_at",
+      "INSERT INTO referral_claim_cache(id,body,observed_at,error_at) VALUES('program',NULL,NULL,?) ON CONFLICT(id) DO UPDATE SET error_at=excluded.error_at WHERE (referral_claim_cache.observed_at IS NULL OR referral_claim_cache.observed_at <= excluded.error_at) AND (referral_claim_cache.error_at IS NULL OR referral_claim_cache.error_at < excluded.error_at)",
     )
       .bind(now.toISOString())
       .run();

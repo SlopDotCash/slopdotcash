@@ -1110,6 +1110,41 @@ tested or verified here:
   freeze was not a source guarantee; the model now preserves the immutable
   draft/escalation fields and includes that interleaving explicitly.
   These are source refinements with no new execution evidence or runtime edits.
+- `referral_cache_write_order` and `referral_cache_projection` separate the
+  event projection from its concurrent cache writes. Their 16 and 24 scenarios
+  cover canonical event/receipt admission, retained roots and wallet counters,
+  pause/void/rescue transitions, latest-state disagreement, final-header checks,
+  monotonic failure timestamps and lost replies. The cache writer now prevents
+  an older success from clearing a newer failure, including a failure-only row,
+  and prevents an older failure from replacing a newer error time. Failure
+  retains precedence at equal timestamps. Four held-statement races and a newer
+  successful recovery are defined in the existing Anvil/SQLite workflow; none
+  were executed. Referral flags remain off. Event delivery completeness and
+  live activation are separate from these finite models.
+- `evaluated_award_loader` adds 18 scenarios for loose and retained manifests,
+  reconstructed-byte digests, sorted discovery, validation, distinct duplicate
+  namespaces and full-batch failure/retry. A syntactically valid review record
+  does not prove a live GitHub approval. Five filesystem regression definitions
+  use the actual loader; journal writes and window selection retain their
+  separate contracts. The earlier two-award model now states its narrower scope.
+- `ui_artifacts` now models the public generated-skill preview specifically:
+  asynchronous tagged digests, registry precedence, source/role/path selection
+  and rendering failures. Its 17 scenarios do not invent cancellation of the
+  digest task. Private evidence remains in its dedicated models, with 11 new
+  `ui_evidence_blob_download` scenarios for object URL creation, requested
+  downloads, independent revocation timers and departure. Two delayed-preview
+  browser definitions and an extended exact-byte download/revocation definition
+  are unexecuted. Native DOM failures are explicit host assumptions, not a
+  reproduced browser defect or proof of a completed download.
+- `payout_readiness` now separates schema refusal, per-network configuration
+  reasons, dispatcher/service/database bindings and release qualification in
+  19 scenarios. An unprobed configuration report can be ready; `--require`
+  needs the probe result. `payout_rpc_probe` adds 16 scenarios for the two RPC
+  stages, wrong identities, malformed responses, EVM head formatting and safe
+  positive Solana slots. Seventeen new configuration/RPC regression cases are
+  defined but unexecuted. Endpoint observations establish neither provider
+  honesty nor contract deployment, signer custody or permission to activate.
+  CLI argument/file/output-process composition remains a separate audit boundary.
 
 ## Acceptance requirements and limits
 

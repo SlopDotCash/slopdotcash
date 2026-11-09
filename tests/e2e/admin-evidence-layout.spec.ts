@@ -655,6 +655,47 @@ test("each evidence read sends its reason and shows the verified text or exact b
   });
 
   // Binary evidence is verified, then saved, never displayed.
+  await page.evaluate(() => {
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    const timeout = window.setTimeout.bind(window);
+    const state = {
+      created: [] as string[],
+      revoked: [] as string[],
+      scheduled: 0,
+      nextTimer: false,
+      release: () => {},
+    };
+    Object.assign(window, { evidenceBlobLifetime: state });
+    URL.createObjectURL = (blob) => {
+      const url = create(blob);
+      state.created.push(url);
+      state.nextTimer = true;
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      state.revoked.push(url);
+      revoke(url);
+    };
+    // The real component registers its 1000ms cleanup synchronously after
+    // the blob click. Hold only that callback to deliver it after departure.
+    window.setTimeout = ((
+      handler: TimerHandler,
+      delay?: number,
+      ...args: unknown[]
+    ) => {
+      if (state.nextTimer && delay === 1000 && typeof handler === "function") {
+        state.nextTimer = false;
+        state.scheduled++;
+        state.release = () => {
+          handler(...args);
+        };
+        window.setTimeout = timeout;
+        return 0;
+      }
+      return timeout(handler, delay, ...args);
+    }) as typeof window.setTimeout;
+  });
   await page
     .getByRole("button", {
       name: `Select Binary sample, ${binaryHash.slice(0, 12)}`,
@@ -685,4 +726,38 @@ test("each evidence read sends its reason and shows the verified text or exact b
   });
   expect(bodyReads).toEqual(["grant-1", "grant-2"]);
   await expectAccessible(page);
+  const createdUrls = await page.evaluate(() => {
+    const { created, revoked, scheduled } = (
+      window as typeof window & {
+        evidenceBlobLifetime: {
+          created: string[];
+          revoked: string[];
+          scheduled: number;
+        };
+      }
+    ).evidenceBlobLifetime;
+    return { created, revoked, scheduled };
+  });
+  expect(createdUrls.created).toHaveLength(1);
+  expect(createdUrls.revoked).toEqual([]);
+  expect(createdUrls.scheduled).toBe(1);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/how-it-works");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page.locator(".evidence-object")).toHaveCount(0);
+  const revokedUrls = await page.evaluate(() => {
+    const state = (
+      window as typeof window & {
+        evidenceBlobLifetime: {
+          created: string[];
+          revoked: string[];
+          release(): void;
+        };
+      }
+    ).evidenceBlobLifetime;
+    state.release();
+    return state.revoked;
+  });
+  expect(revokedUrls).toEqual(createdUrls.created);
 });

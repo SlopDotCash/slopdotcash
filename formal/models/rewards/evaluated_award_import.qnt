@@ -1,7 +1,10 @@
 // @source scripts/validate-evaluator-awards.ts
 // @source src/lib/evaluator-awards.ts
-// Reviewed bounded award manifests must have unique IDs, canonical work,
-// actor/PR review pair, and external-content identity. Scores are not payments.
+// Narrow single-repository, two-external-award abstraction: IDs, canonical
+// work and archived content are unique. `reviewed` is the repository review
+// assumption, not a live approval lookup performed by the loader. The concrete
+// file/manifest and per-kind duplicate pipeline is in evaluated_award_loader.
+// Scores are not payments.
 module evaluated_award_import {
   type S={ids:Set[int],works:Set[int],content:Set[int],points:int,paid:bool}
   var s:S

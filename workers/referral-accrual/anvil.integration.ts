@@ -442,6 +442,151 @@ try {
   await refreshReferralClaims(claimEnv, cacheClock, claimFetch);
   assert.equal((await claimAccount()).claimableBase, CUMULATIVE.toString());
 
+  // Source-authored concurrency regressions; not executed in this change.
+  // Keep the real refresh, migrated SQLite and local chain evidence. Hold only
+  // the final cache statement, after the successful projection has completed.
+  const cacheRow = () =>
+    sqlite
+      .query(
+        "SELECT body,observed_at,error_at FROM referral_claim_cache WHERE id='program'",
+      )
+      .get() as {
+      body: string | null;
+      observed_at: string | null;
+      error_at: string | null;
+    } | null;
+  function holdCacheWrite(kind: "success" | "failure") {
+    let release = () => {};
+    let entered = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let held = false;
+    const heldDb: typeof db = {
+      ...db,
+      prepare(sql) {
+        const statement = db.prepare(sql);
+        const matches =
+          sql.startsWith("INSERT INTO referral_claim_cache") &&
+          sql.includes(
+            kind === "success"
+              ? "VALUES('program',?,?,NULL)"
+              : "VALUES('program',NULL,NULL,?)",
+          );
+        if (!matches) return statement;
+        const wrap = (
+          value: ReturnType<typeof db.prepare>,
+        ): ReturnType<typeof db.prepare> => ({
+          ...value,
+          bind: (...values: unknown[]) => wrap(value.bind(...values)),
+          async run() {
+            if (!held) {
+              held = true;
+              entered();
+              await gate;
+            }
+            return value.run();
+          },
+        });
+        return wrap(statement);
+      },
+    };
+    return { env: { ...claimEnv, REFERRAL_DB: heldDb }, reached, release };
+  }
+  const cacheTime = (seconds: number) =>
+    new Date(cacheClock.getTime() + seconds * 1000);
+  const failCache = (at: Date, selected = claimEnv) =>
+    assert.rejects(
+      refreshReferralClaims(
+        { ...selected, REFERRAL_DISTRIBUTOR_CODE_HASH: undefined },
+        at,
+        claimFetch,
+      ),
+      /Referral claim refresh failed/,
+    );
+  const waitForCacheWrite = (reached: Promise<void>, operation: Promise<void>) =>
+    Promise.race([
+      reached,
+      operation.then(() => {
+        throw new Error("Refresh ended before the held cache write");
+      }),
+    ]);
+  sqlite.exec("SAVEPOINT claim_cache_write_order");
+  try {
+    const baseline = cacheRow();
+    assert.ok(baseline?.body);
+    const older = holdCacheWrite("success");
+    const success = refreshReferralClaims(older.env, cacheTime(1), claimFetch);
+    try {
+      await waitForCacheWrite(older.reached, success);
+      await failCache(cacheTime(2));
+    } finally {
+      older.release();
+      await success;
+    }
+    assert.deepEqual(cacheRow(), {
+      ...baseline,
+      error_at: cacheTime(2).toISOString(),
+    });
+    await refreshReferralClaims(claimEnv, cacheTime(3), claimFetch);
+    assert.equal(cacheRow()?.observed_at, cacheTime(3).toISOString());
+    assert.equal(cacheRow()?.error_at, null);
+
+    const oldFailure = holdCacheWrite("failure");
+    const failing = failCache(cacheTime(4), oldFailure.env);
+    try {
+      await waitForCacheWrite(oldFailure.reached, failing);
+      await failCache(cacheTime(5));
+    } finally {
+      oldFailure.release();
+      await failing;
+    }
+    assert.equal(cacheRow()?.error_at, cacheTime(5).toISOString());
+
+    const equal = holdCacheWrite("success");
+    const equalSuccess = refreshReferralClaims(
+      equal.env,
+      cacheTime(6),
+      claimFetch,
+    );
+    try {
+      await waitForCacheWrite(equal.reached, equalSuccess);
+      await failCache(cacheTime(6));
+    } finally {
+      equal.release();
+      await equalSuccess;
+    }
+    assert.equal(cacheRow()?.observed_at, cacheTime(3).toISOString());
+    assert.equal(cacheRow()?.error_at, cacheTime(6).toISOString());
+
+    sqlite.exec("DELETE FROM referral_claim_cache");
+    const initial = holdCacheWrite("success");
+    const firstSuccess = refreshReferralClaims(
+      initial.env,
+      cacheTime(7),
+      claimFetch,
+    );
+    try {
+      await waitForCacheWrite(initial.reached, firstSuccess);
+      await failCache(cacheTime(8));
+    } finally {
+      initial.release();
+      await firstSuccess;
+    }
+    assert.deepEqual(cacheRow(), {
+      body: null,
+      observed_at: null,
+      error_at: cacheTime(8).toISOString(),
+    });
+  } finally {
+    sqlite.exec(
+      "ROLLBACK TO claim_cache_write_order; RELEASE claim_cache_write_order",
+    );
+  }
+
   const readEvidence: ReferralWatchFetch = async (input, init) => {
     const request = new Request(input, init);
     if (new URL(request.url).origin === publicOrigin) {
