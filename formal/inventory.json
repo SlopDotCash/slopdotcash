@@ -32,12 +32,12 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "8d9add688e30575e90f7a2e5c84fba466af66ef4b0569d48062907d423986dcc",
+      "sha256": "693bf34637fd5f7deca03003d05db6a5234c08ca037a384444891ca41d5ed6a5",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [187],
+      "candidateLines": [188],
       "review": "mapped-abstraction"
     },
     {
@@ -3019,7 +3019,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "8cd1f9d5ff8691514cd31ab40bf5d6dad64dc7cdd569eba7b7a1bd0c6589e305",
+      "sha256": "b0fac598b4b3b43a0e1e7cf9ead21cc5e4f5ab9ea8372ca36599671e24d05568",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"

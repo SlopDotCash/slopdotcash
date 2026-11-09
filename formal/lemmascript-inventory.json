@@ -2537,7 +2537,7 @@
 {"path":"scripts/child-environment.mjs","sha256":"4f9ca5ede116387430cfd37919920c777a742bab25f9ce07bc1dc624a0b5be62","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"childEnvironment","kind":"FunctionDeclaration","line":35,"sha256":"b9e71426cb77e68176ce639281527a3d423ecbd224598fff61654c0d95e8f3bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]}
 ]},
-{"path":"scripts/ci-scope.mjs","sha256":"8cd1f9d5ff8691514cd31ab40bf5d6dad64dc7cdd569eba7b7a1bd0c6589e305","language":"javascript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/ci-scope.mjs","sha256":"b0fac598b4b3b43a0e1e7cf9ead21cc5e4f5ab9ea8372ca36599671e24d05568","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"changed","kind":"ArrowFunction","line":27,"sha256":"7cbca26d1194394298db7f617a8ea78caaed0e2f8dc3fc1e544eeccb2292aa3c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@27>","kind":"ArrowFunction","line":27,"sha256":"ce1d987ac11cfc43f1192231eed652312fa16b90d76d38a684b6e32b929c7c47","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@41>","kind":"ArrowFunction","line":41,"sha256":"0c64ea6e4679183f76f8d63779e9e423cef16c5a9bbee2838da6f8f12ce57129","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

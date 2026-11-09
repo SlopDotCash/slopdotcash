@@ -104,7 +104,7 @@ for (const [key, value] of Object.entries({
     !pr ||
     (!promotion &&
       changed(
-        /^contracts\/solana\/|^backend\/(security|fee-conversions)\/|^workers\/fee-converter\/|^migrations\/|^src\/lib\/security-bounty\.|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/(ci-scope\.mjs$|local-solana-validator\.|escrow-acceptance(?:\/|\.ts$))|^tests\/(direct-bounty-solana-chain\.ts$|e2e\/solana-vault-actions\.spec\.ts$)/u,
+        /^contracts\/solana\/|^backend\/(security|fee-conversions)\/|^workers\/fee-converter\/|^migrations\/|^src\/lib\/security-bounty\.|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/(ci-scope\.mjs$|local-solana-validator\.|escrow-acceptance(?:\/|\.ts$))|^tests\/(direct-bounty-(?:solana-)?chain\.ts$|e2e\/solana-vault-actions\.spec\.ts$)/u,
       )),
   evm:
     !pr ||
