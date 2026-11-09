@@ -6691,7 +6691,7 @@
     },
     {
       "path": "workers/payment-executor/binding-shared.ts",
-      "sha256": "540e879e559c24bb42f9dc99082edcaabec24094711a2be1fae8a673d4a70b33",
+      "sha256": "50c3d1cee85ae20ecfacef34c587adad8a43169597a2c69fd422dd847c212bd3",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",

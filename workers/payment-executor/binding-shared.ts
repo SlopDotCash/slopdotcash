@@ -23,7 +23,7 @@ import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 
 export type Hex = `0x${string}`;
 
-type SignerInput = {
+export type SignerInput = {
   type: "eip1559";
   chainId: number;
   nonce: number;

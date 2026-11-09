@@ -9468,7 +9468,7 @@
 {"name":"<ArrowFunction@305>","kind":"ArrowFunction","line":305,"sha256":"2ce0d4653558cd11a0e538b560f453f8fe33b93f6675d29b0a4436267b9f8494","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"<ArrowFunction@325>","kind":"ArrowFunction","line":325,"sha256":"9104de258918edd59dd7cf8adb156bd179f06c6c06fd4f2071373d01a873d582","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/payment-executor/binding-shared.ts","sha256":"540e879e559c24bb42f9dc99082edcaabec24094711a2be1fae8a673d4a70b33","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/payment-executor/binding-shared.ts","sha256":"50c3d1cee85ae20ecfacef34c587adad8a43169597a2c69fd422dd847c212bd3","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"assertEvmNativeCost","kind":"FunctionDeclaration","line":119,"sha256":"fa72163d1c541a96e9e911666063b7f58c827367c4c6d4b059846dd034250ef9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"<ArrowFunction@125>","kind":"ArrowFunction","line":125,"sha256":"afd7a601710af4d95902b8087fd4f4ade56dcc5823a5d50deed0464a09792094","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@136>","kind":"ArrowFunction","line":136,"sha256":"08187bbbba803c388cf7bca7cd4ecdccb2ead5d943ea89cabe444f0ca507bdaa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
