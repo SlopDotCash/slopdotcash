@@ -41,7 +41,7 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "a727bd3ea935abd0699615236c6f6d5eb55208f35f9085c8eaac1719cd7c7807",
+      "sha256": "2ffc8c27f0ee4a98ab4ec7733c8ea8f35ebb1cfe40e30a2d43cdd03fa9b8d9c1",
       "models": [
         "formal/models/ci_coverage.qnt",
         "formal/models/formal_toolchain.qnt",
