@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "6f8b360cfd3607da62da5eb84fc30194b96b9ca43b75ddb4ab6c347d5fceadff",
+      "sha256": "4c4b0275778a6f2134bd5f52cea0008dba718dd627c087cd18a59b137bd869d9",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 291, 365, 446, 511, 512, 526, 537, 602,
-        832, 860, 898, 914, 924, 925, 1014, 1114, 1116, 1117, 1281, 1364, 1517,
-        1519, 1549, 1645, 1667, 1738, 1749, 1774, 1843, 1856, 1869, 1878, 1879,
-        1880
+        27, 59, 154, 186, 191, 192, 240, 291, 365, 463, 528, 529, 543, 554, 619,
+        849, 877, 915, 931, 941, 942, 1031, 1131, 1133, 1134, 1298, 1381, 1534,
+        1536, 1566, 1662, 1684, 1755, 1766, 1791, 1860, 1873, 1886, 1895, 1896,
+        1897
       ],
       "review": "mapped-abstraction"
     },

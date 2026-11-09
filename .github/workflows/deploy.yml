@@ -370,7 +370,24 @@ jobs:
           set -euo pipefail
           bun run typecheck
           bun run lint:check
-          bun run test
+          # The unit shards partition `bun run test` exactly
+          # (scripts/unit-shards.test.ts) and mostly wait on child processes,
+          # so they share this runner instead of queueing more jobs.
+          pids=()
+          for shard in vetting scripts workers backend; do
+            bun run test:unit:shard "$shard" > "unit-$shard.log" 2>&1 &
+            pids+=("$!")
+          done
+          failed=0
+          for index in "${!pids[@]}"; do
+            if ! wait "${pids[$index]}"; then failed=1; fi
+          done
+          for shard in vetting scripts workers backend; do
+            echo "::group::unit shard $shard"
+            cat "unit-$shard.log"
+            echo "::endgroup::"
+          done
+          test "$failed" = 0
           bun run test:integration
 
       - name: Run installer lifecycle end-to-end checks
