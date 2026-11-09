@@ -4073,6 +4073,47 @@ test("a lost close response reconciles GitHub evidence without another PATCH or 
   });
 }, 30000);
 
+test("a lost close response reconciles under its recorded key after the policy digest changes", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextClose({ loseResponse: true });
+    const first = run.review().catch((error: unknown) => error);
+    await paused.entered;
+    paused.release();
+    expect(await first).toBeInstanceOf(Error);
+    const [recorded] = run.sql(
+      "SELECT review_key FROM slopbot_close_attempts",
+    ) as { review_key: string }[];
+    expect(recorded?.review_key).toBeString();
+    // A repository policy change after the close yields a new review key.
+    run.repositoryConfig(
+      JSON.stringify({
+        version: 1,
+        audience: "protection",
+        closure: true,
+        dailyCloseCap: 7,
+      }),
+    );
+    const calls = run.modelInputs.length;
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.modelInputs).toHaveLength(calls);
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
+    expect(
+      run.sql("SELECT review_key, state FROM slopbot_close_attempts"),
+    ).toEqual([{ review_key: recorded?.review_key, state: "confirmed" }]);
+    expect(
+      run.sql(
+        `SELECT status FROM slopbot_reviews WHERE review_key = '${recorded?.review_key}'`,
+      ),
+    ).toEqual([{ status: "completed" }]);
+    expect(run.sql(PENALTY)).toHaveLength(1);
+  });
+}, 30000);
+
 test("an unconfirmed close keeps its slot and cannot be resent while GitHub still shows open", async () => {
   setSystemTime(new Date(CLOSED_AT));
   await closedItem(async (run) => {

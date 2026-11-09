@@ -224,12 +224,10 @@ export async function runValueInference<T>(
       inferredAt,
     });
   }
-  if (result.calls.length)
-    await reconcileValueBudget(
-      budget.db,
-      budget.attemptId,
-      result.calls.length,
-    );
+  // Every returned route settles its reservation. With no call (authority
+  // refused or failed before the first request) nothing can still be billed;
+  // an unsettled reservation would otherwise hold capacity forever.
+  await reconcileValueBudget(budget.db, budget.attemptId, result.calls.length);
   if (!result.blocked && result.verdict && result.servedBy) {
     const completed = await readValueInference(budget.db, key, output.validate);
     if (!completed) throw new Error("Validated inference was not retained");

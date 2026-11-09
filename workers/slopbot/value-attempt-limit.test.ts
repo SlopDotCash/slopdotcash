@@ -23,6 +23,7 @@ const MIGRATIONS = [
   "0084_slopbot_attempt_accounting.sql",
   "0085_slopbot_provider_failure_notices.sql",
   "0104_slopbot_value_inference_attempts.sql",
+  "0118_slopbot_zero_call_reconciliation.sql",
 ];
 
 const output = (sourceDigest: string) => ({

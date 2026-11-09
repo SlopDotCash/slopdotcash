@@ -1163,7 +1163,6 @@ export async function reviewItem(
     if (issue.state !== "closed") {
       if (pendingClose.state === "pending") throw new store.ReviewBusyError(60);
     } else if (
-      pendingClose.review_key === reviewKey &&
       pendingClose.revision === context.revision &&
       pendingClose.author_id === issue.user.id &&
       closedBySlopbotApp(env, issue)
@@ -1172,11 +1171,16 @@ export async function reviewItem(
       if (closedAt === null)
         throw new Error("Close time is unavailable; reconciliation is pending");
       const recovery = JSON.parse(pendingClose.recovery_json) as CloseRecovery;
+      // A close outcome belongs to the review that reserved it. A later
+      // policy, base or verifier change gives the current item a new key;
+      // recovery still settles the recorded attempt under its own key, or
+      // the pending slot and closed item would never reconcile.
+      const closeKey = pendingClose.review_key;
       const token = crypto.randomUUID();
       const claimed = await store.startReview(
         db,
         {
-          reviewKey,
+          reviewKey: closeKey,
           installationId: job.installationId,
           repositoryId: job.repositoryId,
           itemKind: job.itemKind,
@@ -1190,12 +1194,12 @@ export async function reviewItem(
         token,
       );
       if (claimed === "exists") return "review already completed";
-      const claim = { reviewKey, token };
+      const claim = { reviewKey: closeKey, token };
       try {
         await confirmClose(db, pendingClose.attempt_id, closedAt);
         if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
           await reconcileConfirmedReopen(env, job, context);
-          await store.finishReview(db, reviewKey, token, "completed", {
+          await store.finishReview(db, closeKey, token, "completed", {
             verdict: recovery.verdict,
             action: "close",
           });
@@ -1209,14 +1213,14 @@ export async function reviewItem(
                 projectId: pendingClose.project_id,
                 authorId: issue.user.id,
                 category: recovery.verdict.category,
-                reviewKey,
+                reviewKey: closeKey,
                 closedAt,
               })
             : null;
         if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
           await reversePenalty(db, issue.node_id, "maintainer_reopen");
           await reconcileConfirmedReopen(env, job, context);
-          await store.finishReview(db, reviewKey, token, "completed", {
+          await store.finishReview(db, closeKey, token, "completed", {
             verdict: recovery.verdict,
             action: "close",
           });
@@ -1236,7 +1240,7 @@ export async function reviewItem(
             }),
             claim,
           );
-          await confirmCloseComment(db, reviewKey);
+          await confirmCloseComment(db, closeKey);
         }
         if (
           penalty?.moderator_review === 1 &&
@@ -1248,13 +1252,13 @@ export async function reviewItem(
         )
           await addLabels(env, job, context.github, [MODERATOR_LABEL]);
         await notifyScamReviewForPenalty(env, job, issue, penalty);
-        await store.finishReview(db, reviewKey, token, "completed", {
+        await store.finishReview(db, closeKey, token, "completed", {
           verdict: recovery.verdict,
           action: "close",
         });
         return `closed (${recovery.verdict.category})`;
       } catch (error) {
-        await store.finishReview(db, reviewKey, token, "failed", {
+        await store.finishReview(db, closeKey, token, "failed", {
           skipReason: "Close reconciliation did not finish",
         });
         throw error;
