@@ -210,6 +210,10 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Payout consent UI and Solana account API | `ui_payout_consent_lifetime`, `ui_payout_consent`, `solana_binding_api` | `src/PayoutConsent.tsx`, `src/Earnings.tsx`, `backend/payments/handler.ts`, `tests/e2e/payout-consent.spec.ts`, `contracts/solana/integration/executor.e2e.mjs` |
 | Wallet-provider calls and mutable signing bytes | `evm_wallet_discovery`, `solana_wallet_provider`, `solana_binding_wire`, `solana_message_buffers` | `src/lib/use-payout-wallets.ts`, `src/lib/payout-consent.ts`, `src/PayoutConsent.tsx`, `tests/e2e/payout-wallet-picker.spec.ts`, `tests/e2e/payout-consent.spec.ts` |
 | Expired Solana payment history | `ui_solana_history_recovery`, `solana_history_retirement`, `direct_solana_retirement` | `src/SolanaBountyRecovery.tsx`, `backend/security/direct-solana-recovery.ts`, `tests/e2e/solana-history-recovery.spec.ts`, `formal/tests/direct-solana-retirement.test.ts` |
+| Public payment history and received totals | `payment_history`, `received_totals` | `backend/payments/public-records.ts`, `src/lib/use-vault-payments.ts`, `backend/payments/public-records.test.ts` |
+| Generated project skill publication | `project_skill_publication` | `backend/projects/skill-publication.ts`, `src/lib/project-skill-publication.mjs`, `scripts/project-registry-api.test.ts` |
+| Retained value-dispute evidence and triage | `bot_value_dispute_binding`, `bot_value_dispute_read`, `bot_value_dispute_actor`, `bot_value_dispute_draft` | `workers/slopbot/value-disputes.ts`, `workers/slopbot/penalty-appeal.test.ts` |
+| Archive filters, clocks and historical detail | `ui_cycle_archive`, `ui_cycle_publication`, `ui_record_deadlines` | `src/CyclePages.tsx`, `src/App.tsx`, `tests/e2e/site.spec.ts`, `tests/e2e/ui-clock-transitions.spec.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -563,6 +567,62 @@ and [signature-status lookup](https://solana.com/docs/rpc/http/getsignaturestatu
 explain the distinction between a valid message signature and evidence of a
 landed payment. The new scenarios and browser regressions remain unexecuted;
 neither these models nor local signature verification prove provider history.
+
+Public payment history now separates the boundary, count and page queries.
+The rowid boundary excludes later appends but does not freeze membership
+visibility or a later monthly attribution. The client rejects changed totals,
+duplicates and incomplete collections before publishing. Direct disclosed
+transfers intentionally have different membership rules from vault receipts.
+The received-total model captures each table's boundary separately and keeps
+the 20,000-row limit per table. It validates vault evidence before excluding
+testnet rows, keeps other assets out of the reference-USD sum, and distinguishes
+a failed build from an empty result and a later cache hit. Fixed valid prefixes
+represent the large-count boundary; they do not prove every large dataset.
+
+Generated skill publication models captured project and restriction reads,
+template and file hashes, both rendered roles, and final path selection. A
+failure in the second role does not expose the first role as a completed
+package. Normal permanent admission is separate from reinstatement's pin
+checks. The aggregate template digest and renderer coherence remain trusted
+build inputs. A completed request can reflect an earlier captured revision;
+the model does not claim atomicity with later D1 or deployment changes. Terms,
+discovery filtering, unverified clearance, thrown dependency failures and
+GET/HEAD behavior retain their separate source outcomes. These new models
+and their named scenarios have not been executed.
+
+Value disputes distinguish the current assessment lookup from a retained
+digest-bound appeal. A joint successor takes precedence during current lookup;
+an invalid joint record cannot silently fall back to an older single record.
+Later corrections do not retarget a bound appeal. Eligibility separates joint
+implementation claims, retained reviewed sources and current-head commit
+authors. Triage records provider calls before returning its result; failed
+usage writes can leave a durable prefix or a committed row with a lost reply.
+The model keeps those outcomes separate from a returned draft. Missing source,
+changed head/base and partial joint evidence cap confidence at 0.89. A draft
+does not change scores, payments, penalties or pull requests. Existing worker
+tests use synthetic providers and do not supply live-provider acceptance.
+
+GitHub's [PR commits endpoint](https://docs.github.com/en/rest/pulls/pulls#list-commits-on-a-pull-request)
+returns at most 250 commits. The dispute eligibility path now reuses the
+existing complete-range reader for every commit-author lookup, including short
+lists that could change after their metadata was read. It checks the current
+PR identity and head before collecting authors and
+requires the comparison to reconcile the full count and observed commit IDs.
+Incomplete evidence remains an error that can retry, rather than an unaffected
+actor result. The authored worker regressions include an author whose only
+commit is number 251; they have not run.
+
+The cycle archive now normalizes unavailable URL filters against the current
+published options and schedules the next review or staleness deadline. A
+validated historical record can open without a live leaderboard. Historical
+project lookup is limited to cycle routes; retired records link back to the
+filtered archive. An unavailable index cannot silently substitute a live
+allocation, and a newly published record discovered during a permitted live
+fallback takes precedence over recomputation. The archive model bounds two
+projects/records, two index generations, one snapshot bundle and four clock
+positions. Browser regression definitions cover these transitions but remain
+unexecuted. The separate risk-flag component is unmounted; its local model does
+not establish an available UI flow.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
