@@ -25,6 +25,7 @@ import {
   REGISTERED_REPOSITORIES,
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
+import { eventThirds } from "../src/lib/score-penalties";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
 
 type JsonRecord = Record<string, unknown>;
@@ -182,10 +183,6 @@ function actorId(value: unknown): string {
     throw new TypeError("actor.id must be a non-empty string");
   }
   return actor.id;
-}
-
-function eventThirds(event: ScoreEvent): number {
-  return event.scoreThirds ?? event.points * 3;
 }
 
 function v2WorkUnit(event: ScoreEvent): string {
