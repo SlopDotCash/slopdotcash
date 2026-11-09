@@ -271,17 +271,18 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "6926d8210f6cb1012f0891eb1f8b59f8fef40ab9edafc5692f2f9c2d207a0fba",
+      "sha256": "e086863ae8ff68a624b7a90105fc810e5a9e70f48eb836d8a6cb9eac4b8451fc",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/effective_wallet_history.qnt",
         "formal/models/payments/payment_history.qnt",
-        "formal/models/rewards/monthly_owner_completion.qnt"
+        "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
-        104, 184, 251, 295, 300, 347, 369, 375, 398, 420, 613, 634, 648, 768,
-        824, 862, 871, 882, 1021, 1084, 1101, 1191, 1192, 1246
+        105, 185, 252, 296, 301, 348, 370, 376, 399, 421, 614, 635, 649, 769,
+        825, 863, 872, 883, 1022, 1085, 1102, 1192, 1193, 1256
       ],
       "review": "mapped-abstraction"
     },
@@ -10276,15 +10277,19 @@
     },
     {
       "path": "formal/models/rewards/monthly_source_conflict.qnt",
-      "sha256": "39f798b843102e39ba67c6a9862bde5eebc2ea717fe9d7c448a3c60efda6debd",
+      "sha256": "9af994f1b930e934dec69a36911ece925bab6c60f1dd5b32f5602c7450243cef",
       "sources": [
         "backend/payments/chain-awards.ts",
+        "backend/payments/handler.ts",
         "backend/payments/monthly.ts"
       ],
       "scenarios": [
         "differentActorRefusedTest",
         "evmMatchingNeedsNoNewFundsTest",
-        "solanaWholeMonthNeedsFundsTest"
+        "matchingFeeReplacesAwardTest",
+        "solanaWholeMonthNeedsFundsTest",
+        "unreservedAwardRemainsVisibleTest",
+        "wrongFeeRemainsVisibleTest"
       ]
     },
     {
