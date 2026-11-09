@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 716,
-    "functions": 9893,
+    "files": 717,
+    "functions": 9900,
     "selectedContractTargets": 183,
-    "unprovedFunctions": 9710,
+    "unprovedFunctions": 9717,
     "nonTypeScriptFiles": 53
   },
   "limits": [
@@ -9741,6 +9741,15 @@
 {"name":"preparePermissionlessSolanaPayment","kind":"FunctionDeclaration","line":710,"sha256":"6ab5b3e798cdd6cdf277c093f49730d3219ca17fd94a5de7b36934a572b5bbb2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
 {"name":"submitPermissionlessSolanaPayment","kind":"FunctionDeclaration","line":738,"sha256":"8c99060535d468ca953ba2e90549113d9a013bd1470adabbf126573e89e9b4d3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"<ArrowFunction@764>","kind":"ArrowFunction","line":764,"sha256":"be9727a9d29e12d6de79adb7f0ab30f49663a1d64368fab33a32de5ec3dfe19f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+]},
+{"path":"workers/payment-executor/test-journal.ts","sha256":"119002b025a871d59c4555c46273fbee765c29a526f5c4d2125f4827b4ecf44c","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"memoryJournal","kind":"FunctionDeclaration","line":6,"sha256":"48f9e2e37b4a155a3a0c11d00944dc80a6f3414a8ff3e7578fec21e9a8d52a87","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"get","kind":"MethodDeclaration","line":9,"sha256":"5771d092123a728c9c78f96685b0b79077fc7ef21446d903305280579980f36d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"put","kind":"MethodDeclaration","line":12,"sha256":"feb16c4d908244f44b2555acbdc8c7f5f8f00973ac7a3e3933460095c7f5e1bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"transaction","kind":"MethodDeclaration","line":15,"sha256":"71d102daf98fe4b069853276dd9dbb858816836a0f1cd5d130c32961f2e59763","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"serveJsonRpc","kind":"FunctionDeclaration","line":26,"sha256":"929b01ec35452a27781aeedb4a385ca9f96d55e9743d6ec216d8f705df1d0551","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"fetch","kind":"MethodDeclaration","line":31,"sha256":"9325a6b87c750e82b5f62062277f019fe580e1217bfc1587df41c4eb94cd006f","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"stop","kind":"ArrowFunction","line":51,"sha256":"c85ff094443964a59769801922c31428d23e7b15d1eb516b01350c0c6f16f345","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"workers/payments/deployment-types.ts","sha256":"0a42a7655acde6f5bfa285537a3e1c1943366d36c7bc65d203bd3c8148724f1b","language":"typescript","disposition":"no-function-body","functions":[
 

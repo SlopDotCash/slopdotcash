@@ -6820,6 +6820,14 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/payment-executor/test-journal.ts",
+      "sha256": "119002b025a871d59c4555c46273fbee765c29a526f5c4d2125f4827b4ecf44c",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Test-only doubles: an in-memory journal map and a local JSON-RPC server whose answers come from the calling test. No production code imports it; the signer journal and attempt lifecycles are modeled where PaymentSignerJournal and the executor are mapped."
+    },
+    {
       "path": "workers/payments/deployment-types.ts",
       "sha256": "0a42a7655acde6f5bfa285537a3e1c1943366d36c7bc65d203bd3c8148724f1b",
       "models": [],

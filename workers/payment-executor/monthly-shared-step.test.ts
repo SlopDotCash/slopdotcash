@@ -32,12 +32,13 @@ import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
-import type { Attempt, JournalStore } from "./binding-shared";
+import type { Attempt } from "./binding-shared";
 import {
   type PublicEvmExecutorEnvironment,
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "./core";
+import { memoryJournal, serveJsonRpc } from "./test-journal";
 
 const keeper = privateKeyToAccount(`0x${"7".repeat(64)}`);
 const identity = privateKeyToAccount(`0x${"6".repeat(64)}`);
@@ -229,48 +230,13 @@ function answer(method: string, params: unknown[]) {
       throw new Error(`Unexpected RPC ${method}`);
   }
 }
-let server: ReturnType<typeof Bun.serve>;
+let rpc: ReturnType<typeof serveJsonRpc>;
 let rpcUrl: string;
 beforeAll(() => {
-  server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const { id, method, params } = (await request.json()) as {
-        id: number;
-        method: string;
-        params: unknown[];
-      };
-      const result = answer(method, params);
-      return Response.json(
-        result && typeof result === "object" && "error" in result
-          ? {
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32000, message: result.error },
-            }
-          : { jsonrpc: "2.0", id, result },
-      );
-    },
-  });
-  rpcUrl = `http://127.0.0.1:${server.port}`;
+  rpc = serveJsonRpc(answer);
+  rpcUrl = rpc.url;
 });
-afterAll(() => server.stop(true));
-
-function memoryJournal(): JournalStore {
-  const values = new Map<string, unknown>();
-  const journal: JournalStore = {
-    async get<T>(key: string) {
-      return structuredClone(values.get(key)) as T | undefined;
-    },
-    async put<T>(key: string, value: T) {
-      values.set(key, structuredClone(value));
-    },
-    async transaction(callback) {
-      return callback(journal);
-    },
-  };
-  return journal;
-}
+afterAll(() => rpc.stop());
 
 /** The keeper's executor environment: its own gas key and bounded fee replacement. */
 function keeperEnvironment(): PublicEvmExecutorEnvironment {

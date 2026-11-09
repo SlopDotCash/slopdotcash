@@ -24,8 +24,8 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { JournalStore } from "../payment-executor/binding-shared";
 import { PaymentSignerJournal } from "../payment-executor/index";
+import { memoryJournal, serveJsonRpc } from "../payment-executor/test-journal";
 import { recoverUncertainAttempts, runPaymentDispatch } from "./index";
 import { reconcileFailedAttempts } from "./reconcile";
 
@@ -151,48 +151,13 @@ function answer(method: string, params: unknown[]) {
       throw new Error(`Unexpected RPC ${method}`);
   }
 }
-let server: ReturnType<typeof Bun.serve>;
+let rpc: ReturnType<typeof serveJsonRpc>;
 let rpcUrl: string;
 beforeAll(() => {
-  server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const { id, method, params } = (await request.json()) as {
-        id: number;
-        method: string;
-        params: unknown[];
-      };
-      const result = answer(method, params);
-      return Response.json(
-        result && typeof result === "object" && "error" in result
-          ? {
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32000, message: result.error },
-            }
-          : { jsonrpc: "2.0", id, result },
-      );
-    },
-  });
-  rpcUrl = `http://127.0.0.1:${server.port}`;
+  rpc = serveJsonRpc(answer);
+  rpcUrl = rpc.url;
 });
-afterAll(() => server.stop(true));
-
-function memoryJournal(): JournalStore {
-  const values = new Map<string, unknown>();
-  const journal: JournalStore = {
-    async get<T>(key: string) {
-      return structuredClone(values.get(key)) as T | undefined;
-    },
-    async put<T>(key: string, value: T) {
-      values.set(key, structuredClone(value));
-    },
-    async transaction(callback) {
-      return callback(journal);
-    },
-  };
-  return journal;
-}
+afterAll(() => rpc.stop());
 
 async function stack() {
   const { db, sqlite } = sqliteD1(
