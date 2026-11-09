@@ -98,14 +98,11 @@ export async function requireSecuritySettingsActor(
     session = await currentProjectSession();
   } catch {
     throw new SecuritySettingsAccessLoss(
-      "Your private session could not be checked. Retry management access.",
+      "Your private session could not be checked.",
     );
   }
   if (session?.githubId !== actorId)
-    throw new SecuritySettingsAccessLoss(
-      "Your account changed. Retry management access.",
-      true,
-    );
+    throw new SecuritySettingsAccessLoss("Your account changed.", true);
 }
 
 /** Retain an ordinary error only after the initiating actor is rechecked. */
