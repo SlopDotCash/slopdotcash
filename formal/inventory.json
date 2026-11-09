@@ -2876,7 +2876,10 @@
     {
       "path": "migrations/0118_slopbot_zero_call_reconciliation.sql",
       "sha256": "c2995b5626a8b1a4912332eb393e217ac4c003d316b426294e39ea1af95e5543",
-      "models": ["formal/models/slopbot/bot_value_budget.qnt"],
+      "models": [
+        "formal/models/slopbot/bot_inference_retention.qnt",
+        "formal/models/slopbot/bot_value_budget.qnt"
+      ],
       "candidateLines": [13, 15, 17, 19],
       "review": "mapped-abstraction"
     },
@@ -4462,7 +4465,7 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "07358205cab3f1c5cdfb2e1fa85b01b657db56975959e92facdab55bc5ff7817",
+      "sha256": "d97230dcdfabcef13cef67ae44feeeeb4e14e1110c6aab0d5a0ba8ffec270857",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_owner_awards.qnt",
@@ -4471,8 +4474,8 @@
       ],
       "candidateLines": [
         3, 60, 93, 95, 98, 105, 106, 114, 115, 118, 125, 126, 129, 130, 184,
-        193, 198, 203, 272, 291, 336, 358, 368, 424, 447, 479, 498, 619, 620,
-        647, 648, 652, 657, 663, 680
+        193, 198, 203, 272, 291, 336, 358, 368, 424, 447, 482, 501, 622, 623,
+        650, 651, 655, 660, 666, 683
       ],
       "review": "mapped-abstraction"
     },
@@ -10992,13 +10995,19 @@
     },
     {
       "path": "formal/models/slopbot/bot_inference_retention.qnt",
-      "sha256": "a7ff04665e06bff0a2fb3737224cbb042f97d6305615228dd7b54cb851457eda",
+      "sha256": "f8fa9a14c3e045beff6cacccdef8887a5830cf8205978000e1bf7c5f8a972802",
       "sources": [
         "migrations/0054_slopbot_value_inference_results.sql",
         "migrations/0104_slopbot_value_inference_attempts.sql",
+        "migrations/0118_slopbot_zero_call_reconciliation.sql",
         "workers/slopbot/value-inference.ts"
       ],
-      "scenarios": ["retainedResultReusedTest", "usageFailureCannotPublishTest"]
+      "scenarios": [
+        "retainedResultReusedTest",
+        "unreconciledAttemptsExhaustLimitTest",
+        "usageFailureCannotPublishTest",
+        "zeroCallAttemptsDoNotExhaustLimitTest"
+      ]
     },
     {
       "path": "formal/models/slopbot/bot_installation_lifecycle.qnt",
@@ -12146,10 +12155,13 @@
     },
     {
       "path": "formal/models/ui/ui_owner_awards.qnt",
-      "sha256": "ed98adc9a95d504e8250577aef355a0948c3d606238c6adcf7a703c48e599f90",
+      "sha256": "cbee4a182e8c87d47efb45c1dc333c2df0d49436c0c2d235a24cdd83d96cfe25",
       "sources": ["src/OwnerAwards.tsx", "src/lib/use-time-boundary.ts"],
       "scenarios": [
         "cutoffTest",
+        "maintainerCannotChangeModeTest",
+        "maintainerCannotEditTest",
+        "maintainerCannotFinalizeTest",
         "manualTest",
         "savedOnlyTest",
         "staleSaveTest"

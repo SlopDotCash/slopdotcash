@@ -454,14 +454,17 @@ export default function OwnerAwards({
                             <time dateTime={view.cutoffAt}>
                               {formatDateTime(view.cutoffAt)}
                             </time>
-                            . You can finalize earlier.
+                            .
+                            {view.canManage
+                              ? " You can finalize earlier."
+                              : null}
                           </>
-                        ) : (
+                        ) : view.canManage ? (
                           "Finalize this month manually."
-                        )
-                      ) : (
+                        ) : null
+                      ) : view.canManage ? (
                         "Finalize each month manually."
-                      )}
+                      ) : null}
                     </span>
                   </p>
                   {view.canManage ? (

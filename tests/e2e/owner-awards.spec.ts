@@ -799,6 +799,11 @@ test("a maintainer without owner authority sees monthly awards without owner con
   const awards = page.getByRole("region", { name: "Monthly awards" });
   await expect(awards).toContainText("first-contributor");
   await expect(awards.getByText("View only")).toBeVisible();
+  await expect(awards).toContainText("Finalizes");
+  await expect(awards).not.toContainText("You can finalize earlier.");
+  await expect(awards).not.toContainText(
+    /finalize (this|each) month manually/i,
+  );
   await expect(awards.getByRole("textbox")).toHaveCount(0);
   for (const name of [/automatic finalization/, /^Save /, /^Finalize awards/])
     await expect(awards.getByRole("button", { name })).toHaveCount(0);
