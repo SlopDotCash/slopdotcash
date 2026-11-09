@@ -20,6 +20,16 @@ rollback and cleanup states in the [publication audit](contributor-lock-publicat
 It separates canonical ownership, returned handles and retained debris; its
 new model and native regression definitions remain unexecuted.
 
+The [cycle recovery review](cycle-publication-recovery-audit.md) changes caught
+publication failures to preserve the old public tree/promotion pair and records
+explicit recovery/cleanup states. The [backup publication review](vetting-backup-publication-audit.md)
+refines committed object, verification, queue and restore boundaries without a
+backup runtime change. Their new scenarios and native definitions are unexecuted.
+
+The [audit-retention model](vetting-audit-retention-audit.md) separately covers
+migration 0067's strict one-year cutoff and atomic rejection of a mixed-age
+delete. It changes no retention policy and has no new execution evidence.
+
 | Model | Source obligations reviewed | Bounds and implementation evidence |
 | --- | --- | --- |
 | `bot_review_lease` | `startReview`, `ownsReviewClaim`, `finishReview`; new/skipped/failed/completed states; expired tokens; immutable provider-cost recording | Three token generations, five clock instants. `workers/slopbot/formal-state.test.ts` replays actual Quint output through production D1 methods and migrated SQLite |

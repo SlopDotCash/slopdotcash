@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "3a6072acff16b1708e428a92015ad8a429ddd3d9094dd310f428a754083f4998",
+  "inventorySha256": "924f836ce9981261f49d5f0718a5ee543e46ecedf51d560320fefb40901c7ac7",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1130,8 +1130,11 @@
       "name": "phase",
       "kind": "sql-check",
       "values": ["backup", "cleanup", "complete"],
-      "models": ["formal/models/vetting_retention.qnt"],
-      "lexicallyUnmentionedValues": ["cleanup", "complete"],
+      "models": [
+        "formal/models/vetting_backup_chain.qnt",
+        "formal/models/vetting_retention.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

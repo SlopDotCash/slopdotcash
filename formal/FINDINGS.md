@@ -443,3 +443,27 @@ the private release path separately. Retry touches only that saved path under
 the guard, even after a successor acquires the canonical lock. Completion still
 requires successful guard cleanup. The new model and 11 native regression
 definitions in `contributor-lock-publication-audit.md` are unexecuted.
+
+## Cycle publication and backup recovery
+
+Cycle generation removed the old public tree before activating its replacement
+and wrote promotion bytes before staging finished. Write mode now stages both
+outputs under a publisher guard, retains old versions, and restores the old
+pair after caught activation errors. Failed restoration keeps recovery files
+and the guard. Post-commit cleanup errors explicitly retain the published pair.
+Already launched writes settle before cleanup. The revised model and native
+regression definitions are unexecuted; multi-path crash atomicity and source
+freshness are not claimed.
+
+The private backup model now distinguishes committed R2 objects, verified
+bytes, page/completion records, queue continuation, D1 phase and acknowledgment.
+A restore destination may exist before verification succeeds; exact retry and
+conflicting content are separate states. This was a model refinement, not a
+confirmed backup runtime defect. See `cycle-publication-recovery-audit.md` and
+`vetting-backup-publication-audit.md` for their different evidence boundaries.
+
+The migration's access-log retention rule also has a dedicated model: parsed
+old/equal/new/invalid dates, textual selection, statement-time cutoff and
+whole-statement rollback remain distinct. This restores a source mapping that
+the backup model refinement exposed as missing. It is model coverage, not a
+new runtime defect or proof of every timestamp format.

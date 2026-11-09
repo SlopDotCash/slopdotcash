@@ -3,6 +3,11 @@
 This review compared the seven requested root models with their current source
 entry points. It changed models, not application behavior.
 
+This is an earlier review checkpoint. The later
+[cycle recovery change](cycle-publication-recovery-audit.md) replaces the
+destructive publication behavior described below; its model and native
+regression definitions are unexecuted.
+
 - `dev_server_lifecycle`: a thrown health request may spawn the owned backend;
   a received health response for another origin logs refusal and does not spawn.
   Added the distinct mismatch path. Closing still fences late transport failure.

@@ -211,6 +211,21 @@ census now has 843 sources, 360 models and 2,324 scenarios; the function census
 contains 9,982 bodies in 687 files and 168 selected contracts. These counts do
 not establish implementation refinement or completion of this review.
 
+The cycle and backup follow-up adds one model and 50 scenarios across new and
+refined models. Cycle output now stages and publishes its tree/promotion pair
+under a writer guard, restores prior outputs on caught activation failure,
+and retains recovery state when restoration fails. Eight native regression
+definitions are added but unexecuted. Backup publication now distinguishes R2
+commit/readback, queue continuation, D1 phase and restore success. Access-log
+retention has a separate model for the strict yearly cutoff and statement
+rollback; neither refinement changes backup or retention runtime policy.
+See `cycle-publication-recovery-audit.md`, `vetting-backup-publication-audit.md`
+and `vetting-audit-retention-audit.md`. Current metadata lists 843 sources,
+361 models and 2,374 scenarios, with no unmapped source paths; it inventories
+9,996 function bodies in 687 files and the same 168 selected contracts. All
+new models/tests remain unexecuted. Evidence-bundle publication and the peer's
+pending proof/runtime PR retain separate review and acceptance boundaries.
+
 The reviewer independently confirmed that run `42533925495` attempt 2 passed
 against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,
 924 normal model stages and 168 selected function proofs in 33 modules. These

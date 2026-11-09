@@ -983,6 +983,7 @@
       "path": "backend/vetting/evidence-chunks.ts",
       "sha256": "ff024183afd14283597e5fe30263cf8c2b71bf431fe592dfd167c0a3b99cffc2",
       "models": [
+        "formal/models/vetting_backup_chain.qnt",
         "formal/models/vetting_evidence_upload.qnt",
         "formal/models/vetting_retention.qnt"
       ],
@@ -2344,14 +2345,17 @@
     {
       "path": "migrations/0067_vetting_audit_retention.sql",
       "sha256": "d3800669d6680985868d303ed8219d3693d2e3afc80118daeb4c344585dc05f8",
-      "models": ["formal/models/vetting_backup_chain.qnt"],
+      "models": ["formal/models/vetting_audit_retention.qnt"],
       "candidateLines": [2, 4, 5],
       "review": "mapped-abstraction"
     },
     {
       "path": "migrations/0068_vetting_storage_cycles.sql",
       "sha256": "b48b21b594f3ccebedd7f3fa53e86c1a98871eb72755c75e44899fafec21d5d6",
-      "models": ["formal/models/vetting_retention.qnt"],
+      "models": [
+        "formal/models/vetting_backup_chain.qnt",
+        "formal/models/vetting_retention.qnt"
+      ],
       "candidateLines": [20, 21, 23, 24],
       "review": "mapped-abstraction"
     },
@@ -3924,11 +3928,11 @@
     },
     {
       "path": "scripts/sync-cycle-index.ts",
-      "sha256": "7e3f3f5ce7e9aefd71db483951f05528565fd23d30126075265dc6a64b94dce1",
+      "sha256": "d1af855146a7f60aa167519bc47368ca842935547f5cce477d7bb8b3148c62d9",
       "models": ["formal/models/cycle_snapshot_publication.qnt"],
       "candidateLines": [
-        14, 16, 121, 193, 263, 469, 494, 529, 532, 556, 570, 621, 761, 825, 841,
-        845, 851
+        15, 18, 123, 195, 265, 471, 496, 531, 534, 558, 572, 623, 763, 829, 878,
+        883, 887, 891, 894, 899, 902, 904, 918, 921, 924
       ],
       "review": "mapped-abstraction"
     },
@@ -7581,6 +7585,7 @@
       "path": "workers/vetting-backup/core.ts",
       "sha256": "274eac0ea23d812417d8c8930113889857bdfd35240a935567d95188e35b5700",
       "models": [
+        "formal/models/vetting_audit_retention.qnt",
         "formal/models/vetting_backup_chain.qnt",
         "formal/models/vetting_object_lifecycle.qnt",
         "formal/models/vetting_retention.qnt"
@@ -9484,11 +9489,31 @@
     },
     {
       "path": "formal/models/cycle_snapshot_publication.qnt",
-      "sha256": "be2aedf0fa31e7ad285486fcf05dae8045d97d449ff97cf15286eface372ece5",
+      "sha256": "0745e0b63bf92dbe22f822425defefd65fc318adc1aa54e8d90c92229ffdd20c",
       "sources": ["scripts/sync-cycle-index.ts"],
       "scenarios": [
         "checkOnlyDoesNotAttestPublicTreeTest",
-        "failedRenameCanRemoveOldTreeTest",
+        "committedBackupCleanupFailureRetainsOldCopyTest",
+        "committedCleanupFailureDoesNotUndoPairTest",
+        "committedGuardCleanupFailureBlocksNextWriterTest",
+        "committedPromotionCleanupFailureRetainsBackupTest",
+        "crashAfterOldTreeMoveRetainsOldDataTest",
+        "crashBetweenPairCommitsIsNotAtomicTest",
+        "drainedFailureLeavesPriorPairTest",
+        "failedMetadataLeavesPriorPairTest",
+        "failedOldPromotionMoveRestoresTreeTest",
+        "failedOldTreeMoveKeepsPriorPairTest",
+        "failedPromotionCommitRestoresBothTest",
+        "failedPromotionRestoreRetainsBackupTest",
+        "failedRenameRestoresOldTreeTest",
+        "failedTreeRestoreRetainsBackupTest",
+        "failedTreeRetractionRetainsRecoveryInputsTest",
+        "failedWriteMustDrainSiblingsTest",
+        "firstPromotionCanPublishTest",
+        "freshPublicTreeCanPublishTest",
+        "partialStagingPreparationKeepsPriorPairTest",
+        "restoredFailureCanRetryTest",
+        "secondPublisherCannotEnterHeldGuardTest",
         "successfulTreeSwapTest"
       ]
     },
@@ -13717,10 +13742,35 @@
       ]
     },
     {
-      "path": "formal/models/vetting_backup_chain.qnt",
-      "sha256": "6a24a7a38cb28c3af6723d3544316ea30d30aa1c82c600ce0b4da705c482072f",
+      "path": "formal/models/vetting_audit_retention.qnt",
+      "sha256": "800bfc939b3b75135227d265a5fd01981ea8fc69212a0a8b2fe5671de6797ca6",
       "sources": [
         "migrations/0067_vetting_audit_retention.sql",
+        "workers/vetting-backup/core.ts"
+      ],
+      "scenarios": [
+        "directEqualBoundaryRefusedTest",
+        "directNewerRefusedTest",
+        "directOldRowsDeleteAtomicallyWhileInvalidStaysTest",
+        "disabledSchedulerDoesNotDeleteTest",
+        "disabledWorkerDoesNotDisableTriggerTest",
+        "invalidEarlyDateRefusedTest",
+        "invalidLateDateRefusedOutsideSchedulerTest",
+        "laterStatementDeletesOnlyStrictlyOlderRowsTest",
+        "lexicalEqualParsedDateStillRefusesTest",
+        "lexicalInvalidSelectionRollsBackOldRowTest",
+        "mixedDirectDeleteRollsBackEveryRowTest",
+        "prepareTimeDoesNotFreezeDatabaseCutoffTest",
+        "scheduledOldOnlyBeforeEqualBoundaryTest",
+        "statementClockDoesNotAdvanceBetweenRowsTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting_backup_chain.qnt",
+      "sha256": "b5c2417eb40ee98b7b3f7c0a8ee60337e091c2590292df89a0105fd8e965d15a",
+      "sources": [
+        "backend/vetting/evidence-chunks.ts",
+        "migrations/0068_vetting_storage_cycles.sql",
         "workers/vetting-backup/core.ts",
         "workers/vetting-backup/qualification-entry.ts",
         "workers/vetting-backup/qualification-retention.ts",
@@ -13729,11 +13779,27 @@
         "workers/vetting-backup/workflow.mjs"
       ],
       "scenarios": [
+        "cleanupCommitBeforeLostAcknowledgmentTest",
+        "cleanupEnqueueFailureKeepsCommittedPhaseTest",
+        "committedCopyLostReplyIsReusableTest",
+        "committedPageLostReplyReusesReceiptTest",
+        "committedStartResumesWithoutAnotherCycleTest",
+        "completionExistsBeforeD1PhaseChangeTest",
+        "completionReadAuthorizesPhaseBeforeLaterLossTest",
+        "conflictingRestoreDestinationIsNotOverwrittenTest",
+        "corruptCurrentCopyRefusesRestoreTest",
         "duplicateObjectRefusedTest",
         "incompleteSnapshotCannotRestoreTest",
+        "missingCompletionKeepsCleanupIncompleteTest",
+        "missingCurrentCopyRefusesRestoreTest",
+        "missingCurrentPageRefusesRestoreTest",
         "noConcurrentCycleTest",
+        "receiptRetainedAfterD1PhaseFailureTest",
         "replayDoesNotAdvanceCursorTest",
-        "restoreVerifiedChainTest"
+        "restoreCommitCanPrecedeFailedReadbackTest",
+        "restoreVerifiedChainTest",
+        "stalePageAfterCompleteOnlyAcknowledgesTest",
+        "successorEnqueueBeforeLostAckTest"
       ]
     },
     {
