@@ -16,8 +16,7 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
-import { useTimeBoundary } from "./lib/use-time-boundary";
-import { formatDateTime, NetworkName } from "./Presentation";
+import { NetworkName } from "./Presentation";
 
 const AutomaticMonthlyPayment = lazy(() =>
   import("./AutomaticMonthlyPayment").then((module) => ({
@@ -102,21 +101,10 @@ function BalanceMeter({
   );
 }
 
-function VaultTotals({
-  snapshot,
-  staleAfterMs,
-}: {
-  snapshot: VaultSnapshot;
-  staleAfterMs: number;
-}) {
+function VaultTotals({ snapshot }: { snapshot: VaultSnapshot }) {
   const value = (amount: string | null) =>
     amount === null ? "Not reported" : formatAssetAmount(amount, snapshot);
   const reservedAwards = reservedGross(snapshot);
-  // Cached finalized counters carry their observation time; an old one is
-  // marked stale, never shown as current (PRD section 9).
-  const staleAt = Date.parse(snapshot.observedAt) + staleAfterMs;
-  useTimeBoundary(staleAt);
-  const stale = Date.now() > staleAt;
   return (
     <div className="vault-snapshot">
       <BalanceMeter free={snapshot.freeBalance} reserved={reservedAwards} />
@@ -136,12 +124,6 @@ function VaultTotals({
           </dd>
         </div>
       </dl>
-      <p className="data-notice">
-        As of {formatDateTime(snapshot.observedAt)}
-        {stale ? (
-          <span className="setup-badge setup-badge--warning">Stale</span>
-        ) : null}
-      </p>
     </div>
   );
 }
@@ -334,7 +316,6 @@ function VaultTotalsView({
         <VaultTotals
           key={`${snapshot.network}:${snapshot.vault}`}
           snapshot={snapshot}
-          staleAfterMs={totals.vault.staleAfterMs}
         />
       ))}
     </div>

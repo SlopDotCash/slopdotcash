@@ -252,19 +252,6 @@ function baseVaultProject(): ProjectDefinition {
   };
 }
 
-/** The page's UTC observation time format (Presentation formatDateTime). */
-function formatUtc(time: number): string {
-  return `${new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    hour: "2-digit",
-    hour12: false,
-    minute: "2-digit",
-    month: "short",
-    timeZone: "UTC",
-    year: "numeric",
-  }).format(new Date(time))} UTC`;
-}
-
 /** One finalized vault read: 1,000 USDC deposited, 196 + 4 paid, 196 + 4 reserved. */
 function vaultSnapshot(freeBalance: string, observedAt: number) {
   const time = new Date(observedAt).toISOString();
@@ -364,11 +351,6 @@ test("vault totals stay current without a refresh button and keep each state dis
     "+ 4 USDC fees",
   ]);
   await expect(section.getByRole("alert")).toHaveCount(0);
-  // Cached counters show when they were observed; a fresh read is not stale.
-  await expect(section.getByText(/^As of /u)).toHaveText(
-    `As of ${formatUtc(start - 120_000)}`,
-  );
-  await expect(section.getByText("Stale", { exact: true })).toHaveCount(0);
   await expect(
     section.getByRole("region", { name: /^Fund or withdraw/u }),
   ).toHaveCount(0);
@@ -398,18 +380,13 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(available).toContainText("700 USDC");
   expect(reads).toBe(2);
 
-  // An older snapshot refreshes automatically. The reread still returns the
-  // same observation, so its totals are marked stale with their time.
+  // An older snapshot refreshes automatically without a timestamp badge.
   await page.waitForLoadState("networkidle");
   await page.clock.fastForward(31 * 60_000);
   await expect(section.getByText(/^Outdated · read/u)).toHaveCount(0);
   await expect(section.getByRole("alert")).toHaveCount(0);
   expect(reads).toBe(3);
   await expect(available).toContainText("700 USDC");
-  await expect(section.getByText("Stale", { exact: true })).toBeVisible();
-  await expect(section.getByText(/^As of /u)).toContainText(
-    formatUtc(start + 30_000),
-  );
 
   // A failed refresh keeps the last totals and explains the failed read.
   read = { status: 503, snapshots: [] };
@@ -431,7 +408,6 @@ test("vault totals stay current without a refresh button and keep each state dis
   await section.getByRole("button", { name: "Retry" }).click();
   await expect(section.getByRole("alert")).toHaveCount(0);
   await expect(available).toContainText("700 USDC");
-  await expect(section.getByText("Stale", { exact: true })).toHaveCount(0);
 
   // A vault without a finalized read and a failed first read stay distinct.
   read = { status: 200, snapshots: [] };

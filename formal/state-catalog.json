@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "72b2856af9e535b9a9f83879c79b26c6a5030c249ad6e15529a2832709b83b56",
+  "inventorySha256": "7b455c51ba26433a506d62a1746ce71519392277d752102c218710623732bd1f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -15,7 +15,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 574,
+      "line": 581,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -41,7 +41,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 836,
+      "line": 862,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -57,7 +57,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1312,
+      "line": 1342,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -296,7 +296,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "line": 3993,
+      "line": 4001,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
