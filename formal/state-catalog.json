@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "b579c61746050d1abfb273f19e7beb54af95f728693e4567b6ab4fb3aed24b4b",
+  "inventorySha256": "cc8b5afd60c0e164f5e3cab8e1a55b2a9964588cd4efb1b22350280167b3fe18",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -96,7 +96,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2265,
+      "line": 2266,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -104,6 +104,7 @@
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/project_setup_status.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
@@ -113,7 +114,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2469,
+      "line": 2470,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -121,6 +122,7 @@
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/project_setup_status.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
@@ -130,12 +132,15 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "line": 48,
+      "line": 49,
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
-      "models": ["formal/models/api/api_project_registry.qnt"],
-      "lexicallyUnmentionedValues": ["already_queued", "queued"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/project_setup_status.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["already_queued"],
       "review": "candidate-only"
     },
     {
@@ -526,13 +531,11 @@
       "name": "status",
       "kind": "sql-check",
       "values": ["completed", "failed", "running", "skipped"],
-      "models": ["formal/models/slopbot/bot_installation_lifecycle.qnt"],
-      "lexicallyUnmentionedValues": [
-        "completed",
-        "failed",
-        "running",
-        "skipped"
+      "models": [
+        "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_review_lease.qnt"
       ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -541,8 +544,11 @@
       "name": "outcome",
       "kind": "sql-check",
       "values": ["failed", "ok"],
-      "models": ["formal/models/slopbot/bot_installation_lifecycle.qnt"],
-      "lexicallyUnmentionedValues": ["failed", "ok"],
+      "models": [
+        "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_review_lease.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["ok"],
       "review": "candidate-only"
     },
     {
@@ -1509,7 +1515,7 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt"
       ],
-      "lexicallyUnmentionedValues": ["duplicate", "out-of-scope"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1560,11 +1566,7 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "capacity-exhausted",
-        "not-applicable",
-        "reserved"
-      ],
+      "lexicallyUnmentionedValues": ["not-applicable", "reserved"],
       "review": "candidate-only"
     },
     {
@@ -1814,7 +1816,7 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["local", "public-testnet"],
-      "models": [],
+      "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
       "lexicallyUnmentionedValues": ["local", "public-testnet"],
       "review": "candidate-only"
     },
@@ -1831,15 +1833,8 @@
         "planned",
         "waiting"
       ],
-      "models": [],
-      "lexicallyUnmentionedValues": [
-        "executed",
-        "executing",
-        "failed",
-        "passed",
-        "planned",
-        "waiting"
-      ],
+      "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2819,7 +2814,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 337,
+      "line": 339,
       "name": "state",
       "kind": "string-union",
       "values": ["action_required", "ready", "restricted", "retry", "waiting"],
@@ -2835,7 +2830,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 342,
+      "line": 344,
       "name": "state",
       "kind": "string-union",
       "values": ["installed", "missing", "retry", "suspended"],
@@ -2850,7 +2845,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 350,
+      "line": 352,
       "name": "exemptionKind",
       "kind": "string-union",
       "values": ["existing-project", "owner-approved-admission"],
@@ -2863,7 +2858,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 361,
+      "line": 363,
       "name": "state",
       "kind": "string-union",
       "values": ["pledged", "verified"],
@@ -2873,7 +2868,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 370,
+      "line": 372,
       "name": "state",
       "kind": "string-union",
       "values": ["committed", "pledged"],
@@ -3431,7 +3426,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2761,
+      "line": 2781,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
@@ -3448,7 +3443,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2835,
+      "line": 2855,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -3465,7 +3460,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2898,
+      "line": 2918,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],

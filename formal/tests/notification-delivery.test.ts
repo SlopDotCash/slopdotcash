@@ -199,9 +199,9 @@ test("delivery model: a stale worker's retry cannot move the backoff of a reconc
     const reconciled = due();
     expect(reconciled).toMatchObject({ state: "retrying" });
     h.advance(3_600_000);
-    expect(
-      await retryWithoutProviderCall(h.deps, first, "activity"),
-    ).toBe("retrying");
+    expect(await retryWithoutProviderCall(h.deps, first, "activity")).toBe(
+      "retrying",
+    );
     expect(due()).toEqual(reconciled);
     expect(
       h.sqlite

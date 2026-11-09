@@ -586,11 +586,9 @@ describe("paused project with a cleared scan", () => {
     grandfathered: true,
   };
   function paused(withSkillFields: boolean, activationAllowed: boolean) {
-    const manifest = applicationManifest(
-      "paused-test",
-      "example/paused-test",
-      { status: "paused" },
-    ) as unknown as ProjectDefinition & { contribution?: unknown };
+    const manifest = applicationManifest("paused-test", "example/paused-test", {
+      status: "paused",
+    }) as unknown as ProjectDefinition & { contribution?: unknown };
     if (!withSkillFields) delete manifest.contribution;
     const record: ProjectRecord = {
       ...project,

@@ -1,6 +1,5 @@
 // @source backend/projects/setup.ts
 // @source backend/projects/handler.ts
-// @source src/lib/project-contracts.ts
 // runSetupCheck (handler.ts) and projectSetupStatus (setup.ts): each check
 // reads restriction, Slopbot installation, current GitHub authority, scan
 // clearance, project status and whether the manifest publishes generated

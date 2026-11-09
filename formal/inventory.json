@@ -523,11 +523,12 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "93e6585fd9ac4669e8938d018625af5742c6a88d1f0771bee369e1a5b4e15469",
+      "sha256": "5e9e58af051bbcf58084c524132b4a416d0c5c226e151d0e2402bcb1e23b6d50",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/project_setup_status.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
@@ -536,12 +537,12 @@
         159, 164, 174, 178, 236, 261, 266, 293, 294, 296, 298, 347, 431, 438,
         444, 448, 449, 457, 523, 527, 858, 895, 911, 1007, 1020, 1025, 1032,
         1033, 1036, 1051, 1053, 1055, 1066, 1084, 1091, 1102, 1128, 1134, 1135,
-        1146, 1148, 1153, 1154, 1155, 1156, 1168, 1169, 1170, 1172, 1177, 1215,
-        1309, 1343, 1361, 1428, 1509, 1520, 1529, 1532, 1552, 1594, 1600, 1604,
-        1610, 1616, 1652, 1660, 1663, 1664, 1709, 1710, 1711, 1728, 1774, 1781,
-        1793, 1830, 1849, 1853, 2027, 2031, 2058, 2079, 2080, 2091, 2095, 2134,
-        2152, 2169, 2201, 2210, 2354, 2380, 2529, 2586, 2626, 2637, 2638, 2751,
-        2759, 2777, 2971
+        1146, 1148, 1153, 1154, 1155, 1156, 1168, 1169, 1170, 1172, 1177, 1216,
+        1310, 1344, 1362, 1429, 1510, 1521, 1530, 1533, 1553, 1595, 1601, 1605,
+        1611, 1617, 1653, 1661, 1664, 1665, 1710, 1711, 1712, 1729, 1775, 1782,
+        1794, 1831, 1850, 1854, 2028, 2032, 2059, 2080, 2081, 2092, 2096, 2135,
+        2153, 2170, 2202, 2211, 2355, 2381, 2530, 2587, 2627, 2638, 2639, 2752,
+        2760, 2778, 2972
       ],
       "review": "mapped-abstraction"
     },
@@ -554,14 +555,18 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "sha256": "4dc7269817a5d4f0e5a8fa2cc0443fa3798e2a939fe55e5f7932b09710a92a0e",
-      "models": ["formal/models/api/api_project_registry.qnt"],
+      "sha256": "4df4293e86b067f3ff2453af5fe43b1f7e0661529c6c25a8f07775c21e97037e",
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/project_setup_status.qnt"
+      ],
       "candidateLines": [
-        7, 48, 49, 59, 60, 111, 119, 125, 129, 138, 146, 147, 217, 229, 237,
-        239, 243, 255, 263, 268, 273, 279, 284, 288, 290, 295, 303, 312, 313,
-        316, 321, 325, 330, 331, 332, 334, 337, 338, 344, 347, 348, 351, 354,
-        355, 358, 359, 361, 362, 368, 369, 371, 372, 374, 375, 380, 381, 383,
-        384, 386, 397, 400, 410, 411, 456, 500, 507, 514, 538, 549, 557, 562
+        7, 49, 50, 60, 61, 112, 120, 126, 130, 139, 147, 148, 218, 230, 238,
+        240, 244, 256, 264, 269, 274, 280, 285, 289, 291, 296, 304, 315, 316,
+        319, 324, 328, 333, 334, 335, 337, 340, 341, 347, 350, 351, 354, 357,
+        358, 361, 362, 364, 365, 371, 372, 374, 375, 377, 378, 383, 384, 386,
+        396, 398, 399, 401, 402, 404, 415, 418, 428, 429, 474, 518, 525, 532,
+        556, 567, 575, 580
       ],
       "review": "mapped-abstraction"
     },
@@ -1867,7 +1872,10 @@
     {
       "path": "migrations/0013_slopbot.sql",
       "sha256": "b60d0e723555888e9171ea83d4234811bc90234e700c97e0645ce70f3a9c8460",
-      "models": ["formal/models/slopbot/bot_installation_lifecycle.qnt"],
+      "models": [
+        "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_review_lease.qnt"
+      ],
       "candidateLines": [2, 15, 46, 49, 51],
       "review": "mapped-abstraction"
     },
@@ -2841,7 +2849,10 @@
     {
       "path": "migrations/0114_points_dispute_intake.sql",
       "sha256": "bbaed8641ab21f7652df9d8a4284d4ab60a588794cdbb11970a6c81f70a6287c",
-      "models": ["formal/models/api/api_points_disputes.qnt"],
+      "models": [
+        "formal/models/api/api_points_dispute_lease.qnt",
+        "formal/models/api/api_points_disputes.qnt"
+      ],
       "candidateLines": [2, 31, 39],
       "review": "mapped-abstraction"
     },
@@ -3271,9 +3282,9 @@
     {
       "path": "scripts/escrow-acceptance/upgrade-qualification.ts",
       "sha256": "2fe4bbd6e6ce0172d9a386c365d2a801ea03a36fb0a6a116e1c7440938204052",
-      "models": [],
+      "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
       "candidateLines": [57, 65],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "One schema constant and upgrade qualification record types; no I/O or state transition."
     },
     {
@@ -3423,7 +3434,7 @@
     },
     {
       "path": "scripts/lemmascript-integrity.mjs",
-      "sha256": "3335ea4b2eeca25627ae31232635fe91e9a7bed3f5d7d75b3369fc27a5bccde0",
+      "sha256": "da0f10653602a0ac8c21869cf69d6a580ae72c2cb7c0581a7c77c646911c7567",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5512,11 +5523,11 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "sha256": "d074be79127eb311468602829078abe824e6b5386de3da1b755bae1a32487876",
+      "sha256": "2ecd2fcef07df6cc7854c403f2ce0d64afae82686953662f062e48273feebc1f",
       "models": [],
       "candidateLines": [
-        10, 30, 31, 44, 164, 190, 191, 202, 203, 311, 312, 313, 327, 336, 337,
-        342, 346, 361, 370, 410, 411
+        10, 30, 31, 44, 164, 190, 191, 202, 203, 311, 312, 313, 329, 338, 339,
+        344, 348, 363, 372, 412, 413
       ],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
@@ -6585,7 +6596,7 @@
     },
     {
       "path": "workers/notify/security.ts",
-      "sha256": "52cab787895ab4934635295ac63decf3093f51c0d65b34380a8e9b90ac6b082f",
+      "sha256": "536746df2e0baba56cbc9dd6b2a1cde8c2f7ceec25d600c4c1d7ac25e02a98b0",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_delivery.qnt",
@@ -6593,9 +6604,9 @@
       ],
       "candidateLines": [
         50, 145, 146, 149, 151, 155, 159, 160, 203, 211, 213, 216, 218, 223,
-        234, 237, 246, 247, 311, 323, 398, 399, 405, 412, 422, 423, 424, 428,
-        430, 431, 445, 446, 457, 458, 472, 473, 474, 481, 508, 551, 565, 566,
-        574, 580, 582
+        234, 239, 249, 250, 314, 326, 401, 402, 408, 415, 425, 426, 427, 431,
+        433, 434, 448, 449, 460, 461, 475, 476, 477, 484, 511, 554, 568, 569,
+        577, 583, 585
       ],
       "review": "mapped-abstraction"
     },
@@ -6987,7 +6998,10 @@
     {
       "path": "workers/slopbot/appeals.ts",
       "sha256": "bfc2dbfd8158dd9012f26f5f2b55d13aa6556431682f1c35484c58d233d64caf",
-      "models": ["formal/models/slopbot/bot_appeal.qnt"],
+      "models": [
+        "formal/models/api/api_points_dispute_lease.qnt",
+        "formal/models/slopbot/bot_appeal.qnt"
+      ],
       "candidateLines": [1, 84, 118, 135, 149, 181, 215],
       "review": "mapped-abstraction"
     },
@@ -7131,9 +7145,12 @@
     },
     {
       "path": "workers/slopbot/points-disputes.ts",
-      "sha256": "94de389076be6e0386647ea8f19906d3b431d5d16bcd6df749a06ecc52e63089",
-      "models": ["formal/models/api/api_points_disputes.qnt"],
-      "candidateLines": [41, 71, 72, 181, 208],
+      "sha256": "a73e71d793799141421e76d777d737979c7d849d15e7a3e8af7864504981216c",
+      "models": [
+        "formal/models/api/api_points_dispute_lease.qnt",
+        "formal/models/api/api_points_disputes.qnt"
+      ],
+      "candidateLines": [41, 71, 72, 181, 218],
       "review": "mapped-abstraction"
     },
     {
@@ -7152,7 +7169,7 @@
     },
     {
       "path": "workers/slopbot/reopen-source.ts",
-      "sha256": "cd455deb045d7218691bf66d59989510855f127b139412208cd7bb7c3d3fbfd3",
+      "sha256": "4078e3258954a11650da13f0188f384c7ec6dd68bc2989a6941a6fce6272424e",
       "models": ["formal/models/slopbot/bot_moderation.qnt"],
       "candidateLines": [59, 98],
       "review": "mapped-abstraction"
@@ -7190,7 +7207,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "453ccdf749b0d8025be0949c68eb493ca5186de9d1c1c7ca66eda0e60f5f8b19",
+      "sha256": "df4bef27b1951efe0b8bbcf087c7fb4eb8abcc2eacb676f0b61b4b3fe278f4b0",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -7200,13 +7217,13 @@
         "formal/models/slopbot/bot_penalty_once.qnt"
       ],
       "candidateLines": [
-        3, 153, 267, 282, 291, 301, 304, 496, 650, 797, 826, 836, 971, 976, 981,
-        983, 986, 988, 989, 1000, 1003, 1005, 1062, 1063, 1065, 1066, 1082,
-        1088, 1139, 1161, 1162, 1170, 1175, 1264, 1266, 1286, 1305, 1382, 1387,
-        1458, 1573, 1580, 1581, 1616, 1633, 1636, 1637, 1799, 1804, 1866, 1879,
-        1884, 1891, 1892, 1896, 1897, 1905, 1921, 1971, 2118, 2178, 2184, 2195,
-        2223, 2248, 2256, 2279, 2284, 2360, 2361, 2403, 2438, 2489, 2634, 2891,
-        2966, 3132, 3143, 3151, 3249, 3250, 3290, 3340, 3354, 3370
+        3, 154, 268, 283, 292, 302, 305, 497, 651, 798, 827, 837, 972, 977, 982,
+        984, 987, 989, 990, 1001, 1004, 1006, 1063, 1064, 1066, 1067, 1083,
+        1089, 1140, 1162, 1163, 1171, 1176, 1277, 1279, 1299, 1318, 1395, 1400,
+        1471, 1586, 1593, 1594, 1629, 1646, 1649, 1650, 1812, 1817, 1879, 1892,
+        1897, 1904, 1905, 1909, 1910, 1918, 1934, 1991, 2138, 2198, 2204, 2215,
+        2243, 2268, 2276, 2299, 2304, 2380, 2381, 2423, 2458, 2509, 2654, 2911,
+        2986, 3152, 3163, 3171, 3269, 3270, 3310, 3360, 3374, 3390
       ],
       "review": "mapped-abstraction"
     },
@@ -8200,6 +8217,23 @@
       ]
     },
     {
+      "path": "formal/models/api/api_points_dispute_lease.qnt",
+      "sha256": "b5e204e604c3c3b72455a78cf777e31994dae25cc40026c67fc5674734f68029",
+      "sources": [
+        "migrations/0114_points_dispute_intake.sql",
+        "workers/slopbot/appeals.ts",
+        "workers/slopbot/points-disputes.ts"
+      ],
+      "scenarios": [
+        "draftResumeEscalatesTest",
+        "draftResumesWithoutSecondCallTest",
+        "escalationWithoutDraftResumesTest",
+        "expiredLeaseCannotDraftTest",
+        "resolvedRowIsFinalTest",
+        "throwDoesNotStopBatchTest"
+      ]
+    },
+    {
       "path": "formal/models/api/api_points_disputes.qnt",
       "sha256": "598538e2b3e95735ad744983c58e0916aae8c825b64ba9151844d936d8b397ab",
       "sources": [
@@ -8248,7 +8282,7 @@
     },
     {
       "path": "formal/models/api/api_private_case.qnt",
-      "sha256": "d124e54b681d2586e684115a68288e47051cbe1ea7901bcc2a03bb680815a406",
+      "sha256": "2fa2f49efbf682c57da5b94dcbaa531ae82bddc6d20ba53521e5ab9418fd590d",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/award-asset.ts",
@@ -8278,7 +8312,7 @@
     },
     {
       "path": "formal/models/api/api_private_case_roles.qnt",
-      "sha256": "e0711f2e01ae83b5866b5f2ec2eb63ec0dd121aa8c0d7451f018017f40cd5bbb",
+      "sha256": "8363392db5b02e380c4ec4e6e58bf414de1d458763d101ca4244a71728b66b3a",
       "sources": [
         "backend/security/case-store.ts",
         "backend/security/handler.ts",
@@ -8286,10 +8320,18 @@
       ],
       "scenarios": [
         "appealReviewTest",
+        "approvedAwardNotAppealableTest",
+        "capacityWaitAppealReturnKeepsWaitTest",
+        "duplicateAppealUpheldTest",
         "financeAfterAwardTest",
         "financeBeforeAwardRefusedTest",
+        "financeWaitsOnCapacityTest",
+        "ineligibleAwardAppealTest",
+        "maintainerCannotDecideAppealTest",
         "maintainerDecisionTest",
         "moderatorWithoutCaseReviewRefusedTest",
+        "outOfScopeAppealTest",
+        "pendingAwardNotAppealableTest",
         "pendingRelatedAwardRefusedTest",
         "relatedAwardReviewTest",
         "reporterCannotDecideTest",
@@ -8303,7 +8345,7 @@
     },
     {
       "path": "formal/models/api/api_private_case_transaction.qnt",
-      "sha256": "d9b67541e8d745c394d209a335f3f7865e54eeb6345680a65a723a764f38bd53",
+      "sha256": "1a8247702fa463b651bfeb8c3169b09b58ce97afc2fb3ac3f3bf160cc4a12172",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/case-store.ts",
@@ -8314,8 +8356,14 @@
         "migrations/0101_durable_security_intake.sql"
       ],
       "scenarios": [
+        "approvedAwardNotAppealableTest",
         "approvedObligationCannotBeRevisedTest",
+        "capacityWaitAppealSurvivesReturnTest",
         "decisionWinsReportRaceTest",
+        "declinedAwardAppealUpheldTest",
+        "duplicateAppealUpheldTest",
+        "outOfScopeAppealReturnedTest",
+        "pendingAwardNotAppealableTest",
         "returnedAppealCanReviseButNeedsFreshDecisionTest",
         "revisedReportWinsDecisionRaceTest",
         "revocationWinsTriagerRaceTest",
@@ -8359,7 +8407,7 @@
     },
     {
       "path": "formal/models/api/api_project_enforcement.qnt",
-      "sha256": "c476dd41b6379a449b603f474d8f7e8052c603093a399dcb2b88d648bc5c799d",
+      "sha256": "675a952c06974507564b52dc2aac30cbd5724f9997ef105062a36fe4d0accf98",
       "sources": [
         "backend/projects/account-bans.ts",
         "backend/projects/edge-cache.ts",
@@ -8574,7 +8622,7 @@
     },
     {
       "path": "formal/models/api/notification_delivery.qnt",
-      "sha256": "65046bd13db93d49b040792a121dd4461a487d4af53b42923879bce4d5d06d19",
+      "sha256": "d8b77cc54eedfd38b2518ddd9e0fbf5d043d335fdaa8cade6472d817b354a064",
       "sources": [
         "migrations/0030_security_notification_outbox.sql",
         "migrations/0033_optional_notification_email.sql",
@@ -8585,9 +8633,12 @@
         "acceptedCanBeRejectedTest",
         "ambiguityCanBeDeliveredTest",
         "competingReceiptsCommitOnceTest",
+        "currentRetrySetsBackoffTest",
         "fiveAttemptsExhaustTest",
         "lostWorkerCannotOverwriteTest",
-        "staleAttemptCannotReconcileTest"
+        "staleAttemptCannotReconcileTest",
+        "staleRetryAfterNewClaimTest",
+        "staleRetryCannotMoveBackoffTest"
       ]
     },
     {
@@ -8648,6 +8699,18 @@
       "sha256": "87cb97863a3c7a23370d638dcb9b78e50f9d1c9163ded21950d3e152fe2dbfc8",
       "sources": ["workers/identity/handler.ts"],
       "scenarios": ["completeTest", "decryptFailureTest", "expireTest"]
+    },
+    {
+      "path": "formal/models/api/project_setup_status.qnt",
+      "sha256": "7c6f583dadcd37ba69a047cecf90e9d6b341cde883380ec155b3008190e8ad4d",
+      "sources": ["backend/projects/handler.ts", "backend/projects/setup.ts"],
+      "scenarios": [
+        "incompleteSkillsStayPausedTest",
+        "ownerRevisionKeepsPauseTest",
+        "setupCheckActivatesTest",
+        "unavailableScanRetriesTest",
+        "unscannedQueuesScanTest"
+      ]
     },
     {
       "path": "formal/models/contracts/acceptance_run.qnt",
@@ -8821,21 +8884,28 @@
     },
     {
       "path": "formal/models/contracts/evm_upgrade_qualification.qnt",
-      "sha256": "7e4cce905693e0d81071b9646589b1aec3bc2ab292718e9f5a4a1d04d681ab09",
+      "sha256": "d3ac5c0904cb9491d34b50b5c8cf22bfbd25c980d3773b082805e2b721c0b4f6",
       "sources": [
         "contracts/evm/integration/mainnet-upgrade-rehearsal.ts",
         "contracts/evm/integration/upgrade.ts",
         "scripts/escrow-acceptance/evm-upgrade.ts",
         "scripts/escrow-acceptance/upgrade-payments.ts",
+        "scripts/escrow-acceptance/upgrade-qualification.ts",
         "scripts/escrow-acceptance/upgrade-verification.ts",
         "scripts/escrow-acceptance/upgrade-verify.ts"
       ],
       "scenarios": [
         "exactLaterPaymentAcceptedTest",
+        "failedReentersExecuteTest",
         "lateVaultRecoveredTest",
         "lateVaultStopsCompletionTest",
+        "mainnetRunnerRecordsFailureTest",
         "mainnetRunnerRefusedTest",
-        "unexplainedChangeRefusedTest"
+        "passedRerunStaysPassableTest",
+        "unexplainedChangeCannotPassTest",
+        "unexplainedChangeRefusedTest",
+        "waitingRerunDoesNotResignTest",
+        "waitingResumesWithoutReplayTest"
       ]
     },
     {
@@ -9222,7 +9292,7 @@
     },
     {
       "path": "formal/models/fees/fee_conversion.qnt",
-      "sha256": "ebad773db5d3113ccab6c9335d6aeb2ee0c1c9f0d0dfb4c8ec0967e79edea66e",
+      "sha256": "75b4803b1cc78d7e0b9cc13e4cc5eb18a99fe752de6035fcc6f0cdec68a79076",
       "sources": [
         "backend/fee-conversions/handler.ts",
         "migrations/0022_fee_conversions.sql",
@@ -9242,6 +9312,7 @@
       "scenarios": [
         "convertedTest",
         "dryRunCannotSignTest",
+        "dryRunHasNoSignerTest",
         "dryRunReconcilesOnlyTest",
         "legacyQuotedClosedTest",
         "liveReplacesTest",
@@ -9249,9 +9320,11 @@
         "offDuringSendRetainsTest",
         "offDuringSendStateTest",
         "offRunsNothingTest",
+        "oneVisitPerRunTest",
         "openRowBlocksNewSendTest",
         "pendingDustTest",
         "robinhoodRetainedTest",
+        "settledRowUnblocksTest",
         "staleLeaseRefusedTest"
       ]
     },
@@ -9927,7 +10000,7 @@
     },
     {
       "path": "formal/models/payments/signed_send.qnt",
-      "sha256": "e0378788df77b2dd4a36a15363073374849edb64edb291efa6e772ccd9eb1199",
+      "sha256": "b937832221cccc5a6e29772974253dc4284b5c72a13ecc92c120ff413d9e209c",
       "sources": [
         "migrations/0087_fee_send_replacements.sql",
         "workers/fee-converter/core.ts",
@@ -10908,7 +10981,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_close_recorded_key.qnt",
-      "sha256": "79f25f2e246d42d0bf72dbb9f3aa628dbb8a517d84b4d27b26815379a89cb81b",
+      "sha256": "7355f2ef0aa9aa722806e1c31b7af97b3e8e63c8f06c9937d0147476f054fbfd",
       "sources": [
         "migrations/0117_slopbot_close_attempts.sql",
         "workers/slopbot/close-attempts.ts",
@@ -10916,12 +10989,15 @@
         "workers/slopbot/review.ts"
       ],
       "scenarios": [
+        "confirmedCloseFailedBeforeCommentRecoversTest",
         "definitiveRefusalReleasesWithoutPenaltyTest",
         "deliveredCloseCannotRecoverAgainTest",
         "humanCloseKeepsSlotPendingTest",
+        "ineligibleCloseRecordsNoDebitTest",
         "lostResponseRecoversAfterKeyChangeTest",
         "lostResponseRecoversUnderSameKeyTest",
-        "openItemKeepsUnknownAttemptPendingTest"
+        "openItemKeepsUnknownAttemptPendingTest",
+        "penalizedCloseFailedBeforeFinishRecoversTest"
       ]
     },
     {
@@ -11075,7 +11151,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_penalty_once.qnt",
-      "sha256": "03c5ceac9d07e7c3efbfa0a9cc912de940470d8879b63b987ddcc2897fc9ad85",
+      "sha256": "d2097502c9f42900ec68b0d335dcc1fe954c1c88c60df23736dbb3498e50fcc8",
       "sources": [
         "migrations/0064_slopbot_penalties_appeals.sql",
         "workers/slopbot/penalties.ts",
@@ -11083,7 +11159,9 @@
       ],
       "scenarios": [
         "appealUpholdReversesCoveredDebitTest",
+        "lateReopenReversesOwnRevisionDebitTest",
         "newerHeadDebitSurvivesOlderAppealTest",
+        "olderCloseJobKeepsLaterHeadDebitTest",
         "reopenBeforeRecordWritesNoDebitTest",
         "reopenReversesRecordedDebitOnceTest",
         "secondCloseNeverDebitsAgainTest",
@@ -11186,8 +11264,9 @@
     },
     {
       "path": "formal/models/slopbot/bot_review_lease.qnt",
-      "sha256": "741d890a230ce4215d51ee887313185c1ceecdfe9310d6f0a2fd46eed3e00610",
+      "sha256": "12f26f32ffec6f2e9252007b178d8ddc06cac0c3533c30eb5cefcad76c834d1e",
       "sources": [
+        "migrations/0013_slopbot.sql",
         "migrations/0045_slopbot_review_leases.sql",
         "workers/slopbot/persistence.ts"
       ],
@@ -13063,7 +13142,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_flag_reinstatement.qnt",
-      "sha256": "378a1dee3cac87a18d07139f36984c2ad7a7ff1e73b2e45019c2706ac539813f",
+      "sha256": "61a1cf2fbd546f418e3efd5eb00c41d52dadebe61bdafc674e4628181db8e842",
       "sources": [
         "backend/projects/enforcement.ts",
         "backend/projects/verified-enforcement.ts",
@@ -13074,7 +13153,6 @@
       "scenarios": [
         "cleanScanDoesNotUndoBanTest",
         "duplicateReporterTest",
-        "exemptionDoesNotOverrideRestrictionTest",
         "expiryAllowsRefileTest",
         "freshScanReinstatesTest",
         "refiledIdDuringScanKeepsPauseTest",
