@@ -38,6 +38,7 @@ import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import type { VettingClearance } from "../src/lib/vetting-contracts";
 import { seedParticipationBan } from "../tests/participation-ban.fixture";
+import { seedProject } from "../tests/project-registry.fixture";
 import {
   applicationManifest,
   CONTRIBUTION,
@@ -949,6 +950,7 @@ test("a stored update whose base revision moved on is not offered for publicatio
 
 test("an explicit moderator ban blocks new contribution intake without blaming the original applicant", async () => {
   const t = registry();
+  seedProject(t.sqlite, "other-project", "example/other-project");
   t.deps.moderatorGithubIds = new Set([ADMIN]);
   t.deps.github.fetch = async (url) =>
     Response.json(
