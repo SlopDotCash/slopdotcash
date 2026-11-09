@@ -497,3 +497,17 @@ before it runs. Cleanup failures retain the original validation or read error.
 The new finite model and native fixture definitions are unexecuted. They do not
 prove live transport behavior or a deadline for the full recorder. See
 `evidence-transport-audit.md`.
+
+## Evidence child completion and signal errors
+
+The recorder's direct-child helpers treated exit as completion. They now keep
+error, exit status and close observation distinct. A thrown TERM request could
+leave the old shutdown helper before its KILL fallback; the new helper retains
+signal failures and continues cleanup. An unconfirmed close remains a failure,
+and an observed close can complete cleanup even after a failed signal request.
+
+The initial suspicion of an ordinary failed-spawn timeout was ruled out by the
+pinned Node source: it records a negative exit code before its error event.
+The audit and fixtures retain that correction. The 23-scenario model and 22
+native fixture definitions are unexecuted and do not prove process-tree or
+real-browser cleanup. See `evidence-process-audit.md`.

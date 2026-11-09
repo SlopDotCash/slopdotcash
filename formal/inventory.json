@@ -3259,6 +3259,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/evidence-process.mjs",
+      "sha256": "cb877ec358ef7f32ded755eaf1c0a13b0529bd17419728c63a3621fae57c7a23",
+      "models": ["formal/models/evidence_process.qnt"],
+      "candidateLines": [
+        3, 4, 7, 10, 14, 18, 19, 20, 28, 29, 38, 39, 52, 53, 56, 57, 72, 74
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/formal-inventory.mjs",
       "sha256": "1d5b7c5d1d04ecd87c80fc06c94dc4f42807497c718c204bf6c1413b7746dc0a",
       "models": ["formal/models/formal_toolchain.qnt"],
@@ -3714,14 +3723,15 @@
     },
     {
       "path": "scripts/record-evidence.mjs",
-      "sha256": "07a4e1d23d676e006708b692f64bf8983b5d32754154a9513a8fe0f3ae10c313",
+      "sha256": "92fde9c6f7be0850fbf5dce48bdea9a6ea820e59a189d4a9fc2e1bc673cc7d24",
       "models": [
         "formal/models/evidence_capture.qnt",
+        "formal/models/evidence_process.qnt",
         "formal/models/evidence_transport.qnt"
       ],
       "candidateLines": [
-        4, 91, 128, 129, 131, 164, 166, 179, 185, 210, 261, 276, 297, 305, 309,
-        490, 512, 534, 537, 545, 573, 585, 592, 640
+        4, 87, 124, 125, 127, 130, 160, 162, 175, 181, 230, 245, 266, 274, 278,
+        456, 478, 500, 503, 511, 539, 551, 558, 606
       ],
       "review": "mapped-abstraction"
     },
@@ -9851,6 +9861,39 @@
         "previewFailureStillAbortsStagingTest",
         "protectedAbortDoesNotDeletePublishedBundleTest",
         "setupFailureUsesOwnedFinalizersTest"
+      ]
+    },
+    {
+      "path": "formal/models/evidence_process.qnt",
+      "sha256": "cba96966652d1d755de2cc12c88694663f7307011a3508e4fe703d5a92ef5af7",
+      "sources": [
+        "scripts/evidence-process.mjs",
+        "scripts/record-evidence.mjs"
+      ],
+      "scenarios": [
+        "absentPreviewCleanupIsNoopTest",
+        "alreadyClosedPreviewCleanupIsNoopTest",
+        "commandExitAloneRemainsPendingTest",
+        "commandNonzeroCloseRefusesTest",
+        "commandPreservesFirstErrorTest",
+        "commandSignalCloseRefusesTest",
+        "commandWaitAfterCloseSettlesTest",
+        "commandZeroCloseSucceedsTest",
+        "exitDuringGraceSkipsKillTest",
+        "exitedPreviewWaitsForCloseTest",
+        "exitedWithoutCloseStillRefusesTest",
+        "failedSignalRequestsWithoutCloseRefuseTest",
+        "failedSpawnCommandClosesWithoutExitTest",
+        "failedSpawnMissingCloseRefusesTest",
+        "failedSpawnPreviewClosesWithoutSignalTest",
+        "graceTimeoutEscalatesToKillTest",
+        "lateCloseCannotConvertTimedOutStopTest",
+        "rejectedTermRequestMayStillCloseTest",
+        "signalThrowDoesNotPreventObservedCleanupTest",
+        "termExceptionStillFallsBackToKillTest",
+        "terminationRequestAloneDoesNotProveCloseTest",
+        "unconfirmedClosePreservesAsyncPrimaryTest",
+        "unconfirmedClosePreservesSignalErrorsTest"
       ]
     },
     {

@@ -37,6 +37,11 @@ import {
   verifyRemoteArtifacts,
   withEvidenceResponse,
 } from "./evidence-contract.mjs";
+import {
+  completeEvidenceCommand,
+  observeEvidenceProcess,
+  stopEvidencePreview,
+} from "./evidence-process.mjs";
 import { sha256Hex as hash } from "./sha256.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -62,21 +67,12 @@ const representativeExternalPrizeProjectId =
   externalPrizeProjects[0]?.id ?? null;
 
 function run(command, args) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
-      cwd: packageRoot,
-      env: childEnvironment(),
-      stdio: "inherit",
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-      } else {
-        reject(new Error(`${command} exited with ${code ?? "unknown"}`));
-      }
-    });
+  const child = spawn(command, args, {
+    cwd: packageRoot,
+    env: childEnvironment(),
+    stdio: "inherit",
   });
+  return completeEvidenceCommand(command, observeEvidenceProcess(child));
 }
 
 function digest(path) {
@@ -131,7 +127,7 @@ function assertPreviewRunning(server, state) {
       cause: state.error,
     });
   }
-  if (server.exitCode !== null || server.signalCode !== null) {
+  if (state.closed || server.exitCode !== null || server.signalCode !== null) {
     throw new Error(
       `[Slop] owned preview exited before evidence completed (code=${server.exitCode ?? "none"}, signal=${server.signalCode ?? "none"})`,
     );
@@ -202,35 +198,8 @@ async function waitForServer(baseUrl, server, state, expectedFingerprint) {
   throw new Error("[Slop] preview server did not become ready");
 }
 
-function waitForProcessExit(server, timeoutMs) {
-  if (server.exitCode !== null || server.signalCode !== null) {
-    return Promise.resolve(true);
-  }
-  return new Promise((resolvePromise) => {
-    const timer = setTimeout(() => {
-      server.off("exit", onExit);
-      resolvePromise(false);
-    }, timeoutMs);
-    function onExit() {
-      clearTimeout(timer);
-      resolvePromise(true);
-    }
-    server.once("exit", onExit);
-  });
-}
-
 async function stopPreview(server) {
-  if (!server || server.exitCode !== null || server.signalCode !== null) {
-    return;
-  }
-  server.kill("SIGTERM");
-  if (await waitForProcessExit(server, 3_000)) {
-    return;
-  }
-  server.kill("SIGKILL");
-  if (!(await waitForProcessExit(server, 3_000))) {
-    throw new Error("[Slop] owned preview did not stop after SIGKILL");
-  }
+  await stopEvidencePreview(server, previewState);
 }
 
 function hashedAssetPath(indexHtml) {
@@ -384,7 +353,6 @@ if (mode === "production") {
 } else {
   const previewPort = await reserveLoopbackPort();
   baseUrl = `http://127.0.0.1:${previewPort}`;
-  previewState = { error: undefined };
   previewServer = spawn(
     process.execPath,
     [
@@ -402,9 +370,7 @@ if (mode === "production") {
       stdio: "inherit",
     },
   );
-  previewServer.once("error", (error) => {
-    previewState.error = error;
-  });
+  previewState = observeEvidenceProcess(previewServer);
   try {
     await waitForServer(baseUrl, previewServer, previewState, buildFingerprint);
   } catch (error) {
