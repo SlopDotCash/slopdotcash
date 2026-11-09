@@ -1,5 +1,6 @@
 {
   "backend/d1.ts": "D1 interfaces and pure exception classification; owns no data, counters, cache, timer or transition. The DB writes are covered at their callers.",
+  "backend/github-node-sql.ts": "Pure construction of a SQL expression that decodes a GitHub user node ID to its numeric ID; no state, I/O, time or persistence. The membership joins that use it are modeled at their callers (api_points_disputes, api_inbox).",
   "backend/github.ts": "Pure URL/header/Link parsing and cryptographic JWT construction from explicit inputs. No cached credential or persisted OAuth flow is held here; token validity and use belong to identity callers.",
   "backend/vetting/summary.ts": "Pure mapping from supplied assessment artifacts/findings to safe location and fixed user-facing text; no state, I/O, current time, authority or persistence. Disposition and admission gates remain in separate models.",
   "contracts/evm/vendor/openzeppelin/contracts/interfaces/IERC1967.sol": "Event and error declarations only; no executable state transition.",

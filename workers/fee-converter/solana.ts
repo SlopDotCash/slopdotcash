@@ -1466,11 +1466,11 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       ]);
       // Expiry prevents future inclusion, but one provider's missing history
       // does not prove that the bytes never landed. Journaled sends wait for
-      // the independent retained-history proof checked above.
+      // the independent retained-history proof checked above. A legacy send
+      // recorded before native-gas reservations is no exception: it stays
+      // pending rather than failing on one provider's missing status.
       if (row.expiresAt !== null && height > row.expiresAt)
-        return row.kind === "claim" || row.nativeGasId
-          ? { kind: "pending" }
-          : { kind: "failed", reason: "blockhash expired before inclusion" };
+        return { kind: "pending" };
       if (
         row.kind === "claim" &&
         !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))

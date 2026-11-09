@@ -329,7 +329,7 @@ export function VaultActions({
             hash,
             hashSource: "recovery",
           };
-          let stored;
+          let stored: boolean;
           try {
             stored = updatePendingRecord(key, captured, candidate);
           } catch {

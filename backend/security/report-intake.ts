@@ -4,7 +4,7 @@ import { readBoundedBytes, readBoundedJson } from "../../src/lib/browser-json";
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
-import type { D1QueryStatement } from "../d1";
+import { type D1QueryStatement, isConstraintFailure } from "../d1";
 import { chunked, exactKeys, fail, PROJECT_ID, requireActor } from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
@@ -462,6 +462,12 @@ async function storeReport(
     );
   return { key, digest, bytes: bytes.byteLength };
 }
+/**
+ * The event of an intake revision this batch claimed. It must directly follow
+ * the claiming UPDATE: `changes()=1` chains it to that UPDATE, so a writer
+ * that lost the revision race appends nothing instead of colliding with the
+ * winner's event key.
+ */
 function intakeEvent(
   deps: SecurityApiDependencies,
   row: StoredIntake,
@@ -471,7 +477,7 @@ function intakeEvent(
 ): D1QueryStatement {
   return deps.db
     .prepare(
-      "INSERT INTO security_intake_events(submission_id,revision,kind,actor_github_id,at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=?)",
+      "INSERT INTO security_intake_events(submission_id,revision,kind,actor_github_id,at) SELECT ?,?,?,?,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=?)",
     )
     .bind(
       row.submission_id,
@@ -1161,40 +1167,51 @@ export async function actStoredIntake(
       body.reason.length > 2000
     )
       fail(400, "invalid_request", "Provide a routing decision and reason.");
-    const result = await deps.db.batch([
-      deps.db
-        .prepare(
-          "UPDATE security_submission_intake SET review_decision=?,review_reason=?,reviewed_by=?,reviewed_at=?,revision=revision+1 WHERE submission_id=? AND revision=?",
-        )
-        .bind(
-          body.decision,
-          body.reason.trim(),
-          actor.githubId,
-          at,
-          id,
-          stored.revision,
-        ),
-      intakeEvent(deps, stored, "review", actor.githubId, at),
-      ...(body.decision === "request-information"
-        ? [
-            deps.db
-              .prepare(
-                "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at) SELECT ?,?,'security_case',?,NULL,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=? AND review_decision='request-information' AND reviewed_by=?) ON CONFLICT(event_key,recipient_github_id) DO NOTHING",
-              )
-              .bind(
-                `security-information:${id}:${stored.revision + 1}`,
-                row.reporter_github_id,
-                stored.case_id,
-                `/inbox?submission=${id}`,
-                at,
-                at,
-                id,
-                stored.revision + 1,
-                actor.githubId,
-              ),
-          ]
-        : []),
-    ]);
+    const result = await deps.db
+      .batch([
+        deps.db
+          .prepare(
+            "UPDATE security_submission_intake SET review_decision=?,review_reason=?,reviewed_by=?,reviewed_at=?,revision=revision+1 WHERE submission_id=? AND revision=?",
+          )
+          .bind(
+            body.decision,
+            body.reason.trim(),
+            actor.githubId,
+            at,
+            id,
+            stored.revision,
+          ),
+        intakeEvent(deps, stored, "review", actor.githubId, at),
+        ...(body.decision === "request-information"
+          ? [
+              deps.db
+                .prepare(
+                  "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at) SELECT ?,?,'security_case',?,NULL,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=? AND review_decision='request-information' AND reviewed_by=?) ON CONFLICT(event_key,recipient_github_id) DO NOTHING",
+                )
+                .bind(
+                  `security-information:${id}:${stored.revision + 1}`,
+                  row.reporter_github_id,
+                  stored.case_id,
+                  `/inbox?submission=${id}`,
+                  at,
+                  at,
+                  id,
+                  stored.revision + 1,
+                  actor.githubId,
+                ),
+            ]
+          : []),
+      ])
+      .catch((error: unknown) => {
+        // A concurrent writer claimed this revision first.
+        if (isConstraintFailure(error))
+          fail(
+            409,
+            "stale_revision",
+            "The report changed. Reload it before acting.",
+          );
+        throw error;
+      });
     if (result[0].meta?.changes !== 1)
       fail(
         409,

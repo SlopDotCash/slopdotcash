@@ -370,10 +370,14 @@ async function oauthCallback(
       identity.githubNodeId,
     );
     if (!completed) {
+      // This request holds the only claim, so the flow expired while GitHub
+      // answered. End it, so the original tab stops polling a flow that can
+      // no longer complete.
+      await deps.persistence.failCallback(flow.id);
       return html(
-        409,
-        "Sign-in failed",
-        "The sign-in flow was already completed.",
+        410,
+        "Sign-in expired",
+        "The sign-in took too long. Start again from your original tab or terminal.",
         siteOf(deps),
       );
     }

@@ -554,7 +554,23 @@ describe("community security vetting", () => {
           previous,
           NOW.toISOString(),
           JSON.stringify({
-            award: { actor: { id: actor }, projectId: project, amount },
+            // Awards carry GitHub node IDs; membership joins by numeric ID.
+            award: {
+              actor: {
+                id: btoa(
+                  `04:User${
+                    {
+                      known: "900000010",
+                      reversed: "900000011",
+                      other: "900000012",
+                      unresolved: "900000099",
+                    }[actor]
+                  }`,
+                ),
+              },
+              projectId: project,
+              amount,
+            },
           }),
         );
     }

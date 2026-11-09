@@ -53,7 +53,10 @@ import {
   verifyPaymentWalletSignature,
 } from "./possession";
 import { publicReceivedTotals, publicVaultPayments } from "./public-records";
-import { handleSolanaFunding } from "./solana-funding";
+import {
+  FundingVaultNotFoundError,
+  handleSolanaFunding,
+} from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
@@ -1270,7 +1273,12 @@ export async function handlePaymentsApi(
       return json(200, account);
     }
     return json(404, { error: "not_found" });
-  } catch {
+  } catch (error) {
+    if (error instanceof FundingVaultNotFoundError)
+      return json(404, {
+        error: "funding_vault_not_found",
+        message: "This project has no such vault on a served network.",
+      });
     console.error("payments API failure");
     return json(503, { error: "payments_unavailable" });
   }
