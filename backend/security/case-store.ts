@@ -84,7 +84,7 @@ export type SecurityApiDependencies = {
   reportingProjects?: Map<string, Promise<ReportingProject>>;
 };
 
-export type ReportingProject = {
+type ReportingProject = {
   manifest: ProjectDefinition;
   revision: number;
 } | null;

@@ -265,7 +265,7 @@ export function reservedGross(snapshot: {
 export const VAULT_SNAPSHOT_STALE_MS = 30 * 60 * 1000;
 
 /** Mainnet block-explorer origins of the EVM networks. */
-export const EVM_EXPLORER_ORIGIN = {
+const EVM_EXPLORER_ORIGIN = {
   base: "https://basescan.org",
   robinhood: "https://robinhoodchain.blockscout.com",
   ethereum: "https://etherscan.io",

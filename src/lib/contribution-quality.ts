@@ -206,7 +206,7 @@ export function assertQualityEvidence(
  * the canonical actor order with English case folding and collation, so the
  * leftover units land on the same contributors on every host.
  */
-export function allocateQualityWeights(
+function allocateQualityWeights(
   weights: Map<string, bigint>,
   capMinor: string,
   actorLogins: ReadonlyMap<string, string> = new Map(),

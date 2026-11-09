@@ -37,7 +37,7 @@ export interface FileChange {
 }
 
 /** Private source bytes, not a textual patch or proof of what a recording shows. */
-export interface AddedBinaryProof {
+interface AddedBinaryProof {
   schemaVersion: 1;
   path: string;
   baseSha: string;

@@ -17,8 +17,6 @@ const VETTING_RESULT_SCHEMA = "slop-vetting-result-v1";
 /** Results carry summaries and digests; the full trace stays with the VM operator. */
 export const MAX_VETTING_RESULT_BYTES = 256 * 1024;
 
-export type { VettingDisposition } from "../../src/lib/vetting-contracts";
-
 /** Telemetry channels VET-03 requires; each must be complete for "clean". */
 export const TELEMETRY_CHANNELS = [
   "process",
@@ -233,7 +231,7 @@ export function timestamp(value: unknown, name: string): string {
   return value as string;
 }
 
-export type VettingConfirmation = NonNullable<VettingResult["confirmation"]>;
+type VettingConfirmation = NonNullable<VettingResult["confirmation"]>;
 
 /** The malicious-confirmation evidence shared by both result schemas. */
 export function parseConfirmation(value: unknown): VettingConfirmation | null {
