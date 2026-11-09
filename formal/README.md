@@ -238,6 +238,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Local identity handoff | `dev_identity_bridge` | `scripts/dev-identity-bridge.ts`, `scripts/dev-identity-bridge.test.ts`; remote and local persistence are separate authorities |
 | Service-binding identity and contributor-token exchange | `identity_consumer_exchange` | `backend/identity-assertion.ts`, `backend/points/handler.ts`, `backend/trace/handler.ts`, `backend/trace/auth.ts`, existing publication and account-closure workflows |
 | Trace token validation and request admission | `trace_bearer_tokens`, `trace_route_authorization` | `backend/trace/auth.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, the binding-recovery path in `backend/security/payments.integration.ts` |
+| Trace creation, progress events and finalization | `trace_run_creation`, `trace_event_finalization` | `backend/trace/cloudflare-persistence.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, `scripts/project-self-service.test.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -375,6 +376,24 @@ Session and allowlist observations create only a request-local operator role.
 Admission does not prove the delegated operation succeeds, and an observation
 does not imply continuous knowledge of current global policy. Both new models
 are source-only and unexecuted.
+
+Trace creation models two actors, keys, payloads and request slots, with one
+retry per slot. An actor/key collision returns the existing run only when the
+declared payload matches. Generated IDs, the caller's current login and request
+time do not replace stored creation metadata. New insertion checks the ban in
+the statement; a previously admitted existing-row read can finish after a
+later ban. Readback can observe a run advanced by upload or finalization.
+
+The event/finalization model starts with one owned run and two request slots.
+An event insert checks current finalization and ban state. A concurrent
+same-key loser returns conflict under the current implementation; a later
+admitted matching retry returns the existing event. Finalization requires a
+trace and preserves the first committed timestamp, including on retries. Its
+idempotency header is validated but is not a stored comparison key. Missing
+and foreign runs both return 404. Statement commits remain distinct from
+metadata, readback and response delivery. Existing workflows cover selected
+creation, ban and finalization paths; concurrent event and partial-reply
+conformance remains incomplete. The new models are unexecuted here.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
