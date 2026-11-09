@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 715,
-    "functions": 9877,
+    "functions": 9880,
     "selectedContractTargets": 183,
-    "unprovedFunctions": 9694,
+    "unprovedFunctions": 9697,
     "nonTypeScriptFiles": 53
   },
   "limits": [
@@ -3632,24 +3632,27 @@
 {"path":"scripts/path-containment.ts","sha256":"accb2ad70fe19a813707dd14a2b48d3ba1eef4b1fbf23562225fb6bb684cc852","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"isInsideDirectory","kind":"FunctionDeclaration","line":10,"sha256":"965ecc69c02c6d3225568cb77f2309cdad8d806e686d04af4e9efe0ad7134759","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/payment-keeper/budget.ts","sha256":"4e94ae2f6cdbea21d8dcb9148c66d1d70dc8895b5e21a0c009d02fa5c77ca253","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"rpc","kind":"FunctionDeclaration","line":19,"sha256":"256e7ebdd16346aef78d0dc2308ceaab09fbeb8dd20fc5cf18f9b2c9a7dc032c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
-{"name":"validateBudget","kind":"FunctionDeclaration","line":36,"sha256":"81a7344b2d08d7505497eeb42071c048af959a9e07579d679e427de068747179","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"nonceGroup","kind":"ArrowFunction","line":50,"sha256":"1a916b58c98dbda20de156a2e7f9a68f9a8ecd1ee42fcaed9db44fdb55bc00d8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"sameNonce","kind":"ArrowFunction","line":53,"sha256":"a2ce3a987945c76f7d71e2d5cb4f131d31244842e0c68f828196b378bee871cb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"reserve","kind":"FunctionDeclaration","line":56,"sha256":"bb90ba99e210297e53c24f75eb9fb2559062d3e4070049c399b7348714125a4b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"budgetEvmSigner","kind":"FunctionDeclaration","line":121,"sha256":"c54d88e34cfb5e66204603056eb7a00e0b6017108fdbe805e7b89300ad352d90","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"sign","kind":"ArrowFunction","line":128,"sha256":"63bf23fa3ce7dacdce6dde4c245def4494e890d5e8f8907ecc69181f3da8d1c3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"signTransaction","kind":"ArrowFunction","line":187,"sha256":"1bc74a3907faee4317995078b5b33bfcef9cb92afa80575879b2ec20d848571d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"signReplacement","kind":"ArrowFunction","line":188,"sha256":"7eff207f965554ea0aaa04709e352502da07e86750ce688373ded0606c426c20","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"budgetSolanaSigner","kind":"FunctionDeclaration","line":193,"sha256":"c2d236f40daee3f6f275781ec56497037ea7afb4e28829b7e77b5514b030b9ae","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"signMessage","kind":"MethodDeclaration","line":203,"sha256":"1a1030ffaf3e9d254931d338d6624673b223b879ca83e6f10d10669ed03dcdae","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"<ArrowFunction@215>","kind":"ArrowFunction","line":215,"sha256":"2baf14053a1b44d8294929e36e908037f423120e7a7ea8ae05252fabe64752c3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@245>","kind":"ArrowFunction","line":245,"sha256":"2bf6d29492f93f43145a1397d5f55749b90002c145200febaf2cd03b182ce515","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"reconcileGas","kind":"FunctionDeclaration","line":259,"sha256":"2b9eb7b94940de69f88b6d46b0cd77ad086a38c3b57283b101c742e94356b35e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"<ArrowFunction@360>","kind":"ArrowFunction","line":360,"sha256":"27cb77b25504f029d16fc35b79fb82a677fa40ba0adf5bb4a71d0556ec5e9960","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"accountExpiredSolanaReserve","kind":"FunctionDeclaration","line":388,"sha256":"92e2c83f5d23cacf1e7be585afe0e0e753c9b555dfcefbeb5eaa46ea6ec7b239","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"baseOracleFee","kind":"FunctionDeclaration","line":471,"sha256":"73314d79f96ce314895e222e3de8455cf84eaf405263377cdc8378d7a4505bcc","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
+{"path":"scripts/payment-keeper/budget.ts","sha256":"8301544417ebeeedd3c6329f833f53e15e8503a71c29888666d8cfd9e8698c14","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"rpc","kind":"FunctionDeclaration","line":24,"sha256":"256e7ebdd16346aef78d0dc2308ceaab09fbeb8dd20fc5cf18f9b2c9a7dc032c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
+{"name":"validateBudget","kind":"FunctionDeclaration","line":41,"sha256":"81a7344b2d08d7505497eeb42071c048af959a9e07579d679e427de068747179","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"nonceGroup","kind":"ArrowFunction","line":55,"sha256":"1a916b58c98dbda20de156a2e7f9a68f9a8ecd1ee42fcaed9db44fdb55bc00d8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"sameNonce","kind":"ArrowFunction","line":58,"sha256":"a2ce3a987945c76f7d71e2d5cb4f131d31244842e0c68f828196b378bee871cb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"reserve","kind":"FunctionDeclaration","line":61,"sha256":"a14da7e136a83620230097176c7a3f623ef91da5e0915346e121cf53f48d3e8a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"bucketFor","kind":"ArrowFunction","line":95,"sha256":"e8f85a6d3d510f1aad9828e7662d1ad1634a5017f5770a058ffdb5731233d03c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"settlement","kind":"ArrowFunction","line":103,"sha256":"eaa4de9237c6205034433a109ec05020474f9f99b86700265b885d570e6fcf8d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@107>","kind":"ArrowFunction","line":107,"sha256":"1c858b41e9d7c9d8b52c45d5951d5292e5662edbc547b50d09b171477a6bad56","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"budgetEvmSigner","kind":"FunctionDeclaration","line":152,"sha256":"c54d88e34cfb5e66204603056eb7a00e0b6017108fdbe805e7b89300ad352d90","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"sign","kind":"ArrowFunction","line":159,"sha256":"63bf23fa3ce7dacdce6dde4c245def4494e890d5e8f8907ecc69181f3da8d1c3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"signTransaction","kind":"ArrowFunction","line":218,"sha256":"1bc74a3907faee4317995078b5b33bfcef9cb92afa80575879b2ec20d848571d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"signReplacement","kind":"ArrowFunction","line":219,"sha256":"7eff207f965554ea0aaa04709e352502da07e86750ce688373ded0606c426c20","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"budgetSolanaSigner","kind":"FunctionDeclaration","line":224,"sha256":"c2d236f40daee3f6f275781ec56497037ea7afb4e28829b7e77b5514b030b9ae","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"signMessage","kind":"MethodDeclaration","line":234,"sha256":"1a1030ffaf3e9d254931d338d6624673b223b879ca83e6f10d10669ed03dcdae","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@246>","kind":"ArrowFunction","line":246,"sha256":"2baf14053a1b44d8294929e36e908037f423120e7a7ea8ae05252fabe64752c3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@276>","kind":"ArrowFunction","line":276,"sha256":"2bf6d29492f93f43145a1397d5f55749b90002c145200febaf2cd03b182ce515","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"reconcileGas","kind":"FunctionDeclaration","line":290,"sha256":"2b9eb7b94940de69f88b6d46b0cd77ad086a38c3b57283b101c742e94356b35e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"<ArrowFunction@391>","kind":"ArrowFunction","line":391,"sha256":"27cb77b25504f029d16fc35b79fb82a677fa40ba0adf5bb4a71d0556ec5e9960","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"accountExpiredSolanaReserve","kind":"FunctionDeclaration","line":419,"sha256":"92e2c83f5d23cacf1e7be585afe0e0e753c9b555dfcefbeb5eaa46ea6ec7b239","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"baseOracleFee","kind":"FunctionDeclaration","line":502,"sha256":"73314d79f96ce314895e222e3de8455cf84eaf405263377cdc8378d7a4505bcc","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"scripts/payment-keeper/keeper.ts","sha256":"188959981875144d819a0d6a73495b34ba48622cdd1f061b1b0db524864370b7","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"json","kind":"FunctionDeclaration","line":87,"sha256":"e00438cfba5205b86412374b4ae2b6428bef2acaffbc6db5c5eeddd35cf55d34","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
