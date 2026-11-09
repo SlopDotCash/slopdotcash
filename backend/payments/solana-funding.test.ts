@@ -34,7 +34,7 @@ function fund(resolve: () => Promise<never>) {
   ).finally(() => sqlite.close());
 }
 
-test("an unknown funding vault or network is a 404, not a payments outage", async () => {
+test("an unknown vault on a served network is a 404, not a payments outage", async () => {
   const missing = await fund(async () => {
     throw new FundingVaultNotFoundError("Funding vault unavailable");
   });

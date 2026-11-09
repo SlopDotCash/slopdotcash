@@ -257,7 +257,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   ): Promise<SolanaEscrowConfig> => {
     const selected = vaultSetupNetworks(env).find((name) => name === network);
     if (!selected || ESCROW_NETWORKS[selected].family !== "solana")
-      throw new FundingVaultNotFoundError("Funding network unavailable");
+      throw new Error("Funding network unavailable");
     const registry = await loadRegistryPaymentDeployments(
       db,
       [selected],
