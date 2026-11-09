@@ -1,6 +1,10 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import {
+  shiftPeriod,
+  utcPeriodOf,
+} from "../../src/lib/payments/monthly-allocation";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
   EnforcementAction,
@@ -458,12 +462,10 @@ async function ownerSecurityProgram(
 /** Every UTC month from the reward start through `last`, in order. */
 function monthsThrough(rewardStartAt: string, last: string): string[] {
   const months: string[] = [];
-  const month = new Date(`${rewardStartAt.slice(0, 7)}-01T00:00:00Z`);
   for (
-    let id = month.toISOString().slice(0, 7);
+    let id = utcPeriodOf(new Date(`${rewardStartAt.slice(0, 7)}-01T00:00:00Z`));
     id <= last;
-    month.setUTCMonth(month.getUTCMonth() + 1),
-      id = month.toISOString().slice(0, 7)
+    id = shiftPeriod(id, 1)
   )
     months.push(id);
   return months;
@@ -580,7 +582,7 @@ function prospectiveFinancialChange(
       "financial_change_restricted",
       "Only the monthly amount, network and asset change through owner self-service",
     );
-  const cycleId = now.toISOString().slice(0, 7);
+  const cycleId = utcPeriodOf(now);
   if (assetChanged) {
     // Old caps remain in immutable revisions of the old asset. The new
     // asset starts next month: every month from the reward start through
@@ -1520,11 +1522,7 @@ async function ownerVault(
     current,
     actor,
     manifest: bounty
-      ? attachBountyVault(
-          current.manifest,
-          deployment,
-          deps.now().toISOString().slice(0, 7),
-        )
+      ? attachBountyVault(current.manifest, deployment, utcPeriodOf(deps.now()))
       : attachOrdinaryVault(current.manifest, deployment),
     ownerParticipation: true,
     reason:

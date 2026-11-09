@@ -32,6 +32,10 @@ import {
 import { fundingAssetForNetwork } from "../../src/lib/funding-address.mjs";
 import { reservedGross } from "../../src/lib/payments/contracts";
 import {
+  shiftPeriod,
+  utcPeriodOf,
+} from "../../src/lib/payments/monthly-allocation";
+import {
   assertProjectDefinition,
   CONTRIBUTION_FIELDS,
   PROJECT_SKILL_TEMPLATES,
@@ -1304,12 +1308,7 @@ export function scenarioActor(scenario: number, n: number): TestActor {
  */
 export function openMonthlyPeriod(now: bigint) {
   const date = new Date(Number(now) * 1000);
-  const shift = (months: number) => {
-    const d = new Date(
-      Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1),
-    );
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-  };
+  const shift = (months: number) => shiftPeriod(utcPeriodOf(date), months);
   const monthStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
   const back = date.getTime() < monthStart + 72 * 3_600_000 ? 2 : 1;
   return {
