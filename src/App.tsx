@@ -27,7 +27,7 @@ import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
-import { copyText } from "./lib/copy-text";
+import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
@@ -932,21 +932,7 @@ function AgentPromptBox({
   prompt: string;
   openIn?: boolean;
 }) {
-  const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
-  useEffect(() => {
-    if (copy !== "copied") return;
-    const timer = window.setTimeout(() => setCopy("idle"), 1_600);
-    return () => window.clearTimeout(timer);
-  }, [copy]);
-  const copyPrompt = async () => {
-    try {
-      await copyText(prompt);
-      setCopy("copied");
-    } catch {
-      // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
-      setCopy("error");
-    }
-  };
+  const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
     <div className="command-box agent-prompt-box">
       <output aria-label="Agent prompt" className="agent-prompt-copy">
@@ -965,7 +951,7 @@ function AgentPromptBox({
         aria-label={
           copy === "copied"
             ? "Copied agent prompt"
-            : copy === "error"
+            : copy === "failed"
               ? "Copy unavailable; select agent prompt"
               : "Copy agent prompt"
         }
@@ -974,15 +960,15 @@ function AgentPromptBox({
             ? "button primary-button agent-prompt-copied"
             : "button primary-button"
         }
-        data-copy={copy}
-        onClick={() => void copyPrompt()}
+        data-copy={copy === "failed" ? "error" : copy}
+        onClick={copyPrompt}
         type="button"
       >
         {copy === "copied" ? <Check /> : <Clipboard />}
         <span className="agent-prompt-copy-label">
           {copy === "copied"
             ? "Copied"
-            : copy === "error"
+            : copy === "failed"
               ? "Select text"
               : "Copy"}
         </span>

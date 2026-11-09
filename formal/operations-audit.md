@@ -4,6 +4,12 @@ Target: `origin/development` at `e3d7dea64f1171f5761033069b98de4fd5cc1e77`.
 This is an in-progress review. Source links identify the abstraction's subject;
 they do not prove every function in a linked file refines that abstraction.
 
+Source-only [contributor completion changes](contributor-completion-audit.md)
+refine local receipt publication, terms acknowledgement and discovery child
+ownership. These modified model/source bytes and their new regression
+definitions have not been executed; historical passing results below do not
+apply to the follow-up.
+
 | Model | Source obligations reviewed | Bounds and implementation evidence |
 | --- | --- | --- |
 | `bot_review_lease` | `startReview`, `ownsReviewClaim`, `finishReview`; new/skipped/failed/completed states; expired tokens; immutable provider-cost recording | Three token generations, five clock instants. `workers/slopbot/formal-state.test.ts` replays actual Quint output through production D1 methods and migrated SQLite |

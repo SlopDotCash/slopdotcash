@@ -14,7 +14,8 @@ was insufficient evidence that every state family in the file had a model.
 | Current URL, history, hash and document head | `ui_navigation`, `ui_hash_navigation`; route parsing and title construction remain pure input transformations. DOM arrival and user takeover are distinct. |
 | Hero word, character count, phase and timer | `ui_hero_animation`; hold, delete, gap, type and settle, reduced-motion observation, pending callback and unmount. |
 | Failed custom image and owner avatar | `ui_project_images`; custom URL failure, owner fallback, initial fallback, URL replacement and project-key reset. |
-| Project page selection, history disclosure and copy feedback | Existing `ui_navigation`; bounded pages, filter reset, toggle, copy success/error and feedback expiry. |
+| Project page selection, history disclosure and coarse copy outcomes | Existing `ui_navigation`; bounded pages, filter reset, toggle and coarse copy success/error. |
+| Clipboard request ownership and expiry | `ui_clipboard_requests`; source-only refinement for changing displayed prompts, latest attempts, component lifetime and stale timers. See `clipboard-feedback-audit.md`. |
 | Project-specific agent prompt | `ui_project_discovery`; loading, valid listed result, valid absent result, request/schema error, project-key replacement, departed response and unmount. |
 | Public data and contract values passed to child views | The source hooks and financial models retain those transitions. App rendering does not create a second authoritative record. |
 

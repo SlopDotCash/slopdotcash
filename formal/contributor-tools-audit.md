@@ -3,6 +3,12 @@
 The source links in these models identify concrete control-flow contracts, not
 complete semantic refinement of the linked files.
 
+The [completion follow-up](contributor-completion-audit.md) changes receipt,
+terms-cache and discovery-helper transitions by source review only. Its 29
+named scenarios and five regression definitions are unexecuted. The earlier
+passing results recorded below do not validate these modified model/source
+bytes.
+
 | Source | Model / review |
 | --- | --- |
 | `skills/project-contributor-template/scripts/live-report.mjs` | `contributor_review_epoch`: deterministic cutoff and finite frontier, exact-head terminal disposition, deferred arrivals, one lower-tier permit. `contributor_discovery_lock`: process birth identity, owner token, atomic transition guard, live-child retention, stale-owner reclamation. `contributor_discovery_snapshot`: two full-read attempts, independent inventory/activity, failure without empty-success publication. |

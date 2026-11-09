@@ -2319,6 +2319,123 @@ describe("generated project skill installation", () => {
     ).toBe(`.${skillName}-versions/${revisionA}-r3`);
   });
 
+  it("does not publish an invalid receipt after a small backward clock change and can retry", () => {
+    const root = freshRoot("receipt-clock");
+    const manifest = manifestFor("Prefer small PRs.");
+    const binding = publishRevision(root, manifest, 3);
+    const { artifact } = generatedArtifact(root, manifest, binding);
+    const installRoot = join(root, "install");
+    const installed = run(
+      generatedCommand(artifact, generatedAuthority(root), root),
+      installRoot,
+    );
+    expect(installed.status, installed.stderr).toBe(0);
+    const installedSkill = join(installRoot, "codex", "skills", skillName);
+    const script = join(installedSkill, "scripts", "run-receipt.mjs");
+    const project = JSON.parse(
+      readFileSync(join(installedSkill, "project.json"), "utf8"),
+    );
+    const target = join(root, "target");
+    execFileSync("git", ["init", "--quiet", target]);
+    execFileSync("git", [
+      "-C",
+      target,
+      "remote",
+      "add",
+      "origin",
+      `https://github.com/${project.repositoryId}.git`,
+    ]);
+    const configuration = join(root, "state");
+    const invokeAt = (timestamp: number, args: string[]) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `
+            import { pathToFileURL } from 'node:url';
+            const [script, timestamp, args] = process.argv.slice(1);
+            const now = Number(timestamp);
+            const NativeDate = Date;
+            globalThis.Date = class extends NativeDate {
+              constructor(...values) { super(...(values.length ? values : [now])); }
+              static now() { return now; }
+            };
+            process.argv = [process.execPath];
+            const { main } = await import(pathToFileURL(script).href);
+            try { await main(JSON.parse(args)); }
+            catch (error) {
+              process.stderr.write(String(error.message) + '\\n');
+              process.exitCode = 1;
+            }
+          `,
+          script,
+          String(timestamp),
+          JSON.stringify(args),
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, XDG_CONFIG_HOME: configuration },
+        },
+      );
+    const declared = [
+      "--client",
+      "codex",
+      "--provider",
+      "fixture",
+      "--model",
+      "fixture-model",
+      "--lane",
+      "clock",
+      "--repo-root",
+      target,
+      "--usage-unavailable",
+      "--json",
+    ];
+    const startedAt = Date.parse("2026-11-08T12:00:00.000Z");
+    const started = invokeAt(startedAt, ["start", ...declared]);
+    expect(started.status, started.stderr).toBe(0);
+    const runId = JSON.parse(started.stdout).runId;
+    const active = join(configuration, "slop", "runs", "active", `${runId}.json`);
+    const completed = join(
+      configuration,
+      "slop",
+      "runs",
+      "completed",
+      `${runId}.json`,
+    );
+    const activeBytes = readFileSync(active);
+    const finishArgs = ["finish", ...declared, "--run", runId];
+    const backward = invokeAt(startedAt - 1_000, finishArgs);
+    expect(backward.status).not.toBe(0);
+    expect(backward.stderr).toContain("system clock moved backward");
+    expect(existsSync(completed)).toBe(false);
+    expect(readFileSync(active)).toEqual(activeBytes);
+    const retried = invokeAt(startedAt + 1_000, finishArgs);
+    expect(retried.status, retried.stderr).toBe(0);
+    expect(JSON.parse(retried.stdout).receipt.completedAt).toBe(
+      "2026-11-08T12:00:01.000Z",
+    );
+    expect(existsSync(active)).toBe(false);
+    const committed = readFileSync(completed);
+    const replayed = invokeAt(startedAt + 2_000, finishArgs);
+    expect(replayed.status, replayed.stderr).toBe(0);
+    expect(readFileSync(completed)).toEqual(committed);
+    expect(JSON.parse(replayed.stdout).receipt).toEqual(
+      JSON.parse(retried.stdout).receipt,
+    );
+
+    // A pre-existing invalid record remains an explicit error, never a target
+    // that a retry silently replaces. Model historical invalid bytes locally.
+    const historical = JSON.parse(committed.toString());
+    historical.receipt.completedAt = "2026-11-08T11:59:59.000Z";
+    const invalid = Buffer.from(`${JSON.stringify(historical)}\n`);
+    writeFileSync(completed, invalid);
+    const refused = invokeAt(startedAt + 3_000, finishArgs);
+    expect(refused.status).not.toBe(0);
+    expect(readFileSync(completed)).toEqual(invalid);
+  });
+
   it("refuses offline use of tampered installations and a clean uninstalled checkout", () => {
     const root = freshRoot("offline-integrity");
     const manifest = manifestFor("Prefer small PRs.");

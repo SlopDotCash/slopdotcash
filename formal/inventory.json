@@ -4037,7 +4037,7 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/live-report.mjs",
-      "sha256": "754514baa71dbc3fa7fa8971bf6d07eb17ba8c49c2172bb38d0189c5f2edd4f2",
+      "sha256": "b4a0ade82000f51688e32b929cc6e1d404293b906f7daca577feb1bbb2dc0ef6",
       "models": [
         "formal/models/contributor_discovery_lock.qnt",
         "formal/models/contributor_discovery_snapshot.qnt",
@@ -4048,16 +4048,16 @@
         953, 1015, 1044, 1094, 1186, 1216, 1222, 1327, 1375, 1416, 1471, 1533,
         1572, 1591, 1616, 1617, 1618, 1628, 1682, 1685, 1690, 1695, 1700, 1713,
         1718, 1719, 1720, 1722, 1723, 1727, 1728, 1752, 1753, 1756, 1776, 1810,
-        1814, 1816, 1824, 2055, 2060, 2081, 2087, 2094, 2115, 2135, 2138, 2175,
-        2238, 2560, 2749, 2759, 2766, 2783, 2799, 2809, 2852, 2856, 2865, 2992,
-        2995, 3003, 3027, 3074, 3075, 3287, 3291, 3295, 3419, 3494, 3495, 3506,
-        3663
+        1814, 1816, 1824, 1833, 2059, 2064, 2085, 2091, 2098, 2123, 2137, 2145,
+        2167, 2181, 2218, 2281, 2603, 2792, 2802, 2809, 2826, 2842, 2852, 2895,
+        2899, 2908, 3035, 3038, 3046, 3070, 3117, 3118, 3330, 3334, 3338, 3462,
+        3537, 3538, 3549, 3706
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "skills/project-contributor-template/scripts/run-receipt.mjs",
-      "sha256": "b548cfac9a02485615fb7dbb0d10eb2d45c0300ee5ef464f9ef02421a738f039",
+      "sha256": "34bb846f72661764f4d76a9e71874c80ff1116b482650044ff51e778f684d30e",
       "models": ["formal/models/skill_run_local.qnt"],
       "candidateLines": [
         139, 163, 188, 238, 327, 520, 592, 607, 614, 621, 647, 697, 755, 758,
@@ -4071,8 +4071,8 @@
         2655, 2658, 2661, 2677, 2728, 2754, 2763, 2775, 2776, 2778, 2779, 2780,
         2781, 2783, 2786, 2794, 2847, 2849, 2851, 2857, 2858, 2859, 2860, 2861,
         2862, 2863, 2864, 2865, 2866, 2867, 2869, 2872, 2879, 2888, 2889, 2890,
-        2891, 2892, 2894, 2895, 2896, 2897, 2898, 2899, 2900, 2916, 2928, 2930,
-        2972, 2979
+        2891, 2892, 2894, 2895, 2896, 2897, 2898, 2899, 2900, 2916, 2928, 2937,
+        2979, 2986
       ],
       "review": "mapped-abstraction"
     },
@@ -4085,9 +4085,9 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/terms-preflight.mjs",
-      "sha256": "3e112ab4204a3e5d374045207cc6d4691417ea99516bf8f89d349beb3e3bd818",
+      "sha256": "1e9b2d54ccf2c6eb8f336094d56b7c29a7213804c2e3f524ee811614fe5afd99",
       "models": ["formal/models/contributor_terms_preflight.qnt"],
-      "candidateLines": [9, 12, 45, 116, 117, 260, 281, 286, 293],
+      "candidateLines": [9, 12, 45, 118, 119, 262, 283, 288, 295],
       "review": "mapped-abstraction"
     },
     {
@@ -4152,8 +4152,9 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "69be46c6627af337ae67948b56195421b4049c4f96d56b22e35c0610788b70fc",
+      "sha256": "a91f9fe74de73e11cf01c7e45798302ad0a9873cc8e838f0dc033502f235e609",
       "models": [
+        "formal/models/ui_clipboard_requests.qnt",
         "formal/models/ui_document_head.qnt",
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
@@ -4168,12 +4169,11 @@
       ],
       "candidateLines": [
         13, 15, 283, 293, 303, 314, 323, 324, 325, 326, 327, 329, 330, 389, 444,
-        445, 446, 449, 472, 539, 570, 607, 647, 651, 653, 694, 751, 804, 935,
-        936, 938, 1028, 1043, 1057, 1067, 1097, 1100, 1162, 1165, 1167, 1171,
-        1172, 1180, 1200, 1208, 1209, 1216, 1252, 1296, 1299, 1316, 1317, 1360,
-        1362, 1382, 1384, 1439, 1440, 1443, 1444, 1447, 1448, 1463, 1467, 1472,
-        1474, 1478, 1479, 1530, 1562, 1564, 1589, 1590, 1607, 1608, 1616, 1617,
-        1628, 1631, 1642
+        445, 446, 449, 472, 539, 570, 607, 647, 651, 653, 694, 751, 804, 1014,
+        1029, 1043, 1053, 1083, 1086, 1148, 1151, 1153, 1157, 1158, 1166, 1186,
+        1194, 1195, 1202, 1238, 1282, 1285, 1302, 1303, 1346, 1348, 1368, 1370,
+        1425, 1426, 1429, 1430, 1433, 1434, 1449, 1453, 1458, 1460, 1464, 1465,
+        1516, 1548, 1550, 1575, 1576, 1593, 1594, 1602, 1603, 1614, 1617, 1628
       ],
       "review": "mapped-abstraction"
     },
@@ -4386,9 +4386,12 @@
     },
     {
       "path": "src/Operations.tsx",
-      "sha256": "7c39f7c88aea2ca1b784cd4373a139897654b8abb58128faf5d123f733575892",
-      "models": ["formal/models/ui_navigation.qnt"],
-      "candidateLines": [2, 16, 41],
+      "sha256": "ee41468927af3aeb594add6ba8ab27e29b958411d6d1848d5ecc749544ff8ab5",
+      "models": [
+        "formal/models/ui_clipboard_requests.qnt",
+        "formal/models/ui_navigation.qnt"
+      ],
+      "candidateLines": [34],
       "review": "mapped-abstraction"
     },
     {
@@ -5041,7 +5044,10 @@
     {
       "path": "src/lib/copy-text.ts",
       "sha256": "0a1a1c4e62e9e2ce7c20a4bfac8ac7bb9370871111d730219d6030eaac2b9ea3",
-      "models": ["formal/models/ui_navigation.qnt"],
+      "models": [
+        "formal/models/ui_clipboard_requests.qnt",
+        "formal/models/ui_navigation.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5850,6 +5856,13 @@
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [1, 5, 10, 11],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/use-copy-feedback.ts",
+      "sha256": "2349a436c1c032437d7a9cefefe771f730b2528721dc85c88c1d839e3f1020de",
+      "models": ["formal/models/ui_clipboard_requests.qnt"],
+      "candidateLines": [1, 9, 22, 24],
       "review": "mapped-abstraction"
     },
     {
@@ -8406,7 +8419,7 @@
     },
     {
       "path": "formal/models/api_trace.qnt",
-      "sha256": "aad2b8ff08f16b1857cf6d07d002a742925206934ab5000f1728b2830a701d09",
+      "sha256": "7d8a676efb1587ab2d8aa6a33e788f0c4e4611002dad9dcdbc8a8a86bb5efb1f",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/cloudflare-persistence.ts",
@@ -8419,9 +8432,27 @@
         "migrations/0058_trace_write_reservations.sql"
       ],
       "scenarios": [
+        "admittedRequestMayFinishAfterExpiryTest",
+        "banAfterReservationRetainsUnattachedBytesTest",
+        "banBeforeReservationRefusesWriteTest",
+        "banBetweenReservationAndReadbackRetainsOnlyReservationTest",
+        "banPreservesAttachedReceiptAndRefusesFinalizationTest",
+        "competingDigestCannotChangeReservationTest",
+        "duplicateCapabilityHasOnlyOneCommitTest",
+        "expiredBeforeDispatchRefusesCapabilityTest",
+        "failedBatchRetainsCapabilityAndAllowsRetryTest",
+        "failedWriteAllowsSameCapabilityRetryTest",
+        "finalizationBeforeReplyIsVisibleTest",
+        "finalizationFreezesEventsTest",
+        "finalizedRunRefusesLateAttachmentTest",
+        "invalidBytesNeverReserveTest",
+        "lostAttachmentReplyRetainsAtomicReceiptTest",
+        "lostWriteResponseRetainsBytesForRetryTest",
         "orphanTest",
         "retiredGrantAndReadRemainUnavailableTest",
-        "traceTest"
+        "traceTest",
+        "twoCapabilitiesMayAttachOneDigestTest",
+        "unavailableIntakeNeverReservesTest"
       ]
     },
     {
@@ -9318,13 +9349,18 @@
     },
     {
       "path": "formal/models/contributor_discovery_lock.qnt",
-      "sha256": "e6ee38851041264dfcb94d66ef6067329c0189ae374252c32d3ac3e9cd7331e7",
+      "sha256": "b3e2c14ff2f093e1be311a7ba928fc5c5f15f7301b20f98cda65effd1ef8298f",
       "sources": [
         "skills/project-contributor-template/scripts/live-report.mjs"
       ],
       "scenarios": [
+        "bookkeepingFailureRetainsLaunchedChildOwnershipTest",
         "childPreventsReclaimTest",
+        "cleanupDoesNotReplacePrimaryBookkeepingFailureTest",
+        "closedChildStillHasLiveHelperUntilCleanupTest",
         "crashedGuardRequiresInterventionTest",
+        "failedBookkeepingWaitsBeforeLeaseCleanupTest",
+        "helperBeforeSpawnBlocksReclaimTest",
         "staleOwnerCanBeReclaimedTest"
       ]
     },
@@ -9355,15 +9391,20 @@
     },
     {
       "path": "formal/models/contributor_terms_preflight.qnt",
-      "sha256": "7af72c14cafe60dfb377803c39aaa70880c5012018b712260f2b43c5f54dc2e4",
+      "sha256": "04f8a6ff73f30e63fb946acd3e9caa701287113921f7398a45ded426c59a7672",
       "sources": [
         "skills/project-contributor-template/scripts/terms-preflight.mjs"
       ],
       "scenarios": [
+        "cacheCloseFailureKeepsVerifiedBytesTest",
         "cacheMissMayFetchTest",
         "changedRevisionRefusedTest",
+        "corruptCacheCloseFailureStillAllowsNetworkTest",
         "corruptedCacheDoesNotAuthorizeTest",
-        "mutableUrlNotCacheAuthorityTest"
+        "mutableUrlNotCacheAuthorityTest",
+        "noDocumentsMayAcknowledgeTest",
+        "optionalCachePublicationDoesNotBlockAcknowledgementTest",
+        "pausedProjectDocumentCheckDoesNotGrantAdmissionTest"
       ]
     },
     {
@@ -11327,14 +11368,24 @@
     },
     {
       "path": "formal/models/skill_run_local.qnt",
-      "sha256": "f3826a460e536d9fd744da9361babbd06d720931ee65cefb437e82d836221079",
+      "sha256": "25a7741ca2b897e3ac44ee54b6655de0984bcbe99b0bf758995a012db781e435",
       "sources": [
         "skills/project-contributor-template/scripts/run-receipt.mjs",
         "src/lib/run-receipts.ts"
       ],
       "scenarios": [
+        "activeRemovalFailureCanReplayTest",
+        "backwardClockCannotPoisonCompletedRecordTest",
+        "changedTraceCannotReplaceUploadTest",
+        "cleanupFailureLeavesValidReplayTest",
+        "concurrentFinishPreservesFirstWinnerTest",
+        "invalidCandidateCannotPublishTest",
+        "invalidExistingRecordRemainsExplicitErrorTest",
+        "openedDoesNotNeedMeasuredRunTest",
+        "openedRetryIdentityIsSeparateTest",
         "optionalEvidenceDoesNotBlockReceiptTest",
-        "recordBeforeFinalizationTest"
+        "recordBeforeFinalizationTest",
+        "traceRetryUsesStoredDigestTest"
       ]
     },
     {
@@ -11897,6 +11948,36 @@
       ]
     },
     {
+      "path": "formal/models/ui_clipboard_requests.qnt",
+      "sha256": "348116f3ba6ba457610efeb7da2ec411cba33e61dfb10eecdd6e350d674d61d0",
+      "sources": [
+        "src/App.tsx",
+        "src/Operations.tsx",
+        "src/lib/copy-text.ts",
+        "src/lib/use-copy-feedback.ts"
+      ],
+      "scenarios": [
+        "changedPromptClearsFailureTest",
+        "changedPromptClearsSuccessTest",
+        "changedPromptDiscardsOldFailureTest",
+        "changedPromptDiscardsOldSuccessTest",
+        "clearOnNewAttemptTest",
+        "currentSuccessExpiresTest",
+        "deniedRetryTest",
+        "deniedTest",
+        "departedSuccessIsIgnoredTest",
+        "departedTimerDoesNotClearNewResultTest",
+        "identifierSuccessDoesNotExpireTest",
+        "oldFailureCannotReplaceNewSuccessTest",
+        "oldSuccessCannotReplaceNewFailureTest",
+        "oldSuccessDoesNotEndNewPendingTest",
+        "oldTimerCannotClearNewSuccessTest",
+        "remountedValueDoesNotOwnOldResultTest",
+        "successTest",
+        "textAbaDoesNotReviveOldRequestTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_contributor_allocation.qnt",
       "sha256": "a78c4db8aac66bd191646e35aff8cbd4a40167b9319533ddeb6df0ff321aa60f",
       "sources": [
@@ -12333,7 +12414,7 @@
     },
     {
       "path": "formal/models/ui_navigation.qnt",
-      "sha256": "52dd453aa538af8356d30bcc85dbc2c519f1d537acd1ac147ba7ccf6c864100c",
+      "sha256": "10a22bcc75d1c2a8f77a301b9530f1a150f0e8e9e1b930160c1f5e66781b5caf",
       "sources": [
         "src/App.tsx",
         "src/Link.tsx",

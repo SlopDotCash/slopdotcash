@@ -172,6 +172,21 @@ See `trace-intent-admission-audit.md`, `private-intake-completion-audit.md`,
 The current function census contains 9,967 bodies in 686 files and 168 selected
 contracts.
 
+The clipboard and contributor-completion batch adds one model and 56 scenarios
+across new and refined models. Clipboard feedback now belongs to the current
+text, component lifetime and latest attempt. Local run completion validates
+before immutable publication; optional policy-cache cleanup and discovery-child
+bookkeeping preserve their failure boundaries. Trace upload now models permanent
+reservation, storage outcome, atomic attachment and retry separately. The ten
+new browser/CLI regression definitions and all changed model scenarios are
+unexecuted. See `clipboard-feedback-audit.md`, `contributor-completion-audit.md`
+and `trace-upload-lifecycle-audit.md` for source correspondence and limits.
+The metadata inventory contains 843 production sources, 358 models and 2,282
+named scenarios, with no unmapped source paths. That mapping is not refinement.
+The function census contains 9,970 bodies in 687 files, with 168 selected
+contracts. It does not prove the other bodies. Abrupt loss of a discovery helper
+before its child identity is published remains a separate crash-window review.
+
 The reviewer independently confirmed that run `42533925495` attempt 2 passed
 against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,
 924 normal model stages and 168 selected function proofs in 33 modules. These

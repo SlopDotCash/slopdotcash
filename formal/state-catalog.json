@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "407d0119337729c64f1db0d1113156cef77530399e0d2c7b422fe1e8f2d50467",
+  "inventorySha256": "62454cc06ac08e5c1aca8bd320d684e695f79dec881c09d148609dd5eae6e4d5",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2044,6 +2044,7 @@
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
       "models": [
+        "formal/models/ui_clipboard_requests.qnt",
         "formal/models/ui_document_head.qnt",
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
@@ -2061,33 +2062,12 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 935,
-      "name": "useState",
-      "kind": "string-union",
-      "values": ["copied", "error", "idle"],
-      "models": [
-        "formal/models/ui_document_head.qnt",
-        "formal/models/ui_hash_navigation.qnt",
-        "formal/models/ui_hero_animation.qnt",
-        "formal/models/ui_navigation.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt",
-        "formal/models/ui_points_disputes.qnt",
-        "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt",
-        "formal/models/ui_public_x_profile.qnt",
-        "formal/models/ui_vetting_inventory.qnt"
-      ],
-      "lexicallyUnmentionedValues": [],
-      "review": "candidate-only"
-    },
-    {
-      "path": "src/App.tsx",
-      "line": 1098,
+      "line": 1084,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
       "models": [
+        "formal/models/ui_clipboard_requests.qnt",
         "formal/models/ui_document_head.qnt",
         "formal/models/ui_hash_navigation.qnt",
         "formal/models/ui_hero_animation.qnt",
@@ -2155,16 +2135,6 @@
         "formal/models/ui_explicit_signout.qnt"
       ],
       "lexicallyUnmentionedValues": [],
-      "review": "candidate-only"
-    },
-    {
-      "path": "src/Operations.tsx",
-      "line": 16,
-      "name": "useState",
-      "kind": "string-union",
-      "values": ["copied", "failed"],
-      "models": ["formal/models/ui_navigation.qnt"],
-      "lexicallyUnmentionedValues": ["failed"],
       "review": "candidate-only"
     },
     {

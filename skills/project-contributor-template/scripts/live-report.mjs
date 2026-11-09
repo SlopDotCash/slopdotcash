@@ -1827,7 +1827,11 @@ function writeLiveReportCommandLease(path, lease, replace = false) {
     });
     renameSync(nextPath, path);
   } catch (error) {
-    rmSync(nextPath, { force: true });
+    try {
+      rmSync(nextPath, { force: true });
+    } catch {
+      // The original lease-write failure remains primary.
+    }
     throw error;
   }
 }
@@ -2093,6 +2097,10 @@ async function runLockedGhCommand(lockPath, ownerToken, commandToken) {
   };
   writeLiveReportCommandLease(leasePath, lease);
   let result;
+  let child;
+  let childResult;
+  let primaryFailure;
+  let cleanupFailure;
   try {
     const currentOwner = readLiveReportLockOwner(lockPath);
     if (currentOwner === null || currentOwner.ownerToken !== ownerToken) {
@@ -2100,12 +2108,12 @@ async function runLockedGhCommand(lockPath, ownerToken, commandToken) {
         "live report lock ownership changed while starting GitHub command",
       );
     }
-    const child = spawn("gh", request.args, {
+    child = spawn("gh", request.args, {
       env: { ...process.env, GH_HOST: "github.com" },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
-    const childResult = collectBoundedGhChild(child, request.maxBuffer);
+    childResult = collectBoundedGhChild(child, request.maxBuffer);
     if (Number.isInteger(child.pid) && child.pid > 0) {
       const childIdentity = readLiveReportProcessIdentity(child.pid);
       if (childIdentity !== null) {
@@ -2120,20 +2128,55 @@ async function runLockedGhCommand(lockPath, ownerToken, commandToken) {
       }
     }
     result = await childResult;
+    if (result.error) throw result.error;
+    if (result.overflow !== null) {
+      throw new RangeError(
+        `spawn gh ${result.overflow} exceeded the bounded output buffer`,
+      );
+    }
+    if (result.status === null) {
+      throw new Error(`gh terminated by ${result.signal ?? "an unknown signal"}`);
+    }
+  } catch (error) {
+    primaryFailure = error;
+    if (childResult !== undefined && result === undefined) {
+      // A launched child still belongs to this helper even if reading its
+      // birth identity or publishing that identity failed. Keep the helper
+      // lease until close; deleting it early would permit stale-owner reuse.
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Termination failure cannot replace the original bookkeeping error.
+      }
+      try {
+        await childResult;
+      } catch {
+        // Preserve the first failure after the owned child has settled.
+      }
+    }
   } finally {
-    rmSync(leasePath, { force: true });
-    rmSync(request.requestPath, { force: true });
+    for (const path of [leasePath, request.requestPath]) {
+      try {
+        rmSync(path, { force: true });
+      } catch (error) {
+        cleanupFailure ??= error;
+      }
+    }
   }
-  if (result.error) throw result.error;
-  if (result.overflow !== null) {
-    throw new RangeError(
-      `spawn gh ${result.overflow} exceeded the bounded output buffer`,
-    );
-  }
+  if (primaryFailure !== undefined) throw primaryFailure;
+  if (cleanupFailure !== undefined && result.status === 0)
+    throw cleanupFailure;
   writeProcessDescriptor(1, result.stdout);
   writeProcessDescriptor(2, result.stderr);
-  if (result.status === null) {
-    throw new Error(`gh terminated by ${result.signal ?? "an unknown signal"}`);
+  if (cleanupFailure !== undefined) {
+    const detail =
+      cleanupFailure instanceof Error
+        ? cleanupFailure.message
+        : String(cleanupFailure);
+    writeProcessDescriptor(
+      2,
+      Buffer.from(`Slop GitHub command cleanup also failed: ${detail}\n`),
+    );
   }
   process.exitCode = result.status;
 }

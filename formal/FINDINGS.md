@@ -378,3 +378,34 @@ commit boundary and preserve primary errors. Static and generated skill-role
 admission are represented separately in the source-authority model. One new
 model and 51 additional scenarios, plus all added regression definitions,
 remain unexecuted source-review evidence.
+
+## Clipboard completion, local receipts and trace composition
+
+The project prompt changes in place when clearance loads. Its old clipboard
+promise could then mark the new prompt as copied, and overlapping attempts
+could replace the newer outcome. Shared feedback now belongs to the committed
+text, component lifetime and latest copy request. It does not claim exclusive
+control of operating-system clipboard contents. See
+`clipboard-feedback-audit.md` for the finite model and unexecuted browser cases.
+
+Contributor finish accepted a small backward clock change and published an
+immutable receipt that its own reader rejected. It now refuses that clock
+state and validates the complete candidate before publishing. Existing invalid
+records remain explicit errors. Policy-document cache cleanup no longer turns
+verified bytes or an ordinary cache miss into a failed policy check. The CLI
+describes verified documents without claiming current contribution admission.
+
+A contributor discovery helper could remove its command lease after a child
+was launched but before failed bookkeeping had settled that child. It now
+retains ownership through child completion and preserves the primary error
+when cleanup also fails. The corresponding local receipt, policy and process
+models distinguish these boundaries; their new regression definitions are
+unexecuted.
+
+The trace model previously conflated issuing a capability with the permanent
+run/digest reservation. It now separates admission time, reservation, R2 outcome,
+atomic attachment, concurrent requests, retries and lost responses. In
+particular, expiry after request admission does not cancel an admitted upload.
+The runtime was unchanged by that refinement; see
+`trace-upload-lifecycle-audit.md`. Neither model mapping nor these source
+corrections establish absence of other application state errors.

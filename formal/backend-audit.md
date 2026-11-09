@@ -37,6 +37,12 @@ provider replies and integer amounts into finite equivalence classes. They do
 not execute network calls or sign or submit a payment. Direct-payment chain
 mechanics also have complementary money models from the financial review.
 
+The later source-only [`trace-upload-lifecycle-audit.md`](trace-upload-lifecycle-audit.md)
+refines `api_trace` into separate capability admission, permanent reservation,
+R2 outcome/verification and atomic attachment transitions. Its twenty-one
+authored scenarios are unexecuted and replace the older coarse three-scenario
+model; historical validation below does not validate the new model bytes.
+
 ## Confirmed source fixes
 
 Two failures were reproduced in the current authoritative source using actual

@@ -44,7 +44,8 @@ copying every React state variable as a separate toy machine.
 | `ui_wallet_choice` | Passive provider discovery, UUID/provider conflict retention, chosen provider, and trusted-provider check before request. Discovery sends no connect request. |
 | `ui_payout_consent` | Selected address/network, reconstructed EVM typed message or exact Solana transaction, wallet signature, stored consent, and explicit separation from payment. |
 | `ui_transaction` | Wallet review, current intent check, durable marker before send, known hash, uncertain outcome, rejected request, pending reconciliation, failed/finalized evidence, approval-versus-transfer, retry after a proved failure. |
-| `ui_navigation` | Route/history changes, bounded pagination and filter reset, native disclosures, copy success/failure/expiry. |
+| `ui_navigation` | Route/history changes, bounded pagination and filter reset, native disclosures and coarse copy outcomes. |
+| `ui_clipboard_requests` | Latest copy request and committed text/lifetime ownership, delayed native success/denial, retry, text changes and success expiry; source-only refinement in `clipboard-feedback-audit.md`. |
 | `ui_artifacts` | Source-keyed async generation, stale completion refusal, private read grants, image/preview/evidence error state. |
 | `ui_contributor_allocation` | Sender-recorded token transfer, on-time wallet registration, deadline, final batch, and unclaimed state. A sender record is not chain proof. |
 | `ui_record_display` | Projected/reserved/submitted/verified records remain distinct; read failure cannot fabricate an empty success. Contributor allocation `Sent` is the S.P.'s recorded transfer, not claimed chain verification. |
