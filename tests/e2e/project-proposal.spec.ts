@@ -2,8 +2,8 @@
  * The setup wizard reads public GitHub facts through the same-origin
  * /api/v1/project-github API. The preview lane has no Pages Functions, so the
  * route below runs the real server lookup code against fixtures of GitHub's
- * REST responses; the page, validation, manifest and handoff are the real
- * application, and the browser never calls api.github.com.
+ * REST and immutable-node GraphQL responses; the page, validation, manifest
+ * and handoff are real, and the browser never calls api.github.com.
  */
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -34,8 +34,13 @@ const deployment = deploymentOrigins(
 
 const LICENSE_TEXT = "MIT License\n\nCopyright (c) Example Research\n";
 const COMMIT = "c".repeat(40);
+const PUBLIC_GITHUB_TOKEN = "public-only-read-token-fixture";
+const LICENSE_BLOB = createHash("sha1")
+  .update(`blob ${Buffer.byteLength(LICENSE_TEXT)}\0`)
+  .update(LICENSE_TEXT)
+  .digest("hex");
 
-type GithubFixture = (url: URL) => Promise<Response> | Response;
+type GithubFixture = (url: URL, init: RequestInit) => Promise<Response> | Response;
 
 /** Uses the picker's organization/URL entry mode; valid input looks up itself. */
 async function enterRepository(page: Page, repository: string) {
@@ -57,8 +62,10 @@ async function serveGithubLookups(page: Page, github: GithubFixture) {
       "/api/v1/project-github/".length,
     );
     const fetcher = async (url: string, init: RequestInit) => {
-      expect(new Headers(init.headers).get("authorization")).toBeNull();
-      return github(new URL(url));
+      expect(new Headers(init.headers).get("authorization")).toBe(
+        `Bearer ${PUBLIC_GITHUB_TOKEN}`,
+      );
+      return github(new URL(url), init);
     };
     try {
       const body =
@@ -66,14 +73,14 @@ async function serveGithubLookups(page: Page, github: GithubFixture) {
           ? {
               repositories: await listOwnedRepositories(
                 fetcher,
-                undefined,
+                PUBLIC_GITHUB_TOKEN,
                 "example",
               ),
             }
           : {
               repository: await lookupGitHubRepository(
                 fetcher,
-                undefined,
+                PUBLIC_GITHUB_TOKEN,
                 path.replace(/^repositories\//u, ""),
               ),
             };
@@ -105,7 +112,7 @@ async function routeGitHub(
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#f65b22"/></svg>',
     }),
   );
-  await serveGithubLookups(page, async (url) => {
+  await serveGithubLookups(page, async (url, init) => {
     if (url.pathname === "/repos/example/open-protein") {
       await beforeRepository?.();
       return Response.json(
@@ -132,29 +139,59 @@ async function routeGitHub(
         },
       );
     }
-    if (url.pathname === "/repos/example/open-protein/branches")
-      return Response.json(
-        [integrationBranch, "main", "development"].map((name) => ({
-          name,
-          commit: { sha: COMMIT },
-        })),
-      );
-    if (
-      url.pathname ===
-      `/repos/example/open-protein/branches/${encodeURIComponent(integrationBranch)}`
-    )
-      return Response.json({ commit: { sha: COMMIT } });
+    if (url.pathname === "/graphql") {
+      expect(init.method).toBe("POST");
+      const { query, variables } = JSON.parse(String(init.body));
+      expect(variables.id).toBe("R_fixture");
+      const branch = (name: string) => ({
+        name,
+        prefix: "refs/heads/",
+        target: { __typename: "Commit", oid: COMMIT },
+      });
+      let value: Record<string, unknown>;
+      if (query.includes("ProjectRepositoryBranches")) {
+        expect(variables.cursor).toBeNull();
+        value = {
+          refs: {
+            nodes: [...new Set([integrationBranch, "main", "development"])].map(
+              branch,
+            ),
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+      } else if (query.includes("ProjectRepositoryHead")) {
+        expect(variables.qualifiedName).toBe(`refs/heads/${integrationBranch}`);
+        value = { ref: branch(integrationBranch) };
+      } else {
+        expect(query).toContain("ProjectRepositoryLicense");
+        expect(variables.expression).toBe(`${COMMIT}:LICENSE`);
+        value = { object: { __typename: "Blob", oid: LICENSE_BLOB } };
+      }
+      return Response.json({
+        data: {
+          node: {
+            __typename: "Repository",
+            id: "R_fixture",
+            fullDatabaseId: "123456789",
+            isPrivate: false,
+            ...value,
+          },
+        },
+      });
+    }
     if (url.pathname === "/repos/example/open-protein/license") {
       expect(url.searchParams.get("ref")).toBe(COMMIT);
       return Response.json({
         path: licensePath,
+        type: "file",
+        sha: LICENSE_BLOB,
         encoding: "base64",
         content: Buffer.from(LICENSE_TEXT).toString("base64"),
         license: { spdx_id: "MIT" },
       });
     }
     if (url.pathname === "/users/example/repos")
-      return owned ? owned(url) : Response.json([]);
+      return owned ? owned(url, init) : Response.json([]);
     return Response.json({}, { status: 500 });
   });
 }

@@ -2587,8 +2587,8 @@ test("repository lookup failures explain the next action and preserve the draft 
       "Private upstream diagnostic",
     );
   }
-  // GitHub limits the shared anonymous Pages address. After Slopbot is
-  // installed, the repository's own installation reads its facts.
+  // Slopbot installation grants no fallback to its broader token. Public
+  // lookups recover only when the public-token provider recovers.
   const limited = `e2e-owner/slopbot-lookup-${projectSuffix()}`;
   expect(
     (
@@ -2603,12 +2603,38 @@ test("repository lookup failures explain the next action and preserve the draft 
     "GitHub limited lookups.",
   );
   await setSlopbot(`${limited}/installed`);
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  const [stillLimited] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().endsWith(`/api/v1/project-github/repositories/${limited}`),
+    ),
+    page.getByRole("button", { name: "Retry", exact: true }).click(),
+  ]);
+  expect(stillLimited.status()).toBe(503);
+  await stillLimited.finished();
+  await expect(page.locator("#field-repository-error")).toContainText(
+    "GitHub limited lookups.",
+  );
+  expect(
+    (
+      await fetch(
+        `${GITHUB_FIXTURE}/__fixture/public-repository/${limited}/ready`,
+        { method: "PUT" },
+      )
+    ).status,
+  ).toBe(204);
+  const [recoveredLookup] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().endsWith(`/api/v1/project-github/repositories/${limited}`),
+    ),
+    page.getByRole("button", { name: "Retry", exact: true }).click(),
+  ]);
+  expect(recoveredLookup.status()).toBe(200);
+  await recoveredLookup.finished();
   await expect(
     page.getByRole("combobox", { name: "Integration branch", exact: true }),
   ).toHaveValue("main");
   await page.screenshot({
-    path: test.info().outputPath("repository-lookup-through-slopbot.png"),
+    path: test.info().outputPath("repository-lookup-public-token-recovery.png"),
     fullPage: true,
   });
   await setRepository(page, fixtureProjects().owned.repository);

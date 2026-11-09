@@ -25,6 +25,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useId,
   useMemo,
   useRef,
@@ -1115,8 +1116,13 @@ type Loaded<T> =
   | { status: "error"; message: string }
   | { status: "ready"; value: T; refreshError?: string };
 
-const PrivateRequestContext =
-  createContext<typeof projectApiRequest>(projectApiRequest);
+type PrivateRequest = <T>(
+  method: "GET" | "POST" | "PUT",
+  path: string,
+  body?: unknown,
+  options?: { expectedActorGithubId?: string; isCurrent?: () => boolean },
+) => Promise<T>;
+const PrivateRequestContext = createContext<PrivateRequest>(projectApiRequest);
 
 function usePrivateRequest() {
   return useContext(PrivateRequestContext);
@@ -3433,11 +3439,14 @@ function CaseDetail({
     record.settlement?.generation !== undefined &&
     typeof directRequest?.solana?.transaction === "string" &&
     typeof directRequest.solana.messageId === "string";
-  const authorizeExistingPayment = async () => {
+  const authorizeExistingPayment = async (isCurrent?: () => boolean) => {
     const current = await privateRequest<{ case: SecurityCase }>(
       "GET",
       `security-cases/${encodeURIComponent(record.id)}`,
+      undefined,
+      { isCurrent },
     );
+    if (isCurrent && !isCurrent()) return;
     if (
       !current.case.allowedActions.includes("verify-payment") ||
       current.case.settlement?.generation !== record.settlement?.generation
@@ -3447,11 +3456,17 @@ function CaseDetail({
       throw new Error("The payment state changed. Review the current case.");
     }
   };
-  const verifyExistingPayment = async (hashes: string[]) => {
+  const verifyExistingPayment = async (
+    hashes: string[],
+    isCurrent?: () => boolean,
+  ) => {
     const current = await privateRequest<{ case: SecurityCase }>(
       "GET",
       `security-cases/${encodeURIComponent(record.id)}`,
+      undefined,
+      { isCurrent },
     );
+    if (isCurrent && !isCurrent()) return;
     if (
       !current.case.allowedActions.includes("verify-payment") ||
       current.case.settlement?.generation !== record.settlement?.generation
@@ -3470,7 +3485,9 @@ function CaseDetail({
         transactionIds: hashes,
         confirmation: true,
       },
+      { isCurrent },
     );
+    if (isCurrent && !isCurrent()) return;
     replace(response);
     onChanged();
   };
@@ -3714,13 +3731,16 @@ function CaseDetail({
                   generation={record.settlement.recovery.generation}
                   payer={record.settlement.recovery.payer}
                   messages={record.settlement.recovery.messages}
-                  authorize={async () => {
+                  authorize={async (isCurrent) => {
                     const current = await privateRequest<{
                       case: SecurityCase;
                     }>(
                       "GET",
                       `security-cases/${encodeURIComponent(record.id)}`,
+                      undefined,
+                      { isCurrent },
                     );
+                    if (isCurrent && !isCurrent()) return;
                     if (
                       current.case.revision !== record.revision ||
                       !current.case.allowedActions.includes(
@@ -3740,7 +3760,7 @@ function CaseDetail({
                       );
                     }
                   }}
-                  verify={async (signatures) => {
+                  verify={async (signatures, isCurrent) => {
                     const response = await privateRequest<{
                       case: SecurityCase;
                     }>(
@@ -3753,7 +3773,9 @@ function CaseDetail({
                         confirmation: true,
                         signatures,
                       },
+                      { isCurrent },
                     );
+                    if (isCurrent && !isCurrent()) return;
                     replace(response);
                     onChanged();
                   }}
@@ -4108,7 +4130,7 @@ export function SecurityInbox({
   usePrivateDraftSession(session);
   const [problem, setProblem] = useState<string | null>(null);
   const mounted = useRef(true);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -4139,7 +4161,13 @@ export function SecurityInbox({
       method: "GET" | "POST" | "PUT",
       path: string,
       body?: unknown,
+      options?: { expectedActorGithubId?: string; isCurrent?: () => boolean },
     ): Promise<T> => {
+      const assertCurrent = () => {
+        if (!mounted.current || options?.isCurrent?.() === false)
+          throw new Error("This private report action was closed.");
+      };
+      assertCurrent();
       if (actorId === null)
         throw new Error("Sign in before accessing private reports.");
       const verifyIdentity = async () => {
@@ -4147,14 +4175,14 @@ export function SecurityInbox({
         try {
           current = await currentProjectSession();
         } catch {
+          assertCurrent();
           if (mounted.current)
             setProblem(
               "Your private session could not be verified. Retry before viewing reports.",
             );
           throw new Error("Your private session could not be verified.");
         }
-        if (!mounted.current)
-          throw new Error("This private report view was closed.");
+        assertCurrent();
         if (!current || current.githubId !== actorId) {
           clearAllDrafts();
           setProblem(
@@ -4165,12 +4193,14 @@ export function SecurityInbox({
         }
       };
       await verifyIdentity();
+      assertCurrent();
       let value: T;
       try {
         value = await projectApiRequest<T>(method, path, body, {
           expectedActorGithubId: actorId,
         });
       } catch (cause) {
+        assertCurrent();
         const missingReceipt =
           method === "GET" &&
           /^security-submissions\/ss_[A-Za-z0-9_-]+\?view=receipt$/u.test(
@@ -4197,9 +4227,12 @@ export function SecurityInbox({
         // A missing receipt may be a stale deep link. Keep the fresh list,
         // or a transient view, only after verifying the same account again.
         await verifyIdentity();
+        assertCurrent();
         throw cause;
       }
+      assertCurrent();
       await verifyIdentity();
+      assertCurrent();
       const identity = value as {
         recipientGithubId?: string;
         viewer?: { githubId?: string };

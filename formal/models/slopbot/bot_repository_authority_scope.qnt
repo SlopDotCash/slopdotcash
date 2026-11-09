@@ -15,9 +15,9 @@
 // permission. 404 means none; other failed permission reads are unavailable.
 // Current facts and permission bodies remain independently validated. This
 // model does not prove GitHub's implementation, JWT cryptography, transport
-// timeouts, or continuous ownership after the observed permission. Existing
-// public-content handleRepositoryRead intentionally has a different, unchanged
-// token mode and is outside this authority-only refinement.
+// timeouts, or continuous ownership after the observed permission.
+// Public-content reads use a separate public-only credential. The former
+// handleRepositoryRead installation-token relay has been retired.
 // legacyToken models the former installation-wide token as a negative control
 // outside step. All named scenarios are authored and manually reviewed only.
 module bot_repository_authority_scope {

@@ -2867,11 +2867,13 @@ async function githubLookup(
   const session = await requireSession(request, deps);
   // Public GitHub facts are the same for every caller, so the edge cache is
   // shared; the session only gates who may spend the lookup budget.
+  // Repository facts use a fresh namespace: prior deployments may retain
+  // name-based responses that bypassed the immutable-node reader.
   const url = new URL(request.url);
   const cacheRequest = new Request(
     parts[1] === "owned-repositories"
       ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubId}`
-      : `${url.origin}${url.pathname.toLowerCase()}`,
+      : `${url.origin}/api/v1/project-github/repository-node-v1/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
   );
   const build = async () => {
     if (parts[1] === "owned-repositories") {

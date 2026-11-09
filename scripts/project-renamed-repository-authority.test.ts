@@ -26,6 +26,26 @@ const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };
 const API = "https://api.github.com";
 
+test("the retired public repository relay cannot mint an installation token", () => {
+  let providerCalls = 0;
+  const github = (async () => {
+    providerCalls++;
+    throw new Error("A retired route cannot call GitHub");
+  }) as typeof fetch;
+  const url = new URL("https://slopbot.internal/v1/repository-read");
+  url.searchParams.set(
+    "path",
+    `/repos/example/open-registry/license?ref=${"a".repeat(40)}`,
+  );
+  const route = routeRepositoryAccess(
+    new Request(url),
+    { SLOPBOT_APP_ID: "1", SLOPBOT_APP_PRIVATE_KEY: "unused" },
+    github,
+  );
+  expect(route).toBeNull();
+  expect(providerCalls).toBe(0);
+});
+
 /** GitHub's answer for repository 123456789 under its current name. */
 function repositoryFacts(fullName: string) {
   return {
