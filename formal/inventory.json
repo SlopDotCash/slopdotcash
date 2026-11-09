@@ -3475,12 +3475,15 @@
     },
     {
       "path": "scripts/payment-keeper/budget.ts",
-      "sha256": "4e94ae2f6cdbea21d8dcb9148c66d1d70dc8895b5e21a0c009d02fa5c77ca253",
-      "models": ["formal/models/payments/operator_keeper.qnt"],
+      "sha256": "8301544417ebeeedd3c6329f833f53e15e8503a71c29888666d8cfd9e8698c14",
+      "models": [
+        "formal/models/payments/keeper_gas_budget.qnt",
+        "formal/models/payments/operator_keeper.qnt"
+      ],
       "candidateLines": [
-        30, 84, 116, 154, 181, 231, 235, 245, 251, 289, 290, 293, 305, 327, 353,
-        358, 363, 367, 371, 376, 387, 427, 430, 432, 436, 437, 438, 439, 441,
-        448, 461
+        35, 114, 147, 185, 212, 262, 266, 276, 282, 320, 321, 324, 336, 358,
+        384, 389, 394, 398, 402, 407, 418, 458, 461, 463, 467, 468, 469, 470,
+        472, 479, 492
       ],
       "review": "mapped-abstraction"
     },
@@ -6441,7 +6444,8 @@
         "formal/models/fees/earned_fee_history.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
-        "formal/models/fees/native_budget.qnt"
+        "formal/models/fees/native_budget.qnt",
+        "formal/models/payments/keeper_gas_budget.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -6698,6 +6702,7 @@
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
+        "formal/models/payments/keeper_gas_budget.qnt",
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/signed_send.qnt",
@@ -9748,6 +9753,28 @@
       "scenarios": [
         "inactiveCronRefusedTest",
         "incompleteQualificationRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/keeper_gas_budget.qnt",
+      "sha256": "64d14ba08f3ca5d667f83c6ad24c3f695f27a54d73f9f88199bdcb240b1c97e4",
+      "sources": [
+        "scripts/payment-keeper/budget.ts",
+        "workers/fee-converter/verified-native-liability.ts",
+        "workers/payment-executor/core.ts"
+      ],
+      "scenarios": [
+        "finalizeZeroesSiblingsTest",
+        "overrunStopsSigningTest",
+        "overrunWithinTransactionBudgetTest",
+        "replacementMustNameOriginalTest",
+        "replacementSharesLiabilityTest",
+        "settledYesterdayFreesTodayTest",
+        "solanaExpiryChargedOnObservationDayTest",
+        "solanaHasNoReplacementTest",
+        "unknownCarriesAcrossMidnightTest",
+        "unsignedBlocksReconcileTest",
+        "unsignedOriginalCannotBeReplacedTest"
       ]
     },
     {
