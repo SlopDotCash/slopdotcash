@@ -29,6 +29,7 @@
     "verify": "bun run lemmascript:check && bun run verify:contracts && bun run cycles:check && bun run audit:dependencies && bun run verify:code && bun run build",
     "typecheck": "tsc -b",
     "test": "bun test --timeout 30000 ./scripts ./workers ./backend ./contracts ./formal/tests",
+    "test:unit:shard": "node scripts/run-unit-shard.mjs",
     "test:integration": "node scripts/run-integration.mjs",
     "test:slopbot": "bun test --timeout 30000 ./workers/slopbot",
     "test:notify": "bun test --timeout 30000 ./workers/notify",
