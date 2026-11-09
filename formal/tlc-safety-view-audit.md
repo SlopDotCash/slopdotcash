@@ -1,4 +1,4 @@
-# Hash-bound journal safety view, version 3
+# Hash-bound journal safety view, version 4
 
 This follow-up preserves every byte of `direct_bounty_journal.qnt`, including
 all fields, domains, actions, the invariant and fifteen named output scenarios.
@@ -16,15 +16,14 @@ quotient states and 1,436,139 queued states at depth 10. Version 2 also ended
 incomplete at both 180 and 600 seconds. Its longer run
 last reported 47,177,233 generated, 3,856,770 distinct and 1,394,421 queued
 quotient states at depth 13. These are incomplete progress counts, not complete
-graph sizes. All original receipts remain preserved; version 3 does not
+graph sizes. All original receipts remain preserved; version 4 does not
 relabel those runs as passes.
 
 ## Exact projection
 
-Version 3 preserves all fields except each entry `hash` in the view of `store`
+Version 4 preserves all fields except each entry `hash` in the view of `store`
 and both component `memory` maps. It maps hash zero to zero and hashes one or
-two to a single positive representative. It preserves every map domain and
-every `request`, `transaction`, `candidate`, `held`, `used` and `mounted` value.
+two to a single positive representative. It preserves every map domain, every `request`, `transaction`, `held`, `used` and `mounted` value, and every store `candidate`. It canonicalizes only memory-entry `candidate` to zero: no action reads that field for a guard, store update, or either invariant clause.
 It then retains these two independently computed truth values:
 
 - O: `(s.wrote and s.expected > 0) implies s.observed == s.expected`.
@@ -35,7 +34,7 @@ not supplied authorization flags. False O and false F remain distinct and
 visible to the unchanged invariant. No raw field is removed from the source
 model or from normal scenario execution.
 
-Let N normalize only those entry hashes, let R contain the normalized store
+Let N normalize those entry hashes and only memory-entry candidate fields, let R contain the normalized store
 and memory plus unchanged held/used/mounted, and let P(s) = (R(s), O(s), F(s)).
 The original invariant is exactly the conjunction of the `used` domain rule,
 O and F. Its truth therefore depends only on P.
@@ -45,8 +44,7 @@ O and F. Its truth therefore depends only on P.
 Every reachable hash is zero, one or two. All hash guards use equality to zero
 or positivity; no action compares the two positive markers. Those guards are
 preserved by N. Normalization commutes with map replacement, copying entries,
-and replacing a hash with N of the assigned hash. All other fields are copied
-exactly. Therefore guards and normalized R updates depend only on R and the
+and replacing a hash with N of the assigned hash. All other fields are copied exactly. Memory candidate is only copied or retained within memory; `returned` fallback changes only its hash, and `check` takes candidate from the current store, never memory. Therefore memory-candidate normalization also commutes with every projected successor. Store candidate stays exact because `rejected` reads it. Therefore guards and normalized R updates depend only on R and the
 action parameters.
 `emptyInput` feeds only `checked`. `warning` and `checked` feed no guard or R
 update. The five raw witness fields feed only the invariant and carried state.
@@ -77,8 +75,7 @@ It does not authorize future source changes or other properties.
 
 The two clauses must stay separate. A failed reserve resets O to true while
 carrying F; a single combined O-and-F bit cannot determine that successor.
-No integer symmetry is used. Actor, nonce, request, transaction and candidate
-identities are unchanged. Only the view coalesces the positive hash markers;
+No integer symmetry is used. Actor, nonce, request and transaction identities, and store candidates, are unchanged. Only the view coalesces the positive hash markers and unused memory candidates;
 the full model retains their exact values.
 No state, sequence, retry, time or action domain is reduced.
 
@@ -100,8 +97,8 @@ fingerprints the configured view while retaining a full representative state.
 
 ## Strict version and tool binding
 
-`formal/tlc-safety-views.json` permits only the version-3 request ID, exact
-model path and source hash, module, operator, explicit hash-normalization mode, ordered field expressions,
+`formal/tlc-safety-views.json` permits only the version-4 request ID, exact
+model path and source hash, module, operator, explicit hash-normalization mode, the explicit memory-candidate policy, ordered field expressions,
 two named clause expressions, original generated-TLA hash and final view-TLA hash. The helper
 checks that exact schema and projection. Unknown requests, operators, source,
 TLA, projection or temporal changes fail before TLC. There is no fallback
@@ -112,8 +109,8 @@ requires the exact view evidence it requested.
 The original generated TLA remains SHA-256
 `d7ac95341cfc3820f3e72a9a3983f3c30ed8930a24e3f9a2299c152cc3f587ad`.
 Only a named projection definition is inserted before its terminator. The
-version-3 result is bound to
-`02a61ac93691aa46ab54501c40127201c756e07ba11aa8960ee15125aa33e325`.
+version-4 result is bound to
+`6d35b8e15674e4bdda50a6673e86124b84a00e7645f7fcd94403e890e6c60de0`.
 These are exact bytes; newline/platform/compiler differences require review,
 not normalization or fallback acceptance.
 
@@ -132,18 +129,21 @@ refusal, complete generated-body preservation, separate clause metadata,
 unknown operator refusal, and actual Node import/export resolution. The
 normal-check source and all existing no-view controls remain unchanged.
 
-Five opt-in controls use the actual TLC runner and typed test-only records:
+Six opt-in controls use the actual TLC runner and typed test-only records:
 one violates the retained `used` domain; one changes only the ownership
-witness; one changes only the frame witness; and two cross the zero/positive
-hash boundary in opposite directions. The witness cases keep R unchanged;
+witness; one changes only the frame witness; two cross the zero/positive hash boundary in opposite directions, and one changes a store candidate. Store candidate remains exact in the projection. The witness cases keep R unchanged;
 the hash cases use class predicates and preserve the other fields. Each must produce the expected invariant counterexample, a nonzero
 result and no success message. Test fixtures are not added to the production
 allowlist and prove no application behavior. The same CI command also runs
 the existing no-view false-literal control and two no-view successes.
 
-No version-3 TLC, normal scenario/simulation or real negative-control run has
+No version-4 TLC, normal scenario/simulation or real negative-control run has
 occurred yet. Those executions wait for the shared verification lane. Required
 next evidence is the unchanged fifteen journal scenarios and seeded simulation,
-complete version-3 quotient TLC, all real counterexample/no-view controls and
+complete version-4 quotient TLC, all real counterexample/no-view controls and
 the source-bound toolchain checks. Report complete quotient counts as quotient
 counts, with the prior failures and external boundaries still explicit.
+
+## Version 4 evidence boundary
+
+Version 3 passed its real counterexample controls and full normal scenarios, but its 180-second graph remained incomplete: 389,105 quotient states and 232,293 queued at depth 9. Version 4 adds only the reviewed memory-candidate projection. A real control now requires a store-candidate change to remain visible. The full journal source is still byte-identical; no model domain, action or invariant is changed. Version 4 execution remains pending. An initial local projection-hash calculation used only four terminator characters and was rejected by the exact-output guard. It was corrected to use the complete module terminator; no binding check was relaxed.

@@ -71,8 +71,11 @@ test("view insertion preserves the complete TLA body and rejects drift", () => {
   };
   const result = applySafetyView(binding, config);
   expect(result.tlaCode).toBe(expected);
-  expect(result.slopSafetyView).toBe("SlopJournalSafetyViewV3");
+  expect(result.slopSafetyView).toBe("SlopJournalSafetyViewV4");
   expect(result.viewEvidence.hashMode).toBe("entry-hash-zero-or-positive");
+  expect(result.viewEvidence.memoryCandidateMode).toBe(
+    "erase-unused-memory-candidate",
+  );
   expect(result.viewEvidence.viewTlaSha256).toBe(sha256(result.tlaCode));
   expect(
     result.viewEvidence.clauses.map((clause: { name: string }) => clause.name),
@@ -85,6 +88,9 @@ test("view insertion preserves the complete TLA body and rejects drift", () => {
   ).toThrow("property differs");
   expect(() =>
     applySafetyView({ ...binding, hashMode: "unreviewed" }, config),
+  ).toThrow("property differs");
+  expect(() =>
+    applySafetyView({ ...binding, memoryCandidateMode: "unreviewed" }, config),
   ).toThrow("property differs");
   expect(() =>
     applySafetyView(binding, { ...config, moduleName: "other" }),
@@ -138,6 +144,12 @@ test("pinned Node loads official runner exports through unchanged dependency res
 });
 
 for (const [kind, update, initialHash, hashInvariant] of [
+  [
+    "store-candidate",
+    "!.store[1].candidate = 1, !.before = s.store, !.touched = 1",
+    0,
+    "s.store[1].candidate = 0",
+  ],
   ["retained-field", "!.used = {4}", 0, "TRUE"],
   [
     "ownership-only",

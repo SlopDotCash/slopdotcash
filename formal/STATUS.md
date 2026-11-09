@@ -2,53 +2,39 @@
 
 ## Current delivery and acceptance boundary
 
-The goal is active and incomplete. PR
-[2414](https://github.com/SlopDotCash/slopdotcash/pull/2414) merged into
-`development` at `7f8b920bbc5056416c3f0dd1c7d5c354d44771e4`. This is not a
-production deployment or completion of the application-wide state review.
-The older dirty `/Users/shawwalters/slopdotcash` checkout is preserved.
+The LemmaScript and state-model core merged through PR
+[2429](https://github.com/SlopDotCash/slopdotcash/pull/2429) into `development`
+at `69229342e06a9a6273d4113908550be66aaac14f`. Its source tree is the same as
+reviewed head `cbb2b696ddbcfaaf9cc27c9e98e73033fc4b56b1`. Hosted run
+42533925495, attempt 2, passed the 33 runtime proof modules / 168 selected
+contracts, 924 normal model phases and all 308 finite TLC graphs. This is
+core evidence, not a claim about the later completion fixes.
 
-The review chat owns the remaining published batch. PR 1873 merged at
-`5acc3c47e9a29fc2b55fb756964944eb0a976213`. PR 2427 then merged at
-`5d8b2402e070ec6cc6adf069e5e4f68ce41fcd96`, from reviewed head
-`1bcf755b0645e05a611d288825bf8c4de0696c0c`. Its unfinished Quint job was
-cancelled when the PR closed; the other non-skipped jobs passed. The review
-chat owns the replacement exact-source verification. PR 2426 merged at
-`25cf670075eb89993f3f83ca3e52d13efecefdfe` into the earlier feature branch,
-not into `development`. Its proof changes still require the corrective
-integration being prepared by the review chat. These are recorded checkpoints,
-not mutable-branch completion claims. Later commits must be assessed against
-their own source and model hashes.
+The bounded completion follow-up remains unmerged and under validation.
+It adds stale-completion fences, retained browser evidence, and owned-process
+cleanup. Its inventory has 842 sources, 318 models and 1,572 named scenarios,
+with no pending mappings. The lexical catalog lists 237 lifecycle candidates.
+Counts and source links do not establish implementation refinement.
 
-The frozen local `codex/quint-observation-fixes` branch retains the earlier
-observation checkpoint, and `codex/quint-observation-current-base` retains
-the later corrections at `bde5f518`. The prepared
-`codex/quint-observation-proof-base` branch rebases those corrections onto
-the corrective PR 2429 head `22b0fd511aa8cc8c8e5810fdb979b40a03c5a5f9`.
-It preserves the reviewed runner changes, 168 selected proof targets in 33
-modules, extracted helpers and all proof-side model source links. The combined
-inventories are regenerated. Final alignment with the completed development
-merge remains required. Keep this follow-up separate from the held published
-head until the corrective integration is complete.
+The version-4 journal safety view keeps the full source model, domains,
+actions, invariant and fifteen normal scenarios unchanged. It binds a
+reviewed projection to exact model, original/view TLA, mode and adapter hashes.
+Only positive hash labels and unused memory candidates are coalesced in the
+fingerprint; store candidates and the exact ownership/frame truth values stay
+distinct. Its lightweight checks pass; complete version-4 TLC and real
+counterexample controls remain pending. Earlier full-state and version-1,
+version-2 and version-3 timeouts remain incomplete, not passes. See
+`tlc-safety-view-audit.md` for the source-level congruence argument and limits.
 
-The user resumed the goal after requesting that this chat skip checks and
-focus on pushing. That constraint remains in effect: no new checks are run
-here. Independently produced evidence is identified as such and is not
-reported as a passing run of this combined local branch.
+The source-only peer audit uses a separate branch. Its later changes are not
+part of this bounded follow-up or its current acceptance evidence. The older
+dirty checkout is preserved. Production deployment, provider availability and
+mainnet settlement are separate gates and are not claimed here.
 
-The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
-require reviewed Quint models and implementation conformance evidence for
-explicit and implicit state transitions. The current global inventory contains
-842 production sources, 318 finite models and 1,572 named scenarios, with zero
-unmapped sources. The separate lexical catalog lists 237 declared lifecycle
-candidates. Neither count establishes complete semantic refinement.
-
-The version-3 journal safety view keeps the full model unchanged and binds a
-projection to exact source, original/view TLA, mode and adapter hashes. It
-normalizes only entry hash positivity and retains ownership and frame truth
-separately. Lightweight checks pass; version-3 TLC controls have not run.
-Earlier full-state and version-1/version-2 timeouts remain incomplete. See
-`tlc-safety-view-audit.md`; prior source-bound checks do not certify this version.
+Historical integration checkpoints include PRs 2414, 1873 and 2427. PR 2426
+merged into an earlier feature branch; PR 2429 supplied the corrective
+`development` integration. Earlier local failures and canceled runs stay in
+the evidence record rather than being relabeled by later successful checks.
 
 ## Integrated corrections
 

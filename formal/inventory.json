@@ -1666,7 +1666,7 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "4b89967b3280813bca9727e32f01a75499d2a5796822fec2af7d635e867d6fae",
+      "sha256": "b32c330737782dbe5b098cd8f5399c2a68eae146ce728e4c65843ba2549bec52",
       "models": ["formal/models/formal_toolchain.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -2833,13 +2833,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "4530db1dd0d91b1ec0fbbb7a45057d4320f9feadb7d40d37a9def3c02f7b3dd7",
+      "sha256": "803835ed35525d4bec6df9fabc7ad6aabb2d28c6907b712782688f5afb3dd827",
       "models": [
         "formal/models/formal_process.qnt",
         "formal/models/formal_toolchain.qnt",
         "formal/models/formal_translation.qnt"
       ],
-      "candidateLines": [37, 60, 161, 163, 165, 211, 218, 277],
+      "candidateLines": [37, 60, 161, 163, 165, 212, 219, 278],
       "review": "mapped-abstraction"
     },
     {
@@ -3623,7 +3623,7 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "9d19c0ab3e76b1d00f31cafa7596af06d5b87a664e0b88543a95cf5ce4d87d11",
+      "sha256": "b9446e1e63599c190dc8ee0a5e7edf68011a4cb643f7898e7fbc01d24bf51b9c",
       "models": ["formal/models/formal_toolchain.qnt"],
       "candidateLines": [7],
       "review": "mapped-abstraction"

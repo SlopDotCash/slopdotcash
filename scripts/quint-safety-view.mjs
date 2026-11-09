@@ -8,6 +8,7 @@ const hash = (text) => createHash("sha256").update(text).digest("hex");
 const identifier = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const digest = /^[0-9a-f]{64}$/u;
 const hashMode = "entry-hash-zero-or-positive";
+const memoryCandidateMode = "erase-unused-memory-candidate";
 const fields = [
   {
     name: "store",
@@ -17,7 +18,7 @@ const fields = [
   {
     name: "memory",
     expression:
-      "[q \\in DOMAIN s.memory |-> [n \\in DOMAIN s.memory[q] |-> [s.memory[q][n] EXCEPT !.hash = IF s.memory[q][n].hash = 0 THEN 0 ELSE 1]]]",
+      "[q \\in DOMAIN s.memory |-> [n \\in DOMAIN s.memory[q] |-> [s.memory[q][n] EXCEPT !.hash = IF s.memory[q][n].hash = 0 THEN 0 ELSE 1, !.candidate = 0]]]",
   },
   { name: "held", expression: "s.held" },
   { name: "used", expression: "s.used" },
@@ -51,12 +52,13 @@ export function readSafetyViews(root) {
   const view = manifest.views[0];
   if (
     Object.keys(view).sort().join(",") !==
-      "clauses,fields,hashMode,id,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
-    view.id !== "direct-bounty-journal-safety-v3" ||
+      "clauses,fields,hashMode,id,memoryCandidateMode,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
+    view.id !== "direct-bounty-journal-safety-v4" ||
     view.model !== "formal/models/direct_bounty_journal.qnt" ||
     view.module !== "direct_bounty_journal" ||
-    view.operator !== "SlopJournalSafetyViewV3" ||
+    view.operator !== "SlopJournalSafetyViewV4" ||
     view.hashMode !== hashMode ||
+    view.memoryCandidateMode !== memoryCandidateMode ||
     !digest.test(view.sourceSha256) ||
     !digest.test(view.translatedSha256) ||
     !digest.test(view.viewTlaSha256) ||
@@ -86,8 +88,9 @@ export function applySafetyView(view, config) {
     !config.hasInvariant ||
     config.hasTemporal ||
     !identifier.test(view.operator) ||
-    view.operator !== "SlopJournalSafetyViewV3" ||
+    view.operator !== "SlopJournalSafetyViewV4" ||
     view.hashMode !== hashMode ||
+    view.memoryCandidateMode !== memoryCandidateMode ||
     JSON.stringify(view.fields) !== JSON.stringify(fields) ||
     JSON.stringify(view.clauses) !== JSON.stringify(clauses)
   )
@@ -116,6 +119,7 @@ export function applySafetyView(view, config) {
       translatedSha256: view.translatedSha256,
       operator: view.operator,
       hashMode: view.hashMode,
+      memoryCandidateMode: view.memoryCandidateMode,
       fields: view.fields,
       clauses: view.clauses,
       viewTlaSha256: hash(tlaCode),
