@@ -101,6 +101,12 @@ export type {
  */
 
 import {
+  LEADERBOARD_REPOSITORY,
+  LEADERBOARD_SCHEMA_VERSION,
+  REVIEW_EXCLUSION_REASONS,
+  SCORE_RULE_VERSION,
+} from "./leaderboard-constants";
+import {
   isDeclaredModelIdentifier,
   isExactClientIdentifier,
   isExactProviderIdentifier,
@@ -112,7 +118,6 @@ import { findProject } from "./projects.mjs";
 import {
   findRegisteredRepository,
   findRegisteredRepositoryById,
-  PRIMARY_REPOSITORY,
   REGISTERED_REPOSITORIES,
   type RepositoryId,
   TARGET_REPOSITORIES,
@@ -139,10 +144,6 @@ import {
 
 export { TARGET_REPOSITORIES } from "./repositories.mjs";
 
-/** Backward-compatible alias for the primary registry repository. */
-export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY?.id ?? null;
-export const LEADERBOARD_SCHEMA_VERSION = "6" as const;
-export const SCORE_RULE_VERSION = "slop-score-v2" as const;
 export const SCORE_V2_EFFECTIVE_AT = "2026-08-01T00:00:00.000Z" as const;
 const USAGE_NEUTRAL_EVIDENCE_POLICY_AT = "2026-08-19T00:00:00.000Z" as const;
 // SCR-05: from this instant an unratified merge starts at small credit, and an
@@ -213,30 +214,6 @@ export function canonicalActorAvatarUrl(value: string): string {
   url.search = version === null ? "" : `v=${version}`;
   return url.toString();
 }
-
-export const REVIEW_EXCLUSION_REASONS = [
-  "missing-reviewer",
-  "bot-reviewer",
-  "missing-pull-request-author",
-  "bot-pull-request-author",
-  "self-review",
-  "missing-submission-time",
-  "unmerged-pull-request",
-  "post-merge",
-  "non-decision",
-  "insufficient-substance",
-  "already-awarded-reviewer",
-  "evaluated-contribution-award",
-  "external-prize-policy",
-  "reviewer-cycle-cap",
-  "unchanged-outcome",
-  "pull-request-review-awarded",
-  "review-credit-reviewer-limit",
-  "review-credit-zero-share",
-  "review-credit-outside-window",
-  "review-credit-before-policy",
-  "review-credit-account-banned",
-] as const;
 
 function exactEvidenceBonusRun(
   event: ScoreEvent,
