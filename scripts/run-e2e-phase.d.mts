@@ -5,6 +5,8 @@ export function runE2ePhase(options: {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  interruptGraceMs?: number;
+  cleanupGraceMs?: number;
   signal?: AbortSignal;
   interruptSignal?: NodeJS.Signals;
   browserOwnership?: boolean;

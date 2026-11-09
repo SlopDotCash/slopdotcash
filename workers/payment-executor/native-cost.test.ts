@@ -53,7 +53,9 @@ describe("optional EVM operation envelope", () => {
       ((1n << 256n) - 1n).toString(),
     ]) {
       expect(isMaxNativeCostWei(value)).toBe(true);
-      expect(assertEscrowPolicy(policy(value))).toBeDefined();
+      expect(
+        assertEscrowPolicy(policy(value)).deployments[0].maxNativeCostWei,
+      ).toBe(value);
     }
     for (const value of [
       null,

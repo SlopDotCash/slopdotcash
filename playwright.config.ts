@@ -10,6 +10,47 @@ import { defineConfig, devices } from "@playwright/test";
 const firefoxStreamWorkflows =
   /admin placement and explicit bounty type|a manual Points award reaches private Inbox review|private security bounty programs keep cases restricted|an escalated contribution appeal opens from the moderator Inbox/;
 
+// Workflows whose assertions are pure browser logic (request ordering, account
+// binding, clock and session transitions) with no layout or viewport claim.
+// They run once at the desktop width; the 320 px project would only repeat
+// the same requests and state transitions. Referral claims are deferred from
+// launch (CLAUDE.md, owner decision of 27 October 2026), so they keep one
+// desktop run.
+const desktopOnlySpecs = [
+  "contributor-allocation",
+  "email-preference-actor-binding",
+  "inbox-report-account-change",
+  "inbox-reports-session",
+  "inbox-response-owner",
+  "leaderboard-transport",
+  "legacy-routes",
+  "points-dispute-decision",
+  "points-refresh",
+  "private-case-ordering",
+  "private-report-composition",
+  "profile-review-exclusions",
+  "referral-claims",
+  "reward-asset-amount",
+  "reward-token-navigation",
+  "security-draft-signout",
+  "security-intake-review",
+  "signed-out-reads",
+  "solana-history-recovery",
+  "ui-clock-transitions",
+  "ui-session-focus",
+  "ui-state-boundaries",
+  "wallet-readback",
+].map((name) => `**/${name}.spec.ts`);
+
+// Firefox runs these workflows at both widths (see projects below); Chromium
+// would repeat the same draft and focus transitions.
+const firefoxOnlySpecs = [
+  "**/email-preferences.spec.ts",
+  "**/bounty-full-flow.spec.ts",
+  "**/email-editor-focus.spec.ts",
+  "**/project-draft-storage.spec.ts",
+];
+
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
   process.env.GITARMY_BASE_URL ??
@@ -218,7 +259,8 @@ export default defineConfig({
         stdout: "pipe",
         stderr: "pipe",
       },
-  // Every spec runs at the 1440 px desktop and the 320 px mobile viewport; the
+  // Every spec runs at the 1440 px desktop and the 320 px mobile viewport,
+  // except desktopOnlySpecs and @desktop-only cases, which run at 1440 px; the
   // 1024 px laptop and 768 px tablet viewports run representative @breakpoint layouts.
   // The email and project discovery workflows observed Chromium no-store
   // stream EOF and ERR_ABORTED
@@ -276,10 +318,7 @@ export default defineConfig({
     {
       name: "chromium-desktop",
       grepInvert: firefoxStreamWorkflows,
-      testIgnore: [
-        "**/email-preferences.spec.ts",
-        "**/bounty-full-flow.spec.ts",
-      ],
+      testIgnore: firefoxOnlySpecs,
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: chromiumLaunchOptions,
@@ -289,10 +328,7 @@ export default defineConfig({
     {
       name: "chromium-mobile",
       grepInvert: new RegExp(`@desktop-only|${firefoxStreamWorkflows.source}`),
-      testIgnore: [
-        "**/email-preferences.spec.ts",
-        "**/bounty-full-flow.spec.ts",
-      ],
+      testIgnore: [...firefoxOnlySpecs, ...desktopOnlySpecs],
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: chromiumLaunchOptions,

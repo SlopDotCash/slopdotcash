@@ -181,6 +181,11 @@ test("Reports view retains sign-in and account-error recovery", async ({
   await expect(
     page.getByRole("link", { name: "Sign in with GitHub", exact: true }),
   ).toBeVisible();
+  // Signed out, no private report workspace renders behind the sign-in link.
+  await expect(
+    page.getByRole("region", { name: "Private security reports" }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
   mode = "error";
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toBeVisible();
@@ -189,6 +194,10 @@ test("Reports view retains sign-in and account-error recovery", async ({
   await expect(
     page.getByText("You have no private reports yet.", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
+  await expectAccessible(page);
 });
 
 test("the financial filter keeps remediation distinct from payment", async ({

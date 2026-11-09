@@ -8,7 +8,6 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -192,40 +191,48 @@ async function request(
     signal: AbortSignal.timeout(10_000),
   });
 }
+// Cold Vite and API startup on a shared CI runner can take longer than a
+// proof step; main CI exceeded 25 s before the first health answer. Startup
+// gets its own bound, and a child that exits fails the wait at once instead
+// of waiting out the deadline. Every proof assertion is unchanged.
+const STARTUP_TIMEOUT_MS = 120_000;
+function exited(child: ChildProcess | undefined) {
+  return child && (child.exitCode !== null || child.signalCode !== null)
+    ? `${child.exitCode ?? child.signalCode}`
+    : null;
+}
 async function wait<T>(
-  label: string,
+  step: string,
   read: () => Promise<T | false>,
   timeout = 25_000,
 ): Promise<T> {
   const end = Date.now() + timeout;
+  let last: unknown = null;
   while (Date.now() < end) {
+    for (const [name, child] of [
+      ["API", api],
+      ["Vite", site],
+    ] as const) {
+      const status = exited(child);
+      if (status !== null)
+        throw new Error(
+          `${name} exited (${status}) while waiting for ${step}; see ${artifact}`,
+        );
+    }
     try {
       const value = await read();
       if (value !== false) return value;
-    } catch {}
+      last = null;
+    } catch (error) {
+      last = error;
+    }
     await Bun.sleep(100);
   }
-  throw new Error(`Local proof deadline exceeded: ${label} (${timeout}ms)`);
-}
-// A cold Vite and API start on a loaded CI runner usually takes about 10s but
-// exceeded 25s once (run 42609386004). Only process readiness gets this budget;
-// every behavioral wait keeps its original deadline.
-const STARTUP_TIMEOUT = 90_000;
-function processState(name: string, child: ChildProcess | undefined) {
-  if (!child) return `${name}: not started`;
-  if (child.exitCode !== null) return `${name}: exited ${child.exitCode}`;
-  if (child.signalCode !== null) return `${name}: killed ${child.signalCode}`;
-  return `${name}: running`;
-}
-function errorLogTail(name: string) {
-  try {
-    const lines = readFileSync(join(artifact, name), "utf8")
-      .trimEnd()
-      .split("\n");
-    return lines.slice(-40).join("\n");
-  } catch {
-    return "(absent)";
-  }
+  throw new Error(
+    `Local proof deadline exceeded after ${timeout} ms waiting for ${step}${
+      last instanceof Error ? ` (last error: ${last.message})` : ""
+    }`,
+  );
 }
 try {
   startApi();
@@ -250,9 +257,9 @@ try {
     },
   );
   await wait(
-    "initial Vite and API health",
+    "the first Vite and API health answer",
     async () => (await request("/__dev/health", null)).ok,
-    STARTUP_TIMEOUT,
+    STARTUP_TIMEOUT_MS,
   );
   const inventory = (await (
     await request("/api/v1/projects", null)
@@ -284,7 +291,7 @@ try {
     202,
     "real local verification API must accept enrollment",
   );
-  const mail = await wait("verification mail capture", async () => {
+  const mail = await wait("the captured verification email", async () => {
     const response = await request("/__dev/mail");
     const text = await response.text();
     return text.includes("#verify-email=") ? text : false;
@@ -339,7 +346,7 @@ try {
     200,
   );
   await wait(
-    "security notice mail capture",
+    "the captured private-report notice",
     async () => {
       const html = await (await request("/__dev/mail")).text();
       return html.includes(`href="${origin}/inbox"`);
@@ -351,9 +358,9 @@ try {
   await stop(api);
   startApi();
   await wait(
-    "restarted API health",
+    "the restarted API health answer",
     async () => (await request("/__dev/health", null)).ok,
-    STARTUP_TIMEOUT,
+    STARTUP_TIMEOUT_MS,
   );
   const persisted = await request(
     `/api/v1/security-submissions/${submission.id}`,
@@ -394,17 +401,6 @@ try {
       liveProviderCalls: false,
     }),
   );
-} catch (error) {
-  // Error streams only: diagnostics for a failed run without the request logs.
-  console.error(
-    [
-      processState("vite", site),
-      processState("api", api),
-      `--- vite-errors.log (tail) ---\n${errorLogTail("vite-errors.log")}`,
-      `--- backend-errors.log (tail) ---\n${errorLogTail("backend-errors.log")}`,
-    ].join("\n"),
-  );
-  throw error;
 } finally {
   await stop(site);
   await stop(api);

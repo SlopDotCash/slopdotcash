@@ -258,7 +258,9 @@ test("report errors retain evidence only while the current account is verified",
   await expect(page.getByRole("alert")).toBeVisible();
 });
 
-for (const status of [401, 403, 404, 410] as const) {
+// SecurityBounty handles 403, 404 and 410 in one branch; 401 also clears
+// drafts and signs out. One case per branch.
+for (const status of [401, 403] as const) {
   test(`revoked private-report access (${status}) removes retained evidence`, async ({
     page,
     diagnostics,
