@@ -2840,13 +2840,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "948a1a60583e030edb45c462c6267d1e8f6bc264b7794d988f1cb4e94bddaf06",
+      "sha256": "d2115157a2ff561c56ca62e86e9cf60861c07601dd394785ec0d9db02a06d30f",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [38, 62, 159, 161, 163, 210, 217, 269],
+      "candidateLines": [33, 42, 66, 163, 165, 167, 214, 221, 273],
       "review": "mapped-abstraction"
     },
     {
@@ -11264,7 +11264,7 @@
     },
     {
       "path": "formal/models/ui/ui_bounty_payment_parent.qnt",
-      "sha256": "418e2702e26a8bafdc282a92edd06d2a4b19ccc19044f118c24fc81a83458639",
+      "sha256": "e316b5c0de8f2ba1ade3ccedf11987ac05f7e70e6065fc234eefec8c0c90a62c",
       "sources": [
         "src/DirectBountyPayment.tsx",
         "src/SecurityBounty.tsx",
@@ -12044,7 +12044,7 @@
     },
     {
       "path": "formal/models/ui/ui_solana_payment_pending.qnt",
-      "sha256": "987c0642c6c7cb11b49e6992537a1f581aa9f9c79fa1d611de34c1c740e8fa7b",
+      "sha256": "4c711fb15061665b9883e4232b158189233000744ee4364e54e6ee19c419b6ca",
       "sources": [
         "src/SecurityBounty.tsx",
         "src/SolanaBountyPayment.tsx",

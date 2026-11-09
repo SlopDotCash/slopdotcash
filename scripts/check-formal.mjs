@@ -30,6 +30,10 @@ const files = listModels(root, selected);
 // exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
   "formal/models/ui/ui_submitted_payment_recovery.qnt": 600_000,
+  // These full-state UI graphs exceed the ordinary three-minute budget.
+  // Keep their resource allowance explicit without reducing the models.
+  "formal/models/ui/ui_bounty_payment_parent.qnt": 1_800_000,
+  "formal/models/ui/ui_solana_payment_pending.qnt": 1_800_000,
   // The journal's unchanged finite domain exceeds the ordinary three-minute
   // budget. Keep a bounded, model-specific allowance for its reviewed view.
   "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,

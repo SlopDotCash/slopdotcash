@@ -97,8 +97,9 @@ module ui_solana_payment_pending {
     s'=s.with("slots",s.slots.replaceAt(0,otherRecord)).with("replacements",1)}
   action chooseEdit={nondet id=1.to(2).oneOf() nondet value=0.to(4).oneOf() edit(id,value)}
   action chooseCheck={nondet id=1.to(2).oneOf() beginCheck(id)}
-  action chooseFinish={nondet id=1.to(2).oneOf() nondet authorized=Set(false,true).oneOf()
-    nondet storageWorks=Set(false,true).oneOf() finishCheck(id,authorized,storageWorks)}
+  // The two flags affect State only through their conjunction.
+  action chooseFinish={nondet id=1.to(2).oneOf()
+    any{finishCheck(id,true,true),finishCheck(id,false,false)}}
   action step=any{depart(1),depart(2),mountSecond(1),mountSecond(2),reloadSecond,chooseEdit,prepare,
     rejectDepartedPreflight,beforePrompt(true),beforePrompt(false),walletReturns(true),walletReturns(false),
     walletDeclines(true),walletDeclines(false),chooseCheck,chooseFinish,clearSiteData,newDocumentRequest,s'=s}

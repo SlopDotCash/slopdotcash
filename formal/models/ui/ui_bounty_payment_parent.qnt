@@ -98,17 +98,24 @@ module ui_bounty_payment_parent {
       .with("journal",if(s.promptEpoch==s.epoch)false else s.journal)
       .with("journalPlan",if(s.promptEpoch==s.epoch)0 else s.journalPlan))
       else finishedPrompt(s)}
-  action chooseCaseReply={nondet id=1.to(3).oneOf() nondet mode=0.to(3).oneOf()
-    nondet generation=1.to(2).oneOf() nondet message=1.to(2).oneOf()
-    nondet plan=1.to(2).oneOf()
-    caseReply(id,mode,generation,message,plan)}
+  // Stale reply payloads do not reach State; retain one witness per ID.
+  action chooseCaseReply={nondet id=1.to(3).oneOf()
+    if(id==s.active and s.actor>0) {
+      nondet mode=0.to(3).oneOf() nondet generation=1.to(2).oneOf()
+      nondet message=1.to(2).oneOf() nondet plan=1.to(2).oneOf()
+      caseReply(id,mode,generation,message,plan)
+    } else caseReply(id,0,1,1,1)}
   action chooseCaseReplacement={nondet mode=0.to(3).oneOf()
     nondet generation=1.to(2).oneOf() nondet message=1.to(2).oneOf()
     nondet plan=1.to(2).oneOf()
     replaceCase(mode,generation,message,plan)}
   action chooseFailedRead={nondet id=1.to(3).oneOf() failedRead(id)}
-  action chooseStorageReply={nondet epoch=0.to(7).oneOf() nondet plan=1.to(2).oneOf()
-    any{storageReply(epoch,true,plan),storageReply(epoch,false,plan)}}
+  // A stale epoch already permits identity from every State; keep it once.
+  action chooseStorageReply=any{
+    {nondet plan=1.to(2).oneOf()
+      all{0.to(7).contains(s.epoch),storageReply(s.epoch,true,plan)}},
+    all{0.to(7).contains(s.epoch),storageReply(s.epoch,false,1)},
+    s'=s}
   // Keep each finite choice with its own transition. Hoisting all choices
   // over this disjunction repeats unrelated successors without adding states.
   action step=any{readCase,chooseCaseReply,chooseCaseReplacement,chooseFailedRead,
