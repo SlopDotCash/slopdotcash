@@ -250,7 +250,11 @@ export function PayoutConsent({
         const chain =
           `solana:${payment.network === "solana-mainnet" ? "mainnet" : payment.network.slice(7)}` as `solana:${string}`;
         if (!(await checkActor())) return;
-        const signed = await wallet.solanaSign(bytes, chain);
+        // Wallets may modify their input and retain the returned buffer. Keep
+        // both our reviewed message and the result private across later awaits.
+        const signed = Uint8Array.from(
+          await wallet.solanaSign(bytes.slice(), chain),
+        );
         if (!isCurrent()) return;
         // The attester must receive the exact prepared message and its existing signature.
         verifySignedSolanaBinding(bytes, signed, claim.address);

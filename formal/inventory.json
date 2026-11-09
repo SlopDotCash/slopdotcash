@@ -738,7 +738,8 @@
       "sha256": "b7409b0c874f8a64eae14776177b12ea2da528afdc6913ea9377bd7969983799",
       "models": [
         "formal/models/api/api_award_recovery.qnt",
-        "formal/models/payments/direct_solana_retirement.qnt"
+        "formal/models/payments/direct_solana_retirement.qnt",
+        "formal/models/ui/solana_message_buffers.qnt"
       ],
       "candidateLines": [
         91, 93, 95, 98, 99, 120, 126, 131, 138, 144, 147, 154, 156, 160, 179,
@@ -1730,7 +1731,8 @@
       "sha256": "d3e031297fa43a1aa4c5f1392e5e58425f66910e71db82462cb33e6d418930f9",
       "models": [
         "formal/models/fees/solana_route.qnt",
-        "formal/models/payments/solana_executor_journal.qnt"
+        "formal/models/payments/solana_executor_journal.qnt",
+        "formal/models/ui/solana_binding_wire.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4399,6 +4401,7 @@
       "path": "src/Earnings.tsx",
       "sha256": "6ed98cc111d0c19879c22cc7b96bc8f0f8ef8fad7103f2b5c1a1a0a57906b892",
       "models": [
+        "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
         "formal/models/ui/ui_earnings_wallet_lifetime.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -4636,13 +4639,15 @@
     },
     {
       "path": "src/PayoutConsent.tsx",
-      "sha256": "7557e5c9a1e9309cb8be51a2f0bde2f17ee57f853d15330f1237b1770f18030a",
+      "sha256": "31cba27ee95d7e6b1fd7f30cf2e9d0cac1fcc4433ee68b437abc9c35bef8545a",
       "models": [
+        "formal/models/ui/solana_binding_wire.qnt",
+        "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_payout_consent.qnt",
         "formal/models/ui/ui_payout_consent_lifetime.qnt"
       ],
       "candidateLines": [
-        2, 38, 44, 48, 50, 55, 65, 66, 67, 68, 76, 103, 122, 234, 276, 278, 398
+        2, 38, 44, 48, 50, 55, 65, 66, 67, 68, 76, 103, 122, 234, 280, 282, 402
       ],
       "review": "mapped-abstraction"
     },
@@ -5000,6 +5005,7 @@
       "path": "src/SolanaBountyPayment.tsx",
       "sha256": "3917a4bad22f55bee731ea1aabcfa100f4351fbf40ec2328c02726d11e33f68e",
       "models": [
+        "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submitted_candidate_ownership.qnt",
@@ -5014,7 +5020,11 @@
     {
       "path": "src/SolanaBountyRecovery.tsx",
       "sha256": "ae68fdf73391bfad31eb7bc8ff4ed7ff8741f9631facf7d3185713859cb40ad2",
-      "models": ["formal/models/ui/ui_solana_history_recovery.qnt"],
+      "models": [
+        "formal/models/ui/solana_message_buffers.qnt",
+        "formal/models/ui/solana_wallet_provider.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt"
+      ],
       "candidateLines": [1, 32, 34],
       "review": "mapped-abstraction"
     },
@@ -5555,7 +5565,10 @@
     {
       "path": "src/lib/payout-consent.ts",
       "sha256": "e623d58cf52680ba6e8b7c9e92a26a6ff89d9ce038177d4fc0177cb8001a1c5d",
-      "models": ["formal/models/ui/ui_payout_consent.qnt"],
+      "models": [
+        "formal/models/ui/solana_binding_wire.qnt",
+        "formal/models/ui/ui_payout_consent.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5991,6 +6004,7 @@
       "sha256": "a5162d0931e0f6dc42043c176457fbf206dabc2045489ff99304f11ee7af6647",
       "models": [
         "formal/models/contracts/solana_owner_action.qnt",
+        "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
@@ -6047,12 +6061,15 @@
     },
     {
       "path": "src/lib/use-payout-wallets.ts",
-      "sha256": "20b19c38549dab4b35a68558455a3411552d099c6ab9822077b252ede2384493",
+      "sha256": "c92bffd04511c9caae70829a421985d233a83238aa3ff3adb4ff097e80d19edb",
       "models": [
+        "formal/models/ui/evm_wallet_discovery.qnt",
+        "formal/models/ui/solana_message_buffers.qnt",
+        "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_wallet_choice.qnt"
       ],
-      "candidateLines": [9, 172, 173, 184, 462, 478, 479, 498, 500, 501, 504],
+      "candidateLines": [9, 173, 174, 185, 460, 476, 477, 496, 498, 499, 502],
       "review": "mapped-abstraction"
     },
     {
@@ -13058,6 +13075,166 @@
         "rejectedStartupPreventsLateLaunchTest",
         "rejectedStartupPreventsNewJobTest",
         "twoPhasesDrainBeforeCompletionTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/evm_wallet_discovery.qnt",
+      "sha256": "f6cb22c3d75c2a205b158649ac4691ed489d719e14849a29ada0217d22b782eb",
+      "sources": ["src/lib/use-payout-wallets.ts"],
+      "scenarios": [
+        "changedMetadataBlocksSameProviderTest",
+        "changedProviderBlocksBothTest",
+        "changingLegacyGlobalDoesNotRevokeCapturedWrapperTest",
+        "cleanupDoesNotCancelProviderPromiseTest",
+        "cleanupStopsAnnouncementsTest",
+        "conflictDuringAccountReplyRefusesAddressTest",
+        "conflictDuringPickerStopsAccountsTest",
+        "conflictingAnnouncementCannotReappearAsLegacyTest",
+        "connectedCallRechecksProviderConflictTest",
+        "discoveryNeverConnectsTest",
+        "exactReannouncementIsIdempotentTest",
+        "failedAccountRequestRefusesTest",
+        "furtherConflictBlocksThirdProviderTest",
+        "genuineRetryCannotRestoreConflictedIdTest",
+        "inFlightCallCanReturnAfterConflictTest",
+        "invalidAnnouncementIsIgnoredTest",
+        "legacyChoiceCanConnectTest",
+        "legacyDoesNotDuplicateAnnouncedObjectTest",
+        "malformedAccountReplyRefusesTest",
+        "nonStringSignatureRefusesTest",
+        "oldConnectCouldReturnConflictedProviderNegativeControlTest",
+        "otherPickerErrorRetainsFallbackTest",
+        "providerAliasSharesConflictTest",
+        "rawRpcResponseIsNotSignatureValidatedTest",
+        "rejectedPickerStopsBeforeAccountsTest",
+        "staleSelectedProviderRefusesBeforeConnectTest",
+        "unsupportedPickerFallsBackToAccountsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/solana_binding_wire.qnt",
+      "sha256": "ce4fcc90c2bab5d56ecf6d02b3aaf7ffd4af2af3dfcd6f2440ecf54522a7bc16",
+      "sources": [
+        "contracts/solana/transactions.ts",
+        "src/PayoutConsent.tsx",
+        "src/lib/payout-consent.ts"
+      ],
+      "scenarios": [
+        "addedInstructionRefusesTest",
+        "attesterAsDestinationRefusesTest",
+        "canonicalPreparedMessageAcceptedTest",
+        "changedActorRefusesTest",
+        "changedBindingPdaRefusesTest",
+        "changedClaimDigestRefusesTest",
+        "changedDestinationRefusesTest",
+        "changedInputAndOutputCannotReplacePrivateReferenceTest",
+        "changedNetworkDomainRefusesTest",
+        "changedProgramRefusesTest",
+        "changedProjectRefusesTest",
+        "changedValidMessageRefusesEvenWithValidSignaturesTest",
+        "excessiveAccountKeysRefusesTest",
+        "expiryAndVersionAreNotFreshnessProofTest",
+        "inPlaceSignerCannotMutatePrivateReferenceTest",
+        "independentlyUnpinnedAttesterIsOutsideThisCheckTest",
+        "invalidActorEncodingRefusesTest",
+        "invalidContextAddressRefusesTest",
+        "invalidPreparedAuthoritySignatureRefusesTest",
+        "invalidWalletSignatureRefusesTest",
+        "malformedClaimDigestRefusesTest",
+        "malformedDomainRefusesDuringConstructionTest",
+        "oldInPlaceSigningFalselyRefusesValidMessageNegativeControlTest",
+        "oldSharedInputCanAcceptOtherReviewedContextNegativeControlTest",
+        "oldSharedOutputCanChangeAfterVerificationNegativeControlTest",
+        "prefilledWalletSlotRefusesTest",
+        "providerMutationBeforeVerificationCannotChangePrivateCopyTest",
+        "providerMutationDuringSessionAwaitCannotChangeSubmissionTest",
+        "separateSignedOutputKeepsReviewedBytesTest",
+        "shortPayloadRefusesDuringConstructionTest",
+        "tooFewAccountKeysRefusesTest",
+        "trailingBytesRefuseTest",
+        "truncatedPrefixRefusesTest",
+        "vaultIsCheckedByCallerNotEncodedHereTest",
+        "walletRejectionDoesNotReachSubmissionTest",
+        "wrongMessageSignatureCountRefusesTest",
+        "wrongReadonlySignatureCountRefusesTest",
+        "wrongReturnedAuthoritySignatureRefusesTest",
+        "wrongSignedShapeRefusesTest",
+        "wrongTransactionSignatureCountRefusesTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/solana_message_buffers.qnt",
+      "sha256": "a82a993e74cb404b3c4e90219efd18ce7574124c3ac1a7dc9549c73537d91b98",
+      "sources": [
+        "backend/security/direct-solana-recovery.ts",
+        "src/SolanaBountyRecovery.tsx",
+        "src/lib/use-payout-wallets.ts"
+      ],
+      "scenarios": [
+        "callerMutationDuringAwaitCannotChangeExpectedTest",
+        "callerOwnsReturnedCopyWithoutChangingProviderTest",
+        "exactEchoDoesNotProveSignatureCryptographyTest",
+        "independentDifferentEchoIsRefusedTest",
+        "independentEchoMutationBeforeValidationIsRefusedTest",
+        "laterEchoMutationCannotChangeValidatedSnapshotTest",
+        "laterProviderSignatureMutationCannotChangeReturnedCopyTest",
+        "legacyHasNoEchoProofButKeepsCallerBufferPrivateTest",
+        "legacyReconnectRefusalNeverExposesProviderInputTest",
+        "legacyShortSignatureIsRefusedTest",
+        "legacySnapshotsBeforeReconnectAwaitTest",
+        "missingProviderResultIsRefusedTest",
+        "oldLegacyInputAliasCouldChangeCallerNegativeControlTest",
+        "oldMutatedStandardInputCouldPassNegativeControlTest",
+        "oldProviderSignatureAliasCouldChangeReturnedBytesNegativeControlTest",
+        "providerInputMutationCannotChangeCallerTest",
+        "providerMutatesAliasedEchoBeforeValidationTest",
+        "shortSignatureIsRefusedTest",
+        "signatureCopyUsesBytesAtValidationTest",
+        "standardExactEchoReturnsPrivateSignatureTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/solana_wallet_provider.qnt",
+      "sha256": "d53f4b00c425926d0e8257ca47f750f891e0142861980d143ca38fcdf24b7fcf",
+      "sources": [
+        "src/Earnings.tsx",
+        "src/PayoutConsent.tsx",
+        "src/SolanaBountyPayment.tsx",
+        "src/SolanaBountyRecovery.tsx",
+        "src/lib/solana-vault-actions.ts",
+        "src/lib/use-payout-wallets.ts"
+      ],
+      "scenarios": [
+        "acceptedSendCanOutliveAccountWithdrawalTest",
+        "changedStandardAccountRefusesMessageTest",
+        "emptyTransactionArrayIsTruthyAtAdapterBoundaryTest",
+        "failedSendReplyDoesNotProveNoEffectTest",
+        "initiallyMissingTransactionMethodRemainsUnavailableTest",
+        "invalidConnectReplyCreatesNoConnectionTest",
+        "legacyCannotVerifyUnreturnedMessageBytesTest",
+        "legacyChangedAddressRefusesTextTest",
+        "legacyReconnectFailurePreventsSignaturePromptTest",
+        "legacyTextReconnectsBeforeSigningTest",
+        "legacyTextRejectsShortSignatureTest",
+        "messageDoesNotRequireSpecificChainTest",
+        "oldLegacyTextCouldPromptChangedAccountNegativeControlTest",
+        "oldStandardTextCouldPromptWithdrawnWalletNegativeControlTest",
+        "removedMessageFeatureRefusesTextTest",
+        "removedStandardAccountRefusesTextTest",
+        "sameAddressReplacementUsesCurrentAccountObjectTest",
+        "sendCallbackRefusalPreventsProviderCallTest",
+        "shortSendSignatureDoesNotEraseEffectTest",
+        "signedTransactionBytesNeedCallerVerificationTest",
+        "standardBytesUseFreshSharedMessageGateTest",
+        "standardConnectMayReturnAfterUnregisterTest",
+        "standardRejectsChangedEchoedMessageTest",
+        "standardTextUsesFreshSharedMessageGateTest",
+        "textRejectsShortSignatureThroughSharedHelperTest",
+        "transactionRequiresCurrentRequestedChainTest",
+        "transactionRequiresLegacyFormatTest",
+        "twoConcurrentCallsRetainTheirOwnResultsTest",
+        "withdrawnStandardWalletRefusesTextPromptTest",
+        "withdrawnWalletNeverReachesSendCallbackTest"
       ]
     },
     {
