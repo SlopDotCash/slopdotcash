@@ -18,13 +18,15 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
-  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmAwardId,
   evmMonthlyDigest,
+} from "../../contracts/evm/adapter";
+import {
+  type EvmMonthlyReservation,
   evmMonthlyReserveDigest,
   evmMonthlySumTree,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import {
   type EscrowDeployment,
   paymentDeploymentRecord,

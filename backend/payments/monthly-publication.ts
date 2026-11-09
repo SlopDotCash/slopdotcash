@@ -2,7 +2,7 @@
  * No signing, RPC, or payment submission occurs in the public read route.
  */
 
-import { EvmMonthlyAlreadyAdmitted } from "../../contracts/evm/adapter";
+import { EvmMonthlyAlreadyAdmitted } from "../../contracts/evm/monthly-reserve";
 import {
   type MonthlySchedule,
   monthlyCutoff,

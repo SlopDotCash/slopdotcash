@@ -15,7 +15,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   EvmMonthlyAlreadyAdmitted,
   evmMonthlySumTree,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { monthlyBasesSql } from "../../scripts/prepare-monthly-rewards";
 import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";

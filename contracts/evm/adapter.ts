@@ -241,16 +241,6 @@ export class EvmRpcUnavailable extends EvmRpcError {
     super(false, message, options);
   }
 }
-export {
-  buildCommitMonthlyLeafCalldata,
-  buildReserveMonthlyCalldata,
-  EvmMonthlyAlreadyAdmitted,
-  type EvmMonthlyReservation,
-  evmMonthlyReserveDigest,
-  evmMonthlySumTree,
-  prepareEvmMonthlyReservation,
-  readEvmMonthlyReserve,
-} from "./monthly-reserve";
 export { rpc as evmRpc };
 
 /** Explicit wallet-consent action: read the actor's current version only from a verified vault. */

@@ -3,10 +3,10 @@
  * This prepares authorization bytes only. It does not reserve or pay funds.
  */
 import {
-  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmMonthlyDigest,
 } from "../../contracts/evm/adapter";
+import type { EvmMonthlyReservation } from "../../contracts/evm/monthly-reserve";
 import {
   solanaAllocationRoot,
   solanaMonthlyMessage,

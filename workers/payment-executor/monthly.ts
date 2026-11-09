@@ -7,11 +7,11 @@ import {
   type MonthlyAttestationRequest,
   prepareMonthlyAttestation,
 } from "../../backend/payments/monthly-attestation";
+import type { MonthlyAllocationEntry } from "../../contracts/evm/adapter";
 import {
   type EvmMonthlyReservation,
   evmMonthlyReserveDigest,
-  type MonthlyAllocationEntry,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import type { JournalStore } from "./core";

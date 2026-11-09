@@ -18,7 +18,7 @@ import { securityPaymentDatabase } from "../../backend/security/payment-database
 import {
   EvmMonthlyAlreadyAdmitted,
   prepareEvmMonthlyReservation,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
