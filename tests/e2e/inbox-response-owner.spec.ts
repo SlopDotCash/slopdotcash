@@ -561,8 +561,7 @@ test("Inbox focus during a write retains the completed mutation readback", async
         json: { recipientGithubId: "42", automatic: false, submissions: [] },
       });
     // Ordering barrier: answered after any request the focus handler issued.
-    if (path === "/api/v1/__focus-barrier")
-      return route.fulfill({ json: {} });
+    if (path === "/api/v1/__focus-barrier") return route.fulfill({ json: {} });
     if (path === "/api/v1/notifications/read" && request.method() === "POST") {
       expect(request.headers()["x-slop-expected-github-id"]).toBe("42");
       expect(request.postDataJSON()).toEqual({
