@@ -400,6 +400,37 @@ test("a late previous payment request cannot overwrite a retried project", async
   }
 });
 
+test("payment history shows loading, not an empty history, while direct payments load", async ({
+  page,
+}) => {
+  await fixtures(page);
+  const response = gate();
+  await page.route(
+    "**/api/v1/payments/projects/*/direct-transfers",
+    async (route) => {
+      await response.ready;
+      await route.fulfill({
+        json: payments(new URL(route.request().url()).pathname.split("/")[5]),
+      });
+    },
+  );
+  try {
+    await page.goto(`${site}/projects/${nextProject}`);
+    const history = page.locator(".payment-history");
+    await expect(history.getByRole("status")).toHaveText(
+      "Loading direct payments…",
+    );
+    await expect(history.getByText("No cycles have closed yet.")).toHaveCount(
+      0,
+    );
+    response.release();
+    await expect(history.getByText(nextAmount, { exact: true })).toBeVisible();
+    await expect(history.getByRole("status")).toHaveCount(0);
+  } finally {
+    response.release();
+  }
+});
+
 test("public project navigation does not load an agent-only flag form", async ({
   page,
 }) => {
