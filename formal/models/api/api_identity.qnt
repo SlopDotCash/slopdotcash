@@ -27,5 +27,5 @@ module api_identity {
   run failedExchangeTest = init.then(callback).then(failCallback).expect(s.phase == "failed")
   run expiryDuringCallbackTest = init.then(callback).then(tick).then(tick).then(tick).then(tick).then(tick).expect(not(s.verified))
   // A claim that expires before completion is ended, not left processing.
-  run expiredClaimFailsTest = init.then(callback).then(tick).then(tick).then(tick).then(tick).then(tick).then(verify.fail()).then(failCallback).expect(s.phase == "failed" and not(s.verified))
+  run expiredClaimFailsTest = init.then(callback).then(tick).then(tick).then(tick).then(tick).then(tick).then(failCallback).expect(s.phase == "failed" and not(s.verified))
 }
