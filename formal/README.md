@@ -167,6 +167,11 @@ command-name match grants process ownership. LemmaScript uses the same
 supervisor and retains cancellation/failure receipts without starting later
 proof commands or converting incomplete work into success.
 
+Directory removal is independent of process cleanup: a failed spawn or cleanup
+deadline can leave the private directory behind, and a removed directory does
+not prove that child processes stopped. Ownership checkpoints remain active
+during the interrupt grace period; each completion path retains its failures.
+
 ## Open work and assumptions
 
 - Run the full code, model, database, contract and browser gates against one
