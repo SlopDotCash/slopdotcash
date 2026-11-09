@@ -86,6 +86,7 @@ import {
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
 import { useTimeBoundary } from "./lib/use-time-boundary";
+import { securityBountyShares } from "./lib/verified-security-split";
 import { CopyButton, CopyIdentifier } from "./Operations";
 import {
   ExternalLinkAnchor,
@@ -2933,8 +2934,12 @@ function ActionForm({
             field.decimals,
           );
           const fullAward = isFullAwardSplit(record.terms?.split);
-          const exact =
-            minor !== null && (fullAward || BigInt(minor) % 4n === 0n);
+          const shares =
+            minor !== null &&
+            BigInt(minor) > 0n &&
+            (fullAward || BigInt(minor) % 4n === 0n)
+              ? securityBountyShares(BigInt(minor), fullAward)
+              : null;
           return (
             <label key={field.name}>
               {field.label}
@@ -2949,10 +2954,10 @@ function ActionForm({
               {hint}
               {minor !== null && record.terms ? (
                 <small className="field-hint" role="status">
-                  {exact
+                  {shares
                     ? fullAward
-                      ? `Researcher ${money(minor, record.terms)} · no Slop share`
-                      : `Researcher ${money(((BigInt(minor) * 3n) / 4n).toString(), record.terms)} · Slop ${money((BigInt(minor) / 4n).toString(), record.terms)}`
+                      ? `Researcher ${money(shares.researcher.toString(), record.terms)} · no Slop share`
+                      : `Researcher ${money(shares.researcher.toString(), record.terms)} · Slop ${money(shares.slop.toString(), record.terms)}`
                     : "This amount cannot be split exactly 75/25."}
                 </small>
               ) : null}
