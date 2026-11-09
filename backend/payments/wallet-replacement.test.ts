@@ -119,7 +119,7 @@ test("generated Quint wallet histories match real registration, authorization an
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "run",
-        "formal/models/effective_wallet_history.qnt",
+        "formal/models/payments/effective_wallet_history.qnt",
         "--backend=typescript",
         "--seed=20261107",
         "--max-samples=25",

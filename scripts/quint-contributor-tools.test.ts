@@ -67,7 +67,7 @@ test("Quint review-frontier trace controls real CLI completion and head-bound di
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/contributor_review_epoch.qnt",
+        "formal/models/contributor/contributor_review_epoch.qnt",
         "--backend=typescript",
         "--seed=1",
         "--match=^staleHeadIsExplicitDispositionTest$",

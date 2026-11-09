@@ -42,7 +42,7 @@ function quintStates<T>(model: string, scenario: string): T[] {
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        `formal/models/${model}.qnt`,
+        `formal/models/fees/${model}.qnt`,
         "--backend=typescript",
         "--seed=1",
         `--match=^${scenario}$`,

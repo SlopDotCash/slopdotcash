@@ -1546,6 +1546,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    pointsRulesResponse,
+    scoringRulesResponse,
     llmsResponse,
   ] = await Promise.all([
     request.get("/SKILL.md"),
@@ -1553,6 +1555,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/.well-known/agent-skills/slop/SKILL.md"),
     request.get("/protocol/identity-v1.json"),
     request.get("/protocol/private-trace-v1.md"),
+    request.get("/protocol/points-v1.md"),
+    request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
   ]);
   for (const response of [
@@ -1561,6 +1565,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    pointsRulesResponse,
+    scoringRulesResponse,
     llmsResponse,
   ]) {
     expect(response.status()).toBe(200);
@@ -1592,6 +1598,16 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     identityVersion: "slop-identity-v1",
     paymentMode: "disabled",
   });
+  const privateTraceContract = await privateTraceContractResponse.text();
+  expect(privateTraceContract).toContain("Retention is permanent");
+  expect(privateTraceContract).toContain("No website or API");
+  expect(privateTraceContract).not.toContain("## Cloudflare provisioning");
+  for (const response of [pointsRulesResponse, scoringRulesResponse]) {
+    const rules = await response.text();
+    expect(rules).toContain("Every accepted merge receives at least 10 Points");
+    expect(rules).toContain("## Historical scoring and source integrity");
+    expect(rules).toContain("## Historical protocol record");
+  }
   expect(llmsResponse.headers()["content-type"]).toContain("text/plain");
   const bootstrap = await bootstrapResponse.body();
   const bootstrapDigest = createHash("sha256").update(bootstrap).digest("hex");

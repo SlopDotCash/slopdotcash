@@ -20,7 +20,7 @@ function traces<T>(model: string): T[][] {
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "run",
-        `formal/models/${model}.qnt`,
+        `formal/models/ui/${model}.qnt`,
         "--backend=typescript",
         "--seed=20261107",
         "--max-samples=100",

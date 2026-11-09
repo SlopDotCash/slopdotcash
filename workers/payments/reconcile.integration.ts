@@ -359,7 +359,7 @@ try {
         [
           `${root}node_modules/@informalsystems/quint/dist/src/cli.js`,
           "test",
-          `${root}formal/models/payment_dispatch.qnt`,
+          `${root}formal/models/payments/payment_dispatch.qnt`,
           "--backend=typescript",
           "--seed=1",
           "--match=^staleFailurePreservesSubmittedSuccessorTest$",

@@ -472,6 +472,13 @@ without asking the reporter to consent again. A successful unrelated transaction
 is not cancellation proof and requires manual review. A legacy EVM request without a pinned nonce cannot be
 redirected automatically; renewed consent can restore only its original address.
 
+Initial preparation binds both current authorized wallet records and the reporter's
+exact consent in the case-update transaction. Recovery also requires its current
+payment generation and both wallet records at commit, except that fee-only
+recovery preserves the paid reporter's original destination independently of later
+reporter wallet changes. A payer wallet change during chain verification refuses
+the stale successor; it does not invalidate already finalized transfer evidence.
+
 Solana reuses the original unsigned bytes while their blockhash is valid. A new
 message, including one for the same wallet, requires retirement of every issued
 message first. Both configured independent RPC operators must confirm expiry and

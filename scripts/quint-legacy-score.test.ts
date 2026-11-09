@@ -81,7 +81,7 @@ test("Quint legacy totals and newest material-test winners survive actor/project
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/legacy_score_caps.qnt",
+        "formal/models/points/legacy_score_caps.qnt",
         "--backend=typescript",
         "--seed=1",
         "--match=^(uncappedPositiveMergesTest|newestFiveMaterialTestsTest)$",

@@ -26,6 +26,7 @@ const {
   Transaction,
 } = require("@solana/web3.js");
 const spl = require("@solana/spl-token");
+const { ReceiptConnection } = require("./integration/confirmation.mjs");
 const directory = mkdtempSync(join(tmpdir(), "slop-direct-solana-api-"));
 const port = Number(process.env.SLOP_DIRECT_SOLANA_API_TEST_PORT ?? "30899");
 const rpcUrl = `http://127.0.0.1:${port}`;
@@ -579,8 +580,15 @@ try {
         failedOriginal.serialize(),
         { skipPreflight: true },
       );
-      const result = await connection.confirmTransaction(
-        failedOriginalSignature,
+      // web3's status-poll path throws failed execution before finality while
+      // its subscription path returns it. Reuse the exact receipt waiter so
+      // this deliberately failed send must be finalized before recovery.
+      const result = await new ReceiptConnection(rpcUrl).confirmTransaction(
+        {
+          signature: failedOriginalSignature,
+          blockhash: oldPayment.solana.blockhash,
+          lastValidBlockHeight: oldPayment.solana.lastValidBlockHeight,
+        },
         "finalized",
       );
       assert.notEqual(

@@ -24,7 +24,10 @@ import {
   ACCEPTED_SKILL_REVISIONS,
   GUIDE_RENDERER_PATHS,
 } from "../src/lib/project-skill-publication.mjs";
-import { readIdentityRecord } from "./protocol-identity.mjs";
+import {
+  IDENTITY_RECORD,
+  validateIdentityRecord,
+} from "./protocol-identity.mjs";
 import { sha256Hex as sha256 } from "./sha256.mjs";
 import { pythonCommand } from "./skill-python.mjs";
 import { skillSourceMatchesCommit } from "./skill-source-matches-commit.mjs";
@@ -33,7 +36,6 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = packageRoot;
 const publicRoot = join(packageRoot, "public");
 const downloadsRoot = join(publicRoot, "downloads");
-const protocolRoot = join(repositoryRoot, "protocol");
 const publicProtocolRoot = join(publicRoot, "protocol");
 const bootstrapSkillRoot = join(repositoryRoot, "skills", "slop");
 const bootstrapSkillSource = join(bootstrapSkillRoot, "SKILL.md");
@@ -100,6 +102,20 @@ function listRegularSkillFiles(root, prefix = "") {
   });
 }
 
+function documentSection(path, heading) {
+  const source = readFileSync(path, "utf8");
+  const start = source.indexOf(`${heading}\n`);
+  if (start < 0) {
+    throw new TypeError(
+      `[Slop] required document section is missing: ${heading}`,
+    );
+  }
+  const depth = heading.match(/^#+/u)[0].length;
+  const content = source.slice(start + heading.length + 1);
+  const end = content.search(new RegExp(`^#{1,${depth}} `, "mu"));
+  return (end < 0 ? content : content.slice(0, end)).trim();
+}
+
 mkdirSync(publicRoot, { recursive: true });
 // Project endpoints are Function responses now; a reused checkout must not
 // keep serving files a build published before the D1 registry.
@@ -129,31 +145,31 @@ if (
   );
 }
 mkdirSync(publicProtocolRoot, { recursive: true });
-const privateTraceContractPath = join(protocolRoot, "private-trace-v1.md");
-if (!existsSync(privateTraceContractPath)) {
-  throw new TypeError("[Slop] private trace privacy contract is missing");
-}
-copyFileSync(
-  privateTraceContractPath,
+const privateTraceContract = documentSection(
+  join(repositoryRoot, "backend", "trace", "README.md"),
+  "## Private trace privacy contract",
+);
+writeFileSync(
   join(publicProtocolRoot, "private-trace-v1.md"),
+  `# Private trace privacy contract v1\n\n${privateTraceContract.replace(/^### /gmu, "## ")}\n`,
 );
-const scoringContractPath = join(protocolRoot, "scoring-v2.md");
-if (!existsSync(scoringContractPath)) {
-  throw new TypeError("[Slop] score v2 contract is missing");
-}
-copyFileSync(scoringContractPath, join(publicProtocolRoot, "scoring-v2.md"));
-copyFileSync(
-  join(protocolRoot, "points-v1.md"),
-  join(publicProtocolRoot, "points-v1.md"),
+const pointsRules = documentSection(
+  join(repositoryRoot, "docs", "slop-product-requirements.md"),
+  "## 7. Points, discovery, and clear pages",
 );
-const identityRecordPath = join(protocolRoot, "identity-v1.json");
-if (existsSync(identityRecordPath)) {
-  readIdentityRecord(identityRecordPath);
-  copyFileSync(
-    identityRecordPath,
-    join(publicProtocolRoot, "identity-v1.json"),
+// Preserve published URLs without maintaining competing policy documents.
+// Earlier rules remain available by immutable revision for historical records.
+for (const name of ["points-v1.md", "scoring-v2.md"]) {
+  writeFileSync(
+    join(publicProtocolRoot, name),
+    `# Slop Points\n\nCurrent rules are published from [the canonical PRD, section 7](https://github.com/SlopDotCash/slopdotcash/blob/development/docs/slop-product-requirements.md#7-points-discovery-and-clear-pages).\n\n${pointsRules.replace(/^### /gmu, "## ")}\n\n## Historical protocol record\n\n[The former ${name} document](https://github.com/SlopDotCash/slopdotcash/blob/ebf468873147a7ec119858915deca6cb3177eb0d/protocol/${name}) is retained at an immutable source revision for historical rules and record formats. Current policy and historical preservation follow the PRD above.\n`,
   );
 }
+validateIdentityRecord(IDENTITY_RECORD);
+writeFileSync(
+  join(publicProtocolRoot, "identity-v1.json"),
+  `${JSON.stringify(IDENTITY_RECORD, null, 2)}\n`,
+);
 runPython([skillValidator, bootstrapSkillRoot]);
 
 const commit = execFileSync("git", ["rev-parse", "HEAD"], {

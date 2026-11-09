@@ -3,13 +3,18 @@ import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  listModels,
+  modelScenarios,
+  modelSources as sourcesOf,
+} from "./formal-models.mjs";
+import { readSafetyViews } from "./quint-safety-view.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -19,25 +24,35 @@ const selected = process.argv
   ?.slice(8);
 const quint = join(root, "node_modules/.bin/quint");
 const localTranslator = join(root, "scripts/quint-local-translator.mjs");
-const modelDirectory = join(root, "formal/models");
-const files = readdirSync(modelDirectory)
-  .filter(
-    (file) =>
-      file.endsWith(".qnt") && (!selected || file === `${selected}.qnt`),
-  )
-  .sort();
+const safetyViews = verify ? readSafetyViews(root) : null;
+const files = listModels(root, selected);
+// This finite graph completed in 219s with unchanged inputs. Keep the
+// exception explicit; ordinary stages retain their limits.
+const verificationTimeouts = {
+  "formal/models/ui/ui_submitted_payment_recovery.qnt": 600_000,
+  // These full-state UI graphs exceed the ordinary three-minute budget.
+  // Keep their resource allowance explicit without reducing the models.
+  "formal/models/ui/ui_bounty_payment_parent.qnt": 1_800_000,
+  "formal/models/ui/ui_solana_payment_pending.qnt": 1_800_000,
+  // The journal's unchanged finite domain exceeds the ordinary three-minute
+  // budget. Keep a bounded, model-specific allowance for its reviewed view.
+  "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,
+};
 if (files.length === 0) throw new Error("No matching Quint models");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const toolHashes = Object.fromEntries(
   [
     "scripts/check-formal.mjs",
+    "scripts/formal-models.mjs",
     "scripts/run-e2e-phase.mjs",
     "bun.lock",
     ...(verify
       ? [
           "scripts/quint-local-translator.mjs",
           "scripts/quint-tla-normalization.mjs",
+          "scripts/quint-safety-view.mjs",
           "formal/tlc.json",
+          "formal/tlc-safety-views.json",
         ]
       : []),
   ].map((path) => [path, digest(readFileSync(join(root, path)))]),
@@ -61,16 +76,12 @@ const toolsUnchanged = () =>
     ([path, hash]) => digest(readFileSync(join(root, path))) === hash,
   );
 const inputHashes = new Map(
-  files.map((file) => [file, digest(readFileSync(join(modelDirectory, file)))]),
+  files.map((file) => [file, digest(readFileSync(join(root, file)))]),
 );
 const modelSources = new Map(
   files.map((file) => [
     file,
-    [
-      ...readFileSync(join(modelDirectory, file), "utf8").matchAll(
-        /^\s*\/\/\s*@source\s+(\S+)\s*$/gmu,
-      ),
-    ].map((match) => match[1]),
+    sourcesOf(readFileSync(join(root, file), "utf8")),
   ]),
 );
 const sourceHashes = new Map(
@@ -80,9 +91,9 @@ const sourceHashes = new Map(
 );
 const results = [];
 models: for (const file of files) {
-  const input = `formal/models/${file}`;
+  const input = file;
   const modelText = readFileSync(join(root, input), "utf8");
-  if (!/^\s*run\s+\w+Test\s*=/mu.test(modelText)) {
+  if (modelScenarios(modelText).length === 0) {
     throw new Error(`${input} has no named reachability scenario`);
   }
   const temporalProperties = [
@@ -122,6 +133,8 @@ models: for (const file of files) {
         ],
       ];
   for (const args of stages) {
+    const safetyView = safetyViews?.views.find((view) => view.model === input);
+    const timeoutMs = verify ? (verificationTimeouts[file] ?? 180_000) : 90_000;
     const testedSha256 = digest(readFileSync(join(root, input)));
     const testedSources = Object.fromEntries(
       modelSources
@@ -141,6 +154,14 @@ models: for (const file of files) {
       else output += text;
     };
     const stageDirectory = mkdtempSync(join(tmpdir(), "slop-formal-stage-"));
+    const env = {
+      ...process.env,
+      TMPDIR: stageDirectory,
+      TMP: stageDirectory,
+      TEMP: stageDirectory,
+    };
+    delete env.SLOP_QUINT_SAFETY_VIEW;
+    if (safetyView) env.SLOP_QUINT_SAFETY_VIEW = safetyView.id;
     let status;
     try {
       status = await runE2ePhase({
@@ -148,13 +169,8 @@ models: for (const file of files) {
         command: command[0],
         args: command.slice(1),
         cwd: root,
-        env: {
-          ...process.env,
-          TMPDIR: stageDirectory,
-          TMP: stageDirectory,
-          TEMP: stageDirectory,
-        },
-        timeoutMs: verify ? 180_000 : 90_000,
+        env,
+        timeoutMs,
         signal: cancellation.signal,
         onStdout: collect,
         onStderr: collect,
@@ -171,7 +187,31 @@ models: for (const file of files) {
     const error = cancellation.signal.aborted
       ? cancellation.signal.reason.message
       : null;
-    const passed = status === 0 && !error && stable;
+    const viewLine = output.match(/^\[tlc-safety-view\] (.+)$/mu);
+    let appliedView = null;
+    if (viewLine) {
+      try {
+        appliedView = JSON.parse(viewLine[1]);
+      } catch {
+        // A missing or malformed binding receipt cannot authorize a view.
+      }
+    }
+    const viewApplied =
+      !safetyView ||
+      (appliedView?.id === safetyView.id &&
+        appliedView?.model === input &&
+        appliedView?.sourceSha256 === testedSha256 &&
+        appliedView?.translatedSha256 === safetyView.translatedSha256 &&
+        appliedView?.operator === safetyView.operator &&
+        appliedView?.hashMode === safetyView.hashMode &&
+        appliedView?.memoryCandidateMode === safetyView.memoryCandidateMode &&
+        appliedView?.viewTlaSha256 === safetyView.viewTlaSha256 &&
+        appliedView?.adapterSha256 === safetyViews.quintAdapterSha256 &&
+        JSON.stringify(appliedView?.fields) ===
+          JSON.stringify(safetyView.fields) &&
+        JSON.stringify(appliedView?.clauses) ===
+          JSON.stringify(safetyView.clauses));
+    const passed = status === 0 && !error && stable && viewApplied;
     results.push({
       model: input,
       sha256: testedSha256,
@@ -179,11 +219,16 @@ models: for (const file of files) {
       command,
       passed,
       exitCode: status,
+      timeoutMs,
       durationMs: Date.now() - started,
       output,
-      error: stable
-        ? error
-        : "Model or mapped source changed while its check was running; repeat against stable bytes.",
+      requestedSafetyView: safetyView?.id ?? null,
+      safetyView: appliedView,
+      error: !stable
+        ? "Model or mapped source changed while its check was running; repeat against stable bytes."
+        : !viewApplied
+          ? "Requested safety view was not applied; no verification claim."
+          : error,
     });
     console.log(`${passed ? "PASS" : "FAIL"} ${args[0]} ${file}`);
     if (!passed) console.error(output || error);
@@ -193,19 +238,12 @@ models: for (const file of files) {
 }
 const directory = join(root, "evidence/formal");
 mkdirSync(directory, { recursive: true });
-const finalFiles = readdirSync(modelDirectory)
-  .filter(
-    (file) =>
-      file.endsWith(".qnt") && (!selected || file === `${selected}.qnt`),
-  )
-  .sort();
+const finalFiles = listModels(root, selected);
 const inputsUnchanged =
   toolsUnchanged() &&
   JSON.stringify(files) === JSON.stringify(finalFiles) &&
   files.every(
-    (file) =>
-      digest(readFileSync(join(modelDirectory, file))) ===
-      inputHashes.get(file),
+    (file) => digest(readFileSync(join(root, file))) === inputHashes.get(file),
   ) &&
   [...sourceHashes].every(
     ([path, hash]) => digest(readFileSync(join(root, path))) === hash,
@@ -231,8 +269,9 @@ const report = {
   ).version,
   limitations: [
     "Model correctness does not establish source refinement.",
-    "Finite bounds and abstractions are defined in each model and its audit.",
+    "Finite bounds and abstractions are defined in each model.",
     "The Quint TLC backend disables deadlock checking; terminal-state progress requires explicit scenarios.",
+    "A safetyView identifies a reviewed quotient; its graph count is not the count of all full model states.",
   ],
   results,
 };

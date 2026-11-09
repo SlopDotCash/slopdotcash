@@ -29,7 +29,7 @@ test("Quint takeover trace fences the expired worker at the SQLite write boundar
       "node_modules/.bin/quint",
       [
         "test",
-        "formal/models/bot_review_lease.qnt",
+        "formal/models/slopbot/bot_review_lease.qnt",
         "--backend=typescript",
         "--match=takeoverFencesOldWorkerTest",
         "--seed=20261107",

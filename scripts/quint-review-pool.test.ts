@@ -170,7 +170,7 @@ test("generated pool traces preserve order, highest band, equal remainders, cap 
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "run",
-        "formal/models/ui_review_pool.qnt",
+        "formal/models/ui/ui_review_pool.qnt",
         "--backend=typescript",
         "--seed=20261108",
         "--max-samples=100",

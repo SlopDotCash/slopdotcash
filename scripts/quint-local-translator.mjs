@@ -8,7 +8,14 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  applySafetyView,
+  bindSafetyView,
+  loadSafetyViewTlc,
+  readSafetyViews,
+} from "./quint-safety-view.mjs";
 import { normalizeTlaFolds } from "./quint-tla-normalization.mjs";
 
 const require = createRequire(import.meta.url);
@@ -26,6 +33,22 @@ const { postprocessTlaplus } = require(
 const { right } = require("@sweet-monads/either");
 const compiler = require(join(packageRoot, "dist/src/compileToTlaplus.js"));
 const tlc = require(join(packageRoot, "dist/src/tlc.js"));
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const requestedView = process.env.SLOP_QUINT_SAFETY_VIEW;
+let safetyManifest;
+let safetyView;
+if (requestedView !== undefined) {
+  if (process.argv[2] !== "verify" || !process.argv[3])
+    throw new Error("TLC safety view requires an explicit verification model");
+  const model = relative(root, resolve(process.cwd(), process.argv[3]));
+  safetyManifest = readSafetyViews(root);
+  safetyView = bindSafetyView(
+    safetyManifest,
+    requestedView,
+    model,
+    readFileSync(join(root, model), "utf8"),
+  );
+}
 // JAR from the official v0.62.4 apalache.tgz release asset. The release archive
 // digest and independent download receipt are recorded in the transport audit.
 const APALACHE_SHA256 =
@@ -47,7 +70,22 @@ function verifiedJar(apalacheVersion) {
 const verifyTlc = tlc.verify;
 tlc.verify = async (config, apalacheVersion, ...args) => {
   verifiedJar(apalacheVersion);
-  const result = await verifyTlc(config, apalacheVersion, ...args);
+  let result;
+  if (safetyView) {
+    const viewed = applySafetyView(safetyView, config);
+    const adapter = loadSafetyViewTlc(
+      join(packageRoot, "dist/src/tlc.js"),
+      safetyManifest,
+    );
+    console.log(
+      `[tlc-safety-view] ${JSON.stringify({
+        ...viewed.viewEvidence,
+        adapterSha256: adapter.adapterSha256,
+        overlaySha256: adapter.overlaySha256,
+      })}`,
+    );
+    result = await adapter.verify(viewed, apalacheVersion, ...args);
+  } else result = await verifyTlc(config, apalacheVersion, ...args);
   verifiedJar(apalacheVersion);
   return result;
 };

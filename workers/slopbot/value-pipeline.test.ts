@@ -37,7 +37,7 @@ function pipelineTrace(scenario: string): PipelineState[] {
       "node_modules/.bin/quint",
       [
         "test",
-        "formal/models/bot_value_pipeline.qnt",
+        "formal/models/slopbot/bot_value_pipeline.qnt",
         "--backend=typescript",
         `--match=${scenario}`,
         "--seed=20261107",

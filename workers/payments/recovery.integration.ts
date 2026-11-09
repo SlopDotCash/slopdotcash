@@ -99,7 +99,7 @@ function retirementModelOutboxes() {
     [
       join(root, "node_modules/@informalsystems/quint/dist/src/cli.js"),
       "test",
-      join(root, "formal/models/payment_unsigned_retirement.qnt"),
+      join(root, "formal/models/payments/payment_unsigned_retirement.qnt"),
       "--backend=typescript",
       "--seed=20261108",
       "--match=^staleRetirementKeeps(Submitted|Held)Test$",

@@ -45,7 +45,7 @@ function canonicalVoidTrace(): { row: string; result: string }[] {
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/referral_posting.qnt",
+        "formal/models/referrals/referral_posting.qnt",
         "--backend=typescript",
         "--seed=1",
         "--match=^canonicalVoidAfterFinalizedTest$",
