@@ -3,6 +3,7 @@
 // repository and what base permission one GitHub account has there. The
 // answer comes from GitHub through the App, never from installation records
 // alone, and it carries no token.
+import { githubHeaders } from "../../backend/github";
 import {
   parseRepositoryIdentity,
   REPOSITORY_READ_HEADER,
@@ -47,12 +48,7 @@ async function repositoryInstallation(
   const call = (path: string, token: string, method = "GET") =>
     fetcher(`https://api.github.com${path}`, {
       method,
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
-        "user-agent": "slopbot",
-        "x-github-api-version": "2022-11-28",
-      },
+      headers: githubHeaders(token, "slopbot"),
       redirect: "manual",
     });
   const found = await call(`/repos/${owner}/${repo}/installation`, jwt);
