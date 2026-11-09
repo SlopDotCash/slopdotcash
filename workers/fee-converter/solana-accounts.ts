@@ -6,6 +6,7 @@ import {
 } from "../../contracts/solana/token-extensions";
 import { ata } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { JupiterRouteExpectation } from "./jupiter-route";
 import type { ParsedTransaction } from "./solana";
 import type { RouteAccountObservation } from "./solana-route-accounts";
@@ -39,8 +40,7 @@ export interface SolanaAccountProof {
     accounts: RouteAccountObservation[];
   };
 }
-const hex = (data: Uint8Array) =>
-  Array.from(sha256(data), (x) => x.toString(16).padStart(2, "0")).join("");
+const hex = (data: Uint8Array) => bytesToHex(sha256(data));
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 function publicKey(value: string) {

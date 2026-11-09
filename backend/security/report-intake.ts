@@ -1,6 +1,7 @@
 /** Durable private reports. Slop's receipt is independent of GitHub delivery. */
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedBytes, readBoundedJson } from "../../src/lib/browser-json";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { D1QueryStatement } from "../d1";
@@ -812,9 +813,7 @@ export async function acceptStoredReport(
   const id = `ss_${deps.randomId().replaceAll("-", "")}`;
   await admitPublicWork(deps, actor.githubId, id);
   const caseId = `sc_${deps.randomId().replaceAll("-", "")}`;
-  const marker = Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) =>
-    x.toString(16).padStart(2, "0"),
-  ).join("");
+  const marker = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   const stored = await storeReport(deps, id, 1, report);
   const frozen = await termsAtReceipt(deps, projectId, at);
   const guard = {

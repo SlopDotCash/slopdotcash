@@ -7,6 +7,7 @@ import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletWithFeatures } from "@wallet-standard/base";
 import type { StandardConnectFeature } from "@wallet-standard/features";
 import { useEffect, useState } from "react";
+import { bytesToHex } from "./byte-encoding";
 import type { EscrowFamily } from "./escrow-policy.mjs";
 
 type EthereumWallet = {
@@ -124,7 +125,7 @@ function evmWallet(
         },
         async sign(message) {
           if (!trusted()) throw new Error(conflictMessage);
-          const hex = `0x${Array.from(new TextEncoder().encode(message), (n) => n.toString(16).padStart(2, "0")).join("")}`;
+          const hex = `0x${bytesToHex(new TextEncoder().encode(message))}`;
           const signature = await provider.request({
             method: "personal_sign",
             params: [hex, address],

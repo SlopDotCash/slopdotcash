@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import { positiveBudgetFits } from "../verified-budget";
 import type { Network } from "./config";
 import type { SolanaAccountProof } from "./solana-accounts";
@@ -411,9 +412,7 @@ export class NativeGasJournal {
     )
       throw new Error("Solana completed provider histories disagree");
     const json = JSON.stringify(proof);
-    const digest = Array.from(sha256(new TextEncoder().encode(json)), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join("");
+    const digest = bytesToHex(sha256(new TextEncoder().encode(json)));
     await this.db
       .prepare(
         "INSERT INTO fee_solana_expiry_proofs(tx_id,fee_wallet,run_id,proof_json,proof_sha256,observed_at) VALUES(?,?,?,?,?,?)",

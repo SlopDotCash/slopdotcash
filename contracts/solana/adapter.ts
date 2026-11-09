@@ -5,6 +5,7 @@ import {
   encodeBase58Bytes as base58,
   decodeBase58Bytes,
 } from "../../src/lib/base58";
+import { bytesToHex as hex } from "../../src/lib/byte-encoding";
 import {
   acceptsPayoutFee,
   type PayoutPolicy,
@@ -87,8 +88,6 @@ const list = (value: unknown): unknown[] => {
   if (!Array.isArray(value)) throw new Error("Invalid RPC list");
   return value;
 };
-const hex = (bytes: Uint8Array) =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 const encoder = new TextEncoder();
 const anchorDiscriminator = (name: string) =>
   hex(sha256(encoder.encode(`global:${name}`)).slice(0, 8));

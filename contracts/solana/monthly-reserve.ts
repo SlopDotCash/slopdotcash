@@ -1,4 +1,5 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
+import { bytesToHex as hex } from "../../src/lib/byte-encoding";
 import { sha256Hex } from "../../src/lib/sha256";
 import {
   PROJECT_DISCRIMINATOR,
@@ -25,9 +26,6 @@ import {
   pda,
 } from "./transactions";
 import { prepareSolanaWalletTransaction } from "./wallet-transactions";
-
-const hex = (value: Uint8Array) =>
-  Array.from(value, (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** Evidence only: no signature, instruction or transaction is produced. Missing data and
  * other fault classes do not prove that an admitted recipient can never settle. */
