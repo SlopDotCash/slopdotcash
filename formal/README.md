@@ -245,6 +245,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Solana signed journal and binding completion | `solana_executor_journal`, `solana_binding_completion` | `workers/payment-executor/solana.ts`, `contracts/solana/transactions.ts`, `contracts/solana/integration/executor.e2e.mjs` |
 | Payout consent UI and Solana account API | `ui_payout_consent_lifetime`, `ui_payout_consent`, `solana_binding_api` | `src/PayoutConsent.tsx`, `src/Earnings.tsx`, `backend/payments/handler.ts`, `tests/e2e/payout-consent.spec.ts`, `contracts/solana/integration/executor.e2e.mjs` |
 | Wallet-provider calls and mutable signing bytes | `evm_wallet_discovery`, `solana_wallet_provider`, `solana_binding_wire`, `solana_message_buffers` | `src/lib/use-payout-wallets.ts`, `src/lib/payout-consent.ts`, `src/PayoutConsent.tsx`, `tests/e2e/payout-wallet-picker.spec.ts`, `tests/e2e/payout-consent.spec.ts` |
+| Expired Solana payment history | `ui_solana_history_recovery`, `solana_history_retirement`, `direct_solana_retirement` | `src/SolanaBountyRecovery.tsx`, `backend/security/direct-solana-recovery.ts`, `tests/e2e/solana-history-recovery.spec.ts`, `formal/tests/direct-solana-retirement.test.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -550,6 +551,32 @@ asynchronous results and refusals. The reviewed, lockfile-pinned Wallet Standard
 interfaces expose mutable byte arrays, so the models distinguish provider-owned
 arrays from the application's snapshots. Browser and UI video evidence for
 these changes is still outstanding under the skip-checks instruction.
+
+Solana history recovery now verifies both fresh and cached signatures against
+the original payer and exact retained message before using them. A malformed
+or invalid cached signature is a cache miss; a new invalid signature is never
+saved. Valid cached proofs remain available after a failed history lookup.
+The prior length-only acceptance could retain an invalid signature and reuse
+it on every retry. The browser fixture now signs coherent messages with a
+public deterministic test key instead of supplying arbitrary 64-byte arrays.
+
+Recovery actions also own the case, revision, generation, payer and message
+context. Closing the child or changing that context stops further prompts,
+cache writes and verification requests, even if the parent remains mounted.
+The action runner is local because the shared busy/error helper has no such
+ownership contract. Callers recheck ownership after asynchronous authority
+checks, including the payout-consent caller. Already submitted requests remain
+separate effects; closing a view cannot roll them back.
+
+The retirement model separates input/signature refusal, withheld challenges,
+provider disagreement, found transactions, incomplete history and completed
+retirement proof. It bounds two retained messages and two providers while
+preserving the implementation's separate 64-message input limit. No new backend
+acceptance policy was added. Solana's [transaction signatures](https://solana.com/docs/core/transactions)
+and [signature-status lookup](https://solana.com/docs/rpc/http/getsignaturestatuses)
+explain the distinction between a valid message signature and evidence of a
+landed payment. The new scenarios and browser regressions remain unexecuted;
+neither these models nor local signature verification prove provider history.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.

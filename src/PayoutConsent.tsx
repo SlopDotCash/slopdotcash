@@ -143,9 +143,9 @@ export function PayoutConsent({
     setError("");
     setNotice("");
     try {
-      if (!(await checkActor())) return;
+      if (!(await checkActor()) || !isCurrent()) return;
       const wallet = await provider.connect();
-      if (!(await checkActor())) return;
+      if (!(await checkActor()) || !isCurrent()) return;
       if (!sameWalletAddress(network.family, wallet.address, claim.address))
         throw new Error(
           "Connect your confirmed payout address. To change it, use Account wallets first.",
@@ -180,7 +180,7 @@ export function PayoutConsent({
           throw new Error(
             "The payout consent names a different account, address, network or vault. Refresh and review again.",
           );
-        if (!(await checkActor())) return;
+        if (!(await checkActor()) || !isCurrent()) return;
         const accounts = await rpc("eth_accounts", []);
         if (!isCurrent()) return;
         if (
@@ -198,12 +198,12 @@ export function PayoutConsent({
           throw new Error(
             `Switch your wallet to ${networkLabel(payment.network)}, then review again.`,
           );
-        if (!(await checkActor())) return;
+        if (!(await checkActor()) || !isCurrent()) return;
         const signature = await rpc("eth_signTypedData_v4", [
           claim.address,
           JSON.stringify(expected),
         ]);
-        if (!(await checkActor())) return;
+        if (!(await checkActor()) || !isCurrent()) return;
         if (typeof signature !== "string")
           throw new Error("Your wallet did not return a signature.");
         const result = await requestConsent("bind-authorize", {
@@ -212,7 +212,7 @@ export function PayoutConsent({
           expiresAt: expected.message.expiresAt,
           signature,
         });
-        if (!(await checkActor())) return;
+        if (!(await checkActor()) || !isCurrent()) return;
         if (result.authorized !== true)
           throw new Error(
             "Payout consent was not stored. Refresh and review again.",
@@ -249,7 +249,7 @@ export function PayoutConsent({
         verifyPreparedSolanaBinding(bytes, context);
         const chain =
           `solana:${payment.network === "solana-mainnet" ? "mainnet" : payment.network.slice(7)}` as `solana:${string}`;
-        if (!(await checkActor())) return;
+        if (!(await checkActor()) || !isCurrent()) return;
         // Wallets may modify their input and retain the returned buffer. Keep
         // both our reviewed message and the result private across later awaits.
         const signed = Uint8Array.from(
@@ -258,12 +258,12 @@ export function PayoutConsent({
         if (!isCurrent()) return;
         // The attester must receive the exact prepared message and its existing signature.
         verifySignedSolanaBinding(bytes, signed, claim.address);
-        if (!(await checkActor())) return;
+        if (!(await checkActor()) || !isCurrent()) return;
         const result = await requestConsent("solana-bind/complete", {
           obligationId: payment.id,
           transaction: btoa(String.fromCharCode(...signed)),
         });
-        if (!(await checkActor())) return;
+        if (!(await checkActor()) || !isCurrent()) return;
         if (typeof result.transactionId !== "string")
           throw new Error(
             "Binding submission could not be verified. Reload this page before retrying.",

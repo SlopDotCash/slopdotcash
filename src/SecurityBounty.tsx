@@ -3710,6 +3710,7 @@ function CaseDetail({
                 <SolanaBountyRecovery
                   key={`history:${record.id}:${record.settlement.recovery.generation}`}
                   caseId={record.id}
+                  revision={record.revision}
                   generation={record.settlement.recovery.generation}
                   payer={record.settlement.recovery.payer}
                   messages={record.settlement.recovery.messages}
