@@ -2,23 +2,26 @@
 // @source workers/slopbot/value-budget.ts
 // @source workers/slopbot/models.ts
 // @source migrations/0104_slopbot_value_inference_attempts.sql
+// @source migrations/0118_slopbot_value_attempt_completion.sql
 // @evidence workers/slopbot/value-attempt-limit.test.ts
 // One inference key, two existing counted reservations and three new IDs.
 // Admission and the reservation transaction are separate. Each transaction
 // records its own decision before its asynchronous response is delivered.
 // Complete call lists are no receipt / all-free / containing another call.
+// Completion follows call recording and any required valid-result retention;
+// it is independent of cost reconciliation, abstracted out of this module.
 // Money arithmetic, individual cost-row writes, and provider truth are outside
 // this projection. Ownership abstracts the callback before a provider call;
 // it does not claim a distributed lock between that callback and HTTP send.
 module bot_inference_reservations {
   type Row = { admitted: bool, reserved: bool, called: bool, recorded: str,
-    owner: bool, decision: str, delivered: bool }
+    completed: bool, owner: bool, decision: str, delivered: bool }
   val ids = Set(1, 2, 3, 4, 5)
   val candidates = Set(3, 4, 5)
   val empty = { admitted: false, reserved: false, called: false,
-    recorded: "none", owner: true, decision: "none", delivered: false }
+    recorded: "none", completed: false, owner: true, decision: "none", delivered: false }
   val history = { admitted: true, reserved: true, called: true,
-    recorded: "none", owner: false, decision: "reserved", delivered: true }
+    recorded: "none", completed: false, owner: false, decision: "reserved", delivered: true }
   var s: { rows: int -> Row, budget: bool, atomic: bool }
   action init = s' = { rows: ids.mapBy(id => if (id <= 2) history else empty),
     budget: true, atomic: true }
@@ -26,15 +29,22 @@ module bot_inference_reservations {
     val row = s.rows.get(id)
     row.reserved and row.recorded != "free"
   }).size()
+  val confirmed = ids.filter(id => s.rows.get(id).reserved
+    and s.rows.get(id).completed and s.rows.get(id).recorded == "other").size()
+  val refusal = if (confirmed >= 3) "attempts" else "attempts-pending"
   action admit(id: int): bool = all { candidates.contains(id),
-    not(s.rows.get(id).admitted), counted < 3,
+    not(s.rows.get(id).admitted), s.rows.get(id).decision == "none", counted < 3,
     s' = s.with("rows", s.rows.set(id,
       s.rows.get(id).with("admitted", true))) }
+  action rejectAdmission(id: int): bool = all { candidates.contains(id),
+    not(s.rows.get(id).admitted), s.rows.get(id).decision == "none", counted >= 3,
+    s' = s.with("rows", s.rows.set(id,
+      s.rows.get(id).with("decision", refusal))) }
   // INSERT RETURNING plus refusal SELECT execute in one D1 batch. Only its
   // response is delayed: later cost writes cannot reclassify that decision.
   action reserve(id: int): bool = {
     val decision = if (not(s.atomic)) "storage"
-      else if (counted >= 3) "attempts"
+      else if (counted >= 3) refusal
       else if (not(s.budget)) "budget" else "reserved"
     all { candidates.contains(id), s.rows.get(id).admitted,
       s.rows.get(id).decision == "none",
@@ -59,14 +69,19 @@ module bot_inference_reservations {
     s.rows.get(id).recorded == "none",
     s' = s.with("rows", s.rows.set(id, s.rows.get(id)
       .with("recorded", if (free) "free" else "other"))) }
+  action complete(id: int): bool = all { ids.contains(id),
+    s.rows.get(id).reserved, not(s.rows.get(id).completed),
+    not(s.rows.get(id).called) or s.rows.get(id).recorded != "none",
+    s' = s.with("rows", s.rows.set(id,
+      s.rows.get(id).with("completed", true))) }
   action exhaustBudget = all { s.budget, s' = s.with("budget", false) }
   action restoreBudget = all { not(s.budget), s' = s.with("budget", true) }
   action lackAtomicStorage = all { s.atomic, s' = s.with("atomic", false) }
   action step = {
     nondet id = ids.oneOf()
     nondet free = Set(false, true).oneOf()
-    any { admit(id), reserve(id), deliver(id), loseOwner(id), call(id),
-      record(id, free), exhaustBudget, restoreBudget, lackAtomicStorage,
+    any { admit(id), rejectAdmission(id), reserve(id), deliver(id), loseOwner(id), call(id),
+      record(id, free), complete(id), exhaustBudget, restoreBudget, lackAtomicStorage,
       s' = s }
   }
   val invariant = all { counted <= 3,
@@ -75,20 +90,21 @@ module bot_inference_reservations {
       all { row.reserved implies row.admitted,
         row.called implies row.reserved,
         row.recorded != "none" implies row.called,
+        row.completed implies row.reserved,
         (row.decision == "reserved") == row.reserved,
-        Set("attempts", "budget", "storage").contains(row.decision)
+        Set("attempts", "attempts-pending", "budget", "storage").contains(row.decision)
           implies not(row.reserved) }
     }) }
   run firstReservationWinsLastSlotTest = init.then(admit(3)).then(admit(4))
     .then(reserve(3)).then(reserve(4)).then(deliver(4))
-    .expect(counted == 3 and s.rows.get(4).decision == "attempts"
+    .expect(counted == 3 and s.rows.get(4).decision == "attempts-pending"
       and not(s.rows.get(4).reserved) and invariant)
   run reverseReservationOrderWinsLastSlotTest = init.then(admit(3)).then(admit(4))
     .then(reserve(4)).then(reserve(3)).then(deliver(3))
-    .expect(counted == 3 and s.rows.get(3).decision == "attempts" and invariant)
+    .expect(counted == 3 and s.rows.get(3).decision == "attempts-pending" and invariant)
   run staleOwnerCannotTakeFourthSlotTest = init.then(admit(3)).then(admit(4))
     .then(loseOwner(3)).then(reserve(4)).then(reserve(3)).then(deliver(3))
-    .expect(s.rows.get(3).decision == "attempts"
+    .expect(s.rows.get(3).decision == "attempts-pending"
       and not(s.rows.get(3).called) and counted == 3)
   run staleOwnerReservationRemainsHeldTest = init.then(admit(3)).then(loseOwner(3))
     .then(reserve(3)).then(deliver(3))
@@ -100,7 +116,7 @@ module bot_inference_reservations {
   run refusalSurvivesFreeReceiptBeforeReplyTest = init.then(admit(3)).then(admit(4))
     .then(reserve(3)).then(deliver(3)).then(call(3)).then(reserve(4))
     .then(record(3, true)).then(deliver(4))
-    .expect(counted == 2 and s.rows.get(4).decision == "attempts")
+    .expect(counted == 2 and s.rows.get(4).decision == "attempts-pending")
     .then(admit(5)).then(reserve(5)).expect(counted == 3 and invariant)
   run unknownReservationsDoNotExpireTest = init.then(admit(3)).then(reserve(3))
     .then(deliver(3)).then(loseOwner(3))
@@ -116,4 +132,24 @@ module bot_inference_reservations {
   run immutableAttemptCannotBeReadmittedTest = init.then(admit(3)).then(reserve(3))
     .then(record(1, true)).expect(counted == 2 and s.rows.get(3).admitted)
     .then(admit(3).fail())
+  run unknownFullAdmissionRemainsPendingTest = init.then(admit(3)).then(reserve(3))
+    .then(rejectAdmission(4)).then(deliver(4))
+    .expect(counted == 3 and s.rows.get(4).decision == "attempts-pending"
+      and not(s.rows.get(4).admitted) and invariant)
+  run knownFullAdmissionIsTerminalTest = init.then(record(1, false)).then(complete(1))
+    .then(record(2, false)).then(complete(2))
+    .then(admit(3)).then(reserve(3)).then(deliver(3)).then(call(3)).then(record(3, false))
+    .then(complete(3))
+    .then(rejectAdmission(4)).then(deliver(4))
+    .expect(confirmed == 3 and s.rows.get(4).decision == "attempts"
+      and not(s.rows.get(4).admitted) and invariant)
+  run recordedNonFreeBeforeCompletionRemainsPendingTest = init
+    .then(record(1, false)).then(complete(1)).then(record(2, false)).then(complete(2))
+    .then(admit(3)).then(reserve(3)).then(deliver(3)).then(call(3)).then(record(3, false))
+    .then(rejectAdmission(4)).then(deliver(4))
+    .expect(counted == 3 and confirmed == 2 and s.rows.get(4).decision == "attempts-pending")
+  run completedNoCallReservationStillHoldsCapacityTest = init.then(admit(3))
+    .then(reserve(3)).then(complete(3)).then(rejectAdmission(4)).then(deliver(4))
+    .expect(counted == 3 and s.rows.get(3).completed and not(s.rows.get(3).called)
+      and s.rows.get(4).decision == "attempts-pending" and invariant)
 }

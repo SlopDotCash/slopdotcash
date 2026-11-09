@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "dce2d25dc80ba1acb2e18380161cbffdda510e682688196ad9f32ab71eb86804",
+  "inventorySha256": "f1c885c3f46336b1fc97a4149ab4e9d19c1707827b8f99cd2ce2763fe802a89f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -119,6 +119,7 @@
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
         "formal/models/ui_project_publication_lifetime.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_setup_check_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
@@ -143,6 +144,7 @@
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
         "formal/models/ui_project_publication_lifetime.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_setup_check_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
@@ -2104,6 +2106,7 @@
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_email_preference_requests.qnt",
         "formal/models/ui_explicit_signout.qnt"
       ],
       "lexicallyUnmentionedValues": [
@@ -2125,6 +2128,7 @@
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_email_preference_requests.qnt",
         "formal/models/ui_explicit_signout.qnt"
       ],
       "lexicallyUnmentionedValues": ["unavailable", "unverified"],
@@ -2140,9 +2144,10 @@
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_email_preference_requests.qnt",
         "formal/models/ui_explicit_signout.qnt"
       ],
-      "lexicallyUnmentionedValues": ["loading"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2386,6 +2391,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -2396,7 +2402,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 952,
+      "line": 958,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2411,6 +2417,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -2421,7 +2428,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 967,
+      "line": 973,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2436,6 +2443,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -2446,7 +2454,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 969,
+      "line": 975,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2461,6 +2469,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -2471,7 +2480,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 985,
+      "line": 991,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2486,6 +2495,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -2496,7 +2506,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1024,
+      "line": 1030,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -2525,6 +2535,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -2549,7 +2560,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1342,
+      "line": 1348,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -2564,17 +2575,18 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
         "formal/models/ui_submitted_payment_recovery.qnt"
       ],
-      "lexicallyUnmentionedValues": ["ok"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1610,
+      "line": 1616,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -2589,6 +2601,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -3465,7 +3478,8 @@
       "values": ["failed", "ok"],
       "models": [
         "formal/models/bot_inference_reservations.qnt",
-        "formal/models/bot_producer_provenance.qnt"
+        "formal/models/bot_producer_provenance.qnt",
+        "formal/models/bot_value_precall_authority.qnt"
       ],
       "lexicallyUnmentionedValues": ["ok"],
       "review": "candidate-only"
@@ -3561,14 +3575,32 @@
     },
     {
       "path": "workers/slopbot/value-budget.ts",
-      "line": 19,
+      "line": 36,
       "name": "ReservationResult",
       "kind": "string-union",
-      "values": ["attempts", "budget", "reserved"],
+      "values": ["budget", "reserved"],
       "models": [
         "formal/models/bot_inference_reservations.qnt",
         "formal/models/bot_inference_retention.qnt",
+        "formal/models/bot_value_attempt_recovery.qnt",
         "formal/models/bot_value_budget.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/slopbot/value-inference.ts",
+      "line": 170,
+      "name": "reason",
+      "kind": "string-union",
+      "values": ["attempts", "attempts-pending", "budget"],
+      "models": [
+        "formal/models/bot_inference_reservations.qnt",
+        "formal/models/bot_inference_retention.qnt",
+        "formal/models/bot_value_attempt_recovery.qnt",
+        "formal/models/bot_value_budget.qnt",
+        "formal/models/bot_value_pipeline.qnt",
+        "formal/models/bot_value_precall_authority.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3593,6 +3625,7 @@
       ],
       "models": [
         "formal/models/api_incomplete_assessments.qnt",
+        "formal/models/bot_value_attempt_recovery.qnt",
         "formal/models/bot_value_pipeline.qnt",
         "formal/models/bot_value_request.qnt"
       ],

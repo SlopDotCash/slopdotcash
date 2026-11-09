@@ -1,3 +1,4 @@
+import type { D1Statement } from "../../backend/d1";
 import { PROVIDER_BUDGET_EXHAUSTED } from "./models";
 import type { D1Database, D1TransactionalDatabase } from "./persistence";
 
@@ -15,8 +16,88 @@ export function countedValueAttemptsSql(key: string, freeFailure: string): strin
              WHERE c.review_key=a.attempt_id AND c.failure IS NOT ${freeFailure})))`;
 }
 
+/** Completion closes result retention; a non-free cost alone does not. */
+function nonFreeValueAttemptsSql(key: string, freeFailure: string): string {
+  return `(SELECT COUNT(*) FROM slopbot_value_inference_attempts a
+    JOIN slopbot_value_budget_reservations r ON r.attempt_id=a.attempt_id
+    JOIN slopbot_value_attempt_completions done ON done.attempt_id=a.attempt_id
+    WHERE a.inference_key=${key} AND EXISTS (
+      SELECT 1 FROM slopbot_costs c WHERE c.review_key=a.attempt_id
+        AND c.failure IS NOT ${freeFailure}))`;
+}
+
+function valueAttemptRefusalSql(key: string, freeFailure: string, limit: string) {
+  return `CASE WHEN ${nonFreeValueAttemptsSql(key, freeFailure)} >= ${limit}
+    THEN 'attempts' ELSE 'attempts-pending' END`;
+}
+
 type InferenceGuard = { key: string; limit: number };
-type ReservationResult = "reserved" | "budget" | "attempts";
+type AttemptRefusal = "attempts" | "attempts-pending";
+type ReservationResult = "reserved" | "budget" | AttemptRefusal;
+
+/** Both the write and its refusal classification use one database snapshot. */
+async function writeInferenceAttempt(
+  db: D1Database,
+  attemptId: string,
+  statement: D1Statement,
+  refusal: D1Statement,
+): Promise<"written" | "budget" | AttemptRefusal> {
+  const atomic = db as D1Database & Partial<D1TransactionalDatabase>;
+  if (!atomic.batch)
+    throw new Error("Transactional inference storage is required");
+  const results = await atomic.batch([statement, refusal]);
+  if (results.length !== 2 || results.some((result) => !result.success))
+    throw new Error("Inference attempt result is unavailable");
+  const inserted = results[0].results as { attempt_id?: unknown }[] | undefined;
+  const decision = (results[1].results?.[0] as { result?: unknown } | undefined)
+    ?.result;
+  if (
+    !Array.isArray(inserted) ||
+    (decision !== "attempts" &&
+      decision !== "attempts-pending" &&
+      decision !== "budget")
+  )
+    throw new Error("Inference attempt result is unavailable");
+  if (inserted.length === 1 && inserted[0].attempt_id === attemptId)
+    return "written";
+  if (inserted.length === 0) return decision;
+  throw new Error("Inference attempt result is unavailable");
+}
+
+/** Unknown/incomplete reservations occupy the full cap, but are not proof that
+ * every paid attempt is exhausted. A duplicate ID also admits no new call. */
+export async function admitValueAttempt(
+  db: D1Database,
+  key: string,
+  attemptId: string,
+  limit: number,
+): Promise<"admitted" | AttemptRefusal> {
+  const result = await writeInferenceAttempt(
+    db,
+    attemptId,
+    db
+      .prepare(
+        `INSERT INTO slopbot_value_inference_attempts (attempt_id,inference_key,started_at)
+         SELECT ?1,?2,?3 WHERE ${countedValueAttemptsSql("?2", "?5")} < ?4
+         AND NOT EXISTS (SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id=?1)
+         RETURNING attempt_id`,
+      )
+      .bind(
+        attemptId,
+        key,
+        new Date().toISOString(),
+        limit,
+        PROVIDER_BUDGET_EXHAUSTED,
+      ),
+    db
+      .prepare(`SELECT ${valueAttemptRefusalSql("?1", "?2", "?3")} AS result`)
+      .bind(key, PROVIDER_BUDGET_EXHAUSTED, limit),
+  );
+  if (result === "written") return "admitted";
+  if (result === "budget")
+    throw new Error("Inference admission result is invalid");
+  return result;
+}
 
 /** One atomic admission check across all installations. The caller supplies an
  * operator-approved allowance and, in capped mode, a conservative maximum.
@@ -123,17 +204,15 @@ async function reserveBudget(
         : []),
     );
   if (inference) {
-    const atomic = db as D1Database & Partial<D1TransactionalDatabase>;
-    if (!atomic.batch)
-      throw new Error("Transactional inference reservation storage is required");
-    // Both the inserted row and the refusal reason belong to this transaction.
-    // A later free denial cannot rewrite this request's admission receipt.
-    const results = await atomic.batch([
+    const decision = await writeInferenceAttempt(
+      db,
+      attemptId,
       statement,
       db
         .prepare(`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id=?3 AND inference_key=?1)
             OR EXISTS(SELECT 1 FROM slopbot_value_budget_reservations WHERE attempt_id=?3)
-            OR ${countedValueAttemptsSql("?1", "?2")} >= ?4 THEN 'attempts'
+            OR ${countedValueAttemptsSql("?1", "?2")} >= ?4
+            THEN ${valueAttemptRefusalSql("?1", "?2", "?4")}
           ELSE 'budget' END AS result`)
         .bind(
           inference.key,
@@ -141,23 +220,8 @@ async function reserveBudget(
           attemptId,
           inference.limit,
         ),
-    ]);
-    if (results.length !== 2 || results.some((result) => !result.success))
-      throw new Error("Inference reservation result is unavailable");
-    const inserted = results[0].results as
-      | { attempt_id?: unknown }[]
-      | undefined;
-    const decision = (results[1].results?.[0] as { result?: unknown } | undefined)
-      ?.result;
-    if (
-      !Array.isArray(inserted) ||
-      (decision !== "attempts" && decision !== "budget")
-    )
-      throw new Error("Inference reservation result is unavailable");
-    if (inserted.length === 1 && inserted[0].attempt_id === attemptId)
-      return "reserved";
-    if (inserted.length === 0) return decision;
-    throw new Error("Inference reservation result is unavailable");
+    );
+    return decision === "written" ? "reserved" : decision;
   }
   return (await statement.first()) !== null ? "reserved" : "budget";
 }

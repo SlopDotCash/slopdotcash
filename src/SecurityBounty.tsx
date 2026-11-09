@@ -671,6 +671,10 @@ export function SecurityProgramPage({
     revision: number;
   } | null>(null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
+  const refreshIdentity = useCallback(
+    () => setSessionEpoch((value) => value + 1),
+    [],
+  );
   const session = useProjectSession(sessionEpoch);
   usePrivateDraftSession(session);
   useEffect(() => {
@@ -700,6 +704,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })
@@ -873,6 +878,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })

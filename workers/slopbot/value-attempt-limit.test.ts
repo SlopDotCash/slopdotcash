@@ -20,6 +20,7 @@ import {
 const MIGRATIONS = [
   "0013_slopbot.sql",
   "0039_slopbot_provider_cost.sql",
+  "0041_slopbot_immutable_ledger.sql",
   "0043_slopbot_provider_request.sql",
   "0047_slopbot_review_billing.sql",
   "0049_slopbot_spend_alerts.sql",
@@ -29,6 +30,7 @@ const MIGRATIONS = [
   "0084_slopbot_attempt_accounting.sql",
   "0085_slopbot_provider_failure_notices.sql",
   "0104_slopbot_value_inference_attempts.sql",
+  "0118_slopbot_value_attempt_completion.sql",
 ];
 
 const output = (sourceDigest: string) => ({
@@ -51,10 +53,10 @@ const prompt = {
   item: "No source material",
 };
 
-test("provider retries of one source are bounded and recorded immutably", async () => {
+async function providerRetries(knownCost: boolean) {
   const { db, sqlite } = sqliteD1(MIGRATIONS);
   let requests = 0;
-  // Every provider response is billable but invalid, the re-billing case.
+  // Every response is non-free and invalid; one variant omits its actual cost.
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -72,7 +74,7 @@ test("provider retries of one source are bounded and recorded immutably", async 
           stop_sequence: null,
           usage: { input_tokens: 10, output_tokens: 10 },
         },
-        { headers: { "x-si-buyer-cost-micro": "1000" } },
+        { headers: knownCost ? { "x-si-buyer-cost-micro": "1000" } : {} },
       );
     },
   });
@@ -113,6 +115,16 @@ test("provider retries of one source are bounded and recorded immutably", async 
         )
         .get(),
     ).toEqual({ n: VALUE_INFERENCE_ATTEMPT_LIMIT });
+    expect(
+      sqlite
+        .query("SELECT COUNT(*) n FROM slopbot_value_attempt_completions")
+        .get(),
+    ).toEqual({ n: VALUE_INFERENCE_ATTEMPT_LIMIT });
+    expect(
+      sqlite
+        .query("SELECT COUNT(*) n FROM slopbot_value_budget_reconciliations")
+        .get(),
+    ).toEqual({ n: knownCost ? VALUE_INFERENCE_ATTEMPT_LIMIT : 0 });
     expect(() =>
       sqlite.exec("DELETE FROM slopbot_value_inference_attempts"),
     ).toThrow("immutable");
@@ -127,7 +139,14 @@ test("provider retries of one source are bounded and recorded immutably", async 
     server.stop(true);
     sqlite.close();
   }
-});
+}
+
+test("provider retries of one source are bounded and recorded immutably", () =>
+  providerRetries(true),
+);
+test("completed attempts with unknown cost amounts still have a terminal cap", () =>
+  providerRetries(false),
+);
 
 test("concurrent admitted inferences cannot reserve the same final attempt slot", async () => {
   const { db, sqlite } = sqliteD1(MIGRATIONS);
@@ -178,11 +197,19 @@ test("concurrent admitted inferences cannot reserve the same final attempt slot"
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let reservationPrepared = false;
   const delayedDb = {
     ...db,
+    prepare(sql: string) {
+      if (sql.includes("INSERT INTO slopbot_value_budget_reservations"))
+        reservationPrepared = true;
+      return db.prepare(sql);
+    },
     async batch(statements: Parameters<typeof db.batch>[0]) {
-      entered();
-      await held;
+      if (reservationPrepared) {
+        entered();
+        await held;
+      }
       return db.batch(statements);
     },
   };
@@ -300,7 +327,7 @@ test("an atomic attempt refusal is retained when a free receipt arrives before i
         return results;
       },
     };
-    expect(await reserve(ids[3], delayedReply)).toBe("attempts");
+    expect(await reserve(ids[3], delayedReply)).toBe("attempts-pending");
     expect(
       await db
         .prepare(`SELECT ${countedValueAttemptsSql("?1", "?2")} AS n`)
@@ -332,12 +359,12 @@ test("inference without atomic reservation storage refuses before a provider cal
         maximumMicroUsd: null,
         approvedMonthlyMicroUsd: null,
       }),
-    ).rejects.toThrow("Transactional inference reservation storage is required");
+    ).rejects.toThrow("Transactional inference storage is required");
     expect(
       sqlite
         .query("SELECT attempt_id FROM slopbot_value_inference_attempts")
         .get(),
-    ).toEqual({ attempt_id: attemptId });
+    ).toBeNull();
     expect(
       sqlite
         .query("SELECT COUNT(*) AS n FROM slopbot_value_budget_reservations")

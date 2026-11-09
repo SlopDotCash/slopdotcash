@@ -15,8 +15,9 @@ previously separate completion fixes. The preserved source heads are:
 | Private Points UI | `08a837c84` |
 
 The assembly is based on corrective head `22b0fd511`, not the later
-cleanup-aware development merge `69229342`. Final alignment waits for the
-reviewer's merged-source verification and handoff. All earlier standalone branches remain
+cleanup-aware development merge `69229342`. The reviewer completed the
+merged-source verification and released the hold. Final alignment is sequenced
+after the independent bounded proof-completion batch. All earlier standalone branches remain
 available. No application, parser, simulation, verifier or browser checks ran
 in this lane; regenerated inventories and source comparisons do not prove
 this combined candidate works. Independent evidence below retains its exact
@@ -61,8 +62,8 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-840 production sources, 351 finite models and 2,079 named scenarios, with zero
-unmapped sources. The separate lexical catalog lists 238 declared lifecycle
+841 production sources, 355 finite models and 2,138 named scenarios, with zero
+unmapped sources. The separate lexical catalog lists 239 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
 The wallet source-only batch adds four models and 64 unexecuted scenarios.
@@ -127,6 +128,26 @@ models and regression definitions remain unexecuted. See
 `explicit-signout-audit.md`, `inference-attempt-accounting-audit.md` and the
 enforcement follow-up in `admin-mutation-intent-audit.md`. The current function
 census contains 9,939 bodies in 685 files with 168 selected contracts.
+
+The security-settings, email and worker-recovery batch adds four models and
+59 scenarios across new and refined models. Settings permission and publication
+retain their initiating actor; confirmed identity changes refresh the parent.
+Email continuations check their generation before reads, status handling and
+error publication. Workers re-read local authority after remote membership.
+An immutable attempt-completion record now distinguishes a completed non-free
+attempt from one still awaiting its response or retained result. Unfinished
+capacity stays reserved and retryable; terminal exhaustion rechecks retention.
+All added scenarios and browser/SQLite definitions remain unexecuted. See
+`security-settings-lifetime-audit.md`, `email-preference-requests-audit.md`,
+`value-precall-authority-audit.md` and `inference-attempt-accounting-audit.md`.
+The function census now has 9,960 bodies in 685 files and 168 selected contracts.
+
+The reviewer independently confirmed that run `42533925495` attempt 2 passed
+against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,
+924 normal model stages and 168 selected function proofs in 33 modules. These
+results cover that earlier core revision, not the newer source-only batches.
+The final receipts are attached to the repository's
+[`pr-evidence-2429-cbb2b696` release](https://github.com/SlopDotCash/slopdotcash/releases/tag/pr-evidence-2429-cbb2b696).
 
 ## Integrated corrections
 

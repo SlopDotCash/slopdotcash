@@ -174,6 +174,7 @@
         "formal/models/ui_owner_private_requests.qnt",
         "formal/models/ui_project_authority.qnt",
         "formal/models/ui_project_publication_lifetime.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_setup_check_lifetime.qnt",
         "formal/models/vetting_admin_actor.qnt",
         "formal/models/vetting_evidence_access.qnt"
@@ -527,6 +528,7 @@
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
         "formal/models/ui_project_publication_lifetime.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
@@ -2818,6 +2820,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0118_slopbot_value_attempt_completion.sql",
+      "sha256": "54ba6956649df9cc8f66f8cf3361d280ff60939a01d82eb689c2f78d53d1917a",
+      "models": [
+        "formal/models/bot_inference_reservations.qnt",
+        "formal/models/bot_value_attempt_recovery.qnt"
+      ],
+      "candidateLines": [1, 8, 9, 11, 12, 14, 15],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "5ce68e5d46d579908b1ba07bd7e2935b55d07c7e542e56ad651fa7544304e48f",
       "models": ["formal/models/formal_toolchain.qnt"],
@@ -4314,21 +4326,22 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "sha256": "cd71f401bad60c9ebc4f7c2ea01f368184862ca40139ebc61f6b2f2966279c4a",
+      "sha256": "bfac9d78bee06647be33ff16bf5a11af20dd6951db2120327e0cc7de080c3345",
       "models": [
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_email_preference_requests.qnt",
         "formal/models/ui_explicit_signout.qnt"
       ],
       "candidateLines": [
-        6, 8, 23, 29, 38, 39, 40, 41, 51, 52, 53, 54, 55, 57, 60, 89, 90, 94,
-        95, 96, 125, 127, 136, 141, 153, 160, 174, 176, 179, 181, 195, 200, 204,
-        210, 219, 237, 238, 242, 248, 253, 254, 258, 260, 291, 293, 296, 299,
-        301, 308, 319, 324, 334, 336, 337, 340, 341, 350, 351, 374, 376, 386,
-        401, 403, 405, 412, 418, 425, 433, 435, 436, 451, 468, 470, 471, 512,
-        514, 515, 517, 519, 522, 604, 618, 655, 696, 697, 698, 701, 713, 731,
-        762, 805, 826, 835, 852, 866, 869
+        6, 8, 23, 29, 38, 39, 40, 41, 52, 53, 54, 55, 56, 58, 61, 90, 91, 95,
+        96, 97, 126, 128, 137, 142, 154, 161, 175, 177, 180, 182, 198, 203, 207,
+        213, 222, 242, 244, 250, 256, 257, 288, 289, 293, 295, 326, 328, 331,
+        334, 337, 345, 356, 362, 370, 372, 373, 376, 377, 386, 387, 410, 412,
+        423, 438, 440, 442, 449, 455, 462, 470, 472, 473, 488, 505, 507, 508,
+        549, 551, 552, 554, 556, 559, 641, 655, 692, 733, 734, 735, 738, 750,
+        768, 799, 842, 863, 872, 889, 903, 906
       ],
       "review": "mapped-abstraction"
     },
@@ -4684,14 +4697,15 @@
     },
     {
       "path": "src/ProjectSecuritySettings.tsx",
-      "sha256": "09d1f37da36cfa21f58b93af2d76079cca8de7dd897af99309cc66873168dee7",
+      "sha256": "1730576b4fae74563429574280f9da155b16a65d1b1a53eff5b22db0b5e85537",
       "models": [
         "formal/models/ui_owner_bounty_funds.qnt",
-        "formal/models/ui_project_setup.qnt"
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt"
       ],
       "candidateLines": [
-        1, 22, 25, 26, 27, 28, 30, 31, 66, 87, 91, 118, 119, 120, 121, 122, 123,
-        124, 126, 133, 139, 148, 149, 150, 153, 163, 164, 165, 175
+        1, 30, 33, 34, 35, 36, 38, 55, 79, 102, 123, 127, 157, 158, 159, 160,
+        161, 162, 172, 178, 192, 213, 222, 223, 224, 227, 237, 238, 240, 252
       ],
       "review": "mapped-abstraction"
     },
@@ -4754,7 +4768,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "60f6d507e57f0e0074840869d1c3a0b69b4ba27e3d70a5ea80c4bd790ab8f97b",
+      "sha256": "5483a1a75c1fe520caaac7b4436c335abf5f5fe906c17301d460973e8a5be035",
       "models": [
         "formal/models/ui_bounty_payment_parent.qnt",
         "formal/models/ui_inbox.qnt",
@@ -4766,6 +4780,7 @@
         "formal/models/ui_private_report_scroll.qnt",
         "formal/models/ui_record_deadlines.qnt",
         "formal/models/ui_record_display.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_solana_history_recovery.qnt",
         "formal/models/ui_solana_payment_pending.qnt",
         "formal/models/ui_submission_controls.qnt",
@@ -4776,23 +4791,23 @@
         307, 315, 324, 326, 332, 338, 339, 340, 343, 345, 348, 369, 371, 372,
         374, 381, 384, 388, 389, 390, 392, 394, 397, 399, 401, 402, 403, 406,
         407, 410, 416, 417, 420, 426, 429, 433, 437, 449, 452, 453, 456, 528,
-        617, 627, 630, 668, 669, 673, 676, 681, 698, 722, 723, 730, 783, 952,
-        967, 1005, 1010, 1032, 1107, 1108, 1109, 1110, 1127, 1138, 1145, 1151,
-        1152, 1160, 1162, 1167, 1194, 1198, 1234, 1272, 1278, 1334, 1335, 1342,
-        1345, 1367, 1387, 1388, 1389, 1393, 1456, 1457, 1458, 1462, 1548, 1601,
-        1608, 1628, 1629, 1630, 1637, 1708, 1713, 1722, 1732, 1742, 1746, 1750,
-        1752, 1797, 1798, 1802, 1805, 1858, 1866, 1894, 1895, 1900, 1901, 1906,
-        1907, 1912, 1964, 1971, 1981, 1982, 2030, 2041, 2042, 2043, 2045, 2049,
-        2055, 2108, 2114, 2119, 2121, 2125, 2164, 2168, 2174, 2200, 2201, 2202,
-        2203, 2204, 2205, 2206, 2350, 2521, 2525, 2553, 2750, 2825, 2826, 2951,
-        3010, 3011, 3018, 3034, 3056, 3073, 3074, 3075, 3078, 3102, 3103, 3112,
-        3143, 3160, 3161, 3162, 3165, 3191, 3192, 3201, 3254, 3317, 3348, 3366,
-        3382, 3383, 3385, 3389, 3395, 3398, 3400, 3404, 3441, 3455, 3491, 3495,
-        3497, 3500, 3574, 3576, 3608, 3630, 3654, 3827, 3959, 4098, 4101, 4103,
-        4110, 4115, 4120, 4121, 4123, 4128, 4144, 4172, 4175, 4182, 4220, 4225,
-        4237, 4238, 4244, 4269, 4271, 4273, 4277, 4278, 4282, 4285, 4286, 4288,
-        4306, 4324, 4329, 4332, 4337, 4340, 4342, 4346, 4351, 4376, 4382, 4425,
-        4428, 4433, 4435, 4473, 4475, 4516, 4535
+        617, 627, 630, 668, 669, 673, 680, 685, 702, 727, 728, 735, 788, 958,
+        973, 1011, 1016, 1038, 1113, 1114, 1115, 1116, 1133, 1144, 1151, 1157,
+        1158, 1166, 1168, 1173, 1200, 1204, 1240, 1278, 1284, 1340, 1341, 1348,
+        1351, 1373, 1393, 1394, 1395, 1399, 1462, 1463, 1464, 1468, 1554, 1607,
+        1614, 1634, 1635, 1636, 1643, 1714, 1719, 1728, 1738, 1748, 1752, 1756,
+        1758, 1803, 1804, 1808, 1811, 1864, 1872, 1900, 1901, 1906, 1907, 1912,
+        1913, 1918, 1970, 1977, 1987, 1988, 2036, 2047, 2048, 2049, 2051, 2055,
+        2061, 2114, 2120, 2125, 2127, 2131, 2170, 2174, 2180, 2206, 2207, 2208,
+        2209, 2210, 2211, 2212, 2356, 2527, 2531, 2559, 2756, 2831, 2832, 2957,
+        3016, 3017, 3024, 3040, 3062, 3079, 3080, 3081, 3084, 3108, 3109, 3118,
+        3149, 3166, 3167, 3168, 3171, 3197, 3198, 3207, 3260, 3323, 3354, 3372,
+        3388, 3389, 3391, 3395, 3401, 3404, 3406, 3410, 3447, 3461, 3497, 3501,
+        3503, 3506, 3580, 3582, 3614, 3636, 3660, 3833, 3965, 4104, 4107, 4109,
+        4116, 4121, 4126, 4127, 4129, 4134, 4150, 4178, 4181, 4188, 4226, 4231,
+        4243, 4244, 4250, 4275, 4277, 4279, 4283, 4284, 4288, 4291, 4292, 4294,
+        4312, 4330, 4335, 4338, 4343, 4346, 4348, 4352, 4357, 4382, 4388, 4431,
+        4434, 4439, 4441, 4479, 4481, 4522, 4541
       ],
       "review": "mapped-abstraction"
     },
@@ -4806,11 +4821,15 @@
     },
     {
       "path": "src/SecurityProgramEditor.tsx",
-      "sha256": "4037eef2908511f925c6e37569246c9dcd7a5d55d4a33f5cec9a79bc3769b8cd",
-      "models": ["formal/models/ui_project_setup.qnt"],
+      "sha256": "c86a2d05f41d36fac1e029692d6f56108b0f2da173e149dcc2e39214e9813c1e",
+      "models": [
+        "formal/models/ui_project_setup.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt"
+      ],
       "candidateLines": [
-        1, 50, 81, 82, 83, 85, 92, 102, 103, 108, 113, 120, 132, 170, 181, 182,
-        230, 247, 256, 321, 323, 324, 327, 331, 334, 335, 497, 532, 538
+        1, 55, 79, 87, 101, 106, 155, 156, 157, 159, 166, 176, 177, 182, 187,
+        194, 206, 244, 255, 256, 304, 331, 368, 433, 435, 436, 439, 443, 446,
+        447, 609, 644, 650
       ],
       "review": "mapped-abstraction"
     },
@@ -5440,12 +5459,14 @@
         "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_email_preference_requests.qnt",
         "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
         "formal/models/ui_project_publication_lifetime.qnt",
+        "formal/models/ui_security_settings_lifetime.qnt",
         "formal/models/ui_session.qnt",
         "formal/models/ui_setup_check_lifetime.qnt",
         "formal/models/ui_transport.qnt",
@@ -6950,7 +6971,8 @@
       "sha256": "1595aa393d13b76d286029c5a44a1abd482ae8e27187dd85ef113f50b3cee156",
       "models": [
         "formal/models/bot_inference_reservations.qnt",
-        "formal/models/bot_producer_provenance.qnt"
+        "formal/models/bot_producer_provenance.qnt",
+        "formal/models/bot_value_precall_authority.qnt"
       ],
       "candidateLines": [79, 83, 88, 173, 195, 196, 318, 320],
       "review": "mapped-abstraction"
@@ -7002,7 +7024,10 @@
     {
       "path": "workers/slopbot/registry.ts",
       "sha256": "8820a2171a220fedc946f16ba9c13095dceebbc74456de25c1eba542bd845085",
-      "models": ["formal/models/bot_value_freshness.qnt"],
+      "models": [
+        "formal/models/bot_value_freshness.qnt",
+        "formal/models/bot_value_precall_authority.qnt"
+      ],
       "candidateLines": [97, 101, 121, 130, 150, 151, 152, 157],
       "review": "mapped-abstraction"
     },
@@ -7124,13 +7149,14 @@
     },
     {
       "path": "workers/slopbot/value-budget.ts",
-      "sha256": "27d87454a148416c2463a55ac1fa11fd39808fbb8149c34aede09d2b0d19f809",
+      "sha256": "f29711d5b95abea08e1b0e3f0269b1dcd05c095523a7db183da4c67d9a285e68",
       "models": [
         "formal/models/bot_inference_reservations.qnt",
         "formal/models/bot_inference_retention.qnt",
+        "formal/models/bot_value_attempt_recovery.qnt",
         "formal/models/bot_value_budget.qnt"
       ],
-      "candidateLines": [26, 107, 184],
+      "candidateLines": [31, 35, 57, 80, 107, 188, 248],
       "review": "mapped-abstraction"
     },
     {
@@ -7142,14 +7168,16 @@
     },
     {
       "path": "workers/slopbot/value-consumer.ts",
-      "sha256": "838b8e98e6dedeca8f18f2f1c4cb0bf0ff269c35557a3c99ecb0757a5813b6d7",
+      "sha256": "b415f58160944aea513fc6375f4b737fcc0aa5f06efcfb8c18d13c7448c95bfd",
       "models": [
+        "formal/models/bot_value_attempt_recovery.qnt",
         "formal/models/bot_value_freshness.qnt",
-        "formal/models/bot_value_pipeline.qnt"
+        "formal/models/bot_value_pipeline.qnt",
+        "formal/models/bot_value_precall_authority.qnt"
       ],
       "candidateLines": [
-        45, 61, 62, 76, 126, 132, 135, 178, 256, 267, 290, 300, 316, 317, 325,
-        330, 331, 333, 343, 344, 348
+        45, 61, 62, 73, 74, 82, 132, 138, 141, 184, 199, 200, 267, 278, 301,
+        311, 327, 328, 336, 341, 342, 344, 354, 355, 359
       ],
       "review": "mapped-abstraction"
     },
@@ -7234,14 +7262,16 @@
     },
     {
       "path": "workers/slopbot/value-inference.ts",
-      "sha256": "283f1385d86a38e0e48a9fb98de9d998183e18cc42acb3f37dcc2b2d43df50de",
+      "sha256": "8b1233ab2330a1f48a86183502865728c8a931740fdf5e7f5f4d67c08de46373",
       "models": [
         "formal/models/bot_inference_reservations.qnt",
         "formal/models/bot_inference_retention.qnt",
+        "formal/models/bot_value_attempt_recovery.qnt",
         "formal/models/bot_value_budget.qnt",
-        "formal/models/bot_value_pipeline.qnt"
+        "formal/models/bot_value_pipeline.qnt",
+        "formal/models/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [73, 82, 104, 236, 238],
+      "candidateLines": [72, 90, 110, 170, 251, 253],
       "review": "mapped-abstraction"
     },
     {
@@ -7308,6 +7338,7 @@
       "sha256": "2b5d5b220a2da9b2461df36e2b72640c88ca9348a3e2e735f271531e9dff6048",
       "models": [
         "formal/models/api_incomplete_assessments.qnt",
+        "formal/models/bot_value_attempt_recovery.qnt",
         "formal/models/bot_value_pipeline.qnt",
         "formal/models/bot_value_request.qnt"
       ],
@@ -8666,23 +8697,28 @@
     },
     {
       "path": "formal/models/bot_inference_reservations.qnt",
-      "sha256": "adff94475a3d9654f8800a800b49a3a145e825b31e49ea3ed53123e0c5b80d78",
+      "sha256": "f40cf53796dc200a686c6c50826f80565b25fc4e26b9a11ad1cbaa9e9818b973",
       "sources": [
         "migrations/0104_slopbot_value_inference_attempts.sql",
+        "migrations/0118_slopbot_value_attempt_completion.sql",
         "workers/slopbot/models.ts",
         "workers/slopbot/value-budget.ts",
         "workers/slopbot/value-inference.ts"
       ],
       "scenarios": [
         "budgetRefusalRetainsOnlyAdmissionTest",
+        "completedNoCallReservationStillHoldsCapacityTest",
         "firstReservationWinsLastSlotTest",
         "immutableAttemptCannotBeReadmittedTest",
+        "knownFullAdmissionIsTerminalTest",
         "missingAtomicStorageCannotAuthorizeCallTest",
         "nonFreeReceiptDoesNotReopenSlotTest",
+        "recordedNonFreeBeforeCompletionRemainsPendingTest",
         "refusalSurvivesFreeReceiptBeforeReplyTest",
         "reverseReservationOrderWinsLastSlotTest",
         "staleOwnerCannotTakeFourthSlotTest",
         "staleOwnerReservationRemainsHeldTest",
+        "unknownFullAdmissionRemainsPendingTest",
         "unknownReservationsDoNotExpireTest"
       ]
     },
@@ -8899,6 +8935,27 @@
       ]
     },
     {
+      "path": "formal/models/bot_value_attempt_recovery.qnt",
+      "sha256": "2576ffa9945c4239027886f46c8446dabe36c089078409d15c7f0b421c0ca8d0",
+      "sources": [
+        "migrations/0118_slopbot_value_attempt_completion.sql",
+        "workers/slopbot/value-budget.ts",
+        "workers/slopbot/value-consumer.ts",
+        "workers/slopbot/value-inference.ts",
+        "workers/slopbot/value-processing.ts"
+      ],
+      "scenarios": [
+        "completedNonFreeExhaustionRemainsTerminalTest",
+        "completionRequiresSuccessfulRetentionTest",
+        "incompleteNonFreeCostDoesNotEndRequestTest",
+        "lateFreeReceiptResumesAtRetryTest",
+        "oldOwnerCannotPublishRetainedResultTest",
+        "pendingReceiptDoesNotChangeBeforeReplyTest",
+        "retainedBetweenReadAndAdmissionIsRecheckedTest",
+        "unknownHoldsNeverAuthorizeFourthCallTest"
+      ]
+    },
+    {
       "path": "formal/models/bot_value_budget.qnt",
       "sha256": "41f49a5f47a4e0973e2c050074d5d0dac0938dc30da5bae0b18ff68dc0547565",
       "sources": [
@@ -8995,6 +9052,27 @@
         "overlappingConsumerWaitsThenReadsCurrentTest",
         "unrecordedUsageCannotBecomeRetainedTest",
         "wholeGroupOwnershipExcludesOverlapTest"
+      ]
+    },
+    {
+      "path": "formal/models/bot_value_precall_authority.qnt",
+      "sha256": "8b46ca7a75be2a53b02eafc1f450c0a4bc28d7e7d4aa163d5709233c8f66e7f1",
+      "sources": [
+        "workers/slopbot/models.ts",
+        "workers/slopbot/registry.ts",
+        "workers/slopbot/value-consumer.ts",
+        "workers/slopbot/value-inference.ts"
+      ],
+      "scenarios": [
+        "activeAuthorityReachesProviderTest",
+        "alreadyStartedCallRemainsRecordedTest",
+        "expiredRequestAfterAuthorityStillPreventsCallTest",
+        "expiredSourceAfterAuthorityStillPreventsCallTest",
+        "laterRevocationDoesNotUndoCompletedCheckTest",
+        "pauseDuringMembershipPreventsCallTest",
+        "requestExpiryBetweenLeaseReadsPreventsCallTest",
+        "suspensionDuringMembershipPreventsCallTest",
+        "unavailableMembershipPreventsCallTest"
       ]
     },
     {
@@ -11912,6 +11990,31 @@
       ]
     },
     {
+      "path": "formal/models/ui_email_preference_requests.qnt",
+      "sha256": "c93604e1820a1068bfb6dc1b390d7e842fe1b8e729ec4db435b9bd7304263982",
+      "sources": ["src/InboxEmail.tsx", "src/lib/project-api.ts"],
+      "scenarios": [
+        "backgroundReadRetainsEditedDraftTest",
+        "changedActorFailureReloadsTest",
+        "current401EndsSessionTest",
+        "current403ClearsPriorDraftTest",
+        "current409KeepsDraftAndFeedbackTest",
+        "currentPreferenceSuccessTest",
+        "currentVerificationSuccessTest",
+        "departed403CannotReloadTest",
+        "departed409CannotReloadTest",
+        "departedBodyCannotStartPostflightTest",
+        "departedFailureCannotStartCheckTest",
+        "departedMismatchCannotReloadTest",
+        "departedPostflightCannotResetNewDraftTest",
+        "sameActorFailurePreservesDraftTest",
+        "unacceptedSaveCannotPublishTest",
+        "unacceptedVerificationCannotPublishTest",
+        "unknownIdentityKeepsHiddenDraftTest",
+        "verificationRateLimitKeepsRetryKeyTest"
+      ]
+    },
+    {
       "path": "formal/models/ui_exclusion_identity.qnt",
       "sha256": "d83a937e161d4e022ad7239ffc7d9537128e2063dbd2db52d1952ca95e8f4d53",
       "sources": ["src/lib/github-actor.ts", "src/lib/payout-exclusions.mjs"],
@@ -12834,6 +12937,40 @@
         "missionReadyTest",
         "readyIssueTest",
         "unknownAuthorTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_security_settings_lifetime.qnt",
+      "sha256": "152fd8efc8d84441baa5b12d79d22996e4401a07740461abd6183c9b75471b29",
+      "sources": [
+        "backend/http.ts",
+        "backend/projects/handler.ts",
+        "src/ProjectSecuritySettings.tsx",
+        "src/SecurityBounty.tsx",
+        "src/SecurityProgramEditor.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "acceptedDepartedReplyPreservesServerHistoryTest",
+        "changedActorGetsFreshGateWithoutFocusTest",
+        "cookieSwapBeforeDispatchIsRefusedTest",
+        "departedPermissionCannotGrantNewViewTest",
+        "departedPostflightCannotPublishTest",
+        "departedPreflightSendsNoWriteTest",
+        "initialReadAndPermissionTest",
+        "knownRefusalDropsPrivateGateTest",
+        "newerOwnerRevisionCannotBeReplacedTest",
+        "permissionChangedObservationTest",
+        "permissionTransportFailureTest",
+        "postDispatchCookieCannotRewriteAdmissionTest",
+        "preflightDifferentActorStartsNoWriteTest",
+        "revisionErrorPreservesRetryTest",
+        "revisionIdentityLossDropsGateTest",
+        "sameActorFailureKeepsEditorTest",
+        "signedOutFailureIdentityDropsGateTest",
+        "successfulPublicationTest",
+        "unknownSessionDoesNotLoopParentTest",
+        "wrongPermissionViewerRefusesTest"
       ]
     },
     {

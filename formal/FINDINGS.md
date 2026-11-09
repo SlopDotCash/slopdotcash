@@ -308,3 +308,32 @@ The enforcement model now distinguishes a changed fingerprint before dispatch
 from a changed fingerprint after server acceptance. Two new models and refined
 existing models add 43 unexecuted scenarios. New browser and SQLite definitions
 are also unexecuted; these changes await exact-source validation.
+
+## Security settings, email continuation and worker completion
+
+The active security settings view could accept a permission reply for an old
+actor, publish that actor's loaded terms through a later actor's session, and
+apply an old accepted response after its editor was replaced. The corrected
+read/write boundaries retain actor and lifetime ownership. Confirmed identity
+changes refresh the parent; ordinary access and transport failures retain an
+explicit local retry.
+
+Email preference continuations could start a session or preference reload
+after departure, or apply a reply after their generation changed. Reads,
+mutation statuses, postflight checks and error publication now share the
+current-generation guard. Current destination-conflict feedback and editable
+draft recovery remain.
+
+A value worker checked local project/installation authority before a remote
+membership wait, then checked only leases afterward. It now repeats local
+authority before its final lease observations. A later change after those
+observations remains outside an atomic transaction with the provider.
+
+The inference cap also treated a pending response or pending result retention
+as terminal exhaustion. An expired worker could then finish a free response or
+retain a valid result after its successor had stopped retrying. Completion is
+now an immutable fact separate from reservation, costs and publication. Full
+unfinished capacity stays reserved and retryable; completed non-free exhaustion
+rechecks retained results. Historical completion is not inferred or backfilled.
+The four new models and 59 scenario additions, plus their browser/SQLite
+definitions, are unexecuted source-review evidence.
