@@ -161,6 +161,31 @@ async function directTransfers(
     .first<{ items: string }>();
   return JSON.parse(row?.items ?? "[]") as DirectTransfer[];
 }
+/**
+ * The public history cursor: only `after` and `through`, and `after` only with
+ * `through`. A non-canonical number becomes NaN, which the reader rejects with
+ * a RangeError. Returns null for a refused query.
+ */
+function pageCursor(
+  request: Request,
+): { after: number; through: number | null } | null {
+  const query = new URL(request.url).searchParams;
+  const cursor = (key: string) => {
+    const raw = query.get(key);
+    return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
+      ? Number(raw)
+      : Number.NaN;
+  };
+  if (
+    [...query.keys()].some((key) => !["after", "through"].includes(key)) ||
+    (query.has("after") && !query.has("through"))
+  )
+    return null;
+  return {
+    after: query.has("after") ? cursor("after") : 0,
+    through: query.has("through") ? cursor("through") : null,
+  };
+}
 export async function handlePaymentsApi(
   request: Request,
   deps: PaymentsDependencies,
@@ -432,20 +457,8 @@ export async function handlePaymentsApi(
       );
     if (directRoute && request.method === "GET") {
       if (request.headers.get("x-slop-direct-history") === "paged") {
-        const query = new URL(request.url).searchParams;
-        const cursor = (key: string) => {
-          const raw = query.get(key);
-          return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
-            ? Number(raw)
-            : Number.NaN;
-        };
-        if (
-          [...query.keys()].some(
-            (key) => !["after", "through"].includes(key),
-          ) ||
-          (query.has("after") && !query.has("through"))
-        )
-          return json(400, { error: "invalid_payment_cursor" });
+        const page = pageCursor(request);
+        if (!page) return json(400, { error: "invalid_payment_cursor" });
         try {
           return json(
             200,
@@ -453,8 +466,8 @@ export async function handlePaymentsApi(
               deps.db,
               directRoute[2] ? "github_user_id" : "project_id",
               directRoute[2] ?? directRoute[1],
-              query.has("after") ? cursor("after") : 0,
-              query.has("through") ? cursor("through") : null,
+              page.after,
+              page.through,
             ),
           );
         } catch (error) {
@@ -486,18 +499,8 @@ export async function handlePaymentsApi(
       // A private or closed membership is excluded by the projection itself,
       // so its actor read is an ordinary empty page. A distinct refusal would
       // reveal that the GitHub ID has a private Slop membership.
-      const query = new URL(request.url).searchParams;
-      const cursor = (key: string) => {
-        const raw = query.get(key);
-        return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
-          ? Number(raw)
-          : Number.NaN;
-      };
-      if (
-        [...query.keys()].some((key) => !["after", "through"].includes(key)) ||
-        (query.has("after") && !query.has("through"))
-      )
-        return json(400, { error: "invalid_payment_cursor" });
+      const page = pageCursor(request);
+      if (!page) return json(400, { error: "invalid_payment_cursor" });
       try {
         return json(
           200,
@@ -508,8 +511,8 @@ export async function handlePaymentsApi(
               : kind === "actors"
                 ? { githubUserId: value }
                 : null,
-            query.has("after") ? cursor("after") : 0,
-            query.has("through") ? cursor("through") : null,
+            page.after,
+            page.through,
             // Production excludes testnet networks, mirroring the /totals,
             // /vault, and /received deployment-tier rules. Staging keeps them
             // because it pays in testnet stablecoins.
