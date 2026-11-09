@@ -526,11 +526,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
             return [];
           }
         },
-        verifyAuthority: (project, actor) =>
+        verifyAuthority: (project, actor, level) =>
           verifyProjectAuthority(
             project.manifest,
             actor,
             env.SLOP_GITHUB_READ_TOKEN,
+            level,
           ),
         // The cutoff display and the owner's cutoff lock. A malformed value
         // turns both off; the payments Worker then fails loudly and freezes
