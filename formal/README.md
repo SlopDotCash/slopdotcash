@@ -1610,6 +1610,35 @@ tested or verified here:
   before/after video remain acceptance boundaries. The model permits the normal
   unmount after successful navigation while detecting stale-lifetime navigation.
 
+- `api_private_case_creation` adds 29 scenarios for advisory claims, manual
+  records, concurrent durable-receipt adoption, uniqueness recovery and private
+  response authorization. Creation now repeats the linked-receipt lookup after
+  a uniqueness conflict, retaining the same reporter, role and read-audit gates.
+  A caller who has lost all case roles after the creation batch receives no
+  private projection; the committed receipt and its history remain. Four
+  migrated-database regression cases are unexecuted. Atomic
+  [D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)
+  and resolved role snapshots remain explicit assumptions; authorization is not a
+  lock held through every later projection await or response delivery.
+
+- `submission_reconcile_request` adds 26 scenarios for reconciliation's actual
+  awaits, quiet period, complete and inconclusive listings, first-send search
+  window, concurrent writes and exact readback. Eleven database regression
+  definitions are unexecuted. Empty-listing compare-and-swap losers can return
+  their captured uncertain row; matched-listing losers cannot borrow another
+  request's verified result. No runtime change was justified by this review.
+  Advisory validation, settlement and receipt verification remain separate
+  models and external evidence boundaries.
+- `ui_case_intake_forms` adds 29 scenarios for claims, imports and manual
+  records. A completed claim keeps input edited while its request was pending;
+  import results and errors stay associated with the submitted project; manual
+  records retain retry keys per canonical payload. Six browser regression
+  cases in three definitions are unexecuted. The model distinguishes unverified
+  claims from the unique verified case for each project/advisory and retains
+  the original receipt facts after an uncertain write. Key maps remain local
+  to the mounted form, and native browser and before/after video acceptance
+  remain open.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

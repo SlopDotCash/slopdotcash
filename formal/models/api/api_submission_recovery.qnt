@@ -24,6 +24,7 @@
 // the earliest visible copy; a failed listing keeps the accepted new copy.
 // Copy ordering abstracts created_at plus GHSA tie-breaking, not attempt order.
 // Reconciliation and verified-case writes are atomic outcome projections here;
+// submission_reconcile_request expands reconciliation awaits and CAS readback.
 // their own in-flight reads, full advisory validation and role checks are out
 // of scope. Legacy/direct creation and OAuth cookies are in adjacent models.
 // Case creation/linking remains atomic with the receipt transition. Missing

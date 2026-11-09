@@ -838,6 +838,7 @@
       "sha256": "877f04248ef146e3ffd64aac72db59f15fc74a93f7eb8adc7a2435d23d746eab",
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt"
@@ -925,7 +926,8 @@
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/api/submission_reconcile_request.qnt"
       ],
       "candidateLines": [
         76, 313, 352, 357, 358, 361, 380, 395, 422, 473, 500, 502, 504, 505,
@@ -935,10 +937,11 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "716c52ce3f19e714738eca9225de8f415e17a72a4ee42633b208c7b698e14ef3",
+      "sha256": "4cbd9b5e8ddf3ed0bba51aa8462bc907ad31884215f85a1bd2ab5457146d9a84",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_reporting_readiness.qnt",
@@ -951,17 +954,18 @@
         "formal/models/payments/security_payment_projection.qnt",
         "formal/models/payments/security_rail_exclusivity.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
         298, 299, 350, 352, 359, 412, 420, 422, 495, 560, 627, 633, 655, 657,
         665, 683, 749, 901, 927, 1070, 1090, 1123, 1129, 1145, 1275, 1317, 1318,
-        1320, 1322, 1342, 1444, 1467, 1486, 1583, 1584, 1599, 1612, 1637, 1708,
-        1712, 1757, 1782, 1981, 2106, 2466, 2492, 2517, 2570, 2737, 2740, 2741,
-        2780, 2789, 2809, 2855, 2906, 2907, 2909, 2952, 3014, 3043, 3049, 3055,
-        3085, 3122, 3133, 3151, 3157, 3238, 3246, 3248, 3263, 3356, 3365, 3371,
-        3383, 3386, 3387, 3415, 3419, 3422
+        1320, 1322, 1342, 1377, 1444, 1469, 1488, 1591, 1592, 1607, 1620, 1645,
+        1716, 1720, 1765, 1790, 1989, 2114, 2474, 2500, 2525, 2578, 2745, 2748,
+        2749, 2788, 2797, 2817, 2863, 2914, 2915, 2917, 2960, 3022, 3051, 3057,
+        3063, 3093, 3130, 3141, 3159, 3165, 3246, 3254, 3256, 3271, 3364, 3373,
+        3379, 3391, 3394, 3395, 3423, 3427, 3430
       ],
       "review": "mapped-abstraction"
     },
@@ -1065,7 +1069,8 @@
       "sha256": "5b6df422dea92483378593d0c550882772d71085502eaedda3626e0481d113e4",
       "models": [
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_submission_recovery.qnt"
+        "formal/models/api/api_submission_recovery.qnt",
+        "formal/models/api/submission_reconcile_request.qnt"
       ],
       "candidateLines": [
         26, 60, 67, 80, 83, 96, 110, 130, 141, 148, 152, 155, 160, 166, 178,
@@ -1081,6 +1086,7 @@
         "formal/models/api/api_submission_recovery.qnt",
         "formal/models/api/submission_authorization_wrappers.qnt",
         "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/api/submission_reconcile_request.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt"
       ],
       "candidateLines": [
@@ -2332,8 +2338,10 @@
       "sha256": "ecbbe09c5185d69ee0e7bbb5ef1775cb971a295bf4d52d1043f54f0e493019f6",
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "candidateLines": [
         38, 84, 85, 91, 92, 124, 125, 130, 131, 137, 154, 155, 173, 174, 179,
@@ -3106,10 +3114,12 @@
       "path": "migrations/0101_durable_security_intake.sql",
       "sha256": "9b62a2c583139a91eb7400fc667f041eff78b411885ea2a62832a02d4a42f798",
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "candidateLines": [
         42, 45, 46, 71, 87, 96, 97, 101, 102, 116, 117, 170, 175, 177, 179, 181,
@@ -5475,9 +5485,10 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "e6e3e2c56b02e9b33553d54b2e28013da97fd81e2d4cb90c43ea8e9f8e3f0230",
+      "sha256": "d18c32872e71887b2a7262bcf377d948e504533b629885d2cdf9edfa3394f995",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -5502,21 +5513,21 @@
         432, 435, 441, 442, 445, 451, 454, 458, 462, 474, 477, 478, 481, 553,
         642, 652, 655, 693, 694, 698, 705, 710, 727, 752, 753, 760, 813, 983,
         998, 1036, 1041, 1063, 1138, 1139, 1140, 1141, 1163, 1174, 1181, 1187,
-        1188, 1196, 1198, 1203, 1230, 1234, 1270, 1308, 1314, 1370, 1371, 1378,
-        1381, 1403, 1423, 1424, 1425, 1429, 1509, 1510, 1524, 1608, 1661, 1668,
-        1688, 1689, 1690, 1697, 1768, 1773, 1782, 1792, 1802, 1806, 1810, 1812,
-        1857, 1858, 1862, 1865, 1918, 1926, 1954, 1955, 1960, 1961, 1966, 1967,
-        1972, 2024, 2031, 2041, 2042, 2090, 2101, 2102, 2103, 2105, 2109, 2115,
-        2168, 2174, 2179, 2181, 2185, 2224, 2228, 2234, 2260, 2261, 2262, 2263,
-        2264, 2265, 2266, 2410, 2581, 2585, 2613, 2810, 2885, 2886, 3015, 3074,
-        3075, 3082, 3098, 3120, 3137, 3138, 3139, 3142, 3166, 3167, 3176, 3207,
-        3224, 3225, 3226, 3229, 3255, 3256, 3265, 3318, 3381, 3412, 3430, 3442,
-        3443, 3445, 3449, 3455, 3458, 3460, 3464, 3532, 3552, 3590, 3594, 3596,
-        3599, 3673, 3675, 3707, 3729, 3753, 3889, 4021, 4160, 4163, 4172, 4177,
-        4182, 4183, 4185, 4190, 4213, 4242, 4245, 4252, 4293, 4298, 4310, 4311,
-        4317, 4342, 4344, 4346, 4350, 4351, 4355, 4358, 4359, 4361, 4379, 4397,
-        4402, 4405, 4410, 4413, 4415, 4419, 4424, 4449, 4455, 4498, 4501, 4506,
-        4508, 4546, 4548, 4589, 4608
+        1188, 1196, 1198, 1203, 1230, 1234, 1270, 1308, 1314, 1370, 1371, 1372,
+        1380, 1383, 1407, 1427, 1431, 1435, 1521, 1522, 1536, 1620, 1673, 1680,
+        1700, 1701, 1702, 1709, 1780, 1785, 1794, 1804, 1814, 1818, 1822, 1824,
+        1869, 1870, 1874, 1877, 1930, 1938, 1966, 1967, 1972, 1973, 1978, 1979,
+        1984, 2036, 2043, 2053, 2054, 2102, 2113, 2114, 2115, 2117, 2121, 2127,
+        2180, 2186, 2191, 2193, 2197, 2236, 2240, 2246, 2272, 2273, 2274, 2275,
+        2276, 2277, 2425, 2596, 2600, 2628, 2825, 2900, 2901, 3030, 3089, 3090,
+        3097, 3113, 3135, 3152, 3153, 3154, 3157, 3181, 3182, 3191, 3222, 3239,
+        3240, 3241, 3244, 3270, 3271, 3280, 3333, 3396, 3427, 3445, 3457, 3458,
+        3460, 3464, 3470, 3473, 3475, 3479, 3547, 3567, 3605, 3609, 3611, 3614,
+        3688, 3690, 3722, 3744, 3768, 3904, 4036, 4175, 4178, 4187, 4192, 4197,
+        4198, 4200, 4205, 4228, 4257, 4260, 4267, 4308, 4313, 4325, 4326, 4332,
+        4357, 4359, 4361, 4365, 4366, 4370, 4373, 4374, 4376, 4394, 4412, 4417,
+        4420, 4425, 4428, 4430, 4434, 4439, 4464, 4470, 4513, 4516, 4521, 4523,
+        4561, 4563, 4604, 4623
       ],
       "review": "mapped-abstraction"
     },
@@ -6667,6 +6678,7 @@
       "models": [
         "formal/models/ui/ui_account_menu.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_email_actions.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -9534,6 +9546,47 @@
       ]
     },
     {
+      "path": "formal/models/api/api_private_case_creation.qnt",
+      "sha256": "9a98b3d7e495fd13de854077763b8e7dddc8740a0672cb7047af262a33ad0593",
+      "sources": [
+        "backend/security/case-store.ts",
+        "backend/security/handler.ts",
+        "migrations/0026_private_security_cases.sql",
+        "migrations/0101_durable_security_intake.sql"
+      ],
+      "scenarios": [
+        "anotherReportersVerifiedCaseBlocksRecordTest",
+        "changedRecordKeyRefusesTest",
+        "claimCreatesAtomicHistoryTest",
+        "invalidInputCreatesNothingTest",
+        "linkArrivingBeforeInsertReplaysTest",
+        "linkedReceiptPrecheckReplaysTest",
+        "linkedReplayNeedsAuditTest",
+        "linkedReplayNeedsCurrentRoleTest",
+        "lostCommitReplyRetainsAtomicHistoryTest",
+        "maintainerCannotRecordOwnReportTest",
+        "missingProjectCreatesNothingTest",
+        "nonMaintainerCannotRecordTest",
+        "nonUniqueDatabaseFailureIsNotReplayTest",
+        "oldEmptyRoleReturnExposesCaseTest",
+        "oldLinkedRecoveryMissedDurableCaseTest",
+        "otherReporterCannotAdoptLinkedReceiptTest",
+        "otherVerifiedOrdinaryCaseDoesNotAuthenticateClaimTest",
+        "projectionFailureDoesNotUndoCaseTest",
+        "recordCannotReplacePendingClaimTest",
+        "recordCreatesVerifiedHistoryTest",
+        "recordRacingLinkedReceiptReplaysTest",
+        "recordReplaysOnlyOriginalActorAndKeyTest",
+        "rejectedClaimDoesNotBlockNewClaimTest",
+        "revokedAfterRecordCommitCannotReadTest",
+        "revokedBeforeAdmissionCannotRecordTest",
+        "roleSnapshotIsNotAResponseLockTest",
+        "sameReporterClaimReplaysByIdentityTest",
+        "separateUnverifiedClaimCanCoexistTest",
+        "verifiedClaimReplaysRegardlessOfOriginalKeyTest"
+      ]
+    },
+    {
       "path": "formal/models/api/api_private_case_roles.qnt",
       "sha256": "e4e6b6e27d245ce2408d15cea5e20c75ab4d3cbb930c91286d2900e783ba48ad",
       "sources": [
@@ -9939,7 +9992,7 @@
     },
     {
       "path": "formal/models/api/api_submission_recovery.qnt",
-      "sha256": "1071f57714c4580e05121cb5a61680fd0c2deb18a417597a5fa2db9d549e4deb",
+      "sha256": "dd4b3bf6d8ac194061552782eb4de7312e2f50064ca4d2638a1bc57d794930a0",
       "sources": [
         "backend/security/report-intake.ts",
         "backend/security/submission-store.ts",
@@ -11063,6 +11116,43 @@
         "slopNotFoundRemainsRecoverableTest",
         "staleReadResolvesAtRevisionBoundTest",
         "unavailableContactsKeepsDurableCaseTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/submission_reconcile_request.qnt",
+      "sha256": "513d7c07299747364cc64d68ad42a88c1f56cbffc43e1927b15ee5270ad631a4",
+      "sources": [
+        "backend/security/github-advisories.ts",
+        "backend/security/submission-store.ts",
+        "backend/security/submissions.ts"
+      ],
+      "scenarios": [
+        "changedReadbackCannotAuthorizeVerificationTest",
+        "chosenSnapshotDoesNotChangeWithLaterOrderingTest",
+        "concurrentEmptyListingsHaveOneStateTransitionTest",
+        "creationTimeAndGhsaOrderCanChooseSecondTest",
+        "draftRefusesReconciliationTest",
+        "earlyEmptyListingStaysUncertainTest",
+        "emptyCasLoserReturnsCapturedRowTest",
+        "exactQuietBoundaryReopensDraftTest",
+        "failedVerificationCasCanReturnCapturedSubmissionTest",
+        "failedWriteDoesNotInventAdoptionTest",
+        "firstAttemptReadFailureDoesNotTransitionTest",
+        "foreignAuthorOnlyIsEmptyTest",
+        "inconclusiveListingCannotReopenDraftTest",
+        "lostWriteReplyDoesNotUndoAdoptionTest",
+        "malformedBodyCannotReadListingTest",
+        "matchedCasLoserIsStaleTest",
+        "matchingCopySkipsQuietWaitTest",
+        "missingChangeCountKeepsCommittedDraftButReturnsCapturedRowTest",
+        "missingGrantPreventsListingTest",
+        "multipleCopiesChooseEarliestTest",
+        "staleRevisionCannotReadListingTest",
+        "submittedSkipsListingAndRetriesOnlyVerificationTest",
+        "submittingRefusesBeforeGrantTest",
+        "timeDuringListingCountsTowardQuietTest",
+        "unavailableVerificationPreservesSubmittedResponseTest",
+        "wrongOwnerCannotReadListingTest"
       ]
     },
     {
@@ -17542,6 +17632,48 @@
         "monthRolloverTest",
         "periodSwitchUsesCurrentMonthTest",
         "projectMonthRolloverTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_case_intake_forms.qnt",
+      "sha256": "70fe4796b57beb7353ad4c272146c853a930f6e6f1bf0973777350c44b4bf323",
+      "sources": [
+        "backend/security/handler.ts",
+        "migrations/0026_private_security_cases.sql",
+        "migrations/0101_durable_security_intake.sql",
+        "src/SecurityBounty.tsx",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "changedAdvisoryCreatesSeparateRecordTest",
+        "changedClaimCanUseSameKeyTest",
+        "changedLoginRefusesFalseAcknowledgementTest",
+        "changedProjectCreatesSeparateRecordTest",
+        "changedReceiptRefusesFalseAcknowledgementTest",
+        "changedReporterCannotDuplicateVerifiedAdvisoryTest",
+        "claimReturnToSameDraftClearsTest",
+        "duplicateClaimClickBlockedTest",
+        "duplicateImportClickBlockedTest",
+        "duplicateRecordClickBlockedTest",
+        "editedClaimAdvisorySurvivesSuccessTest",
+        "editedClaimProjectSurvivesSuccessTest",
+        "editingBusyRecordDoesNotChangeCapturedFactsTest",
+        "emptyClaimCannotSubmitTest",
+        "emptyImportStillRefreshesListTest",
+        "failedClaimKeepsDraftAndKeyTest",
+        "importFailureHiddenAfterProjectSwitchTest",
+        "importRetryClearsPreviousFeedbackTest",
+        "importSuccessHiddenAfterProjectSwitchTest",
+        "importSuccessVisibleForOwnProjectTest",
+        "oldClaimSuccessErasedEditedDraftTest",
+        "oldImportSuccessMislabelsCurrentProjectTest",
+        "oldRecordKeyAcknowledgedDifferentReceiptTest",
+        "returnToFailedImportShowsErrorTest",
+        "returnToImportedProjectShowsResultTest",
+        "returningToOriginalRecordReusesItsKeyTest",
+        "uncertainClaimRetryUsesNaturalCaseTest",
+        "uncertainRecordRetryUsesSameKeyTest",
+        "unchangedClaimClearsDraftTest"
       ]
     },
     {

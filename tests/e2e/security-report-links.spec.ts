@@ -106,12 +106,10 @@ async function serveSecurity(page: Page, fixture: Fixture) {
       return route.fulfill({
         json: {
           viewer: { githubId: actor, githubLogin: login },
-          programs: [
-            {
-              projectId: project?.id,
-              roles: ["security-maintainer"],
-            },
-          ],
+          programs: (fixture.projects ?? [project]).map((entry) => ({
+            projectId: entry.id,
+            roles: ["security-maintainer"],
+          })),
           cases: fixture.cases,
         },
       });
@@ -413,6 +411,192 @@ test("an old direct authorization cannot navigate a remounted same-reporter form
     release();
   }
 });
+
+// Source-authored conformance definitions; no browser execution in this audit.
+for (const changed of ["advisory", "project"] as const) {
+  test(`a pending claim preserves an edited ${changed} after its original report is saved`, async ({ page, diagnostics }) => {
+    diagnostics.allowPreviewApiMisses();
+    const another = PROJECTS.find((entry) => entry.id !== project.id && entry.listingTier !== "retired");
+    if (!another) throw new Error("Missing second claim project fixture");
+    const linked = caseView("sc_e2eclaimdraft1", directAdvisoryA);
+    let release = () => {};
+    let captured = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const requested = new Promise<void>((resolve) => { captured = resolve; });
+    const fixture: Fixture = {
+      automatic: false, projects: [project, another], cases: [], submissions: [], posts: [], caseReads: 0,
+      answer: async (path, body) => {
+        if (path !== "security-cases" || body.mode !== "claim") return undefined;
+        captured();
+        await held;
+        fixture.cases = [linked];
+        return { status: 201, json: { case: linked } };
+      },
+    };
+    await serveSecurity(page, fixture);
+    try {
+      await page.goto("/security#security-link", { waitUntil: "networkidle" });
+      const options = await openLinkOptions(page);
+      const form = options.locator("form").filter({
+        has: page.getByRole("button", { name: "Link my GitHub report", exact: true }),
+      });
+      const advisory = form.getByRole("textbox", { name: "GitHub advisory ID", exact: true });
+      const select = form.getByRole("combobox", { name: "Project", exact: true });
+      await select.selectOption(project.id);
+      await advisory.fill(directAdvisoryA);
+      await form.getByRole("button", { name: "Link my GitHub report", exact: true }).click();
+      await requested;
+      if (changed === "advisory") await advisory.fill(directAdvisoryB);
+      else await select.selectOption(another.id);
+      const response = page.waitForResponse((reply) => reply.request().method() === "POST"
+        && new URL(reply.url()).pathname === "/api/v1/security-cases");
+      release();
+      await (await response).finished();
+      await expect(page.getByRole("status").filter({ hasText: "Report saved." })).toBeVisible();
+      await expect(advisory).toHaveValue(changed === "advisory" ? directAdvisoryB : directAdvisoryA);
+      await expect(select).toHaveValue(changed === "project" ? another.id : project.id);
+      expect(fixture.posts).toHaveLength(1);
+      expect(fixture.posts[0].body).toMatchObject({ mode: "claim", projectId: project.id, advisory: directAdvisoryA });
+    } finally {
+      release();
+    }
+  });
+}
+
+for (const outcome of ["success", "unavailable"] as const) {
+  test(`an import ${outcome} stays with its submitted project while selection changes`, async ({ page, diagnostics }) => {
+    diagnostics.allowPreviewApiMisses();
+    const another = PROJECTS.find((entry) => entry.id !== project.id && entry.listingTier !== "retired");
+    if (!another) throw new Error("Missing second import project fixture");
+    let release = () => {};
+    let captured = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const requested = new Promise<void>((resolve) => { captured = resolve; });
+    const fixture: Fixture = {
+      automatic: true, projects: [project, another], cases: [], submissions: [], posts: [], caseReads: 0,
+      answer: async (path, body) => {
+        if (path !== "security-cases" || body.mode !== "import") return undefined;
+        captured();
+        await held;
+        return { json: outcome === "success" ? { state: "ok", received: 1 } : { state: "unavailable", received: 0 } };
+      },
+    };
+    await serveSecurity(page, fixture);
+    try {
+      await page.goto("/security#security-link", { waitUntil: "networkidle" });
+      const options = await openLinkOptions(page);
+      const form = options.locator("form").filter({
+        has: page.getByRole("button", { name: "Bring in GitHub private reports", exact: true }),
+      });
+      const select = form.getByRole("combobox", { name: "Project", exact: true });
+      const button = form.getByRole("button", { name: "Bring in GitHub private reports", exact: true });
+      await select.selectOption(project.id);
+      const readsBefore = fixture.caseReads;
+      await button.click();
+      await requested;
+      await select.selectOption(another.id);
+      const response = page.waitForResponse((reply) => reply.request().method() === "POST"
+        && new URL(reply.url()).pathname === "/api/v1/security-cases");
+      release();
+      await (await response).finished();
+      await expect(button).toBeEnabled();
+      await expect(select).toHaveValue(another.id);
+      await expect(form.getByRole("status")).toHaveCount(0);
+      await expect(form.getByRole("alert")).toHaveCount(0);
+      await select.selectOption(project.id);
+      if (outcome === "success") {
+        await expect(form.getByRole("status")).toHaveText("1 new private report recorded.");
+        await expect.poll(() => fixture.caseReads).toBeGreaterThan(readsBefore);
+      } else {
+        await expect(form.getByRole("alert")).toContainText("Slop could not read the repository's private reports on GitHub.");
+      }
+      expect(fixture.posts).toEqual([{ path: "security-cases", body: { mode: "import", projectId: project.id } }]);
+    } finally {
+      release();
+    }
+  });
+}
+
+for (const changed of ["receivedAt", "reporterGithubLogin"] as const) {
+  test(`a changed verified ${changed} cannot replay an uncertain record as if the new facts were saved`, async ({ page, diagnostics }) => {
+    diagnostics.allowPreviewApiMisses();
+    diagnostics.allowResponse(503, "POST", "/api/v1/security-cases");
+    diagnostics.allowResponse(409, "POST", "/api/v1/security-cases");
+    const retryMessage = "The record response was unavailable; retry the same report.";
+    const conflictMessage = "This advisory already has a verified case";
+    const recorded = caseView("sc_e2erecordintent1", directAdvisoryA, {
+      view: "restricted", viewerRoles: ["security-maintainer"], submissionState: "verified",
+      receivedAt: "2026-10-30T14:05:00.000Z", receivedAtSource: "maintainer-attested", nextStep: "Triage the report.",
+    });
+    let original: Record<string, unknown> | null = null;
+    let matching = 0;
+    const fixture: Fixture = {
+      automatic: false, cases: [], submissions: [], posts: [], caseReads: 0,
+      answer: (path, body) => {
+        if (path !== "security-cases" || body.mode !== "record") return undefined;
+        // Match createCase's ordinary existing-case replay: original actor/key,
+        // not changed receipt facts. Linked-submission races are separate tests.
+        if (original === null) {
+          original = { ...body };
+          fixture.cases = [recorded];
+        }
+        if (body.idempotencyKey !== original.idempotencyKey)
+          return { status: 409, json: { error: "advisory_already_recorded", message: conflictMessage } };
+        matching += 1;
+        if (matching < 3) return { status: 503, json: { error: "unavailable", message: retryMessage } };
+        return { json: { replayed: true, case: recorded } };
+      },
+    };
+    await serveSecurity(page, fixture);
+    await page.goto("/security#security-link", { waitUntil: "networkidle" });
+    const options = await openLinkOptions(page);
+    const form = options.locator("form").filter({
+      has: page.getByRole("button", { name: "Record verified report", exact: true }),
+    });
+    await form.getByRole("combobox", { name: "Project", exact: true }).selectOption(project.id);
+    await form.getByRole("textbox", { name: "GitHub advisory ID", exact: true }).fill(directAdvisoryA);
+    await form.getByRole("textbox", { name: "Reporter GitHub account ID", exact: true }).fill("900000123");
+    const login = form.getByRole("textbox", { name: "Reporter GitHub login", exact: true });
+    const received = form.getByLabel("Time GitHub received the report (UTC)");
+    await login.fill("  fixture-researcher  ");
+    await received.fill("2026-10-30T14:05");
+    await form.getByRole("checkbox").check();
+    const submit = form.getByRole("button", { name: "Record verified report", exact: true });
+    await submit.click();
+    await expect(form.getByRole("alert")).toHaveText(retryMessage);
+    // Whitespace normalization still identifies the same posted payload.
+    await login.fill("fixture-researcher");
+    await submit.click();
+    await expect.poll(() => fixture.posts.length).toBe(2);
+    await expect(form.getByRole("alert")).toHaveText(retryMessage);
+    await expect(submit).toBeEnabled();
+    expect(fixture.posts[1].body).toEqual(fixture.posts[0].body);
+    expect(fixture.posts[0].body).toMatchObject({
+      projectId: project.id,
+      advisory: directAdvisoryA,
+      reporterGithubId: "900000123",
+      reporterGithubLogin: "fixture-researcher",
+      receivedAt: "2026-10-30T14:05:00.000Z",
+      confirmation: true,
+    });
+    if (changed === "receivedAt") await received.fill("2026-10-30T14:06");
+    else await login.fill("renamed-researcher");
+    await submit.click();
+    await expect(form.getByRole("alert")).toHaveText(conflictMessage);
+    expect(fixture.posts).toHaveLength(3);
+    expect(fixture.posts[2].body.idempotencyKey).not.toBe(fixture.posts[0].body.idempotencyKey);
+    expect(fixture.posts[2].body[changed]).toBe(changed === "receivedAt" ? "2026-10-30T14:06:00.000Z" : "renamed-researcher");
+    await expect(page.getByRole("status").filter({ hasText: "Report saved." })).toHaveCount(0);
+    expect(recorded.receivedAt).toBe("2026-10-30T14:05:00.000Z");
+    if (changed === "receivedAt") await received.fill("2026-10-30T14:05");
+    else await login.fill("fixture-researcher");
+    await submit.click();
+    await expect(page.getByRole("status").filter({ hasText: "Report saved." })).toBeVisible();
+    expect(fixture.posts).toHaveLength(4);
+    expect(fixture.posts[3].body).toEqual(fixture.posts[0].body);
+    await expect(page.locator(`[aria-labelledby="case-${recorded.id}"]`)).toBeVisible();
+  });
+}
 
 test("a maintainer brings in GitHub private reports after GitHub was unavailable", async ({
   page,

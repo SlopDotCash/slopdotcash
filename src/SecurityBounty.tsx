@@ -1368,11 +1368,13 @@ function ImportReports({
 }) {
   const privateRequest = usePrivateRequest();
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ projectId: string; text: string } | null>(null);
+  const [attemptProject, setAttemptProject] = useState<string | null>(null);
   const { busy, error, run: act } = useAction();
   const run = (event: FormEvent) => {
     event.preventDefault();
     setNote(null);
+    setAttemptProject(projectId);
     void act(async () => {
       const body = await privateRequest<{
         state: "ok" | "unavailable";
@@ -1382,11 +1384,13 @@ function ImportReports({
         throw new Error(
           "Slop could not read the repository's private reports on GitHub. Nothing changed; try again later.",
         );
-      setNote(
-        body.received === 0
-          ? "Every private report on GitHub already has a case."
-          : `${body.received} new private report${body.received === 1 ? "" : "s"} recorded.`,
-      );
+      setNote({
+        projectId,
+        text:
+          body.received === 0
+            ? "Every private report on GitHub already has a case."
+            : `${body.received} new private report${body.received === 1 ? "" : "s"} recorded.`,
+      });
       onImported();
     });
   };
@@ -1399,12 +1403,12 @@ function ImportReports({
           value={projectId}
         />
       ) : null}
-      {note ? (
+      {note?.projectId === projectId ? (
         <p className="admin-status" role="status">
-          {note}
+          {note.text}
         </p>
       ) : null}
-      <FormError message={error} />
+      <FormError message={attemptProject === projectId ? error : null} />
       <button className="button secondary-button" disabled={busy} type="submit">
         {busy ? "Reading GitHub…" : "Bring in GitHub private reports"}
       </button>
@@ -1420,8 +1424,10 @@ function ClaimForm({
   onCreated: (created: SecurityCase) => void;
 }) {
   const privateRequest = usePrivateRequest();
-  const [projectId, setProjectId] = useState(programProjects[0]?.id ?? "");
-  const [advisory, setAdvisory] = useState("");
+  const [draft, setDraft] = useState({
+    projectId: programProjects[0]?.id ?? "",
+    advisory: "",
+  });
   const [key, setKey] = useState(requestKey);
   const { busy, error, run } = useAction();
   if (programProjects.length === 0)
@@ -1430,18 +1436,24 @@ function ClaimForm({
     );
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const submitted = draft;
     void run(async () => {
       const body = await privateRequest<{ case: SecurityCase }>(
         "POST",
         "security-cases",
         {
           mode: "claim",
-          projectId,
-          advisory: advisory.trim(),
+          projectId: submitted.projectId,
+          advisory: submitted.advisory.trim(),
           idempotencyKey: key,
         },
       );
-      setAdvisory("");
+      setDraft((current) =>
+        current.projectId === submitted.projectId &&
+        current.advisory === submitted.advisory
+          ? { ...current, advisory: "" }
+          : current,
+      );
       setKey(requestKey());
       onCreated(body.case);
     });
@@ -1449,14 +1461,14 @@ function ClaimForm({
   return (
     <form className="security-form" onSubmit={submit}>
       <ProjectSelect
-        onChange={setProjectId}
+        onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
         projects={programProjects}
-        value={projectId}
+        value={draft.projectId}
       />
       <AdvisoryIdField
         hint="Only the ID. Do not paste report details here."
-        onChange={setAdvisory}
-        value={advisory}
+        onChange={(advisory) => setDraft((current) => ({ ...current, advisory }))}
+        value={draft.advisory}
       />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
@@ -2263,26 +2275,29 @@ function RecordForm({
   const [reporterLogin, setReporterLogin] = useState("");
   const [receivedAt, setReceivedAt] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const [key, setKey] = useState(requestKey);
+  // A record replay must refer to the same verified facts, not edited fields.
+  const requestKeys = useRef(new Map<string, string>());
   const { busy, error, run } = useAction();
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
+      const intent = {
+        mode: "record",
+        projectId,
+        advisory: advisory.trim(),
+        reporterGithubId: reporterId.trim(),
+        reporterGithubLogin: reporterLogin.trim(),
+        receivedAt: utcInput(receivedAt),
+        confirmation: confirmed,
+      };
+      const fingerprint = JSON.stringify(intent);
+      const key = requestKeys.current.get(fingerprint) ?? requestKey();
+      requestKeys.current.set(fingerprint, key);
       const body = await privateRequest<{ case: SecurityCase }>(
         "POST",
         "security-cases",
-        {
-          mode: "record",
-          projectId,
-          advisory: advisory.trim(),
-          reporterGithubId: reporterId.trim(),
-          reporterGithubLogin: reporterLogin.trim(),
-          receivedAt: utcInput(receivedAt),
-          confirmation: confirmed,
-          idempotencyKey: key,
-        },
+        { ...intent, idempotencyKey: key },
       );
-      setKey(requestKey());
       onCreated(body.case);
     });
   };

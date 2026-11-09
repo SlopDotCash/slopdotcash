@@ -1370,12 +1370,11 @@ async function programOrNotFound(
 }
 
 /**
- * Starts a private report (PRD section 8, Intake). The signed-in reporter
- * gets one submission per project: a record of who reports where and since
- * when, never report content. Private reporting must be on at GitHub now;
- * otherwise nothing is created and there is no public fallback. An open
- * submission is returned again, so an interrupted report is reconciled
- * before the reporter submits a second time.
+ * Links a reporter's GitHub advisory or records a maintainer-attested receipt
+ * (PRD section 8, Intake). A claim is unique by project, advisory and reporter;
+ * an ordinary manual record replays only for its original actor and request key.
+ * A linked durable Slop receipt remains the authoritative case, including
+ * when its GitHub link appears while this request is attempting its insert.
  */
 async function createCase(
   request: Request,
@@ -1439,13 +1438,14 @@ async function createCase(
       ...(await termsAtReceipt(deps, projectId, receivedAt)),
     };
   }
-  const linked = await deps.db
-    .prepare(
-      "SELECT case_id FROM security_submissions WHERE project_id=? AND repository=? AND advisory_ghsa=? AND case_id IS NOT NULL AND state IN ('submitted','receipt-verified') AND EXISTS(SELECT 1 FROM security_submission_intake i WHERE i.submission_id=security_submissions.id)",
-    )
-    .bind(projectId, terms.intake.repository, advisory)
-    .first<{ case_id: string }>();
-  if (linked) {
+  const replayLinkedCase = async (): Promise<Response | null> => {
+    const linked = await deps.db
+      .prepare(
+        "SELECT case_id FROM security_submissions WHERE project_id=? AND repository=? AND advisory_ghsa=? AND case_id IS NOT NULL AND state IN ('submitted','receipt-verified') AND EXISTS(SELECT 1 FROM security_submission_intake i WHERE i.submission_id=security_submissions.id)",
+      )
+      .bind(projectId, terms.intake.repository, advisory)
+      .first<{ case_id: string }>();
+    if (!linked) return null;
     const existing = await loadCase(deps, linked.case_id);
     if (existing && existing.reporter_github_id === reporter.githubId) {
       const roles = await caseRoles(deps, existing, actor);
@@ -1463,7 +1463,9 @@ async function createCase(
       "advisory_already_recorded",
       "This advisory already has a verified case.",
     );
-  }
+  };
+  const linkedReplay = await replayLinkedCase();
+  if (linkedReplay) return linkedReplay;
   const insert = caseInsertStatement(deps, {
     id,
     projectId,
@@ -1516,6 +1518,11 @@ async function createCase(
     ]);
   } catch (error) {
     if (!/UNIQUE/iu.test(constraintError(error))) throw error;
+    // The durable receipt may have acquired its GitHub advisory after the
+    // first lookup. Its case keeps the original null advisory column, so the
+    // ordinary case lookup below cannot resolve this trigger conflict.
+    const linkedReplay = await replayLinkedCase();
+    if (linkedReplay) return linkedReplay;
     // A rejected link is history; only a live case for this reporter and
     // advisory can answer the request.
     const existing = await deps.db
@@ -1563,6 +1570,7 @@ async function createCase(
   }
   const row = (await loadCase(deps, id)) as CaseRow;
   const roles = await caseRoles(deps, row, actor);
+  if (roles.size === 0) notFound();
   return json(201, { case: await caseView(deps, row, roles, true) });
 }
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "136c06bc589810419070538fc7db51d1360b65d29e0791529dbf487988f6c486",
+  "inventorySha256": "2107f0514df863b76d16c45b179902e147843ad216fc26158dac60f783be2279",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -302,11 +302,12 @@
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt"
       ],
-      "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
+      "lexicallyUnmentionedValues": ["link-rejected"],
       "review": "candidate-only"
     },
     {
@@ -317,11 +318,12 @@
       "values": ["disabled", "forbidden", "ready", "unavailable"],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt"
       ],
-      "lexicallyUnmentionedValues": ["disabled", "forbidden", "ready"],
+      "lexicallyUnmentionedValues": ["disabled", "ready"],
       "review": "candidate-only"
     },
     {
@@ -350,7 +352,8 @@
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/api/submission_reconcile_request.qnt"
       ],
       "lexicallyUnmentionedValues": ["no", "unknown"],
       "review": "candidate-only"
@@ -384,7 +387,8 @@
       ],
       "models": [
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_submission_recovery.qnt"
+        "formal/models/api/api_submission_recovery.qnt",
+        "formal/models/api/submission_reconcile_request.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -397,7 +401,8 @@
       "values": ["forward", "request-information"],
       "models": [
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_submission_recovery.qnt"
+        "formal/models/api/api_submission_recovery.qnt",
+        "formal/models/api/submission_reconcile_request.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -761,10 +766,12 @@
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
-      "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
+      "lexicallyUnmentionedValues": ["link-rejected"],
       "review": "candidate-only"
     },
     {
@@ -784,8 +791,10 @@
       ],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -806,8 +815,10 @@
       ],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "fixing",
@@ -832,8 +843,10 @@
       ],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -846,8 +859,10 @@
       "values": ["not-applicable", "rail-unavailable"],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": ["rail-unavailable"],
       "review": "candidate-only"
@@ -860,8 +875,10 @@
       "values": ["disclosed", "embargoed", "redaction-approved"],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": ["embargoed", "redaction-approved"],
       "review": "candidate-only"
@@ -874,8 +891,10 @@
       "values": ["none", "open", "returned", "upheld"],
       "models": [
         "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt"
+        "formal/models/payments/security_rail_exclusivity.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1604,12 +1623,14 @@
       "kind": "sql-check",
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
-      "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
+      "lexicallyUnmentionedValues": ["link-rejected"],
       "review": "candidate-only"
     },
     {
@@ -1628,10 +1649,12 @@
         "triaging"
       ],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1651,10 +1674,12 @@
         "retest"
       ],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "fixing",
@@ -1681,10 +1706,12 @@
         "reserved"
       ],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": ["not-applicable"],
       "review": "candidate-only"
@@ -1696,10 +1723,12 @@
       "kind": "sql-check",
       "values": ["not-applicable", "rail-unavailable"],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": ["not-applicable", "rail-unavailable"],
       "review": "candidate-only"
@@ -1711,10 +1740,12 @@
       "kind": "sql-check",
       "values": ["disclosed", "embargoed", "redaction-approved"],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "disclosed",
@@ -1730,10 +1761,12 @@
       "kind": "sql-check",
       "values": ["none", "open", "returned", "upheld"],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": ["open", "returned", "upheld"],
       "review": "candidate-only"
@@ -1752,10 +1785,12 @@
         "unavailable"
       ],
       "models": [
+        "formal/models/api/api_private_case_creation.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2495,6 +2530,7 @@
       "values": ["disabled", "forbidden", "ready", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -2523,6 +2559,7 @@
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -2551,6 +2588,7 @@
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -2579,6 +2617,7 @@
       "values": ["return", "uphold"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -2607,6 +2646,7 @@
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -2649,6 +2689,7 @@
       ],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -2685,12 +2726,13 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1378,
+      "line": 1380,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
@@ -2713,12 +2755,13 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1670,
+      "line": 1682,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_case_intake_forms.qnt",
         "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",

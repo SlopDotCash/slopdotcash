@@ -1088,6 +1088,54 @@ describe("private intake: creation and identity", () => {
 });
 
 describe("registered project without paid bounty terms", () => {
+  test("a manual record keeps its receipt but refuses disclosure after maintainer access is revoked", async () => {
+    const t = setup({ noProgram: true });
+    try {
+      t.setBeforeBatch(() => t.setPermission("read"));
+      const recorded = await t.call(MAINTAINER, "POST", "security-cases", {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: "GHSA-2c3f-4g5h-6j7m",
+        idempotencyKey: t.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: START,
+        confirmation: true,
+      });
+      expect(recorded.status).toBe(404);
+      expect(recorded.body).toEqual({
+        error: "not_found",
+        message: "Case not found",
+      });
+      const [retained] = t.cases();
+      expect(t.cases()).toHaveLength(1);
+      expect(retained).toMatchObject({
+        submission_state: "verified",
+        reporter_github_id: REPORTER.githubId,
+        received_at: START,
+      });
+      expect(
+        t.sqlite
+          .query("SELECT kind FROM security_case_events WHERE case_id = ?")
+          .all(retained.id),
+      ).toEqual([{ kind: "record" }]);
+      expect(
+        t.sqlite
+          .query("SELECT action FROM security_case_access_log WHERE case_id = ?")
+          .all(retained.id),
+      ).toEqual([{ action: "write" }]);
+      expect(t.outbox()).toContain(REPORTER.githubId);
+      expect(
+        (await t.call(MAINTAINER, "GET", `security-cases/${retained.id}`)).status,
+      ).toBe(404);
+      expect(
+        (await t.call(REPORTER, "GET", `security-cases/${retained.id}`)).status,
+      ).toBe(200);
+    } finally {
+      t.sqlite.close();
+    }
+  });
+
   test("an unrelated authority outage preserves the reporter's own case list with a generic retry notice", async () => {
     const t = setup({ noProgram: true });
     const own = await t.ready();
@@ -2984,6 +3032,122 @@ describe("optional GitHub forwarding of a saved report", () => {
       (viewed.body.case as { advisory: { ghsa: string } }).advisory.ghsa,
     ).toBeTruthy();
   });
+
+  async function createDuringDurableAdoption(
+    mode: "claim" | "record",
+    actor: Account,
+    authorized: boolean,
+  ) {
+    const t = setup({ durable: true });
+    try {
+      const accepted = await t.create(REPORTER, { report: REPORT });
+      expect(accepted.status).toBe(201);
+      const submission = accepted.body.submission as NonNullable<
+        Body["submission"]
+      >;
+      const [savedCase] = t.cases();
+      const authorization = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/authorize`,
+        {},
+      );
+      expect(
+        (await t.authorize(REPORTER, authorization.body.authorizeUrl as string))
+          .status,
+      ).toBe(303);
+      t.github.faults.create = "timeout-after-create";
+      const sent = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/send`,
+        { expectedRevision: submission.revision },
+      );
+      expect(sent.body.submission?.state).toBe("uncertain");
+      if (!sent.body.submission) throw new Error("Missing uncertain submission");
+      const uncertain = sent.body.submission;
+      const advisory = t.github.advisories[0].advisory.ghsa_id;
+      const reads = () =>
+        Number(
+          (
+            t.sqlite
+              .query(
+                "SELECT COUNT(*) AS n FROM security_case_access_log WHERE case_id = ? AND actor_github_id = ? AND action = 'read'",
+              )
+              .get(savedCase.id, actor.githubId) as { n: number }
+          ).n,
+        );
+      let adopted = false;
+      let readsAfterAdoption = -1;
+      // The linked-case lookup has already missed. Complete the real forward
+      // reconciliation before its competing case INSERT reaches SQLite.
+      t.setBeforeBatch(async () => {
+        const reconciled = await t.reconcile(
+          submission.id,
+          uncertain.revision,
+        );
+        expect(reconciled.status).toBe(200);
+        expect(reconciled.body.submission?.state).toBe("receipt-verified");
+        readsAfterAdoption = reads();
+        adopted = true;
+      });
+      const result = await t.call(actor, "POST", "security-cases", {
+        mode,
+        projectId: PROJECT,
+        advisory,
+        idempotencyKey: t.key(),
+        ...(mode === "record"
+          ? {
+              reporterGithubId: REPORTER.githubId,
+              reporterGithubLogin: REPORTER.githubLogin,
+              receivedAt: START,
+              confirmation: true,
+            }
+          : {}),
+      });
+      expect(adopted).toBe(true);
+      expect(t.row(submission.id).state).toBe("receipt-verified");
+      expect(t.cases()).toEqual([savedCase]);
+      expect(t.github.counts.posts).toBe(1);
+      expect(
+        t.sqlite
+          .query(
+            "SELECT kind FROM security_case_events WHERE kind IN ('claim', 'record')",
+          )
+          .all(),
+      ).toEqual([]);
+      if (authorized) {
+        expect(result.status).toBe(200);
+        expect(result.body).toMatchObject({
+          replayed: true,
+          case: { id: savedCase.id, receivedAtSource: "slop-received" },
+        });
+        expect(reads()).toBe(readsAfterAdoption + 1);
+      } else {
+        expect(result.status).toBe(409);
+        expect(result.body).toEqual({
+          error: "advisory_already_recorded",
+          message: "This advisory already has a verified case.",
+        });
+        expect(reads()).toBe(readsAfterAdoption);
+      }
+    } finally {
+      t.sqlite.close();
+    }
+  }
+
+  test("a reporter replays the durable receipt adopted between claim lookup and insertion", async () => {
+    await createDuringDurableAdoption("claim", REPORTER, true);
+  });
+
+  test("a maintainer replays the durable receipt adopted between record lookup and insertion", async () => {
+    await createDuringDurableAdoption("record", MAINTAINER, true);
+  });
+
+  test("another reporter cannot discover the durable receipt adopted before claim insertion", async () => {
+    await createDuringDurableAdoption("claim", OTHER, false);
+  });
+
   test("an import before the forward settles leaves GitHub's copy to the saved report's case", async () => {
     const t = setup({ durable: true });
     const accepted = await t.create(REPORTER, { report: REPORT });
@@ -3439,4 +3603,180 @@ test("an unfinished legacy draft passes the same screen before its first forward
   expect(sent.body.error).toBe("screening_required");
   expect(t.row(submission.id).state).toBe("draft");
   expect(t.github.advisories).toHaveLength(0);
+});
+
+// Reconciliation request boundaries supplement the send/receipt scenarios
+// above. These source-authored definitions were not executed in this audit.
+describe("private submission reconciliation request boundaries", () => {
+  async function uncertain(copy = false) {
+    const t = setup();
+    const submission = await t.ready();
+    t.github.faults.create = copy ? "timeout-after-create" : "5xx-before-create";
+    const sent = await t.send(submission.id, submission.revision);
+    expect(sent.body.submission?.state).toBe("uncertain");
+    return { t, submission, revision: sent.body.submission!.revision };
+  }
+
+  test("a complete empty listing one millisecond before quiet time remains uncertain", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      t.advance(RECONCILE_QUIET_MS - 1);
+      const response = await t.reconcile(submission.id, revision);
+      expect(response.status).toBe(202);
+      expect(response.body.submission).toMatchObject({ state: "uncertain", revision: revision + 1, retryAllowed: false });
+      expect(t.github.counts.posts).toBe(1);
+      expect(t.sqlite.query("SELECT kind FROM security_submission_events WHERE submission_id=? ORDER BY revision DESC LIMIT 1").get(submission.id))
+        .toEqual({ kind: "reconcile-too-early" });
+    } finally { t.sqlite.close(); }
+  });
+
+  test("a complete empty listing at the exact quiet boundary reopens only the draft", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      t.advance(RECONCILE_QUIET_MS);
+      const response = await t.reconcile(submission.id, revision);
+      expect(response.status).toBe(200);
+      expect(response.body.submission).toMatchObject({ state: "draft", retryAllowed: true, attempt: 1 });
+      expect(t.github.counts.posts).toBe(1);
+      expect(t.cases()).toHaveLength(0);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("quiet time is observed after the asynchronous listing completes", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      const original = t.intake.advisories.findByMarker.bind(t.intake.advisories);
+      t.intake.advisories.findByMarker = async (...args) => {
+        const result = await original(...args);
+        t.advance(RECONCILE_QUIET_MS);
+        return result;
+      };
+      expect((await t.reconcile(submission.id, revision)).body.submission?.state).toBe("draft");
+      expect(t.github.counts.posts).toBe(1);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("reconciliation always searches back from the first send across later attempts", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      t.advance(RECONCILE_QUIET_MS);
+      const reopened = await t.reconcile(submission.id, revision);
+      t.advance(60_000);
+      const retried = await t.send(submission.id, reopened.body.submission!.revision);
+      expect(retried.body.submission).toMatchObject({ state: "uncertain", attempt: 2 });
+      let since: string | undefined;
+      const original = t.intake.advisories.findByMarker.bind(t.intake.advisories);
+      t.intake.advisories.findByMarker = (...args) => { since = args[3]; return original(...args); };
+      await t.reconcile(submission.id, retried.body.submission!.revision);
+      expect(since).toBe(new Date(Date.parse(START) - 10 * 60_000).toISOString());
+      expect(t.github.counts.posts).toBe(2);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("a failed listing journals inconclusive state without authorizing a resend", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      t.advance(RECONCILE_QUIET_MS);
+      t.github.faults.list = "error";
+      const response = await t.reconcile(submission.id, revision);
+      expect(response.status).toBe(202);
+      expect(response.body.submission).toMatchObject({ state: "uncertain", retryAllowed: false });
+      expect(t.sqlite.query("SELECT kind FROM security_submission_events WHERE submission_id=? ORDER BY revision DESC LIMIT 1").get(submission.id))
+        .toEqual({ kind: "reconcile-inconclusive" });
+      expect(t.github.counts.posts).toBe(1);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("a failed reconciliation batch retains its captured uncertainty and report attempt", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      t.advance(RECONCILE_QUIET_MS);
+      t.setBeforeBatch(() => { throw new Error("Synthetic reconciliation storage failure"); });
+      const response = await t.reconcile(submission.id, revision);
+      expect(response.status).toBe(500);
+      expect(t.row(submission.id)).toMatchObject({ state: "uncertain", revision, attempt: 1 });
+      expect(t.github.counts.posts).toBe(1);
+      expect(t.cases()).toHaveLength(0);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("wrong-owner and stale-revision requests never inspect private advisory listings", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      const before = t.github.counts.lists;
+      expect((await t.call(OTHER, "POST", `security-submissions/${submission.id}/reconcile`, { expectedRevision: revision })).status).toBe(404);
+      expect((await t.reconcile(submission.id, revision - 1)).status).toBe(409);
+      expect(t.github.counts.lists).toBe(before);
+      expect(t.github.counts.posts).toBe(1);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("the same timestamp uses GHSA ordering and retains duplicate references privately", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      const marker = t.row(submission.id).marker;
+      const first = t.github.seed(REPO, { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+        { summary: REPORT.summary, description: `${REPORT.description}\n\nReport reference: ${marker}` }, START);
+      const second = t.github.seed(REPO, { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+        { summary: REPORT.summary, description: `${REPORT.description}\n\nReport reference: ${marker}` }, START);
+      const expected = [first.ghsa_id, second.ghsa_id].sort()[0];
+      const response = await t.reconcile(submission.id, revision);
+      expect(response.body.submission?.state).toBe("receipt-verified");
+      expect(t.cases()[0].advisory_ghsa).toBe(expected);
+      expect(t.cases()).toHaveLength(1);
+      const duplicateEvent = t.sqlite.query("SELECT detail FROM security_submission_events WHERE submission_id=? AND kind='duplicate-advisories'")
+        .get(submission.id) as { detail: string };
+      expect(JSON.parse(duplicateEvent.detail)).toEqual({
+        advisory: expected,
+        ghsas: [first.ghsa_id, second.ghsa_id].filter((ghsa) => ghsa !== expected),
+      });
+      expect(JSON.stringify(response.body)).not.toContain(SENTINEL);
+      expect(t.github.counts.posts).toBe(1);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("an empty-listing CAS loser returns its captured uncertainty without claiming a fresh revision", async () => {
+    const { t, submission, revision } = await uncertain();
+    try {
+      t.advance(RECONCILE_QUIET_MS);
+      let winner: Awaited<ReturnType<typeof t.reconcile>> | undefined;
+      t.setBeforeBatch(async () => { winner = await t.reconcile(submission.id, revision); });
+      const loser = await t.reconcile(submission.id, revision);
+      expect(winner?.body.submission).toMatchObject({ state: "draft", revision: revision + 1 });
+      expect(loser.status).toBe(200);
+      expect(loser.body.submission).toMatchObject({ state: "uncertain", revision, retryAllowed: false });
+      expect(t.row(submission.id)).toMatchObject({ state: "draft", revision: revision + 1 });
+      expect(t.github.counts.posts).toBe(1);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("a matched-listing CAS loser cannot borrow the winner's verified receipt", async () => {
+    const { t, submission, revision } = await uncertain(true);
+    try {
+      let winner: Awaited<ReturnType<typeof t.reconcile>> | undefined;
+      t.setBeforeBatch(async () => { winner = await t.reconcile(submission.id, revision); });
+      const loser = await t.reconcile(submission.id, revision);
+      expect(winner?.body.submission?.state).toBe("receipt-verified");
+      expect(loser.status).toBe(409);
+      expect(loser.body.error).toBe("stale_revision");
+      expect(t.cases()).toHaveLength(1);
+      expect(t.github.counts.posts).toBe(1);
+    } finally { t.sqlite.close(); }
+  });
+
+  test("a submitted receipt retries verification without another marker listing", async () => {
+    const t = setup();
+    try {
+      const submission = await t.ready();
+      t.github.faults.get = "error";
+      const sent = await t.send(submission.id, submission.revision);
+      expect(sent.body.submission?.state).toBe("submitted");
+      const before = t.github.counts.lists;
+      t.github.faults.get = "ok";
+      const response = await t.reconcile(submission.id, sent.body.submission!.revision);
+      expect(response.body.submission?.state).toBe("receipt-verified");
+      expect(t.github.counts.lists).toBe(before);
+      expect(t.github.counts.posts).toBe(1);
+    } finally { t.sqlite.close(); }
+  });
 });
