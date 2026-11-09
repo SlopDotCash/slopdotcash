@@ -1189,6 +1189,7 @@ async function runSetupCheck(
     clearance,
     scanRequest,
     activatedRevision,
+    activationAllowed: options.allowActivation !== false,
     checkedAt: deps.now().toISOString(),
   });
 }

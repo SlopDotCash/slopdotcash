@@ -21,6 +21,7 @@ import {
   SLOPBOT_INSTALL_URL,
   slopbotInstallScopeNote,
 } from "../../src/lib/project-contracts";
+import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { quarantinedScanMessage } from "../vetting/summary";
@@ -303,6 +304,8 @@ export function projectSetupStatus(input: {
   clearance: VettingClearance | { state: "unavailable"; message: string };
   scanRequest: ScanRequest | null;
   activatedRevision: number | null;
+  /** False after an owner revision: a routine edit never resumes a pause. */
+  activationAllowed?: boolean;
   checkedAt: string;
 }): ProjectSetupStatus {
   const { project, restriction, authority, access, clearance } = input;
@@ -377,6 +380,21 @@ export function projectSetupStatus(input: {
       "none",
       "Contributors can find this project and its skills.",
     );
+  } else if (scan.state === "cleared" && project.status === "paused") {
+    // Every check passed, so no scan is pending: the project is paused only
+    // until its generated skills are publishable and a setup check runs.
+    state = "action_required";
+    nextAction = publishesGeneratedSkills(manifest)
+      ? action(
+          "activate_project",
+          input.activationAllowed === false
+            ? `${scan.message} Your edit kept the project paused. Check again to activate it.`
+            : `${scan.message} Check again to activate the project.`,
+        )
+      : action(
+          "complete_skill_fields",
+          `${scan.message} The project stays paused until its contributor guide and skill fields are complete. Add them in a project update.`,
+        );
   } else if (scan.state === "queued") {
     state = "waiting";
     nextAction = action("wait_for_scan", scan.message);

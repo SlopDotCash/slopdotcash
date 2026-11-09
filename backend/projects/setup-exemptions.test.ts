@@ -578,3 +578,63 @@ describe("summarize findings location classification", () => {
     expect(summary.findingsLocation).toBeUndefined();
   });
 });
+
+describe("paused project with a cleared scan", () => {
+  const cleared: VettingClearance = {
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  };
+  function paused(withSkillFields: boolean, activationAllowed: boolean) {
+    const manifest = applicationManifest(
+      "paused-test",
+      "example/paused-test",
+      { status: "paused" },
+    ) as unknown as ProjectDefinition & { contribution?: unknown };
+    if (!withSkillFields) delete manifest.contribution;
+    const record: ProjectRecord = {
+      ...project,
+      id: "paused-test",
+      status: "paused",
+      manifest,
+    };
+    return projectSetupStatus({
+      project: record,
+      restriction: projectRestriction(record.id, []),
+      authority: { state: "verified", message: "Fixture authority check." },
+      access: {
+        state: "read",
+        access: {
+          installation: "installed",
+          installationId: 123,
+          permission: "admin",
+          roleName: "admin",
+        },
+      },
+      clearance: cleared,
+      scanRequest: null,
+      activatedRevision: null,
+      activationAllowed,
+      checkedAt: at,
+    });
+  }
+
+  test("an owner revision that kept the pause asks for a setup check, not a scan", () => {
+    const result = paused(true, false);
+    expect(result.state).toBe("action_required");
+    expect(result.nextAction.kind).toBe("activate_project");
+    expect(result.nextAction.message).toContain("Check again to activate it.");
+    expect(result.nextAction.message).not.toContain("queue");
+  });
+
+  test("a manifest without generated skill fields asks the owner to complete them", () => {
+    for (const allowed of [true, false]) {
+      const result = paused(false, allowed);
+      expect(result.state).toBe("action_required");
+      expect(result.nextAction.kind).toBe("complete_skill_fields");
+      expect(result.nextAction.message).toContain(
+        "contributor guide and skill fields are complete",
+      );
+    }
+  });
+});
