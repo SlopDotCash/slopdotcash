@@ -27,9 +27,14 @@ const same = (left: string, right: string) =>
 const bytes = (transaction: DirectEvmTransaction) =>
   JSON.stringify(transaction);
 
-function selectedHash(entry: Entry, recovered: string | undefined): string | null {
+function selectedHash(
+  entry: Entry,
+  recovered: string | undefined,
+): string | null {
   const hash =
-    recovered !== undefined ? recovered.trim() : entry.candidate ?? entry.hash;
+    recovered !== undefined
+      ? recovered.trim()
+      : (entry.candidate ?? entry.hash);
   return hash && HASH.test(hash) ? hash : null;
 }
 
@@ -254,7 +259,8 @@ export function DirectBountyPayment({
               if (!replaced && mounted.current)
                 setJournal((latest) => {
                   const entry = latest[transaction.nonce];
-                  return entry && entry.requestId === requestId &&
+                  return entry &&
+                    entry.requestId === requestId &&
                     bytes(entry.transaction) === bytes(transaction)
                     ? { ...latest, [transaction.nonce]: { ...entry, hash } }
                     : latest;
@@ -365,12 +371,15 @@ export function DirectBountyPayment({
       }
       const currentHashes = transactions.flatMap((transaction) => {
         const entry = entries[transaction.nonce];
-        if (!entry || bytes(entry.transaction) !== bytes(transaction)) return [];
+        if (!entry || bytes(entry.transaction) !== bytes(transaction))
+          return [];
         const hash = selectedHash(entry, recovered[transaction.nonce]);
         return hash ? [hash] : [];
       });
       if (currentHashes.length === 0)
-        throw new Error("Enter the matching transaction hash from your wallet.");
+        throw new Error(
+          "Enter the matching transaction hash from your wallet.",
+        );
       await verify(currentHashes);
       setNotice("Finalized evidence verified.");
     });

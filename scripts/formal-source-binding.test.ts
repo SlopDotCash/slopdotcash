@@ -16,7 +16,7 @@ it("refuses a successful model run when its mapped implementation changes during
   const fixture = mkdtempSync(join(tmpdir(), "slop-quint-source-binding-"));
   try {
     mkdirSync(join(fixture, "scripts"));
-    mkdirSync(join(fixture, "formal/models"), { recursive: true });
+    mkdirSync(join(fixture, "formal/models/fixture"), { recursive: true });
     symlinkSync(
       join(root, "node_modules"),
       join(fixture, "node_modules"),
@@ -26,10 +26,15 @@ it("refuses a successful model run when its mapped implementation changes during
       join(fixture, "scripts/check-formal.mjs"),
       readFileSync(join(root, "scripts/check-formal.mjs")),
     );
-    writeFileSync(
-      join(fixture, "scripts/run-e2e-phase.mjs"),
-      readFileSync(join(root, "scripts/run-e2e-phase.mjs")),
-    );
+    for (const script of [
+      "formal-models.mjs",
+      "quint-safety-view.mjs",
+      "run-e2e-phase.mjs",
+    ])
+      writeFileSync(
+        join(fixture, "scripts", script),
+        readFileSync(join(root, "scripts", script)),
+      );
     writeFileSync(
       join(fixture, "bun.lock"),
       readFileSync(join(root, "bun.lock")),
@@ -39,7 +44,7 @@ it("refuses a successful model run when its mapped implementation changes during
       "export const state = 'before';\n",
     );
     writeFileSync(
-      join(fixture, "formal/models/source_binding.qnt"),
+      join(fixture, "formal/models/fixture/source_binding.qnt"),
       `// @source implementation.ts
 module source_binding {
   var s: int

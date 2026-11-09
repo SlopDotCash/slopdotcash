@@ -699,7 +699,7 @@ try {
       [
         `${root}node_modules/@informalsystems/quint/dist/src/cli.js`,
         "test",
-        `${root}formal/models/authority_rotation.qnt`,
+        `${root}formal/models/payments/authority_rotation.qnt`,
         "--backend=typescript",
         "--seed=1",
         "--match=^delayedOldAuthorityRevertsAndReconcilesTest$",

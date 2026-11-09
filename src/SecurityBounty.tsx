@@ -3365,17 +3365,13 @@ function CaseDetail({
   const recoveryAction = useAction();
   const [state, reload, replaceData] = useSecurityData<{
     case: SecurityCase;
-  }>(
-    `security-cases/${encodeURIComponent(caseId)}`,
-  );
+  }>(`security-cases/${encodeURIComponent(caseId)}`);
   const replace = useCallback(
     (value: { case: SecurityCase }) =>
-      replaceData(
-        value,
-        (previous) =>
-          value.case.revision === previous.case.revision
-            ? "refresh"
-            : value.case.revision > previous.case.revision,
+      replaceData(value, (previous) =>
+        value.case.revision === previous.case.revision
+          ? "refresh"
+          : value.case.revision > previous.case.revision,
       ),
     [replaceData],
   );

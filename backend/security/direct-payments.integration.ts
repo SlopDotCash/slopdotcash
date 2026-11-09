@@ -1016,60 +1016,70 @@ for (const scenario of [
       // A wallet can change without changing the case revision while the
       // cancellation proof is awaiting its provider. No stale successor may
       // commit, even though the captured wallet had valid earlier consent.
-      sqlite.exec("SAVEPOINT recovery_wallet_race");
-      const priorRevision = sqlite
-        .query<{ revision: number }, [string]>(
-          "SELECT revision FROM security_cases WHERE id=?",
-        )
-        .get(next)?.revision;
-      const priorEvents = sqlite
-        .query<{ n: number }, [string]>(
-          "SELECT COUNT(*) n FROM security_case_events WHERE case_id=?",
-        )
-        .get(next)?.n;
-      let rotatedDuringProof = false;
-      receiptHook = (transactionId) => {
-        if (transactionId !== cancellationHash) return;
-        receiptHook = null;
-        rotateReporter(recipient, "during-cancellation-proof");
-        rotatedDuringProof = true;
-      };
-      try {
-        const stale = await act(OWNER, next, "recover-payment", {
-          confirmation: true,
-          cancellationTransactionId: cancellationHash,
-        });
-        assert.equal(rotatedDuringProof, true);
-        assert.equal(stale.status, 409, JSON.stringify(stale.body));
-        assert.equal(stale.body.error, "payment_recovery_changed");
-        assert.equal(
-          sqlite
-            .query<{ n: number }, [string]>(
-              "SELECT COUNT(*) n FROM security_direct_payment_revisions WHERE case_id=?",
-            )
-            .get(next)?.n,
-          0,
-        );
-        assert.equal(
-          sqlite
-            .query<{ revision: number }, [string]>(
-              "SELECT revision FROM security_cases WHERE id=?",
-            )
-            .get(next)?.revision,
-          priorRevision,
-        );
-        assert.equal(
-          sqlite
-            .query<{ n: number }, [string]>(
-              "SELECT COUNT(*) n FROM security_case_events WHERE case_id=?",
-            )
-            .get(next)?.n,
-          priorEvents,
-        );
-      } finally {
-        receiptHook = null;
-        sqlite.exec("ROLLBACK TO recovery_wallet_race");
-        sqlite.exec("RELEASE recovery_wallet_race");
+      for (const changed of ["reporter", "payer"] as const) {
+        sqlite.exec("SAVEPOINT recovery_wallet_race");
+        const priorRevision = sqlite
+          .query<{ revision: number }, [string]>(
+            "SELECT revision FROM security_cases WHERE id=?",
+          )
+          .get(next)?.revision;
+        const priorEvents = sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT COUNT(*) n FROM security_case_events WHERE case_id=?",
+          )
+          .get(next)?.n;
+        let rotatedDuringProof = false;
+        receiptHook = (transactionId) => {
+          if (transactionId !== cancellationHash) return;
+          receiptHook = null;
+          rotateWallet(
+            changed === "payer" ? OWNER : REPORTER,
+            changed === "payer" ? wrong : recipient,
+            `during-cancellation-proof-${changed}`,
+          );
+          rotatedDuringProof = true;
+        };
+        try {
+          const stale = await act(OWNER, next, "recover-payment", {
+            confirmation: true,
+            cancellationTransactionId: cancellationHash,
+          });
+          assert.equal(rotatedDuringProof, true);
+          assert.equal(
+            stale.status,
+            409,
+            `${changed}: ${JSON.stringify(stale.body)}`,
+          );
+          assert.equal(stale.body.error, "payment_recovery_changed");
+          assert.equal(
+            sqlite
+              .query<{ n: number }, [string]>(
+                "SELECT COUNT(*) n FROM security_direct_payment_revisions WHERE case_id=?",
+              )
+              .get(next)?.n,
+            0,
+          );
+          assert.equal(
+            sqlite
+              .query<{ revision: number }, [string]>(
+                "SELECT revision FROM security_cases WHERE id=?",
+              )
+              .get(next)?.revision,
+            priorRevision,
+          );
+          assert.equal(
+            sqlite
+              .query<{ n: number }, [string]>(
+                "SELECT COUNT(*) n FROM security_case_events WHERE case_id=?",
+              )
+              .get(next)?.n,
+            priorEvents,
+          );
+        } finally {
+          receiptHook = null;
+          sqlite.exec("ROLLBACK TO recovery_wallet_race");
+          sqlite.exec("RELEASE recovery_wallet_race");
+        }
       }
       const recovered = await act(OWNER, next, "recover-payment", {
         confirmation: true,

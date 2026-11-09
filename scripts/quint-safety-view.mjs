@@ -54,7 +54,7 @@ export function readSafetyViews(root) {
     Object.keys(view).sort().join(",") !==
       "clauses,fields,hashMode,id,memoryCandidateMode,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
     view.id !== "direct-bounty-journal-safety-v4" ||
-    view.model !== "formal/models/direct_bounty_journal.qnt" ||
+    view.model !== "formal/models/payments/direct_bounty_journal.qnt" ||
     view.module !== "direct_bounty_journal" ||
     view.operator !== "SlopJournalSafetyViewV4" ||
     view.hashMode !== hashMode ||

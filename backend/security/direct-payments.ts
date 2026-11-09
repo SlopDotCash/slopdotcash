@@ -115,6 +115,9 @@ export function directPaymentNetworks(
       awardAsset(terms, network) !== null && config(network) !== null,
   );
 }
+const CURRENT_AUTHORIZED_WALLET =
+  "EXISTS(SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.record_sha256=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry')";
+
 async function wallet(db: Database, actor: string, chain: string) {
   const found = await db
     .prepare(
@@ -332,8 +335,6 @@ export function directPreparationFence(
   payerId: string,
   intent: DirectIntent,
 ) {
-  const currentWallet =
-    "EXISTS(SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.record_sha256=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry')";
   const consent = {
     rail: "direct",
     network: intent.network,
@@ -341,7 +342,7 @@ export function directPreparationFence(
     recipient: intent.recipient,
   };
   return {
-    requireSql: `${currentWallet} AND ${currentWallet} AND EXISTS(SELECT 1 FROM security_payment_consents WHERE case_id=? AND reporter_github_id=? AND deployment=?)`,
+    requireSql: `${CURRENT_AUTHORIZED_WALLET} AND ${CURRENT_AUTHORIZED_WALLET} AND EXISTS(SELECT 1 FROM security_payment_consents WHERE case_id=? AND reporter_github_id=? AND deployment=?)`,
     requireValues: [
       intent.recipient.id,
       intent.recipient.digest,
@@ -357,7 +358,8 @@ export function directPreparationFence(
     ],
     unmet: {
       code: "payment_preparation_changed",
-      message: "The payment wallets or consent changed. Review the payment again.",
+      message:
+        "The payment wallets or consent changed. Review the payment again.",
     },
   };
 }
@@ -1215,21 +1217,27 @@ export async function recoverDirectIntent(
       fail(
         409,
         "payment_recovery_changed",
-        "The payment or reporter wallet changed. Review recovery again.",
+        "The payment or payout wallets changed. Review recovery again.",
       );
   }
-  // Chain reads below can outlive another wallet registration. Fence the
-  // case update and successor insertion in the same transaction, not only
+  // Chain reads can outlive another payer or reporter wallet registration.
+  // Fence the case update and successor insertion in the same transaction, not only
   // the earlier read. A paid researcher leg keeps its original destination;
   // fee-only recovery must not depend on that actor's later wallet changes.
   const predicates = [
     "EXISTS(SELECT 1 FROM security_direct_current_payments WHERE case_id=? AND generation=?)",
+    CURRENT_AUTHORIZED_WALLET,
   ];
-  const values: unknown[] = [input.caseId, c.generation];
+  const values: unknown[] = [
+    input.caseId,
+    c.generation,
+    payer.id,
+    payer.digest,
+    input.payerId,
+    c.intent.chain,
+  ];
   if (legIndex === 0) {
-    predicates.push(
-      "EXISTS(SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=? AND w.record_sha256=? AND w.github_user_id=? AND w.chain=? AND w.source='d1_registry')",
-    );
+    predicates.push(CURRENT_AUTHORIZED_WALLET);
     values.push(c.target.id, c.target.digest, c.reporterId, c.intent.chain);
     if (c.target.id !== c.intent.recipient.id) {
       predicates.push(
@@ -1243,7 +1251,7 @@ export async function recoverDirectIntent(
     requireValues: values,
     unmet: {
       code: "payment_recovery_changed",
-      message: "The payment or reporter wallet changed. Review recovery again.",
+      message: "The payment or payout wallets changed. Review recovery again.",
     },
   };
   const original =

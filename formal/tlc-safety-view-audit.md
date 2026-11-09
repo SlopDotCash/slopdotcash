@@ -1,23 +1,13 @@
-# Hash-bound journal safety view, version 4
+# Journal safety view
 
-This follow-up preserves every byte of `direct_bounty_journal.qnt`, including
-all fields, domains, actions, the invariant and fifteen named output scenarios.
-It changes only the state fingerprint used by TLC for this reviewed safety
-invariant. It serves PRD section 12. No application runtime or policy changes.
-
-The full model SHA-256 remains
+The `direct-bounty-journal-safety-v4` view is specific to the invariant in
+`models/payments/direct_bounty_journal.qnt`. It changes TLC state fingerprints,
+not the source model, full-state named scenarios or sampled execution. The
+model SHA-256 is
 `549580117b331f06f8bb0950211c650c84a7fbffbcb51045812f0c26d3e38fa3`.
-At `a77cb2516`, canonical 180-second and diagnostic 600-second full-state
-checks both ended incomplete, without an invariant counterexample. The longer
-run's last progress was 48,955,304 generated, 9,508,664 distinct and 7,289,887
-queued states at depth 9. Version 1 of the view at `cebc1d565` also exceeded
-180 seconds: its last progress was 16,307,349 generated, 2,227,568 distinct
-quotient states and 1,436,139 queued states at depth 10. Version 2 also ended
-incomplete at both 180 and 600 seconds. Its longer run
-last reported 47,177,233 generated, 3,856,770 distinct and 1,394,421 queued
-quotient states at depth 13. These are incomplete progress counts, not complete
-graph sizes. All original receipts remain preserved; version 4 does not
-relabel those runs as passes.
+Earlier full-state and shorter view runs ended incomplete; they remain failed
+receipts and cannot be relabeled by a later result. Model authoring comments
+record their original checkpoint, not current execution status.
 
 ## Exact projection
 
@@ -122,42 +112,23 @@ Removing the inserted VIEW-emission line recovers the original runner bytes.
 No installed dependency is edited. Original adapter, overlay, source, TLA and
 view hashes and both clause definitions are recorded with the result.
 
-## Checks and remaining evidence
+## Validation contract
 
-Lightweight checks cover exact source/request binding, stale TLA/projection
-refusal, complete generated-body preservation, separate clause metadata,
-unknown operator refusal, and actual Node import/export resolution. The
-normal-check source and all existing no-view controls remain unchanged.
+`SLOP_QUINT_TRANSLATOR_TEST=1 bun test ./scripts/quint-local-translator.test.ts
+./scripts/quint-safety-view.test.ts` exercises the actual TLC runner. Six
+counterexample controls separately violate the used-identity domain, ownership
+witness, frame witness, both zero/positive hash directions, and a store
+candidate. They must return a nonzero result and no success claim. The same
+command retains the no-view false-literal control and valid no-view examples.
+Lightweight tests cover exact model/request/TLA binding, projection refusal,
+complete generated-body preservation and Node import resolution. These
+controls test the adapter; they do not mechanically prove successor congruence.
 
-Six opt-in controls use the actual TLC runner and typed test-only records:
-one violates the retained `used` domain; one changes only the ownership
-witness; one changes only the frame witness; two cross the zero/positive hash boundary in opposite directions, and one changes a store candidate. Store candidate remains exact in the projection. The witness cases keep R unchanged;
-the hash cases use class predicates and preserve the other fields. Each must produce the expected invariant counterexample, a nonzero
-result and no success message. Test fixtures are not added to the production
-allowlist and prove no application behavior. The same CI command also runs
-the existing no-view false-literal control and two no-view successes.
-
-At `07582f196fe8fa1dc4671f3abd0a6c6f2c029e4c`, version 4 passed all
-thirteen tool controls (63 assertions), including the real TLC counterexamples
-and unchanged no-view controls. All fifteen full-model scenarios and the seeded
-500-sample, 60-step simulation passed. The original 180-second finite run
-remained incomplete and remains a failed receipt.
-
-A separate run with the same inputs and a 1,800-second allowance completed:
-108,943,297 generated states, 5,727,360 distinct quotient states, zero queued
-states and depth 22. TLC reported no invariant violation in 851,432 ms. The
-receipt SHA-256 is
-`b968c914479fab8bda62783e0f79cf0a0753c36637c63359ac5acea4e6eab634`.
-All input hashes were unchanged and all 434 process IDs observed by the
-numeric diagnostic sampler were absent after completion. This success does
-not replace the original short-run failure or establish a temporal or
-implementation-refinement theorem.
-
-The integrated checker now gives this exact model an explicit 1,800-second
-budget. Other ordinary models retain their existing limits. A complete
-current-source model matrix and browser acceptance are separate gates tracked
-in [PR #2432](https://github.com/SlopDotCash/slopdotcash/pull/2432).
-
-## Version 4 evidence boundary
-
-Version 3 passed its real counterexample controls and full normal scenarios, but its 180-second graph remained incomplete: 389,105 quotient states and 232,293 queued at depth 9. Version 4 adds only the reviewed memory-candidate projection. A real control now requires a store-candidate change to remain visible. The full journal source is still byte-identical; no model domain, action or invariant is changed. Version 4 execution is recorded above. An initial local projection-hash calculation used only four terminator characters and was rejected by the exact-output guard. It was corrected to use the complete module terminator; no binding check was relaxed.
+Run the complete model through `bun run formal:verify` or select it with
+`node scripts/check-formal.mjs --verify --model=direct_bounty_journal`.
+The checked-in limit is 1,800 seconds. A finished finite view graph is a pass
+only for the invariant, projection and domains above. A timeout, cancellation,
+changed input or nonempty work queue is incomplete. Exact source, tool and
+projection hashes, effective limit and output belong in `evidence/formal/`.
+Do not replace failed receipts with a claim about a different representation.
+Browser, database, chain and implementation-conformance checks are separate.

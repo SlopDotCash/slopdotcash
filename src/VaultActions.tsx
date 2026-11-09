@@ -257,7 +257,9 @@ export function VaultActions({
       try {
         const beforeSend = () => {
           if (!mounted.current)
-            throw new Error("The wallet view was closed. Review before sending.");
+            throw new Error(
+              "The wallet view was closed. Review before sending.",
+            );
           if (!remember(intent))
             throw new Error(
               "The saved request changed. Reload before continuing.",

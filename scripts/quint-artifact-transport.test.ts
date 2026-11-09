@@ -13,7 +13,7 @@ test("Quint artifact retry trace preserves origin credentials and terminal sibli
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/artifact_transport.qnt",
+        "formal/models/contributor/artifact_transport.qnt",
         "--backend=typescript",
         "--seed=1",
         "--match=^transientRetryStartsAtAuthorityTest$",

@@ -132,8 +132,7 @@ async function run(command, label, cwd = sandbox, timeoutMs = 180_000) {
     error,
   });
   console.log(`${passed ? "PASS" : "FAIL"} ${label}`);
-  if (!passed)
-    throw new Error(`${label}: ${error ?? output.slice(-5000)}`);
+  if (!passed) throw new Error(`${label}: ${error ?? output.slice(-5000)}`);
   return output;
 }
 

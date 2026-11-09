@@ -6,8 +6,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -91,6 +91,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
         descendant: number;
         port: number;
       } | null = null;
+      let cleanupFailure: unknown;
       try {
         const deadline = Date.now() + 10_000;
         while (!existsSync(ready) && !ended && Date.now() < deadline)
@@ -133,13 +134,15 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
           try {
             process.kill(-owned.launcher, "SIGKILL");
           } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH")
+              cleanupFailure = error;
           }
         }
         await exited;
         await output;
         rmSync(fixture, { recursive: true, force: true });
       }
+      if (cleanupFailure) throw cleanupFailure;
     },
     30_000,
   );

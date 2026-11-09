@@ -174,12 +174,7 @@ export function AutomaticMonthlyPayment({
             wallet,
             automatic,
           )
-        : await reviewEvmMonthlySetting(
-            project,
-            deployment,
-            wallet,
-            automatic,
-          );
+        : await reviewEvmMonthlySetting(project, deployment, wallet, automatic);
       if (mounted.current) setReview(result);
     });
   const send = () =>
@@ -201,7 +196,9 @@ export function AutomaticMonthlyPayment({
       try {
         const beforeSend = () => {
           if (!mounted.current)
-            throw new Error("The wallet view was closed. Review before sending.");
+            throw new Error(
+              "The wallet view was closed. Review before sending.",
+            );
           if (!remember(intent))
             throw new Error(
               "The saved request changed. Reload before continuing.",

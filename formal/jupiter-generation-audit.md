@@ -1,6 +1,6 @@
 # Jupiter generator control-flow audit
 
-`models/jupiter_generation.qnt` maps the canonical decoder generator's
+`models/tooling/jupiter_generation.qnt` maps the canonical decoder generator's
 `--write`, `--sync-proof` and `--check` modes and the enclosing proof gate.
 It records a captured input epoch, source/native/proof output classes,
 baseline availability, partial writes, refused stale data and final proof

@@ -25,8 +25,7 @@ function matchesPendingAttempt(raw: string | null, expected: PendingAttempt) {
 
 function matchesPendingRecord(raw: string | null, expected: PendingAttempt) {
   return (
-    raw !== null &&
-    JSON.stringify(JSON.parse(raw)) === JSON.stringify(expected)
+    raw !== null && JSON.stringify(JSON.parse(raw)) === JSON.stringify(expected)
   );
 }
 

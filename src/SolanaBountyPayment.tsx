@@ -28,8 +28,7 @@ function readPending(raw: string | null, transaction: string): Pending | null {
     saved &&
     (!validPendingAttemptId(saved.attemptId) ||
       saved.transaction !== transaction ||
-      (saved.signature !== null &&
-        !isSolanaTransactionId(saved.signature)) ||
+      (saved.signature !== null && !isSolanaTransactionId(saved.signature)) ||
       (saved.candidate !== undefined &&
         !isSolanaTransactionId(saved.candidate)))
   )

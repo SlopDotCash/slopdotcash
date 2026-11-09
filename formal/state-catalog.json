@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "b356eb2234592a89d1f26282e81ac20a29fd6b6357fffd90f392a16543343bcd",
+  "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
+  "inventorySha256": "7addaa5d5ad3431362d5eecfff55580b1caa6e9bc8a32b5fcf6369634b4f5ea6",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -9,7 +9,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
-      "models": ["formal/models/fee_conversion.qnt"],
+      "models": ["formal/models/fees/fee_conversion.qnt"],
       "lexicallyUnmentionedValues": ["not_converted", "usdc"],
       "review": "candidate-only"
     },
@@ -20,8 +20,8 @@
       "kind": "string-union",
       "values": ["opened", "resolved"],
       "models": [
-        "formal/models/api_inbox.qnt",
-        "formal/models/api_mail_delivery.qnt"
+        "formal/models/api/api_inbox.qnt",
+        "formal/models/api/api_mail_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": ["opened", "resolved"],
       "review": "candidate-only"
@@ -32,7 +32,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/monthly_source_conflict.qnt"],
+      "models": ["formal/models/rewards/monthly_source_conflict.qnt"],
       "lexicallyUnmentionedValues": ["paid"],
       "review": "candidate-only"
     },
@@ -43,11 +43,11 @@
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
       "models": [
-        "formal/models/monthly_coordinator.qnt",
-        "formal/models/monthly_cutoff_queue.qnt",
-        "formal/models/monthly_owner_completion.qnt",
-        "formal/models/monthly_reserve.qnt",
-        "formal/models/monthly_source_conflict.qnt"
+        "formal/models/rewards/monthly_coordinator.qnt",
+        "formal/models/rewards/monthly_cutoff_queue.qnt",
+        "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_reserve.qnt",
+        "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "lexicallyUnmentionedValues": ["failed", "finalized"],
       "review": "candidate-only"
@@ -59,11 +59,11 @@
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
-        "formal/models/monthly_coordinator.qnt",
-        "formal/models/monthly_cutoff_queue.qnt",
-        "formal/models/monthly_owner_completion.qnt",
-        "formal/models/monthly_reserve.qnt",
-        "formal/models/monthly_source_conflict.qnt"
+        "formal/models/rewards/monthly_coordinator.qnt",
+        "formal/models/rewards/monthly_cutoff_queue.qnt",
+        "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_reserve.qnt",
+        "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -75,8 +75,8 @@
       "kind": "string-union",
       "values": ["immutable-mismatch", "payout-mismatch", "ready"],
       "models": [
-        "formal/models/chain_evidence.qnt",
-        "formal/models/payment_dispatch.qnt"
+        "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
       ],
       "lexicallyUnmentionedValues": ["immutable-mismatch", "payout-mismatch"],
       "review": "candidate-only"
@@ -87,7 +87,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["cancelled", "connected", "failed"],
-      "models": ["formal/models/api_x_connection.qnt"],
+      "models": ["formal/models/api/api_x_connection.qnt"],
       "lexicallyUnmentionedValues": ["cancelled", "failed"],
       "review": "candidate-only"
     },
@@ -98,10 +98,10 @@
       "kind": "string-union",
       "values": ["apply", "preview"],
       "models": [
-        "formal/models/api_project_registry.qnt",
-        "formal/models/api_registry_alias_transaction.qnt",
-        "formal/models/referrer_attribution.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt"
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/referrals/referrer_attribution.qnt",
+        "formal/models/ui/ui_owner_bounty_funds.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
@@ -113,10 +113,10 @@
       "kind": "string-union",
       "values": ["apply", "preview"],
       "models": [
-        "formal/models/api_project_registry.qnt",
-        "formal/models/api_registry_alias_transaction.qnt",
-        "formal/models/referrer_attribution.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt"
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/referrals/referrer_attribution.qnt",
+        "formal/models/ui/ui_owner_bounty_funds.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
@@ -127,7 +127,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
-      "models": ["formal/models/api_project_registry.qnt"],
+      "models": ["formal/models/api/api_project_registry.qnt"],
       "lexicallyUnmentionedValues": ["already_queued", "queued"],
       "review": "candidate-only"
     },
@@ -137,7 +137,7 @@
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
-      "models": ["formal/models/api_project_registry.qnt"],
+      "models": ["formal/models/api/api_project_registry.qnt"],
       "lexicallyUnmentionedValues": ["committed", "working-tree"],
       "review": "candidate-only"
     },
@@ -147,7 +147,7 @@
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
-      "models": ["formal/models/api_project_registry.qnt"],
+      "models": ["formal/models/api/api_project_registry.qnt"],
       "lexicallyUnmentionedValues": ["committed", "working-tree"],
       "review": "candidate-only"
     },
@@ -158,9 +158,9 @@
       "kind": "string-union",
       "values": ["return", "uphold"],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["return", "uphold"],
       "review": "candidate-only"
@@ -172,9 +172,9 @@
       "kind": "string-union",
       "values": ["legitimate", "needs-information", "spam"],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -186,9 +186,9 @@
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -200,9 +200,9 @@
       "kind": "string-union",
       "values": ["failed", "unavailable"],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -214,9 +214,9 @@
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -228,9 +228,9 @@
       "kind": "string-union",
       "values": ["failed", "unavailable"],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -242,8 +242,8 @@
       "kind": "string-union",
       "values": ["expiry-required", "history-check"],
       "models": [
-        "formal/models/api_award_recovery.qnt",
-        "formal/models/direct_solana_retirement.qnt"
+        "formal/models/api/api_award_recovery.qnt",
+        "formal/models/payments/direct_solana_retirement.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -255,8 +255,8 @@
       "kind": "string-union",
       "values": ["no", "unknown"],
       "models": [
-        "formal/models/api_private_authorization.qnt",
-        "formal/models/api_private_intake.qnt"
+        "formal/models/api/api_private_authorization.qnt",
+        "formal/models/api/api_private_intake.qnt"
       ],
       "lexicallyUnmentionedValues": ["no", "unknown"],
       "review": "candidate-only"
@@ -268,14 +268,14 @@
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
-        "formal/models/api_bounty_reservation.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_roles.qnt",
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/direct_preparation_completion.qnt",
-        "formal/models/direct_recovery_completion.qnt",
-        "formal/models/security_payment_projection.qnt",
-        "formal/models/ui_private_case_revisions.qnt"
+        "formal/models/api/api_bounty_reservation.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/payments/direct_preparation_completion.qnt",
+        "formal/models/payments/direct_recovery_completion.qnt",
+        "formal/models/payments/security_payment_projection.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
@@ -287,14 +287,14 @@
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
       "models": [
-        "formal/models/api_bounty_reservation.qnt",
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_roles.qnt",
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/direct_preparation_completion.qnt",
-        "formal/models/direct_recovery_completion.qnt",
-        "formal/models/security_payment_projection.qnt",
-        "formal/models/ui_private_case_revisions.qnt"
+        "formal/models/api/api_bounty_reservation.qnt",
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/payments/direct_preparation_completion.qnt",
+        "formal/models/payments/direct_recovery_completion.qnt",
+        "formal/models/payments/security_payment_projection.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden"],
       "review": "candidate-only"
@@ -306,8 +306,8 @@
       "kind": "string-union",
       "values": ["off", "on"],
       "models": [
-        "formal/models/api_private_authorization.qnt",
-        "formal/models/api_private_intake.qnt"
+        "formal/models/api/api_private_authorization.qnt",
+        "formal/models/api/api_private_intake.qnt"
       ],
       "lexicallyUnmentionedValues": ["off", "on"],
       "review": "candidate-only"
@@ -319,11 +319,11 @@
       "kind": "string-union",
       "values": ["forward", "request-information"],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_report_forward_revision.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_report_forward_revision.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -343,8 +343,8 @@
         "uncertain"
       ],
       "models": [
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -363,11 +363,11 @@
         "unavailable"
       ],
       "models": [
-        "formal/models/api_private_assessment.qnt",
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_report_forward_revision.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_assessment.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_report_forward_revision.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -378,7 +378,7 @@
       "name": "RunState",
       "kind": "string-union",
       "values": ["awaiting_trace", "finalized", "trace_uploaded"],
-      "models": ["formal/models/api_trace.qnt"],
+      "models": ["formal/models/api/api_trace.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -389,8 +389,8 @@
       "kind": "string-union",
       "values": ["active", "expired", "resolved", "withdrawn"],
       "models": [
-        "formal/models/vetting_flag_admission.qnt",
-        "formal/models/vetting_flag_reinstatement.qnt"
+        "formal/models/vetting/vetting_flag_admission.qnt",
+        "formal/models/vetting/vetting_flag_reinstatement.qnt"
       ],
       "lexicallyUnmentionedValues": ["expired", "resolved", "withdrawn"],
       "review": "candidate-only"
@@ -402,11 +402,11 @@
       "kind": "string-union",
       "values": ["conflict", "recorded"],
       "models": [
-        "formal/models/vetting_admission_lineage.qnt",
-        "formal/models/vetting_fixed_exemption.qnt",
-        "formal/models/vetting_flag_reinstatement.qnt",
-        "formal/models/vetting_malicious_reinstatement.qnt",
-        "formal/models/vetting_result_atomic.qnt"
+        "formal/models/vetting/vetting_admission_lineage.qnt",
+        "formal/models/vetting/vetting_fixed_exemption.qnt",
+        "formal/models/vetting/vetting_flag_reinstatement.qnt",
+        "formal/models/vetting/vetting_malicious_reinstatement.qnt",
+        "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "lexicallyUnmentionedValues": ["conflict", "recorded"],
       "review": "candidate-only"
@@ -417,7 +417,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["awaiting_trace", "finalized", "trace_uploaded"],
-      "models": ["formal/models/api_trace.qnt"],
+      "models": ["formal/models/api/api_trace.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -432,7 +432,7 @@
         "callback_processing",
         "pending"
       ],
-      "models": ["formal/models/api_identity.qnt"],
+      "models": ["formal/models/api/api_identity.qnt"],
       "lexicallyUnmentionedValues": [
         "assertion_issued",
         "callback_complete",
@@ -452,8 +452,8 @@
         "pending"
       ],
       "models": [
-        "formal/models/api_accounts.qnt",
-        "formal/models/api_identity.qnt"
+        "formal/models/api/api_accounts.qnt",
+        "formal/models/api/api_identity.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "assertion_issued",
@@ -468,7 +468,7 @@
       "name": "status",
       "kind": "sql-check",
       "values": ["pending", "processing"],
-      "models": ["formal/models/api_x_connection.qnt"],
+      "models": ["formal/models/api/api_x_connection.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -479,8 +479,8 @@
       "kind": "sql-check",
       "values": ["paid", "reserved"],
       "models": [
-        "formal/models/api_payment_wallet_protocol.qnt",
-        "formal/models/payment_dispatch.qnt"
+        "formal/models/api/api_payment_wallet_protocol.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
       ],
       "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
@@ -492,8 +492,8 @@
       "kind": "sql-check",
       "values": ["held", "paid", "processing", "ready", "submitted"],
       "models": [
-        "formal/models/api_payment_wallet_protocol.qnt",
-        "formal/models/payment_dispatch.qnt"
+        "formal/models/api/api_payment_wallet_protocol.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -505,8 +505,8 @@
       "kind": "sql-check",
       "values": ["failed", "finalized", "prepared", "submitted", "unknown"],
       "models": [
-        "formal/models/api_payment_wallet_protocol.qnt",
-        "formal/models/payment_dispatch.qnt"
+        "formal/models/api/api_payment_wallet_protocol.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "failed",
@@ -522,7 +522,7 @@
       "name": "status",
       "kind": "sql-check",
       "values": ["completed", "failed", "running", "skipped"],
-      "models": ["formal/models/bot_installation_lifecycle.qnt"],
+      "models": ["formal/models/slopbot/bot_installation_lifecycle.qnt"],
       "lexicallyUnmentionedValues": [
         "completed",
         "failed",
@@ -537,7 +537,7 @@
       "name": "outcome",
       "kind": "sql-check",
       "values": ["failed", "ok"],
-      "models": ["formal/models/bot_installation_lifecycle.qnt"],
+      "models": ["formal/models/slopbot/bot_installation_lifecycle.qnt"],
       "lexicallyUnmentionedValues": ["failed", "ok"],
       "review": "candidate-only"
     },
@@ -547,7 +547,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": ["formal/models/payments/payment_dispatch.qnt"],
       "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
     },
@@ -558,8 +558,8 @@
       "kind": "sql-check",
       "values": ["approved", "pending", "rejected"],
       "models": [
-        "formal/models/api_project_registry.qnt",
-        "formal/models/api_registry_alias_transaction.qnt"
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_registry_alias_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["rejected"],
       "review": "candidate-only"
@@ -571,8 +571,8 @@
       "kind": "sql-check",
       "values": ["active", "paused"],
       "models": [
-        "formal/models/api_project_registry.qnt",
-        "formal/models/api_registry_alias_transaction.qnt"
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_registry_alias_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["paused"],
       "review": "candidate-only"
@@ -583,7 +583,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/payment_dispatch.qnt"],
+      "models": ["formal/models/payments/payment_dispatch.qnt"],
       "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
     },
@@ -593,7 +593,7 @@
       "name": "mode",
       "kind": "sql-check",
       "values": ["dry_run", "live"],
-      "models": ["formal/models/fee_conversion.qnt"],
+      "models": ["formal/models/fees/fee_conversion.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -611,7 +611,7 @@
         "submitted",
         "unknown"
       ],
-      "models": ["formal/models/fee_conversion.qnt"],
+      "models": ["formal/models/fees/fee_conversion.qnt"],
       "lexicallyUnmentionedValues": ["failed", "skipped", "submitted"],
       "review": "candidate-only"
     },
@@ -621,7 +621,7 @@
       "name": "state_after",
       "kind": "sql-check",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -631,7 +631,7 @@
       "name": "result",
       "kind": "sql-check",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -645,7 +645,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["clean", "incomplete", "malicious", "pending"],
-      "models": ["formal/models/vetting_result_atomic.qnt"],
+      "models": ["formal/models/vetting/vetting_result_atomic.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -655,7 +655,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["blocked", "quarantined", "released"],
-      "models": ["formal/models/vetting_result_atomic.qnt"],
+      "models": ["formal/models/vetting/vetting_result_atomic.qnt"],
       "lexicallyUnmentionedValues": ["blocked", "quarantined", "released"],
       "review": "candidate-only"
     },
@@ -666,8 +666,8 @@
       "kind": "sql-check",
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
@@ -688,8 +688,8 @@
         "triaging"
       ],
       "models": [
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["duplicate", "out-of-scope"],
       "review": "candidate-only"
@@ -709,8 +709,8 @@
         "retest"
       ],
       "models": [
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "fixing",
@@ -734,8 +734,8 @@
         "reserved"
       ],
       "models": [
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "capacity-exhausted",
@@ -751,8 +751,8 @@
       "kind": "sql-check",
       "values": ["not-applicable", "rail-unavailable"],
       "models": [
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["not-applicable", "rail-unavailable"],
       "review": "candidate-only"
@@ -764,8 +764,8 @@
       "kind": "sql-check",
       "values": ["disclosed", "embargoed", "redaction-approved"],
       "models": [
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["embargoed", "redaction-approved"],
       "review": "candidate-only"
@@ -777,8 +777,8 @@
       "kind": "sql-check",
       "values": ["none", "open", "returned", "upheld"],
       "models": [
-        "formal/models/api_private_case.qnt",
-        "formal/models/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["none", "open", "returned", "upheld"],
       "review": "candidate-only"
@@ -789,7 +789,7 @@
       "name": "state_after",
       "kind": "sql-check",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -799,7 +799,7 @@
       "name": "decision_source",
       "kind": "sql-check",
       "values": ["admin-panel", "owner-request"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": ["admin-panel", "owner-request"],
       "review": "candidate-only"
     },
@@ -809,7 +809,7 @@
       "name": "result",
       "kind": "sql-check",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -834,10 +834,10 @@
         "suppressed"
       ],
       "models": [
-        "formal/models/api_mail_delivery.qnt",
-        "formal/models/notification_delivery.qnt",
-        "formal/models/notification_escalation.qnt",
-        "formal/models/notification_schema_upgrade.qnt"
+        "formal/models/api/api_mail_delivery.qnt",
+        "formal/models/api/notification_delivery.qnt",
+        "formal/models/api/notification_escalation.qnt",
+        "formal/models/api/notification_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -848,7 +848,7 @@
       "name": "state_after",
       "kind": "sql-check",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -858,7 +858,7 @@
       "name": "decision_source",
       "kind": "sql-check",
       "values": ["admin-panel", "owner-request", "standing-rule"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "admin-panel",
         "owner-request",
@@ -872,7 +872,7 @@
       "name": "result",
       "kind": "sql-check",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -897,10 +897,10 @@
         "suppressed"
       ],
       "models": [
-        "formal/models/api_email_consent.qnt",
-        "formal/models/api_mail_delivery.qnt",
-        "formal/models/notification_delivery.qnt",
-        "formal/models/notification_schema_upgrade.qnt"
+        "formal/models/api/api_email_consent.qnt",
+        "formal/models/api/api_mail_delivery.qnt",
+        "formal/models/api/notification_delivery.qnt",
+        "formal/models/api/notification_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -911,7 +911,7 @@
       "name": "outcome",
       "kind": "sql-check",
       "values": ["accepted", "ambiguous"],
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -922,8 +922,8 @@
       "kind": "sql-check",
       "values": ["completed", "running", "waiting"],
       "models": [
-        "formal/models/bot_value_request.qnt",
-        "formal/models/value_schema_upgrade.qnt"
+        "formal/models/slopbot/bot_value_request.qnt",
+        "formal/models/slopbot/value_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -943,8 +943,8 @@
         "source-incomplete"
       ],
       "models": [
-        "formal/models/bot_value_request.qnt",
-        "formal/models/value_schema_upgrade.qnt"
+        "formal/models/slopbot/bot_value_request.qnt",
+        "formal/models/slopbot/value_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -955,7 +955,7 @@
       "name": "status",
       "kind": "sql-check",
       "values": ["pending", "processing"],
-      "models": ["formal/models/api_accounts.qnt"],
+      "models": ["formal/models/api/api_accounts.qnt"],
       "lexicallyUnmentionedValues": ["pending", "processing"],
       "review": "candidate-only"
     },
@@ -965,7 +965,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["held", "paid", "processing", "ready", "submitted"],
-      "models": ["formal/models/bounty_payment.qnt"],
+      "models": ["formal/models/payments/bounty_payment.qnt"],
       "lexicallyUnmentionedValues": [
         "held",
         "processing",
@@ -980,7 +980,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["failed", "finalized", "prepared", "submitted", "unknown"],
-      "models": ["formal/models/bounty_payment.qnt"],
+      "models": ["formal/models/payments/bounty_payment.qnt"],
       "lexicallyUnmentionedValues": [
         "failed",
         "finalized",
@@ -995,7 +995,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/bounty_payment.qnt"],
+      "models": ["formal/models/payments/bounty_payment.qnt"],
       "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
     },
@@ -1014,8 +1014,8 @@
         "uncertain"
       ],
       "models": [
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1026,7 +1026,7 @@
       "name": "state_after",
       "kind": "sql-check",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/vetting_flag_reinstatement.qnt"],
+      "models": ["formal/models/vetting/vetting_flag_reinstatement.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1036,7 +1036,7 @@
       "name": "decision_source",
       "kind": "sql-check",
       "values": ["admin-panel", "owner-request", "standing-rule"],
-      "models": ["formal/models/vetting_flag_reinstatement.qnt"],
+      "models": ["formal/models/vetting/vetting_flag_reinstatement.qnt"],
       "lexicallyUnmentionedValues": [
         "admin-panel",
         "owner-request",
@@ -1050,7 +1050,7 @@
       "name": "result",
       "kind": "sql-check",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/vetting_flag_reinstatement.qnt"],
+      "models": ["formal/models/vetting/vetting_flag_reinstatement.qnt"],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -1064,7 +1064,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["active", "expired", "resolved", "withdrawn"],
-      "models": ["formal/models/vetting_flag_reinstatement.qnt"],
+      "models": ["formal/models/vetting/vetting_flag_reinstatement.qnt"],
       "lexicallyUnmentionedValues": [
         "active",
         "expired",
@@ -1080,8 +1080,8 @@
       "kind": "sql-check",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
-        "formal/models/api_private_authorization.qnt",
-        "formal/models/api_private_case.qnt"
+        "formal/models/api/api_private_authorization.qnt",
+        "formal/models/api/api_private_case.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "complete",
@@ -1097,7 +1097,7 @@
       "name": "phase",
       "kind": "sql-check",
       "values": ["backup", "cleanup", "complete"],
-      "models": ["formal/models/vetting_retention.qnt"],
+      "models": ["formal/models/vetting/vetting_retention.qnt"],
       "lexicallyUnmentionedValues": ["cleanup", "complete"],
       "review": "candidate-only"
     },
@@ -1107,7 +1107,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["complete", "failed", "running", "unavailable"],
-      "models": ["formal/models/api_private_assessment.qnt"],
+      "models": ["formal/models/api/api_private_assessment.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1117,7 +1117,7 @@
       "name": "state_after",
       "kind": "sql-check",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1132,7 +1132,7 @@
         "owner-request",
         "standing-rule"
       ],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "account-request",
         "admin-panel",
@@ -1147,7 +1147,7 @@
       "name": "result",
       "kind": "sql-check",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -1161,7 +1161,7 @@
       "name": "state_after",
       "kind": "sql-check",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1176,7 +1176,7 @@
         "owner-request",
         "standing-rule"
       ],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "account-request",
         "admin-panel",
@@ -1191,7 +1191,7 @@
       "name": "result",
       "kind": "sql-check",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/api_project_enforcement.qnt"],
+      "models": ["formal/models/api/api_project_enforcement.qnt"],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -1205,7 +1205,7 @@
       "name": "outcome",
       "kind": "sql-check",
       "values": ["accepted", "rejected", "unknown"],
-      "models": ["formal/models/vetting_publication.qnt"],
+      "models": ["formal/models/vetting/vetting_publication.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1216,8 +1216,8 @@
       "kind": "sql-check",
       "values": ["dry_run", "live"],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1238,8 +1238,8 @@
         "unknown"
       ],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "failed",
@@ -1256,8 +1256,8 @@
       "kind": "sql-check",
       "values": ["dry_run", "live"],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1278,8 +1278,8 @@
         "unknown"
       ],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "failed",
@@ -1296,8 +1296,8 @@
       "kind": "sql-check",
       "values": ["dry_run", "live"],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1318,8 +1318,8 @@
         "unknown"
       ],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "failed",
@@ -1335,7 +1335,7 @@
       "name": "outcome",
       "kind": "sql-check",
       "values": ["accepted", "ambiguous"],
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1353,7 +1353,7 @@
         "referrer_excluded",
         "window_closed"
       ],
-      "models": ["formal/models/referral_accrual.qnt"],
+      "models": ["formal/models/referrals/referral_accrual.qnt"],
       "lexicallyUnmentionedValues": [
         "asset_not_eligible",
         "held",
@@ -1370,7 +1370,7 @@
       "name": "mode",
       "kind": "sql-check",
       "values": ["dry_run", "live"],
-      "models": ["formal/models/referral_accrual.qnt"],
+      "models": ["formal/models/referrals/referral_accrual.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1381,8 +1381,8 @@
       "kind": "sql-check",
       "values": ["failed", "finalized", "submitted", "unknown", "voided"],
       "models": [
-        "formal/models/referral_distribution.qnt",
-        "formal/models/referral_posting.qnt"
+        "formal/models/referrals/referral_distribution.qnt",
+        "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1394,8 +1394,8 @@
       "kind": "sql-check",
       "values": ["dry_run", "live"],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1416,8 +1416,8 @@
         "unknown"
       ],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "failed",
@@ -1434,8 +1434,8 @@
       "kind": "sql-check",
       "values": ["abandoned", "reserved", "signed"],
       "models": [
-        "formal/models/fee_lease_journal.qnt",
-        "formal/models/native_budget.qnt"
+        "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/native_budget.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1446,7 +1446,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["abandoned", "reserved", "signed"],
-      "models": ["formal/models/native_budget.qnt"],
+      "models": ["formal/models/fees/native_budget.qnt"],
       "lexicallyUnmentionedValues": ["signed"],
       "review": "candidate-only"
     },
@@ -1456,7 +1456,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["completed", "running", "waiting"],
-      "models": ["formal/models/bot_value_request.qnt"],
+      "models": ["formal/models/slopbot/bot_value_request.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1475,7 +1475,7 @@
         "retry",
         "source-incomplete"
       ],
-      "models": ["formal/models/bot_value_request.qnt"],
+      "models": ["formal/models/slopbot/bot_value_request.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1486,9 +1486,9 @@
       "kind": "sql-check",
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
@@ -1509,9 +1509,9 @@
         "triaging"
       ],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["duplicate", "out-of-scope"],
       "review": "candidate-only"
@@ -1531,9 +1531,9 @@
         "retest"
       ],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "fixing",
@@ -1560,9 +1560,9 @@
         "reserved"
       ],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "capacity-exhausted",
@@ -1578,9 +1578,9 @@
       "kind": "sql-check",
       "values": ["not-applicable", "rail-unavailable"],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["not-applicable", "rail-unavailable"],
       "review": "candidate-only"
@@ -1592,9 +1592,9 @@
       "kind": "sql-check",
       "values": ["disclosed", "embargoed", "redaction-approved"],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "disclosed",
@@ -1610,9 +1610,9 @@
       "kind": "sql-check",
       "values": ["none", "open", "returned", "upheld"],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["none", "open", "returned", "upheld"],
       "review": "candidate-only"
@@ -1631,9 +1631,9 @@
         "unavailable"
       ],
       "models": [
-        "formal/models/api_private_case_transaction.qnt",
-        "formal/models/api_private_intake.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1645,8 +1645,8 @@
       "kind": "sql-check",
       "values": ["completed", "running", "waiting"],
       "models": [
-        "formal/models/bot_value_request.qnt",
-        "formal/models/value_schema_upgrade.qnt"
+        "formal/models/slopbot/bot_value_request.qnt",
+        "formal/models/slopbot/value_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1670,8 +1670,8 @@
         "source-incomplete"
       ],
       "models": [
-        "formal/models/bot_value_request.qnt",
-        "formal/models/value_schema_upgrade.qnt"
+        "formal/models/slopbot/bot_value_request.qnt",
+        "formal/models/slopbot/value_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1688,7 +1688,7 @@
         "callback_processing",
         "pending"
       ],
-      "models": ["formal/models/api_identity.qnt"],
+      "models": ["formal/models/api/api_identity.qnt"],
       "lexicallyUnmentionedValues": [
         "assertion_issued",
         "callback_complete",
@@ -1704,9 +1704,9 @@
       "kind": "sql-check",
       "values": ["queued", "sending", "sent", "unknown"],
       "models": [
-        "formal/models/api_email_consent.qnt",
-        "formal/models/email_enrollment_delivery.qnt",
-        "formal/models/notification_schema_upgrade.qnt"
+        "formal/models/api/api_email_consent.qnt",
+        "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/notification_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1718,8 +1718,8 @@
       "kind": "sql-check",
       "values": ["confirmed", "pending", "rejected"],
       "models": [
-        "formal/models/bot_author_admission.qnt",
-        "formal/models/bot_close_capacity.qnt"
+        "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_capacity.qnt"
       ],
       "lexicallyUnmentionedValues": ["pending"],
       "review": "candidate-only"
@@ -1731,8 +1731,8 @@
       "kind": "string-union",
       "values": ["held-below-minimum", "paid-direct", "unclaimed"],
       "models": [
-        "formal/models/historical_disclosure.qnt",
-        "formal/models/source_import.qnt"
+        "formal/models/payments/historical_disclosure.qnt",
+        "formal/models/points/source_import.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "held-below-minimum",
@@ -1747,7 +1747,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["reverted", "success"],
-      "models": ["formal/models/acceptance_run.qnt"],
+      "models": ["formal/models/contracts/acceptance_run.qnt"],
       "lexicallyUnmentionedValues": ["reverted", "success"],
       "review": "candidate-only"
     },
@@ -1757,7 +1757,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["passed", "pending"],
-      "models": ["formal/models/acceptance_run.qnt"],
+      "models": ["formal/models/contracts/acceptance_run.qnt"],
       "lexicallyUnmentionedValues": ["pending"],
       "review": "candidate-only"
     },
@@ -1767,7 +1767,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "passed", "pending"],
-      "models": ["formal/models/acceptance_run.qnt"],
+      "models": ["formal/models/contracts/acceptance_run.qnt"],
       "lexicallyUnmentionedValues": ["pending"],
       "review": "candidate-only"
     },
@@ -1777,7 +1777,7 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["local", "public-testnet"],
-      "models": ["formal/models/acceptance_run.qnt"],
+      "models": ["formal/models/contracts/acceptance_run.qnt"],
       "lexicallyUnmentionedValues": ["public-testnet"],
       "review": "candidate-only"
     },
@@ -1787,7 +1787,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "passed", "running", "waiting"],
-      "models": ["formal/models/acceptance_run.qnt"],
+      "models": ["formal/models/contracts/acceptance_run.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1797,7 +1797,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["active", "paused"],
-      "models": ["formal/models/acceptance_run.qnt"],
+      "models": ["formal/models/contracts/acceptance_run.qnt"],
       "lexicallyUnmentionedValues": ["active", "paused"],
       "review": "candidate-only"
     },
@@ -1807,7 +1807,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["active", "paused"],
-      "models": ["formal/models/acceptance_run.qnt"],
+      "models": ["formal/models/contracts/acceptance_run.qnt"],
       "lexicallyUnmentionedValues": ["active", "paused"],
       "review": "candidate-only"
     },
@@ -1817,7 +1817,7 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["local", "public-testnet"],
-      "models": ["formal/models/evm_upgrade_qualification.qnt"],
+      "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
       "lexicallyUnmentionedValues": ["local", "public-testnet"],
       "review": "candidate-only"
     },
@@ -1834,7 +1834,7 @@
         "planned",
         "waiting"
       ],
-      "models": ["formal/models/evm_upgrade_qualification.qnt"],
+      "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
       "lexicallyUnmentionedValues": ["failed", "passed", "waiting"],
       "review": "candidate-only"
     },
@@ -1845,10 +1845,10 @@
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
-        "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt",
-        "formal/models/value_feed_deadline.qnt"
+        "formal/models/points/github_census.qnt",
+        "formal/models/points/ingestion_retry.qnt",
+        "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged", "open"],
       "review": "candidate-only"
@@ -1865,10 +1865,10 @@
         "resolved-issues"
       ],
       "models": [
-        "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt",
-        "formal/models/value_feed_deadline.qnt"
+        "formal/models/points/github_census.qnt",
+        "formal/models/points/ingestion_retry.qnt",
+        "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "merged-pull-requests",
@@ -1885,10 +1885,10 @@
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
-        "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt",
-        "formal/models/value_feed_deadline.qnt"
+        "formal/models/points/github_census.qnt",
+        "formal/models/points/ingestion_retry.qnt",
+        "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged"],
       "review": "candidate-only"
@@ -1900,10 +1900,10 @@
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
-        "formal/models/github_census.qnt",
-        "formal/models/ingestion_retry.qnt",
-        "formal/models/pr_review_recovery.qnt",
-        "formal/models/value_feed_deadline.qnt"
+        "formal/models/points/github_census.qnt",
+        "formal/models/points/ingestion_retry.qnt",
+        "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
       "review": "candidate-only"
@@ -1915,8 +1915,8 @@
       "kind": "string-union",
       "values": ["under-review", "unresolved-proposals"],
       "models": [
-        "formal/models/prior_cycle_carry.qnt",
-        "formal/models/unsafe_destination_history.qnt"
+        "formal/models/payments/unsafe_destination_history.qnt",
+        "formal/models/rewards/prior_cycle_carry.qnt"
       ],
       "lexicallyUnmentionedValues": ["under-review", "unresolved-proposals"],
       "review": "candidate-only"
@@ -1927,7 +1927,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["CLOSED", "OPEN"],
-      "models": ["formal/models/github_census.qnt"],
+      "models": ["formal/models/points/github_census.qnt"],
       "lexicallyUnmentionedValues": ["CLOSED", "OPEN"],
       "review": "candidate-only"
     },
@@ -1938,8 +1938,8 @@
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
       "models": [
-        "formal/models/value_feed_deadline.qnt",
-        "formal/models/value_ingestion.qnt"
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/slopbot/value_ingestion.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "headRefOid",
@@ -1957,9 +1957,9 @@
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
       "models": [
-        "formal/models/ui_admin_editor_lifetime.qnt",
-        "formal/models/ui_admin_review.qnt",
-        "formal/models/ui_focus_session.qnt"
+        "formal/models/ui/ui_admin_editor_lifetime.qnt",
+        "formal/models/ui/ui_admin_review.qnt",
+        "formal/models/ui/ui_focus_session.qnt"
       ],
       "lexicallyUnmentionedValues": ["not_converted", "usdc"],
       "review": "candidate-only"
@@ -1970,7 +1970,7 @@
       "name": "useState",
       "kind": "string-union",
       "values": ["apply", "preview"],
-      "models": ["formal/models/ui_admin_review.qnt"],
+      "models": ["formal/models/ui/ui_admin_review.qnt"],
       "lexicallyUnmentionedValues": ["apply"],
       "review": "candidate-only"
     },
@@ -1980,7 +1980,7 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["enforcement", "enforcement-preview"],
-      "models": ["formal/models/ui_admin_review.qnt"],
+      "models": ["formal/models/ui/ui_admin_review.qnt"],
       "lexicallyUnmentionedValues": ["enforcement", "enforcement-preview"],
       "review": "candidate-only"
     },
@@ -1991,13 +1991,13 @@
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
       "models": [
-        "formal/models/ui_hash_navigation.qnt",
-        "formal/models/ui_hero_animation.qnt",
-        "formal/models/ui_navigation.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt",
-        "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt"
+        "formal/models/ui/ui_hash_navigation.qnt",
+        "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_navigation.qnt",
+        "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/ui/ui_project_discovery.qnt",
+        "formal/models/ui/ui_project_images.qnt",
+        "formal/models/ui/ui_project_work.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2009,13 +2009,13 @@
       "kind": "string-union",
       "values": ["copied", "error", "idle"],
       "models": [
-        "formal/models/ui_hash_navigation.qnt",
-        "formal/models/ui_hero_animation.qnt",
-        "formal/models/ui_navigation.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt",
-        "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt"
+        "formal/models/ui/ui_hash_navigation.qnt",
+        "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_navigation.qnt",
+        "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/ui/ui_project_discovery.qnt",
+        "formal/models/ui/ui_project_images.qnt",
+        "formal/models/ui/ui_project_work.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2027,13 +2027,13 @@
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
       "models": [
-        "formal/models/ui_hash_navigation.qnt",
-        "formal/models/ui_hero_animation.qnt",
-        "formal/models/ui_navigation.qnt",
-        "formal/models/ui_owner_bounty_funds.qnt",
-        "formal/models/ui_project_discovery.qnt",
-        "formal/models/ui_project_images.qnt",
-        "formal/models/ui_project_work.qnt"
+        "formal/models/ui/ui_hash_navigation.qnt",
+        "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_navigation.qnt",
+        "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/ui/ui_project_discovery.qnt",
+        "formal/models/ui/ui_project_images.qnt",
+        "formal/models/ui/ui_project_work.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2045,9 +2045,9 @@
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
       "models": [
-        "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt",
-        "formal/models/ui_email_parent.qnt"
+        "formal/models/ui/ui_email.qnt",
+        "formal/models/ui/ui_email_actions.qnt",
+        "formal/models/ui/ui_email_parent.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "expired",
@@ -2065,9 +2065,9 @@
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
       "models": [
-        "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt",
-        "formal/models/ui_email_parent.qnt"
+        "formal/models/ui/ui_email.qnt",
+        "formal/models/ui/ui_email_actions.qnt",
+        "formal/models/ui/ui_email_parent.qnt"
       ],
       "lexicallyUnmentionedValues": ["unavailable", "unverified"],
       "review": "candidate-only"
@@ -2079,9 +2079,9 @@
       "kind": "string-union",
       "values": ["loading", "signed-out"],
       "models": [
-        "formal/models/ui_email.qnt",
-        "formal/models/ui_email_actions.qnt",
-        "formal/models/ui_email_parent.qnt"
+        "formal/models/ui/ui_email.qnt",
+        "formal/models/ui/ui_email_actions.qnt",
+        "formal/models/ui/ui_email_parent.qnt"
       ],
       "lexicallyUnmentionedValues": ["loading", "signed-out"],
       "review": "candidate-only"
@@ -2092,7 +2092,7 @@
       "name": "useState",
       "kind": "string-union",
       "values": ["copied", "failed"],
-      "models": ["formal/models/ui_navigation.qnt"],
+      "models": ["formal/models/ui/ui_navigation.qnt"],
       "lexicallyUnmentionedValues": ["failed"],
       "review": "candidate-only"
     },
@@ -2102,7 +2102,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
-      "models": ["formal/models/ui_project_setup.qnt"],
+      "models": ["formal/models/ui/ui_project_setup.qnt"],
       "lexicallyUnmentionedValues": ["idle", "submitting"],
       "review": "candidate-only"
     },
@@ -2113,9 +2113,9 @@
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
       "models": [
-        "formal/models/ui_calendar_views.qnt",
-        "formal/models/ui_email_parent.qnt",
-        "formal/models/ui_session.qnt"
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_email_parent.qnt",
+        "formal/models/ui/ui_session.qnt"
       ],
       "lexicallyUnmentionedValues": ["loading"],
       "review": "candidate-only"
@@ -2127,9 +2127,9 @@
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
       "models": [
-        "formal/models/ui_calendar_views.qnt",
-        "formal/models/ui_email_parent.qnt",
-        "formal/models/ui_session.qnt"
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_email_parent.qnt",
+        "formal/models/ui/ui_session.qnt"
       ],
       "lexicallyUnmentionedValues": ["absent", "loading", "unavailable"],
       "review": "candidate-only"
@@ -2141,9 +2141,9 @@
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
       "models": [
-        "formal/models/ui_calendar_views.qnt",
-        "formal/models/ui_email_parent.qnt",
-        "formal/models/ui_session.qnt"
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_email_parent.qnt",
+        "formal/models/ui/ui_session.qnt"
       ],
       "lexicallyUnmentionedValues": ["loading", "preview"],
       "review": "candidate-only"
@@ -2154,7 +2154,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["resolved", "review", "triage"],
-      "models": ["formal/models/ui_inbox.qnt"],
+      "models": ["formal/models/ui/ui_inbox.qnt"],
       "lexicallyUnmentionedValues": ["resolved", "review", "triage"],
       "review": "candidate-only"
     },
@@ -2173,9 +2173,9 @@
         "uncertain"
       ],
       "models": [
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_record_deadlines.qnt"
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2194,9 +2194,9 @@
         "unavailable"
       ],
       "models": [
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_record_deadlines.qnt"
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2208,9 +2208,9 @@
       "kind": "string-union",
       "values": ["pending", "routed"],
       "models": [
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_record_deadlines.qnt"
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt"
       ],
       "lexicallyUnmentionedValues": ["pending", "routed"],
       "review": "candidate-only"
@@ -2221,7 +2221,7 @@
       "name": "inputMode",
       "kind": "string-union",
       "values": ["decimal", "numeric"],
-      "models": ["formal/models/ui_project_setup.qnt"],
+      "models": ["formal/models/ui/ui_project_setup.qnt"],
       "lexicallyUnmentionedValues": ["decimal", "numeric"],
       "review": "candidate-only"
     },
@@ -2232,14 +2232,14 @@
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
       "models": [
-        "formal/models/ui_calendar_views.qnt",
-        "formal/models/ui_draft_save_progress.qnt",
-        "formal/models/ui_draft_slots.qnt",
-        "formal/models/ui_focus_session.qnt",
-        "formal/models/ui_image_decode.qnt",
-        "formal/models/ui_project_draft.qnt",
-        "formal/models/ui_project_setup.qnt",
-        "formal/models/ui_repository_lookup.qnt"
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt"
       ],
       "lexicallyUnmentionedValues": ["done"],
       "review": "candidate-only"
@@ -2251,14 +2251,14 @@
       "kind": "string-union",
       "values": ["idle", "submitting"],
       "models": [
-        "formal/models/ui_calendar_views.qnt",
-        "formal/models/ui_draft_save_progress.qnt",
-        "formal/models/ui_draft_slots.qnt",
-        "formal/models/ui_focus_session.qnt",
-        "formal/models/ui_image_decode.qnt",
-        "formal/models/ui_project_draft.qnt",
-        "formal/models/ui_project_setup.qnt",
-        "formal/models/ui_repository_lookup.qnt"
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt"
       ],
       "lexicallyUnmentionedValues": ["submitting"],
       "review": "candidate-only"
@@ -2270,14 +2270,14 @@
       "kind": "string-union",
       "values": ["idle", "publishing"],
       "models": [
-        "formal/models/ui_calendar_views.qnt",
-        "formal/models/ui_draft_save_progress.qnt",
-        "formal/models/ui_draft_slots.qnt",
-        "formal/models/ui_focus_session.qnt",
-        "formal/models/ui_image_decode.qnt",
-        "formal/models/ui_project_draft.qnt",
-        "formal/models/ui_project_setup.qnt",
-        "formal/models/ui_repository_lookup.qnt"
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2289,20 +2289,20 @@
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden"],
       "review": "candidate-only"
@@ -2314,20 +2314,20 @@
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["complete"],
       "review": "candidate-only"
@@ -2339,20 +2339,20 @@
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["complete"],
       "review": "candidate-only"
@@ -2364,20 +2364,20 @@
       "kind": "string-union",
       "values": ["return", "uphold"],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["return", "uphold"],
       "review": "candidate-only"
@@ -2389,20 +2389,20 @@
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected"],
       "review": "candidate-only"
@@ -2428,20 +2428,20 @@
         "wallet-required"
       ],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "cancellation-required",
@@ -2467,20 +2467,20 @@
       "kind": "string-union",
       "values": ["ok", "unavailable"],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["ok"],
       "review": "candidate-only"
@@ -2492,20 +2492,20 @@
       "kind": "string-union",
       "values": ["forward", "request-information"],
       "models": [
-        "formal/models/ui_bounty_payment_parent.qnt",
-        "formal/models/ui_inbox.qnt",
-        "formal/models/ui_intake_handoff.qnt",
-        "formal/models/ui_private_case_revisions.qnt",
-        "formal/models/ui_private_intake.qnt",
-        "formal/models/ui_private_report_identity.qnt",
-        "formal/models/ui_private_report_projection.qnt",
-        "formal/models/ui_private_report_scroll.qnt",
-        "formal/models/ui_record_deadlines.qnt",
-        "formal/models/ui_record_display.qnt",
-        "formal/models/ui_solana_history_recovery.qnt",
-        "formal/models/ui_solana_payment_pending.qnt",
-        "formal/models/ui_submission_controls.qnt",
-        "formal/models/ui_submitted_payment_recovery.qnt"
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["request-information"],
       "review": "candidate-only"
@@ -2516,7 +2516,7 @@
       "name": "fundingState",
       "kind": "string-union",
       "values": ["committed", "pledged"],
-      "models": ["formal/models/allocation_funding.qnt"],
+      "models": ["formal/models/rewards/allocation_funding.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -2527,8 +2527,8 @@
       "kind": "string-union",
       "values": ["awaiting-wallet", "scheduled", "sent", "unclaimed"],
       "models": [
-        "formal/models/contributor_allocation.qnt",
-        "formal/models/ui_contributor_allocation.qnt"
+        "formal/models/rewards/contributor_allocation.qnt",
+        "formal/models/ui/ui_contributor_allocation.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2547,7 +2547,7 @@
         "settlement-planned",
         "wound-up"
       ],
-      "models": ["formal/models/ui_cycle_publication.qnt"],
+      "models": ["formal/models/ui/ui_cycle_publication.qnt"],
       "lexicallyUnmentionedValues": [
         "closed-no-awards",
         "external-provisional",
@@ -2658,11 +2658,11 @@
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
       "models": [
-        "formal/models/legacy_score_caps.qnt",
-        "formal/models/ui_review_pool.qnt",
-        "formal/models/ui_score_ledger.qnt",
-        "formal/models/ui_score_selection.qnt",
-        "formal/models/ui_snapshot_contract.qnt"
+        "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/ui/ui_review_pool.qnt",
+        "formal/models/ui/ui_score_ledger.qnt",
+        "formal/models/ui/ui_score_selection.qnt",
+        "formal/models/ui/ui_snapshot_contract.qnt"
       ],
       "lexicallyUnmentionedValues": ["APPROVED", "CHANGES_REQUESTED"],
       "review": "candidate-only"
@@ -2673,7 +2673,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
-      "models": ["formal/models/solana_owner_action.qnt"],
+      "models": ["formal/models/contracts/solana_owner_action.qnt"],
       "lexicallyUnmentionedValues": ["failed", "pending"],
       "review": "candidate-only"
     },
@@ -2684,8 +2684,8 @@
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
-        "formal/models/escrow_balances.qnt",
-        "formal/models/ordinary_fee.qnt"
+        "formal/models/fees/ordinary_fee.qnt",
+        "formal/models/rewards/escrow_balances.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2704,8 +2704,8 @@
         "underfunded"
       ],
       "models": [
-        "formal/models/escrow_balances.qnt",
-        "formal/models/ordinary_fee.qnt"
+        "formal/models/fees/ordinary_fee.qnt",
+        "formal/models/rewards/escrow_balances.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "awaiting-reservation",
@@ -2721,7 +2721,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["approved", "excluded", "held"],
-      "models": ["formal/models/historical_reward.qnt"],
+      "models": ["formal/models/rewards/historical_reward.qnt"],
       "lexicallyUnmentionedValues": ["excluded"],
       "review": "candidate-only"
     },
@@ -2731,7 +2731,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["CLOSED", "OPEN"],
-      "models": ["formal/models/ui_profile_history.qnt"],
+      "models": ["formal/models/ui/ui_profile_history.qnt"],
       "lexicallyUnmentionedValues": ["CLOSED", "OPEN"],
       "review": "candidate-only"
     },
@@ -2884,8 +2884,8 @@
       "kind": "string-union",
       "values": ["monthly", "none"],
       "models": [
-        "formal/models/ui_project_setup.qnt",
-        "formal/models/ui_repository_lookup.qnt"
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt"
       ],
       "lexicallyUnmentionedValues": ["monthly", "none"],
       "review": "candidate-only"
@@ -2901,7 +2901,7 @@
         "marker-copied-between-actors",
         "outside-snapshot-window"
       ],
-      "models": ["formal/models/monthly_allocation.qnt"],
+      "models": ["formal/models/rewards/monthly_allocation.qnt"],
       "lexicallyUnmentionedValues": [
         "conflicting-receipt-bytes",
         "device-key-shared-between-actors",
@@ -2916,7 +2916,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["closed", "live"],
-      "models": ["formal/models/monthly_allocation.qnt"],
+      "models": ["formal/models/rewards/monthly_allocation.qnt"],
       "lexicallyUnmentionedValues": ["closed", "live"],
       "review": "candidate-only"
     },
@@ -2926,7 +2926,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["ready", "stale", "unknown"],
-      "models": ["formal/models/referral_claim_review.qnt"],
+      "models": ["formal/models/referrals/referral_claim_review.qnt"],
       "lexicallyUnmentionedValues": ["ready", "stale"],
       "review": "candidate-only"
     },
@@ -2936,7 +2936,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["approved", "proposed"],
-      "models": ["formal/models/historical_reward.qnt"],
+      "models": ["formal/models/rewards/historical_reward.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -2946,7 +2946,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["assessed", "unresolved"],
-      "models": ["formal/models/bot_work_partition.qnt"],
+      "models": ["formal/models/slopbot/bot_work_partition.qnt"],
       "lexicallyUnmentionedValues": ["assessed", "unresolved"],
       "review": "candidate-only"
     },
@@ -2980,7 +2980,7 @@
       "name": "WalletPossessionState",
       "kind": "string-union",
       "values": ["not-provable-by-signature", "proven", "unproven"],
-      "models": ["formal/models/api_wallet_claims.qnt"],
+      "models": ["formal/models/api/api_wallet_claims.qnt"],
       "lexicallyUnmentionedValues": [
         "not-provable-by-signature",
         "proven",
@@ -2995,9 +2995,9 @@
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_quote_policy.qnt",
-        "formal/models/fee_wallet_handoff.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_wallet_handoff.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3018,12 +3018,12 @@
         "unknown"
       ],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_lease_journal.qnt",
-        "formal/models/fee_nonce_reuse.qnt",
-        "formal/models/fee_quote_policy.qnt",
-        "formal/models/fee_wallet_handoff.qnt",
-        "formal/models/signed_send.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/fee_nonce_reuse.qnt",
+        "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_wallet_handoff.qnt",
+        "formal/models/payments/signed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3035,12 +3035,12 @@
       "kind": "string-union",
       "values": ["dry_run", "live"],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_lease_journal.qnt",
-        "formal/models/fee_nonce_reuse.qnt",
-        "formal/models/fee_quote_policy.qnt",
-        "formal/models/fee_wallet_handoff.qnt",
-        "formal/models/signed_send.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/fee_nonce_reuse.qnt",
+        "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_wallet_handoff.qnt",
+        "formal/models/payments/signed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3052,12 +3052,12 @@
       "kind": "string-union",
       "values": ["locked", "not_converted", "ran"],
       "models": [
-        "formal/models/fee_conversion.qnt",
-        "formal/models/fee_lease_journal.qnt",
-        "formal/models/fee_nonce_reuse.qnt",
-        "formal/models/fee_quote_policy.qnt",
-        "formal/models/fee_wallet_handoff.qnt",
-        "formal/models/signed_send.qnt"
+        "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/fee_nonce_reuse.qnt",
+        "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_wallet_handoff.qnt",
+        "formal/models/payments/signed_send.qnt"
       ],
       "lexicallyUnmentionedValues": ["locked", "not_converted", "ran"],
       "review": "candidate-only"
@@ -3069,10 +3069,10 @@
       "kind": "string-union",
       "values": ["abandoned", "reserved", "signed"],
       "models": [
-        "formal/models/fee_lease_journal.qnt",
-        "formal/models/fee_nonce_reuse.qnt",
-        "formal/models/native_budget.qnt",
-        "formal/models/solana_expiry.qnt"
+        "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/fee_nonce_reuse.qnt",
+        "formal/models/fees/native_budget.qnt",
+        "formal/models/fees/solana_expiry.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3089,7 +3089,7 @@
         "callback_processing",
         "pending"
       ],
-      "models": ["formal/models/api_identity.qnt"],
+      "models": ["formal/models/api/api_identity.qnt"],
       "lexicallyUnmentionedValues": [
         "assertion_issued",
         "callback_complete",
@@ -3110,7 +3110,7 @@
         "unauthorized",
         "unreachable"
       ],
-      "models": ["formal/models/api_identity_admission.qnt"],
+      "models": ["formal/models/api/api_identity_admission.qnt"],
       "lexicallyUnmentionedValues": [
         "malformed",
         "rate-limited",
@@ -3126,7 +3126,7 @@
       "name": "activityDeliveryDecision",
       "kind": "string-union",
       "values": ["retry", "send", "suppress"],
-      "models": ["formal/models/api_mail_delivery.qnt"],
+      "models": ["formal/models/api/api_mail_delivery.qnt"],
       "lexicallyUnmentionedValues": ["retry", "send", "suppress"],
       "review": "candidate-only"
     },
@@ -3136,7 +3136,7 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "execute", "off"],
-      "models": ["formal/models/operator_keeper.qnt"],
+      "models": ["formal/models/payments/operator_keeper.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -3147,8 +3147,8 @@
       "kind": "string-union",
       "values": ["original_finalized", "original_reverted", "superseded"],
       "models": [
-        "formal/models/binding_cancellation.qnt",
-        "formal/models/signed_send.qnt"
+        "formal/models/payments/binding_cancellation.qnt",
+        "formal/models/payments/signed_send.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "original_finalized",
@@ -3164,13 +3164,13 @@
       "kind": "string-union",
       "values": ["none", "required"],
       "models": [
-        "formal/models/authority_rotation.qnt",
-        "formal/models/binding_cancellation.qnt",
-        "formal/models/binding_consent_renewal.qnt",
-        "formal/models/monthly_execution_recovery.qnt",
-        "formal/models/payment_binding.qnt",
-        "formal/models/payment_unsigned_retirement.qnt",
-        "formal/models/signed_send.qnt"
+        "formal/models/payments/authority_rotation.qnt",
+        "formal/models/payments/binding_cancellation.qnt",
+        "formal/models/payments/binding_consent_renewal.qnt",
+        "formal/models/payments/payment_binding.qnt",
+        "formal/models/payments/payment_unsigned_retirement.qnt",
+        "formal/models/payments/signed_send.qnt",
+        "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["required"],
       "review": "candidate-only"
@@ -3190,8 +3190,8 @@
         "window_closed"
       ],
       "models": [
-        "formal/models/referral_accrual.qnt",
-        "formal/models/referral_posting.qnt"
+        "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "asset_not_eligible",
@@ -3210,8 +3210,8 @@
       "kind": "string-union",
       "values": ["dry_run", "live"],
       "models": [
-        "formal/models/referral_accrual.qnt",
-        "formal/models/referral_posting.qnt"
+        "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3223,8 +3223,8 @@
       "kind": "string-union",
       "values": ["locked", "ran"],
       "models": [
-        "formal/models/referral_accrual.qnt",
-        "formal/models/referral_posting.qnt"
+        "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": ["locked", "ran"],
       "review": "candidate-only"
@@ -3236,8 +3236,8 @@
       "kind": "string-union",
       "values": ["accrued", "pool_cap", "project_cap"],
       "models": [
-        "formal/models/referral_accrual.qnt",
-        "formal/models/referral_posting.qnt"
+        "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": ["pool_cap", "project_cap"],
       "review": "candidate-only"
@@ -3249,8 +3249,8 @@
       "kind": "string-union",
       "values": ["failed", "finalized", "submitted", "unknown", "voided"],
       "models": [
-        "formal/models/referral_accrual.qnt",
-        "formal/models/referral_posting.qnt"
+        "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3272,8 +3272,8 @@
         "precheck_failed"
       ],
       "models": [
-        "formal/models/referral_accrual.qnt",
-        "formal/models/referral_posting.qnt"
+        "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": ["precheck_failed"],
       "review": "candidate-only"
@@ -3285,8 +3285,8 @@
       "kind": "string-union",
       "values": ["confirmed", "pending", "rejected"],
       "models": [
-        "formal/models/bot_close_capacity.qnt",
-        "formal/models/bot_close_recovery_claim.qnt"
+        "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_close_recovery_claim.qnt"
       ],
       "lexicallyUnmentionedValues": ["pending"],
       "review": "candidate-only"
@@ -3298,9 +3298,9 @@
       "kind": "string-union",
       "values": ["close", "label", "off"],
       "models": [
-        "formal/models/bot_author_admission.qnt",
-        "formal/models/bot_close_capacity.qnt",
-        "formal/models/bot_review_admission.qnt"
+        "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_review_admission.qnt"
       ],
       "lexicallyUnmentionedValues": ["label", "off"],
       "review": "candidate-only"
@@ -3311,7 +3311,7 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -3321,7 +3321,7 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
-      "models": ["formal/models/bot_notice_delivery.qnt"],
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -3331,7 +3331,7 @@
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
-      "models": ["formal/models/bot_repository_access.qnt"],
+      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
       "lexicallyUnmentionedValues": ["exempt", "not-exempt"],
       "review": "candidate-only"
     },
@@ -3342,8 +3342,8 @@
       "kind": "string-union",
       "values": ["active", "removed", "suspended"],
       "models": [
-        "formal/models/bot_installation_lifecycle.qnt",
-        "formal/models/bot_webhook_delivery.qnt"
+        "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": ["active"],
       "review": "candidate-only"
@@ -3354,7 +3354,7 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["labeled", "maintainer_acted", "superseded"],
-      "models": ["formal/models/bot_moderation.qnt"],
+      "models": ["formal/models/slopbot/bot_moderation.qnt"],
       "lexicallyUnmentionedValues": [
         "labeled",
         "maintainer_acted",
@@ -3368,7 +3368,7 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["failed", "ok"],
-      "models": ["formal/models/bot_producer_provenance.qnt"],
+      "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
       "lexicallyUnmentionedValues": ["ok"],
       "review": "candidate-only"
     },
@@ -3378,7 +3378,7 @@
       "name": "reason",
       "kind": "string-union",
       "values": ["appeal_upheld", "maintainer_reopen"],
-      "models": ["formal/models/bot_appeal.qnt"],
+      "models": ["formal/models/slopbot/bot_appeal.qnt"],
       "lexicallyUnmentionedValues": ["appeal_upheld", "maintainer_reopen"],
       "review": "candidate-only"
     },
@@ -3389,12 +3389,12 @@
       "kind": "string-union",
       "values": ["active", "removed", "suspended"],
       "models": [
-        "formal/models/bot_author_admission.qnt",
-        "formal/models/bot_close_recovery_claim.qnt",
-        "formal/models/bot_installation_lifecycle.qnt",
-        "formal/models/bot_provider_cost_history.qnt",
-        "formal/models/bot_review_lease.qnt",
-        "formal/models/bot_webhook_delivery.qnt"
+        "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_recovery_claim.qnt",
+        "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_provider_cost_history.qnt",
+        "formal/models/slopbot/bot_review_lease.qnt",
+        "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": ["active"],
       "review": "candidate-only"
@@ -3406,12 +3406,12 @@
       "kind": "string-union",
       "values": ["completed", "failed", "skipped"],
       "models": [
-        "formal/models/bot_author_admission.qnt",
-        "formal/models/bot_close_recovery_claim.qnt",
-        "formal/models/bot_installation_lifecycle.qnt",
-        "formal/models/bot_provider_cost_history.qnt",
-        "formal/models/bot_review_lease.qnt",
-        "formal/models/bot_webhook_delivery.qnt"
+        "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_recovery_claim.qnt",
+        "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_provider_cost_history.qnt",
+        "formal/models/slopbot/bot_review_lease.qnt",
+        "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3423,10 +3423,10 @@
       "kind": "string-union",
       "values": ["category", "confidence"],
       "models": [
-        "formal/models/bot_author_admission.qnt",
-        "formal/models/bot_close_capacity.qnt",
-        "formal/models/bot_close_recovery_claim.qnt",
-        "formal/models/bot_moderation.qnt"
+        "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_close_recovery_claim.qnt",
+        "formal/models/slopbot/bot_moderation.qnt"
       ],
       "lexicallyUnmentionedValues": ["category", "confidence"],
       "review": "candidate-only"
@@ -3438,10 +3438,10 @@
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
       "models": [
-        "formal/models/bot_author_admission.qnt",
-        "formal/models/bot_close_capacity.qnt",
-        "formal/models/bot_close_recovery_claim.qnt",
-        "formal/models/bot_moderation.qnt"
+        "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_close_recovery_claim.qnt",
+        "formal/models/slopbot/bot_moderation.qnt"
       ],
       "lexicallyUnmentionedValues": ["draft", "escalation", "resolution"],
       "review": "candidate-only"
@@ -3453,10 +3453,10 @@
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
       "models": [
-        "formal/models/bot_author_admission.qnt",
-        "formal/models/bot_close_capacity.qnt",
-        "formal/models/bot_close_recovery_claim.qnt",
-        "formal/models/bot_moderation.qnt"
+        "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_close_recovery_claim.qnt",
+        "formal/models/slopbot/bot_moderation.qnt"
       ],
       "lexicallyUnmentionedValues": ["draft", "escalation", "resolution"],
       "review": "candidate-only"
@@ -3480,9 +3480,9 @@
         "source-incomplete"
       ],
       "models": [
-        "formal/models/api_incomplete_assessments.qnt",
-        "formal/models/bot_value_pipeline.qnt",
-        "formal/models/bot_value_request.qnt"
+        "formal/models/api/api_incomplete_assessments.qnt",
+        "formal/models/slopbot/bot_value_pipeline.qnt",
+        "formal/models/slopbot/bot_value_request.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3493,7 +3493,7 @@
       "name": "SubscriptionResult",
       "kind": "string-union",
       "values": ["budgetResetAt", "calls", "servedBy"],
-      "models": ["formal/models/bot_producer_provenance.qnt"],
+      "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
       "lexicallyUnmentionedValues": ["budgetResetAt", "calls", "servedBy"],
       "review": "candidate-only"
     },
@@ -3504,8 +3504,8 @@
       "kind": "string-union",
       "values": ["policySha", "sourceDigest"],
       "models": [
-        "formal/models/bot_publication_transaction.qnt",
-        "formal/models/bot_value_freshness.qnt"
+        "formal/models/slopbot/bot_publication_transaction.qnt",
+        "formal/models/slopbot/bot_value_freshness.qnt"
       ],
       "lexicallyUnmentionedValues": ["policySha", "sourceDigest"],
       "review": "candidate-only"
@@ -3527,8 +3527,8 @@
         "Unsupported source tree entry"
       ],
       "models": [
-        "formal/models/vetting_acquisition.qnt",
-        "formal/models/vetting_terminal_outcomes.qnt"
+        "formal/models/vetting/vetting_acquisition.qnt",
+        "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "An exact repository and commit SHA are required",
@@ -3549,7 +3549,7 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
-      "models": ["formal/models/vetting_disposition.qnt"],
+      "models": ["formal/models/vetting/vetting_disposition.qnt"],
       "lexicallyUnmentionedValues": [
         "cdata",
         "comment",
@@ -3565,7 +3565,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["exited", "not-executable", "output-limit", "timeout"],
-      "models": ["formal/models/vetting_execution_provenance.qnt"],
+      "models": ["formal/models/vetting/vetting_execution_provenance.qnt"],
       "lexicallyUnmentionedValues": [
         "not-executable",
         "output-limit",
@@ -3580,8 +3580,8 @@
       "kind": "string-union",
       "values": ["accepted", "rejected", "unknown"],
       "models": [
-        "formal/models/vetting_disposition.qnt",
-        "formal/models/vetting_publication.qnt"
+        "formal/models/vetting/vetting_disposition.qnt",
+        "formal/models/vetting/vetting_publication.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3593,8 +3593,8 @@
       "kind": "string-union",
       "values": ["accepted", "rejected", "unknown"],
       "models": [
-        "formal/models/vetting_acquisition.qnt",
-        "formal/models/vetting_terminal_outcomes.qnt"
+        "formal/models/vetting/vetting_acquisition.qnt",
+        "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "lexicallyUnmentionedValues": ["accepted", "rejected", "unknown"],
       "review": "candidate-only"
@@ -3606,8 +3606,8 @@
       "kind": "string-union",
       "values": ["invalid-response", "invalid-review"],
       "models": [
-        "formal/models/vetting_review_batches.qnt",
-        "formal/models/vetting_terminal_outcomes.qnt"
+        "formal/models/vetting/vetting_review_batches.qnt",
+        "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "lexicallyUnmentionedValues": ["invalid-response", "invalid-review"],
       "review": "candidate-only"

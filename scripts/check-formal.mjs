@@ -3,13 +3,17 @@ import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  listModels,
+  modelScenarios,
+  modelSources as sourcesOf,
+} from "./formal-models.mjs";
 import { readSafetyViews } from "./quint-safety-view.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
 
@@ -20,27 +24,22 @@ const selected = process.argv
   ?.slice(8);
 const quint = join(root, "node_modules/.bin/quint");
 const localTranslator = join(root, "scripts/quint-local-translator.mjs");
-const modelDirectory = join(root, "formal/models");
 const safetyViews = verify ? readSafetyViews(root) : null;
-const files = readdirSync(modelDirectory)
-  .filter(
-    (file) =>
-      file.endsWith(".qnt") && (!selected || file === `${selected}.qnt`),
-  )
-  .sort();
+const files = listModels(root, selected);
 // This finite graph completed in 219s with unchanged inputs. Keep the
-// exception explicit and source-bound; ordinary stages retain their limits.
+// exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
-  "ui_submitted_payment_recovery.qnt": 600_000,
+  "formal/models/ui/ui_submitted_payment_recovery.qnt": 600_000,
   // The journal's unchanged finite domain exceeds the ordinary three-minute
   // budget. Keep a bounded, model-specific allowance for its reviewed view.
-  "direct_bounty_journal.qnt": 1_800_000,
+  "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,
 };
 if (files.length === 0) throw new Error("No matching Quint models");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const toolHashes = Object.fromEntries(
   [
     "scripts/check-formal.mjs",
+    "scripts/formal-models.mjs",
     "scripts/run-e2e-phase.mjs",
     "bun.lock",
     ...(verify
@@ -73,16 +72,12 @@ const toolsUnchanged = () =>
     ([path, hash]) => digest(readFileSync(join(root, path))) === hash,
   );
 const inputHashes = new Map(
-  files.map((file) => [file, digest(readFileSync(join(modelDirectory, file)))]),
+  files.map((file) => [file, digest(readFileSync(join(root, file)))]),
 );
 const modelSources = new Map(
   files.map((file) => [
     file,
-    [
-      ...readFileSync(join(modelDirectory, file), "utf8").matchAll(
-        /^\s*\/\/\s*@source\s+(\S+)\s*$/gmu,
-      ),
-    ].map((match) => match[1]),
+    sourcesOf(readFileSync(join(root, file), "utf8")),
   ]),
 );
 const sourceHashes = new Map(
@@ -92,9 +87,9 @@ const sourceHashes = new Map(
 );
 const results = [];
 models: for (const file of files) {
-  const input = `formal/models/${file}`;
+  const input = file;
   const modelText = readFileSync(join(root, input), "utf8");
-  if (!/^\s*run\s+\w+Test\s*=/mu.test(modelText)) {
+  if (modelScenarios(modelText).length === 0) {
     throw new Error(`${input} has no named reachability scenario`);
   }
   const temporalProperties = [
@@ -239,19 +234,12 @@ models: for (const file of files) {
 }
 const directory = join(root, "evidence/formal");
 mkdirSync(directory, { recursive: true });
-const finalFiles = readdirSync(modelDirectory)
-  .filter(
-    (file) =>
-      file.endsWith(".qnt") && (!selected || file === `${selected}.qnt`),
-  )
-  .sort();
+const finalFiles = listModels(root, selected);
 const inputsUnchanged =
   toolsUnchanged() &&
   JSON.stringify(files) === JSON.stringify(finalFiles) &&
   files.every(
-    (file) =>
-      digest(readFileSync(join(modelDirectory, file))) ===
-      inputHashes.get(file),
+    (file) => digest(readFileSync(join(root, file))) === inputHashes.get(file),
   ) &&
   [...sourceHashes].every(
     ([path, hash]) => digest(readFileSync(join(root, path))) === hash,
@@ -277,7 +265,7 @@ const report = {
   ).version,
   limitations: [
     "Model correctness does not establish source refinement.",
-    "Finite bounds and abstractions are defined in each model and its audit.",
+    "Finite bounds and abstractions are defined in each model.",
     "The Quint TLC backend disables deadlock checking; terminal-state progress requires explicit scenarios.",
     "A safetyView identifies a reviewed quotient; its graph count is not the count of all full model states.",
   ],

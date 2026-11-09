@@ -1,499 +1,760 @@
-# Slop Product Requirements
+# Slop product requirements
 
-Make money shipping and securing open source.
+**Make money shipping and securing open source.**
 
-Slop connects useful open-source contributions and private security reports to human review and verified rewards. GitHub is where public contributions are submitted and accepted. Private security reports are submitted through Slop. Slop records policy, decisions, and payment evidence.
+Slop connects accepted open-source work and private security reports to review and rewards. Public work stays on GitHub. Private reports enter through Slop. Slop records Points, decisions, and payment evidence.
+
+This document defines product behavior, user flows, acceptance criteria, and release conditions. The repository copy governs; Google Docs mirrors it after repository review. A requirement does not establish implementation or production readiness.
 
 ## 1. Product and scope
 
-The minimum viable product (MVP) supports two journeys: contribute useful work, or report a vulnerability privately. Published rules and Slopbot make routine decisions; humans decide exceptions, escalated disputes, and bounty awards. Both end with verified payment when eligible. Security clearance protects both.
+### Problem and intended outcome
 
-Contributors use any disclosed agent/model or work manually. Maintainers define scope and accept outcomes. Researchers report privately. Funders review terms before depositing. Moderators decide escalated disputes, escalated appeals, and confirmed-malicious bans. Operators handle incidents, audited access to private evidence, and redirected wallet recovery. Neither role approves routine project admission.
+Contributors need useful work, clear acceptance rules, and a reliable reward record. Maintainers need accepted results without paying for activity or reviewing invented work. Researchers need confidential intake and a traceable human decision. Administrators need bounded authority and evidence for exceptions.
 
-Scope: accounts, wallets, projects, generated skills, Slopbot, security checks, rankings, vaults, private bounties and automatic private-report submission, and fee-wallet conversion. Networks: Base, Solana, Robinhood Chain, and Ethereum, using approved stablecoins or supported project tokens. Maintainers can pay in their own token if it’s a standard ERC-20 or SPL token. Measure accepted work, validated reports, verified fixes, eligible payments, delays, missed notices, and reconciliation errors.
+Slop must connect these needs without replacing GitHub authority or confusing a projected reward with a payment.
 
-Only owners and maintainers open issues. Contributors use approved requirements or existing issues. Issues alone do not approve scope: the contribution guidelines set for the project, along with the AGENTS.md and CONTRIBUTING.md (and README.md) are all considered.
+### Scope
+
+The minimum viable product (MVP) includes:
+
+- GitHub accounts, payout wallets, preferences, and private Inbox notices.
+- Self-service project registration, immutable terms, and generated contribution skills.
+- Public work discovery, Slopbot review, Points, rankings, and appeals.
+- Project security admission, contributor flags, and human moderation.
+- Private reports, discretionary bounties, remediation, and controlled disclosure.
+- Monthly vault allocations, supported private-award payments, and finalized payment records.
+- Conversion of received fees within the approved fee wallets.
+- The separate contributor token allocation described in section 6.
+
+Support Base, Ethereum, Robinhood Chain, and Solana. Each project selects one network and asset. Section 6 defines supported assets and payment restrictions.
+
+### Boundaries
+
+Score accepted outcomes, not commits, comments, token use, or test counts. Any provider, model, or agent client may participate with exact attribution. Manual work is also permitted.
+
+Only project owners and maintainers open issues. Contributors use approved requirements and existing issues. An issue alone does not approve scope. The target repository's contribution rules still apply.
+
+Slop must not infer copyright ownership, legal capacity, assignment, wallet control, or payment authority from GitHub identity. Slop does not guarantee awards or vault funds.
+
+Referrals remain disabled and outside launch scope. Do not start a later phase until maintainers record MVP completion and approve that phase. New product requirements need human approval before implementation.
+
+### Success measures
+
+Use existing work, case, allocation, and payment records to assess these outcomes. Keep private-case measures within authorized views.
+
+| Outcome | Measure |
+| --- | --- |
+| Useful public work | Accepted work units and useful reviews, with complete source coverage and no duplicate credit. |
+| Useful security work | Qualifying reports, human decisions, verified fixes, and unresolved cases. |
+| Reliable rewards | Eligible allocations, finalized payments, unpaid obligations, and reconciliation errors. |
+| Timely service | Time from acceptance or report receipt to decision and eligible payment; failed or overdue notices. |
+
+Numeric growth, availability, latency, and response-time targets are not approved in this specification. Do not invent them or present them as launch commitments.
 
 ## 2. Authority and records
 
-- GitHub establishes repository identity, permissions, work, and acceptance.
+### Sources of truth
 
-- The D1 database holds the only project inventory. Authorized project owners publish permanent revisions through self-service setup. Published rules apply restrictions automatically; moderators decide escalated disputes and confirmed-malicious bans.
+| Record | Authority |
+| --- | --- |
+| Repository identity, permissions, work, and merge acceptance | GitHub, using permanent repository and actor IDs. |
+| Project inventory and published terms | D1 `projects`, `project_revisions`, and `project_applications`; each change appends an immutable revision. |
+| Sessions, preferences, wallet records, and private decisions | Authenticated account and case services. |
+| Points and corrections | Append-only journal with source identity, occurrence time, and recording time. |
+| Monthly proposals and final allocations | Private D1 allocation records. |
+| Deposits, reservations, and completed payments | Exact finalized chain evidence, reconciled with the applicable obligation. |
 
-- The account service holds private settings, sessions, social links, and wallet records.
+Generated snapshots and pages derive from these records. They are not separate inventories. Never edit generated registry or public build outputs by hand. Retain history when a project pauses or retires; never delete registry rows.
 
-- Project owners set award policy and act by exception. The automatic monthly process distributes funded allocations that the owner does not change. Private bounty awards stay owner decisions. Finalized chain evidence proves deposits and payments.
+A score, model result, device signature, or database entry cannot replace another required proof. GitHub stewardship does not establish legal ownership or financial authority.
 
-- A score, model result, device signature, or database entry cannot replace another required proof.
+### Roles
+
+| Role | Permitted decisions and actions |
+| --- | --- |
+| Contributor | Select permitted work, submit a PR, review work, manage their wallet, and appeal a decision. |
+| Researcher | Submit a private report, provide evidence, authorize optional forwarding, and consent to a payout destination. |
+| Project owner or maintainer | Prove current GitHub authority, publish terms, accept work, review authorized cases, and decide awards. |
+| Financial approver | Authorize permitted funding and payments with the required wallet and project authority. A case role alone grants no signing power. |
+| Administrator | Manage listing tiers, authorized restrictions, and recorded policy exceptions. Administration alone grants no general private-report access. |
+| Moderator | Decide escalated disputes, appeals, and confirmed-malicious bans. Preserve funded obligations and appeal access. |
+| Security operator | Inspect scanner evidence only through the approved audited access process. |
+| Slopbot | Review, score, apply eligible penalties, perform qualified closure, and triage disputes under published rules. |
+
+Recheck current authority for sensitive reads and actions. Refuse unauthorized self-approval, cross-project access, and access after role revocation.
+
+### Terms
+
+A **pull request (PR)** proposes a repository change. **D1** is Slop's database service; **R2** is its private object storage service. **UTC** is the time standard for periods and deadlines.
+
+An **asset base unit** is the smallest transferable unit. **Gross** is the amount before fees; **net** is the recipient amount. **Principal** excludes network fees. **Finality** is the required chain confirmation, not submission or inclusion alone.
+
+A **reserve** holds funds for an obligation. A **pledge** states an intention without proving funds. **Clearance** permits project admission under the security policy. A **work unit** groups related accepted contributions for one scoring decision.
+
+**EVM** means Ethereum Virtual Machine. **ERC-20**, **SPL**, and **Token-2022** identify supported token standards or programs. **RPC** is the interface used to query or submit chain data. **USDC** and **USDG** are asset names, not interchangeable dollar balances.
+
+### State meanings
+
+These are separate dimensions. Do not collapse them into one success status.
+
+| Dimension | Distinct states or facts |
+| --- | --- |
+| Project | Setup readiness, admission clearance, funding readiness, listing tier, pause, quarantine, and retirement. |
+| Award | Projected, under review, approved, or excluded. Approval alone does not prove funds or payment. |
+| Payment | Underfunded, awaiting wallet, ready, scheduled, held, submitted, or paid. A submitted transaction is not paid. |
+| Private case | Receipt, screening, human review, award, funding, payment, remediation, and disclosure. |
+| Notice | Saved, read, acknowledged, provider-accepted, delivered, failed, or uncertain. |
+| Data | Loading, empty, stale, invalid, denied, unavailable, failed, or current. Missing data is not zero. |
+
+A funded award never expires because of time or a missing wallet. The separate contributor token allocation uses its own deadline and Unclaimed state.
 
 ## 3. Accounts and wallets
 
-Owner decision, 30 October 2026: complete the remaining private-bounty flow
-gaps. An account can enroll and verify its own notification email without an
-operator-maintained recipient list. Verification is account-bound, expiring,
-single-use and stored only as a token digest. Security and ordinary activity
-email preferences remain explicit and revocable; in-app notices remain
-available independently. Unsubscribe must stop future delivery without
-granting account or case access. Use a sender/provider configuration that
-actually permits delivery to verified user-selected destinations. A legacy
-restricted pilot is not evidence of general delivery readiness.
+### Identity and account pages
 
-An unpaid private award can recover from a reporter wallet change through an
-explicit, auditable review and successor payment request. Preserve every paid
-leg and require renewed reporter consent to the new destination. Retire or
-prove the expiry of all prior signable requests before presenting a replacement;
-never claim that deleting a database record cancels an external transaction.
-Existing finalized transfers remain verifiable. A recovery cannot authorize a
-second payment of an already settled amount.
+GitHub is the only login method. Use permanent actor IDs through account renames. Preserve the return destination and permitted drafts through sign-in.
 
-Local development must support the same private report storage, background
-assessment and API flow with durable isolated data and real identity/authority
-checks. Development must not silently send real notification mail or enable a
-production signer. Verify the complete report, review, payment, fee, notification
-and recovery journeys again after these changes, including their failure paths.
+Settings, Payouts, and Inbox are separate pages reached from the account menu. Do not add shared account navigation tabs. Settings contains wallet management and email preferences, both always expanded. Payouts links to wallet management when needed. Preserve existing wallet deep links.
 
-GitHub is the only login. Use its permanent actor ID through renames. Owner decision, 28 October 2026: Settings, Payouts and Inbox are separate pages, reached from the account menu without shared account navigation tabs. Settings holds wallets and preferences. Wallets and email preferences are always expanded. Remove the Security card and its recovery, closure and account-appeal controls from Settings. Keep the existing backend account and appeal records, APIs and authorization rules. Wallet management belongs in Settings; Payouts links to it when needed. Keep existing wallet deep links. Approved directly by the repository owner in the 27 October 2026 review: remove the individual-session list and revocation controls from the account page. Keep current-session sign-out and the account-closure API; closure still ends all sessions. This does not remove backend session validation, expiry or revocation. The X connection is optional. Telegram integration is removed by owner decision on 25 October 2026. Do not provide a Telegram bot, connection, profile link, or support route. Keep existing historical records unchanged. Record walletless awards against the account; a verified wallet is required only to receive payment.
+Keep current-session sign-out and backend session validation, expiry, revocation, account closure, and appeal records. Do not restore the session list, Connections card, or Security card. Keep recovery, closure, and account-appeal controls out of Settings. Do not add a payout-wallet shortcut to contributor profiles. The Activity email switch has no outer button border.
 
-Owner decision, 29 October 2026: remove the Connections card from Settings and the Add a payout wallet shortcut from contributor profiles. The Activity email switch has no outer button border. Keep existing public X links, connection records and APIs.
+Account closure ends all sessions and makes the account private. Explicit reopening is permitted. Preserve wallet records, identity reservations, obligations, settlement history, and private cases.
 
-Public GitHub work stays public. Show private case status only in the authorized user's private account area. Keep private case amounts out of ordinary balances and public rankings. Connecting X remains optional and permits no posting or messaging. Support account closure.
+### Public membership and optional X connection
 
-Owner decision, 26 October 2026: active memberships and connected X profile links are public, with no separate visibility opt-out. Sign-in and explicit account reopening publish membership. An existing private membership and its already-connected X link become public at the next authenticated sign-in; new X connections are public. State this visibility before sign-in or connecting X. Do not publish closed accounts, reconnect a removed link, or change private case, trace, wallet, email-consent or historical Points records. Public read requests do not perform this transition.
+Active memberships and connected X profile links are public. Disclose this before sign-in or connection. Existing private membership and connected X links become public at the next authenticated sign-in. Explicit reopening and new X connections are public. Public reads must not perform this transition.
 
-Store only ID, optional username, verification time, and visibility. Reserve that ID to the first verified GitHub identity, including after disconnect. Public display follows the public-account policy above; connecting the X account still requires its OAuth authorization. Grant no points or authority. Joining earns no welcome points (Participation points, section 11).
+Keep closed accounts private and removed links disconnected. Do not change private cases, traces, wallets, email consent, or historical Points during the transition.
 
-Users can add EVM and Solana payout wallets. If users have not added wallets, they can claim payouts they should have already received.
+An X connection requires OAuth authorization and is optional. Store only its ID, optional username, verification time, and visibility. Reserve the ID to the first verified GitHub identity, including after disconnect. It grants no Points, posting permission, messaging permission, or other authority.
 
-Owner decision, 28 October 2026: local development uses the existing Slop GitHub App through a loopback-bound, single-use identity handoff. No separate developer App or production secret is required locally. Production and local session/assertion stores remain separate; local handoffs cannot create production assertions.
+Telegram remains retired. Preserve historical records, but provide no bot, connection, profile link, or support route.
+
+### Wallet registration and recovery
+
+A user may add EVM and Solana payout wallets. Record walletless awards against the account. Require a verified wallet only for payment.
+
+Bind a wallet with both authenticated account evidence and the destination wallet's signature. Neither proof establishes the other identity. Changed or recovered wallets activate immediately after these proofs. There is no waiting period.
+
+Keep the current verified wallet active until the replacement wallet signs its authorization. Preserve the first-registration proof, pending attempts, uncertain attempts, and replay protection.
+
+Redirected recovery uses one operator: contact the operator by email, then complete the contributor-signed self-service flow. The operator gains no signing or payment authority. Retain historical recovery records; retire the unused admin wallet-proposal endpoint.
+
+For an unpaid private award, use explicit review and a successor payment request after a wallet change. Obtain renewed reporter consent. Retire or prove expiry of every prior signable request before presenting the replacement. Preserve paid legs. Deleting a database row never cancels an external transaction or permits a second payment.
+
+### Email enrollment
+
+Users enroll and verify their own notification address. Verification is account-bound, expiring, single-use, and stored only as a token digest. Use a provider configuration that can deliver to verified user-selected destinations.
+
+Security and activity email consent remain separate, explicit, and revocable. In-app notices work independently. Unsubscribe stops future delivery without granting account or case access. Section 9 defines delivery and retry behavior.
 
 ## 4. Projects and contribution skills
 
-Owner decision, 28 October 2026: projects may upload an optional custom image in setup and settings. Cards and project headers use that image, falling back to the GitHub owner avatar. Do not use GitHub social-preview images. Save image changes as project presentation revisions.
+### Contributor journey
 
-Setup has three steps: Project (repository and contribution rules), Rewards, Review. The Project step offers the signed-in user's public repositories in one picker, with URL entry for other public repositories. A choice loads its facts automatically, with the integration branch beside it. Funding terms belong in Rewards. Project owners must be logged in with GitHub to create a project. Preview the page and both skills. Show one setup status that reports GitHub authority, Slopbot installation, the security scan, and funding separately, with the next action.
+1. Open a project and read its scope, reward terms, restrictions, and freshness.
+2. Inspect live GitHub for permitted, bounded work and overlapping submissions.
+3. If using a skill, install its verified project version.
+4. Follow repository rules and test the useful result.
+5. Open a PR with the requirement, result, evidence, and exact attribution.
+6. Follow review, acceptance, Points, and any appeal.
+7. If an eligible funded award exists, view it in Payouts and register a wallet if needed.
+8. Follow that payment until finalized evidence proves completion.
 
-Owner decision, 29 October 2026: Rewards also offers Private bounty. It creates a security-bounty project in the same registry and three-step flow, using the selected branch's immutable source revision, project scope, acceptance criteria and safe-test rules. The creator is the initial private-case contact and sponsor. Show the award, researcher share and private-report terms before creation. New programs use the standard 75/25 split and an after-approval pledge; funds and payment remain separate from creation. A bounty-only project has no monthly contribution pool.
+Stale discovery requires a live check. Assignments, maintainer claims, drafts, active review requests, approvals, and changes requested exclude work selection. Security labels, human-gated work, epics, and project restrictions also exclude selection. Do not claim platform authority over an issue or create placeholder work.
 
-Owner decision, 30 October 2026: monthly rewards and private bounties use the same network and asset choices, including Robinhood Chain, each network's native coin and stablecoin, and custom tokens. Their payment style differs: a monthly allocation or an individually approved private award. A private bounty does not require or imply a payment vault. Keep existing vault-backed programs supported. Direct payments use verified wallets and finalized transaction evidence in the exact asset frozen with the award; preparing a payment never marks it paid.
+Work may earn acceptance and Points without a funded award. A pause stops contributor work. A failed payment preserves the award and reserve. Ordinary submission remains possible without payout registration, a measured run, a device key, a signed receipt, or a private trace.
 
-Owner clarification, 30 October 2026: new security bounties use the scope and acceptance criteria entered by their owner. Do not impose another program's critical-severity or loss-of-funds requirement. Existing programs and received reports retain their published eligibility restrictions. A direct award records each finalized transfer separately, shows only the unpaid transfers, and becomes paid only when both the researcher amount and any Slop share are proved. Completed direct fees enter the same fee-conversion accounting as vault fees. Notify the reporter, current security maintainers and financial approvers of payment progress without including private report content in messages.
+### Maintainer journey
 
-Projects start without routine admin approval after complete setup, verified GitHub authority, Slopbot installation, and either a successful security scan or the permanent existing-project exemption in section 8. Funding is optional and has a separate status. Contributor skills check for malicious code and injection risks before installation or execution. They report risks and stop the local workflow. Two distinct contributor flags pause the project and remove it from available work. A clean fresh scan reinstates a project that flags alone paused.
+1. Sign in and start or resume Add project.
+2. Select a public repository and prove current GitHub authority.
+3. Complete Project, Rewards, and Review.
+4. Preview the public page and generated skills.
+5. Install Slopbot and complete admission clearance.
+6. Publish the project when all setup requirements pass.
+7. Review work and authorized private cases; manage unresolved assessments in Inbox.
+8. Adjust monthly allocations or decide individual bounty awards under the published terms.
+9. Publish later changes as immutable revisions.
 
-The home page always offers the generic agent setup instructions, including when discovery is unavailable or no project is cleared. Project-specific installation still checks project restrictions and clearance.
+No routine administrator approval is required. A stored applicant may publish through the same current authority checks. Funding readiness remains separate from registration and admission.
 
-Generate each skill from its single template and approved project revision. Owner decision, 27 October 2026: remove template freshness, main ancestry, release-label and revocation authorization gates, superseding the earlier bounded latest-release exception. Any immutable 40-character commit that the canonical GitHub repository API resolves may supply a template, including unreleased, divergent, older or previously revoked commits. Verify its complete bytes against GitHub and the generated skill against the approved D1 digest at installation, update and explicit rollback; this proves source identity, not maintainer approval. Ordinary updates must not decrease the D1 revision. Explicit rollback may select a retained, reverified revision. Current project status and clearance still gate installation, update and rollback. Installed `authorize` and `start` validate local provenance, file hashes and receipt schema without live GitHub or registry authorization. A local checkout alone cannot substitute for an installation. Optional usage, policy verification and submission network operations retain their existing consent and access rules. Existing installs need a verified update after publication to gain offline behavior; historical template bytes remain unchanged. Follow repository access rules and inspect live GitHub before work selection and submission. Respect assignments, reviews, drafts and claims, stop on malicious code, and do not invent work for points.
+### Setup requirements
 
-PRs explain the problem, requirement, result, implementation choice, and real evidence. Include Made via @slopdotcash and exact provider/model/client. A signed run receipt is optional and never blocks submission. After opening a PR, the contributor skill records a pull_request_opened event that names the PR node ID through the author's own authenticated Slop session (recorded attribution decision, section 11). Follow the effective trace policy; contributors inspect/redact permitted private uploads. Usage totals never set rewards. Economic changes are prospective; preserve funded awards. Agents should, if they can use computer use or browser use, star and fork the repos they are working on.
+Project contains the repository, integration branch, and contribution rules. Provide one picker for the user's public repositories and URL entry for other public repositories. Load repository facts after selection.
+
+Verify permanent repository and actor IDs, current write or maintain authority, license facts, integration branch, and reward terms. Record the license URL, commit, and digest. Read Slopbot installation status before creation.
+
+Collect scope, contribution guidance, supported tasks, required tests, review expectations, security contact, closure policy, and maintainer notes. Preview both generated skills. Missing required skill fields prevent skill publication.
+
+Rewards offers a monthly pool or Private bounty. New monthly projects use one contribution pool, not a second review budget. Preserve historical review-budget commitments. Bounty-only projects have no monthly pool.
+
+Monthly rewards and bounties use the same network and asset choices. A new bounty records the selected branch's immutable revision, owner-defined scope, acceptance criteria, and safe-test rules. Its creator is the initial contact and sponsor. Show gross award, researcher share, Slop share, and private-report terms before creation.
+
+New bounties use a 75/25 split and an after-approval pledge. Owners cannot grant split exceptions. Creation neither proves funds nor requires a bounty vault. Section 8 defines award and payment rules.
+
+An optional custom project image falls back to the GitHub owner avatar. Do not use social-preview images. Save changes as presentation revisions.
+
+Show one setup summary with separate authority, Slopbot, security, and funding results, plus the next action. Activate after complete setup, current authority, installation, and valid admission clearance. Economic policy changes apply from the next UTC calendar month; preserve frozen terms and funded obligations.
+
+### Skill source and installation
+
+Generate each skill from one canonical generic template and the approved D1 project revision. The same inputs must produce the same bytes. Maintainer notes cannot weaken template rules. Do not store per-project skill copies.
+
+The trust root is the canonical immutable template commit and approved D1 revision digest. The checksum detects corruption only. Resolve the full 40-character commit through the fixed canonical GitHub API. Verify the complete tree against immutable GitHub bytes and verify the rendered output against the approved digest.
+
+Any resolved canonical commit may supply the template, including unreleased, divergent, older, or previously revoked commits. Do not add freshness, ancestry, release-label, or revocation gates. These checks prove source identity, not maintainer approval.
+
+Ordinary updates must not decrease the D1 revision. Explicit rollback rechecks retained bytes, the digest, and current installation clearance. Installation, update, and rollback require current project status and clearance.
+
+Reject missing or extra files, mutable redirects, working-tree provenance, and byte mismatches. Preserve immutable sibling versions, the process-bound kernel lock, atomic relative-symlink activation, and prior verified versions. Tests may inject deterministic `file://` authorities only through the generator's test option.
+
+Installed `authorize` and `start` validate local provenance, complete hashes, and receipt schema without live authorization calls. A local checkout is not an installation. Existing installs need one verified update to gain this behavior; never rewrite historical templates.
+
+Repository access, live work selection, submission checks, and consent rules still apply. Inspect malicious code and prompt-injection risks before installation or execution. Report a risk and stop the local workflow.
+
+### Submission and optional evidence
+
+A PR states the problem, approved requirement, useful result, implementation choice, and real evidence. Include `Made via @slopdotcash` once and the exact provider, model, and client. Agents star and fork only when they can use browser or computer control. Stars and forks earn nothing.
+
+After opening the PR, the skill records `pull_request_opened` with the exact PR node ID through the author's authenticated Slop session. This evidence supports automation eligibility; it is not a prerequisite for ordinary GitHub submission.
+
+Signed receipts and minimized private traces are optional. The contributor inspects and redacts a selected trace before upload. The uploader stores those exact bytes. Usage totals are diagnostic and never change Points, rank, share, or payment. A device signature proves byte continuity, not provider billing.
+
+The separate reviewer skill is advisory. It checks correctness, tests, security, scope, duplication, abuse, evidence, and usefulness. Place its recommendation before the exact provider, model, and client footer.
 
 ## 5. Slopbot
 
-Slopbot is always free. It runs only on repositories registered on slop.cash. Installation is required before a project is ready. Suspended, flagged, or removed projects cannot enter contributor work; authorized security review may continue.
+### Review and scoring
 
-Review project contributions under the effective repository rules. Apply security, scope, and ignore rules first.
+Slopbot is required, always free, and limited to registered repositories. Never charge a project vault for bot review.
 
-Owner request, 28 October 2026: make review outcomes visible, including no findings, limited source coverage, and retryable failures. Large or binary evidence must not silently exhaust review attempts. A limited review identifies unreviewed content and cannot label, close, penalize, or claim full verification. Preserve repository opt-outs, exemptions, and source checks.
+Apply effective repository security, scope, ignore, and rejection rules before review. Review exact source against approved base-branch rules. Run untrusted code only in approved isolation without secrets or posting credentials.
 
-Review exact source against approved base-branch rules. Run untrusted code only in approved isolation, without secrets or posting credentials. The recorded route is Surplus Opus 5.5, then GPT-6.1 Sol fallback.
+Use Surplus Opus 5.5, then GPT-6.1 Sol as fallback. Show no-findings, limited-coverage, and retryable-failure outcomes. Identify unreviewed content. A limited review cannot label, close, penalize, or claim full verification. Large or binary evidence must not silently exhaust attempts.
 
-Slopbot reviews contributions, estimates each PR's size and value, and assigns its score. It closes clearly bad, fake, scam, or harmful Slop-skill contributions under the project rules. Uncertain findings go to the maintainer first. If no maintainer acts within 7 days, Slopbot applies its verdict as a label only; an uncertain finding never closes a contribution. Free service does not charge project vaults.
+Slopbot assesses PR size and value and credits useful reviews under section 7. Maintainers decide merges. Preserve repository opt-outs and exemptions.
 
-For ongoing value scoring, email the operator at each $500 of monthly spending. Alerts-only mode has no monthly hard cap or fixed attempt reserve. Keep immutable attempt records, actual or unknown provider costs, duplicate refusal and queue limits. Alert the operator when the Surplus balance runs low or a provider call fails. Assess September and October 2026 through ChatGPT subscription subagents. The 26 October 2026 decision assigned the SlopDotCash/slopdotcash slice to a Claude subscription subagent. Owner decision, 27 October 2026: a Codex subscription session or subagent using GPT-6.1 Sol may also assess that slice. Import results through the standard assessment journal. Disclose the provider, model and client. A subscription declaration is not an API receipt or billing proof. Paid API assessment starts on 1 November 2026 UTC; historical scoring does not move that date. Section 11 records these owner decisions and the separate capped mode.
+### Closure eligibility and consent
 
-Automatic closure applies only to verified slop.cash members using the skill, never project maintainers. Verified means a slop.cash member matched by immutable GitHub ID, with a trace_runs row from their own authenticated Slop session for this project and a pull_request_opened event that names this PR node ID (recorded attribution decision, section 11). A copied marker alone is never proof. Preserve maintainer reopen decisions. Slopbot triages each appeal first and drafts a resolution; a moderator decides escalated appeals. Closure alone does not authorize a financial penalty.
+Automatic closure requires all of the following:
 
-Owner decision, 25 October 2026: use project settings for explicit automatic-closure consent. The control starts unchecked; absent consent means no automatic closure. Registration and App installation alone are not consent. A separate `.github/slopbot.json` file is not required. Preserve existing opt-outs, category restrictions and repository rejection rules. Record changes through the existing immutable project revisions and current GitHub authority checks.
+- A registered project with saved closure consent and a qualified category.
+- A non-maintainer author who is a Slop member, matched by permanent GitHub ID.
+- The author's authenticated `trace_runs` record for that project.
+- A `pull_request_opened` event naming the exact PR node ID.
+- Required independent confirmation, caps, source checks, and production activation.
 
-Owner decision, 29 October 2026: new project drafts start with automatic closure selected. Keep the visible control editable before creation and preserve an explicit saved opt-out. This changes the initial setup value only; it does not change existing project consent, closure eligibility, or the authority checks above.
+A copied marker or footer proves none of these facts. Closure alone does not authorize a penalty.
 
-Qualify closure with reviewed real cases and counterexamples, not a fixed 14-day and 50-item threshold. Preserve independent confirmation, caps, appeals, maintainer reopen protection, the seven-day uncertain label-only rule and explicit production activation. The activation record must identify the reviewed evidence and any qualified objective verifier. Fixtures prove authorization and failure controls; actual model qualification requires real inference. This decision does not activate production closure.
+New project drafts start with closure selected. Keep the control editable and save an explicit opt-out. Missing saved consent means false. Registration and installation alone are not consent. Do not alter existing projects' consent. No separate `.github/slopbot.json` is required, but preserve existing file opt-outs and category restrictions.
+
+Uncertain findings go to the maintainer. After seven days without action, Slopbot may apply the verdict as a label only. An uncertain finding never closes a PR. Preserve maintainer reopen decisions.
+
+On paused, flagged, or quarantined projects, authorized security review may only comment and apply the scam label. Retired projects receive no review. These projects remain unavailable for contributor work.
+
+### Appeals, qualification, and cost
+
+Slopbot triages appeals and drafts a resolution. A moderator decides escalated cases under section 9. A scam or malicious closure also creates one moderator Inbox notice to review the account.
+
+Qualify closure with reviewed real cases and counterexamples. A fixed 14-day or 50-item threshold is not sufficient. Fixtures prove controls, not model quality. Keep the global switch off until explicit production activation. Record the reviewed evidence and any qualified objective verifier.
+
+Ongoing value scoring uses alerts-only spending: no monthly hard cap or fixed attempt reserve. Email the operator at each crossed $500 monthly milestone. Alert on low Surplus balance and provider failures. Retain immutable attempts, actual or unknown costs, duplicate refusal, and queue limits. Capped mode retains numeric reservations. Missing or malformed configuration stops inference.
+
+Paid API assessment begins on 1 November 2026 UTC. September and October assessments use ChatGPT subscription subagents. The Slop repository slice may instead use Claude subscription subagents or Codex subscription sessions/subagents with GPT-6.1 Sol. Import results through the standard assessment journal with exact attribution. A subscription declaration is not an API receipt or billing proof. Section 7 defines the historical publication hold.
 
 ## 6. Funds and payments
 
-Each project uses one project vault, network, reward asset, and deposit balance. Project maintainers can deposit and withdraw. Reserved awards and fees cannot be withdrawn.
+### Assets and funding
 
-Support the approved stablecoin, standard ERC-20, classic SPL token, or the metadata-only Token-2022 subset below. Exclude transfer-fee, rebasing, transfer-hook, confidential-transfer, interest-bearing and other extensions that change transfer or balance behavior. Verify identity, token program, decimals, behavior and finality. Use integer base units; never add unlike assets or present tokens as dollars.
+Monthly contribution rewards use one project vault, network, asset, and deposit balance. Private awards may use supported direct payments or an existing separate bounty vault. Preserve ordinary and bounty purposes.
 
-Owner decision, 29 October 2026: add direct native ETH rewards on Base, Ethereum and Robinhood Chain, and direct native SOL rewards on Solana. Setup, vault deposits, reserved awards, payouts, refunds and fee claims must use the native coin, not a wrapped-token substitute. Keep native principal and network fees separate, preserve the Solana rent reserve, and retain existing token-vault behavior and funded obligations. Existing fee-conversion limits still apply only to fees already received in the fee wallet. This approves implementation and local testing, not a mainnet deployment, program upgrade, new funding, or activation of a signer.
+Anyone may deposit into a vault. All deposits share one bucket. Only the owner's refund destination receives free-fund withdrawals. State this before deposit signature. Reserved awards and fees cannot be withdrawn. Funding is optional; a pledge is not available funds.
 
-Owner decision, 26 October 2026, issue #905: support Pump.fun project tokens. This supersedes the blanket Token-2022 exclusion for a bounded subset: a mint may have only `MetadataPointer` and `TokenMetadata` extensions, with mint and freeze authorities disabled; its token accounts may have only `ImmutableOwner`, or no extensions. Reject every other mint or token-account extension, including unknown extensions. Retain classic SPL behavior. Project and asset inventory still comes from D1.
+Support approved stablecoins, standard ERC-20 tokens, classic SPL tokens, native ETH, and native SOL. Use native coins directly, not wrapped substitutes. Separate principal from network fees and preserve Solana rent reserves.
 
-Qualify the correct token program throughout vault creation, deposits, withdrawals, funded awards, fee claims, owner setup and finalized accounting before releasing Token-2022 support. Preserve existing vaults, funded obligations, fee rules and role separation. Allow versioned Jupiter routes only after resolving and verifying every address lookup and inspecting all affected accounts for signer, destination, token and native-debit/rent limits. An unresolved or unsupported account or extension refuses signing; a missing receipt retains the full native reservation. Keep the existing slippage, price-impact, dust, gas-multiple, transaction and daily limits and same-wallet USDC output. Prove the selected mint's receipt → fee accrual → claim → conversion → finalized reconciliation and failure/restart controls. A program upgrade or token-funding step requires its own exact reviewed execution plan and owner approval; this scope decision alone does not authorize those transactions or claim deployed acceptance.
+The supported Token-2022 subset permits only `MetadataPointer` and `TokenMetadata` mint extensions. Mint and freeze authorities must be disabled. Token accounts may have `ImmutableOwner` or no extensions. Reject all other or unknown extensions. Exclude transfer-fee, rebasing, transfer-hook, confidential-transfer, interest-bearing, and other balance-changing behavior.
 
-Awards: projected, under review, approved, excluded. Payments: underfunded, awaiting wallet, ready, held, submitted, paid. A failed attempt preserves the award and reserve; one recipient's failure cannot block others.
+Verify the asset identity, token program, decimals, behavior, and finality throughout each flow. Use integer base units and largest-remainder allocation. Never assume six decimals, add unlike assets, or present a token amount as dollars.
 
-Automatic monthly payment is the default for every project with funds committed in its vault. The owner sets the monthly amount during setup, can change allocations before execution, and can turn the default off. If the owner does not distribute the funds, the automatic monthly process distributes the current allocations. Do not create unfunded obligations or pay twice. The period is the calendar UTC month, starting with 2026-11. Owners may change allocations or finalize early until 72 hours after the month ends; the automatic process then freezes the current allocations once. An underfunded month creates no obligations until the whole month is covered. Private bounty awards remain discretionary.
+### Monthly allocation
 
-Ordinary award and free-fund withdrawal fee: ceil(gross / 50) (2%, rounded up so that splitting an amount never lowers the fee; owner confirmed on 25 October 2026). A 100 USDC award pays 98 and 2. A one-base-unit award pays one unit in fees and zero to the contributor. Project-token awards pay both amounts in that token. No second fee at claim/retry. Funded awards keep their original fees after an upgrade. Private bounties instead use section 8's 75/25 split.
+Automatic monthly payment is the default when funds are committed. The owner sets the monthly cap during setup and may change it or opt out. Vault creation enables monthly commitment unless the owner opts out.
 
-A project-operated or permissionless executor submits payments; Slop operates no payment key/relayer. Payments are stored in a vault/escrow contract to show that they have been committed. Projects are not obligated to commit funds. Wallet binding requires authenticated account evidence and the wallet signature. Neither signature proves both identities. Mark paid only after exact finalized principal, fee, asset, and destination reconciliation; prevent replay.
+The period is the calendar UTC month, starting November 2026. The trusted monthly workflow freezes the complete closed-month ledger and writes each project's proposal once. A repeat run must not add or replace rows. Store allocations privately in D1, not new cycle files.
 
-The identity attester may automatically cancel its own obsolete pending EVM wallet-binding transaction. Use the same nonce, zero native value, its own address, empty data and the existing gas limits. Keep both signed attempts and reconcile either canonical finalized winner; the original binding can still win. Missing RPC evidence never proves cancellation. This permission does not include payments or monthly commitments (owner decision, 25 October 2026).
+The owner may adjust amounts or finalize early. At 72 hours after month end, the automatic process freezes the current allocation once. Do not publish adjustment history or require public reasons. Retain records needed for disputes and reconciliation.
 
-Owner decision, 25 October 2026: let the current project owner release a whole untouched monthly reserve that cannot settle because the signed total is wrong. Slop loads the complete retained allocation and checks fresh finalized chain evidence. Only a matching root with a different total qualifies. Missing, healthy, stale, partly settled or already released allocations refuse. The identity Worker signs the approval; the owner signs one release transaction in the existing payment flow. The Worker does not submit it. This returns the reserve to the vault’s free balance and does not withdraw funds or change valid awards.
+Only accepted-work Points for that project and period set shares. Rollover never increases a later monthly cap. An underfunded month creates no obligations until the entire allocation is covered. Prevent manual and automatic duplicate payments.
 
-On Base, Ethereum and Solana, automatically sell received project-token fees into USDC. Convert only fees already in the fee wallet; return proceeds to that wallet. On Robinhood Chain, do not convert or bridge fees. Keep each received asset in the fee wallet: USDG stays USDG, and project tokens stay in their original token. Show these fees as "not converted", not pending (owner decision, 25 October 2026; section 11).
+Keep walletless funded awards reserved without expiry. One recipient's failure must not block others. Preserve historical cycles' original review windows and frozen terms.
 
-Each fee wallet uses one dedicated fee-claim and conversion key, held as a Worker secret. Base, Ethereum and Robinhood Chain share one EVM fee wallet; Solana has its own (owner decision, 29 October 2026, section 11). Each network keeps its per-run and daily caps. The key may claim only accrued fees from reviewed vaults to that same fee wallet. It holds no vault role and cannot touch free funds, contributor principal, reserved awards or payments. Verify the deployment and fee recipient before a claim; stop on unknown or mismatched state. Reconcile uncertain sends before retrying and verify receipt before conversion. Use approved routes and bounded slippage. On networks that require conversion, an unavailable route, liquidity or signer leaves the token pending or failed.
+### Fees and payment evidence
 
-Native gas limits are separate from token-value caps. The fee signer stays off until its dedicated transaction and daily gas limits are set and verified. No keeper or referral budget supplies a default. Count approval, claim, conversion and replacement gas; keep uncertain sends reserved until finalized cost evidence resolves them.
+For ordinary awards and free-fund withdrawals, the fee is `ceil(gross / 50)`: 2%, rounded up. A 100 USDC award pays 98 to the contributor and 2 in fees. A one-base-unit award pays that unit in fees and zero net. Splitting must not reduce the fee.
 
-Owner decision, 26 October 2026: the latest approved fee-service ceilings are 0.0001 ETH per transaction and 0.001 ETH per UTC day on Base, 0.001 ETH and 0.01 ETH on Ethereum, and 0.0002 ETH and 0.002 ETH on Robinhood. Base includes a 0.00005 ETH data/operator reserve inside its transaction ceiling. These values supersede the earlier fee-service limits. Existing conversion safeguards remain, Robinhood retains received assets, and these ceilings authorize no funding or additional project-payment activation.
+Pay token fees in the same token. Do not charge again at claim or retry. Preserve funded awards' original fees through upgrades. Private bounties use section 8's split instead.
 
-Owner decision, 26 October 2026, issue #905: Solana fee-service ceilings are 0.005 SOL per transaction and 0.02 SOL per UTC day, including account creation and priority fees. These supersede the earlier 0.001 SOL / 0.01 SOL proposal. Enforce the dedicated native budget and durable uncertain-send accounting before enabling Solana. Gas funding is a separately reviewed exact-amount step.
+A project-operated or permissionless executor submits payments. Slop operates no payment key or payment relayer. Permissionless vault creation requires the owner's authority; remove the separate service charge.
 
-Owner decision, 26 October 2026, issue #905: release an expired Solana fee-send native reservation only when two independent RPC providers agree the blockhash is invalid at finalized commitment and neither finds a signature or transaction in full-history lookups. Require retained history covering the signed blockhash's slot. Any disagreement, unavailable or missing history, or provider failure keeps the hold. Retain immutable observations and signed bytes; never turn a missing receipt alone into zero cost.
+Mark an obligation paid only after finalized evidence reconciles its exact vault or direct-payment source, recipient, principal, fee, and asset. Reject replay, wrong owner, wrong asset, partial completion, failed transfers, duplicates, and overpayment. Keep uncertain attempts until reconciliation; a missing receipt is not failure proof.
 
-Owner decision, 27 October 2026: conditionally approve Solana fee conversion, with live activation deferred while owner vault setup is on another computer. Keep Solana out of the production fee-converter network list until an independently operated full-history recovery RPC and the first registered Solana vault are verified and all existing readiness checks pass. A later reviewed `main` release activates it. The controls release and approved 0.05 SOL gas top-up are complete; do not repeat that funding or the existing program upgrade. Merging prepared work does not authorize live signing or prove conversion.
+### Service signer boundaries
 
-Slop owners authorize sweeps to separate owner-controlled software wallets. A human or owner-authorized agent executes them outside the Worker. Sweep keys stay in the owner's local `.env`, never in the Worker. These are software wallets, not cold storage.
+No application service may sign outside these limits. An owner-authorized agent may privately use necessary credentials for reviewed setup, testnet, or mainnet plans within the approved financial scope. Required acceptance, explicit activation, and release controls still apply. This permission does not expand service powers.
+
+| Signer | Allowed scope |
+| --- | --- |
+| Identity attester | Attest authenticated GitHub identity for a wallet-signed binding and submit that binding. Sign bounded monthly allocation roots and the limited approvals below. |
+| Fee-wallet key | Claim accrued fees from reviewed vaults into the same fee wallet. Convert only received fees through approved routes within all limits. |
+| Referral root poster | Post cumulative referral roots only after separate reactivation. It remains disabled for launch. |
+
+One identity authority may serve the three EVM networks. The EVM fee wallet also shares one key across those networks. Solana has a separate fee wallet. Store dedicated fee keys as Worker secrets. Fee keys hold no vault role and cannot touch free funds, principal, reserved awards, or payments.
+
+A monthly root commitment is limited by the owner's cap, opt-out, and one commitment per period. Anyone may submit the signed commitment after the cutoff. The attester cannot withdraw, choose a payout destination, or execute payment through this power.
+
+The attester may cancel only its own obsolete pending EVM wallet-binding transaction. Use the same nonce, zero native value, its own address, and empty data within existing gas limits. Retain both signed attempts. Either may become the canonical finalized winner. This exception does not permit payment or monthly-commitment cancellation.
+
+For a wrong-total monthly reserve, require a current owner request and the complete retained allocation. Fresh finalized evidence must prove a matching root, wrong total, and no prior settlement or release. Refuse missing, healthy, stale, partially settled, or released allocations. Derive the whole untouched reserve; never accept a chosen amount. The attester signs approval; the owner signs the release transaction. The Worker never submits it. Release returns funds to the vault's free balance; it does not withdraw funds or alter valid awards.
+
+Until a qualified reserve-release upgrade is active, an allocation that cannot settle remains reserved and blocks manual awards on that vault. Later monthly admissions, payments, deposits, and free-fund withdrawals still work. Time alone never releases the reserve.
+
+Keep owner-controlled upgrade keys separate from service keys: one for EVM factories and vaults, one for Solana. Upgrades, award payments, wallet activation, and identity-authority rotation use zero-delay deployment configuration. Verify atomic EVM initialization, accepted implementations, upgrade authority, and exact Solana program bytes. Preserve existing immutable deployments.
+
+Immediate upgrades can change logic governing deposited funds. A compromised attester plus an attacker-controlled wallet can redirect matured unpaid awards before owner cancellation. These accepted risks depend on key custody; do not describe a guaranteed intervention window.
+
+### Received-fee handling
+
+Convert received fees to USDC on Base, Ethereum, and Solana. Return proceeds to the same fee wallet. Robinhood Chain never converts or bridges fees: retain each asset and show **not converted**. Unavailable conversion elsewhere leaves the token pending or failed and never blocks contributor payment.
+
+Convert on receipt only when the value is at least 5 USDC and ten times the gas cost. Limit slippage to 1%, price impact to 2%, value to 1,000 USDC per run, and 5,000 USDC per day.
+
+| Network | Native ceiling per transaction | Native ceiling per UTC day |
+| --- | --- | --- |
+| Base | 0.0001 ETH, including a 0.00005 ETH data/operator reserve | 0.001 ETH |
+| Ethereum | 0.001 ETH | 0.01 ETH |
+| Robinhood Chain | 0.0002 ETH | 0.002 ETH |
+| Solana | 0.005 SOL, including account creation and priority fees | 0.02 SOL |
+
+These budgets are separate from token-value, keeper, and referral limits. Count approvals, claims, conversions, and replacements. Keep uncertain native spending reserved until finalized cost evidence resolves it. Refuse signing if limits or readiness are missing.
+
+Verify deployment and fee recipient before each claim. Stop on unknown or mismatched state. Reconcile uncertain sends before retry and prove fee receipt before conversion.
+
+Automatically replace an EVM keeper or fee-converter send only when it remains unmined because its maximum fee is below the network fee. Preserve nonce and transaction content. Increase only fees in bounded steps of about 25%, at most three times the original. Stay within network limits. Journal every attempt before broadcast and record one finalized outcome. Source approval alone does not activate replacement.
+
+For an expired Solana fee send, require two independent full-history RPC providers before releasing its native reservation. Both must confirm an invalid blockhash at finalized commitment and find no signature or transaction. Retained history must cover the signed blockhash's slot. Disagreement, missing history, or provider failure keeps the hold. Retain observations and signed bytes.
+
+For versioned Jupiter routes, resolve every address lookup and inspect all affected accounts. Verify signer, destination, token, native-debit, and rent limits. Unresolved accounts or unsupported extensions refuse signing.
+
+Owners authorize sweeps to separate EVM and Solana software wallets. A human or authorized agent executes outside the Worker. Sweep keys stay in the owner's local `.env`. They are not cold-storage wallets.
+
+### Separate contributor token allocation
+
+Slop Cash S.P. sends this allocation from its own wallet. It is separate from Points, awards, vaults, and payment obligations. The application holds no key and signs or sends nothing.
+
+The fixed actor-ID and amount list is `public/contributor-allocation.json`, changed only through reviewed PRs. `{"distribution": null}` publishes nothing.
+
+Use the recipient's confirmed wallet for the allocation network. Its first confirmation must precede the published registration deadline. Replacement preserves that first time. Send each recipient once; a wallet change never causes a resend.
+
+Payouts shows only the signed-in recipient's row: amount and Sent, Scheduled, Awaiting wallet, or Unclaimed. Scheduled requires a confirmed wallet. Awaiting wallet links to registration before the deadline. Unclaimed means the deadline passed without a wallet, or the final batch closed with the row unsent. Other accounts see nothing.
+
+The sender records each transaction after sending. **Sent** includes the recorded transaction link. It means sender-recorded, not chain-verified by Slop.
 
 ## 7. Points, discovery, and clear pages
 
-Use one public Points measure; do not show a separate Slop Score. Accepted-work credits already convert into the points journal and must not be added a second time. Money received remains a separate record of verified payments. Owner decision, 24 October 2026: consolidate score into Points. Only accepted-work points for the project and payment period determine reward shares. Joining and connecting X earn no points from 24 October 2026 (Participation points, section 11). Welcome and X-connection awards recorded before that date stay unchanged; earned-point standings and payouts already exclude them. Payment-recognition and other bonuses never affect payouts. Monthly and lifetime totals are views of the same points history. Preserve funded awards, historical payment calculations and source identifiers; old score fields are compatibility encodings, not another public metric.
+### Accepted-work Points
 
-The homepage cycles the original campaign phrases with typing and deletion (owner decision, 24 October 2026). Keep a stable accessible heading and disable the animation for reduced motion.
+Publish one Points measure. Monthly and lifetime totals are views of the same history. Do not show a separate Slop Score or add converted credits twice. Verified money received remains a separate record.
 
-Default rankings to Points. Preserve equal ranks, shareable filters, exact periods, and source coverage. Missing data is not zero.
+Only accepted-work Points for the project and period determine reward shares. Participation, payout recognition, usage, and trace evidence never change a payment share. Preserve historical awards and compatibility fields without exposing another score.
 
-Share merge credit with verified commit authors. Do not reward the same commit twice. Credit useful reviews separately; a recipient's own review earns no credit. Split review credit among up to the first five distinct qualifying reviewers, not five comments from the same person. Each pull request's review pool is the sum of the credited reviewers' highest review bands, capped at the pull request's own assessed size credit, with a minimum of 10 points. Shares follow each reviewer's highest band, with largest-remainder allocation in 10-point increments; ties go to the earlier first qualifying review, then the review node ID. Every accepted merge earns at least 10 points, including a merge assessed at zero. Owner decision, 25 October 2026: apply these size and review bands to unpaid work from 1 September through 31 October 2026, and to new work from 1 November. Preserve the original Points and frozen terms of approved or funded awards, including scheduled and paid awards. Keep original source IDs, occurrence times, and other eligibility and penalty dates. Historical revisions append to the existing journal; they do not rewrite prior records.
+| Accepted-work size | Points |
+| --- | --- |
+| Micro | 10 |
+| Small | 30 |
+| Medium | 90 |
+| Large | 240 |
+| XL | 450 |
+| Exceptional | 750 |
 
-A useful review can identify a correction or validate the change. A request for changes is not required. Repeated, empty, or duplicate reviews earn no extra credit.
+| Review band | Points |
+| --- | --- |
+| Triage | 10 |
+| Standard | 30 |
+| Deep | 90 |
+| Specialist | 240 |
 
-Slopbot determines the value of each PR based on T-shirt sizing and assigns accepted-work points.
+Every accepted merge receives at least 10 Points, including a zero-size assessment. Keep source, rubric, model, and corrections with the record. Group split or related PRs into one work unit. Prevent duplicate credit across commits, stacked PRs, and indirect merges. Do not apply account-level caps or diminishing credit.
 
-Record qualifying penalties and reversals once. Reopen, appeal, and retry cannot multiply a debit. Slopbot applies penalties from one published penalty table. The repository owner approves the table once; later changes are prospective. An upheld appeal reverses a penalty once. Penalties include spam, malicious PRs, and PRs that clearly violate the guidelines of the project.
+Share merge credit with verified implementation authors. Credit useful reviews separately. Exclude bots, self-review, post-merge reviews, repeated comments, and duplicate or empty reviews. A useful review may validate a change without requesting corrections.
 
-Published penalty table (approved 24 October 2026, in points):
+Credit at most the first five distinct qualifying reviewers. Use each reviewer's highest band. The review pool is their summed bands, capped at the PR's assessed credit, with a 10-point minimum. Allocate proportionally by largest remainder in 10-point increments. Break ties by first qualifying review time, then review node ID.
 
-| Slopbot category                         | Action                                | Debit |
-| ---------------------------------------- | ------------------------------------- | ----- |
-| Spam                                     | Close                                 | 30    |
-| Scam or malicious                        | Close; moderator reviews the account  | 240   |
-| Clear violation of a quoted project rule | Close                                 | 10    |
-| Low quality                              | Close (closure-eligible authors only) | 0     |
-| Duplicate                                | Close                                 | 0     |
-| Out of scope                             | Label                                 | 0     |
+Use reviewed evaluation manifests only for useful work that ordinary scoring does not cover. Never reward a source twice. A merged PR later removed by GitHub retains its recorded Points and reward eligibility.
 
-A debit reduces only that UTC month's accepted-work points and never takes it below zero. A debit never changes an approved, scheduled, or paid award. Maintainers and authors outside the closure scope receive no penalty.
+Stop new welcome and X-connection awards from 24 October 2026. Preserve earlier awards unchanged; earned-work standings and rewards exclude them. Payout recognition is fixed per recipient, project, and cycle, never per dollar or transfer.
 
-Exclude Slopbot from scoring and human rankings.
+Apply payout exclusions prospectively for owners, funded employees, and related parties, subject to the period-specific exceptions below. Excluded weights must not reduce other contributors' shares. A ban never erases a funded award.
 
-Use explicit payout exclusions for owners, funded employees, and related parties. Apply changes prospectively. Excluded weights cannot reduce other contributors' shares.
+### Historical scoring and source integrity
 
-Owner decision, 26 October 2026: configure no contributor payout exclusions for November 2026 for Slop (`slopdotcash`), Eliza (`eliza`), TheNetwork (`thenetwork`) or ASI (`asi`). Keep those projects' payout-exclusion lists empty. This decision does not remove participation bans or change funded awards.
+The current size and review bands also apply to eligible unpaid work from 1 September through 31 October 2026. Preserve original Points and frozen terms for approved or funded awards, including scheduled and paid awards. Retain source IDs, occurrence times, and eligibility and penalty dates. Append corrections; never rewrite earlier records.
 
-Owner decision, 27 October 2026 ([#1046](https://github.com/SlopDotCash/slopdotcash/issues/1046#issuecomment-6437706876)): do not apply a special Points or payment exclusion to anyone in the September–October 2026 census because they are a team member or because Madyoun's account was previously unavailable. Keep the existing sharing rule for all verified implementation actors. This supersedes the earlier census exclusions for team members and Madyoun. Source verification, duplicate-credit controls, participation bans, funding and wallet requirements still apply. Preserve funded awards and the historical-publication hold; this decision does not itself authorize publication or payment.
+The September–October census has no special exclusion for team membership or Madyoun's former account unavailability. Normal source verification, sharing, duplicate-credit, participation-ban, funding, and wallet rules still apply. For November 2026, payout-exclusion lists remain empty for `slopdotcash`, `eliza`, `thenetwork`, and `asi`. These exceptions do not change funded awards or later periods.
 
-Slopbot triages each dispute first and drafts a resolution; a moderator decides escalated disputes. Awards use an honor and reputation model. Owners may change proposed amounts; do not publish adjustment history or require a public explanation. Keep only the records needed for allocation, dispute handling, and payment reconciliation. A ban does not erase a funded award.
+Hold historical Points publication until the complete assessment journal and exact changes reconcile. Require source coverage, duplicate-credit, and funded-history checks before release. Other releases retain prior historical rules. Keep the standard importer and September candidate checks. Held or unassessed pre-November sources keep their earlier Points.
 
-Owner decision, 30 October 2026: incomplete ordinary PR assessments belong to the project's current maintainers in their private Inbox. Platform admins can also see this queue. Show the affected public PR and automatic retry state; keep the entry through retries and remove it when the existing assessment flow completes. Recheck current repository authority and project identity on each read. An unavailable authority check must show a retryable failure. Repeated deliveries must not duplicate a PR. Do not expose private security cases, model prompts, responses or traces, and do not change scoring, payment or automatic retry policy. Acceptance: maintainers and admins see the same unresolved PR once; unrelated or former maintainers cannot read it; retries retain it, and a completed assessment removes it.
+A no-change branch promotion earns no additional Points only when complete, hash-verified trees prove identical base, submitted head, and accepted merge content. Joint evidence must identify an earlier complete accepted source for every imported commit. Missing trees, changed content, unknown commits, or incomplete sources remain unresolved. Preserve original contributors, normal sharing, existing awards, required source review, and the historical publication hold. This rule grants no additional actor credit or branch authority.
 
-Slopbot assesses size and value from the PR and its evidence. Use these accepted-work point bands: micro 10, small 30, medium 90, large 240, XL 450, exceptional 750. Review bands are triage 10, standard 30, deep 90, specialist 240. These are the existing credit amounts expressed in points, not additional awards. Keep source, rubric, model, and corrections with the points. Preserve historical awards and prevent duplicate credit across stacked or indirect merges.
+### Penalties
 
-Owner decision, 27 October 2026 ([verified owner authorization](https://github.com/SlopDotCash/slopdotcash/pull/1591#issuecomment-6445279090)): a no-change branch promotion may be classified as a duplicate without additional Points when complete, hash-verified Git trees prove that its recorded base, submitted head and accepted merge are identical, and joint evidence identifies one earlier complete accepted source for every imported commit. Preserve the original contributors and normal sharing rule. This grants no branch authority for new changes or additional actor credit. Missing trees, changed content, an unrecognized imported commit or an incomplete original source remain unresolved. A standalone promotion cannot bypass the joint-source check. Preserve existing awards, funded history and the historical-publication hold. This decision does not waive source review, required checks or the historical-publication hold.
+Use the published table only for eligible authors under section 5. Maintainers and authors outside closure scope receive no penalty.
 
-Make Featured and Community projects easy to find. Show real funding, suitable work, and freshness. Featuring does not guarantee payment.
+| Finding | Permitted action | Point debit |
+| --- | --- | --- |
+| Spam | Close | 30 |
+| Scam or malicious | Close and notify a moderator to review the account | 240 |
+| Clear violation of a quoted project rule | Close | 10 |
+| Low quality | Close when the category is qualified | 0 |
+| Duplicate | Close | 0 |
+| Out of scope | Label | 0 |
 
-Owner decision, 29 October 2026: an admin's Featured checkbox sets a project's registry listing tier. Funding amount and payment history do not select that tier. Apply the same placement rules to ordinary and security-bounty projects, with current project restrictions and availability still enforced.
+A debit affects only that UTC month's accepted-work Points and cannot reduce them below zero. It cannot change an approved, scheduled, or paid award. Record each debit and upheld-appeal reversal once. Reopen, retry, and appeal must not multiply them. Later table changes are prospective.
 
-Use one account area, one shared ranking view, and one status summary per project. Show the result, the next action, and any restriction together. Put optional explanations after the action. Keep required consent, amounts, and evidence visible.
+### Discovery and public records
 
-Support mobile, keyboard access, screen readers, reduced motion, and 200% zoom. Meet WCAG AA accessibility requirements.
+Retain every open issue and PR in snapshots for source-count integrity. Publish a deterministic selection decision for each item. Advertise only bounded, unblocked work and require a live GitHub check before action.
 
-Owner decision, 30 October 2026: remove the "Skip to content" link. Keep the main landmark and keyboard-accessible navigation. The shared header stays at the top of the viewport while scrolling.
+The rolling ledger covers a complete 35-day window. Publish exact bounds and counts; deduplicate permanent GitHub IDs. Default rankings to Points. Preserve equal ranks, shareable filters, source coverage, and exact periods. Slopbot does not enter human rankings.
 
-Keep loading, empty, stale, invalid, denied, unavailable, and failed states distinct. Each failure needs a useful next action.
+Make Featured and Community projects discoverable. An administrator's Featured setting controls the D1 listing tier, independent of funding or payment history. Apply the same rules to ordinary and bounty projects. Featuring never guarantees payment.
 
-The public `/models` page is removed (owner decision, 27 October 2026). Keep exact model attribution on contribution records.
+Paused projects remain listed, but their repositories are not collected or scored. Retired projects disappear from lists while history still resolves. Legacy community projects remain retired. Their IDs exist only in `src/lib/legacy-projects.json` for Points and profile validation; never list, collect, score, or pay them.
 
-The public `/receipts` page and its navigation links are removed (owner decision, 27 October 2026). Do not display individual run receipt details or receipt-evidence bonus labels on the website. Keep the run and trace APIs, optional receipt collection, stored records, and scoring rules unchanged. Monthly project cycle pages also omit the Evidence section and its original-record download links. Keep the cycle records, existing data URLs, contributor allocations, and payment status unchanged.
+Profiles and cycle pages show finalized ordinary vault payments with project, recorded contribution month, net asset amount, and transaction link. If the contribution month is missing, show it as unavailable. Never infer it from indexing time. Preserve closed-account privacy and distinguish pending or unavailable evidence from payment.
 
-### User journeys
+Do not publish private case amounts, counts, queues, or revealing totals through ordinary profiles, balances, rankings, cycles, or notices.
 
-Use the existing routes and shared controls. These are acceptance requirements, not claims that every live service is ready.
+### Interface requirements
 
-| Person and goal   | Shortest complete flow                                                                                               | Required outcome or recovery                                                                                                                                                     |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Contributor       | Home → project → eligible work → skill → GitHub PR → Payouts                                                         | Clear scope, safe execution, accepted outcome, final award status, and verified payment; wallet setup uses Account                                                               |
-| Researcher        | Home security bounties or project → report through Slop → private receipt in Inbox → screening → owner review → decision → payment | Visible net award and privacy terms; confirmed receipt; next action and deadline; private appeal; no public fallback                                                             |
-| Maintainer        | Add project → three setup steps → Slopbot installation → security scan → automatic activation                         | Resume draft, preview page and skills, see setup status; owners publish updates; routine updates keep the same repository’s admission clearance; security investigations and reinstatement retain fresh-evidence gates (section 8) |
-| Funder or owner   | Project funding → terms and balance → deposit, approve, or withdraw → receipt                                        | Separate available and reserved funds; show asset, gross, fee, net, signer, and finality; reconcile an uncertain send before retry                                               |
-| Member            | GitHub login → Account → connections, wallets, preferences → Inbox/Payouts                                              | Preserve return destination and drafts; independent consent; current-session sign-out; private recovery and account closure                                                               |
-| Moderator         | Admin → escalated dispute, appeal, or confirmed-malicious result → evidence and Slopbot triage → decision            | Current authority, saved reason, fresh scan; flag-only pauses reinstate automatically after a clean scan; preserve awards                                                        |
-| Security operator | Private vetting evidence → authorized reasoned grant → inspect → record result                                       | Exact retained bytes, explicit coverage gaps, audited access; "scan passed" only when every defined check ran (section 8)                                                        |
-| Visitor           | Projects, profiles, shared rankings, cycles, sponsors, How it works                        | Consistent amounts and periods; explain score, funding, and verification once; retain old URLs and raw downloads                                                                 |
+Use existing routes and shared controls. Show the result, next action, and restriction together. Keep required consent, amounts, and evidence visible. Avoid decorative controls or explanatory clutter. Interface changes require an approved requirement or a reproduced broken flow.
+
+Home provides distinct contribution and private-report entry points. Show current security offers before project lists and rankings. Keep generic agent setup available even when discovery fails or no project is cleared.
+
+Preserve the campaign typing/deletion animation with a stable accessible heading. Disable it for reduced motion. Keep the header at the viewport top while scrolling. Keep the main landmark and keyboard navigation without the removed Skip to content link.
+
+Support mobile screens, keyboards, screen readers, reduced motion, and 200% zoom. Meet Web Content Accessibility Guidelines (WCAG) AA. Use field-linked errors, status announcements, exact readable values, and useful recovery actions.
+
+The public `/models` and `/receipts` pages remain removed. Do not show individual receipt details or evidence-bonus labels. Keep attribution, optional collection, APIs, and stored records. Cycle pages omit the Evidence section and original-record download links; retain existing data URLs. The intentionally removed `/data/cycles/eliza/2026-09/proposal.json` and `/downloads/contribute-to-eliza.skill` remain HTTP 404.
 
 ## 8. Security and private bounties
 
 ### Clear a project before execution
 
-Scan submitted project code for malicious behavior, including wallet drainers, password and credential theft, secret exfiltration, harmful installation scripts, unsafe execution, suspicious downloads, and agent prompt injection.
+Require one complete successful admission scan for each nonexempt immutable registered repository. Routine source, dependency, skill, Markdown, and presentation changes retain admission. They are not represented as scanned. A different repository cannot inherit clearance.
 
-The scan is bounded. By default it checks the supported source files, manifests and dependencies, install and build scripts, and agent instructions (skills, AGENTS.md, and similar files) of the checked revision. Run code in isolation only for artifacts that these checks mark as risky, for example an install script that downloads or runs code, or an opaque binary. Use a second model or a specialist investigation only for ambiguous or high-risk results, not for every clean project. Put no secrets in untrusted execution. A full runtime of every project is not required. Owner decision, 28 October 2026: the security scan has no repository size limit. No entry count, file size or total size refuses a repository, and requesting the same scan again must not be the only remedy for a large one. Acquire the exact commit with one shallow Git fetch and verify it locally. Run the deterministic checks over every file. Review content larger than one model call in token-budgeted batches, risky content first, followed by one repository-level synthesis; dependency locks, data files, generated bundles and vendored copies may be covered by the deterministic checks, with every match sent to the model in context. Every reviewed item must be read, and an incomplete review is never recorded as passed.
+Bind the assessment to its actual revision, commit, and template. An existing row, failed evidence check, or incomplete scan is not clearance. Explicit investigations and reinstatement still require current evidence and live source checks.
 
-Owner approval, 27 October 2026, confirmed directly during review of #1528: outside the permanent existing-project exemption below, require one successful security scan when a project is added. Admission clearance then remains valid for the same immutable registered GitHub repository across routine commits, dependencies, Markdown, skill inputs and presentation changes. Keep the successful assessment bound to the revision, commit and template actually scanned; later content is not represented as scanned. A different repository identity cannot inherit admission. An existing row, incomplete scan or failed evidence check is not clearance. This replaces routine changed-content requalification, not explicit security investigations, contributor flags, pauses, confirmed-malicious decisions or fresh remedial/reinstatement scans. Keep their current evidence, timing, authority and live-pin requirements. Required retained admission evidence must remain complete and verifiable. The same direct approval covers permanent private retention of successful bounded-scan evidence, including the original evidence behind reused results. Other cases keep their existing retention rule; permanent retention never makes missing, corrupt or incomplete evidence valid.
+Scan for malicious code, wallet drainers, credential theft, secret export, harmful installation, suspicious downloads, unsafe execution, and prompt injection. Acquire the exact commit with one shallow Git fetch and verify it locally. Store inert content objects.
 
-Permanent existing-project exemption (owner decision, 24 October 2026): projects present in each environment’s D1 registry when migration `0075_vetting_grandfathered_projects.sql` runs are exempt from normal scan clearance, including for future executable changes. The migration fixes that set permanently; later projects cannot join it. Exempt projects may activate, appear in discovery and publish skills without an assessment. Represent this as an explicit exemption, never as a passed scan. This accepts that future executable changes may become available without scanning. Contributor flags, pauses, confirmed-malicious bans and account restrictions still apply. Reinstatement after a flag pause requires a fresh clean scan; reinstatement after confirmed malice also requires the moderator decision. The exemption does not override those restrictions.
+Run deterministic checks over every file. Review large content in token-budgeted batches, risky content first, then synthesize the repository result. Deterministic checks may cover dependency locks, data, generated bundles, and vendored copies; send every match to the model with context. Read every item marked reviewed.
 
-Owner decision, 27 October 2026: approve a normal-admission exemption for the registered Umia Protocol fork, `SlopDotCash/umia-protocol`. A platform administrator records this explicit decision through the authenticated admin interface, with the reason, approving actor and time, and the current D1 project revision, immutable GitHub repository identity and repository steward. Keep that record separate from the fixed migration-0075 set and label it **Owner-approved exemption**, never a passed scan. There is no automatic exemption for other repositories owned by Slop. Only a recorded human owner decision authorizes another grant. A different repository identity or steward cannot inherit the grant. Preserve prior queued assessments and their evidence; any subsequent investigation controls clearance. Contributor flags, pauses, account restrictions, confirmed-malicious findings and fresh reinstatement requirements remain effective. Revocations remain audited and restore the ordinary admission requirement.
+There is no repository, entry-count, file, object, or run size refusal. Repeating the same scan cannot be the sole remedy for a large repository. Incomplete review never passes.
 
-"Scan passed" means that every defined check ran on the bound revision and found no malicious result. It is not a guarantee of safety and does not claim complete runtime coverage. Record which checks ran and which content they did not cover. A scan is incomplete when a defined check did not run, or when content that runs at install or execution time was not covered by a check, isolated execution, or specialist review. An incomplete scan does not establish clearance and is never recorded as passed; do not convert earlier incomplete results to passed. Confirmed malicious projects leave contributor discovery. Two distinct contributor flags automatically pause a project and notify moderators. Skills must refuse installation and work on flagged projects. A clean fresh scan reinstates a project that flags alone paused.
+Use Surplus Opus 5.5 first. Use GPT-6.1 Sol or specialist investigation only for ambiguous or high-risk findings. Use one disposable Cloudflare sandbox per risky artifact, with internet off and no secrets. Full runtime execution of every project is not required.
 
-After a confirmed malicious result, the owner can appeal. A moderator decides whether to reinstate or ban the project. The moderator must identify each responsible account from the evidence. Do not infer responsibility from current ownership or the original application. Reinstating a project does not clear account bans. Record a separate decision for each account cleared by the evidence. A banned account cannot start new Slop participation, receive new contribution or review credit, or receive new awards. Preserve funded awards and access to appeals, including for a responsible account that no longer owns the project.
+A passed scan means every defined check ran on the bound revision and found no malicious result. Record checks and coverage gaps. It is not a guarantee of safety. Uncovered executable content makes the scan incomplete unless a check, isolated execution, or specialist review covers it.
 
-### Report and decide privately
+### Exemptions and restrictions
 
-Owner decision, 29 October 2026: any eligible project may offer a private security bounty through Add project. Public project pages, offers and owner editors derive names, source revisions, scope, contacts, amounts and award splits from the registry. Do not prefill a particular project's terms, deployment addresses or source commit in product code. Preserve published programs and report receipt terms. Award-split exceptions are admin-controlled manifest terms; an owner cannot grant a fee exception through creation or an owner revision. This replaces earlier named-project limits on new offers and admin-approved split exceptions, without changing historical offers or payment obligations.
+Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. Display an exemption, never a passed scan.
 
-The private-reporting interface implements the existing MVP reporting, account and review requirements and the owner-requested UI simplification. The home page gives contributing and private reporting distinct entry points and places current security offers before project listings and rankings. Each offer shows the researcher's net amount prominently, the gross amount and Slop share, qualifying scope, and pledged or verified funding. All terms come from the D1 revision. No open paid offer means a confidential-report entry without a promised award. Preserve the approved campaign animation and historical terms.
+A separate owner-approved Umia fork exemption requires an audited administrator record. Bind it to the current D1 revision, permanent repository identity, steward, approving actor, reason, and time. Display **Owner-approved exemption**. Another repository or steward cannot inherit it. Other grants require a separate human owner decision. Retain previous assessments and audited revocations; revocation restores ordinary admission.
 
-Reporting uses Write report and Review and submit on the same route. Guide the researcher through affected component/revision, impact and safe reproduction evidence using the existing report description. Classification stays optional. Show the exact report, reward eligibility and privacy terms before submission. Retain a project-and-account-bound draft in session storage, clear it on sign-out or account change, and preserve its idempotency key across an uncertain retry. Failed storage stays explicit and must not cause silent loss. No persistent local-storage draft, server autosave or new attachment service is authorized. Slop receipt remains independent of optional GitHub delivery.
+Exemptions do not override investigations, flags, pauses, bans, or fresh reinstatement checks.
 
-Inbox is the common report workspace. Show private reports and notification events together without view tabs. Keep existing case/submission deep links and `/security` working. Present one report entry even when it has separate submission and case records. Preserve notification read state and acknowledgment actions. Show receipt, screening, human review, award, funding, payment, remediation and disclosure as distinct states. Provide a clear next action, recoverable access errors, and a mobile detail view with Back to reports. Never show another recipient's retained data after an account change.
+A flag is eligible only from a member with a GitHub account at least 30 days old and one accepted Slop contribution. Owners and maintainers cannot flag their own project. One flag remains private. Two distinct eligible flags pause the project and notify moderators. A flag counts for 90 days; withdrawal stops it counting.
 
-Reviewers see direct, state-appropriate actions for requesting information, deciding a finding, deciding an award and preparing payment. AI screening stays advisory and does not preselect the human severity decision. Conditional decision fields cover scope, reproducibility, covered impact, duplicate finding identity and private rationale. Fixed after-approval awards retain the amount frozen at receipt; the owner may award that amount or none. Display exact gross, researcher net and Slop share before financial authorization. This interface grants no new signer, payment, disclosure or award authority.
+Skills refuse installation and work on flagged projects. A fresh clean scan automatically reinstates a flag-only pause and resolves the flags counted toward it. Stale evidence cannot reinstate a project.
 
-Separate owner bounty setup from the public report form. Group offer, scope/testing, contacts/response targets and preview/publish, using the same offer presentation as public discovery. Verify current owner capability before displaying setup. Keep bounty funds separate from contribution funds, with observed time and stale state. Use sentence case, readable exact values, keyboard controls, field-linked errors and status announcements; qualify desktop, mobile, 200% text and reduced motion. This interface work preserves bounty credit eligibility, economic rules, existing waivers and deployment gates.
+After confirmed malice, reinstatement requires a fresh clean scan and a moderator decision. A moderator decides any ban from the evidence. Identify responsible accounts individually; do not infer responsibility from current ownership or the original application. Project reinstatement does not clear account bans. Record a separate account decision when evidence supports it.
 
-Owners publish bounty terms. Existing prefunded programs open only after verified funding; an explicitly published `after-approval` funding policy may open as a discretionary pledge without an upfront deposit. The project steward or a repository admin manages private-case contacts. These changes require no routine Slop admin approval.
+A banned account cannot start participation, earn new contribution or review credit, or receive new awards. Preserve funded awards and appeal access, including after project transfer. During quarantine or a ban, existing funded payments may continue but no new commitments start.
 
-Owner decision, 27 October 2026 (amended 28 October 2026 by the Slop contract bounty below): the only current advertised and paid security bounty is Umia Protocol (`umiafinance/protocol`), for a critical vulnerability that can cause loss of funds. The gross award is $10,000 per accepted critical finding: $7,500 to the first qualifying reporter and $2,500 to slop.cash, without the ordinary 2% fee. The maintainer reviews each distinct underlying finding and decides whether to grant the published award. An after-approval award uses the gross amount frozen at receipt; choosing no award remains discretionary. Historical programs retain their earlier amount rules. There is no single-award program limit. The owner confirmed Base USDC as the settlement network and asset on 27 October 2026. The owner will not fund the vault upfront: publish `fundingPolicy: "after-approval"`, show the offer as pledged, and fund an approved award before reservation and settlement. An open offer is not evidence of available funds. `lalalune` (GitHub actor 18633264) is the intended program owner and technical contact, independently of the repository organization name; verify current repository authority before registration or private access. Slop fronts an approved award through the existing separate bounty vault and private settlement flow. Umia reimbursement is handled off chain, outside Slop settlement. Publish this program from an immutable D1 revision; never add a second project inventory. Close other paid programs prospectively, preserving their cases, receipt terms and funded obligations. Every registered project may still accept confidential reports without a bounty. The home page shows current bounty terms, gross and net amounts, funding status and a private-report action.
+### Researcher journey
 
-Owner decision, 28 October 2026: slop.cash adds a second advertised paid security bounty, for its own contracts. The award is $10,000 per accepted critical loss-of-funds finding in the Slop contracts deployed to a Slop mainnet deployment: the EVM project vaults, vault factory and monthly reserve in `contracts/evm/src`, the Solana project vaults and monthly reserve in `contracts/solana/programs`, and any other contract there, such as the referral distributor, once it is deployed to mainnet from reviewed source. Loss of funds means theft or permanent freezing of user, contributor, project-owner or vault funds. Out of scope: third-party contracts and protocols (including token, Squads and Sablier contracts), website, API, worker and other off-chain or frontend-only issues, testnet-only or local deployments, already-known or previously reported issues, and losses that require a compromised privileged key or an intended owner action. Because slop.cash is the sponsor, a 25% Slop share would pay Slop from Slop: the full $10,000 goes to the first qualifying reporter, with no Slop share and no payout fee (owner decision confirmed 28 October 2026). Only the platform's own registered project (`slopdotcash`, repository `SlopDotCash/slopdotcash`) may publish this full-award split; every other program keeps the 75/25 split. The program uses `fundingPolicy: "after-approval"`, is shown as pledged, has no predetermined award count and binds no bounty vault, because the existing bounty vault always pays 75/25. No full-award payment path exists yet, so an approved award stays a chosen, unpayable award until a full-award payment path is approved and released; verified funding alone does not make it payable; a later vault revision never reserves or pays a full-award case at 75/25. Reports use the same authenticated private Slop intake, screening and Inbox flow; never a public issue. The owner publishes the terms from the slopdotcash project's security settings as an immutable D1 revision; the editor prefills the proposed terms, deployments and source revision. `lalalune` (GitHub actor 18633264) reviews findings and decides awards. The maintainer reviews each distinct underlying finding and may grant the published award or none.
+1. Open a project's confidential-report entry or published bounty offer.
+2. Review scope, safe-test rules, funding status, and any gross, net, and Slop-share amounts.
+3. Sign in and write the affected component, source revision, impact, and safe reproduction evidence.
+4. Review the exact report, eligibility, and privacy terms, then submit.
+5. Receive a durable Slop receipt in Inbox.
+6. Follow screening and human review; provide requested information or appeal privately.
+7. If awarded, confirm the payment destination and follow funding and payment progress.
+8. Track remediation and any separately approved disclosure.
 
-Any registered user can report to a registered project, including one without bounty terms or funding. Use its primary repository when no bounty intake repository is set. A report without published paid terms has no promised award. Route exploitable findings privately even when bounty eligibility is uncertain. Never fall back to a public issue. Keep technical evidence in restricted Slop storage and, when privately forwarded with authorization, GitHub private advisories. Keep terms, decisions, appeals and payments in restricted Slop records.
+Any registered user may report to a registered project, including one without a bounty. Use the primary repository if no intake repository is set. An unpaid intake promises no award. Uncertain eligibility never justifies a public issue or induced loss.
 
-Owner decision, 27 October 2026: accept the authenticated researcher's report in Slop first, before GitHub authorization or delivery. Retain the exact report in private object storage, bind its digest, reporter, repository, receipt time and effective terms, and create the private case and reporter Inbox receipt atomically. Keep report bodies out of D1, public pages, logs, analytics, notifications and generated artifacts. Only the reporter and currently authorized case reviewers may read the retained report; audit those reads. Private report storage is separate from contributor trace access. An unavailable GitHub delivery must not lose the report or block private review and the existing discretionary award flow.
+### Offers and report intake
 
-Screen the retained report for a plausible, reproducible security finding, missing evidence, duplication and spam before notifying the project owner. Use the existing Surplus Intelligence account with `SURPLUS_API_KEY` and request `claude-opus-5.5`; the marketplace model identity is not independently verified. Do not fall back to another provider or execute submitted code. Treat every report field as untrusted data. Record screening separately from severity, technical acceptance, award, payment and disclosure. Missing evidence, suspected spam, provider failure and uncertainty remain recoverable private states, not an automatic final rejection, ban or award decision. Let the reporter follow status in Inbox and let an authorized owner review or override a held screening result.
+Eligible projects may offer bounties through Add project. All names, source revisions, scope, contacts, amounts, and splits derive from D1. Do not hardcode a program or prefill its terms, deployments, or commit in product code.
 
-Route plausible or owner-approved reports through the existing private Inbox and verified email-notice infrastructure. Email contains a secure Inbox link rather than vulnerability details. Where available, also forward privately through GitHub with the researcher's explicit GitHub authorization and preserve their authorship; verify and display that receipt separately from Slop receipt. Keep submission credentials private only as long as needed to complete or reconcile the submission. Reconcile an uncertain send before retrying. Never fall back to a public issue. A zero-data-retention agreement is not required for Surplus; provider retention follows the applicable account terms. Do not claim zero retention without confirmation.
+Owners publish scope and acceptance criteria; do not impose another program's critical-severity or loss-of-funds restriction. Preserve the protected program terms below and each report's receipt terms. A bounty award requires paid terms to have been published when the case was received. Only administrator-controlled manifest terms may grant an award-split exception.
 
-Owner decision, 30 October 2026: approve changing the existing slopdotcash GitHub App (5257625) permission for repository security advisories from read to write, as required by GitHub for researcher-authorized private report creation. The backend must continue to request read-only installation tokens. Only the researcher-authorized user token may forward that researcher’s report; the App installation token must never create or change an advisory. Keep the current App, private Slop receipt, authorship and receipt-verification checks. Permission setup does not prove delivery; qualify a real authorized report and verify its GitHub receipt before declaring forwarding available.
+Show researcher net prominently, with gross, Slop share, scope, and pledged or verified funding. A prefunded program opens only after verified funds. An explicit `after-approval` program may open as a discretionary pledge. An open offer does not prove available funds.
 
-The maintainer or owner decides whether to award a bounty and approves its payout. Critical bugs and potential loss of funds do not automatically approve a payment. Slopbot triages disputes first; moderators decide escalated disputes. Neither screening nor private forwarding grants payment authority.
+Keep owner setup separate from reporting. Group offer, scope/testing, contacts/response targets, and preview/publish. Verify owner authority before showing setup. Project stewards or repository administrators manage case contacts without routine platform approval. Keep bounty funds separate from contribution funds, with observation time and stale status.
 
-Use safe evidence of a critical bug or potential loss of funds. Actual loss is not required and must not be induced. Record the first verified qualifying report for each underlying finding. Prevent duplicate reservations. A discretionary award decision may record an amount while funding is unavailable; it creates no funded reservation or payment claim. Discretionary approval and verified funds precede any award reservation; private bounties do not use the monthly automatic-payment fallback.
+Reporting uses Write report and Review and submit on one route. Classification is optional. Keep drafts in account-and-project-bound session storage. Clear them on sign-out or account change. Preserve the idempotency key through uncertain retries and show storage failure. Do not add persistent local-storage drafts, server autosave, or an attachment service.
 
-Keep receipt, remediation, award, payment, and disclosure states separate. Use independent private patch review and exact-revision tests. A fix, payment, or expired deadline never authorizes disclosure. Maintainers should supply an e-mail or Signal address to be contacted by reporters and moderators.
+Retain the exact report in private object storage before optional forwarding. Bind its digest, reporter, repository, receipt time, and effective terms. Atomically create the case and reporter Inbox receipt. Never put report bodies in D1, public pages, logs, analytics, notifications, or generated artifacts.
 
-### Pay a private award
+### Screening, human review, and forwarding
 
-The researcher normally receives 75% of the gross award; slop.cash receives 25%. This replaces the ordinary 2% commission. An admin-approved full-award program pays the researcher 100% and takes no Slop share. Add no ordinary payout or claim fee. Use 75/25 gross amounts divisible by four base units of the selected asset; the full-award split needs no divisibility rule. A 100 USDC award pays 75 and 25. The report and its fix are one financial work unit unless approved terms say otherwise.
+Screen before notifying the project owner. Use the existing Surplus account and requested model `claude-opus-5.5`. The marketplace model identity is not independently verified. Use no provider fallback and execute no submitted code. Treat every report field as untrusted data.
 
-Reuse existing payment rails, wallet authorization, recovery, and finality checks. Keep a private award ledger; a separate bounty vault is optional. Direct payments and existing vault payments both require finalized proof before an award is paid. Ordinary balances, cycles, notices, and account views must reveal no case-related amounts or changes. Restrict case identifiers, counts, queues, and totals.
+Screen for plausibility, reproducibility, missing evidence, duplication, and spam. Screening is advisory and separate from severity, acceptance, award, payment, and disclosure. Missing evidence, suspected spam, uncertainty, or provider failure must remain recoverable. An authorized owner may review or override a held result. Notify owners only for plausible or owner-approved reports, through private Inbox and verified email notices.
+
+Inbox combines reports and notification events without view tabs. Preserve case/submission deep links and `/security`. Show one report entry even when it has separate submission and case records. Preserve read and acknowledgment state. Show each case stage separately, with the next action and recoverable access errors. Mobile details provide Back to reports. Clear retained private data on account change.
+
+Give authorized reviewers direct actions to request information, decide a finding, decide an award, and prepare payment. Record scope, reproducibility, covered impact, duplicate identity, and private rationale as applicable. Do not preselect human severity from model screening.
+
+GitHub forwarding is optional and requires the researcher's explicit authorization. Preserve authorship and verify its receipt separately from the Slop receipt. Use only the researcher-authorized user token to create or change an advisory. The existing GitHub App may request advisory write permission, but backend installation tokens remain read-only.
+
+Keep submission credentials only as long as completion or reconciliation requires. Reconcile an uncertain send before retrying. Failed forwarding must not lose the report or block private review. Never fall back to a public issue. Provider retention follows applicable account terms; do not claim unconfirmed zero retention.
+
+### Award, payment, and disclosure
+
+The owner or maintainer decides technical acceptance and discretionary awards. The financial approver authorizes payout. Screening, forwarding, a critical defect, or potential loss never authorizes payment. Refuse unauthorized self-approval. Slopbot triages disputes; a moderator decides escalated cases.
+
+Record the first verified qualifying report for each underlying finding. Use safe evidence; actual loss is neither required nor permitted. A fixed after-approval offer uses the gross amount frozen at receipt: award that amount or none. Preserve historical amount rules.
+
+An unfunded award decision creates no funded reservation or payment claim. Require approval and verified funds before reservation. A vault-backed award reserves only its bounty vault's finalized free balance. Prevent duplicate reservations. Private awards never use the automatic monthly-payment fallback.
+
+The standard split is 75% to the researcher and 25% to Slop. Its gross amount must divide by four in asset base units. An authorized full-award exception pays 100% to the researcher and needs no such divisibility rule. Add no ordinary 2% fee or claim fee. Show exact gross and net amounts before authorization.
+
+Use a released, qualified payment path for the award's frozen asset and split. Existing 75/25 vaults must never pay a full-award case. A selected award or verified funds alone do not prove that a suitable path is available.
+
+For direct payments, record each finalized leg separately and show only unpaid legs for action. Mark paid only when the researcher amount and any Slop share are proved. Direct fees enter the same received-fee accounting as vault fees. Notify the reporter, current security maintainers, and financial approvers with private content omitted.
+
+Keep the report and its fix as one financial work unit unless approved terms say otherwise. Separate eligible ordinary work may still earn rewards.
+
+Use independent private patch review and exact-revision tests. Remediation, payment, or an expired deadline never authorizes disclosure. Require approval of the exact redacted content, retain embargo history, and obtain separate recognition consent. Maintainers should provide an email or Signal contact for private coordination.
+
+### Protected program terms
+
+These terms protect existing offers and received reports. They do not restrict new programs to named projects or replace the D1 registry.
+
+**Umia Protocol.** Each accepted critical loss-of-funds finding carries a 10,000 USDC gross offer on Base. The first qualifying reporter receives 7,500 USDC; Slop receives 2,500 USDC. The maintainer may grant the receipt-time amount or none. There is no single-award program limit.
+
+The program is an after-approval pledge. Slop fronts an approved award through its separate bounty vault after verified funding. Umia reimbursement occurs off chain. Verify the registered repository and current authority from D1 and GitHub. `lalalune` (GitHub actor 18633264) is the intended owner and technical contact. Private vulnerability reporting must be enabled on the registered fork for optional researcher-token forwarding.
+
+**Slop mainnet contracts.** Each accepted critical loss-of-funds finding carries a $10,000 offer, paid entirely to the first qualifying reporter. Slop takes no share or payout fee. The maintainer may grant the published amount or none; there is no predetermined award count. `lalalune` reviews findings and decides awards.
+
+Scope covers reviewed Slop mainnet deployments from `contracts/evm/src` and `contracts/solana/programs`. It includes vaults, factories, monthly reserves, and other contracts in those paths only after qualifying mainnet deployment. Loss means theft or permanent freezing of user, contributor, owner, or vault funds.
+
+Exclude third-party contracts, off-chain and frontend defects, testnet/local deployments, known or previously reported findings, and losses requiring compromised privileged keys or intended owner actions. This after-approval offer belongs to the `slopdotcash` platform project and binds no 75/25 bounty vault. The full-award payment-path requirement above applies.
+
+### Private data and retention
+
+| Data | Access and retention rule |
+| --- | --- |
+| Private reports | Only the reporter and currently authorized case reviewers may read retained bodies. Audit every read. Keep cases and obligations through recovery and role changes. |
+| Scanner evidence | Only `lalalune` and `drew-dot-com` may read through audited 15-minute grants. `lalalune` owns this policy. |
+| Successful admission evidence | Retain permanently, including original evidence behind reused results. Missing or corrupt evidence is never valid. |
+| Other scanner evidence | Retain while open and for 90 days after closure. Clean scans close automatically; incomplete or malicious cases require `lalalune` to close them. |
+| Scanner recovery records | Daily private backups retained for 30 days; access logs retained for one year. Prove restoration before activation. |
+| Contributor traces | Permanent private R2 objects. No website or API may return a body to anyone, including its contributor or an operator. |
+
+Store scanner objects once by SHA-256 in private R2 using 8 MiB upload parts. D1 holds manifests and digests. Reuse existing objects by reference; delete shared bytes only after all retained references end. Policy changes require a reviewed source change, not a deployment attestation.
+
+Trace upload remains optional, authenticated, bounded, checksum-verified, write-only, and fail-closed. Failure or refusal must not block contribution. Keep only safe metadata and digests in public artifacts. Preserve existing audit records. The MVP accepts the absence of a durable per-actor upload quota; this does not remove size or authentication controls.
 
 ## 9. Operations and launch decisions
 
-Public pages use cached D1 data or published snapshots. On refresh failure, retain the last good value with a stale label. Sensitive actions recheck current authority.
+### Administrator and moderator journey
+
+1. Sign in and open the queue permitted by the current role.
+2. Recheck project identity and current authority before viewing evidence or acting.
+3. Review the source record and any Slopbot recommendation.
+4. Record the permitted decision and reason.
+5. Confirm the resulting restriction, notice, or recovery state.
+6. Preserve history, funded obligations, and appeal access.
+
+Administrators manage Featured placement, authorized exceptions, restrictions, and incomplete ordinary assessments. Use quarantine to hold a project. They do not approve routine project admission or automatically gain private-case access.
+
+Moderators are `lalalune` (GitHub actor 18633264) and `drew-dot-com` (202660855). Escalate when an appellant or maintainer rejects Slopbot's proposed resolution. Escalate appeals or disputes that involve bans, confirmed malice, private security cases, or debits of at least 240 Points. Escalate when Slopbot's confidence is below 0.9. Escalate an appeal still unresolved after seven days.
+
+Incomplete ordinary PR assessments appear once in the current maintainers' and administrators' private Inbox. Show the public PR and retry state. Retain the entry through retries and remove it on completion. Recheck authority on each read; unavailable checks produce a retryable failure. Never expose this queue to unrelated or former maintainers.
 
 ### Notifications
 
-Use one Inbox for wallet changes, payout exceptions, project decisions, appeals, and case notices. Save each notice with the source change; replay must not duplicate it. Keep private notices generic. Read, acknowledged, provider-accepted, delivered, failed, and uncertain are different states.
+Use one Inbox for wallet changes, payout exceptions, project decisions, appeals, and case notices. Save each notice with its source change. Replay must not duplicate it. Keep private notifications generic and link to the secure Inbox.
 
-Activity email is optional. Show the verified destination before opt-in. Bind consent to its exact version. A changed address needs new consent. Opt-out cancels queued activity mail and works during outages; opt-in does not send old history. Essential wallet-security and private-case notices use their separate policies.
+Activity email is optional. Show the verified destination before consent and bind consent to its exact version. A changed address needs new consent. Opt-out cancels queued activity mail, including during outages. Opt-in does not send old history. Wallet-security and private-case notices use their separate policies.
 
-Recheck roles and destinations before sending. Verify actual inbox receipt separately from provider acceptance. Bound retries; reconcile uncertain sends before retry. Escalate failed or overdue case notices to a current approved backup. Preserve cases when notification fails.
+Recheck roles and destinations before sending. Provider acceptance does not prove inbox delivery or user acknowledgment. Verify actual receipt separately. Bound retries and reconcile uncertain sends before retry. Escalate failed or overdue case notices to a current approved backup. Notification failure never deletes a case.
 
-### Recorded decisions and remaining gates
+### Dependencies and local operation
 
-| Area                    | Recorded decision                                                                                                                                            | Remaining approval or evidence                                                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authority               | Repository PRD; D1 inventory; GitHub work; owner-set awards with default automatic monthly distribution; chain finality                                      | Reconcile older trace, scoring, and key instructions before the affected action                                                                                                                                         |
-| Fees                    | Public awards and free-fund withdrawals: 2%; private bounties: 25%; no stacked fee                                                                           | Keep historical terms; approve changes prospectively                                                                                                                                                                    |
-| Wallet recovery         | Fresh account and wallet proof; one operator for redirected recovery; changed or recovered payout wallets activate immediately, with no waiting period       | Implement immediate wallet activation before launch; approved funded awards never expire and stay reserved until paid                                                                                                   |
-| Mainnet                 | Four approved networks; owner waived the independent smart-contract audit and signer/attester legal review                                                   | Exact assets, finality, authority, testnet results, and explicit activation                                                                                                                                             |
-| Fee conversion          | Convert received fees to USDC on Base, Ethereum and Solana; retain received assets unconverted on Robinhood; separate fee signer and owner-authorized sweeps | Verify the three USDC routes, Robinhood's "not converted" state, Solana role separation, limits and custody in section 11                                                                                               |
-| Slopbot                 | Required and always free; registered repositories only; size-based PR scoring and useful review credit                                                       | Verified closure scope, Slopbot appeal triage with moderator escalation, free-service capacity limits, and production qualification                                                                                     |
-| Private programs        | Automatic private reporting; discretionary owner awards; Slopbot-triaged disputes with moderator escalation; 75/25 payment                                   | Published program terms, safe testing, verified reserves after approval, and activation per program                                                                                                                     |
-| Moderation and evidence | Staging pilot: lalalune (18633264), drew-dot-com (202660855)                                                                                                 | Qualify staging, the bounded malicious-code scan in section 8 with an isolated runner for risky artifacts (a universal Linux/KVM runtime is not required), external retention/recovery controls, and production release |
+Public pages use cached D1 data or published snapshots. Refresh failure retains the last good value with a stale label. Sensitive actions require fresh authority.
+
+| Dependency | Required failure behavior |
+| --- | --- |
+| GitHub identity, authority, and source | Refuse sensitive actions on unavailable proof; retain recoverable drafts and records. |
+| D1 and private R2 storage | Require durable receipt and verifiable evidence; never report a partial write as success. |
+| Review providers and isolated execution | Preserve incomplete or retryable states; never invent a completed review. |
+| RPC services and supported payment paths | Retain pending obligations and uncertain attempts until exact finality is established. |
+| Email provider | Preserve Inbox access, explicit delivery state, and escalation. |
+
+The public repository picker uses the read-only `SLOP_GITHUB_READ_TOKEN` in production and staging. It grants no write, private-repository, or organization authority.
+
+Local development uses durable isolated report storage, background assessment, API flows, and real authorization. The existing GitHub App supplies a loopback-bound single-use identity handoff. Local and production stores remain separate; local handoffs cannot create production assertions. Require no separate developer App or local production secret. Do not silently send real mail or enable a production signer.
+
+The old wallet-possession protocol, isolated test identity stack, and v1 secure-VM vetting pipeline remain retired. Keep `deck.slop.cash` detached.
+
+### Decisions still required
+
+The product owner must approve new service targets, support commitments, phase scope, and activations outside existing standing approvals. Keep implementation and evidence in the repository review process. Section 11 defines the required completion record.
 
 ## 10. Private bounty acceptance
 
-| Check                | Required result                                                                                                                                                                                                                 |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Program              | Only the current Umia paid program is advertised; other projects retain unpaid intake; published gross/net terms, discretionary awards, named payer and dispute contact                                                                                                                          |
-| Intake               | Durable Slop receipt before forwarding; enabled, disabled, stale, denied, unavailable, direct and interrupted paths; verified authorship, separate Slop/GitHub receipt times, policy and evidence version; no public fallback                                                               |
-| Eligibility and fix  | Screen plausible, incomplete, spam and provider-unavailable reports without automatic final rejection; safe critical-bug or potential-loss evidence; discretionary award approval; private patch review and tests; deployed mitigation                                                                                                 |
-| Access and decisions | Refuse self-approval, cross-case/project access, and revoked roles; two authorities: the project owner or maintainer decides technical, award, and disclosure questions, and a moderator decides escalated appeals and disputes |
-| Capacity             | Verified funds versus pledges; reserve only approved awards; one reservation per finding; no automatic bounty payout                                                                                                            |
-| Amounts              | 10,000 gross pays 7,500 and 2,500; reject inexact minor-unit splits and stacked fees; preserve the agreed asset and historical terms                                                                                            |
-| Payment and recovery | Reporter chain consent; correct vault, asset, destination, and unsigned owner request; missing wallets, changed destinations, partial results, uncertain sends, restart, and replay; finality before paid                       |
-| Privacy              | No case data, counts, or revealing totals in public pages, APIs, logs, analytics, caches, downloads, rankings, or notices                                                                                                       |
-| Disclosure           | Exact redacted-content approval and embargo history; separate recognition consent; no automatic publication after fix, payment, or deadline                                                                                     |
-| Compatibility        | No second cash award for the same report/fix; preserve ordinary rewards for separate eligible work                                                                                                                              |
-| Notices              | Verified sender, binding, destination, current role, quota, isolation, inbox receipt, explicit acknowledgment, bounded retry, and escalation                                                                                    |
-| Continuity           | Restore backups; preserve obligations through account recovery, role loss, project transfer, ban, closure, and intake outage                                                                                                    |
-| Release              | All section 7 journeys, accessibility checks, sanitized evidence, and exact deployed revision                                                                                                                                   |
+These tests cover the complete private-report journey, including reports without paid terms. Apply the scoped evidence exceptions in section 11 without treating them as passed tests.
+
+| Area | Required result |
+| --- | --- |
+| Offer | Registry-derived scope, named sponsor, payer, and dispute contact, exact gross/net/split, and clear pledged or verified funding. No invented award for unpaid intake. |
+| Intake | Durable Slop receipt before optional forwarding. Enabled, disabled, stale, denied, unavailable, interrupted, and direct-intake paths preserve data correctly. |
+| Screening | Plausible, incomplete, suspected-spam, and provider-failure cases remain distinct. No automatic rejection, award, or submitted-code execution. |
+| Authority | Refuse self-approval, unrelated case access, revoked roles, and stale authority. Keep technical, financial, and moderator powers separate. |
+| Terms | Preserve receipt-time eligibility and amount. Apply the program's scope rather than a universal severity threshold. |
+| Funding | Distinguish approval, pledge, verified funds, and reservation. One finding cannot create duplicate reserves or automatic monthly payouts. |
+| Amounts | Prove 75/25 and authorized 100% paths. Reject inexact splits, wrong assets, and stacked fees. |
+| Payment and recovery | Test missing wallets, changed destinations, renewed consent, partial legs, uncertain sends, restart, replay, and old-request retirement. Finality precedes paid. |
+| Privacy | No case bodies, counts, amounts, or revealing totals in unauthorized pages, APIs, logs, analytics, caches, downloads, or notices. |
+| Forwarding | Preserve reporter authorship and separate receipt times. Use the authorized user token; never use an installation token to write an advisory. |
+| Remediation and disclosure | Verify the exact patch and mitigation. Require separate exact-content disclosure approval, embargo history, and recognition consent. |
+| Notices | Prove sender, destination, consent, current role, quota, isolation, actual receipt, acknowledgment, bounded retry, and escalation. |
+| Continuity | Restore backups. Preserve cases and obligations through role loss, account closure, transfer, ban, recovery, and intake outage. |
+| Interface | Complete the researcher and maintainer journeys on desktop and mobile, with keyboard, 200% zoom, reduced motion, and recoverable errors. |
 
 ## 11. Source, delivery, and acceptance
 
-The repository PRD is canonical. The Google Docs copy mirrors it after repository review. Owner decisions in this revision supersede conflicting older requirements: self-service admission; required free Slopbot on registered repositories; size-based PR scores and useful review credit; two-flag pauses; automatic private reporting with discretionary bounty payouts; no public award-adjustment history; automatic monthly payment by default for funded projects; and received-fee conversion to USDC except on Robinhood, which retains received assets unchanged. The 23 October 2026 revision adds: automatic reinstatement after flag-only pauses; a 7-day maintainer window before Slopbot labels uncertain findings; one published penalty table; Slopbot-first triage of appeals and disputes; two bounty authorities; one operator for redirected wallet recovery; and a lighter isolated scanner runtime, used only for risky artifacts within the bounded scan in section 8. The owner waived the independent smart-contract audit and signer/attester legal review on 24 October 2026. Explicit mainnet activation remains required.
+### Whole-product acceptance
 
-These are target requirements, not claims that current code or deployed services implement them. Preserve existing funded obligations and historical scoring terms. Keep implementation and evidence in the existing GitHub issues. This revision defines no requirement or MVP work-package IDs. Cite the section number and the acceptance result. Older IDs (for example PAY-05, SKL-03, TOK-07, and MVP-07c) remain valid references in existing records, code, and decisions. The old detailed delivery prose is superseded where it conflicts with this revision.
+Cite the relevant section and observable acceptance result in each implementation PR. Historical PAY, SKL, TOK, and MVP identifiers remain valid in existing records. This document adds no work-package taxonomy. Section 12 retains the five current STATE requirements.
 
-Before release, prove self-service setup, malicious-code detection, two-flag pause and skill refusal, automatic reinstatement after a clean scan, moderator decisions on confirmed-malicious results, free registered-repository bot review, scoring without duplicate review credit, monthly payment fallback, discretionary private reporting and settlement, USDC fee conversion on Base/Ethereum/Solana, and unconverted fee retention on Robinhood. Apply the recorded owner exceptions below, including the private-reporting live checks. Include failed, unavailable, and uncertain paths. Verify the exact source and deployed revision, real browser flows, access controls, recovery, and required network evidence. Both external reviews are waived, not completed. Explicit mainnet activation remains required. Maintainers approve completion from evidence; a source merge alone is not completion.
+| Product area | Acceptance result |
+| --- | --- |
+| Accounts | GitHub identity survives renames. Consent, visibility, closure, wallet replacement, and recovery follow section 3 without cross-account leakage. |
+| Contributors | Complete discovery, verified installation when used, attributed submission, acceptance, and Points. For an eligible funded award, also complete payment. Optional evidence never blocks submission. |
+| Maintainers | Complete and resume setup without routine admin approval. Verify authority, installation, admission, immutable revisions, and independent funding readiness. |
+| Slopbot | Review registered repositories for free. Preserve incomplete outcomes, qualified closure scope, consent, reopen protection, penalties, and appeal escalation. |
+| Points | Complete source coverage, correct work/review shares, single debits and reversals, preserved history, and no duplicate credit. |
+| Security admission | Prove complete scans, honest exemptions, eligible two-flag pause, skill refusal, fresh reinstatement, and human confirmed-malicious decisions. |
+| Private reports | Meet section 10 for paid and unpaid intake, including privacy, partial payments, recovery, and separate disclosure authority. |
+| Monthly rewards | Prove one proposal and final allocation, full funding, owner adjustment/opt-out, cutoff fallback, permanent reserves, and exact finalized payment. |
+| Fee handling | Prove receipt, claim, conversion, reconciliation, and failure/restart controls. Keep Robinhood assets unconverted and enforce every value and gas limit. |
+| Operations | Prove role-scoped queues, idempotent notices, current consent, restoration, isolated local development, and explicit unavailable states. |
+| Interface | Verify all affected desktop/mobile flows, keyboard access, screen readers, 200% zoom, reduced motion, downloads, links, and console/network behavior. |
+| State correctness | Meet section 12 with source mappings, reachable scenarios, implementation evidence, and explicit gaps. |
 
-### Recorded owner decisions (24–25 October 2026)
-
-These decisions apply prospectively, except for the approved extension to unpaid September and October work in section 7. Preserve the original Points and frozen terms of approved or funded awards, including scheduled and paid awards. Ongoing API assessment still starts on 1 November 2026 UTC. Configuration that implements these decisions stays fail-closed until it is set.
-
-Historical Points publication is on hold until the complete assessment journal and exact changes are reconciled. Other releases retain the prior historical scoring rules. Keep the standard importer and September candidate checks available. Release the historical projection only after coverage, duplicate-credit and funded-history checks pass. This hold does not change the approved scope in section 7 or the November API start.
-
-| Decision                          | Recorded value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Monthly period model              | Calendar UTC month; first period 2026-11; cutoff 72 hours after the month ends (section 6)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Review-credit pool                | Sum of the credited reviewers' highest bands, capped at the pull request's assessed size credit, minimum 10 points; largest remainder. Applies to unpaid September and October 2026 work and new work from 1 November, with the history protections in section 7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Historical census exclusions     | Owner decision, 27 October 2026: no special Points or payment exclusions for team status or Madyoun's former account unavailability in the September–October 2026 census. Keep the existing sharing rule and all source, duplicate-credit, participation-ban, funding and wallet controls. Preserve funded awards and the publication hold (section 7, #1046). |
-| Flag lifetime and resolution      | A flag counts for 90 days. A clean-scan reinstatement resolves every flag counted toward that pause; a withdrawn flag stops counting. Only a member whose GitHub account is at least 30 days old and who has at least one accepted Slop contribution may flag; owners and maintainers cannot flag their own project. One flag stays private                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Fee conversion timing and dust    | Convert on receipt when the value is at least 5 USDC and at least 10 times the gas cost; slippage 1%, price impact 2%, 1,000 USDC per run, 5,000 USDC per day. Capped fee claims move only accrued fees to the same fee wallet. Robinhood retains each received asset without conversion or bridging and shows "not converted"; USDG stays USDG ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/914#issuecomment-6403364990), 25 October 2026). Solana role separation was verified on the deployed Config on 26 October 2026; live signing still requires approved native transaction/day limits and durable cost accounting                                                                                                                                                                                                                                                                                                                                 |
-| Attribution for automatic closure | An ordinary submission needs the visible Slop attribution line and the exact provider, model, and client; a signed receipt is optional. Closure and penalties need the author's own authenticated Slop run for that project and a pull-request-opened event that names the exact pull request. A copied marker is never proof                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Closure consent and qualification | Owner decision, 25 October 2026: explicit consent in project settings replaces the separate `.github/slopbot.json` requirement. Registration and App installation alone are not consent. Preserve existing opt-outs and repository rejection rules. Reviewed real cases and counterexamples replace the fixed 14-day and 50-item threshold; independent confirmation, caps, appeals, reopen protection, the seven-day uncertain label-only rule and explicit production activation remain                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Penalty table                     | Section 7 table                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Escalation criteria               | A moderator decides when the appellant or maintainer rejects Slopbot's drafted resolution; the case involves a ban, a confirmed-malicious result, or a private security case; the debit is 240 points or more; Slopbot's confidence is below 0.9; or the case is unresolved 7 days after the appeal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Restricted projects               | Security-only review on a paused, flagged, or quarantined project may comment and apply the scam label only. Retired projects get no review. Approved funded payouts continue during quarantine or a ban; no new commitments start                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Setup                             | Creating a project requires a Slopbot installation read. Economic changes apply from the next UTC calendar month. Amounts use asset base units. Admins use quarantine to hold a project                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Account closure                   | Closure is reversible through an explicit reopen. Wallets, obligations, settlement records, identity reservations, and private-case records remain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Pending wallet replacement | Approved directly by the repository owner in the 27 October 2026 review; [recorded summary, #1467 section 3.4](https://github.com/SlopDotCash/slopdotcash/issues/1467#issuecomment-6437990392): keep the verified wallet active until the replacement wallet signs the required authorization. Registration alone does not pause the prior destination. Preserve first-registration proof, pending and uncertain attempts, replay controls, cancellation limits and funded obligations. |
-| Wallet recovery entry point | Approved directly by the repository owner in the 27 October 2026 review; [recorded summary, #1467 section 3.5](https://github.com/SlopDotCash/slopdotcash/issues/1467#issuecomment-6437990392): email the operator, then use the existing contributor-signed self-service flow. Remove the unused admin wallet-proposal endpoint; preserve historical rows. This grants no new operator signing or payment authority. |
-| Public vault payment records | Approved directly by the repository owner in the 27 October 2026 review: profiles and `/cycles` show finalized ordinary project-vault payments with the project, recorded contribution month, net asset amount and transaction link. A missing contribution month stays explicitly unavailable; never infer it from indexing time. Keep private security-bounty records private, preserve closed-account privacy and show pending or unavailable evidence separately from paid records. |
-| Wallet activation                 | Changed or recovered payout-wallet addresses activate immediately after the required account and wallet-control proof. The waiting period is zero ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6379760881)). Award payments and identity-authority rotations also have no waiting period (see Contract timelocks)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Solana upgrade authority          | Retain owner-controlled upgrade authority in production, without a timelock. The upgrade key is separate from the identity attester and fee-conversion keys. Verify its public key and exact finalized program bytes before activation. This supersedes the prior requirement to revoke production upgrade authority.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Solana build verification         | Owner decision, 25 October 2026: waive the second-operator and different-machine build requirement. It was not completed. Keep the deterministic build with a pinned image digest, exact artifact and on-chain hash checks, public-testnet acceptance, and a human-authorized mainnet upgrade.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Solana token compatibility        | Owner decision, 26 October 2026, #905: include Pump.fun metadata-only Token-2022 mints under section 6, with disabled mint/freeze authorities, only MetadataPointer/TokenMetadata mint extensions and token accounts with only ImmutableOwner or no extensions. Reject all other extensions. Qualify the escrow and fully inspected versioned routing before release; existing fees, limits and roles stay unchanged. Program upgrades and token funding require separate exact reviewed execution plans and owner approval. |
-| EVM upgrade authority             | The deployment authority may upgrade replacement EVM factories and individual vaults without a timelock. This power can change logic governing deposited funds. Fee-conversion and identity-attester keys have no upgrade power. Initialization is atomic. Each accepted implementation and upgrade authority must be verified before payment evidence is accepted. Existing immutable deployments remain unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Contract timelocks                | Award payments and identity-authority rotations have no mandatory waiting period. Deploy replacement EVM contracts and update Solana deployment configuration for zero delay. Preserve reserved awards, required authorization, wallet-control proofs and replay protection. Calendar-month accounting and evidence retention remain separate policies.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Owner-authorized operations       | Owner decision, 25 October 2026: agents may privately use necessary existing credentials and execute reviewed setup, testnet and mainnet plans within the owner's authorized financial scope. Never print secrets or signing material. This replaces the blanket human-only rule. Required acceptance, explicit mainnet activation and the reviewed release flow remain. Application-service signer powers do not expand.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Obsolete binding cancellation     | Owner decision, 25 October 2026: the unattended identity attester may send a same-nonce, zero-native-value, empty-data transaction to itself only to cancel its own obsolete pending EVM wallet binding. Keep the existing gas limits, both immutable signed attempts and uncertainty until a canonical finalized winner is verified. The original binding may win. No payment or monthly-commitment cancellation is authorized.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Upgrade key custody               | Keep one owner-held upgrade key for the EVM factories and vaults on every network and one for the Solana program ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6380908685), 24 October 2026). Either key can replace escrow logic immediately; this is an accepted risk, recorded in `docs/security/red-team-2026-10-24.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Security bounty opening           | A project owner may open a funded private security bounty program without admin approval ([owner decision](https://github.com/SlopDotCash/slopdotcash/pull/1183), recorded in the PR description, 24 October 2026). The program terms, technical approver and sponsor rules, private-report access controls and ban checks still apply.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Accepted attester-compromise risk | Keep immediate wallet binding. The owner explicitly accepts that a compromised identity-attester key, together with an attacker-controlled wallet, can redirect unpaid awards without an owner-veto waiting window ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6381602244)). This acceptance does not waive other contract fixes, review, required checks or deployment verification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Funded-award expiry               | Approved funded awards never expire. Keep funds reserved until payment, including when the recipient has no confirmed payout wallet. Time alone never releases the reserve to the project ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6379763484)). Consequence: if a signed monthly allocation can never settle (an attester fault), its gross stays reserved and the owner's manual awards on that vault stay blocked until a reviewed contract upgrade. Later monthly admissions, payments, deposits and free withdrawals still work. The owner requested a reviewed contract change that lets the owner release only a month's provably unsettleable reserve; this consequence stays in force until that upgrade is qualified and activated ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/914#issuecomment-6403364990), 25 October 2026).   |
-| Wrong-sum reserve release         | Owner decision, 25 October 2026: the identity Worker may approve an owner-requested release only after fresh finalized evidence proves a complete matching allocation has the wrong total and no prior settlement or release. Derive the whole remaining reserve; do not accept a chosen amount. The current owner separately signs the transaction. Refuse missing, healthy, stale, partially settled or released evidence. No automatic release, withdrawal or mainnet activation is authorized.                                                                                                                                                                                                                                                                                                                                                                                                             |
-| External reviews                  | The independent smart-contract audit and signer/attester legal review are waived by the owner, not completed. This supersedes both earlier external-review prerequisites. Explicit mainnet activation remains required ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/903#issuecomment-6379783252))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Fee-sweep custody                 | Use separate owner-controlled EVM and Solana software wallets, with keys stored locally in `.env`. No hardware wallet is required. Sweeps require owner authorization and stay separate from the conversion Worker ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/905#issuecomment-6379777455))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Private bounties                  | Reserve against the bounty vault's finalized free balance. The researcher submits durably through Slop, which screens before private owner notification. GitHub forwarding is optional with researcher authorization; verify its receipt separately through authorized advisory read access. Two authorities, as in section 10. Awards only for cases received while paid terms were published                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Contracts before launch           | Remove the service charge. Permissionless vault creation by its owner, with separate ordinary and bounty purposes. A bounded monthly commitment that anyone may submit after the cutoff, signed by the identity attester and limited by the owner's monthly cap, one commitment per period, and the owner's opt-out                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Scanner evidence retention        | Only lalalune and drew-dot-com may read evidence, through audited 15-minute grants; lalalune owns the policy. Keep successful bounded admission-scan evidence permanently (owner decision, 27 October 2026, #1467). Other raw evidence stays while its case is open and for 90 days after closure. Clean scans close automatically; incomplete or malicious cases stay open until lalalune explicitly closes them. Keep daily private backups for 30 days and access logs for one year; prove restoration before activation. This policy does not change permanent contributor traces                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Slopbot spending limit            | Alerts-only: no monthly hard cap on Slopbot inference spending. Email the owner at every crossed $500 milestone. Keep immutable attempt and actual/unknown cost records, duplicate refusal and queue limits. Alerts-only mode needs no numeric attempt reserve; capped mode retains its numeric reservations. Ongoing API assessment starts at 2026-11-01T00:00:00.000Z; September/October use ChatGPT subscription subagents and the standard assessment journal; the SlopDotCash/slopdotcash slice may use a Claude subscription subagent (26 October 2026, #1344) or a Codex subscription session/subagent using GPT-6.1 Sol (27 October 2026). Missing or malformed configuration still stops inference (owner decisions, 24 October 2026 in #1141, 25 October 2026 and 26 October 2026)                                                                                                                                                                                                   |
-| Existing-project scan exemption   | Permanently exempt the projects captured by migration `0075_vetting_grandfathered_projects.sql` from normal scan clearance, including future code changes. Later projects still require scans. Flags, pauses, confirmed-malicious bans and fresh-scan reinstatement remain effective. An exemption is not a passed scan ([owner decision](https://github.com/SlopDotCash/slopdotcash/pull/1114#issuecomment-6382081150))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Scanner and runner                | Surplus Opus 5.5 first; GPT-6.1 Sol only for ambiguous or high-risk results. One disposable Cloudflare sandbox per risky artifact, with internet access off and no secrets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Scanner repository size           | Owner decision, 28 October 2026: admission scans have no repository size limit. Remove the 1,024-entry, 8 MiB-file and 64 MiB acquisition limits; acquire the exact commit with one shallow Git fetch, verify it locally and write only inert content objects. Batch large inventories across model calls with a repository-level synthesis; keep the Surplus route, isolation and fail-closed completeness unchanged (section 8, `workers/vetting/ACQUISITION.md`). Retained scanner evidence has no object or run size limit either: store each object once by SHA-256 in private R2, upload it in 8 MiB parts, keep only manifests and digests in D1, reference an already stored digest instead of re-uploading, and delete shared bytes only when no retained reference remains (`backend/vetting/EVIDENCE.md`) |
-| Participation points              | Grant no new welcome (5) or X-connection (10) points to anyone from 24 October 2026. Keep every award recorded before that date unchanged; never delete, rewrite, or reissue one. The X connection stays as a consented profile link with no points. Payout shares stay accepted-work points only (owner decision, 24 October 2026: “for 1154 we're ending welcome points and x connection points”)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Account visibility                | Owner decision, 26 October 2026: memberships and connected X profile links are public. Existing private membership and its connected X link become public on the next authenticated sign-in; new connections and explicitly reopened accounts are public. Remove visibility opt-outs, show the policy before sign-in/connect, and preserve private cases, traces, wallet records, email consent, closed accounts and historical Points. |
-| Scam closure notice               | Implementation note for the "Scam or malicious" row of the section 7 penalty table, not a separate decision: the closure creates one idempotent moderator Inbox notice to review the account, alongside the label (#1155)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Moderators                        | lalalune (18633264) and drew-dot-com (202660855)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| EVM replacement fees              | A keeper or fee-converter EVM send that stays unmined because its maximum fee is below the network fee is replaced automatically: same nonce and content, fees raised in bounded steps (about 25% each, at most 3 times the original), within the existing per-network gas limits. Every attempt is journaled before broadcast; exactly one finalized outcome is recorded ([owner decision](https://github.com/SlopDotCash/slopdotcash/issues/914#issuecomment-6403364990), 25 October 2026)                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Monthly commitment default        | Vault creation turns on the monthly commitment unless the owner opts out. The owner can turn it off or change the monthly cap later (owner decision, 25 October 2026, in #1160: “Yes, I approve: vault creation turns on the monthly commitment unless the owner opts out. Record it as an owner decision and merge #1160.”)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Launch order | The non-money product launches first. Mainnet requires explicit activation, one network at a time: Base, Solana, then Robinhood Chain. The separate Ethereum live qualification is waived below. |
-| First Base qualification transfer | Owner decision, 25 October 2026: permit one production qualification transfer to lalalune (GitHub actor 18633264), outside earned rewards and Points. Use Slop's Base/USDC vault, a 1,000 USDC monthly cap with automatic monthly payment Off, a 10 USDC deposit and a 1 USDC gross transfer (0.98 net, 0.02 fee). The previously approved 0.001 ETH total gas ceiling covers the reviewed Base upgrade and the entire qualification sequence across its wallets. Use a separate qualification source; do not enter this transfer in an earned-reward cycle or evaluation, grant payout-recognition Points, or change independently earned contribution credit. This one-off exception does not change ordinary owner/related-party payout exclusions. Recheck each step before signing and stop on failed eligibility, simulation or reconciliation. Other networks remain unactivated until Base reconciles. |
-| Other-network qualification | Owner decision, 26 October 2026, with the Ethereum exception below: after Base reconciles, the first Solana and Robinhood Chain vaults each use the same qualification as Base. That is a 1,000-unit monthly cap with automatic monthly payment Off, a 10-unit deposit and one 1-unit gross qualification transfer to lalalune (GitHub actor 18633264): USDC on Solana, USDG on Robinhood. Each network has its own total gas ceiling (0.001 ETH on Robinhood; 0.01 SOL on Solana). The same exclusions from earned cycles, evaluations and Points apply. Run them in the launch order after Base. Observing the first natural automatic monthly cutoff is not a release or issue-closure requirement. |
-| Ethereum live qualification | Owner decision, 27 October 2026: waive the separate Ethereum first-vault live qualification and accept the shared EVM coverage from successful Base and Robinhood qualification. Record the Ethereum launch gate as waived, not as a completed live test. No Ethereum project or qualification vault is needed for launch. Existing Ethereum asset, authority, finality and explicit activation controls remain. This decision authorizes no new transaction or funding. |
-| Two-flag pause acceptance         | Owner decision, 26 October 2026: waive the live test with two real contributor accounts for the two-flag pause. Accept deployed-staging fixture evidence instead: two distinct eligible fixture flags pause the project and refuse the skill (HTTP 410), a fresh scan reinstates a flag-only pause, a stale scan is refused, and a ban or newer evidence is not cleared. The flag rules and moderator decisions themselves are unchanged (#911)                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Objective quality verifier        | Owner decision, 26 October 2026: remove the objective-quality verifier from launch acceptance. No verifier host is built for launch. Closure that needs a signed objective-defect receipt stays unavailable, and `SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256` stays unset. Ordinary closure categories keep their existing consent, confirmation, cap, appeal and activation controls. A later verifier needs its own reviewed qualification                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Scanner evidence policy           | Owner decision, 26 October 2026: remove the deployment evidence-policy setting and its operator attestation. The approved owner, readers, 15-minute grants, permanent successful admission evidence, 90-day post-closure retention for other cases, and size limits are fixed in source; a change needs a reviewed pull request. Backup, retention and restoration controls are unchanged. |
-| Contributor trace reads           | Owner decision, 27 October 2026: remove all website and API routes for reading contributor trace bodies, including operator grant and read routes. Keep optional trace uploads, permanent private R2 objects, D1 metadata, and existing grant and audit records. This does not change authorized private security-evidence reads or operator authority for wallet recovery. |
-| Slop contract security bounty | Owner decision, 28 October 2026: slop.cash offers $10,000 per accepted critical loss-of-funds finding (theft or permanent freezing of funds) in its deployed mainnet contracts under `contracts/evm/src` and `contracts/solana/programs`, reported only through the authenticated private Slop intake. The full award goes to the first qualifying reporter with no Slop share (owner confirmed this split on 28 October 2026); only the platform project may publish it. After-approval pledge, no bound bounty vault, not payable until a full-award payment path is approved and released, owner-published D1 revision (section 8). |
-| Post-merge CI on development | Owner decision, 29 October 2026 (#1467 item 1.2, #1411 E6/F1): agents and automation may merge a pull request into `development` before its hosted CI finishes ("post-merge CI accepted"). Batch promotions from `development` to `main` so that one production release (about 45 minutes) can finish without cancellation by a newer `main` push. The trusted `main` release still runs the full quality gate before it deploys. Fix or revert a failing post-merge check promptly. This does not apply to `main` and changes no production publication rule. |
-| Trace upload quota risk | Owner decision, 29 October 2026 (#1411 B4): the owner accepts the risk of no durable per-actor upload quota for the MVP. Keep the bounded size, authentication and checksum rules for trace uploads. This acceptance is not a quota and does not change any other trace rule. |
-| Automatic closure launch gate | Owner decision, 29 October 2026 (#1411 A5, #1046 item 5): launch waits until Slopbot automatic closure is qualified with reviewed real cases and counterexamples and explicitly activated in production. This decision does not activate closure. The global closure switch stays off until the reviewed activation. Consent, confirmation, caps, appeals and the seven-day label-only rule remain. |
-| Owned-repository picker | Owner decision, 29 October 2026 (#1467 item 3.7): keep the owned-repository picker. The owner supplies a read-only GitHub token that reads public repositories only as the Pages secret `SLOP_GITHUB_READ_TOKEN`, in production (`eliza-computer`) and staging. The token grants no write, private-repository or organization authority. |
-| Shared EVM fee wallet | Owner decision, 29 October 2026 (#1467 item 3.10e): Base, Ethereum and Robinhood Chain share one EVM fee wallet (`0x8f77c37d8650776bfe73c9b12b15209ee15d9b86`, as set in `workers/fee-converter/wrangler.toml`) and its fee-claim and conversion key; Solana keeps its own fee wallet. Per-network modes, per-run and daily caps, allowlisted routes, slippage limits, same-wallet output, the Robinhood no-conversion rule and the absence of any vault role are unchanged (section 6). This activates no network or fee handling. |
-| Shared EVM identity attester | Owner decision, 29 October 2026: one identity-attester authority key (`0x31B87d13f9091bC3b8A5cb6F45C8b3cB99Ed6d70`) may serve Base, Ethereum and Robinhood Chain. This records key custody policy only. It activates no network, adds no attester power and changes no attester limit. |
-| Merged PRs later removed by GitHub | Owner decision, 29 October 2026 (#1411; removed yasdrox pull requests #1410, #1432, #1437, #1438 and #1443; #1466, #1046): a merged pull request that GitHub later removed keeps its full recorded Points and reward eligibility. The current NOT_FOUND recovery behavior is correct; no code change is required. |
-| Held pre-November sources | Owner decision, 29 October 2026 (#1411 B3): held or unassessed sources from before November 2026 keep their earlier recorded Points. Never rewrite historical awards. |
-| Retired cleanup items | Owner decision, 29 October 2026 (#1467 items 3.10a–d): retire `protocol/wallet-possession.md`, the old isolated test identity stack and the v1 secure-VM vetting pipeline; detach `deck.slop.cash`; allow CI dependency caching, except in trusted publication jobs. This decision approves the cleanup; it does not perform it. |
-| Umia advisory delivery | Owner decision, 29 October 2026 (#1467): keep reporter-token forwarding of Umia private reports. The owner enables private vulnerability reporting on `SlopDotCash/umia-protocol`. The section 8 design is unchanged. |
-| Removed legacy raw URLs | Owner decision, 29 October 2026 (#1411 D2): `/data/cycles/eliza/2026-09/proposal.json` and `/downloads/contribute-to-eliza.skill` were removed intentionally and stay 404. |
-| Legacy community projects | Owner decision, 29 October 2026: the legacy community projects removed before the registry stay retired. Their ids remain only in `src/lib/legacy-projects.json` for points and profile validation; they are never listed, collected, scored or paid. |
-
-Proposed, not approved by the owner (from #1154; do not implement or treat as decided): every new project draft uses 200 bps and vault-custody wording, including drafts without a vault; historical welcome and X-connection awards are removed from displayed totals.
+Use real provider calls for model behavior and real browser, database, and chain evidence where applicable. Record exact source revisions, client versions, providers, models, results, and limitations. Follow [CONTRIBUTING.md](../CONTRIBUTING.md) for required checks and affected agent-client coverage. Never publish secrets, private prompts/responses, source evidence, credentials, sessions, traces, or signing material.
 
 ### Release workflow
 
-Owner decision, 25 October 2026: branch protections and rulesets are not release requirements. Do not add or restore them during release work unless the owner asks. Keep the reviewed `development` to `main` pull-request flow, full CI and trusted policy checks, main-only production environment, and checked-in release workflow.
+Use reviewed PRs into `development`, then batch promotions to `main`. Reviewed development PRs may merge before hosted continuous integration (CI) finishes. Fix or revert failures promptly. Main must pass the full trusted quality gate before deployment.
 
-A manual `main` release may explicitly select `use_published_data` when fresh
-GitHub collection is unavailable. Validate and retain the last published
-production leaderboard and profiles with their original timestamps, history
-and source counts. Keep the current D1 registry and every code, browser,
-sandbox, protected-environment, source-identity and deployment-byte gate.
-Missing or invalid published data stops the release. This option defaults to
-`false`, cannot run on staging or with staging bootstrap, and never uses the
-pull-request data adapter. Normal releases still collect fresh data.
+Production deploys only through the checked-in main workflow and main-only production environment. Keep publication credentials out of PR runs. Use the shared publication lock and bind deployment to the tested source. Staging uses separate storage, identity, and secrets. No separate manual release approval or branch-protection rule is required. Do not add rulesets unless requested.
 
-Owner decisions, 26 October 2026: enable private-report intake in staging and production after the reviewed release (#1284). Enable fee handling on Base, Ethereum and Robinhood only after the fee wallets are funded and the limits and readiness are verified (#1285). Base and Ethereum convert received fees; Robinhood retains them. These decisions do not authorize other networks, unbounded spending or referral posting.
+Normal releases sync the current D1 registry and collect live GitHub data. An explicit manual main release may set `use_published_data` to retain validated production rankings and profiles. Preserve their timestamps, history, and counts. The option defaults to false and cannot run on staging or with bootstrap data. It cannot use the PR adapter or skip any code, browser, sandbox, environment, source, or deployed-byte check. Missing or invalid data stops release.
 
-Owner decision, 26 October 2026 (#910): accept the remaining private-reporting live checks without proof: successful non-admin delivery, automatic analysis, maintainer notices, interrupted-submission recovery, and funded private-bounty settlement. The approved `shawgotbags` test is no longer a launch gate. Record these checks as waived, not passed. Keep the behavior and access controls in sections 8–10, repair known defects, and preserve funded obligations. This acceptance grants no signing or spending authority, activates no service, and does not establish completion of the whole MVP.
+Install pinned publication tooling without lifecycle scripts. Do not cache dependencies in trusted publication jobs. Verify deployment identity, current-main equivalence, served bytes, DNS, TLS, redirects, and headers separately.
+
+The separate hourly private-reporting health job never publishes code or holds the publication lock. A status older than 24 hours blocks optional trace collection only. Website deployment and ordinary GitHub contribution remain independent.
+
+### Activation gates and accepted risks
+
+Launch the non-money product first. Mainnet activation is explicit, one network at a time: Base, Solana, then Robinhood Chain. Ethereum retains its separate waiver below. Exact assets, authority, finality, deployment bytes, and applicable testnet results remain required.
+
+Native-asset and Token-2022 scope permits implementation and local testing, not a mainnet upgrade, funding, or signer activation. Qualify creation, deposits, refunds, reservations, payouts, claims, and accounting. Token-2022 also requires the fully inspected conversion path. Each upgrade or funding step needs its own reviewed execution plan and owner authorization.
+
+Private-report intake is approved for staging and production after the reviewed release. This standing approval does not prove deployment or successful delivery.
+
+Fee handling on Base, Ethereum, and Robinhood requires funded fee wallets and verified limits and readiness. The fee-converter release variable must be enabled. Keep Solana outside the production network list until its independent full-history recovery RPC, first registered vault, and all readiness checks pass. A reviewed main release then activates it. The Solana controls release, existing program upgrade, and approved 0.05 SOL gas top-up are recorded as complete. Do not repeat them; consult retained execution evidence before any later operation.
+
+Launch requires real-case qualification and explicit production activation of automatic closure. Keep its global switch off before that activation. Closure categories that require an objective-defect receipt stay unavailable without their own qualified verifier. Keep `SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256` unset for launch.
+
+A private full-award case remains unpayable until its suitable payment path is approved, released, and qualified. Advisory permission setup alone does not prove delivery. Qualify a real authorized report and verify its separate GitHub receipt before declaring forwarding available.
+
+### Limited network qualification
+
+These limits apply to the one-time qualification sequence, not ongoing service spending. Check retained execution records and never repeat completed steps. Qualify Base first, then Solana, then Robinhood Chain. Do not activate a later network before the required earlier qualification reconciles.
+
+| Limit | Base | Solana | Robinhood Chain |
+| --- | --- | --- | --- |
+| Asset | USDC | USDC | USDG |
+| Monthly cap | 1,000 USDC | 1,000 USDC | 1,000 USDG |
+| Automatic monthly payment | Off | Off | Off |
+| Deposit | 10 USDC | 10 USDC | 10 USDG |
+| One gross transfer | 1 USDC | 1 USDC | 1 USDG |
+| Recipient net / fee | 0.98 / 0.02 USDC | 0.98 / 0.02 USDC | 0.98 / 0.02 USDG |
+| Total gas ceiling | 0.001 ETH | 0.01 SOL | 0.001 ETH |
+
+The recipient is `lalalune`, GitHub actor 18633264. Base uses Slop's Base/USDC vault; its gas ceiling covers the reviewed upgrade and entire sequence across wallets. Solana and Robinhood use their first qualifying vaults.
+
+Keep qualification transfers outside earned-reward cycles, evaluations, and payout-recognition Points. Preserve independently earned credit and ordinary payout exclusions. Recheck eligibility, simulation, and reconciliation before each signature; stop on failure. No Ethereum qualification project or vault is required under the waiver below.
+
+### Evidence exceptions
+
+These exceptions preserve recorded approvals. They do not remove product behavior, authorize spending, or prove MVP completion.
+
+| Evidence item | Approved treatment | Requirements that remain |
+| --- | --- | --- |
+| Independent contract audit and signer/attester legal review | Waived, not completed. | Review, exact execution plan, required checks, and explicit mainnet activation. |
+| Second-operator and different-machine Solana build | Waived. | Pinned deterministic build image, artifact/on-chain hash comparison, public-testnet evidence, and authorized upgrade. |
+| Separate Ethereum first-vault live qualification | Waived in favor of successful Base and Robinhood shared-EVM coverage. | Ethereum asset, authority, finality, and explicit activation checks. |
+| Two real contributor accounts for flag testing | Deployed-staging fixture evidence accepted. | Two eligible flags pause and refuse skills with HTTP 410; fresh reinstatement works; stale scans, bans, and newer evidence remain protected. |
+| Objective-quality verifier at launch | Deferred. | Dependent closure stays unavailable; other closure categories retain all controls. |
+| Specific private-report live checks | Non-admin delivery, automatic analysis, maintainer notices, interrupted submission recovery, and funded settlement evidence were waived. | Preserve access controls and repair known defects. Later email, direct-payment, and recovery changes require complete affected-flow verification. |
+| First natural monthly cutoff observation | Not required for release or issue closure. | Prove monthly behavior through the required qualification and exact limits. |
+
+The prior `shawgotbags` test is not a launch gate. Restricted pilot delivery is not proof of general email readiness. Keep passed, failed, waived, untested, and unavailable evidence distinct.
 
 ### Referral program
 
-Owner decision, 27 October 2026: defer the referral program from launch. Keep `REFERRAL_ACCRUAL_MODE="off"` and `REFERRAL_PROGRAM_ENABLED="false"`; do not file accruals or post roots. Referral token setup, funding, public-testnet qualification and watcher activation are not launch requirements. Preserve the implementation, historical records and the approved terms below. Any later reactivation requires a separate owner approval and the applicable activation checks; this deferral does not change dates, amounts or prior records.
+Referrals remain deferred. Keep `REFERRAL_ACCRUAL_MODE="off"` and `REFERRAL_PROGRAM_ENABLED="false"`. File no accruals and post no roots. Token setup, funding, qualification, and watcher activation do not gate launch.
 
-Owner decision, 25 October 2026: approve the project-referral program proposed by the operator in #1261, #1265 and #1267. Slop Cash S.P. runs it beside the product from its own program-token allocation. It is not a Points, scoring or payout feature.
+Slop Cash S.P. funds this separate program from its program-token allocation. It does not alter Points, project manifests, scoring, cycles, ordinary payouts, or settlement. Preserve its code and records under the following deferred requirements.
 
-- **Attribution.** The maintainer who submits a project may name the signed-in account that referred it. The record is immutable (migration `0055_project_referrer.sql`). Self, steward, admin and moderator referrers are refused at capture.
-- **Accrual.** A referral accrues only from a finalized payout on that project, recorded as `paid` in `payment_obligations`. The amount is a fixed program-token rate per stablecoin micro-unit of gross payout. Only payouts within 12 months of the project's first paid obligation count. A lifetime pool and a per-project cap apply. The first period is 2026-11.
-- **Initial parameters.** 3 tokens per 1 USDC of gross payout, a 2,000,000-token lifetime pool and a 250,000-token cap per referred project. The owner may change them prospectively. The applied rate is recorded on each accrual, and filed accruals never change.
-- **Exclusions.** These accrue nothing: team accounts (lalalune, drew-dot-com, admins and moderators), accounts under a participation ban, payouts in a non-stablecoin asset, and projects with a public hold.
-- **Public record.** Each closed UTC month is filed once, in order, as an append-only public file that anyone can recompute from the payment record (`workers/referral-accrual`, `GET /api/v1/referrals/accruals`). The file holds cumulative totals per referrer and a Merkle root over authorized Robinhood Chain wallets. A referrer without a wallet is carried forward to a later root.
-- **Distribution.** The `ReferralDistributor` contract receives cumulative Merkle roots. Owner decision, 26 October 2026: remove the seven-day claim delay. Each posted root is immediately claimable, and referrers claim their own tokens. The owner can void only the latest root before its first successful claim; a successful claim seals that root and paid tokens cannot be clawed back. Slop sends no token transfer. The owner approved a Slop-operated root-posting key, held as a Worker secret. It may only post roots, and it is a separate key from the contract owner.
-- **Claim flow.** Earnings shows accrued, pending, claimable and claimed referral tokens from cached finalized evidence. The referrer reviews and signs a claim with the wallet pinned to the published root. Keep stale or uncertain results distinct from confirmed claims.
-- **Posting limits.** Owner decision, 25 October 2026: the whole-root growth limit is 2,000,000 tokens; the per-project lifetime cap stays 250,000. This permits one monthly file across projects. The independent watcher remains required, but there is no guaranteed intervention window if the poster key is compromised. Pause and poster rotation can stop later activity; they cannot recover paid tokens. The separate poster gas ceilings are 0.0002 ETH per transaction and 0.002 ETH per UTC day. Pause above either ceiling. These settings do not authorize funding or activation.
-- **Unchanged.** Points, manifests, scoring, cycles, payouts and settlement do not change. Contributors and sponsors see no difference. `protocol/points-v1.md` still has no referral commissions in Points.
-- **Activation after reapproval.** Owner decision, 26 October 2026: referral activation does not require counsel review. The owner confirms that the program token is not deployed yet. After the separate reactivation approval required by the 27 October decision, the accrual job may run only in `off` or `dry_run` until all of these hold: the program token exists, the funding line is agreed, an independent root watcher is in operation, and the owner explicitly activates posting. Root posting stays on Robinhood Chain Testnet until that activation. No public copy announces the program before activation.
+The submitting maintainer may name a signed-in referrer. Keep the record immutable under migration `0055_project_referrer.sql`. Refuse self, steward, administrator, and moderator referrals at capture.
 
-### Contributor token allocation
+Accrue only from finalized project payouts recorded as `paid` in `payment_obligations`. The first period is November 2026. Only payouts within 12 months of the project's first paid obligation qualify. The initial rate is 3 program tokens per 1 USDC of gross payout, calculated per stablecoin micro-unit. The lifetime pool is 2,000,000 tokens; each referred project has a 250,000-token lifetime cap. Rate changes are prospective. Record each applied rate and never change filed accruals.
 
-Proposed by the operator on 29 October 2026; approved by the owner on 30 October 2026. Slop Cash S.P. distributes its Contributors token line beside the product. It is not a Points, scoring, award or vault feature, and it creates no obligation in the payment record.
+Exclude team accounts (`lalalune`, `drew-dot-com`, administrators, and moderators), participation-banned accounts, non-stablecoin payouts, and projects with a public hold.
 
-- **Sender.** Slop Cash S.P. sends each transfer from its own wallet. The application holds no key, signs nothing and sends nothing.
-- **Recipients.** The S.P. publishes a fixed list of GitHub actor IDs and amounts in `public/contributor-allocation.json`, changed only by a reviewed pull request. `{"distribution": null}` publishes nothing.
-- **Wallets.** A recipient receives tokens at the wallet confirmed on Payouts for the allocation's network. The first wallet confirmation on that chain must precede the published registration deadline. A later wallet replacement keeps that registration time. Transfers go out in batches. Each recipient is sent once; a later wallet change does not resend.
-- **Payouts.** A signed-in recipient sees only their own row on Payouts: the amount, and Sent with the recorded transaction, Scheduled with a confirmed wallet, Awaiting wallet with a link to register before the published deadline, or Unclaimed. Unclaimed applies after the deadline without a wallet, or to any unsent row once the file records the final batch (`closed`). Accounts outside the list see nothing.
-- **Evidence.** The S.P. records each transaction in the file after it sends. Sent means the sender recorded the transfer; the application does not verify it on chain.
+File each closed UTC month once, in order, as an append-only public record that anyone can recompute from payment evidence. Publish through `workers/referral-accrual` and `GET /api/v1/referrals/accruals`. Include cumulative referrer totals and a Merkle root over authorized Robinhood Chain wallets. Carry walletless referrers into later roots.
+
+`ReferralDistributor` accepts cumulative roots. Each root is immediately claimable. Referrers sign claims using the wallet pinned to that root. The owner may void only the latest root before its first successful claim. A successful claim seals the root; paid tokens cannot be recovered. Earnings distinguishes accrued, pending, claimable, and claimed amounts using cached finalized evidence. Stale or uncertain evidence does not prove a claim.
+
+Keep the root-posting key as a Worker secret, separate from the contract owner. It may only post roots, not transfer tokens or control project funds. Whole-root growth cannot exceed 2,000,000 tokens. Poster gas ceilings are 0.0002 ETH per transaction and 0.002 ETH per UTC day. Pause above either ceiling and retain uncertain attempts. An independent watcher is required. There is no guaranteed intervention window; pause or key rotation cannot recover paid tokens.
+
+Reactivation requires separate owner approval. After approval, accrual stays `off` or `dry_run` until the token exists, funding is agreed, and the watcher operates. The owner must explicitly activate posting. Posting stays on Robinhood Chain Testnet until that activation. Counsel review is not required. Publish no announcement before activation.
+
+### Completion and change control
+
+Maintain implementation evidence in repository reviews and verification records. Update requirements in their owning sections when policy changes. Preserve an approval link and effective date when historical terms depend on them; do not append a second competing rule.
+
+MVP completion requires a reviewed record covering every requirement and release gate. Include exact tested revisions, real end-to-end results, applicable deployment/provider/chain evidence, approved waivers, and resolution of blocking defects. A source merge, local pass, partial rollout, or this document cannot establish completion.
 
 ## 12. State correctness and Quint verification
 
-Owner requirement, 7 November 2026: review all application flows and model every
-explicit and implicit state transition in Quint. This requirement covers the
-current application on `development`, including UI and UX, APIs, workers,
-databases, files, queues, scheduled jobs, contributor tools, contracts and release
-workflows. It does not authorize new product features, deployments, signing,
-funding or changes to economic and access policy.
+Review every explicit and implicit state transition in the application. Cover UI, APIs, workers, databases, files, queues, jobs, contributor tools, contracts, and release workflows. This requirement grants no new product, policy, deployment, funding, or signing authority.
 
-- **STATE-01 — Inventory.** Keep a source-to-model inventory in `formal/`.
-  Include state held in flags, optional values, collections, timestamps, caches,
-  pending requests, files, database records and external evidence. Account for
-  all entry points and list unmodeled transitions and assumptions explicitly.
-- **STATE-02 — Models.** Define initial states, actions, refusal conditions,
-  invariants and reachable outcomes. Include loading, empty, stale, invalid,
-  error and success; authorization, expiry, cancellation, retry, duplicates,
-  concurrency, partial writes, interruption and recovery. Preserve immutable
-  history, distinct financial states and integer asset amounts. Model external
-  uncertainty without treating a request or signature as finalized evidence.
-  Check composed parent/child and cross-subsystem transitions; isolated
-  component checks do not establish the behavior of their composition.
-- **STATE-03 — Conformance.** Compare model behavior with the actual affected
-  workflow. Use model-derived traces or equivalent named scenarios through real
-  entry points. Database races need database evidence; UI changes need browser
-  evidence. Keep real-provider and chain checks where existing requirements call
-  for them. A model cannot substitute for those checks.
-- **STATE-04 — Fix and maintain.** Reproduce discrepancies, fix their causes and
-  repeat the affected checks. Update the model, source mapping and implementation
-  evidence whenever state behavior changes. Do not weaken an invariant or remove
-  an allowed failure path to hide a code defect. Preserve all existing required
-  checks and the product's authority boundaries.
-- **STATE-05 — Verification evidence.** Pin Quint in the lockfile. Run
-  `bun run formal:check` and `bun run formal:verify`. Record tool versions, source
-  hashes, scenarios, model-checker backend, bounds, results and unresolved gaps.
-  Distinguish sampled simulation, exhaustive finite exploration, implementation
-  conformance and live integration. Passing abstract models are not proof that
-  the implementation refines them or that all possible state errors are absent.
+- **STATE-01 — Inventory.** Keep source-to-model mappings in `formal/`. Include flags, optional values, collections, times, caches, pending requests, files, database records, and external evidence. List every entry point, unmodeled transition, and assumption.
+- **STATE-02 — Models.** Define initial states, actions, refusal conditions, invariants, and reachable outcomes. Cover loading, empty, stale, invalid, error, success, authorization, expiry, cancellation, retry, duplicates, concurrency, partial writes, interruption, and recovery. Preserve immutable history, distinct financial states, and integer amounts. Model uncertainty without treating a request or signature as finality. Check parent/child and cross-subsystem composition.
+- **STATE-03 — Conformance.** Compare models with actual workflows through model-derived traces or equivalent named scenarios at real entry points. Database races need database evidence; UI changes need browser evidence. Keep required provider and chain checks. Models cannot replace them.
+- **STATE-04 — Fix and maintain.** Reproduce discrepancies, fix their causes, and repeat affected checks. Update models, mappings, and implementation evidence when behavior changes. Never weaken an invariant or remove a failure path to hide a defect.
+- **STATE-05 — Verification evidence.** Pin Quint in the lockfile. Run `bun run formal:check` and `bun run formal:verify`. Record tool versions, source hashes, scenarios, backend, finite bounds, results, and unresolved gaps. Distinguish simulation, exhaustive finite exploration, implementation conformance, and live integration.
 
-Completion requires reviewed models and implementation evidence for every
-inventoried transition, corrected known discrepancies, passing required checks,
-and an explicit account of remaining assumptions. Maintain the coverage and
-verification record in `formal/`; leave this requirement open while any required
-coverage or evidence remains incomplete.
+Passing abstract models does not prove implementation refinement or the absence of every possible state error. Completion requires reviewed models and implementation evidence for every inventoried transition, corrected discrepancies, passing checks, and explicit assumptions. Keep this requirement open while any required coverage or evidence is incomplete.
