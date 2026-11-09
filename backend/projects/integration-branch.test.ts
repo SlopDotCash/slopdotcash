@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { REPOSITORY_READ_PATH } from "../../src/lib/project-contracts";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { renderProjectSkill } from "../../src/lib/project-skill.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
@@ -17,12 +16,40 @@ for (const branch of [
 ]) {
   test(`a selectable integration branch survives lookup, validation and skill rendering: ${branch}`, async () => {
     const calls: string[] = [];
-    const fetcher = async (url: string) => {
+    const fetcher = async (url: string, init: RequestInit) => {
       calls.push(url);
       const parsed = new URL(url);
-      expect(
-        REPOSITORY_READ_PATH.test(`${parsed.pathname}${parsed.search}`),
-      ).toBe(true);
+      if (parsed.pathname === "/graphql") {
+        expect(init.method).toBe("POST");
+        const body = JSON.parse(String(init.body));
+        expect(body.variables.id).toBe("R_example");
+        const node = {
+          __typename: "Repository",
+          id: "R_example",
+          fullDatabaseId: "123456789",
+          isPrivate: false,
+        };
+        if (body.query.includes("ProjectRepositoryBranches"))
+          return Response.json({
+            data: {
+              node: {
+                ...node,
+                refs: {
+                  nodes: [
+                    {
+                      name: branch,
+                      prefix: "refs/heads/",
+                      target: { __typename: "Commit", oid: COMMIT },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          });
+        expect(body.variables.qualifiedName).toBe(`refs/heads/${branch}`);
+        return Response.json({ data: { node: { ...node, ref: null } } });
+      }
       const path = new URL(url).pathname;
       if (path === "/repos/example/branch-fixture")
         return Response.json({
@@ -38,15 +65,13 @@ for (const branch of [
             type: "Organization",
           },
         });
-      if (path === "/repos/example/branch-fixture/branches")
-        return Response.json([{ name: branch, commit: { sha: COMMIT } }]);
       if (path.startsWith("/repos/example/branch-fixture/branches/"))
         return Response.json({ name: branch, commit: { sha: COMMIT } });
       return Response.json({ message: "Not Found" }, { status: 404 });
     };
     const lookup = await lookupGitHubRepository(
       fetcher,
-      undefined,
+      "public-read-token-fixture",
       "example/branch-fixture",
     );
     expect(lookup.branches).toContain(branch);

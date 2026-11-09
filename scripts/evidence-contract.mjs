@@ -11,11 +11,12 @@ import {
   PRIMARY_REPOSITORY,
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
+import { withEvidenceCleanup } from "./evidence-bundle.mjs";
 import { sha256Hex as sha256 } from "./sha256.mjs";
 
 export const PRODUCTION_ORIGIN = "https://slop.cash";
 export const PRODUCTION_HOSTNAME = "slop.cash";
-export const LIVE_LEDGER_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+const LIVE_LEDGER_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 // Project skills, the project discovery index and terms are Pages Function
 // responses rendered from D1, so they are not static release artifacts.
@@ -362,6 +363,148 @@ export function assertTlsSession(session, now = Date.now()) {
   };
 }
 
+/** The connector is injected; the production authority remains fixed here. */
+export function probeProductionTls(connectTls, timeoutMs = 10_000) {
+  return new Promise((resolve, reject) => {
+    let socket;
+    let deadline;
+    let session;
+    let failed = false;
+    let failure;
+    let settled = false;
+    let closing = false;
+    let closed = false;
+    const fail = (error) => {
+      if (!failed) {
+        failed = true;
+        failure = error;
+      }
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      socket.off("secureConnect", onSecure);
+      socket.off("end", onEnd);
+      // Keep the guarded error listener: a queued socket error must not become
+      // an unhandled process exception after a deadline or close settles us.
+      if (failed) reject(failure);
+      else resolve(session);
+    };
+    const destroy = () => {
+      if (closing || closed) return;
+      closing = true;
+      try {
+        socket.destroy();
+      } catch (error) {
+        if (failed) {
+          failure = new AggregateError(
+            [failure, error],
+            "TLS observation failed and socket cleanup also failed",
+            { cause: failure },
+          );
+        } else fail(error);
+        finish();
+      }
+    };
+    function onError(error) {
+      if (settled) return;
+      fail(error);
+      destroy();
+    }
+    function onEnd() {
+      if (settled || session !== undefined) return;
+      fail(
+        new Error(
+          "production TLS connection ended before a verified handshake",
+        ),
+      );
+      destroy();
+    }
+    function onClose() {
+      closed = true;
+      if (settled) return;
+      if (session === undefined && !failed) {
+        fail(
+          new Error(
+            "production TLS connection closed before a verified handshake",
+          ),
+        );
+      }
+      finish();
+    }
+    function onSecure() {
+      if (settled || closing) return;
+      try {
+        const certificate = socket.getPeerCertificate();
+        session = assertTlsSession({
+          authorizationError: socket.authorizationError,
+          authorized: socket.authorized,
+          cipher: socket.getCipher()?.name,
+          issuer: certificate.issuer?.CN,
+          protocol: socket.getProtocol(),
+          subject: certificate.subject?.CN,
+          subjectAltName: certificate.subjectaltname,
+          validFrom: certificate.valid_from,
+          validTo: certificate.valid_to,
+        });
+        socket.end();
+      } catch (error) {
+        fail(error);
+      }
+      destroy();
+    }
+    try {
+      socket = connectTls({
+        host: PRODUCTION_HOSTNAME,
+        port: 443,
+        rejectUnauthorized: true,
+        servername: PRODUCTION_HOSTNAME,
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    socket.on("error", onError);
+    socket.once("end", onEnd);
+    socket.once("close", onClose);
+    socket.once("secureConnect", onSecure);
+    deadline = setTimeout(() => {
+      if (settled) return;
+      fail(new Error("production TLS observation exceeded its deadline"));
+      destroy();
+      finish();
+    }, timeoutMs);
+  });
+}
+
+/** Dispose the unread remainder on success and on every validation failure. */
+export function withEvidenceResponse(response, operation) {
+  return withEvidenceCleanup(operation, [
+    { label: "response body disposal", run: () => response.body?.cancel() },
+  ]);
+}
+
+/** Caller must own the response through withEvidenceResponse. */
+export async function readEvidenceResponseBytes(response, maxBytes, label) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error(`${label} omitted its response body`);
+  return withEvidenceCleanup(async () => {
+    const chunks = [];
+    let receivedBytes = 0;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      receivedBytes += chunk.value.byteLength;
+      if (receivedBytes > maxBytes) {
+        throw new Error(`${label} exceeded the verified body size`);
+      }
+      chunks.push(Buffer.from(chunk.value));
+    }
+    return Buffer.concat(chunks, receivedBytes);
+  }, [{ label: "response reader lock", run: () => reader.releaseLock() }]);
+}
+
 async function readExactResponseBytes(response, expectedBytes, path) {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
@@ -375,35 +518,17 @@ async function readExactResponseBytes(response, expectedBytes, path) {
       );
     }
   }
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error(`production ${path} omitted its response body`);
-  const chunks = [];
-  let receivedBytes = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      receivedBytes += chunk.value.byteLength;
-      if (receivedBytes > expectedBytes) {
-        await reader.cancel("response exceeded verified artifact size");
-        throw new Error(
-          `production ${path} exceeded the verified artifact size`,
-        );
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  if (receivedBytes !== expectedBytes) {
+  const bytes = await readEvidenceResponseBytes(
+    response,
+    expectedBytes,
+    `production ${path}`,
+  );
+  if (bytes.length !== expectedBytes) {
     throw new Error(
       `production ${path} length does not match the verified artifact`,
     );
   }
-  return Buffer.concat(
-    chunks.map((chunk) => Buffer.from(chunk)),
-    receivedBytes,
-  );
+  return bytes;
 }
 
 export async function verifyRemoteArtifacts({
@@ -438,45 +563,49 @@ export async function verifyRemoteArtifacts({
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) {
-      throw new Error(
-        `production ${artifact.path} returned HTTP ${response.status}`,
+    const observed = await withEvidenceResponse(response, async () => {
+      if (!response.ok) {
+        throw new Error(
+          `production ${artifact.path} returned HTTP ${response.status}`,
+        );
+      }
+      const contentType = response.headers.get("content-type");
+      const expectedContentType = artifactContentType(artifact.path);
+      if (
+        typeof contentType !== "string" ||
+        contentType.toLowerCase().split(";", 1)[0].trim() !==
+          expectedContentType
+      ) {
+        throw new Error(
+          `production ${artifact.path} returned ${contentType ?? "no Content-Type"}; expected ${expectedContentType}`,
+        );
+      }
+      const received = await readExactResponseBytes(
+        response,
+        artifact.contents.length,
+        artifact.path,
       );
-    }
-    const contentType = response.headers.get("content-type");
-    const expectedContentType = artifactContentType(artifact.path);
-    if (
-      typeof contentType !== "string" ||
-      contentType.toLowerCase().split(";", 1)[0].trim() !== expectedContentType
-    ) {
-      throw new Error(
-        `production ${artifact.path} returned ${contentType ?? "no Content-Type"}; expected ${expectedContentType}`,
-      );
-    }
-    const received = await readExactResponseBytes(
-      response,
-      artifact.contents.length,
-      artifact.path,
-    );
-    const expectedDigest = sha256(artifact.contents);
-    const receivedDigest = sha256(received);
-    if (
-      artifact.contents.length !== received.length ||
-      expectedDigest !== receivedDigest
-    ) {
-      throw new Error(
-        `production ${artifact.path} does not match the verified dist artifact`,
-      );
-    }
-    results.push({
-      bytes: received.length,
-      cacheControl: response.headers.get("cache-control"),
-      contentType,
-      path: artifact.path,
-      sha256: receivedDigest,
-      status: response.status,
-      url: url.href,
+      const expectedDigest = sha256(artifact.contents);
+      const receivedDigest = sha256(received);
+      if (
+        artifact.contents.length !== received.length ||
+        expectedDigest !== receivedDigest
+      ) {
+        throw new Error(
+          `production ${artifact.path} does not match the verified dist artifact`,
+        );
+      }
+      return {
+        bytes: received.length,
+        cacheControl: response.headers.get("cache-control"),
+        contentType,
+        path: artifact.path,
+        sha256: receivedDigest,
+        status: response.status,
+        url: url.href,
+      };
     });
+    results.push(observed);
   }
   return results;
 }

@@ -24,6 +24,8 @@ import { createServer } from "node:http";
 
 /** The site session that owns its user repositories. */
 export const E2E_OWNER = { githubId: "900000003", login: "e2e-owner" };
+/** Public lookup authentication for this loopback server only; never a secret. */
+export const E2E_PUBLIC_GITHUB_TOKEN = "slop-e2e-public-read-token";
 export const E2E_REWARD_TOKEN = Object.freeze({
   address: "0x1234567890123456789012345678901234567890",
   symbol: "BOUNTY",
@@ -622,6 +624,9 @@ export function startGitHubApiFixture(port) {
   const privateIntake = privateIntakeFixture();
   const githubUsers = new Map();
   const limitedRepositories = new Set();
+  // Capture the exact metadata object when its REST route is read. GraphQL
+  // resolves that opaque node ID, never reconstructs a mutable owner/name.
+  const publicRepositories = new Map();
   let rewardMetadataReads = 0;
   const slopbot = {
     installations: new Map(),
@@ -692,6 +697,78 @@ export function startGitHubApiFixture(port) {
     } catch {
       response.writeHead(400, { "content-type": "application/json" });
       response.end('{"message":"Fixture refusal"}');
+      return;
+    }
+    if (path === "/graphql" && request.method === "POST") {
+      const send = (status, body, headers = {}) => {
+        response.writeHead(status, {
+          "content-type": "application/json",
+          ...headers,
+        });
+        response.end(JSON.stringify(body));
+      };
+      if (
+        request.headers.authorization !== `Bearer ${E2E_PUBLIC_GITHUB_TOKEN}`
+      ) {
+        send(401, { message: "The loopback public lookup token is required" });
+        return;
+      }
+      try {
+        const { query, variables } = JSON.parse(await readBody(request));
+        if (typeof query !== "string" || typeof variables?.id !== "string")
+          throw new Error("Invalid fixture query");
+        const repository = publicRepositories.get(variables.id);
+        if (repository === undefined) {
+          send(200, { data: { node: null } });
+          return;
+        }
+        if (limitedRepositories.has(repository.full_name.toLowerCase())) {
+          send(
+            403,
+            { message: "API rate limit exceeded" },
+            {
+              "x-ratelimit-remaining": "0",
+            },
+          );
+          return;
+        }
+        const node = {
+          __typename: "Repository",
+          id: repository.node_id,
+          fullDatabaseId: String(repository.id),
+          isPrivate: repository.private,
+        };
+        const branch = (name) => ({
+          name,
+          prefix: "refs/heads/",
+          target: {
+            __typename: "Commit",
+            oid: fixtureBranchHead(repository.full_name, name),
+          },
+        });
+        if (query.includes("query ProjectRepositoryBranches(")) {
+          if (variables.cursor !== null)
+            throw new Error("Invalid fixture cursor");
+          node.refs = {
+            nodes: ["development", "main"].map(branch),
+            pageInfo: { hasNextPage: false, endCursor: null },
+          };
+        } else if (query.includes("query ProjectRepositoryHead(")) {
+          const name = variables.qualifiedName?.replace(/^refs\/heads\//u, "");
+          node.ref = ["main", "development"].includes(name)
+            ? branch(name)
+            : null;
+        } else if (query.includes("query ProjectRepositoryLicense(")) {
+          if (!/^[a-f0-9]{40}:LICENSE$/u.test(variables.expression ?? ""))
+            throw new Error("Invalid fixture license expression");
+          // These synthetic repositories have never served a LICENSE file.
+          // Keep their license unknown rather than inventing new evidence.
+          node.object = null;
+        } else throw new Error("Unsupported fixture query");
+        send(200, { data: { node } });
+      } catch {
+        send(400, { message: "Invalid public lookup fixture query" });
+      }
       return;
     }
     const control =
@@ -799,8 +876,10 @@ export function startGitHubApiFixture(port) {
         owner === "e2e-applicant" ||
         fixtureMemberId(owner) !== undefined
       ) {
+        const facts = fixtureRepository(repository[1]);
+        publicRepositories.set(facts.node_id, facts);
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(fixtureRepository(repository[1])));
+        response.end(JSON.stringify(facts));
         return;
       }
     }

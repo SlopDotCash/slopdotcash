@@ -28,6 +28,8 @@ import type {
 
 type R2Head = {
   size: number;
+  /** Opaque R2 object ETag; absent adapters cannot authorize a repair CAS. */
+  etag?: string;
   customMetadata?: Record<string, string>;
 };
 type R2ObjectBody = R2Head & { body: ReadableStream<Uint8Array> };
@@ -40,7 +42,9 @@ export type R2Bucket = {
     options: {
       httpMetadata: { contentType: string };
       customMetadata: Record<string, string>;
-      onlyIf: { etagDoesNotMatch: "*" };
+      onlyIf:
+        | { etagDoesNotMatch: "*"; etagMatches?: never }
+        | { etagMatches: string; etagDoesNotMatch?: never };
     },
   ): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
@@ -275,6 +279,13 @@ function sameCreate(existing: RunRow, input: CreateRunInput): boolean {
     existing.client_version === input.clientVersion
   );
 }
+
+// Intent creation and renewal must use the run state at the write, not the
+// handler's earlier owner/state read. The alias is shared by these local reads
+// and writes.
+const TRACE_INTENT_RUN_SQL = `run.id = ? AND run.github_user_id = ?
+  AND run.state != 'finalized'
+  AND (run.trace_sha256 IS NULL OR run.trace_sha256 = ?)`;
 
 /**
  * The one writer of `wallet_claims`: the claim, its audit event and the
@@ -778,16 +789,24 @@ export class CloudflareTracePersistence implements TracePersistence {
   async createUploadIntent(
     intent: TraceUploadIntent,
   ): Promise<PersistenceResult<TraceUploadIntent>> {
-    const existing = await this.db
-      .prepare(
-        "SELECT * FROM trace_upload_intents WHERE github_user_id = ? AND idempotency_key = ?",
-      )
-      .bind(intent.githubId, intent.idempotencyKey)
-      .first<UploadIntentRow>();
+    const readExisting = () =>
+      this.db
+        .prepare(`SELECT intent.* FROM trace_upload_intents intent
+          JOIN trace_runs run ON run.id=intent.run_id
+          WHERE intent.github_user_id=? AND intent.idempotency_key=?
+            AND ${TRACE_INTENT_RUN_SQL}
+            AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`)
+        .bind(
+          intent.githubId,
+          intent.idempotencyKey,
+          intent.runId,
+          intent.githubId,
+          intent.sha256,
+          intent.githubId,
+        )
+        .first<UploadIntentRow>();
+    const existing = await readExisting();
     if (existing !== null) {
-      if (await this.hasParticipationBan(intent.githubId)) {
-        return { status: "conflict" };
-      }
       const mapped = mapUploadIntent(existing);
       if (
         mapped.runId !== intent.runId ||
@@ -802,19 +821,20 @@ export class CloudflareTracePersistence implements TracePersistence {
           .prepare(
             `UPDATE trace_upload_intents SET expires_at = ?
              WHERE token_hash = ? AND consumed_at IS NULL AND expires_at <= ?
+               AND EXISTS (SELECT 1 FROM trace_runs run WHERE ${TRACE_INTENT_RUN_SQL})
                AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
           )
           .bind(
             intent.expiresAt,
             mapped.tokenHash,
             intent.createdAt,
+            intent.runId,
+            intent.githubId,
+            intent.sha256,
             intent.githubId,
           )
           .run();
-        const renewed = await this.db
-          .prepare("SELECT * FROM trace_upload_intents WHERE token_hash = ?")
-          .bind(mapped.tokenHash)
-          .first<UploadIntentRow>();
+        const renewed = await readExisting();
         if (renewed === null) return { status: "conflict" };
         const renewedIntent = mapUploadIntent(renewed);
         return renewedIntent.runId === intent.runId &&
@@ -840,7 +860,9 @@ export class CloudflareTracePersistence implements TracePersistence {
           `INSERT INTO trace_upload_intents (
             token_hash, run_id, github_user_id, trace_sha256, size_bytes,
             content_type, idempotency_key, created_at, expires_at, consumed_at
-          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL WHERE NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+            FROM trace_runs run WHERE ${TRACE_INTENT_RUN_SQL}
+            AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
         )
         .bind(
           intent.tokenHash,
@@ -852,6 +874,9 @@ export class CloudflareTracePersistence implements TracePersistence {
           intent.idempotencyKey,
           intent.createdAt,
           intent.expiresAt,
+          intent.runId,
+          intent.githubId,
+          intent.sha256,
           intent.githubId,
         )
         .run();

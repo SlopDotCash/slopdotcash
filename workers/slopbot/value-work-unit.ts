@@ -10,10 +10,9 @@ import { binarySourceLimitations } from "./value-binary";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
 import {
   findRepository,
-  type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
-import type { ValueMergeRecipe } from "./value-merge-profile";
+import type { ValueEvidence } from "./value-evidence-types";
 import { mergeResolutionMatches } from "./value-merge-resolution";
 import {
   NO_CHANGE_PROMOTION_CONTEXT,
@@ -21,14 +20,13 @@ import {
 } from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
+import type {
+  WorkUnitClaim,
+  WorkUnitEvidence,
+  WorkUnitSource,
+} from "./value-work-unit-types";
 import { selectAcceptedCommitIndices } from "./verified-source-ownership";
 import { completeClaimPartition } from "./verified-work-unit";
-
-export interface WorkUnitSource {
-  evidence: ValueEvidence;
-  policy: { sha: string; text: string };
-  mergeRecipe?: ValueMergeRecipe;
-}
 
 /** Discovery and valuation must use the same accepted commit selection.
  * Merge-resolution scope is verified below before any claim is admitted.
@@ -48,30 +46,6 @@ export function acceptedWorkUnitCommits(
       : { kind: "direct" },
   );
   return selected.map((index) => evidence.commits[index]);
-}
-
-export interface WorkUnitClaim {
-  id: string;
-  repositoryNodeId: string;
-  commitSha: string;
-  path: string;
-  carrierPullRequestIds: string[];
-  creditPullRequestId: string;
-  implementationActorNodeIds: string[];
-  retainedCopy?: {
-    acceptancePullRequestId: string;
-    acceptedCommitSha: string;
-    preexistingCommitShas: string[];
-  };
-}
-
-export interface WorkUnitEvidence {
-  projectId: string;
-  sources: WorkUnitSource[];
-  sourceDigests: { pullRequestNodeId: string; digest: string }[];
-  claims: WorkUnitClaim[];
-  limitations: string[];
-  sourceDigest: string;
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);

@@ -132,35 +132,63 @@ layout. If verification cannot finish, a clean result stays pending rather
 than clearing. Oversize parts are refused, and
 evidence is never shortened or silently omitted to obtain clearance.
 
-Objects registered since migration 0107 are content-addressed. Their bytes
-live once in private R2 at `vetting/objects/<sha256>` (parts at
-`vetting/objects/<sha256>/chunks/<index>/<part-sha256>`), and D1 holds only
-each run's manifest, object rows, digests and chunk layout. `object_key`
-remains the unique per-row identity; `storage = 'content'` says where the
-bytes are. Rows from before migration 0107 keep their run-scoped keys. Every
-upload is checked against its digest before it is written and reread after,
-so a content-addressed key can only hold the bytes it names. Writes are
-create-only; a valid copy is never overwritten. The single exception repairs
-a content-addressed copy that is missing or fails its digest: newly verified
-bytes for that same digest replace it. Registration answers with `stored`: the
-digests whose complete bytes (every part) reread and hash correctly now. The
-scanner references them instead of uploading again. This is a hint only: a chunked
-object still needs this run's finalization, which rereads every part and the
-whole digest, and retention rereads every byte. A missing, changed or
-partial object fails closed for every run that references it.
+Evidence is identified by its SHA-256 and shared within an active physical
+storage generation. Migration 0119 binds every new run object immutably to
+that generation. D1 keeps the run manifest, generation, declared layout,
+reserved targets and the current target for each exact part. Physical keys
+use `vetting/generations/<generation>/<target>`. `object_key` remains the
+unique historical identity of the run's object.
 
-Release order: apply migration 0107, then deploy the vetting API and the
-backup worker (its cleanup reads `storage` and the deletion claim), then the
-scanner. A scanner that references stored digests before the API knows them
-leaves clean results pending until the API catches up.
+Each physical body is written create-only after its input digest is checked,
+then read back and verified. An observed valid current target is reused. A
+missing or corrupt target is repaired into a newly reserved key; publication
+compares the expected prior pointer and requires an active generation. A lost
+write or publication reply does not erase the reservation. Every candidate,
+including failed and unpublished candidates, remains in the retirement
+inventory. Unknown read failures do not authorize a repair. ETags do not define
+generations or authorize overwriting generated body keys.
 
-Retention deletion is reference-aware. An expired content-addressed
-reference gets its own deletion receipt, but its bytes are deleted only when
-no other reference without a receipt remains, so permanent admission evidence
-and open cases keep shared bytes. The intake parses a scan report or
-inventory whole; one larger than 32 MiB cannot be parsed in a Worker request
-and is refused as not retained (fail closed). This bounds those JSON
-documents only, never artifacts or total evidence.
+Rows from migration 0107 through 0118 keep their shared digest keys. Earlier
+rows keep their run-scoped keys. These legacy rows remain readable, but the
+collector holds them without a deletion receipt: an already-admitted old
+writer cannot be fenced retroactively. Legacy corruption repair still uses
+the observed ETag; a missing copy retries create-only. New registrations do
+not attach to a legacy key or reuse any retired generated key.
+
+Registration's `stored` response contains digests whose declared parts were
+observed intact through that run's immutable binding. This is only a hint.
+Chunked objects still require their own finalization, which verifies the
+ordered whole-file digest. A missing, corrupt, expired or partly uploaded
+object never supplies clearance.
+
+The collector freezes a generation only when no current retained reference
+requires it. No target reservation or pointer publication can commit after
+that transition. It visits every reserved target, including alternate declared
+layouts and failed repair candidates. Existing bytes require verified backup
+before replacement by a permanent non-evidence retirement marker. An absent
+target is fenced create-only, so a late writer either loses or must be backed
+up before replacement. The marker stays permanently; ordinary reads refuse it.
+A new run after retirement selects a new physical generation.
+
+Retirement of physical targets and complete backup of a run are different
+outcomes. Missing declared parts keep a `retention-missing` audit and never
+receive a complete deletion receipt. Legacy and currently shared generations
+keep a `retention-held` audit. Changed raw bytes are backed up under their observed digest and remain
+distinct from valid declared evidence. They never satisfy a complete per-run
+evidence deletion receipt. Unreadable bytes, failed storage operations and
+unknown outcomes remain incomplete and retryable.
+See the [backup worker](../../workers/vetting-backup/README.md) for the bounded
+collector, supplemental backup receipts and restoration contract.
+
+Apply migration 0119 before the new API and collector. Its guards refuse old
+registration code and prevent an old collector from inventing a new-generation
+deletion receipt. This source change does not deploy or activate retention.
+Legacy writer quiescence, exact-head tests, backup/restore qualification and
+production release remain separate acceptance work.
+
+The intake parses a scan report or inventory whole; one larger than 32 MiB
+cannot be parsed in a Worker request and is refused as not retained. This bounds
+those JSON documents only, never artifacts or total evidence.
 
 Objects above 8 MiB declare `chunks` in their immutable object receipt. Each entry
 has `index`, `sha256` and `sizeBytes`. Indices start at zero, parts are exactly
@@ -190,6 +218,9 @@ Operator authorization, policy currency, expiry and complete bytes are checked
 again at read time. Audit rows retain the actor, reason and action. Grants and
 bodies use no-store; bodies use attachment, nosniff and a restrictive CSP. Text
 is escaped. Binary downloads never execute.
+Buffered responses refresh retention and recheck the same current operator
+after storage and the read audit complete. A read audit records verified bytes
+prepared for access, not proof that the client received them.
 
 Large downloads use a dedicated JSON POST `/:sha256/download-grant`. It returns
 no token in JSON or a URL. The server sets `__Secure-vetting-read-grant` as a
@@ -197,7 +228,10 @@ Secure, HttpOnly, SameSite=Strict, host-only cookie with the exact native downlo
 path and the same configured read-grant lifetime. The browser follows `/:sha256/download` as an
 attachment. GET requires `Sec-Fetch-Site: same-origin`, current session/operator
 policy and the actor/object-bound single-use grant. Duplicate grant cookies,
-ranges and HEAD are refused. The cookie is cleared on a native download attempt.
+ranges and HEAD are refused. Download responses do not change the grant cookie:
+a delayed response must not clear a newer same-object grant. The spent cookie
+may remain until its original 900-second expiry or a later grant overwrites it;
+the consumed D1 row prevents reuse.
 The site's CSP stays unchanged. Small text inspection keeps the existing header
 grant and bounded client digest check.
 
@@ -226,12 +260,10 @@ pixels and exceeds the site's existing 320-pixel minimum; that case is not
 claimed to pass. Captures and raw input bytes stay outside Git.
 
 
-Shared-object cleanup and registration use a D1 deletion claim per digest.
-The claim is created atomically only when no other retained reference exists.
-A database trigger refuses new content references while the claim exists, so
-registration cannot observe reusable bytes that cleanup is about to delete.
-The API returns a retryable conflict and rolls back that registration.
-The single cleanup consumer keeps the claim across R2 failures and retries;
-there is no expiry that could let a delayed delete race a new registration.
-After deletion, its receipt and claim release commit together. A later run
-must upload the missing bytes instead of reusing the deleted copy.
+Legacy cleanup claims and their existing receipts stay in the database as
+history. The new collector does not use those claims as a fence for generated
+storage and does not delete legacy bytes. The old late-write and omitted-layout
+counterexamples remain documented in the historical models; the new generation
+models cover reservation, publication and permanent retirement markers. No
+source model or passing bounded check alone proves implementation refinement
+or that deployed legacy writers are stopped.

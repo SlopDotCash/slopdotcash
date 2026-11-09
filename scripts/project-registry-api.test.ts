@@ -5,7 +5,7 @@
 // and ADM-06 enforcement.
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import {
@@ -22,7 +22,6 @@ import {
   handleProjectApi,
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
-import { slopbotGithubFetch } from "../backend/projects/repository-access";
 import type { SkillTemplateIndex } from "../backend/projects/skill-publication";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import {
@@ -42,10 +41,10 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "../src/lib/allocation-funding";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import type { RepositoryAccess } from "../src/lib/project-contracts";
 import { rewardFields } from "../src/lib/project-proposal";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
-import { sha256Hex } from "../src/lib/project-skill-publication.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import {
   REWARD_ASSET_NETWORKS,
@@ -64,7 +63,6 @@ import {
   reversalOnlyRegistration,
   reviewRegistration,
 } from "../workers/slopbot/registry";
-import { handleRepositoryRead } from "../workers/slopbot/repository-access";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 
 const ORIGIN = "https://slop.cash";
@@ -72,6 +70,29 @@ const ADMIN = { githubId: "900000001", githubLogin: "e2e-admin" };
 const APPLICANT = { githubId: "900000002", githubLogin: "e2e-applicant" };
 const MODERATOR = { githubId: "900000003", githubLogin: "e2e-moderator" };
 const TOKEN = "0x1111111111111111111111111111111111111111";
+const PUBLIC_GITHUB_TOKEN = "public-only-read-token-fixture";
+
+function githubRepositoryNode(
+  fields: Record<string, unknown>,
+  identity: Record<string, unknown> = {},
+) {
+  return Response.json({
+    data: {
+      node: {
+        __typename: "Repository",
+        id: "R_example",
+        fullDatabaseId: "123456789",
+        isPrivate: false,
+        ...fields,
+        ...identity,
+      },
+    },
+  });
+}
+
+function githubBranch(name: string, oid = "a".repeat(40)) {
+  return { name, prefix: "refs/heads/", target: { __typename: "Commit", oid } };
+}
 
 class MemoryCache implements EdgeCache {
   readonly entries = new Map<string, Response>();
@@ -189,22 +210,29 @@ beforeEach(async () => {
       throw new TokenMetadataError("No contract exists at that token address");
     },
     github: {
-      fetch: async (url) => {
+      token: PUBLIC_GITHUB_TOKEN,
+      fetch: async (url, init) => {
         githubReads.push(url);
+        if (url === "https://api.github.com/graphql") {
+          const { query } = JSON.parse(String(init.body));
+          if (query.includes("ProjectRepositoryBranches"))
+            return githubRepositoryNode({
+              refs: {
+                nodes: [
+                  githubBranch("main"),
+                  githubBranch("development", "b".repeat(40)),
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            });
+          return githubRepositoryNode({ ref: null });
+        }
         if (url === `https://api.github.com/user/${APPLICANT.githubId}`)
           return Response.json({
             id: Number(APPLICANT.githubId),
             login: APPLICANT.githubLogin,
             type: "User",
           });
-        if (
-          url ===
-          "https://api.github.com/repos/example/open-registry/branches?per_page=100&page=1"
-        )
-          return Response.json([
-            { name: "main", commit: { sha: "a".repeat(40) } },
-            { name: "development", commit: { sha: "b".repeat(40) } },
-          ]);
         if (url === "https://api.github.com/repos/example/open-registry")
           return Response.json({
             id: 123456789,
@@ -1920,55 +1948,41 @@ describe("project registry API", () => {
     }
   });
 
-  test("returns every branch through the Slopbot repository read without losing pagination", async () => {
+  test("returns every branch by immutable repository node through direct public-token reads", async () => {
     const ordinary = deps.github.fetch;
-    const firstPage =
-      "https://api.github.com/repos/example/open-registry/branches?per_page=100&page=1";
-    const secondPage = firstPage.replace(/&page=1$/u, "&page=2");
-    const nextPage =
-      "https://api.github.com/repositories/123456789/branches?per_page=100&page=2";
-    const pages: string[] = [];
-    const env = {
-      SLOPBOT_APP_ID: "1",
-      SLOPBOT_APP_PRIVATE_KEY: generateKeyPairSync("rsa", {
-        modulusLength: 2048,
-      })
-        .privateKey.export({ format: "pem", type: "pkcs8" })
-        .toString(),
+    const pages: (string | null)[] = [];
+    deps.github.fetch = async (url, init) => {
+      expect(new Headers(init.headers).get("authorization")).toBe(
+        `Bearer ${PUBLIC_GITHUB_TOKEN}`,
+      );
+      if (url === "https://api.github.com/graphql") {
+        expect(init.method).toBe("POST");
+        const { query, variables } = JSON.parse(String(init.body));
+        expect(variables.id).toBe("R_example");
+        if (!query.includes("ProjectRepositoryBranches"))
+          return githubRepositoryNode({ ref: null });
+        pages.push(variables.cursor);
+        return githubRepositoryNode({
+          refs:
+            variables.cursor === null
+              ? {
+                  nodes: [githubBranch("development", "b".repeat(40))],
+                  pageInfo: { hasNextPage: true, endCursor: "page-two" },
+                }
+              : {
+                  nodes: [
+                    githubBranch("main"),
+                    githubBranch("release/1.x", "c".repeat(40)),
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: "last" },
+                },
+        });
+      }
+      // A renamed/reused owner/name could now return another repository's
+      // branches. No branch or head request is allowed through that name.
+      expect(url).not.toContain("/branches");
+      return ordinary(url, init);
     };
-    const github = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input instanceof Request ? input.url : input);
-      if (url.endsWith("/installation"))
-        return Response.json({ id: 42, suspended_at: null });
-      if (url.endsWith("/access_tokens"))
-        return Response.json({ token: "installation-token-fixture" });
-      if (url === firstPage) {
-        pages.push(url);
-        return Response.json(
-          [{ name: "development", commit: { sha: "b".repeat(40) } }],
-          {
-            headers: { link: `<${nextPage}>; rel="next"` },
-          },
-        );
-      }
-      if (url === secondPage) {
-        pages.push(url);
-        return Response.json([
-          { name: "main", commit: { sha: "a".repeat(40) } },
-          { name: "release/1.x" },
-        ]);
-      }
-      return ordinary(url, init ?? {});
-    }) as typeof fetch;
-    deps.github.fetch = slopbotGithubFetch(
-      { fetch: (request) => handleRepositoryRead(request, env, github) },
-      "https://api.github.com",
-      async () => {
-        throw new Error(
-          "The installed repository must not use anonymous reads",
-        );
-      },
-    );
     const response = await call(
       "GET",
       "project-github/repositories/example/open-registry",
@@ -1978,25 +1992,236 @@ describe("project registry API", () => {
     expect((await response.json()).repository).toMatchObject({
       defaultBranch: "main",
       branches: ["development", "main", "release/1.x"],
-      branchCommits: { development: "b".repeat(40), main: "a".repeat(40) },
+      branchCommits: {
+        development: "b".repeat(40),
+        main: "a".repeat(40),
+        "release/1.x": "c".repeat(40),
+      },
       license: { state: "unknown" },
     });
-    expect(pages).toEqual([firstPage, secondPage]);
+    expect(pages).toEqual([null, "page-two"]);
   });
 
-  test("branch discovery refuses failed pages and links outside the repository", async () => {
+  test("branch discovery rejects partial, changed-identity, private and cyclic node results", async () => {
     const ordinary = deps.github.fetch;
-    for (const next of [
-      null,
-      "https://api.github.com/repos/other/repository/branches?per_page=100&page=2",
+    for (const failure of [
+      "http",
+      "partial",
+      "node-id",
+      "numeric-id",
+      "private",
+      "cursor",
+      "cycle",
+      "commit",
+      "page-limit",
+      "rate-limit",
     ]) {
+      let pages = 0;
       deps.github.fetch = async (url, init) => {
-        if (url.includes("/branches?"))
-          return next === null
-            ? Response.json({ message: "Unavailable" }, { status: 503 })
-            : Response.json([{ name: "main" }], {
-                headers: { link: `<${next}>; rel="next"` },
-              });
+        if (url !== "https://api.github.com/graphql")
+          return ordinary(url, init);
+        const { variables } = JSON.parse(String(init.body));
+        expect(variables.id).toBe("R_example");
+        pages++;
+        if (failure === "http") return new Response(null, { status: 503 });
+        if (failure === "rate-limit")
+          return Response.json({ errors: [{ type: "RATE_LIMITED" }] });
+        const refs = {
+          nodes: [
+            githubBranch(
+              "main",
+              failure === "commit" ? "invalid" : "a".repeat(40),
+            ),
+          ],
+          pageInfo: {
+            hasNextPage: ["cursor", "cycle", "page-limit"].includes(failure),
+            endCursor:
+              failure === "cursor"
+                ? null
+                : failure === "page-limit"
+                  ? `page-${pages}`
+                  : "repeated-cursor",
+          },
+        };
+        if (failure === "partial") {
+          const body = await githubRepositoryNode({ refs }).json();
+          return Response.json({
+            ...body,
+            errors: [{ message: "A resolver failed" }],
+          });
+        }
+        return githubRepositoryNode(
+          { refs },
+          failure === "node-id"
+            ? { id: "R_reused" }
+            : failure === "numeric-id"
+              ? { fullDatabaseId: "987654321" }
+              : failure === "private"
+                ? { isPrivate: true }
+                : {},
+        );
+      };
+      const response = await call(
+        "GET",
+        "project-github/repositories/example/open-registry",
+        "applicant",
+      );
+      expect(response.status).toBe(failure === "rate-limit" ? 503 : 502);
+      expect((await response.json()).repository).toBeUndefined();
+      expect(pages).toBe(
+        failure === "cycle" ? 2 : failure === "page-limit" ? 20 : 1,
+      );
+    }
+  });
+
+  test("a later branch page with another repository identity cannot publish partial facts", async () => {
+    const ordinary = deps.github.fetch;
+    const cursors: (string | null)[] = [];
+    deps.github.fetch = async (url, init) => {
+      if (url !== "https://api.github.com/graphql") return ordinary(url, init);
+      const { variables } = JSON.parse(String(init.body));
+      cursors.push(variables.cursor);
+      expect(variables.id).toBe("R_example");
+      return githubRepositoryNode(
+        {
+          refs: {
+            nodes: [
+              githubBranch(variables.cursor === null ? "development" : "main"),
+            ],
+            pageInfo: {
+              hasNextPage: variables.cursor === null,
+              endCursor: variables.cursor === null ? "second" : null,
+            },
+          },
+        },
+        variables.cursor === null
+          ? {}
+          : { id: "R_name_reused", fullDatabaseId: "42" },
+      );
+    };
+    const response = await call(
+      "GET",
+      "project-github/repositories/example/open-registry",
+      "applicant",
+    );
+    expect(response.status).toBe(502);
+    expect((await response.json()).repository).toBeUndefined();
+    expect(cursors).toEqual([null, "second"]);
+    expect(cache.entries.size).toBe(0);
+  });
+
+  test("canonical renamed repository metadata retains its node through case-insensitive lookup", async () => {
+    const ordinary = deps.github.fetch;
+    deps.github.fetch = async (url, init) => {
+      if (url === "https://api.github.com/repos/Example/Old-Name") {
+        const metadata = await (
+          await ordinary(
+            "https://api.github.com/repos/example/open-registry",
+            init,
+          )
+        ).json();
+        return Response.json({
+          ...metadata,
+          full_name: "example/renamed-project",
+        });
+      }
+      if (url === "https://api.github.com/graphql") {
+        expect(JSON.parse(String(init.body)).variables.id).toBe("R_example");
+        return ordinary(url, init);
+      }
+      throw new Error(`Unexpected named dependent read: ${url}`);
+    };
+    const response = await call(
+      "GET",
+      "project-github/repositories/Example/Old-Name",
+      "applicant",
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).repository).toMatchObject({
+      repository: "example/renamed-project",
+      numericId: "123456789",
+      nodeId: "R_example",
+      branches: ["main", "development"],
+      license: { state: "unknown" },
+    });
+  });
+
+  test("repository lookup refuses absent public credentials before a provider call", async () => {
+    deps.github.token = undefined;
+    const response = await call(
+      "GET",
+      "project-github/repositories/example/open-registry",
+      "applicant",
+    );
+    expect(response.status).toBe(503);
+    expect((await response.json()).repository).toBeUndefined();
+    expect(githubReads).toEqual([]);
+  });
+
+  test("license verification binds REST classification and exact bytes to the captured node and commit", async () => {
+    const ordinary = deps.github.fetch;
+    const commit = "c".repeat(40);
+    const bytes = Buffer.from(
+      "MIT License\r\n\r\nCopyright (c) 2026 Example\r\n",
+      "utf8",
+    );
+    const oid = createHash("sha1")
+      .update(Buffer.from(`blob ${bytes.length}\0`))
+      .update(bytes)
+      .digest("hex");
+    for (const result of [
+      "valid",
+      "wrong-oid",
+      "wrong-bytes",
+      "non-file",
+      "missing-blob",
+      "changed-node",
+      "license-http",
+    ]) {
+      deps.cache = new MemoryCache();
+      let licenseReads = 0;
+      deps.github.fetch = async (url, init) => {
+        expect(new Headers(init.headers).get("authorization")).toBe(
+          `Bearer ${PUBLIC_GITHUB_TOKEN}`,
+        );
+        if (url === "https://api.github.com/graphql") {
+          const { query, variables } = JSON.parse(String(init.body));
+          expect(variables.id).toBe("R_example");
+          if (query.includes("ProjectRepositoryBranches"))
+            return ordinary(url, init);
+          if (query.includes("ProjectRepositoryHead")) {
+            expect(variables.qualifiedName).toBe("refs/heads/main");
+            return githubRepositoryNode({ ref: githubBranch("main", commit) });
+          }
+          expect(variables.expression).toBe(`${commit}:LICENSE`);
+          return githubRepositoryNode(
+            {
+              object:
+                result === "missing-blob" ? null : { __typename: "Blob", oid },
+            },
+            result === "changed-node" ? { id: "R_reused" } : {},
+          );
+        }
+        if (url.includes("/license?")) {
+          licenseReads++;
+          expect(url).toBe(
+            `https://api.github.com/repos/example/open-registry/license?ref=${commit}`,
+          );
+          if (result === "license-http")
+            return new Response(null, { status: 503 });
+          return Response.json({
+            path: "LICENSE",
+            type: result === "non-file" ? "dir" : "file",
+            sha: result === "wrong-oid" ? "d".repeat(40) : oid,
+            encoding: "base64",
+            content: (result === "wrong-bytes"
+              ? Buffer.from("another repository's LICENSE")
+              : bytes
+            ).toString("base64"),
+            license: { spdx_id: "MIT" },
+          });
+        }
+        expect(url).not.toContain("/branches");
         return ordinary(url, init);
       };
       const response = await call(
@@ -2004,20 +2229,21 @@ describe("project registry API", () => {
         "project-github/repositories/example/open-registry",
         "applicant",
       );
-      expect(response.status).toBe(502);
-      expect((await response.json()).repository).toBeUndefined();
+      expect(response.status).toBe(200);
+      const { repository } = await response.json();
+      expect(repository.numericId).toBe("123456789");
+      if (result === "valid")
+        expect(repository.license).toEqual({
+          state: "verified",
+          spdx: "MIT",
+          commitSha: commit,
+          fileSha256: createHash("sha256").update(bytes).digest("hex"),
+        });
+      else expect(repository.license.state).toBe("unknown");
+      expect(licenseReads).toBe(
+        ["missing-blob", "changed-node"].includes(result) ? 0 : 1,
+      );
     }
-    deps.github.fetch = async (url, init) =>
-      url.includes("/branches?")
-        ? Response.json([{ name: "main", commit: { sha: "not-a-commit" } }])
-        : ordinary(url, init);
-    const invalidCommit = await call(
-      "GET",
-      "project-github/repositories/example/open-registry",
-      "applicant",
-    );
-    expect(invalidCommit.status).toBe(502);
-    expect((await invalidCommit.json()).repository).toBeUndefined();
   });
 });
 

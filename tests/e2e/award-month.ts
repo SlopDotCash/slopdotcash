@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
 
 /** Select retained fixture data through the same calendar controls as an owner. */
 export async function selectAwardMonth(page: Page, period: string) {
@@ -35,4 +36,99 @@ export async function selectAwardMonth(page: Page, period: string) {
     await expect(label).not.toHaveText(shown);
   }
   throw new Error(`Could not select retained award month ${period}`);
+}
+
+/**
+ * Serves the finalized September 2026 monthly award review of the eliza
+ * fixture for `deployment`, and the award commitment the owner requests from
+ * it. Set `review.available` to false to answer the review with 503;
+ * `review.reads` counts review reads.
+ */
+export async function routeMonthlyAwardReview(
+  page: Page,
+  deployment: EscrowDeployment,
+) {
+  const commitment = {
+    schemaVersion: "2",
+    projectId: "eliza",
+    cycleId: "2026-09",
+    manifestSha256: "a".repeat(64),
+    snapshotSha256: "b".repeat(64),
+    deployment,
+    award: {
+      githubUserId: "1234",
+      login: "local-contributor",
+      sourceDigest: "d".repeat(64),
+      gross: "2000000",
+      fee: "40000",
+      net: "1960000",
+    },
+  };
+  const review = { available: true, reads: 0 };
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-09",
+    (route) => {
+      review.reads++;
+      return route.fulfill({
+        status: review.available ? 200 : 503,
+        json: review.available
+          ? {
+              projectId: "eliza",
+              period: "2026-09",
+              manifestSha256: commitment.manifestSha256,
+              automatic: true,
+              canManage: true,
+              cutoffAt: null,
+              deployment,
+              asset: null,
+              proposal: {
+                capBase: "2000000",
+                allocationSequence: 0,
+                allocations: [
+                  {
+                    githubUserId: "1234",
+                    login: "local-contributor",
+                    grossBase: "2000000",
+                    proposedGrossBase: "2000000",
+                    sourceDigest: commitment.award.sourceDigest,
+                  },
+                ],
+              },
+              run: {
+                trigger: "automatic",
+                frozenAt: "2026-10-03T00:00:00.000Z",
+                snapshotSha256: commitment.snapshotSha256,
+                totalGrossBase: "2000000",
+                network: deployment.network,
+                vault: deployment.vault,
+                funded: true,
+                awards: [
+                  {
+                    githubUserId: "1234",
+                    login: "local-contributor",
+                    grossBase: "2000000",
+                    feeBase: "40000",
+                    netBase: "1960000",
+                    state: "awaiting-reservation",
+                  },
+                ],
+              },
+            }
+          : { message: "Review temporarily unavailable" },
+      });
+    },
+  );
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-09/commitment",
+    (route) => {
+      expect(route.request().postDataJSON()).toEqual({
+        network: deployment.network,
+        githubUserId: "1234",
+        manifestSha256: commitment.manifestSha256,
+        snapshotSha256: commitment.snapshotSha256,
+      });
+      return route.fulfill({ json: commitment });
+    },
+  );
+  return { commitment, review };
 }

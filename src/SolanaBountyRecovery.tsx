@@ -1,16 +1,38 @@
-import { useEffect, useRef, useState } from "react";
-import { encodeBase58Bytes } from "./lib/base58";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { useLayoutEffect, useRef, useState } from "react";
+import { decodeBase58Bytes, encodeBase58Bytes } from "./lib/base58";
+import { decodeBase64 } from "./lib/byte-encoding";
+import { errorMessage } from "./lib/errors";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { currentProjectSession } from "./lib/project-api";
-import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { solanaAddressBytes } from "./lib/wallets";
 import { NoWalletFound, WalletConnection } from "./Presentation";
 
 type Message = { messageId: string; message: string };
 
+function validSignature(
+  value: unknown,
+  message: Uint8Array,
+  payer: Uint8Array,
+): value is string {
+  if (typeof value !== "string" || value.length > 88) return false;
+  try {
+    const signature = decodeBase58Bytes(value);
+    return (
+      signature.length === 64 &&
+      encodeBase58Bytes(signature) === value &&
+      ed25519.verify(signature, message, payer, { zip215: false })
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Only signs messages the API has established are expired; never sends a transaction. */
 export function SolanaBountyRecovery({
   caseId,
+  revision,
   generation,
   payer,
   messages,
@@ -18,39 +40,87 @@ export function SolanaBountyRecovery({
   verify,
 }: {
   caseId: string;
+  revision: number;
   generation: number;
   payer: string;
   messages: Message[];
-  authorize: () => Promise<void>;
+  authorize: (isCurrent?: () => boolean) => Promise<void>;
   verify: (
     signatures: { messageId: string; signature: string }[],
+    isCurrent?: () => boolean,
   ) => Promise<void>;
 }) {
   const wallets = usePayoutWallets().filter(
     (wallet) => wallet.family === "solana",
   );
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const active = useRef<symbol | null>(null);
+  const context = JSON.stringify([
+    caseId,
+    revision,
+    generation,
+    payer,
+    messages,
+  ]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A different case, revision, payer or message retires the prior signing request.
+  useLayoutEffect(() => {
+    active.current = null;
+    setWallet(null);
+    setBusy(false);
+    setError(null);
     return () => {
-      mounted.current = false;
+      active.current = null;
     };
-  }, []);
-  const { busy, error, run } = useAction();
+  }, [context]);
+  const run = async (action: (isCurrent: () => boolean) => Promise<void>) => {
+    if (active.current !== null) return;
+    const token = Symbol();
+    active.current = token;
+    const isCurrent = () => active.current === token;
+    setBusy(true);
+    setError(null);
+    try {
+      await action(isCurrent);
+    } catch (caught) {
+      if (isCurrent()) setError(errorMessage(caught));
+    } finally {
+      if (isCurrent()) {
+        active.current = null;
+        setBusy(false);
+      }
+    }
+  };
   const connect = (provider: PayoutWallet) =>
-    void run(async () => {
-      await authorize();
+    void run(async (isCurrent) => {
+      await authorize(isCurrent);
+      if (!isCurrent()) return;
       const connection = await provider.connect();
+      if (!isCurrent()) return;
       if (connection.address !== payer || !connection.solanaSignMessage)
         throw new Error("Connect the original payer's Solana wallet.");
       setWallet(connection);
     });
   const check = () =>
-    void run(async () => {
+    void run(async (isCurrent) => {
       const actor = await currentProjectSession();
+      if (!isCurrent()) return;
       if (!actor || !wallet?.solanaSignMessage)
         throw new Error("Sign in and connect the original payer wallet.");
+      const payerBytes = solanaAddressBytes(payer);
+      const checkAuthority = async () => {
+        if (!isCurrent()) return false;
+        await authorize(isCurrent);
+        if (!isCurrent()) return false;
+        const current = await currentProjectSession();
+        if (!isCurrent()) return false;
+        if (current?.githubId !== actor.githubId)
+          throw new Error(
+            "Your account changed. Reload before checking payment history.",
+          );
+        return true;
+      };
       const key = `slop:bounty-history:v1:${caseId}:${generation}:${actor.githubId}`;
       const raw = sessionStorage.getItem(key);
       const saved = raw
@@ -61,29 +131,31 @@ export function SolanaBountyRecovery({
         : {};
       const signatures: { messageId: string; signature: string }[] = [];
       for (const message of messages) {
-        await authorize();
-        const current = await currentProjectSession();
-        if (current?.githubId !== actor.githubId)
-          throw new Error(
-            "Your account changed. Reload before checking payment history.",
-          );
-        if (!mounted.current) throw new Error("The recovery view was closed.");
+        if (!(await checkAuthority()) || !isCurrent()) return;
+        const bytes = decodeBase64(message.message);
+        const cached = saved[message.messageId];
         let signature =
-          saved[message.messageId]?.message === message.message
-            ? saved[message.messageId].signature
+          cached?.message === message.message &&
+          validSignature(cached.signature, bytes, payerBytes)
+            ? cached.signature
             : null;
         if (!signature) {
-          const bytes = Uint8Array.from(atob(message.message), (character) =>
-            character.charCodeAt(0),
+          signature = encodeBase58Bytes(
+            await wallet.solanaSignMessage(bytes.slice()),
           );
-          signature = encodeBase58Bytes(await wallet.solanaSignMessage(bytes));
+          if (!isCurrent()) return;
+          if (!validSignature(signature, bytes, payerBytes))
+            throw new Error(
+              "Your wallet returned an invalid recovery signature. Reconnect and try again.",
+            );
+          if (!(await checkAuthority()) || !isCurrent()) return;
           saved[message.messageId] = { message: message.message, signature };
           sessionStorage.setItem(key, JSON.stringify(saved));
         }
         signatures.push({ messageId: message.messageId, signature });
       }
-      await authorize();
-      await verify(signatures);
+      if (!(await checkAuthority()) || !isCurrent()) return;
+      await verify(signatures, isCurrent);
     });
   return (
     <div className="direct-bounty-payment">

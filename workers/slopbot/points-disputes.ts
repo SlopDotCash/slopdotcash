@@ -190,8 +190,18 @@ export async function processPendingPointsDisputes(env: Env) {
     await env.SLOPBOT_DB.prepare(`SELECT json_group_array(appeal_key) AS rows FROM (SELECT appeal_key FROM points_disputes
     WHERE resolved_at IS NULL AND escalated_at IS NULL
     ORDER BY opened_at LIMIT 5)`).first<{ rows: string }>();
-  for (const key of JSON.parse(rows?.rows ?? "[]") as string[])
-    await processPointsDispute(env, key);
+  // One dispute that rethrows (for example after an unrecorded model call)
+  // must not stop the rest of the batch from reaching moderator escalation.
+  const failures: unknown[] = [];
+  for (const key of JSON.parse(rows?.rows ?? "[]") as string[]) {
+    try {
+      await processPointsDispute(env, key);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length)
+    throw new AggregateError(failures, "Points dispute failures");
 }
 
 export function routePointsDisputes(

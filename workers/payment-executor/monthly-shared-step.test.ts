@@ -17,26 +17,28 @@ import {
   toFunctionSelector,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
-  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmAwardId,
   evmMonthlyDigest,
+} from "../../contracts/evm/adapter";
+import {
+  type EvmMonthlyReservation,
   evmMonthlyReserveDigest,
   evmMonthlySumTree,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
+import { memoryJournal, serveJsonRpc } from "../../tests/payment-test-journal";
+import type { Attempt } from "./binding-shared";
 import {
-  type Attempt,
-  type JournalStore,
   type PublicEvmExecutorEnvironment,
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "./core";
-import type { MonthlyAuthorization } from "./monthly";
 
 const keeper = privateKeyToAccount(`0x${"7".repeat(64)}`);
 const identity = privateKeyToAccount(`0x${"6".repeat(64)}`);
@@ -228,48 +230,13 @@ function answer(method: string, params: unknown[]) {
       throw new Error(`Unexpected RPC ${method}`);
   }
 }
-let server: ReturnType<typeof Bun.serve>;
+let rpc: ReturnType<typeof serveJsonRpc>;
 let rpcUrl: string;
 beforeAll(() => {
-  server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const { id, method, params } = (await request.json()) as {
-        id: number;
-        method: string;
-        params: unknown[];
-      };
-      const result = answer(method, params);
-      return Response.json(
-        result && typeof result === "object" && "error" in result
-          ? {
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32000, message: result.error },
-            }
-          : { jsonrpc: "2.0", id, result },
-      );
-    },
-  });
-  rpcUrl = `http://127.0.0.1:${server.port}`;
+  rpc = serveJsonRpc(answer);
+  rpcUrl = rpc.url;
 });
-afterAll(() => server.stop(true));
-
-function memoryJournal(): JournalStore {
-  const values = new Map<string, unknown>();
-  const journal: JournalStore = {
-    async get<T>(key: string) {
-      return structuredClone(values.get(key)) as T | undefined;
-    },
-    async put<T>(key: string, value: T) {
-      values.set(key, structuredClone(value));
-    },
-    async transaction(callback) {
-      return callback(journal);
-    },
-  };
-  return journal;
-}
+afterAll(() => rpc.stop());
 
 /** The keeper's executor environment: its own gas key and bounded fee replacement. */
 function keeperEnvironment(): PublicEvmExecutorEnvironment {

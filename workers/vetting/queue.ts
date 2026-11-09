@@ -1,6 +1,7 @@
 /** Read-only signed queue and revision/template acquisition. No result-write capability. */
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { githubHeaders } from "../../backend/github";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { readRecord } from "../../src/lib/record-validation.mjs";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
@@ -9,6 +10,7 @@ import {
   acquireRepository,
   readAcquisitionBody,
 } from "./acquire";
+import type { QueuedAssessment } from "./assembly-manifest";
 import {
   serviceOrigin,
   signedVettingFetch,
@@ -32,14 +34,6 @@ const safePath = (value: unknown): string => {
   )
     throw new Error("Invalid input path");
   return value;
-};
-export type QueuedAssessment = {
-  assessmentId: string;
-  projectId: string;
-  revision: number;
-  manifestSha256: string;
-  commitSha: string;
-  templateSha256: string;
 };
 /** A refusal bound to the assignment reread by acquisition itself. */
 export class QueuedAcquisitionRefusal extends AcquisitionRefusal {
@@ -207,11 +201,7 @@ export async function acquireQueuedAssessment(
     `https://api.github.com/repos/${currentPath}`,
     {
       method: "GET",
-      headers: {
-        accept: "application/vnd.github+json",
-        "x-github-api-version": "2022-11-28",
-        "user-agent": "slop-vetting-acquisition",
-      },
+      headers: githubHeaders(undefined, "slop-vetting-acquisition"),
       redirect: "manual",
       signal: AbortSignal.timeout(15_000),
     },

@@ -5,7 +5,7 @@ import {
 } from "../../src/lib/deployment";
 export const IDENTITY_PUBLIC_ORIGIN = "https://identity.slop.cash";
 export const IDENTITY_INTERNAL_HOST = "identity.internal";
-export const IDENTITY_AUDIENCE = "private-trace-api";
+const IDENTITY_AUDIENCE = "private-trace-api";
 export const POINTS_AUDIENCE = "slop-points-web";
 export type IdentityAudience =
   | typeof IDENTITY_AUDIENCE
@@ -75,6 +75,8 @@ export interface IdentityPersistence {
   ): Promise<OAuthFlow | null>;
   createAssertion(
     assertion: IdentityAssertion,
+    /** Required for deterministic production assertions; null for independent local tokens. */
+    flowId: string | null,
   ): Promise<IdentityAssertion | null>;
   markAssertionIssued(flowId: string, issuedAt: string): Promise<boolean>;
   consumeAssertion(

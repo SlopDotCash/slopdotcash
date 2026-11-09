@@ -48,8 +48,8 @@ export async function dispatchDueJobs<T>(
 }
 
 type ReviewJob = Extract<Job, { kind: "review" }>;
-export type HoldJob = Extract<Job, { kind: "maintainer_hold" }>;
-export type Hold = {
+type HoldJob = Extract<Job, { kind: "maintainer_hold" }>;
+type Hold = {
   review_key: string;
   item_node_id: string;
   revision: string;

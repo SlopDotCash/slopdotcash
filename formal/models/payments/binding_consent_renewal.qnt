@@ -1,6 +1,7 @@
 // @source migrations/0016_binding_authorizations.sql
 // @source backend/payments/handler.ts
 // @source workers/payment-executor/core.ts
+// @source workers/payment-executor/binding-shared.ts
 // Store an immutable row per version/expiry. The API refuses short and overly
 // long consent; execution chooses latest usable expiry for the current version.
 // Time units abstract the 600-second submission margin and 90-day lifetime.

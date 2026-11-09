@@ -42,6 +42,7 @@ export default {
               "not_owner",
               "Test owner required",
             );
+          return true;
         },
         releaseReserve: async (input) => {
           const service = env[env.TEST_RELEASE_BINDING] as

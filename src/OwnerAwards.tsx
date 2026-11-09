@@ -1,6 +1,13 @@
 import "./owner-review.css";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
@@ -8,11 +15,18 @@ import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
-import { PRD_MONTHLY_SCHEDULE } from "./lib/payments/monthly-allocation";
+import {
+  PRD_MONTHLY_SCHEDULE,
+  shiftPeriod,
+  utcPeriodOf,
+} from "./lib/payments/monthly-allocation";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
-import { apiRequest } from "./lib/project-api";
+import {
+  apiRequest,
+  currentProjectSession,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
-import { useAction } from "./lib/use-action";
 import { useTimeBoundary, useUtcDay } from "./lib/use-time-boundary";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease, {
@@ -27,19 +41,6 @@ import {
   StatusBadge,
 } from "./Presentation";
 
-function previousMonth() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
-    .toISOString()
-    .slice(0, 7);
-}
-/** The calendar month `delta` months from a YYYY-MM period. */
-function shiftMonth(period: string, delta: number) {
-  const [year, month] = period.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1 + delta, 1))
-    .toISOString()
-    .slice(0, 7);
-}
 /** Base units as a plain decimal an owner can edit, without grouping separators. */
 function editableUnits(base: string, decimals: number | null) {
   return decimals === null
@@ -57,9 +58,9 @@ function baseUnitsOf(value: string, decimals: number | null) {
   return parseVaultAmount(trimmed, decimals).toString();
 }
 /** A release this browser submitted must stay visible until it settles. */
-function hasSubmittedRelease(projectId: string) {
+function hasSubmittedRelease(projectId: string, suffix = "") {
   try {
-    const prefix = releaseStoragePrefix(projectId);
+    const prefix = `${releaseStoragePrefix(projectId)}${suffix}`;
     return Object.keys(sessionStorage).some((key) => key.startsWith(prefix));
   } catch {
     return false;
@@ -93,7 +94,7 @@ export default function OwnerAwards({
   // (or the earliest public cycle, when one is older) to the last closed
   // month. The server still authorizes every month read.
   const monthlyProject = project.reward.kind === "monthly-pool";
-  const lastClosedMonth = previousMonth();
+  const lastClosedMonth = shiftPeriod(utcPeriodOf(new Date()), -1);
   const firstMonth =
     months.length && months[0] < PRD_MONTHLY_SCHEDULE.firstPeriod
       ? months[0]
@@ -121,16 +122,23 @@ export default function OwnerAwards({
   }));
   const { period } = monthRequest;
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
+  const [viewActor, setViewActor] = useState<string | null>(null);
+  const knownActor = useRef<string | null>(null);
+  const mounted = useRef(true);
+  const generation = useRef(0);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+    };
+  }, []);
   const [drafts, setDrafts] = useState<
     Record<string, Record<string, { value: string; base: string }>>
   >({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
-  const {
-    busy: actionBusy,
-    error: actionError,
-    setError: setActionError,
-    run: act,
-  } = useAction();
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const busy = loading || actionBusy;
@@ -146,16 +154,19 @@ export default function OwnerAwards({
       : `${formatBaseUnits(value, decimals)}${symbol ? ` ${symbol}` : ""}`;
 
   const accept = useCallback(
-    (body: MonthlyOwnerView, month: string) => {
+    (body: MonthlyOwnerView, month: string, actorId: string) => {
       if (
         body.projectId !== project.id ||
         body.period !== month ||
         typeof body.automatic !== "boolean" ||
+        typeof body.canManage !== "boolean" ||
         (body.proposal !== null && !Array.isArray(body.proposal.allocations)) ||
         (body.run !== null && !Array.isArray(body.run.awards))
       )
         throw new Error("The award response could not be verified.");
       setView(body);
+      setViewActor(actorId);
+      knownActor.current = actorId;
       setDrafts((previous) => {
         const rows = new Map(
           body.proposal?.allocations.map((row) => [
@@ -175,45 +186,110 @@ export default function OwnerAwards({
     },
     [project.id],
   );
+  const clearPrivate = useCallback(() => {
+    setView(null);
+    setViewActor(null);
+    knownActor.current = null;
+    setSelectedActor(null);
+    setDrafts({});
+    setNotice("");
+  }, []);
+  useEffect(
+    () =>
+      subscribeProjectSessionChange(() => {
+        generation.current += 1;
+        clearPrivate();
+        setSignedOut(true);
+        setLoading(false);
+        setActionBusy(false);
+        setActionError(null);
+        setLoadError(null);
+      }),
+    [clearPrivate],
+  );
   const call = useCallback(
     async (
       path: string,
       request: unknown,
       label: string,
+      expectedActor: string | null,
+      owns: () => boolean,
       signal?: AbortSignal,
     ) => {
-      const response = await apiRequest(`${base}${path}`, {
-        body: request,
-        timeoutMs: 120_000,
-        signal,
-      });
+      const current = () => mounted.current && owns() && !signal?.aborted;
+      if (!current()) return null;
+      const checkSession = async () => {
+        try {
+          return await currentProjectSession();
+        } catch {
+          if (current()) clearPrivate();
+          throw new Error(
+            "Your private session could not be checked. Refresh awards.",
+          );
+        }
+      };
+      const session = await checkSession();
+      if (!current()) return null;
       if (
-        !signal?.aborted &&
-        (response.status === 401 || response.status === 403)
-      )
-        setDrafts({});
-      const body = (await readBoundedJson(
-        response,
-        8 * 1024 * 1024,
-        label,
-      )) as Record<string, unknown> & { message?: string };
-      if (signal?.aborted) return null;
-      if (response.status === 401) {
-        setSignedOut(true);
+        !session ||
+        (expectedActor !== null && session.githubId !== expectedActor)
+      ) {
+        clearPrivate();
+        setSignedOut(session === null);
+        if (session) throw new Error("Your account changed. Refresh awards.");
         return null;
       }
-      if (!response.ok)
-        throw new Error(body.message ?? "Awards are unavailable. Retry.");
-      return body;
+      if (
+        knownActor.current !== null &&
+        knownActor.current !== session.githubId
+      )
+        clearPrivate();
+      let body: (Record<string, unknown> & { message?: string }) | null = null;
+      let failure: unknown;
+      let failed = false;
+      try {
+        const response = await apiRequest(`${base}${path}`, {
+          body: request,
+          timeoutMs: 120_000,
+          signal,
+          headers: { "x-slop-expected-github-id": session.githubId },
+        });
+        if (current() && [401, 403, 404, 410].includes(response.status)) {
+          clearPrivate();
+          setSignedOut(response.status === 401);
+        }
+        body = (await readBoundedJson(
+          response,
+          8 * 1024 * 1024,
+          label,
+        )) as Record<string, unknown> & { message?: string };
+        if (!response.ok)
+          throw new Error(body.message ?? "Awards are unavailable. Retry.");
+      } catch (cause) {
+        failed = true;
+        failure = cause;
+      }
+      if (!current()) return null;
+      const after = await checkSession();
+      if (!current()) return null;
+      if (after?.githubId !== session.githubId) {
+        clearPrivate();
+        setSignedOut(after === null);
+        throw new Error("Your account changed. Refresh awards.");
+      }
+      if (failed) throw failure;
+      return { body, actorId: session.githubId };
     },
-    [base],
+    [base, clearPrivate],
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useEffect(() => {
     if (!opened) return;
     setView(null);
     setSelectedActor(null);
     setLoadError(null);
     setActionError(null);
+    setActionBusy(false);
     setNotice("");
     setSignedOut(false);
     setLoading(false);
@@ -223,33 +299,51 @@ export default function OwnerAwards({
       return;
     }
     const controller = new AbortController();
+    const current = ++generation.current;
+    const owns = () => mounted.current && generation.current === current;
     setLoading(true);
     void call(
       `/monthly/${month}`,
       undefined,
       "Monthly awards",
+      null,
+      owns,
       controller.signal,
     )
-      .then((body) => {
-        if (!controller.signal.aborted && body)
-          accept(body as unknown as MonthlyOwnerView, month);
+      .then((result) => {
+        if (owns() && !controller.signal.aborted && result?.body)
+          accept(
+            result.body as unknown as MonthlyOwnerView,
+            month,
+            result.actorId,
+          );
       })
       .catch((reason) => {
-        if (!controller.signal.aborted)
+        if (owns() && !controller.signal.aborted)
           setLoadError(errorMessage(reason, "Awards are unavailable."));
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (owns() && !controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
   }, [accept, call, monthRequest, opened, setActionError]);
-  function run(action: () => Promise<void>) {
+  async function run(action: (owns: () => boolean) => Promise<void>) {
+    if (!mounted.current) return;
+    const current = ++generation.current;
+    const owns = () => mounted.current && generation.current === current;
     setNotice("");
     setLoadError(null);
     setSignedOut(false);
-    return act(action, (reason) =>
-      errorMessage(reason, "Awards are unavailable."),
-    );
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await action(owns);
+    } catch (reason) {
+      if (owns())
+        setActionError(errorMessage(reason, "Awards are unavailable."));
+    } finally {
+      if (owns()) setActionBusy(false);
+    }
   }
   function load(event: FormEvent) {
     event.preventDefault();
@@ -259,7 +353,7 @@ export default function OwnerAwards({
     }));
   }
   const save = (githubUserId: string) =>
-    run(async () => {
+    run(async (owns) => {
       if (!view?.proposal) return;
       const draft = drafts[view.period]?.[githubUserId];
       if (draft === undefined) return;
@@ -271,9 +365,15 @@ export default function OwnerAwards({
           expectedSequence: view.proposal.allocationSequence,
         },
         "Monthly allocation",
+        viewActor,
+        owns,
       );
-      if (body) {
-        accept(body as unknown as MonthlyOwnerView, view.period);
+      if (body?.body && owns()) {
+        accept(
+          body.body as unknown as MonthlyOwnerView,
+          view.period,
+          body.actorId,
+        );
         setDrafts((previous) => {
           const next = { ...previous };
           const month = { ...(next[view.period] ?? {}) };
@@ -285,15 +385,21 @@ export default function OwnerAwards({
       }
     });
   const finalize = () =>
-    run(async () => {
+    run(async (owns) => {
       if (!view?.proposal) return;
       const body = await call(
         `/monthly/${view.period}/finalize`,
         { expectedSequence: view.proposal.allocationSequence },
         "Monthly finalization",
+        viewActor,
+        owns,
       );
-      if (body) {
-        accept(body as unknown as MonthlyOwnerView, view.period);
+      if (body?.body && owns()) {
+        accept(
+          body.body as unknown as MonthlyOwnerView,
+          view.period,
+          body.actorId,
+        );
         setDrafts((previous) => {
           const next = { ...previous };
           delete next[view.period];
@@ -303,15 +409,17 @@ export default function OwnerAwards({
       }
     });
   const toggleAutomatic = () =>
-    run(async () => {
+    run(async (owns) => {
       if (!view) return;
       const body = await call(
         "/monthly-settings",
         { automatic: !view.automatic },
         "Monthly finalization setting",
+        viewActor,
+        owns,
       );
-      if (body && typeof body.automatic === "boolean")
-        setView({ ...view, automatic: body.automatic });
+      if (owns() && body?.body && typeof body.body.automatic === "boolean")
+        setView({ ...view, automatic: body.body.automatic });
     });
 
   useTimeBoundary(
@@ -363,14 +471,15 @@ export default function OwnerAwards({
         <CalendarDays size={22} aria-hidden="true" /> Monthly awards
       </h2>
       {recovery.error && <p role="alert">{recovery.error}</p>}
-      {recovery.pending.map((entry) => (
-        <OwnerCommitment
-          key={`recovery:${entry.cycleId}:${entry.expected.network}:${entry.expected.githubUserId}`}
-          projectId={project.id}
-          cycleId={entry.cycleId}
-          expected={entry.expected}
-        />
-      ))}
+      {!signedOut &&
+        recovery.pending.map((entry) => (
+          <OwnerCommitment
+            key={`recovery:${entry.cycleId}:${entry.expected.network}:${entry.expected.githubUserId}`}
+            projectId={project.id}
+            cycleId={entry.cycleId}
+            expected={entry.expected}
+          />
+        ))}
       {!opened ? (
         <>
           <p>Review allocations and reserve finalized awards.</p>
@@ -394,7 +503,7 @@ export default function OwnerAwards({
                 className="button secondary-button icon-button"
                 aria-label="Previous award month"
                 disabled={busy || period <= firstMonth}
-                onClick={() => selectMonth(shiftMonth(period, -1))}
+                onClick={() => selectMonth(shiftPeriod(period, -1))}
               >
                 <ChevronLeft aria-hidden="true" />
               </button>
@@ -404,7 +513,7 @@ export default function OwnerAwards({
                 className="button secondary-button icon-button"
                 aria-label="Next award month"
                 disabled={busy || period >= lastClosedMonth}
-                onClick={() => selectMonth(shiftMonth(period, 1))}
+                onClick={() => selectMonth(shiftPeriod(period, 1))}
               >
                 <ChevronRight aria-hidden="true" />
               </button>
@@ -462,26 +571,33 @@ export default function OwnerAwards({
                             <time dateTime={view.cutoffAt}>
                               {formatDateTime(view.cutoffAt)}
                             </time>
-                            . You can finalize earlier.
+                            .
+                            {view.canManage
+                              ? " You can finalize earlier."
+                              : null}
                           </>
-                        ) : (
+                        ) : view.canManage ? (
                           "Finalize this month manually."
-                        )
-                      ) : (
+                        ) : null
+                      ) : view.canManage ? (
                         "Finalize each month manually."
-                      )}
+                      ) : null}
                     </span>
                   </p>
-                  <button
-                    className="button secondary-button"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void toggleAutomatic()}
-                  >
-                    {view.automatic
-                      ? "Turn off automatic finalization"
-                      : "Turn on automatic finalization"}
-                  </button>
+                  {view.canManage ? (
+                    <button
+                      className="button secondary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void toggleAutomatic()}
+                    >
+                      {view.automatic
+                        ? "Turn off automatic finalization"
+                        : "Turn on automatic finalization"}
+                    </button>
+                  ) : (
+                    <p role="status">View only</p>
+                  )}
                 </div>
                 {authorizationDeployment && (
                   <p className="owner-award-authorization">
@@ -549,70 +665,74 @@ export default function OwnerAwards({
                               fee={amount(fee.toString())}
                               saved
                             />
-                            <div className="owner-award-edit">
-                              <label htmlFor={id}>
-                                <span aria-hidden="true">
-                                  {drafts[view.period]?.[row.githubUserId] ===
-                                  undefined
-                                    ? "Edit gross"
-                                    : "Unsaved gross"}
-                                </span>
-                                <span className="visually-hidden">
-                                  Award for {row.login}
-                                  {decimals === null ? " (base units)" : ""}
-                                </span>
-                              </label>
-                              <input
-                                id={id}
-                                inputMode="decimal"
-                                spellCheck={false}
-                                disabled={busy || cutoffPassed}
-                                value={
-                                  drafts[view.period]?.[row.githubUserId]
-                                    ?.value ??
-                                  editableUnits(row.grossBase, decimals)
-                                }
-                                onChange={(event) =>
-                                  setDrafts({
-                                    ...drafts,
-                                    [view.period]: {
-                                      ...(drafts[view.period] ?? {}),
-                                      [row.githubUserId]: {
-                                        value: event.target.value,
-                                        base: row.grossBase,
-                                      },
-                                    },
-                                  })
-                                }
-                              />
-                              <button
-                                className="button secondary-button"
-                                type="button"
-                                disabled={
-                                  busy ||
-                                  cutoffPassed ||
-                                  drafts[view.period]?.[row.githubUserId] ===
+                            {view.canManage && (
+                              <div className="owner-award-edit">
+                                <label htmlFor={id}>
+                                  <span aria-hidden="true">
+                                    {drafts[view.period]?.[row.githubUserId] ===
                                     undefined
-                                }
-                                aria-label={`Save ${row.login}`}
-                                onClick={() => void save(row.githubUserId)}
-                              >
-                                Save
-                              </button>
-                            </div>
+                                      ? "Edit gross"
+                                      : "Unsaved gross"}
+                                  </span>
+                                  <span className="visually-hidden">
+                                    Award for {row.login}
+                                    {decimals === null ? " (base units)" : ""}
+                                  </span>
+                                </label>
+                                <input
+                                  id={id}
+                                  inputMode="decimal"
+                                  spellCheck={false}
+                                  disabled={busy || cutoffPassed}
+                                  value={
+                                    drafts[view.period]?.[row.githubUserId]
+                                      ?.value ??
+                                    editableUnits(row.grossBase, decimals)
+                                  }
+                                  onChange={(event) =>
+                                    setDrafts({
+                                      ...drafts,
+                                      [view.period]: {
+                                        ...(drafts[view.period] ?? {}),
+                                        [row.githubUserId]: {
+                                          value: event.target.value,
+                                          base: row.grossBase,
+                                        },
+                                      },
+                                    })
+                                  }
+                                />
+                                <button
+                                  className="button secondary-button"
+                                  type="button"
+                                  disabled={
+                                    busy ||
+                                    cutoffPassed ||
+                                    drafts[view.period]?.[row.githubUserId] ===
+                                      undefined
+                                  }
+                                  aria-label={`Save ${row.login}`}
+                                  onClick={() => void save(row.githubUserId)}
+                                >
+                                  Save
+                                </button>
+                              </div>
+                            )}
                           </li>
                         );
                       })}
                     </ul>
                   )}
-                  <button
-                    className="button primary-button"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void finalize()}
-                  >
-                    Finalize awards
-                  </button>
+                  {view.canManage && (
+                    <button
+                      className="button primary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void finalize()}
+                    >
+                      Finalize awards
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
@@ -620,7 +740,9 @@ export default function OwnerAwards({
                     Finalized{" "}
                     {view.run.trigger === "automatic"
                       ? "automatically"
-                      : "by you"}{" "}
+                      : view.canManage
+                        ? "by you"
+                        : "by the owner"}{" "}
                     on{" "}
                     <time dateTime={view.run.frozenAt}>
                       {formatDateTime(view.run.frozenAt)}
@@ -699,12 +821,17 @@ export default function OwnerAwards({
               )}
             </div>
           )}
-          {view?.deployment && (
-            <OwnerReserveRelease
-              key={`${view.projectId}:${view.period}:${view.manifestSha256}`}
-              view={view}
-            />
-          )}
+          {view?.deployment &&
+            (view.canManage ||
+              hasSubmittedRelease(
+                project.id,
+                `${view.period}:${view.deployment.network}`,
+              )) && (
+              <OwnerReserveRelease
+                key={`${view.projectId}:${view.period}:${view.manifestSha256}`}
+                view={view}
+              />
+            )}
         </>
       )}
     </section>

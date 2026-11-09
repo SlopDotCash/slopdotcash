@@ -11,6 +11,7 @@
  */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type {
   GithubActor,
   ProjectRecord,
@@ -33,9 +34,9 @@ import {
   exactKeys,
   fail,
   isSameOriginJsonWrite,
-  json as jsonResponse,
   PROJECT_ID,
   pathParts,
+  requireActor,
 } from "../http";
 import type { ProjectPersistence } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
@@ -51,9 +52,13 @@ import {
   type ScanRequester,
   setupAuthority,
 } from "../projects/setup";
-import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
+import {
+  isRecord,
+  readLimitedBody,
+  readStrictJsonObject,
+} from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
-import type { ProjectFlagStore } from "./flags";
+import { json, type ProjectFlagStore } from "./flags";
 import {
   type CloudflareVettingPersistence,
   summarize,
@@ -106,15 +111,11 @@ export type VettingApiDependencies = {
   refreshSetup?: (projectId: string) => Promise<ProjectSetupStatus | null>;
 };
 
-function json(status: number, body: Record<string, unknown>): Response {
-  return jsonResponse(status, body, { cacheControl: "no-store" });
-}
-
 function base64Bytes(value: string): Uint8Array | null {
   const normal = value.trim().replaceAll("-", "+").replaceAll("_", "/");
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(normal)) return null;
   try {
-    return Uint8Array.from(atob(normal), (char) => char.charCodeAt(0));
+    return decodeBase64(normal);
   } catch {
     return null;
   }
@@ -225,6 +226,7 @@ async function requireAdmin(
 ): Promise<WebSession> {
   const session = await deps.session(request);
   if (session === null) fail(401, "unauthorized", "Sign in with GitHub");
+  await requireActor(request, { sessionActor: async () => session });
   if (!session.admin) fail(403, "forbidden", "Admin access is required");
   return session;
 }
@@ -338,7 +340,7 @@ async function grantExemption(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, [
     "projectId",
     "revision",
@@ -487,7 +489,7 @@ async function revokeExemption(
   id: string,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["reason", "decisionReference", "confirmation"]);
   const reason = exemptionReason(body);
   if (!/^vex_[A-Za-z0-9_-]{4,76}$/u.test(id))
@@ -513,7 +515,7 @@ async function requestAssessment(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const keys = Object.keys(body).sort().join(",");
   if (keys !== "projectId,reason,revision")
     fail(400, "invalid_request", "Send projectId, revision and reason");

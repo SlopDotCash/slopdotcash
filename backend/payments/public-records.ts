@@ -8,7 +8,11 @@ import {
   type PublicVaultPaymentPage,
   transactionUrl,
 } from "../../src/lib/payments/contracts";
-import { isUsdMicroAsset } from "../../src/lib/received-totals";
+import {
+  isUsdMicroAsset,
+  type ReceivedContributor,
+  type ReceivedTotalsRecord,
+} from "../../src/lib/received-totals";
 import type { D1Database } from "../d1";
 
 const PAGE_SIZE = 100;
@@ -171,7 +175,7 @@ export async function publicVaultPayments(
 }
 
 /** At most this many finalized records feed one aggregate; more fails closed. */
-export const MAX_RECEIVED_RECORDS = 20_000;
+const MAX_RECEIVED_RECORDS = 20_000;
 /** Vault rows carry their evidence (1.5 to 2.5 KB); 100 stay near 250 KB. */
 const VAULT_PAGE_SIZE = 100;
 const DIRECT_PAGE_SIZE = 500;
@@ -207,39 +211,6 @@ async function pagedRows<T>(
   }
 }
 
-/** One contributor's all-time finalized receipts, in exact base units. */
-export interface ReceivedContributor {
-  githubUserId: string;
-  login: string | null;
-  /** Disclosed direct USDC transfers plus finalized USD-stablecoin vault payments. */
-  usdMicro: string;
-  directMicro: string;
-  vaultUsdMicro: string;
-  directTransfers: number;
-  vaultPayments: number;
-  /** The same dollar receipts by project, largest first. */
-  projects: { projectId: string; usdMicro: string }[];
-  /** Finalized vault payments in other assets, never converted to dollars. */
-  otherAssets: {
-    network: string;
-    assetAddress: string;
-    assetDecimals: number;
-    netBase: string;
-  }[];
-}
-export interface ReceivedTotals {
-  schemaVersion: "1";
-  contributors: ReceivedContributor[];
-  totals: {
-    usdMicro: string;
-    directMicro: string;
-    vaultUsdMicro: string;
-    directTransfers: number;
-    vaultPayments: number;
-    contributors: number;
-  };
-}
-
 /**
  * All-time money received per public contributor: every disclosed direct
  * transfer plus every finalized ordinary vault payment. Each vault record is
@@ -248,7 +219,7 @@ export interface ReceivedTotals {
 export async function publicReceivedTotals(
   db: D1Database,
   includeTestnets: boolean,
-): Promise<ReceivedTotals> {
+): Promise<ReceivedTotalsRecord> {
   // Bounded pages keep every returned value far below D1's 2 MB value limit;
   // a frozen rowid boundary keeps the pages one consistent read.
   const vaultRows = await pagedRows<Row & { memberLogin: string | null }>(

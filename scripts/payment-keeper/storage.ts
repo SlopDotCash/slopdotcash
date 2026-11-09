@@ -1,5 +1,5 @@
 import type { D1Statement, D1TransactionalDatabase } from "../../backend/d1";
-import type { JournalStore } from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 
 export type KeeperValue =
   | string

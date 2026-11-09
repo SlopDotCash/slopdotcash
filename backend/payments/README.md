@@ -287,8 +287,8 @@ sections 6 and 7). Migration `0062` adds its private records.
    gets no proposal; the other projects still get theirs. If the project is
    active again before the last run, the next run proposes the month. No cycle
    file, public decision or review PR is created.
-2. **Private changes.** The owner, with current GitHub write, maintain or
-   admin permission on the immutable repository, changes amounts through
+2. **Private changes.** The owner, the project steward or a current admin of
+   the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and
    `POST .../monthly/:YYYY-MM/allocations` (`githubUserId`, `grossBase`,
    `expectedSequence`). The month's total never exceeds its monthly amount, so
@@ -296,7 +296,9 @@ sections 6 and 7). Migration `0062` adds its private records.
    allocation. Each change is an append-only `monthly_allocation_changes` row
    kept only for dispute handling and reconciliation; no route returns it and
    no public reason exists. `POST .../monthly-settings` (`automatic`) turns
-   the automatic default off or on again.
+   the automatic default off or on again. Write or maintain permission can
+   read the month and prepare its commitment, but cannot change allocations,
+   the automatic default, finalization or reserve release.
 3. **Execution snapshot.** `POST .../monthly/:YYYY-MM/finalize`
    (`expectedSequence`) freezes the current allocations now. Otherwise the
    payments Worker's scheduled coordinator freezes them at the cutoff,

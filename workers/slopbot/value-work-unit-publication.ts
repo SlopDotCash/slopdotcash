@@ -19,17 +19,14 @@ import {
   fenceValueClaim,
   registeredValuePublication,
 } from "./value-publication-fence";
-import {
-  prepareWorkUnitEvidence,
-  type WorkUnitEvidence,
-  type WorkUnitSource,
-} from "./value-work-unit";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
 import {
   appendWorkUnitRecord,
   currentWorkUnitRecord,
   prepareWorkUnitRecord,
 } from "./value-work-unit-journal";
 import type { WorkUnitAssessmentResult } from "./value-work-unit-review";
+import type { WorkUnitEvidence, WorkUnitSource } from "./value-work-unit-types";
 
 type Result = WorkUnitAssessmentResult;
 

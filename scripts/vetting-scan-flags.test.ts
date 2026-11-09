@@ -26,6 +26,7 @@ import {
   CloudflareVettingPersistence,
   type VettingPin,
 } from "../backend/vetting/persistence";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { seedParticipationBan } from "../tests/participation-ban.fixture";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
@@ -125,7 +126,7 @@ let sqlite: ReturnType<typeof sqliteD1>["sqlite"];
 let projects: CloudflareProjectPersistence;
 let vetting: CloudflareVettingPersistence;
 let flags: ProjectFlagStore;
-let beforeFlagBatch: (() => void) | null = null;
+let beforeFlagBatch: (() => void | Promise<void>) | null = null;
 let keys: Awaited<ReturnType<typeof vettingKeyPair>>;
 let livePin: VettingPin;
 let pinUp = true;
@@ -147,7 +148,7 @@ beforeEach(async () => {
     batch: async (statements) => {
       const hook = beforeFlagBatch;
       beforeFlagBatch = null;
-      hook?.();
+      await hook?.();
       return database.db.batch(statements);
     },
   });
@@ -1044,6 +1045,121 @@ test("a concurrent account ban cannot supply the flag that pauses another projec
   expect((await publicProject()).status).toBe(200);
 });
 
+test("a concurrent steward revision refuses stale flag eligibility before its write", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  const before = await projects.getProject("open-registry");
+  if (!before) throw new Error("Missing project before flag admission");
+  beforeFlagBatch = async () => {
+    const manifest = {
+      ...before.manifest,
+      steward: {
+        ...before.manifest.steward,
+        kind: "individual" as const,
+        displayName: "Bob",
+        github: {
+          ...before.manifest.steward.github,
+          actorId: BOB.githubId,
+          nodeId: "U_bob",
+          login: BOB.githubLogin,
+          type: "User" as const,
+          profileUrl: "https://github.com/bob",
+        },
+      },
+    };
+    expect(
+      await projects.appendProjectRevision(
+        {
+          projectId: before.id,
+          expectedRevision: before.revision,
+          manifest,
+          manifestText: JSON.stringify(manifest),
+          manifestSha256: await sha256Hex(
+            new TextEncoder().encode(JSON.stringify(manifest)),
+          ),
+          reason: "Record a changed project steward during flag admission",
+          actor: ADMIN,
+          at: clock.toISOString(),
+        },
+        await projects.enforcementGeneration(),
+      ),
+    ).toBe("updated");
+  };
+  const refused = await flag("bob");
+  expect(refused.status).toBe(409);
+  expect((await refused.json()).error).toBe("flag_retry");
+  expect((await projects.getProject(before.id))?.revision).toBe(
+    before.revision + 1,
+  );
+  expect(
+    (await flags.activeFlags(clock)).map((entry) => entry.reporter.githubId),
+  ).toEqual([ALICE.githubId]);
+  expect(await projects.listEnforcements()).toEqual([]);
+  // The registry revision may notify its audience, but no flag-pause notice
+  // is added for the refused stale admission.
+  expect(
+    sqlite
+      .query(
+        "SELECT COUNT(*) n FROM notifications WHERE kind='project_quarantined'",
+      )
+      .get(),
+  ).toEqual({ n: 0 });
+  const currentOwner = await flag("bob");
+  expect(currentOwner.status).toBe(403);
+  expect((await currentOwner.json()).error).toBe("owner_cannot_flag");
+});
+
+test("a withdrawn reporter's new flag is outside an older scan's immutable snapshot", async () => {
+  await activeProject();
+  const original = await (await flag("alice")).json();
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  const assessment = (await vetting.pendingAssessments()).at(-1);
+  if (!assessment) throw new Error("Missing flag-pause assessment");
+  expect(
+    (
+      await flagApi(
+        sessionRequest(
+          "POST",
+          "project-flags/open-registry/withdraw",
+          "alice",
+          {},
+        ),
+      )
+    ).status,
+  ).toBe(200);
+  clock = new Date(NOW.getTime() + 120_000);
+  const replacement = await (await flag("alice")).json();
+  expect(replacement.flag.id).not.toBe(original.flag.id);
+  clock = new Date(NOW.getTime() + 180_000);
+  expect(
+    (
+      await postResult(
+        await scanFixture(assessment.id, "clean", {
+          runId: "scan-refiled-flag",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await publicProject()).status).toBe(410);
+  expect((await flags.activeFlags(clock)).map((entry) => entry.id)).toEqual([
+    replacement.flag.id,
+  ]);
+  expect((await flags.get(original.flag.id))?.state).toBe("withdrawn");
+  expect(
+    sqlite
+      .query(
+        "SELECT state,closed_by FROM project_flags WHERE reporter_github_id=?",
+      )
+      .get(BOB.githubId),
+  ).toEqual({ state: "resolved", closed_by: "clean-scan" });
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) => entry.action === "reinstate",
+    ),
+  ).toEqual([]);
+});
+
 test("the existing-project exemption is permanent but cannot clear reinstatement or later projects", async () => {
   const migration = "0075_vetting_grandfathered_projects.sql";
   const database = sqliteD1(
@@ -1068,15 +1184,18 @@ test("the existing-project exemption is permanent but cannot clear reinstatement
     const existing = await canonical("existing-exempt");
     const later = await canonical("later-scanned");
     const create = async (manifest: typeof existing) =>
-      registry.createProject({
-        manifest,
-        manifestText: JSON.stringify(manifest),
-        manifestSha256: "a".repeat(64),
-        reason: "Owner creates a test project",
-        actor: APPLICANT,
-        at: NOW.toISOString(),
-        referrer: null,
-      });
+      registry.createProject(
+        {
+          manifest,
+          manifestText: JSON.stringify(manifest),
+          manifestSha256: "a".repeat(64),
+          reason: "Owner creates a test project",
+          actor: APPLICANT,
+          at: NOW.toISOString(),
+          referrer: null,
+        },
+        await registry.enforcementGeneration(),
+      );
     expect(await create(existing)).toBe("created");
     database.sqlite.exec(
       readFileSync(
@@ -1214,15 +1333,18 @@ test("an exempt owner edit stays active without a scan, while flags still requir
       retained.evidence.retained(assessment.result),
   );
   expect(
-    await projects.createProject({
-      manifest: canonical.manifest,
-      manifestText: JSON.stringify(canonical.manifest),
-      manifestSha256: canonical.manifestSha256,
-      reason: "Existing project before the scan gate",
-      actor: APPLICANT,
-      at: NOW.toISOString(),
-      referrer: null,
-    }),
+    await projects.createProject(
+      {
+        manifest: canonical.manifest,
+        manifestText: JSON.stringify(canonical.manifest),
+        manifestSha256: canonical.manifestSha256,
+        reason: "Existing project before the scan gate",
+        actor: APPLICANT,
+        at: NOW.toISOString(),
+        referrer: null,
+      },
+      await projects.enforcementGeneration(),
+    ),
   ).toBe("created");
   sqlite.exec(
     readFileSync(

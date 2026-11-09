@@ -13,6 +13,7 @@ import {
   parseTransaction,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   buildBindCalldata,
   buildCommitAwardCalldata,
@@ -34,7 +35,6 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { cloudflareKeeperRuntime } from "../../tests/cloudflare-keeper-runtime.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import { rpc } from "./budget";
 import { type KeeperConfiguration, runKeeper } from "./keeper";
 import { openKeeperStore } from "./store";

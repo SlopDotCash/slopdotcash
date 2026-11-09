@@ -5,7 +5,6 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -19,6 +18,7 @@ import { childEnvironment } from "./child-environment.mjs";
 import {
   beginEvidenceTransaction,
   validateEvidenceBundle,
+  withEvidenceCleanup,
 } from "./evidence-bundle.mjs";
 import {
   assertCommittedBuildManifest,
@@ -27,14 +27,21 @@ import {
   assertImmutableAssetCache,
   assertLiveLedgerReady,
   assertSecurityHeaders,
-  assertTlsSession,
   PRODUCTION_HOSTNAME,
   PRODUCTION_ORIGIN,
   parseEvidenceMode,
+  probeProductionTls,
   REMOTE_ARTIFACT_PATHS,
+  readEvidenceResponseBytes,
   shouldBuildForEvidence,
   verifyRemoteArtifacts,
+  withEvidenceResponse,
 } from "./evidence-contract.mjs";
+import {
+  completeEvidenceCommand,
+  observeEvidenceProcess,
+  stopEvidencePreview,
+} from "./evidence-process.mjs";
 import { sha256Hex as hash } from "./sha256.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -60,21 +67,12 @@ const representativeExternalPrizeProjectId =
   externalPrizeProjects[0]?.id ?? null;
 
 function run(command, args) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
-      cwd: packageRoot,
-      env: childEnvironment(),
-      stdio: "inherit",
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-      } else {
-        reject(new Error(`${command} exited with ${code ?? "unknown"}`));
-      }
-    });
+  const child = spawn(command, args, {
+    cwd: packageRoot,
+    env: childEnvironment(),
+    stdio: "inherit",
   });
+  return completeEvidenceCommand(command, observeEvidenceProcess(child));
 }
 
 function digest(path) {
@@ -129,7 +127,7 @@ function assertPreviewRunning(server, state) {
       cause: state.error,
     });
   }
-  if (server.exitCode !== null || server.signalCode !== null) {
+  if (state.closed || server.exitCode !== null || server.signalCode !== null) {
     throw new Error(
       `[Slop] owned preview exited before evidence completed (code=${server.exitCode ?? "none"}, signal=${server.signalCode ?? "none"})`,
     );
@@ -177,34 +175,19 @@ async function waitForServer(baseUrl, server, state, expectedFingerprint) {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
       continue;
     }
-    if (!response.ok) {
-      throw new Error(
-        `[Slop] owned preview returned ${response.status} for the build fingerprint`,
-      );
-    }
-    if (!response.body) {
-      throw new Error("[Slop] owned preview omitted the build fingerprint");
-    }
-    const reader = response.body.getReader();
-    const digest = createHash("sha256");
-    let receivedBytes = 0;
-    try {
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        receivedBytes += chunk.value.byteLength;
-        if (receivedBytes > MAX_PREVIEW_MANIFEST_BYTES) {
-          await reader.cancel("preview manifest exceeded size limit");
-          throw new Error(
-            "[Slop] owned preview build fingerprint is oversized",
-          );
-        }
-        digest.update(chunk.value);
+    const servedFingerprint = await withEvidenceResponse(response, async () => {
+      if (!response.ok) {
+        throw new Error(
+          `[Slop] owned preview returned ${response.status} for the build fingerprint`,
+        );
       }
-    } finally {
-      reader.releaseLock();
-    }
-    const servedFingerprint = digest.digest("hex");
+      const bytes = await readEvidenceResponseBytes(
+        response,
+        MAX_PREVIEW_MANIFEST_BYTES,
+        "[Slop] owned preview build fingerprint",
+      );
+      return hash(bytes);
+    });
     if (servedFingerprint !== expectedFingerprint) {
       throw new Error(
         "[Slop] preview served a build other than the selected dist",
@@ -215,65 +198,8 @@ async function waitForServer(baseUrl, server, state, expectedFingerprint) {
   throw new Error("[Slop] preview server did not become ready");
 }
 
-function waitForProcessExit(server, timeoutMs) {
-  if (server.exitCode !== null || server.signalCode !== null) {
-    return Promise.resolve(true);
-  }
-  return new Promise((resolvePromise) => {
-    const timer = setTimeout(() => {
-      server.off("exit", onExit);
-      resolvePromise(false);
-    }, timeoutMs);
-    function onExit() {
-      clearTimeout(timer);
-      resolvePromise(true);
-    }
-    server.once("exit", onExit);
-  });
-}
-
 async function stopPreview(server) {
-  if (!server || server.exitCode !== null || server.signalCode !== null) {
-    return;
-  }
-  server.kill("SIGTERM");
-  if (await waitForProcessExit(server, 3_000)) {
-    return;
-  }
-  server.kill("SIGKILL");
-  await waitForProcessExit(server, 3_000);
-}
-
-async function inspectTls() {
-  return new Promise((resolvePromise, reject) => {
-    const socket = connectTls({
-      host: PRODUCTION_HOSTNAME,
-      port: 443,
-      rejectUnauthorized: true,
-      servername: PRODUCTION_HOSTNAME,
-    });
-    socket.setTimeout(10_000);
-    socket.once("timeout", () => {
-      socket.destroy(new Error("[Slop] production TLS handshake timed out"));
-    });
-    socket.once("error", reject);
-    socket.once("secureConnect", () => {
-      const certificate = socket.getPeerCertificate();
-      const session = assertTlsSession({
-        authorizationError: socket.authorizationError,
-        authorized: socket.authorized,
-        cipher: socket.getCipher()?.name,
-        issuer: certificate.issuer?.CN,
-        protocol: socket.getProtocol(),
-        subject: certificate.subject?.CN,
-        subjectAltName: certificate.subjectaltname,
-        validFrom: certificate.valid_from,
-        validTo: certificate.valid_to,
-      });
-      socket.end();
-      resolvePromise(session);
-    });
-  });
+  await stopEvidencePreview(server, previewState);
 }
 
 function hashedAssetPath(indexHtml) {
@@ -290,7 +216,7 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
   const addresses = assertDnsAddresses(
     await lookup(PRODUCTION_HOSTNAME, { all: true, verbatim: true }),
   );
-  const tls = await inspectTls();
+  const tls = await probeProductionTls(connectTls);
   const httpUrl = new URL(`http://${PRODUCTION_HOSTNAME}/`);
   httpUrl.searchParams.set("verify", cacheKey);
   const redirectResponse = await fetch(httpUrl, {
@@ -299,9 +225,11 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
-  const redirect = assertHttpsRedirect(
-    redirectResponse.status,
-    redirectResponse.headers.get("location"),
+  const redirect = await withEvidenceResponse(redirectResponse, () =>
+    assertHttpsRedirect(
+      redirectResponse.status,
+      redirectResponse.headers.get("location"),
+    ),
   );
   const httpsUrl = new URL("/", PRODUCTION_ORIGIN);
   httpsUrl.searchParams.set("verify", cacheKey);
@@ -311,18 +239,19 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!httpsResponse.ok) {
-    throw new Error(
-      `[Slop] production apex returned HTTP ${httpsResponse.status}`,
-    );
-  }
-  if (new URL(httpsResponse.url).origin !== PRODUCTION_ORIGIN) {
-    throw new Error(
-      `[Slop] production HTTPS request left ${PRODUCTION_ORIGIN}`,
-    );
-  }
-  const securityHeaders = assertSecurityHeaders(httpsResponse.headers);
-  await httpsResponse.body?.cancel();
+  const securityHeaders = await withEvidenceResponse(httpsResponse, () => {
+    if (!httpsResponse.ok) {
+      throw new Error(
+        `[Slop] production apex returned HTTP ${httpsResponse.status}`,
+      );
+    }
+    if (new URL(httpsResponse.url).origin !== PRODUCTION_ORIGIN) {
+      throw new Error(
+        `[Slop] production HTTPS request left ${PRODUCTION_ORIGIN}`,
+      );
+    }
+    return assertSecurityHeaders(httpsResponse.headers);
+  });
   const assetUrl = new URL(assetPath, PRODUCTION_ORIGIN);
   assetUrl.searchParams.set("verify", cacheKey);
   const assetResponse = await fetch(assetUrl, {
@@ -331,13 +260,14 @@ async function inspectProductionNetwork(cacheKey, assetPath) {
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!assetResponse.ok) {
-    throw new Error(
-      `[Slop] production asset returned HTTP ${assetResponse.status}`,
-    );
-  }
-  const assetCacheControl = assertImmutableAssetCache(assetResponse.headers);
-  await assetResponse.body?.cancel();
+  const assetCacheControl = await withEvidenceResponse(assetResponse, () => {
+    if (!assetResponse.ok) {
+      throw new Error(
+        `[Slop] production asset returned HTTP ${assetResponse.status}`,
+      );
+    }
+    return assertImmutableAssetCache(assetResponse.headers);
+  });
   return {
     asset: {
       cacheControl: assetCacheControl,
@@ -423,7 +353,6 @@ if (mode === "production") {
 } else {
   const previewPort = await reserveLoopbackPort();
   baseUrl = `http://127.0.0.1:${previewPort}`;
-  previewState = { error: undefined };
   previewServer = spawn(
     process.execPath,
     [
@@ -441,15 +370,14 @@ if (mode === "production") {
       stdio: "inherit",
     },
   );
-  previewServer.once("error", (error) => {
-    previewState.error = error;
-  });
+  previewState = observeEvidenceProcess(previewServer);
   try {
     await waitForServer(baseUrl, previewServer, previewState, buildFingerprint);
   } catch (error) {
     // error-policy:J6 a failed local preview is terminated before its startup error is rethrown.
-    await stopPreview(previewServer);
-    throw error;
+    await withEvidenceCleanup(async () => {
+      throw error;
+    }, [{ label: "preview shutdown", run: () => stopPreview(previewServer) }]);
   }
   verification = {
     schemaVersion: "1",
@@ -467,14 +395,15 @@ try {
   evidenceTransaction = beginEvidenceTransaction(finalEvidenceRoot);
 } catch (error) {
   // error-policy:J6 a local preview is terminated if evidence staging cannot begin.
-  await stopPreview(previewServer);
-  throw error;
+  await withEvidenceCleanup(async () => {
+    throw error;
+  }, [{ label: "preview shutdown", run: () => stopPreview(previewServer) }]);
 }
 const evidenceRoot = evidenceTransaction.stagingRoot;
 const videoRoot = join(evidenceRoot, ".video");
-mkdirSync(videoRoot, { recursive: true });
 
-try {
+async function captureEvidence() {
+  mkdirSync(videoRoot, { recursive: true });
   writeFileSync(
     join(evidenceRoot, "site-verification.json"),
     `${JSON.stringify(verification, null, 2)}\n`,
@@ -631,16 +560,14 @@ try {
     }
   }
 
-  try {
+  await withEvidenceCleanup(async () => {
     await capture("after-desktop", { width: 1440, height: 1000 });
     await capture("walkthrough", { width: 1440, height: 900 }, true, false);
     await capture("after-mobile", { width: 320, height: 800 });
     if (previewServer && previewState) {
       assertPreviewRunning(previewServer, previewState);
     }
-  } finally {
-    await browser.close();
-  }
+  }, [{ label: "browser close", run: () => browser.close() }]);
 
   const webmPath = join(evidenceRoot, "walkthrough.webm");
   const mp4Path = join(evidenceRoot, "walkthrough.mp4");
@@ -715,8 +642,10 @@ try {
   }
   validateEvidenceBundle(evidenceRoot, { buildFingerprint, mode });
   evidenceTransaction.publish();
-  console.log(`[Slop] ${mode} evidence written to ${finalEvidenceRoot}`);
-} finally {
-  await stopPreview(previewServer);
-  evidenceTransaction.abort();
 }
+
+await withEvidenceCleanup(captureEvidence, [
+  { label: "preview shutdown", run: () => stopPreview(previewServer) },
+  { label: "evidence staging cleanup", run: () => evidenceTransaction.abort() },
+]);
+console.log(`[Slop] ${mode} evidence written to ${finalEvidenceRoot}`);

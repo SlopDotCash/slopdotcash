@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -23,21 +23,15 @@ import {
   transactionUrl,
 } from "./lib/payments/contracts";
 import {
-  clearPendingAttempt,
-  createPendingAttempt,
   type PendingAttempt,
-  updatePendingAttempt,
-  updatePendingRecord,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
-import {
-  PendingTransaction,
-  UnsentTransactionRecovery,
-} from "./OwnerPresentation";
+import { PendingWalletCheck } from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
 
 type Pending = PendingAttempt & {
@@ -97,29 +91,21 @@ export function AutomaticMonthlyPayment({
   const solana = family === "solana";
   const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-monthly:v1:${deployment.network}:${deployment.vault}`;
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const [saved] = useState(() => {
-    let raw: string | null = null;
-    try {
-      raw = sessionStorage.getItem(key);
-      return { pending: readPending(raw, solana), error: "", raw };
-    } catch (error) {
-      return {
-        pending: null,
-        raw,
-        error: errorMessage(error, "The wallet request failed."),
-      };
-    }
-  });
-  const storedPending = useRef<Pending | null>(saved.pending);
-  const [pending, setPending] = useState<Pending | null>(saved.pending);
-  const [storageError, setStorageError] = useState(Boolean(saved.error));
+  const {
+    mounted,
+    saved,
+    storedPending,
+    pending,
+    storageError,
+    clear,
+    submit,
+    recordRecoveryHash,
+    clearUnreadable,
+  } = usePendingWalletAttempt<Pending>(
+    key,
+    (raw) => readPending(raw, solana),
+    (error) => errorMessage(error, "The wallet request failed."),
+  );
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [automatic, setAutomatic] = useState(true);
   const [review, setReview] = useState<MonthlyReview | null>(null);
@@ -130,22 +116,6 @@ export function AutomaticMonthlyPayment({
       ? entry.family === "solana" && entry.solanaFunding
       : entry.family === "evm",
   );
-  const remember = (value: Pending, previous?: Pending) => {
-    const stored = previous
-      ? updatePendingAttempt(key, previous, value)
-      : createPendingAttempt(key, value);
-    if (!stored) return false;
-    storedPending.current = value;
-    if (mounted.current) setPending(value);
-    return true;
-  };
-  const clear = (value: Pending) => {
-    if (!mounted.current) return;
-    if (!clearPendingAttempt(key, value))
-      throw new Error("The saved request changed. Reload before continuing.");
-    storedPending.current = null;
-    setPending(null);
-  };
   const { busy, error, run: act } = useAction(saved.error);
   const run = (action: () => Promise<void>) => {
     setNotice("");
@@ -192,57 +162,21 @@ export function AutomaticMonthlyPayment({
           ? { solanaBlockhash: review.solanaPlan.transaction.blockhash }
           : {}),
       };
-      let requested = false;
-      try {
-        const beforeSend = () => {
-          if (!mounted.current)
-            throw new Error(
-              "The wallet view was closed. Review before sending.",
-            );
-          if (!remember(intent))
-            throw new Error(
-              "The saved request changed. Reload before continuing.",
-            );
-          if (mounted.current) setRecoveryHash("");
-          requested = true;
-        };
-        const hash = solana
-          ? await sendSolanaMonthlySetting(
-              deployment,
-              wallet,
-              review,
-              beforeSend,
-            )
-          : await sendEvmMonthlySetting(deployment, wallet, review, beforeSend);
-        const submitted: Pending = { ...intent, hash, hashSource: "wallet" };
-        try {
-          if (!remember(submitted, intent) && mounted.current)
-            setNotice(
-              `Submitted: ${hash}. The saved request was cleared or replaced. Keep this hash with your wallet activity.`,
-            );
-        } catch {
-          if (mounted.current) {
-            setPending(submitted);
-            setNotice(
-              `Submitted: ${hash}. Keep this hash; browser storage could not save it.`,
-            );
-          }
-        }
-        if (mounted.current) setReview(null);
-      } catch (caught) {
-        if ((caught as { code?: unknown } | null)?.code === 4001) {
-          if (requested) {
-            if (mounted.current) clear(intent);
-            else clearPendingAttempt(key, intent);
-          }
-          throw new Error("You declined the wallet request. Nothing was sent.");
-        }
-        if (requested)
-          throw new Error(
+      await submit(
+        intent,
+        (beforeSend) =>
+          solana
+            ? sendSolanaMonthlySetting(deployment, wallet, review, beforeSend)
+            : sendEvmMonthlySetting(deployment, wallet, review, beforeSend),
+        {
+          submitted: (hash) => ({ ...intent, hash, hashSource: "wallet" }),
+          notify: setNotice,
+          onBeforeSend: () => setRecoveryHash(""),
+          unclear:
             "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
-          );
-        throw caught;
-      }
+        },
+      );
+      if (mounted.current) setReview(null);
     });
   const check = () =>
     run(async () => {
@@ -277,22 +211,12 @@ export function AutomaticMonthlyPayment({
             hash,
             hashSource: "recovery",
           };
-          let stored;
-          try {
-            stored = updatePendingRecord(key, captured, candidate);
-          } catch {
-            setPending(candidate);
+          if (!recordRecoveryHash(captured, candidate)) {
             setNotice(
-              `This transaction could not be saved on this device. Keep its ${solana ? "signature" : "hash"}: ${hash}. Check it again before another action.`,
+              `Not saved on this device. Keep this ${solana ? "signature" : "hash"}: ${hash}.`,
             );
             return;
           }
-          if (!stored)
-            throw new Error(
-              "The saved request changed. Reload before continuing.",
-            );
-          storedPending.current = candidate;
-          setPending(candidate);
         }
         setNotice(
           pending.hashSource === "wallet"
@@ -375,17 +299,7 @@ export function AutomaticMonthlyPayment({
         <button
           type="button"
           disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              if (!mounted.current) return;
-              if (sessionStorage.getItem(key) !== saved.raw)
-                throw new Error(
-                  "The saved request changed. Reload before continuing.",
-                );
-              sessionStorage.removeItem(key);
-              setStorageError(false);
-            })
-          }
+          onClick={() => void run(async () => clearUnreadable())}
         >
           I checked wallet activity; clear the unreadable local record
         </button>
@@ -406,56 +320,31 @@ export function AutomaticMonthlyPayment({
         onConnect={(provider) => void connect(provider)}
       />
       {pending ? (
-        <PendingTransaction>
+        <PendingWalletCheck
+          link={link}
+          hashSource={pending.hashSource}
+          solana={solana}
+          recoveryHash={recoveryHash}
+          onRecoveryHash={setRecoveryHash}
+          busy={busy}
+          canCheck={!!wallet}
+          onCheck={() => void check()}
+          unsent={!pending.hash}
+          onClear={() =>
+            void run(async () => {
+              clear(storedPending.current ?? pending);
+              setReview(null);
+              setNotice("Local request cleared. Review again before sending.");
+            })
+          }
+        >
           <p>
             {pending.enabled
               ? `Turning on automatic monthly payment, up to ${formatted(pending.cap, pending.decimals)} each month,`
               : "Turning off automatic monthly payment"}{" "}
             awaiting verification. Do not send it again.
           </p>
-          {link ? (
-            <p>
-              <a href={link} target="_blank" rel="noreferrer">
-                {pending.hashSource === "wallet"
-                  ? "View submitted transaction"
-                  : "View transaction to check"}
-              </a>
-            </p>
-          ) : null}
-          {pending.hashSource !== "wallet" ? (
-            <label>
-              Transaction {solana ? "signature" : "hash"} from your wallet
-              <input
-                value={recoveryHash}
-                disabled={busy}
-                onChange={(event) => setRecoveryHash(event.target.value)}
-                spellCheck={false}
-              />
-            </label>
-          ) : null}
-          <button
-            type="button"
-            className="button primary-button"
-            disabled={busy || !wallet}
-            onClick={() => void check()}
-          >
-            Check transaction
-          </button>
-          {!pending.hash ? (
-            <UnsentTransactionRecovery
-              disabled={busy}
-              onClear={() =>
-                void run(async () => {
-                  clear(storedPending.current ?? pending);
-                  setReview(null);
-                  setNotice(
-                    "Local request cleared. Review again before sending.",
-                  );
-                })
-              }
-            />
-          ) : null}
-        </PendingTransaction>
+        </PendingWalletCheck>
       ) : wallet && !storageError ? (
         <>
           <fieldset className="admin-fieldset" disabled={busy}>

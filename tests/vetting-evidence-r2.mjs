@@ -26,6 +26,7 @@ const runtime = new Miniflare(
         return new Response(request.method === "HEAD" ? null : value.body, {
           headers: {
             "x-r2-size": String(value.size),
+            "x-r2-etag": value.etag,
             "x-r2-metadata": JSON.stringify(value.customMetadata ?? {}),
           },
         });

@@ -1,4 +1,5 @@
 import { formatBaseUnits } from "./base-units.mjs";
+import { evmExplorerOrigin } from "./payments/contracts";
 import type { ProjectDefinition } from "./projects.mjs";
 import type {
   SecurityBountyTerms,
@@ -6,7 +7,7 @@ import type {
 } from "./security-bounty.mjs";
 
 /** Display variants derive only from the registry's reward policy. */
-export type ProjectRewardSummary =
+type ProjectRewardSummary =
   | {
       kind: "monthly-pool";
       amount: string;
@@ -70,22 +71,12 @@ export function projectRewardSummaries(
                 asset.kind === "native"
                   ? asset.network === "solana"
                     ? "https://solscan.io/"
-                    : asset.network === "base"
-                      ? "https://basescan.org/"
-                      : asset.network === "robinhood"
-                        ? "https://robinhoodchain.blockscout.com/"
-                        : "https://etherscan.io/"
+                    : `${evmExplorerOrigin(asset.network)}/`
                   : asset.network === "solana"
                     ? asset.address.endsWith("pump")
                       ? `https://pump.fun/coin/${asset.address}`
                       : `https://solscan.io/token/${asset.address}`
-                    : `https://${
-                        asset.network === "base"
-                          ? "basescan.org"
-                          : asset.network === "robinhood"
-                            ? "robinhoodchain.blockscout.com"
-                            : "etherscan.io"
-                      }/token/${asset.address}`,
+                    : `${evmExplorerOrigin(asset.network)}/token/${asset.address}`,
             },
           }
         : { kind: "monthly-pool", amount: `$${amount}` },

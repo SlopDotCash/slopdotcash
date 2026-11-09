@@ -1,3 +1,4 @@
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   readEvmAuthorityRotation,
   verifyPayment,
@@ -25,14 +26,15 @@ import {
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
-  type PublicEvmExecutorEnvironment,
   preflightEvmDeployment,
-  preparePermissionlessEvmPayment,
   type Signer,
+} from "../../workers/payment-executor/binding-shared";
+import {
+  type PublicEvmExecutorEnvironment,
+  preparePermissionlessEvmPayment,
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "../../workers/payment-executor/core";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import {
   type PublicSolanaExecutorEnvironment,
   preflightSolanaDeployment,

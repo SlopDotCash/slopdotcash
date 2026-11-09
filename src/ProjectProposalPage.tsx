@@ -7,7 +7,7 @@ import {
   Shield,
   Wallet,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   type ProjectDraftStore,
   useProjectDraftSave,
@@ -36,6 +36,7 @@ import {
 import { hasBountyOverview } from "./lib/home-projects";
 import {
   createProject,
+  currentProjectSession,
   ProjectApiError,
   type ProjectSessionState,
   projectApiRequest,
@@ -109,6 +110,33 @@ const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const DEFAULT_CRITERIA =
   "Merged pull requests that fix a reproduced bug or deliver a change the maintainers asked for, with tests or other evidence that the result works.";
 const SETUP_STEPS = ["Project", "Rewards", "Review"] as const;
+
+async function requireEditorActor(actorId: string) {
+  const current = await currentProjectSession();
+  if (current?.githubId !== actorId)
+    throw new ProjectApiError(
+      409,
+      "account_changed",
+      "Your account changed. Review this project with your current account.",
+    );
+}
+
+function editorAccessLost(error: unknown) {
+  return (
+    error instanceof ProjectApiError &&
+    (error.code === "account_changed" || [401, 403].includes(error.status))
+  );
+}
+
+async function checkedEditorFailure(error: unknown, actorId: string) {
+  if (editorAccessLost(error)) return error;
+  try {
+    await requireEditorActor(actorId);
+  } catch (cause) {
+    return cause;
+  }
+  return error;
+}
 
 const EMPTY_PROPOSAL = {
   name: "",
@@ -776,6 +804,14 @@ function ProjectProposalForm({
   const [imageRevision, setImageRevision] = useState(0);
   const [sessionRevision, setSessionRevision] = useState(0);
   const projectSession = useProjectSession(sessionRevision);
+  const mounted = useRef(true);
+  const submitInFlight = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [saved] = useState(() => {
     try {
       return JSON.parse(draftStore.initial ?? "null") as {
@@ -840,6 +876,8 @@ function ProjectProposalForm({
       );
     return empty ? null : JSON.stringify({ proposal, step, referrer });
   }, [proposal, step, referrer]);
+  const latestDraftPayload = useRef(draftPayload);
+  latestDraftPayload.current = draftPayload;
   const { saving: draftSaving, failed: saveFailed } = useProjectDraftSave(
     draftStore,
     draftPayload,
@@ -1283,6 +1321,7 @@ function ProjectProposalForm({
     | {
         status: "submitted";
         projectId: string;
+        actorId: string;
         setup: ProjectSetupStatus;
         referrer: string | null;
       }
@@ -1290,36 +1329,60 @@ function ProjectProposalForm({
   function clearReferrer() {
     setReferrer(null);
   }
-  function submit() {
+  async function submit() {
+    if (!mounted.current || submitInFlight.current) return;
     if (!valid) {
       goTo(2);
       return;
     }
+    if (projectSession.status !== "signed-in") {
+      setSessionRevision((current) => current + 1);
+      return;
+    }
+    const actorId = projectSession.session.githubId;
+    const submittedPayload = draftPayload;
+    submitInFlight.current = true;
     setSubmission({ status: "submitting" });
-    createProject(
-      manifest as unknown as ProjectDefinition,
-      referrer,
-      funding.mode === "monthly" ? funding.monthlyAmount.trim() : null,
-      p.fundingMode === "bounty" ? p.monthlyPool.trim() : null,
-    ).then(
-      ({ project, setup }) => {
-        setReferrer(null);
-        setSubmission({
-          status: "submitted",
-          projectId: project.id,
-          setup,
-          referrer,
-        });
-      },
-      (error: unknown) =>
-        setSubmission({
-          status: "error",
-          message: errorMessage(error, "The project was not created."),
-          install:
-            error instanceof ProjectApiError &&
-            error.code === "slopbot_required",
-        }),
-    );
+    try {
+      await requireEditorActor(actorId);
+      if (!mounted.current) return;
+      const { project, setup } = await createProject(
+        manifest as unknown as ProjectDefinition,
+        referrer,
+        funding.mode === "monthly" ? funding.monthlyAmount.trim() : null,
+        p.fundingMode === "bounty" ? p.monthlyPool.trim() : null,
+        actorId,
+      );
+      if (!mounted.current) return;
+      await requireEditorActor(actorId);
+      if (!mounted.current) return;
+      if (latestDraftPayload.current === submittedPayload) setReferrer(null);
+      setSubmission({
+        status: "submitted",
+        projectId: project.id,
+        actorId,
+        setup,
+        referrer,
+      });
+    } catch (error) {
+      if (!mounted.current) return;
+      const failure = await checkedEditorFailure(error, actorId);
+      if (!mounted.current) return;
+      if (editorAccessLost(failure))
+        setSessionRevision((current) => current + 1);
+      setSubmission({
+        status: "error",
+        message: errorMessage(
+          failure,
+          "Project creation could not be confirmed.",
+        ),
+        install:
+          failure instanceof ProjectApiError &&
+          failure.code === "slopbot_required",
+      });
+    } finally {
+      submitInFlight.current = false;
+    }
   }
 
   function goTo(index: number) {
@@ -1412,6 +1475,7 @@ function ProjectProposalForm({
           compact
           initial={submission.setup}
           projectId={submission.projectId}
+          actorId={submission.actorId}
           showProjectLink={false}
         />
         {submission.referrer ? (
@@ -1936,7 +2000,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   const { allowed, checking, session, error, retry } = useProjectMaintainer(
     project.id,
   );
-  if (!allowed)
+  if (!allowed || session.status !== "signed-in")
     return (
       <main className="shell route-main manage-page">
         <RoutePageHeader title="Project settings" />
@@ -1967,14 +2031,34 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
         )}
       </main>
     );
-  return <ProjectUpdateDraft project={project} />;
+  return (
+    <ProjectUpdateDraft
+      key={`${project.id}:${session.session.githubId}`}
+      project={project}
+      actorId={session.session.githubId}
+      onAccessLost={retry}
+    />
+  );
 }
 
-function ProjectUpdateDraft({ project }: { project: ProjectDefinition }) {
+function ProjectUpdateDraft({
+  project,
+  actorId,
+  onAccessLost,
+}: {
+  project: ProjectDefinition;
+  actorId: string;
+  onAccessLost: () => void;
+}) {
   const key = `slop:project-update:v2:${project.id}`;
   const store = useProjectDraftStore(key, () => localStorage.getItem(key));
   return store ? (
-    <ProjectUpdateForm project={project} draftStore={store} />
+    <ProjectUpdateForm
+      project={project}
+      draftStore={store}
+      actorId={actorId}
+      onAccessLost={onAccessLost}
+    />
   ) : (
     <main className="shell route-main manage-page">
       <RoutePageHeader title="Project settings" />
@@ -1986,13 +2070,25 @@ function ProjectUpdateDraft({ project }: { project: ProjectDefinition }) {
 function ProjectUpdateForm({
   project,
   draftStore,
+  actorId,
+  onAccessLost,
 }: {
   project: ProjectDefinition;
   draftStore: ProjectDraftStore;
+  actorId: string;
+  onAccessLost: () => void;
 }) {
   useUtcDay();
   const [imageRevision, setImageRevision] = useState(0);
   const session = useProjectSession();
+  const mounted = useRef(true);
+  const publishInFlight = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [base, setBase] = useState<{
     revision: number;
     project: ProjectDefinition;
@@ -2338,6 +2434,7 @@ function ProjectUpdateForm({
   const valid = Object.values(errors).every((error) => !error);
   const shown = (field: string) => (attempted ? errors[field] : undefined);
   async function publish() {
+    if (!mounted.current || publishInFlight.current) return;
     setAttempted(true);
     if (!valid) {
       const fieldNames: Record<string, string> = {
@@ -2359,8 +2456,11 @@ function ProjectUpdateForm({
     }
     if (!changed || base === null || staleDraft) return;
     const submittedDraft = draft;
+    publishInFlight.current = true;
     setSubmission({ state: "publishing" });
     try {
+      await requireEditorActor(actorId);
+      if (!mounted.current) return;
       const result = await publishProjectRevision(
         project.id,
         next,
@@ -2369,7 +2469,12 @@ function ProjectUpdateForm({
         !bountyOnly && choice.mode === "monthly" && changes.financial.length > 0
           ? value.monthlyAmount.trim()
           : null,
+        null,
+        actorId,
       );
+      if (!mounted.current) return;
+      await requireEditorActor(actorId);
+      if (!mounted.current) return;
       // The response is the published revision. Use it before allowing the
       // next edit; a later GET would make a fast new draft appear stale.
       setBase({
@@ -2385,12 +2490,22 @@ function ProjectUpdateForm({
       setDraftRevision(editedDuringSave ? result.project.revision : null);
       setAttempted(false);
     } catch (error) {
+      if (!mounted.current) return;
+      const failure = await checkedEditorFailure(error, actorId);
+      if (!mounted.current) return;
+      if (editorAccessLost(failure)) {
+        onAccessLost();
+        return;
+      }
       setSubmission({
         state: "error",
         staleRevision:
-          error instanceof ProjectApiError && error.code === "stale_revision",
-        message: errorMessage(error, "Changes were not published."),
+          failure instanceof ProjectApiError &&
+          failure.code === "stale_revision",
+        message: errorMessage(failure, "Publication could not be confirmed."),
       });
+    } finally {
+      publishInFlight.current = false;
     }
   }
   const nextMonth = new Date();
@@ -2404,7 +2519,8 @@ function ProjectUpdateForm({
       </p>
       <RoutePageHeader icon={<Settings2 />} title="Manage project" />
       <ProjectNav project={project} current="settings" />
-      {session.status === "signed-in" ? (
+      {session.status === "signed-in" &&
+      session.session.githubId === actorId ? (
         <ProjectSetupStatusPanel
           key={
             submission.state === "published"
@@ -2418,6 +2534,7 @@ function ProjectUpdateForm({
           }
           onSetup={setSetupStatus}
           projectId={project.id}
+          actorId={actorId}
           showProjectLink={false}
         />
       ) : null}

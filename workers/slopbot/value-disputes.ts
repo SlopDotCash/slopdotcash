@@ -10,6 +10,7 @@ import {
   TRIAGE_ROUTE,
 } from "./models";
 import type { D1Database } from "./persistence";
+import { pullCommits } from "./value-evidence";
 import type { StoredValueRecord, ValueJournalRecord } from "./value-journal";
 import type { WorkUnitRecord } from "./value-work-unit-journal";
 
@@ -130,7 +131,7 @@ export async function retainedValueDispute(
   return result;
 }
 
-export function disputeAssessments(value: ValueDispute): ValueAssessment[] {
+function disputeAssessments(value: ValueDispute): ValueAssessment[] {
   return value.record.schemaVersion === "slop-value-record:v1"
     ? [value.record.assessment]
     : value.record.units.map((unit) => unit.assessment);
@@ -161,34 +162,53 @@ export async function affectedValueActor(
   const reviews = new Set(
     disputeAssessments(value).flatMap((a) => a.reviews.map((r) => r.sourceId)),
   );
-  for (const kind of ["reviews", "commits"] as const) {
-    // Old single records do not retain commit authors. Current GitHub commit
-    // authors qualify only while those commits still name the disputed head.
-    if (kind === "commits" && currentHead !== value.source.headSha) continue;
-    for (let page = 1; page <= 30; page++) {
-      const rows = await github.get<
-        {
-          node_id?: string;
-          author?: { node_id: string } | null;
-          user?: { node_id: string } | null;
-        }[]
-      >(`${path}/${kind}?per_page=100&page=${page}`);
-      if (!Array.isArray(rows))
-        throw new Error("Value actor evidence is unavailable");
-      if (
-        rows.some((row) =>
-          kind === "reviews"
-            ? row.user?.node_id === actor.node_id &&
-              reviews.has(row.node_id ?? "")
-            : row.author?.node_id === actor.node_id,
-        )
+  for (let page = 1; page <= 30; page++) {
+    const rows = await github.get<
+      { node_id?: string; user?: { node_id: string } | null }[]
+    >(`${path}/reviews?per_page=100&page=${page}`);
+    if (!Array.isArray(rows))
+      throw new Error("Value actor evidence is unavailable");
+    if (
+      rows.some(
+        (row) =>
+          row.user?.node_id === actor.node_id && reviews.has(row.node_id ?? ""),
       )
-        return true;
-      if (rows.length < 100) break;
-      if (page === 30) throw new Error("Value actor evidence is incomplete");
-    }
+    )
+      return true;
+    if (rows.length < 100) break;
+    if (page === 30) throw new Error("Value actor evidence is incomplete");
   }
-  return false;
+  // Old single records do not retain commit authors. Current GitHub commit
+  // authors qualify only while those commits still name the disputed head.
+  if (currentHead !== value.source.headSha) return false;
+  const pull = await github.get<{
+    node_id: string;
+    number: number;
+    commits: number;
+    base: { sha: string };
+    head: { sha: string };
+  }>(path);
+  if (
+    !pull ||
+    pull.node_id !== value.source.pullRequestNodeId ||
+    pull.number !== value.source.pullRequestNumber ||
+    !Number.isSafeInteger(pull.commits) ||
+    pull.commits < 0 ||
+    !/^[a-f0-9]{40}$/u.test(pull.base?.sha ?? "")
+  )
+    throw new Error("Value actor commit evidence is unavailable");
+  if (pull.head?.sha !== currentHead)
+    throw new Error("Value actor commit evidence changed");
+  const commits = await pullCommits(
+    github,
+    `/repos/${repository}`,
+    path,
+    pull,
+    {
+      requireImmutableRange: true,
+    },
+  );
+  return commits.some((commit) => commit.author?.node_id === actor.node_id);
 }
 
 export const VALUE_DISPUTE_SCHEMA = {

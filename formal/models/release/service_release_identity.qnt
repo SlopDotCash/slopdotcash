@@ -6,6 +6,7 @@
 // @source .github/workflows/vetting-recovery-qualification.yml
 // @source .github/workflows/vetting-sandbox-qualification.yml
 // @source .github/workflows/vetting-sandbox.yml
+// @source scripts/worker-release.mjs
 // Publication can be partial; exact post-release readback is separate from a
 // successful upload. Staging probe success does not activate retention or prove
 // an actual security assessment. Sandbox qualification binds image/key/private

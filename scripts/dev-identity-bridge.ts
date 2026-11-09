@@ -145,16 +145,20 @@ export function devIdentityBridge(
       flows.delete(body.flowId as string);
       const assertion = `slop_assert_v1_${randomBytes(32).toString("base64url")}`;
       const expiresAt = new Date(Date.now() + 90_000).toISOString();
-      const stored = await persistence.createAssertion({
-        tokenHash: await sha256Hex(assertion),
-        githubActorId: result.githubActorId,
-        githubLogin: result.githubLogin,
-        githubNodeId: result.githubNodeId,
-        audience: "slop-points-web",
-        createdAt: new Date().toISOString(),
-        expiresAt,
-        consumedAt: null,
-      });
+      const stored = await persistence.createAssertion(
+        {
+          tokenHash: await sha256Hex(assertion),
+          githubActorId: result.githubActorId,
+          githubLogin: result.githubLogin,
+          githubNodeId: result.githubNodeId,
+          audience: "slop-points-web",
+          createdAt: new Date().toISOString(),
+          expiresAt,
+          consumedAt: null,
+        },
+        // This independent random token belongs only to the local database.
+        null,
+      );
       if (!stored) return json(503, { error: "local_identity_unavailable" });
       return json(200, {
         status: "complete",

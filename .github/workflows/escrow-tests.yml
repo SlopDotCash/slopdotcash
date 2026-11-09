@@ -15,8 +15,12 @@ on:
       - 'scripts/local-solana-validator.*'
       - 'scripts/escrow-acceptance.ts'
       - 'scripts/escrow-acceptance/**'
+      - 'tests/bounty-wallet-seed.ts'
       - 'tests/direct-bounty-solana-chain.ts'
       - 'tests/e2e/solana-vault-actions.spec.ts'
+      - 'tests/e2e/award-month.ts'
+      - 'tests/e2e/project-maintainer-fixture.ts'
+      - 'tests/e2e/vault-setup-server.ts'
       - '.github/workflows/escrow-tests.yml'
       - 'scripts/ci-scope.mjs'
   schedule:
@@ -36,6 +40,7 @@ concurrency:
 jobs:
   scope:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       solana: ${{ steps.scope.outputs.solana }}
       evm: ${{ steps.scope.outputs.evm }}

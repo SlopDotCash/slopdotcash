@@ -18,10 +18,10 @@ import { consumeValueRequest, type ValueConsumerEnv } from "./value-consumer";
 import { collectValueEvidence } from "./value-evidence";
 import { recordValueRequest } from "./value-requests";
 import { prepareWorkUnitEvidence } from "./value-work-unit";
+import { assessWorkUnits } from "./value-work-unit-review";
 
 const start = new Date().toISOString();
 type PipelineState = {
-  last: string;
   now: number;
   calls: number;
   retained: boolean;
@@ -69,23 +69,51 @@ for (const expiry of [
   "queued",
   "pre-call",
   "queued-pre-call",
+  "paused-pre-call",
+  "restricted-pre-call",
+  "suspended-pre-call",
+  "late-free-attempt",
+  "late-retained-attempt",
+  "retained-before-admission",
+  "confirmed-attempts",
 ] as const) {
-  test(`${expiry} expiry preserves retained inference and one joint publication for both PRs`, async () => {
+  const localRevocation =
+    expiry === "paused-pre-call" ||
+    expiry === "restricted-pre-call" ||
+    expiry === "suspended-pre-call";
+  const attemptRecovery =
+    expiry === "late-free-attempt" ||
+    expiry === "late-retained-attempt" ||
+    expiry === "retained-before-admission" ||
+    expiry === "confirmed-attempts";
+  const title = localRevocation
+    ? `${expiry} during remote membership prevents the first provider call`
+    : attemptRecovery
+      ? `${expiry} preserves pending recovery and confirmed exhaustion`
+      : `${expiry} expiry preserves retained inference and one joint publication for both PRs`;
+  test(title, async () => {
     const beforeCall = expiry === "pre-call" || expiry === "queued-pre-call";
-    const trace = pipelineTrace(
-      beforeCall
-        ? "leaseExpiryDuringPreCallCheckPreventsSpendTest"
-        : expiry === "publication" || expiry === "queued"
-          ? "expiredPublicationReusesInferenceTest"
-          : expiry === "provider"
-            ? "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest"
-            : "overlappingConsumerWaitsThenReadsCurrentTest",
+    const trace =
+      localRevocation || attemptRecovery
+        ? []
+        : pipelineTrace(
+            beforeCall
+              ? "leaseExpiryDuringPreCallCheckPreventsSpendTest"
+              : expiry === "publication" || expiry === "queued"
+                ? "expiredPublicationReusesInferenceTest"
+                : expiry === "provider"
+                  ? "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest"
+                  : "overlappingConsumerWaitsThenReadsCurrentTest",
+          );
+    // Only the model's tick advances its clock: the first later state is it.
+    const tick = trace.find(
+      (state, index) => index > 0 && state.now > (trace[index - 1]?.now ?? 0),
     );
-    const tick = trace.find((state) => state.last === "tick");
-    if (!tick) throw new Error("Generated pipeline trace omitted expiry");
+    if (!localRevocation && !attemptRecovery && !tick)
+      throw new Error("Generated pipeline trace omitted expiry");
     const later = new Date(
       Date.parse(start) +
-        tick.now * (expiry === "overlap" ? 61 : 11) * 60 * 1000,
+        (tick?.now ?? 1) * (expiry === "overlap" ? 61 : 11) * 60 * 1000,
     ).toISOString();
     setSystemTime(new Date(start));
     const { db, sqlite } = sqliteD1();
@@ -174,8 +202,45 @@ for (const expiry of [
       reviews: [],
     };
     let providerCalls = 0;
+    let providerMode: "valid" | "invalid" | "held-free" = "valid";
+    let providerEntered = () => {};
+    let releaseProvider = () => {};
+    const providerWaiting = new Promise<void>((resolve) => {
+      providerEntered = resolve;
+    });
+    const providerHeld = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    let retentionEntered = () => {};
+    let releaseRetention = () => {};
+    let retentionHeld = false;
+    const retentionWaiting = new Promise<void>((resolve) => {
+      retentionEntered = resolve;
+    });
+    const retentionGate = new Promise<void>((resolve) => {
+      releaseRetention = resolve;
+    });
+    let holdAdmission = false;
+    let admissionPrepared = false;
+    let admissionEntered = () => {};
+    let releaseAdmission = () => {};
+    const admissionWaiting = new Promise<void>((resolve) => {
+      admissionEntered = resolve;
+    });
+    const admissionGate = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    let lateConsumer: ReturnType<typeof consumeValueRequest> | undefined;
     let expired = false;
     let preCallSourceReads = 0;
+    let membershipEntered = () => {};
+    let releaseMembership = () => {};
+    const membershipWaiting = new Promise<void>((resolve) => {
+      membershipEntered = resolve;
+    });
+    const membershipHeld = new Promise<void>((resolve) => {
+      releaseMembership = resolve;
+    });
     const expireRows = () => {
       sqlite.run(
         "UPDATE slopbot_value_processing SET lease_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second') WHERE state='running'",
@@ -198,6 +263,28 @@ for (const expiry of [
           expireRows();
         }
         const input = (await request.json()) as { model: string };
+        if (providerMode === "held-free") {
+          providerEntered();
+          await providerHeld;
+          return Response.json(
+            {
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                detail: {
+                  window: "month",
+                  limit_micro: 100,
+                  spent_micro: 100,
+                  resets_at: new Date(
+                    Date.parse(later) + 60 * 60 * 1000,
+                  ).toISOString(),
+                },
+              },
+              usage: { buyer_cost_micro: 0 },
+            },
+            { status: 400 },
+          );
+        }
         return Response.json(
           {
             id: "local-pipeline",
@@ -207,11 +294,17 @@ for (const expiry of [
             content: [
               {
                 type: "text",
-                text: JSON.stringify({
-                  units: [
-                    { claimIds: joint.claims.map(({ id }) => id), assessment },
-                  ],
-                }),
+                text:
+                  providerMode === "invalid"
+                    ? "invalid JSON"
+                    : JSON.stringify({
+                        units: [
+                          {
+                            claimIds: joint.claims.map(({ id }) => id),
+                            assessment,
+                          },
+                        ],
+                      }),
               },
             ],
             stop_reason: "end_turn",
@@ -239,6 +332,20 @@ for (const expiry of [
       if (url.pathname === "/app/installations/1/access_tokens")
         return Response.json({ token: "local-installation" });
       if (url.pathname === "/installation/repositories") {
+        if (
+          localRevocation &&
+          !expired &&
+          providerCalls === 0 &&
+          sqlite
+            .query<{ n: number }, []>(
+              "SELECT COUNT(*) n FROM slopbot_value_budget_reservations",
+            )
+            .get()?.n === 1
+        ) {
+          expired = true;
+          membershipEntered();
+          await membershipHeld;
+        }
         if (
           expiry === "pre-call" &&
           !expired &&
@@ -332,7 +439,40 @@ for (const expiry of [
     }) as typeof fetch;
     const wrapped = {
       ...db,
+      async batch(statements: Parameters<typeof db.batch>[0]) {
+        if (holdAdmission && admissionPrepared) {
+          holdAdmission = false;
+          admissionEntered();
+          await admissionGate;
+        }
+        return db.batch(statements);
+      },
       prepare(sql: string) {
+        if (
+          holdAdmission &&
+          sql.includes("INSERT INTO slopbot_value_inference_attempts")
+        )
+          admissionPrepared = true;
+        if (
+          (expiry === "late-retained-attempt" ||
+            expiry === "retained-before-admission") &&
+          !retentionHeld &&
+          sql.includes("INSERT INTO slopbot_value_inference_results")
+        ) {
+          retentionHeld = true;
+          const delayed = (
+            statement: ReturnType<typeof db.prepare>,
+          ): ReturnType<typeof db.prepare> => ({
+            ...statement,
+            bind: (...values: unknown[]) => delayed(statement.bind(...values)),
+            run: async () => {
+              retentionEntered();
+              await retentionGate;
+              return statement.run();
+            },
+          });
+          return delayed(db.prepare(sql));
+        }
         if (
           expiry === "queued-pre-call" &&
           !expired &&
@@ -466,6 +606,206 @@ for (const expiry of [
         await recordDelivery(db, job.deliveryId, "pull_request");
         await recordValueRequest(db, job);
       }
+      if (attemptRecovery) {
+        providerMode = "invalid";
+        const earlier = expiry === "confirmed-attempts" ? 3 : 2;
+        for (let index = 0; index < earlier; index++) {
+          const result = await assessWorkUnits(env, joint, async () => true, {
+            db,
+            installationId: 1,
+            attemptId: `value:${crypto.randomUUID()}`,
+            maximumMicroUsd: null,
+            approvedMonthlyMicroUsd: null,
+          });
+          expect(result.blocked).toBe(false);
+          expect(result.verdict).toBeNull();
+        }
+        const priorCalls = providerCalls;
+        expect(priorCalls).toBeGreaterThan(0);
+        if (expiry === "confirmed-attempts") {
+          expect(await consumeValueRequest(env, jobs[0])).toBe(
+            "attempts-exhausted",
+          );
+          expect(providerCalls).toBe(priorCalls);
+          expect(
+            sqlite
+              .query(
+                "SELECT state,outcome,retry_at FROM slopbot_value_processing WHERE delivery_id=?",
+              )
+              .get(jobs[0].deliveryId),
+          ).toEqual({
+            state: "completed",
+            outcome: "attempts-exhausted",
+            retry_at: null,
+          });
+          return;
+        }
+        providerMode = expiry === "late-free-attempt" ? "held-free" : "valid";
+        lateConsumer = consumeValueRequest(env, jobs[0]);
+        const lateOutcome = lateConsumer.then(
+          (value) => ({ value, error: null }),
+          (error: unknown) => ({ value: null, error }),
+        );
+        await (expiry === "late-free-attempt"
+          ? providerWaiting
+          : retentionWaiting);
+        expect(providerCalls).toBe(priorCalls + 1);
+        expireRows();
+        if (expiry === "retained-before-admission") {
+          holdAdmission = true;
+          const successor = consumeValueRequest(env, jobs[1]);
+          try {
+            await admissionWaiting;
+            releaseRetention();
+            const old = await lateOutcome;
+            expect(old.error).toBeInstanceOf(Error);
+            expect((old.error as Error).message).toContain("lease");
+            releaseAdmission();
+            expect(await successor).toBe("published");
+            expect(await consumeValueRequest(env, jobs[0])).toBe("current");
+            expect(providerCalls).toBe(priorCalls + 1);
+            expect(
+              sqlite
+                .query("SELECT COUNT(*) n FROM slopbot_work_unit_journal")
+                .get(),
+            ).toEqual({ n: 1 });
+          } finally {
+            releaseRetention();
+            releaseAdmission();
+            await successor.catch(() => {});
+          }
+          return;
+        }
+        expect(await consumeValueRequest(env, jobs[1])).toBe("retry");
+        expect(providerCalls).toBe(priorCalls + 1);
+        expect(
+          sqlite
+            .query("SELECT COUNT(*) n FROM slopbot_value_budget_reservations")
+            .get(),
+        ).toEqual({ n: 3 });
+        const waiting = sqlite
+          .query(
+            "SELECT state,outcome,retry_at FROM slopbot_value_processing WHERE delivery_id=?",
+          )
+          .get(jobs[1].deliveryId) as {
+          state: string;
+          outcome: string;
+          retry_at: string;
+        };
+        expect(waiting.state).toBe("waiting");
+        expect(waiting.outcome).toBe("retry");
+        expect(Number.isFinite(Date.parse(waiting.retry_at))).toBe(true);
+        providerMode = "valid";
+        releaseProvider();
+        releaseRetention();
+        const old = await lateOutcome;
+        expect(old.error).toBeInstanceOf(Error);
+        expect((old.error as Error).message).toContain("lease");
+        expect(
+          sqlite
+            .query(
+              "SELECT COUNT(*) n FROM slopbot_costs WHERE failure='provider budget exhausted'",
+            )
+            .get(),
+        ).toEqual({ n: expiry === "late-free-attempt" ? 1 : 0 });
+        setSystemTime(new Date(waiting.retry_at));
+        expect(await consumeValueRequest(env, jobs[1])).toBe("published");
+        expect(await consumeValueRequest(env, jobs[0])).toBe("current");
+        expect(providerCalls).toBe(
+          priorCalls + (expiry === "late-free-attempt" ? 2 : 1),
+        );
+        expect(
+          sqlite
+            .query("SELECT COUNT(*) n FROM slopbot_value_budget_reservations")
+            .get(),
+        ).toEqual({ n: expiry === "late-free-attempt" ? 4 : 3 });
+        expect(
+          sqlite
+            .query("SELECT COUNT(*) n FROM slopbot_work_unit_journal")
+            .get(),
+        ).toEqual({ n: 1 });
+        return;
+      }
+      if (localRevocation) {
+        const pending = consumeValueRequest(env, jobs[0]);
+        try {
+          await membershipWaiting;
+          if (expiry === "paused-pre-call") {
+            const paused = JSON.stringify({ ...project, status: "paused" });
+            const pausedDigest = createHash("sha256")
+              .update(paused)
+              .digest("hex");
+            sqlite.run(
+              "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,2,?,?,?,?)",
+              [
+                project.id,
+                paused,
+                pausedDigest,
+                "Pause during membership",
+                start,
+              ],
+            );
+            sqlite.run(
+              "UPDATE projects SET status='paused',revision=2,manifest=?,manifest_sha256=?,updated_at=? WHERE id=?",
+              [paused, pausedDigest, start, project.id],
+            );
+          } else if (expiry === "restricted-pre-call") {
+            sqlite.run(
+              `INSERT INTO project_enforcements
+              (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,actor_role,decision_source,before_revision,before_manifest_sha256,result,created_at)
+              VALUES ('enf_precall_fixture',?,1,'quarantine','quarantined','none','Review pending','local-workflow',?,?,'77','moderator','project-moderator','admin-panel',1,?,'revision_pending',?)`,
+              [
+                project.id,
+                "42",
+                JSON.stringify([repository.id]),
+                digest,
+                start,
+              ],
+            );
+          } else {
+            sqlite.run(
+              "UPDATE slopbot_installations SET suspended_at=? WHERE installation_id=1",
+              [start],
+            );
+          }
+          expect(
+            sqlite
+              .query(
+                "SELECT lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS live FROM slopbot_value_processing WHERE state='running'",
+              )
+              .get(),
+          ).toEqual({ live: 1 });
+          releaseMembership();
+          const outcome =
+            expiry === "suspended-pre-call" ? "retry" : "authority";
+          expect(await pending).toBe(outcome);
+          expect(providerCalls).toBe(0);
+          expect(
+            sqlite
+              .query(
+                "SELECT state,outcome,retry_at IS NOT NULL AS retryable FROM slopbot_value_processing WHERE delivery_id=?",
+              )
+              .get(jobs[0].deliveryId),
+          ).toEqual({ state: "waiting", outcome, retryable: 1 });
+          for (const table of [
+            "slopbot_costs",
+            "slopbot_value_inference_results",
+            "slopbot_work_unit_journal",
+          ])
+            expect(
+              sqlite.query(`SELECT COUNT(*) n FROM ${table}`).get(),
+            ).toEqual({ n: 0 });
+          expect(
+            sqlite
+              .query("SELECT COUNT(*) n FROM slopbot_value_budget_reservations")
+              .get(),
+          ).toEqual({ n: 1 });
+        } finally {
+          releaseMembership();
+          await pending.catch(() => {});
+        }
+        return;
+      }
       if (expiry === "overlap") {
         expect(await consumeValueRequest(env, jobs[0])).toBe("published");
         setSystemTime(new Date(later));
@@ -531,6 +871,11 @@ for (const expiry of [
         },
       ]);
     } finally {
+      releaseMembership();
+      releaseProvider();
+      releaseRetention();
+      releaseAdmission();
+      await lateConsumer?.catch(() => {});
       globalThis.fetch = originalFetch;
       server.stop(true);
       setSystemTime();

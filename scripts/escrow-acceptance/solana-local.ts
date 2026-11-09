@@ -7,9 +7,9 @@ import {
   verifySolanaDeployment,
 } from "../../contracts/solana/adapter";
 import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
+import type { PaymentDeployment } from "../../workers/payments/deployment-types";
 import {
   ingestPaymentEvent,
-  type PaymentDeployment,
   type PaymentsWorkerEnvironment,
   readDeploymentVaultTotals,
   recoverUncertainAttempts,

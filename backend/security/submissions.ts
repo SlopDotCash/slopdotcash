@@ -15,24 +15,22 @@
  * public submission.
  */
 
-import { readBoundedJson } from "../../src/lib/browser-json";
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
 import type { D1QueryStatement as D1Statement } from "../d1";
 import { GHSA } from "../github";
-import { exactKeys, fail, PROJECT_ID, requireActor } from "../http";
+import {
+  exactKeys,
+  fail,
+  PROJECT_ID,
+  requireActor,
+  requireJsonObject,
+} from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import {
   hasParticipationBan,
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
-import {
-  type AdvisoryFacts,
-  type FailureCode,
-  markerLine,
-  parseReportInput,
-  type ReporterGrant,
-} from "./github-advisories";
 import {
   automaticIntake,
   caseInsertStatement,
@@ -44,10 +42,16 @@ import {
   type ReportingContext,
   reportingContext,
   type SecurityApiDependencies,
-  scheduleAnalysis,
   stringField,
   termsAtReceipt,
-} from "./handler";
+} from "./case-store";
+import {
+  type AdvisoryFacts,
+  type FailureCode,
+  markerLine,
+  parseReportInput,
+  type ReporterGrant,
+} from "./github-advisories";
 import {
   beginAuthorization,
   clearGrantCookie,
@@ -64,59 +68,24 @@ import {
   decorateSubmission,
   listStoredSubmissions,
   readStoredIntake,
+  scheduleAnalysis,
   screenLegacyReport,
-  storedIntake,
 } from "./report-intake";
+import {
+  COLUMNS,
+  loadSubmission,
+  RECONCILE_QUIET_MS,
+  SUBMISSION_ID,
+  type SubmissionRow,
+  settle,
+  storedIntake,
+  submissionView,
+  transition,
+  transitionStatements,
+} from "./submission-store";
 
-export type SubmissionState =
-  | "draft"
-  | "submitting"
-  | "uncertain"
-  | "submitted"
-  | "receipt-verified"
-  | "failed"
-  | "abandoned";
-
-export type SubmissionRow = {
-  id: string;
-  project_id: string;
-  repository: string;
-  reporter_github_id: string;
-  reporter_github_login: string;
-  origin: "slop" | "direct";
-  idempotency_key: string;
-  marker: string;
-  state: SubmissionState;
-  attempt: number;
-  attempt_started_at: string | null;
-  advisory_ghsa: string | null;
-  github_created_at: string | null;
-  evidence_digest: string | null;
-  failure_code: FailureCode | null;
-  case_id: string | null;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-};
-
-const SUBMISSION_ID = /^ss_[A-Za-z0-9_-]{8,72}$/u;
-/** A `submitting` row older than this is treated as interrupted. */
-const SUBMITTING_TIMEOUT_MS = 60_000;
-/** A draft or failed submission idle this long is abandoned. */
-const IDLE_MS = 24 * 60 * 60 * 1000;
 /** How far before the attempt a GitHub listing looks for its copy. */
 const RECONCILE_WINDOW_MS = 10 * 60 * 1000;
-/**
- * An empty listing reopens an uncertain send only this long after the
- * attempt began: well past the 10 second request timeout and GitHub's
- * listing lag, so a send that was cut off but still lands is found first.
- */
-export const RECONCILE_QUIET_MS = 5 * 60 * 1000;
-/**
- * A `submitted` row GitHub has not let Slop verify for this long fails as
- * `unverifiable`, so it no longer blocks a new submission for the program.
- */
-export const SUBMITTED_LIMIT_MS = 24 * 60 * 60 * 1000;
 /** GitHub's clock may run slightly ahead of Slop's. */
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const MAX_SEND_BYTES = 256 * 1024;
@@ -157,55 +126,6 @@ function redirect(location: string, cookies: string[]): Response {
   return withCookies(response, cookies);
 }
 
-/** The reporter's view: state and identifiers, never report content. */
-export function submissionView(row: SubmissionRow): Record<string, unknown> {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    repository: row.repository,
-    origin: row.origin,
-    state: row.state,
-    revision: row.revision,
-    attempt: row.attempt,
-    advisory:
-      row.advisory_ghsa === null
-        ? null
-        : {
-            ghsa: row.advisory_ghsa,
-            url: `https://github.com/${row.repository}/security/advisories/${row.advisory_ghsa}`,
-          },
-    githubCreatedAt: row.github_created_at,
-    failureCode: row.failure_code,
-    caseId: row.case_id,
-    retryAllowed: row.state === "draft" && row.attempt > 0,
-    // An empty listing before this time keeps the send uncertain.
-    reconcileAfter:
-      row.state === "uncertain" &&
-      row.advisory_ghsa === null &&
-      row.attempt_started_at !== null
-        ? new Date(
-            Date.parse(row.attempt_started_at) + RECONCILE_QUIET_MS,
-          ).toISOString()
-        : null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-export const COLUMNS =
-  "id, project_id, repository, reporter_github_id, reporter_github_login, origin, idempotency_key, marker, state, attempt, attempt_started_at, advisory_ghsa, github_created_at, evidence_digest, failure_code, case_id, revision, created_at, updated_at";
-
-export async function loadSubmission(
-  deps: SecurityApiDependencies,
-  id: string,
-): Promise<SubmissionRow | null> {
-  if (!SUBMISSION_ID.test(id)) return null;
-  return deps.db
-    .prepare(`SELECT ${COLUMNS} FROM security_submissions WHERE id = ?`)
-    .bind(id)
-    .first<SubmissionRow>();
-}
-
 /** Only the reporter sees a submission; everyone else gets the same 404. */
 async function ownSubmission(
   deps: SecurityApiDependencies,
@@ -215,169 +135,6 @@ async function ownSubmission(
   const row = await loadSubmission(deps, id);
   if (row === null || row.reporter_github_id !== actor.githubId) notFound();
   return row;
-}
-
-type Transition = {
-  state: SubmissionState;
-  set?: Partial<
-    Pick<
-      SubmissionRow,
-      | "attempt"
-      | "attempt_started_at"
-      | "advisory_ghsa"
-      | "github_created_at"
-      | "evidence_digest"
-      | "failure_code"
-      | "case_id"
-    >
-  >;
-  kind: string;
-  detail?: Record<string, unknown>;
-  actorGithubId: string | null;
-  guard?: { sql: string; values: unknown[] };
-};
-
-/**
- * One compare-and-set transition: the row moves only from the exact state
- * and revision that was read, and its event lands at the next revision in
- * the same batch. `before` statements run first in the batch.
- */
-function transitionStatements(
-  deps: SecurityApiDependencies,
-  row: SubmissionRow,
-  next: Transition,
-  at: string,
-): D1Statement[] {
-  const set: Record<string, unknown> = {
-    ...(next.state === "failed" ? {} : { failure_code: null }),
-    ...next.set,
-  };
-  const columns = Object.keys(set);
-  return [
-    deps.db
-      .prepare(
-        `UPDATE security_submissions SET state = ?, ${columns
-          .map((column) => `${column} = ?, `)
-          .join(
-            "",
-          )}revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND state = ?${next.kind === "send" ? ` AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})` : ""}${next.guard ? ` AND (${next.guard.sql})` : ""}`,
-      )
-      .bind(
-        next.state,
-        ...columns.map((column) => set[column]),
-        at,
-        row.id,
-        row.revision,
-        row.state,
-        ...(next.kind === "send" ? [row.reporter_github_id] : []),
-        ...(next.guard?.values ?? []),
-      ),
-    deps.db
-      .prepare(
-        "INSERT INTO security_submission_events (submission_id, revision, kind, detail, actor_github_id, at) SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT revision FROM security_submissions WHERE id = ?) = ? AND (SELECT state FROM security_submissions WHERE id = ?) = ?",
-      )
-      .bind(
-        row.id,
-        row.revision + 1,
-        next.kind,
-        next.detail === undefined ? null : JSON.stringify(next.detail),
-        next.actorGithubId,
-        at,
-        row.id,
-        row.revision + 1,
-        row.id,
-        next.state,
-      ),
-  ];
-}
-
-/** Commits a transition; returns the new row, or null when it was stale. */
-async function transition(
-  deps: SecurityApiDependencies,
-  row: SubmissionRow,
-  next: Transition,
-): Promise<SubmissionRow | null> {
-  let results: Awaited<ReturnType<typeof deps.db.batch>>;
-  try {
-    results = await deps.db.batch(
-      transitionStatements(deps, row, next, deps.now().toISOString()),
-    );
-  } catch (error) {
-    // A concurrent writer took this revision: the batch rolled back whole.
-    if (
-      error instanceof Error &&
-      /UNIQUE/iu.test(error.message) &&
-      /security_submission_events/iu.test(error.message)
-    )
-      return null;
-    throw error;
-  }
-  if ((results[0]?.meta?.changes ?? 0) !== 1) return null;
-  return loadSubmission(deps, row.id);
-}
-
-/**
- * Applies time-based moves before any decision: an interrupted send becomes
- * `uncertain` and is never resent, a `submitted` row GitHub never let Slop
- * verify fails as `unverifiable` (it holds a GitHub advisory, so it is never
- * resent), and an idle draft or failure is abandoned. A verified receipt
- * awaiting a current triager remains recoverable with fresh reporter consent.
- */
-export async function settle(
-  deps: SecurityApiDependencies,
-  row: SubmissionRow,
-): Promise<SubmissionRow> {
-  const now = deps.now().getTime();
-  // A saved Slop report and its receipt do not expire with an optional GitHub
-  // draft. Only an idle draft or failure can expire, so only it needs the read.
-  if (
-    (row.state === "draft" || row.state === "failed") &&
-    now - Date.parse(row.updated_at) > IDLE_MS &&
-    (await storedIntake(deps, row.id))
-  )
-    return row;
-  let next: Transition | null = null;
-  if (
-    row.state === "submitting" &&
-    row.attempt_started_at !== null &&
-    now - Date.parse(row.attempt_started_at) > SUBMITTING_TIMEOUT_MS
-  )
-    next = { state: "uncertain", kind: "interrupted", actorGithubId: null };
-  else if (
-    row.state === "submitted" &&
-    now - Date.parse(row.attempt_started_at ?? row.updated_at) >
-      SUBMITTED_LIMIT_MS
-  )
-    next = {
-      state: "failed",
-      set: { failure_code: "unverifiable" },
-      kind: "verify-expired",
-      detail: { code: "unverifiable" },
-      actorGithubId: null,
-    };
-  else if (
-    (row.state === "draft" || row.state === "failed") &&
-    now - Date.parse(row.updated_at) > IDLE_MS
-  )
-    next = { state: "abandoned", kind: "abandoned", actorGithubId: null };
-  if (next === null) return row;
-  if (
-    (row.state === "submitted" || row.state === "draft") &&
-    row.advisory_ghsa !== null &&
-    (await deps.db
-      .prepare(
-        "SELECT 1 AS verified FROM security_submission_events WHERE submission_id = ? AND revision <= ? AND kind = 'contacts-unavailable' LIMIT 1",
-      )
-      .bind(row.id, row.revision)
-      .first()) !== null
-  )
-    // This event is written only after GitHub receipt identity checks pass.
-    // Missing routing contacts do not make that delivered report unverifiable.
-    return row;
-  return (
-    (await transition(deps, row, next)) ??
-    ((await loadSubmission(deps, row.id)) as SubmissionRow)
-  );
 }
 
 function expectedRevision(body: Record<string, unknown>): number {
@@ -390,16 +147,52 @@ function expectedRevision(body: Record<string, unknown>): number {
   return body.expectedRevision;
 }
 
-async function readBody(request: Request): Promise<Record<string, unknown>> {
-  let value: unknown;
-  try {
-    value = await readBoundedJson(request, MAX_SEND_BYTES, "Report request");
-  } catch {
-    fail(400, "invalid_request", "Request body must be a JSON object");
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    fail(400, "invalid_request", "Request body must be a JSON object");
-  return value as Record<string, unknown>;
+function readBody(request: Request): Promise<Record<string, unknown>> {
+  return requireJsonObject(request, MAX_SEND_BYTES, "Report request");
+}
+
+/** The caller's own submission, at exactly the revision the request names. */
+async function ownSubmissionAtRevision(
+  request: Request,
+  deps: SecurityApiDependencies,
+  id: string,
+): Promise<{ actor: Actor; loaded: SubmissionRow }> {
+  const actor = await requireActor(request, deps);
+  const loaded = await ownSubmission(deps, id, actor);
+  const body = await readBody(request);
+  exactKeys(body, ["expectedRevision"]);
+  const expected = expectedRevision(body);
+  if (expected !== loaded.revision)
+    fail(409, "stale_revision", "The submission changed since you loaded it");
+  return { actor, loaded };
+}
+
+/**
+ * A lost race for one advisory: answer with a concurrent winner's outcome for
+ * this submission, otherwise fail it as already recorded without revealing
+ * the other case.
+ */
+async function failAlreadyRecorded(
+  deps: SecurityApiDependencies,
+  row: SubmissionRow,
+): Promise<{ status: number; row: SubmissionRow }> {
+  const current = (await loadSubmission(deps, row.id)) as SubmissionRow;
+  if (current.state === "receipt-verified")
+    return { status: 200, row: current };
+  if (current.revision !== row.revision || current.state !== row.state)
+    fail(409, "stale_revision", "The submission changed since you loaded it");
+  await transition(deps, current, {
+    state: "failed",
+    set: { failure_code: "already-recorded" },
+    kind: "verify-failed",
+    detail: { code: "already-recorded" },
+    actorGithubId: null,
+  });
+  fail(
+    409,
+    "advisory_already_recorded",
+    "This advisory already has a verified case",
+  );
 }
 
 async function programTerms(
@@ -615,10 +408,14 @@ async function authorizeSubmission(
   const owned = await ownSubmission(deps, id, actor);
   const body = await readBody(request);
   exactKeys(body, []);
-  await approvedReportForForward(deps, id);
   const row = await settle(deps, owned);
   if (row.state === "receipt-verified" || row.state === "abandoned")
     fail(409, "submission_closed", "This submission is finished");
+  // A send in progress may still need reconciliation. Renew its read grant
+  // without requiring the saved body or permission to send a new copy. Send
+  // rechecks the current report and approval before claiming another attempt.
+  if (!["submitting", "uncertain", "submitted"].includes(row.state))
+    await approvedReportForForward(deps, id);
   const flow = await beginAuthorization(
     request,
     intake,
@@ -777,23 +574,7 @@ async function writeVerifiedCase(
       actorGithubId: row.reporter_github_id,
     });
     if (linked !== null) return { status: 200, row: linked };
-    const current = (await loadSubmission(deps, row.id)) as SubmissionRow;
-    if (current.state === "receipt-verified")
-      return { status: 200, row: current };
-    if (current.revision !== row.revision || current.state !== row.state)
-      fail(409, "stale_revision", "The submission changed since you loaded it");
-    await transition(deps, current, {
-      state: "failed",
-      set: { failure_code: "already-recorded" },
-      kind: "verify-failed",
-      detail: { code: "already-recorded" },
-      actorGithubId: null,
-    });
-    fail(
-      409,
-      "advisory_already_recorded",
-      "This advisory already has a verified case",
-    );
+    return failAlreadyRecorded(deps, row);
   }
   const receivedAt = facts.createdAt;
   // Analysis runs in memory on the content GitHub returned; only enums leave.
@@ -922,26 +703,9 @@ async function writeVerifiedCase(
   } catch (error) {
     if (!/UNIQUE/iu.test(error instanceof Error ? error.message : ""))
       throw error;
-    const current = (await loadSubmission(deps, row.id)) as SubmissionRow;
     // A concurrent request for this same submission won: its event took the
     // next revision. Answer with its outcome, never with already-recorded.
-    if (current.state === "receipt-verified")
-      return { status: 200, row: current };
-    if (current.revision !== row.revision || current.state !== row.state)
-      fail(409, "stale_revision", "The submission changed since you loaded it");
-    // Another case already holds this advisory. It is not revealed here.
-    await transition(deps, current, {
-      state: "failed",
-      set: { failure_code: "already-recorded" },
-      kind: "verify-failed",
-      detail: { code: "already-recorded" },
-      actorGithubId: null,
-    });
-    fail(
-      409,
-      "advisory_already_recorded",
-      "This advisory already has a verified case",
-    );
+    return failAlreadyRecorded(deps, row);
   }
   const updated = (await loadSubmission(deps, row.id)) as SubmissionRow;
   // Another request may have verified the same receipt first.
@@ -1225,13 +989,7 @@ async function reconcileSubmission(
   intake: IntakeConfig,
   id: string,
 ): Promise<Response> {
-  const actor = await requireActor(request, deps);
-  const loaded = await ownSubmission(deps, id, actor);
-  const body = await readBody(request);
-  exactKeys(body, ["expectedRevision"]);
-  const expected = expectedRevision(body);
-  if (expected !== loaded.revision)
-    fail(409, "stale_revision", "The submission changed since you loaded it");
+  const { actor, loaded } = await ownSubmissionAtRevision(request, deps, id);
   let row = await settle(deps, loaded);
   if (row.state === "submitting")
     fail(409, "submission_in_progress", "This submission is being sent");
@@ -1313,13 +1071,7 @@ async function verifyDirect(
   intake: IntakeConfig,
   id: string,
 ): Promise<Response> {
-  const actor = await requireActor(request, deps);
-  const loaded = await ownSubmission(deps, id, actor);
-  const body = await readBody(request);
-  exactKeys(body, ["expectedRevision"]);
-  const expected = expectedRevision(body);
-  if (expected !== loaded.revision)
-    fail(409, "stale_revision", "The submission changed since you loaded it");
+  const { actor, loaded } = await ownSubmissionAtRevision(request, deps, id);
   const row = await settle(deps, loaded);
   if (row.origin !== "direct" || row.state !== "draft")
     fail(409, "action_not_allowed", "This submission cannot be verified now");

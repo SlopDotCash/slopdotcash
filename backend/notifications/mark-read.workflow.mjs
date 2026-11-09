@@ -1,59 +1,25 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
+import { resolve } from "node:path";
+import { startHandlerWorker } from "../../tests/miniflare-d1.mjs";
 
 // Native D1 enforces the 100-bind limit that bun:sqlite does not enforce.
 // Use the real inbox handler and migrations, with a synthetic session actor.
-const directory = await mkdtemp(join(tmpdir(), "slop-inbox-read-"));
 const actor = "900000002";
 const other = "900000004";
 const at = "2026-10-29T00:00:00.000Z";
-let runtime;
+let worker;
 try {
-  const entry = join(directory, "worker.ts");
-  const output = join(directory, "worker.mjs");
-  await writeFile(
-    entry,
-    `import { handleNotificationsApi } from ${JSON.stringify(resolve("backend/notifications/handler.ts"))};
+  worker = await startHandlerWorker({
+    d1: "inbox-read",
+    entrySource: `import { handleNotificationsApi } from ${JSON.stringify(resolve("backend/notifications/handler.ts"))};
 export default { fetch(request, env) {
   return handleNotificationsApi(request, {
     db: env.DB, sessionActor: async () => ({githubId: ${JSON.stringify(actor)}}),
     now: () => new Date(${JSON.stringify(at)})
   });
 }};`,
-  );
-  const build = spawnSync(
-    "bun",
-    ["build", entry, "--target=browser", "--outfile", output],
-    {
-      encoding: "utf8",
-    },
-  );
-  assert.equal(build.status, 0, build.stderr);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      modules: true,
-      compatibilityDate: "2026-09-14",
-      script: await readFile(output, "utf8"),
-      d1Databases: { DB: "inbox-read" },
-    }),
-  );
-  const db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort()) {
-    await db.batch(
-      splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-        db.prepare(sql),
-      ),
-    );
-  }
+  });
+  const { runtime, db } = worker;
   const insert = (key, recipient = actor, kind = "wallet_changed") =>
     db
       .prepare(
@@ -107,6 +73,5 @@ export default { fetch(request, env) {
     }),
   );
 } finally {
-  await runtime?.dispose();
-  await rm(directory, { recursive: true, force: true });
+  await worker?.dispose();
 }

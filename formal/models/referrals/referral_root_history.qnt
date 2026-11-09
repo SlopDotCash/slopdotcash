@@ -3,6 +3,14 @@
 // Five epochs, total representatives1..5, cap2, clock1..7, spacing1.
 // The first root is normalized to total2 at time1; later totals remain1..5.
 // Caller authority, token funding and Merkle verification are in other models.
+// Finite reduction: `void` stores a voided epoch as the canonical
+// {total:0,posted:0,voided:true,priorMax:0}. `void` reads only the latest
+// epoch's fields before replacing it; `live`, `actualMax` and `actualLast`
+// skip voided epochs; `post` only appends; nothing un-voids an epoch. A voided
+// epoch's other fields are therefore read only by the list length and the
+// priorMax range invariant, which the canonical value satisfies and which was
+// checked on the same priorMax while the epoch was live. Histories that differ
+// only in voided totals, times or prior marks become one state.
 module referral_root_history {
   type Epoch={total:int,posted:int,voided:bool,priorMax:int}
   var s:{epochs:List[Epoch],now:int,highWater:int,lastLive:int,sealed:bool}
@@ -19,7 +27,7 @@ module referral_root_history {
   action void=all{s.epochs.length()>0,not(s.epochs[s.epochs.length()-1].voided),not(s.sealed),
     val last=s.epochs.length()-1
     val previousLive=live.exclude(Set(last))
-    s'=s.with("epochs",s.epochs.replaceAt(last,s.epochs[last].with("voided",true)))
+    s'=s.with("epochs",s.epochs.replaceAt(last,{total:0,posted:0,voided:true,priorMax:0}))
       .with("highWater",s.epochs[last].priorMax)
       .with("lastLive",previousLive.fold(0,(lastTime,i)=>if(s.epochs[i].posted>lastTime)s.epochs[i].posted else lastTime))}
   action claim=all{live.size()>0,s'=s.with("sealed",true)}
@@ -32,5 +40,9 @@ module referral_root_history {
     .then(tick).then(post(5)).then(void).then(post(3)).then(void).expect(s.highWater==4 and s.lastLive==3 and invariant)
   run voidFirstRestoresEmptyMarksTest=init.then(post(2)).then(void).expect(s.highWater==0 and s.lastLive==0)
   run sealedLatestCannotVoidTest=init.then(post(2)).then(claim).then(void.fail())
+  run voidedEpochKeepsSlotAndCanonicalFieldsTest=init.then(post(2)).then(tick).then(post(4)).then(void)
+    .expect(s.epochs.length()==2 and s.epochs[1]=={total:0,posted:0,voided:true,priorMax:0}
+      and s.highWater==2 and s.lastLive==1 and invariant)
+    .then(tick).then(post(4)).expect(s.epochs.length()==3 and s.highWater==4 and s.lastLive==3)
   run spacingFollowsLatestLiveTimeTest=init.then(post(2)).then(post(3).fail())
 }

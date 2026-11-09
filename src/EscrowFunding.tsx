@@ -149,7 +149,7 @@ type VaultTotalsState =
  * an empty or failed read) and when the reader returns to the page after the
  * cache window. A refresh keeps the last good totals visible.
  */
-export function useVaultTotals(
+function useVaultTotals(
   project: ProjectDefinition,
   revision = 0,
 ): VaultTotalsState {
@@ -257,8 +257,6 @@ export function useVaultTotals(
     };
   return state.status === "error" ? { ...state, retry } : state;
 }
-
-export { reservedGross };
 
 function RetryButton({ retry }: { retry: () => void }) {
   return (

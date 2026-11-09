@@ -17,8 +17,9 @@ import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
+import { memoryJournal } from "../../tests/payment-test-journal";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { type JournalStore, lookupAttempt } from "../payment-executor/core";
+import { lookupAttempt } from "../payment-executor/core";
 import { PaymentSignerJournal } from "../payment-executor/index";
 import { recoverUncertainAttempts } from "./index";
 
@@ -46,22 +47,6 @@ const baseDeployment: EscrowDeployment = {
   registrar: address("f6"),
 };
 const ethereumVault = address("a9");
-
-function memoryJournal(): JournalStore {
-  const values = new Map<string, unknown>();
-  const journal: JournalStore = {
-    async get<T>(key: string) {
-      return structuredClone(values.get(key)) as T | undefined;
-    },
-    async put<T>(key: string, value: T) {
-      values.set(key, structuredClone(value));
-    },
-    async transaction(callback) {
-      return callback(journal);
-    },
-  };
-  return journal;
-}
 
 test("recovery leaves another network's attempt to that network's relayer", async () => {
   const { db, sqlite } = sqliteD1(

@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { base58 } from "@scure/base";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
 import { assertEscrowPolicy } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
+import { applyRepositoryMigrations } from "../../tests/miniflare-d1.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Actual scheduled payments entrypoint, migrations and persistent native D1.
@@ -110,13 +110,7 @@ export default {async fetch(request,env){
     );
   runtime = startRuntime();
   let db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort())
-    for (const sql of splitSqlQuery(
-      await readFile(join("migrations", name), "utf8"),
-    ))
-      await db.prepare(sql).run();
+  await applyRepositoryMigrations(db);
   const deployment = {
     network: "solana-devnet",
     vault: key(10),

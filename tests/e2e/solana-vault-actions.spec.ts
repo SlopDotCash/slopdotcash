@@ -1,5 +1,5 @@
 /** Real local validator and public fixture wallets. No live RPC or funds. */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdirSync,
@@ -37,7 +37,7 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
-import { selectAwardMonth } from "./award-month";
+import { routeMonthlyAwardReview, selectAwardMonth } from "./award-month";
 import {
   type Diagnostics,
   escapeRegExp,
@@ -48,6 +48,10 @@ import {
   test,
 } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
+import {
+  connectVaultSetupServer,
+  spawnVaultSetupServer,
+} from "./vault-setup-server";
 
 // Dependencies are installed by the existing Solana contract test command.
 const requireSolana = createRequire(
@@ -625,7 +629,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect(actions.getByRole("status")).toContainText(
-    "could not be saved on this device",
+    "Not saved on this device",
   );
   await expect(recovery).toHaveValue("1".repeat(64));
   await expect(recovery).toBeEditable();
@@ -761,87 +765,9 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   expect(apiRejections).toEqual([422, 422]);
   // Finalized awards and session are controlled fixtures; the API planner, wallet and
   // finalized commitment verifier below use the actual local Solana program.
-  const commitment = {
-    schemaVersion: "2",
-    projectId: "eliza",
-    cycleId: "2026-09",
-    manifestSha256: "a".repeat(64),
-    snapshotSha256: "b".repeat(64),
+  const { commitment, review } = await routeMonthlyAwardReview(
+    page,
     deployment,
-    award: {
-      githubUserId: "1234",
-      login: "local-contributor",
-      sourceDigest: "d".repeat(64),
-      gross: "2000000",
-      fee: "40000",
-      net: "1960000",
-    },
-  };
-  let reviewAvailable = true;
-  let reviewReads = 0;
-  await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-09",
-    (route) => {
-      reviewReads++;
-      return route.fulfill({
-        status: reviewAvailable ? 200 : 503,
-        json: reviewAvailable
-          ? {
-              projectId: "eliza",
-              period: "2026-09",
-              manifestSha256: commitment.manifestSha256,
-              automatic: true,
-              cutoffAt: null,
-              deployment,
-              asset: null,
-              proposal: {
-                capBase: "2000000",
-                allocationSequence: 0,
-                allocations: [
-                  {
-                    githubUserId: "1234",
-                    login: "local-contributor",
-                    grossBase: "2000000",
-                    proposedGrossBase: "2000000",
-                    sourceDigest: commitment.award.sourceDigest,
-                  },
-                ],
-              },
-              run: {
-                trigger: "automatic",
-                frozenAt: "2026-10-03T00:00:00.000Z",
-                snapshotSha256: commitment.snapshotSha256,
-                totalGrossBase: "2000000",
-                network: deployment.network,
-                vault: deployment.vault,
-                funded: true,
-                awards: [
-                  {
-                    githubUserId: "1234",
-                    login: "local-contributor",
-                    grossBase: "2000000",
-                    feeBase: "40000",
-                    netBase: "1960000",
-                    state: "awaiting-reservation",
-                  },
-                ],
-              },
-            }
-          : { message: "Review temporarily unavailable" },
-      });
-    },
-  );
-  await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-09/commitment",
-    (route) => {
-      expect(route.request().postDataJSON()).toEqual({
-        network: deployment.network,
-        githubUserId: "1234",
-        manifestSha256: commitment.manifestSha256,
-        snapshotSha256: commitment.snapshotSha256,
-      });
-      return route.fulfill({ json: commitment });
-    },
   );
   await page.route(
     "**/api/v1/payments/projects/eliza/monthly/2026-09/solana-commitment",
@@ -875,7 +801,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
           } as never,
           monthly: {
             commitment: async () => {
-              if (!reviewAvailable)
+              if (!review.available)
                 throw new Error("Award fixture is unavailable");
               return commitment as never;
             },
@@ -952,10 +878,10 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     "wallet result is unclear",
   );
   expect(sends).toHaveLength(3);
-  reviewAvailable = false;
+  review.available = false;
   await page.reload({ waitUntil: "networkidle" });
   await connectOwner();
-  expect(reviewReads).toBe(1);
+  expect(review.reads).toBe(1);
   await expect(
     ownerActions.getByRole("button", {
       name: "Authorize this award in wallet",
@@ -974,7 +900,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
   await expect(ownerActions.getByRole("status")).toContainText(
     "Award reserved on the finalized chain",
   );
-  reviewAvailable = true;
+  review.available = true;
   interrupted = false;
   await ownerActions
     .getByRole("button", { name: "Verify award and funding" })
@@ -1136,28 +1062,18 @@ async function ownerSetupWorkflow(
     ),
     contentType: "application/json",
   });
-  let output = "";
-  const server = spawn("bun", [bundle, file, String(apiPort), rpcUrl], {
-    cwd: root,
-    env: { ...process.env, SLOP_E2E_VAULT_ACTIONS: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  server.stdout?.on("data", (s) => (output += String(s)));
-  server.stderr?.on("data", (s) => (output += String(s)));
+  const { server, output } = spawnVaultSetupServer(
+    [bundle, file, String(apiPort), rpcUrl],
+    { cwd: root, env: { ...process.env, SLOP_E2E_VAULT_ACTIONS: "1" } },
+  );
   const sends: string[] = [];
   let interrupted = true;
   try {
-    await expect
-      .poll(() => output, { timeout: 30_000 })
-      .toContain("Vault setup API ready");
-    const initial = await (
-      await page.request.get(`${origin}/__fixture`)
-    ).json();
-    const headers = {
+    const { initial, headers, api } = await connectVaultSetupServer(
+      page,
       origin,
-      cookie: `__Host-slop_points=${initial.token}`,
-      "content-type": "application/json",
-    };
+      output,
+    );
     expect(initial.projects).toBe(1);
     const setupStatus = () =>
       page.request
@@ -1171,15 +1087,6 @@ async function ownerSetupWorkflow(
     await page.request.post(`${origin}/__fixture`, {
       data: { templatesEnabled: true },
     });
-    const api = async (path: string, data: unknown) => {
-      const response = await page.request.post(`${origin}/api/v1/${path}`, {
-        headers,
-        data,
-      });
-      const body = await response.json();
-      expect(response.ok(), JSON.stringify(body)).toBe(true);
-      return body;
-    };
     const claim = await api("payments/wallets/register", {
       chain: "solana",
       address: donor.publicKey.toBase58(),
@@ -1817,7 +1724,7 @@ async function ownerSetupWorkflow(
     });
   } finally {
     await info.attach("solana-setup-api.log", {
-      body: output,
+      body: output(),
       contentType: "text/plain",
     });
     if (server.exitCode === null) {

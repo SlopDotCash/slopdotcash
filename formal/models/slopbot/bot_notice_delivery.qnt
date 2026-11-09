@@ -3,8 +3,10 @@
 // @source workers/slopbot/failure-alerts.ts
 // @source workers/slopbot/spend-alerts.ts
 // @source migrations/0049_slopbot_spend_alerts.sql
-// At most one provider call per durable notice claim, including ambiguous
-// transport failure. Three scaled spending milestones retain all past claims.
+// At most one notify-service request per durable notice claim, including
+// ambiguous transport failure. The service may send to several administrators;
+// its provider fan-out and partial results are notification_admin_fanout.
+// Three scaled spending milestones retain all past claims.
 module bot_notice_delivery {
   var s: { earned: int, claimed: int, pending: bool, sent: bool,
     receipts: List[str], calls: int }

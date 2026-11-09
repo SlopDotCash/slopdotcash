@@ -11,7 +11,7 @@ type RateLimitRow = {
   request_count: number;
 };
 
-export type ExactRateLimitResult = {
+type ExactRateLimitResult = {
   allowed: boolean;
   retryAfterSeconds: number;
 };

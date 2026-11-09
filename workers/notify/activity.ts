@@ -8,14 +8,16 @@ import {
   PROJECT_AFFECTED_CONTRIBUTORS,
   PROJECT_OWNERS,
 } from "../../backend/notifications/events";
-import type { SecurityD1Database } from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
 import { retryableEmailRejection, SENDER_ADDRESS } from "./contracts";
 import {
   claimDueDeliveries,
   destinationDigest,
   inboxNoticeMime,
+  ownsDeliveryAttempt,
   parseMailPilotConfig,
   recordDelivery,
+  recordDeliveryDestination,
   retryWithoutProviderCall,
 } from "./security";
 import { activityDeliveryDecision, deliveryVersion } from "./verified-delivery";
@@ -309,12 +311,15 @@ export async function dispatchActivityMail(
         continue;
       }
       // Recipient and consent are resolved on the server immediately before this one-recipient send.
-      await deps.db
-        .prepare(
-          "UPDATE activity_notification_outbox SET destination_digest=? WHERE id=?",
-        )
-        .bind(destination.destinationVersion, row.id)
-        .run();
+      if (
+        !(await recordDeliveryDestination(
+          deps.db,
+          row,
+          destination.destinationVersion,
+          "activity",
+        ))
+      )
+        continue;
     } catch {
       // Preparation failed before any provider call; retry within the existing bound.
       await retryWithoutProviderCall(deps, row, "activity");
@@ -332,6 +337,9 @@ export async function dispatchActivityMail(
           registered.destinationVersion,
           deps.now(),
         );
+      // This local check cannot recall a provider call once begun, or
+      // atomically fence its service.
+      if (!(await ownsDeliveryAttempt(deps.db, row, "activity"))) continue;
     } catch {
       // Preparation failed before any provider call; retry within the existing bound.
       await retryWithoutProviderCall(deps, row, "activity");

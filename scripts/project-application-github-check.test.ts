@@ -3,16 +3,18 @@
 // every additional repository and alias is checked too. Identity facts alone never
 // grant authority; the installation permission does (owner decision D11).
 import { afterEach, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { onRequest } from "../functions/api/v1/[[path]]";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { sha256Hex } from "../workers/identity/crypto";
 
 const ORIGIN = "https://slop.cash";
 const API = "https://api.github.com";
 const SESSION = "t".repeat(48);
+const PUBLIC_READ_TOKEN = "fixture-public-read-token";
 
 const OWNER = {
   id: 987654321,
@@ -47,10 +49,12 @@ repositories["example/old-registry-name"] =
 
 const realFetch = globalThis.fetch;
 const lookups: string[] = [];
+const slopbotReads: string[] = [];
 
 afterEach(() => {
   globalThis.fetch = realFetch;
   lookups.length = 0;
+  slopbotReads.length = 0;
 });
 
 let stubGithub = () => {
@@ -80,6 +84,7 @@ async function submit(
   path = "projects",
   seed?: (sqlite: ReturnType<typeof sqliteD1>["sqlite"]) => void,
   slopbot: SlopbotAnswer = ADMIN_ACCESS,
+  method: "POST" | "GET" = "POST",
 ) {
   const { db, sqlite } = sqliteD1(
     readdirSync(resolve(import.meta.dir, "..", "migrations"))
@@ -99,22 +104,26 @@ async function submit(
   stubGithub();
   const response = await onRequest({
     request: new Request(`${ORIGIN}/api/v1/${path}`, {
-      method: "POST",
+      method,
       headers: {
         origin: ORIGIN,
         "content-type": "application/json",
         cookie: `__Host-slop_points=${SESSION}`,
       },
-      body: JSON.stringify(path === "projects" ? { manifest } : {}),
+      ...(method === "POST"
+        ? { body: JSON.stringify(path === "projects" ? { manifest } : {}) }
+        : {}),
     }),
     env: {
       SLOP_DB: db,
       ADMIN_GITHUB_IDS: "900000001",
+      SLOP_GITHUB_READ_TOKEN: PUBLIC_READ_TOKEN,
       ...(slopbot === null
         ? {}
         : {
             SLOPBOT: {
               fetch: async (request: Request) => {
+                slopbotReads.push(request.url);
                 const url = new URL(request.url);
                 expect(url.searchParams.get("includeRepository")).toBe("1");
                 return Response.json({
@@ -143,9 +152,220 @@ async function submit(
     };
     error?: string;
     message?: string;
+    repository?: {
+      branches: string[];
+      license: { state: string };
+    };
   };
   return { status: response.status, body, db, sqlite };
 }
+
+test.each(["public", "private-before-branches", "private-before-license"])(
+  "the Pages repository picker keeps the public-only credential: %s",
+  async (state) => {
+    const previousStub = stubGithub;
+    const requests: string[] = [];
+    const licenseText = "Public fixture license bytes.\n";
+    const blob = createHash("sha1")
+      .update(`blob ${Buffer.byteLength(licenseText)}\0${licenseText}`)
+      .digest("hex");
+    const commit = "a".repeat(40);
+    const branch = {
+      name: "main",
+      prefix: "refs/heads/",
+      target: { __typename: "Commit", oid: commit },
+    };
+    const node = {
+      __typename: "Repository",
+      id: "R_example",
+      fullDatabaseId: "123456789",
+      isPrivate: false,
+    };
+    // The fixture enforces the deployment contract: this credential can read
+    // public resources only. Visibility changes deny the later request at
+    // GitHub; no privileged installation response may replace that refusal.
+    stubGithub = () => {
+      globalThis.fetch = (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request.url);
+        expect(request.headers.get("authorization")).toBe(
+          `Bearer ${PUBLIC_READ_TOKEN}`,
+        );
+        if (request.url === `${API}/repos/example/open-registry`)
+          return Response.json({
+            ...(repositories["example/open-registry"] as object),
+            default_branch: "main",
+          });
+        if (request.url === `${API}/graphql`) {
+          expect(request.method).toBe("POST");
+          const body = (await request.json()) as {
+            query: string;
+            variables: { id: string };
+          };
+          expect(body.variables.id).toBe("R_example");
+          if (body.query.includes("ProjectRepositoryBranches")) {
+            if (state === "private-before-branches")
+              return new Response(null, { status: 404 });
+            return Response.json({
+              data: {
+                node: {
+                  ...node,
+                  refs: {
+                    nodes: [branch],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            });
+          }
+          if (body.query.includes("ProjectRepositoryHead"))
+            return Response.json({ data: { node: { ...node, ref: branch } } });
+          expect(body.query).toContain("ProjectRepositoryLicense");
+          return Response.json({
+            data: {
+              node: { ...node, object: { __typename: "Blob", oid: blob } },
+            },
+          });
+        }
+        expect(request.url).toBe(
+          `${API}/repos/example/open-registry/license?ref=${commit}`,
+        );
+        if (state === "private-before-license")
+          return new Response(null, { status: 404 });
+        return Response.json({
+          path: "LICENSE",
+          type: "file",
+          sha: blob,
+          license: { spdx_id: "MIT" },
+          encoding: "base64",
+          content: Buffer.from(licenseText).toString("base64"),
+        });
+      }) as typeof fetch;
+    };
+    try {
+      const result = await submit(
+        null,
+        "project-github/repositories/example/open-registry",
+        undefined,
+        ADMIN_ACCESS,
+        "GET",
+      );
+      expect(slopbotReads).toEqual([]);
+      expect(requests[0]).toBe(`${API}/repos/example/open-registry`);
+      if (state === "private-before-branches") {
+        expect(result.status).toBe(502);
+        expect(result.body.repository).toBeUndefined();
+        expect(requests).toHaveLength(2);
+      } else {
+        expect(result.status).toBe(200);
+        expect(result.body.repository?.branches).toEqual(["main"]);
+        expect(result.body.repository?.license.state).toBe(
+          state === "public" ? "verified" : "unknown",
+        );
+        expect(requests).toHaveLength(5);
+      }
+    } finally {
+      stubGithub = previousStub;
+    }
+  },
+);
+
+test("the Pages picker ignores legacy repository cache bytes and caches its node-bound result", async () => {
+  const previousStub = stubGithub;
+  const cacheDescriptor = Object.getOwnPropertyDescriptor(globalThis, "caches");
+  const cachePrefix = `${ORIGIN}/__slop-cache/projects-v1/api/v1/project-github`;
+  const legacyKey = `${cachePrefix}/repositories/example/open-registry`;
+  const currentKey = `${cachePrefix}/repository-node-v1/example/open-registry`;
+  const entries = new Map<string, Response>([
+    [legacyKey, Response.json({ repository: { branches: ["legacy-mixed"] } })],
+  ]);
+  const cacheReads: string[] = [];
+  const providerReads: string[] = [];
+  Object.defineProperty(globalThis, "caches", {
+    configurable: true,
+    value: {
+      default: {
+        async match(request: Request) {
+          cacheReads.push(request.url);
+          return entries.get(request.url)?.clone();
+        },
+        async put(request: Request, response: Response) {
+          entries.set(request.url, response.clone());
+        },
+        async delete(request: Request) {
+          return entries.delete(request.url);
+        },
+      },
+    },
+  });
+  stubGithub = () => {
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      providerReads.push(request.url);
+      expect(request.headers.get("authorization")).toBe(
+        `Bearer ${PUBLIC_READ_TOKEN}`,
+      );
+      if (request.url === `${API}/repos/example/open-registry`)
+        return Response.json({
+          ...(repositories["example/open-registry"] as object),
+          default_branch: "main",
+        });
+      expect(request.url).toBe(`${API}/graphql`);
+      const body = (await request.json()) as {
+        query: string;
+        variables: { id: string };
+      };
+      expect(body.variables.id).toBe("R_example");
+      const node = {
+        __typename: "Repository",
+        id: "R_example",
+        fullDatabaseId: "123456789",
+        isPrivate: false,
+      };
+      if (body.query.includes("ProjectRepositoryBranches"))
+        return Response.json({
+          data: {
+            node: {
+              ...node,
+              refs: {
+                nodes: [
+                  {
+                    name: "main",
+                    prefix: "refs/heads/",
+                    target: { __typename: "Commit", oid: "a".repeat(40) },
+                  },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        });
+      expect(body.query).toContain("ProjectRepositoryHead");
+      return Response.json({ data: { node: { ...node, ref: null } } });
+    }) as typeof fetch;
+  };
+  try {
+    const path = "project-github/repositories/example/open-registry";
+    const first = await submit(null, path, undefined, ADMIN_ACCESS, "GET");
+    expect(first.status).toBe(200);
+    expect(first.body.repository?.branches).toEqual(["main"]);
+    expect(cacheReads).toEqual([currentKey]);
+    expect(entries.has(legacyKey)).toBe(true);
+    expect(entries.has(currentKey)).toBe(true);
+    expect(providerReads).toHaveLength(3);
+    const second = await submit(null, path, undefined, ADMIN_ACCESS, "GET");
+    expect(second.status).toBe(200);
+    expect(second.body.repository?.branches).toEqual(["main"]);
+    expect(cacheReads).toEqual([currentKey, currentKey]);
+    expect(providerReads).toHaveLength(3);
+    expect(slopbotReads).toEqual([]);
+  } finally {
+    stubGithub = previousStub;
+    if (cacheDescriptor === undefined)
+      Reflect.deleteProperty(globalThis, "caches");
+    else Object.defineProperty(globalThis, "caches", cacheDescriptor);
+  }
+});
 
 /** The `/projects/new` manifest for a user repository, plus `repositories`. */
 function manifestWith(...extra: Record<string, unknown>[]) {

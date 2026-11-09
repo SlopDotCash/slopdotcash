@@ -16,7 +16,7 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../backend/trace/handler";
-import { sha256Hex } from "../backend/trace/validation";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { seedParticipationBan } from "../tests/participation-ban.fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
 
@@ -80,11 +80,12 @@ function api() {
   sqlite.exec("PRAGMA foreign_keys=ON");
   const store = r2();
   let counter = 0;
+  let now = T0;
   const deps: TraceApiDependencies = {
     persistence: new CloudflareTracePersistence(db, store.bucket),
     authSecret: SECRET,
     operatorGithubIds: new Set<string>(),
-    now: () => new Date(T0),
+    now: () => new Date(now),
     randomId: () => `trace-upload-id-${++counter}`,
     verifyIdentityAssertion: async () => null,
     privateIntakeStatus: async () => ({
@@ -94,7 +95,7 @@ function api() {
     }),
   };
   const token = async () => {
-    const iat = Math.floor(T0 / 1000);
+    const iat = Math.floor(now / 1000);
     return signApiToken(
       {
         iss: "slop.cash",
@@ -206,6 +207,9 @@ function api() {
     return store.objects.has(`traces/sha256/${digest.slice(0, 2)}/${digest}`);
   };
   return {
+    db,
+    sqlite,
+    bucket: store.bucket,
     deps,
     createRun,
     intent,
@@ -215,6 +219,9 @@ function api() {
     ban,
     retained,
     failNextWrite: store.failNextWrite,
+    advance(milliseconds: number) {
+      now += milliseconds;
+    },
     reservation: (id: string) =>
       sqlite
         .query(
@@ -222,6 +229,56 @@ function api() {
         )
         .get(id),
   };
+}
+
+function holdIntentOperation(
+  t: ReturnType<typeof api>,
+  kind: "new" | "renew" | "replay",
+) {
+  let enter = () => {};
+  let release = () => {};
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let chosen = false;
+  const database = {
+    ...t.db,
+    prepare(sql: string) {
+      const statement = t.db.prepare(sql);
+      if (
+        chosen ||
+        !(kind === "new"
+          ? sql.startsWith("INSERT INTO trace_upload_intents")
+          : kind === "renew"
+            ? sql.startsWith("UPDATE trace_upload_intents SET expires_at")
+            : sql.startsWith("SELECT intent.* FROM trace_upload_intents"))
+      )
+        return statement;
+      chosen = true;
+      const delay = (
+        value: ReturnType<typeof t.db.prepare>,
+      ): ReturnType<typeof t.db.prepare> => ({
+        ...value,
+        bind: (...values: unknown[]) => delay(value.bind(...values)),
+        async run() {
+          enter();
+          await held;
+          return value.run();
+        },
+        async first<T>() {
+          enter();
+          await held;
+          return value.first<T>();
+        },
+      });
+      return delay(statement);
+    },
+  };
+  t.deps.persistence = new CloudflareTracePersistence(database, t.bucket);
+  return { entered, release };
 }
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -239,6 +296,141 @@ async function runWithTraceA(t: ReturnType<typeof api>) {
   expect(await t.retained(TRACE_A)).toBe(true);
   return runId;
 }
+
+for (const kind of ["new", "renew"] as const) {
+  for (const change of ["finalized", "different trace"] as const) {
+    test(`${kind} trace intent refuses a concurrent ${change} at its write`, async () => {
+      const t = api();
+      let release = () => {};
+      let pending: ReturnType<typeof t.intent> | undefined;
+      try {
+        const created = await t.createRun();
+        const runId = created.json.serverRunId as string;
+        const retryKey = "intent-state-race-0123456789";
+        const bytes = change === "finalized" ? TRACE_A : TRACE_B;
+        if (kind === "renew") {
+          expect((await t.intent(runId, bytes, retryKey)).status).toBe(201);
+          t.advance(5 * 60_000 + 1);
+        }
+        if (change === "finalized") {
+          const ready = await t.intent(runId, TRACE_A);
+          expect(
+            (await t.upload(ready.json.uploadUrl as string, TRACE_A)).status,
+          ).toBe(201);
+        }
+        const previous = t.sqlite
+          .query("SELECT * FROM trace_upload_intents WHERE idempotency_key=?")
+          .get(retryKey);
+        const held = holdIntentOperation(t, kind);
+        release = held.release;
+        pending = t.intent(runId, bytes, retryKey);
+        await held.entered;
+        if (change === "finalized") {
+          expect((await t.finalize(runId)).status).toBe(200);
+        } else {
+          const other = await t.intent(runId, TRACE_A);
+          expect(
+            (await t.upload(other.json.uploadUrl as string, TRACE_A)).status,
+          ).toBe(201);
+        }
+        release();
+        const refused = await pending;
+        expect(refused.status).toBe(409);
+        expect(refused.json.error).toBe(
+          change === "finalized" ? "run_finalized" : "trace_conflict",
+        );
+        expect(refused.json.uploadUrl).toBeUndefined();
+        expect(
+          t.sqlite
+            .query("SELECT * FROM trace_upload_intents WHERE idempotency_key=?")
+            .get(retryKey),
+        ).toEqual(previous);
+        expect(await t.retained(TRACE_A)).toBe(true);
+        expect(await t.retained(TRACE_B)).toBe(false);
+      } finally {
+        release();
+        await pending?.catch(() => {});
+        t.sqlite.close();
+      }
+    });
+  }
+}
+
+test("an existing trace intent read refuses concurrent run finalization", async () => {
+  const t = api();
+  let release = () => {};
+  let pending: ReturnType<typeof t.intent> | undefined;
+  try {
+    const runId = await runWithTraceA(t);
+    const key = "intent-read-race-0123456789";
+    expect((await t.intent(runId, TRACE_A, key)).status).toBe(201);
+    const previous = t.sqlite
+      .query("SELECT * FROM trace_upload_intents WHERE idempotency_key=?")
+      .get(key);
+    const held = holdIntentOperation(t, "replay");
+    release = held.release;
+    pending = t.intent(runId, TRACE_A, key);
+    await held.entered;
+    expect((await t.finalize(runId)).status).toBe(200);
+    release();
+    const refused = await pending;
+    expect(refused.status).toBe(409);
+    expect(refused.json.error).toBe("run_finalized");
+    expect(refused.json.uploadUrl).toBeUndefined();
+    expect(
+      t.sqlite
+        .query("SELECT * FROM trace_upload_intents WHERE idempotency_key=?")
+        .get(key),
+    ).toEqual(previous);
+  } finally {
+    release();
+    await pending?.catch(() => {});
+    t.sqlite.close();
+  }
+});
+
+test("exact trace intent replay preserves its capability and renews only while unconsumed", async () => {
+  const t = api();
+  try {
+    const created = await t.createRun();
+    const runId = created.json.serverRunId as string;
+    const key = "intent-replay-0123456789";
+    const first = await t.intent(runId, TRACE_A, key);
+    expect(first.status).toBe(201);
+    const replay = await t.intent(runId, TRACE_A, key);
+    expect(replay.status).toBe(200);
+    expect(replay.json).toEqual(first.json);
+    t.advance(5 * 60_000 + 1);
+    const renewed = await t.intent(runId, TRACE_A, key);
+    expect(renewed.status).toBe(200);
+    expect(renewed.json.uploadUrl).toBe(first.json.uploadUrl);
+    expect(Date.parse(renewed.json.expiresAt as string)).toBeGreaterThan(
+      Date.parse(first.json.expiresAt as string),
+    );
+    expect((await t.intent(runId, TRACE_B, key)).status).toBe(409);
+    expect(
+      (await t.upload(renewed.json.uploadUrl as string, TRACE_A)).status,
+    ).toBe(201);
+    const used = t.sqlite
+      .query("SELECT * FROM trace_upload_intents WHERE idempotency_key=?")
+      .get(key);
+    t.advance(5 * 60_000 + 1);
+    const usedReplay = await t.intent(runId, TRACE_A, key);
+    expect(usedReplay.status).toBe(200);
+    expect(usedReplay.json.uploadUrl).toBe(first.json.uploadUrl);
+    expect(usedReplay.json.expiresAt).toBe(renewed.json.expiresAt);
+    expect(
+      (await t.upload(usedReplay.json.uploadUrl as string, TRACE_A)).status,
+    ).toBe(410);
+    expect(
+      t.sqlite
+        .query("SELECT * FROM trace_upload_intents WHERE idempotency_key=?")
+        .get(key),
+    ).toEqual(used);
+  } finally {
+    t.sqlite.close();
+  }
+});
 
 test("uploaded traces cannot be read through removed routes, even by an operator", async () => {
   const t = api();

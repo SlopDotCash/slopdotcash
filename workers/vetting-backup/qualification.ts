@@ -28,6 +28,7 @@ export const qualificationMigrations = [
   "0067_vetting_audit_retention.sql",
   "0068_vetting_storage_cycles.sql",
   "0107_vetting_content_addressed_evidence.sql",
+  "0119_vetting_storage_generations.sql",
 ];
 // The assessment is synthetic; all evidence tables and their guards use the
 // real migrations. No project, scan result or operational attestation is made.

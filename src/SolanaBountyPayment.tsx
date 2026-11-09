@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { encodeBase58Bytes } from "./lib/base58";
+import { decodeBase64 } from "./lib/byte-encoding";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { isSolanaTransactionId } from "./lib/funding-address.mjs";
 import {
@@ -131,10 +132,7 @@ export function SolanaBountyPayment({
         await guard();
         if (wallet.address !== payer)
           throw new Error("The payer wallet changed.");
-        const transaction = Uint8Array.from(
-          atob(plan.transaction),
-          (character) => character.charCodeAt(0),
-        );
+        const transaction = decodeBase64(plan.transaction);
         const intent: Pending = {
           attemptId: crypto.randomUUID(),
           transaction: plan.transaction,
@@ -171,7 +169,7 @@ export function SolanaBountyPayment({
             ) {
               if (mounted.current)
                 setError(
-                  `Submitted ${signature}. The saved request was cleared or replaced. Keep this signature with your wallet activity.`,
+                  `Submitted ${signature}. Keep this signature; the saved request changed.`,
                 );
             }
           } catch {

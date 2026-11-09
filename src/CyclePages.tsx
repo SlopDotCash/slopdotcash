@@ -16,7 +16,7 @@ import {
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
 import type { CycleIndexState } from "./lib/use-cycle-index";
-import type { DataState } from "./lib/use-snapshot";
+import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 import { useTimeBoundary } from "./lib/use-time-boundary";
 import {
   awaitingApproval,
@@ -39,24 +39,48 @@ import { CycleAllocation } from "./ProjectLeaderboard";
 import { VaultPaymentHistory } from "./VaultPaymentHistory";
 
 export function CyclePage({
+  archive,
   project,
   cycleId,
   state,
   retry,
+  retryArchive,
 }: {
+  archive: CycleIndexState;
   project: ProjectDefinition;
   cycleId: string;
   state: DataState;
   retry: () => void;
+  retryArchive: () => void;
 }) {
   const validCycleId = /^\d{4}-(0[1-9]|1[0-2])$/u.test(cycleId);
-  const record =
-    state.status === "ready"
-      ? state.cycleIndex.cycles.find(
+  const listedProject = findProject(project.id);
+  const projectHref = listedProject
+    ? `/projects/${project.slug}`
+    : `/cycles?project=${encodeURIComponent(project.id)}`;
+  const archivedRecord =
+    archive.status === "ready"
+      ? archive.cycleIndex.cycles.find(
           (cycle) =>
             cycle.projectId === project.id && cycle.cycleId === cycleId,
         )
       : undefined;
+  // A record may be published between the independent index read and a live
+  // snapshot fallback. Its validated frozen allocation still takes priority.
+  const record =
+    archivedRecord ??
+    (archive.status === "ready" && state.status === "ready"
+      ? state.cycleIndex.cycles.find(
+          (cycle) =>
+            cycle.projectId === project.id && cycle.cycleId === cycleId,
+        )
+      : undefined);
+  const recordIndex =
+    archivedRecord && archive.status === "ready"
+      ? archive.cycleIndex
+      : state.status === "ready"
+        ? state.cycleIndex
+        : null;
   const ownerCutoff = validCycleId
     ? monthlyCutoff(PRD_MONTHLY_SCHEDULE, cycleId)
     : null;
@@ -66,6 +90,11 @@ export function CyclePage({
       : null,
   );
   useTimeBoundary(ownerCutoff?.getTime() ?? null);
+  useTimeBoundary(
+    recordIndex
+      ? Date.parse(recordIndex.generatedAt) + SNAPSHOT_STALE_AFTER_MS + 1
+      : null,
+  );
   const [year, month] = cycleId.split("-").map(Number);
   useTimeBoundary(
     validCycleId ? Date.UTC(year, month, 1) - 7 * 24 * 60 * 60 * 1000 : null,
@@ -73,24 +102,32 @@ export function CyclePage({
   if (!validCycleId) {
     return <NotFound title="Cycle unavailable" />;
   }
-  const notice = (noticeState: DataState) => (
+  const notice = (noticeState: DataState, retryRead = retry) => (
     <main className="shell route-main">
       <h1>
         {project.name} · {formatCycleMonth(cycleId)}
       </h1>
-      <DataNotice state={noticeState} retry={retry} />
+      <DataNotice state={noticeState} retry={retryRead} />
     </main>
   );
-  if (state.status !== "ready") return notice(state);
+  if (archive.status !== "ready") return notice(archive, retryArchive);
+  if (!record && state.status !== "ready") return notice(state);
   // A paused project is not collected; its recorded cycles still render.
-  const collected = project.repositories.every((repository) =>
-    state.snapshot.repositories.some(
-      (candidate) => candidate.id === repository.id,
-    ),
-  );
+  const collected =
+    state.status === "ready" &&
+    project.repositories.every((repository) =>
+      state.snapshot.repositories.some(
+        (candidate) => candidate.id === repository.id,
+      ),
+    );
   let view: ProjectView | null = null;
   // A month outside the snapshot window has no live view.
-  if (collected && projectCycleHasOpened(state.snapshot, project.id, cycleId)) {
+  if (
+    !record &&
+    state.status === "ready" &&
+    collected &&
+    projectCycleHasOpened(state.snapshot, project.id, cycleId)
+  ) {
     try {
       view = createProjectView(state.snapshot, project.id, cycleId);
     } catch (error) {
@@ -104,7 +141,11 @@ export function CyclePage({
           {collected
             ? ""
             : "Activity for this project has not been collected yet. "}
-          See the <Link href={`/projects/${project.slug}`}>project page</Link>.
+          See the{" "}
+          <Link href={projectHref}>
+            {listedProject ? "project page" : "cycle archive"}
+          </Link>
+          .
         </p>
       </NotFound>
     );
@@ -194,9 +235,18 @@ export function CyclePage({
       : `${(view?.reward.totalSharePartsPerMillion ?? 0) / 10_000}%`;
   return (
     <main className="shell route-main cycle-page route-cycle">
-      <DataNotice state={state} retry={retry} />
+      {record && recordIndex ? (
+        stale(recordIndex) ? (
+          <p className="data-notice data-stale" role="status">
+            Cycle history may be outdated · updated{" "}
+            {formatDate(recordIndex.generatedAt)}
+          </p>
+        ) : null
+      ) : (
+        <DataNotice state={state} retry={retry} />
+      )}
       <p className="breadcrumb">
-        <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+        <Link href={projectHref}>{project.name}</Link>
       </p>
       <section className="cycle-hero">
         <RoutePageHeader
@@ -257,9 +307,11 @@ export function CyclePage({
           <CircleAlert aria-hidden="true" size={18} />
           <span>
             {reminder.message}{" "}
-            <Link href={`/projects/${project.slug}/funding`}>
-              View project funding
-            </Link>
+            {listedProject ? (
+              <Link href={`/projects/${project.slug}/funding`}>
+                View project funding
+              </Link>
+            ) : null}
           </span>
         </div>
       ) : null}
@@ -299,7 +351,7 @@ export function CyclePage({
         // A frozen record is what is under review; never replace it with a
         // live recompute, even while the rolling window still covers the month.
         <ArchivedCycleLeaderboard cycle={record} />
-      ) : view ? (
+      ) : view && state.status === "ready" ? (
         <CycleAllocation updatedAt={state.snapshot.generatedAt} view={view} />
       ) : null}
     </main>
@@ -465,20 +517,12 @@ export function CycleArchivePage({
             left.projectId.localeCompare(right.projectId),
         )
       : [];
-  const [filters, setFilters] = useState(readArchiveFilters);
+  const [requestedFilters, setFilters] = useState(readArchiveFilters);
   useEffect(() => {
     const restore = () => setFilters(readArchiveFilters());
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    for (const key of ARCHIVE_FILTERS) {
-      if (filters[key]) url.searchParams.set(key, filters[key]);
-      else url.searchParams.delete(key);
-    }
-    window.history.replaceState(window.history.state, "", url);
-  }, [filters]);
   // A filter appears only when the published records offer a choice.
   const options = {
     project: [...new Set(all.map((cycle) => cycle.projectId))].map(
@@ -491,6 +535,53 @@ export function CycleArchivePage({
       (id) => [id, cycleStateLabel(id)] as const,
     ),
   };
+  const filters = { ...requestedFilters };
+  if (state.status === "ready") {
+    for (const key of ARCHIVE_FILTERS) {
+      if (!options[key].some(([value]) => value === filters[key]))
+        filters[key] = "";
+    }
+  }
+  const {
+    project: projectFilter,
+    month: monthFilter,
+    state: stateFilter,
+  } = filters;
+  useEffect(() => {
+    const normalized = {
+      project: projectFilter,
+      month: monthFilter,
+      state: stateFilter,
+    };
+    if (
+      ARCHIVE_FILTERS.some((key) => normalized[key] !== requestedFilters[key])
+    )
+      setFilters(normalized);
+    const url = new URL(window.location.href);
+    for (const key of ARCHIVE_FILTERS) {
+      if (normalized[key]) url.searchParams.set(key, normalized[key]);
+      else url.searchParams.delete(key);
+    }
+    window.history.replaceState(window.history.state, "", url);
+  }, [projectFilter, monthFilter, stateFilter, requestedFilters]);
+  const now = Date.now();
+  const staleAt =
+    state.status === "ready"
+      ? Date.parse(state.cycleIndex.generatedAt) + SNAPSHOT_STALE_AFTER_MS + 1
+      : null;
+  const nextBoundary = all.reduce<number | null>(
+    (next, cycle) => {
+      const deadline =
+        cycle.state === "review" && cycle.reviewEndsAt
+          ? Date.parse(cycle.reviewEndsAt)
+          : null;
+      return deadline !== null && deadline > now
+        ? Math.min(next ?? deadline, deadline)
+        : next;
+    },
+    staleAt !== null && staleAt > now ? staleAt : null,
+  );
+  useTimeBoundary(nextBoundary);
   const cycles = all.filter(
     (cycle) =>
       (!filters.project || cycle.projectId === filters.project) &&

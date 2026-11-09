@@ -23,6 +23,8 @@ function harness(rejectMail = false) {
     "0084_slopbot_attempt_accounting.sql",
     "0085_slopbot_provider_failure_notices.sql",
     "0104_slopbot_value_inference_attempts.sql",
+    "0118_slopbot_zero_call_reconciliation.sql",
+    "0120_slopbot_value_attempt_completion.sql",
   ]);
   const mail: string[] = [];
   const notify = {
@@ -335,6 +337,61 @@ test("alerts-only route retains unknown fallback costs without a reserve or dupl
     ).toEqual([{ outcome: "accepted" }]);
   } finally {
     server.stop(true);
+    h.sqlite.close();
+  }
+});
+
+test("an authority refusal after reservation settles with zero calls and releases capped capacity", async () => {
+  const h = harness();
+  const output = {
+    sourceDigest: "b".repeat(64),
+    name: "zero_call_budget",
+    schema: { type: "object" },
+    validate: () => ({ accepted: true }),
+  };
+  const prompt = { system: "Zero-call fixture", policy: "None", item: "None" };
+  // No provider is reachable: any request would fail the test.
+  const env = {
+    SURPLUS_API_KEY: "local-only",
+    SURPLUS_BASE_URL: "http://127.0.0.1:9",
+  };
+  try {
+    for (const failure of [null, new Error("registry unavailable")]) {
+      const id = `value:${crypto.randomUUID()}`;
+      // Authority holds for the pre-reservation check, then changes before
+      // the route's first request.
+      let checks = 0;
+      const mayCall = async () => {
+        checks++;
+        if (checks === 1) return true;
+        if (failure) throw failure;
+        return false;
+      };
+      const run = runValueInference(env, prompt, output, mayCall, {
+        db: h.db,
+        installationId: 1,
+        attemptId: id,
+        maximumMicroUsd: 600,
+        approvedMonthlyMicroUsd: 1000,
+      });
+      if (failure) await expect(run).rejects.toThrow("registry unavailable");
+      else expect((await run).blockReason).toBe("authority");
+      expect(
+        h.sqlite
+          .query(
+            "SELECT call_count,recorded_micro_usd FROM slopbot_value_budget_reconciliations WHERE attempt_id = ?",
+          )
+          .get(id),
+      ).toEqual({ call_count: 0, recorded_micro_usd: 0 });
+    }
+    expect(
+      h.sqlite.query("SELECT count(*) AS n FROM slopbot_costs").get(),
+    ).toEqual({ n: 0 });
+    // Both settled holds are free again: one more 600 reservation fits.
+    expect(
+      await reserveValueBudget(h.db, `value:${crypto.randomUUID()}`, 600, 1000),
+    ).toBe(true);
+  } finally {
     h.sqlite.close();
   }
 });

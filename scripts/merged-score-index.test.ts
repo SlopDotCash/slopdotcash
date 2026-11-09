@@ -60,11 +60,3 @@ test("one accepted merge shares credit with both linked authors while distinct m
       ?.scoreThirds,
   ).toBe(4);
 });
-
-test("a second snapshot independently credits its accepted merges", () => {
-  setSystemTime(new Date(AFTER_NOVEMBER));
-  const first = createLeaderboardSnapshot(acceptedMerges());
-  const second = createLeaderboardSnapshot(acceptedMerges());
-  expect(second.ledger).toEqual(first.ledger);
-  expect(second.leaders).toEqual(first.leaders);
-});

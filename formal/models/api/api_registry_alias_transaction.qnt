@@ -8,20 +8,20 @@
 module api_registry_alias_transaction {
   var s: { revisionA: int, revisionB: int, historyA: int, historyB: int,
     keysA: Set[int], keysB: Set[int], applicationA: str, applicationB: str,
-    preparedA: bool, preparedB: bool, generation: int, readGeneration: int,
+    preparedA: bool, preparedB: bool, generation: int, readGeneration: int,readGenerationB:int,
     notifications: int }
   action init = s' = {revisionA: 1, revisionB: 0, historyA: 1, historyB: 0,
     keysA: Set(1), keysB: Set(), applicationA: "pending", applicationB: "pending",
-    preparedA: false, preparedB: false, generation: 0, readGeneration: 0, notifications: 0}
+    preparedA: false, preparedB: false, generation: 0, readGeneration: 0,readGenerationB:0, notifications: 0}
   action prepareUpdate = all { s.applicationA == "pending", s.revisionA == 1, not(s.keysB.contains(3)),
     s' = s.with("preparedA", true).with("readGeneration", s.generation) }
   action prepareNew = all { s.applicationB == "pending", s.revisionB == 0, not(s.keysA.contains(3)),
-    s' = s.with("preparedB", true) }
+    s' = s.with("preparedB", true).with("readGenerationB",s.generation) }
   action publishUpdate = all { s.preparedA, s.applicationA == "pending", s.revisionA == 1,
     s.readGeneration == s.generation, not(s.keysB.contains(3)),
     s' = s.with("revisionA", 2).with("historyA", 2).with("keysA", Set(1, 3))
       .with("applicationA", "approved").with("notifications", s.notifications + 1) }
-  action publishNew = all { s.preparedB, s.applicationB == "pending", s.revisionB == 0, not(s.keysA.contains(3)),
+  action publishNew = all { s.preparedB, s.applicationB == "pending", s.revisionB == 0, not(s.keysA.contains(3)),s.readGenerationB==s.generation,
     s' = s.with("revisionB", 1).with("historyB", 1).with("keysB", Set(2, 3)).with("applicationB", "approved") }
   action directRevision = all { s.revisionA == 1,
     s' = s.with("revisionA", 2).with("historyA", 2).with("notifications", s.notifications + 1) }
@@ -42,4 +42,6 @@ module api_registry_alias_transaction {
   run approvedApplicationCannotPublishTwiceTest = init.then(prepareNew).then(publishNew).then(publishNew.fail())
   run aliasAppendRetainsOriginalIdentityTest = init.then(prepareUpdate).then(publishUpdate)
     .expect(s.keysA == Set(1, 3) and s.historyA == 2)
+  run restrictionInvalidatesNewApplicationTest=init.then(prepareNew).then(enforcementArrives)
+    .expect(s.applicationB=="pending" and s.revisionB==0 and s.keysB==Set()).then(publishNew.fail())
 }

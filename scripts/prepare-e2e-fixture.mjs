@@ -33,7 +33,7 @@ import { copyWorkingTree } from "./copy-working-tree.mjs";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = join(repositoryRoot, "tests", "fixtures");
 /** The sync time the fixture build publishes with its last good registry. */
-export const FIXTURE_REGISTRY_SYNCED_AT = "2026-10-16T06:00:00.000Z";
+const FIXTURE_REGISTRY_SYNCED_AT = "2026-10-16T06:00:00.000Z";
 
 function run(command, args, cwd, env = process.env) {
   execFileSync(command, args, { cwd, env, stdio: "inherit" });
