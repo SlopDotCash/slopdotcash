@@ -197,6 +197,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Notifications and inference accounting | `notification_attempt_ownership`, `notification_admin_fanout`, `notification_escalation`, `bot_inference_reservations`, `bot_value_attempt_recovery`, `bot_value_precall_authority` | `workers/notify/security.ts`, `workers/notify/activity.ts`, `workers/slopbot/value-budget.ts`, migration `0118_slopbot_value_attempt_completion.sql`, existing notification and value-pipeline tests |
 | Inbox storage and identity admission | `api_inbox`, `inbox_queries`, `inbox_mark_read`, `api_identity_admission`, `identity_rate_gate` | `backend/notifications/handler.ts`, `workers/identity/rate-limit.ts`, existing migrated notification workflows; direct rate-counter/gate execution evidence remains missing |
 | Scheduled identity cleanup and intake renewal | `identity_intake_renewal`, `identity_scheduled_maintenance` | `workers/identity/index.ts`, `workers/identity/persistence.ts`, `scripts/identity-maintenance.test.ts`; token-fallback and outer scheduled-handler execution evidence remains incomplete |
+| GitHub identity exchange and callback completion | `github_identity_exchange`, `identity_callback_completion` | `workers/identity/index.ts`, `workers/identity/handler.ts`, `workers/identity/persistence.ts`; `workers/identity/failed-callback.test.ts` and `workers/identity/expiry-boundary.test.ts` use an injected resolver and do not exercise real provider exchange |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -244,6 +245,28 @@ explains the joins, while the
 [Workers scheduled-handler contract](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/)
 defines the host entry point. Neither reference proves this implementation's
 conformance. The models and their 34 scenarios remain unexecuted here.
+
+The GitHub exchange model separates a refused HTTP response or invalid value
+that returns null from a fetch or body-read exception. Its one token request
+and one user request follow the
+[GitHub App user-token flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
+Only the projected actor, login and optional valid User node ID are returned.
+Clearing the local token variable does not revoke the token or erase other
+references. A basic identity can serve the private-trace audience; Points
+requires the node ID. A returned identity is not a completed callback.
+
+The callback model bounds one flow and two competing requests. The claim
+consumes the stored verifier, and a missing reply does not restore it. Failure
+and completion writes can commit before their replies fail. Missing change-count
+metadata also produces a refusal despite a committed write. Failure persistence
+can itself fail, leaving the terminal state unconfirmed and replacing the
+original error. Completion checks a fresh timestamp after the exchange, but SQL
+uses that captured value if later work is delayed. Expiry cleanup can race with
+these writes or remove a completed row before the HTML response is prepared.
+The model does not assert that a successful response proves current row
+availability, browser delivery or assertion issuance. Existing callback tests
+cover selected refusal and expiry paths; they do not establish refinement for
+all modeled races. Both new models and all their scenarios are unexecuted here.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
