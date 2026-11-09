@@ -4,6 +4,7 @@ import type { R2Bucket } from "../../backend/trace/cloudflare-persistence";
 import {
   chunkLayout,
   EVIDENCE_CHUNK_BYTES,
+  observedPart,
   verifiedPart,
 } from "../../backend/vetting/evidence-chunks";
 import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "../../backend/vetting/evidence-retention";
@@ -56,6 +57,12 @@ type Page = {
   next: string | null;
   objects: Copy[];
 };
+type Complete = {
+  pages: number;
+  lastPageSha256: string;
+  objects: number;
+  bytes: number;
+};
 type GenerationTarget = {
   target_key: string;
   generation_id: string;
@@ -72,8 +79,10 @@ type RetirementReceipt = {
   partIndex: number;
   sha256: string;
   sizeBytes: number;
-  outcome: "backed" | "missing";
+  outcome: "backed" | "changed" | "missing";
   backupKey: string | null;
+  observedSha256: string | null;
+  observedSizeBytes: number | null;
 };
 const encoder = new TextEncoder();
 const root = (day: string) => {
@@ -91,11 +100,17 @@ const retirementKey = async (day: string, key: string) =>
   `${root(day)}/retirement/${await sha256Hex(encoder.encode(key))}.json`;
 
 function markerHead(head: Awaited<ReturnType<R2Bucket["head"]>>) {
-  return head?.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] ===
-    EVIDENCE_RETIREMENT_METADATA_VALUE;
+  return (
+    head?.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] ===
+    EVIDENCE_RETIREMENT_METADATA_VALUE
+  );
 }
 
-async function verifyMarker(bucket: R2Bucket, key: string, outcome?: "backed" | "missing") {
+async function verifyMarker(
+  bucket: R2Bucket,
+  key: string,
+  outcome?: RetirementReceipt["outcome"],
+) {
   const bytes = evidenceRetirementBytes(key);
   const head = await bucket.head(key);
   if (!markerHead(head)) throw new Error("Evidence retirement marker is absent");
@@ -104,7 +119,12 @@ async function verifyMarker(bucket: R2Bucket, key: string, outcome?: "backed" | 
   await verifiedPart(bucket, key, await sha256Hex(bytes), bytes.byteLength, true);
 }
 
-async function writeMarker(env: BackupEnvironment, key: string, outcome: "backed" | "missing", createOnly: boolean) {
+async function writeMarker(
+  env: BackupEnvironment,
+  key: string,
+  outcome: RetirementReceipt["outcome"],
+  createOnly: boolean,
+) {
   const bytes = evidenceRetirementBytes(key);
   try {
     await env.EVIDENCE_SOURCE.put(key, bytes, {
@@ -117,8 +137,11 @@ async function writeMarker(env: BackupEnvironment, key: string, outcome: "backed
       ...(createOnly ? { onlyIf: { etagDoesNotMatch: "*" as const } } : {}),
     });
   } catch (error) {
-    try { await verifyMarker(env.EVIDENCE_SOURCE, key, outcome); }
-    catch { throw error; }
+    try {
+      await verifyMarker(env.EVIDENCE_SOURCE, key, outcome);
+    } catch {
+      throw error;
+    }
   }
   await verifyMarker(env.EVIDENCE_SOURCE, key, outcome);
 }
@@ -250,32 +273,23 @@ export async function backupPage(env: BackupEnvironment, job: BackupJob) {
         await verifyMarker(env.EVIDENCE_SOURCE, source.key);
         continue;
       }
-      const digest = head?.customMetadata?.sha256;
-      if (
-        !head ||
-        head.size !== source.size ||
-        !digest ||
-        !/^[0-9a-f]{64}$/.test(digest)
-      )
+      if (!head || head.size !== source.size)
         throw new Error("Scanner evidence changed during backup");
-      const bytes = await verifiedPart(
-        env.EVIDENCE_SOURCE,
-        source.key,
-        digest,
-        source.size,
-      );
+      const observed = await observedPart(env.EVIDENCE_SOURCE, source.key);
+      if (observed.sizeBytes !== source.size)
+        throw new Error("Scanner evidence changed during backup");
       const backupKey = `${root(job.day)}/objects/${source.key}`;
       await immutable(
         env.EVIDENCE_BACKUPS,
         backupKey,
-        bytes,
+        observed.bytes,
         "application/octet-stream",
       );
       objects.push({
         key: source.key,
         backupKey,
-        sha256: digest,
-        sizeBytes: source.size,
+        sha256: observed.sha256,
+        sizeBytes: observed.sizeBytes,
       });
     }
     const value: Page = {
@@ -349,6 +363,48 @@ async function finishBackup(env: BackupEnvironment, day: string) {
   await enqueueCleanup(env, day);
 }
 
+async function snapshotCopies(
+  backups: R2Bucket,
+  day: string,
+  complete: { value: Complete; digest: string },
+  wanted: Set<string>,
+) {
+  if (!Number.isSafeInteger(complete.value.pages) || complete.value.pages < 1)
+    throw new Error("Backup is incomplete");
+  const found = new Map<string, Copy>();
+  let previous: string | null = null;
+  let objects = 0;
+  let bytes = 0;
+  for (let page = 0; page < complete.value.pages; page++) {
+    const record = await jsonRecord<Page>(backups, pageKey(day, page));
+    if (!record || record.value.previous !== previous)
+      throw new Error("Backup receipt chain is incomplete");
+    previous = record.digest;
+    for (const object of record.value.objects) {
+      objects++;
+      bytes += object.sizeBytes;
+      if (!wanted.has(object.key)) continue;
+      if (
+        found.has(object.key) ||
+        object.backupKey !== `${root(day)}/objects/${object.key}` ||
+        !/^[a-f0-9]{64}$/u.test(object.sha256) ||
+        !Number.isSafeInteger(object.sizeBytes) ||
+        object.sizeBytes < 0 ||
+        object.sizeBytes > EVIDENCE_CHUNK_BYTES
+      )
+        throw new Error("Invalid snapshot object receipt");
+      found.set(object.key, object);
+    }
+  }
+  if (
+    previous !== complete.value.lastPageSha256 ||
+    objects !== complete.value.objects ||
+    bytes !== complete.value.bytes
+  )
+    throw new Error("Backup completion does not match its receipts");
+  return found;
+}
+
 function validateRetirement(
   value: RetirementReceipt,
   day: string,
@@ -357,19 +413,36 @@ function validateRetirement(
 ) {
   const generation = generationKey.exec(key)?.[1];
   if (
+    value === null ||
+    typeof value !== "object" ||
     value.schemaVersion !== "slop-evidence-retirement-backup-v1" ||
-    value.day !== day || value.snapshotSha256 !== snapshotSha256 ||
-    value.targetKey !== key || value.generationId !== generation ||
-    !Number.isSafeInteger(value.partIndex) || value.partIndex < -1 ||
+    value.day !== day ||
+    value.snapshotSha256 !== snapshotSha256 ||
+    value.targetKey !== key ||
+    value.generationId !== generation ||
+    !Number.isSafeInteger(value.partIndex) ||
+    value.partIndex < -1 ||
     !/^[a-f0-9]{64}$/u.test(value.sha256) ||
-    !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes < 0 ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    value.sizeBytes < 0 ||
     value.sizeBytes > EVIDENCE_CHUNK_BYTES ||
-    !["backed", "missing"].includes(value.outcome) ||
+    !["backed", "changed", "missing"].includes(value.outcome) ||
     (value.outcome === "missing"
-      ? value.backupKey !== null
+      ? value.backupKey !== null ||
+        value.observedSha256 !== null ||
+        value.observedSizeBytes !== null
       : value.backupKey !== `${root(day)}/objects/${key}` &&
-        value.backupKey !== `${root(day)}/retirement/objects/${key}`)
-  ) throw new Error("Invalid retirement backup receipt");
+        value.backupKey !== `${root(day)}/retirement/objects/${key}`) ||
+    (value.outcome !== "missing" &&
+      (!/^[a-f0-9]{64}$/u.test(value.observedSha256 ?? "") ||
+        !Number.isSafeInteger(value.observedSizeBytes) ||
+        value.observedSizeBytes! < 0 ||
+        value.observedSizeBytes! > EVIDENCE_CHUNK_BYTES ||
+        (value.observedSha256 === value.sha256 &&
+          value.observedSizeBytes === value.sizeBytes) !==
+          (value.outcome === "backed")))
+  )
+    throw new Error("Invalid retirement backup receipt");
 }
 
 /** Backup and fence one reserved target, including candidates never published. */
@@ -378,43 +451,55 @@ async function retireTarget(
   day: string,
   snapshotSha256: string,
   target: GenerationTarget,
+  primary: Copy | undefined,
 ) {
   if (
     generationKey.exec(target.target_key)?.[1] !== target.generation_id ||
     !/^[a-f0-9]{64}$/u.test(target.sha256) ||
-    !Number.isSafeInteger(target.part_index) || target.part_index < -1 ||
-    !Number.isSafeInteger(target.size_bytes) || target.size_bytes < 0 ||
+    !Number.isSafeInteger(target.part_index) ||
+    target.part_index < -1 ||
+    !Number.isSafeInteger(target.size_bytes) ||
+    target.size_bytes < 0 ||
     target.size_bytes > EVIDENCE_CHUNK_BYTES
-  ) throw new Error("Invalid reserved evidence target");
+  )
+    throw new Error("Invalid reserved evidence target");
   const key = await retirementKey(day, target.target_key);
   let receipt = await jsonRecord<RetirementReceipt>(env.EVIDENCE_BACKUPS, key);
   if (!receipt) {
-    let backupKey: string | null = `${root(day)}/objects/${target.target_key}`;
-    if (await env.EVIDENCE_BACKUPS.head(backupKey)) {
-      await verifiedPart(env.EVIDENCE_BACKUPS, backupKey, target.sha256, target.size_bytes);
+    const supplementalKey = `${root(day)}/retirement/objects/${target.target_key}`;
+    // An unbound orphan backup is not authority. Without a receipt, read the
+    // source again and require any previous create-only copy to match it.
+    let copy = primary;
+    if (copy) {
+      await verifiedPart(
+        env.EVIDENCE_BACKUPS, copy.backupKey, copy.sha256, copy.sizeBytes,
+      );
     } else {
-      backupKey = `${root(day)}/retirement/objects/${target.target_key}`;
-      if (await env.EVIDENCE_BACKUPS.head(backupKey)) {
-        await verifiedPart(env.EVIDENCE_BACKUPS, backupKey, target.sha256, target.size_bytes);
-      } else {
-        let head = await env.EVIDENCE_SOURCE.head(target.target_key);
-        if (!head) {
-          // Absence alone does not settle an older PUT. Compete atomically:
-          // either this marker wins or the late body must be backed first.
-          try { await writeMarker(env, target.target_key, "missing", true); }
-          catch (error) {
-            head = await env.EVIDENCE_SOURCE.head(target.target_key);
-            if (!head) throw error;
-          }
+      let head = await env.EVIDENCE_SOURCE.head(target.target_key);
+      if (!head) {
+        // Absence alone does not settle an older PUT. Compete atomically:
+        // either this marker wins or the late body must be backed first.
+        try {
+          await writeMarker(env, target.target_key, "missing", true);
+        } catch (error) {
           head = await env.EVIDENCE_SOURCE.head(target.target_key);
+          if (!head) throw error;
         }
-        if (markerHead(head)) {
-          await verifyMarker(env.EVIDENCE_SOURCE, target.target_key, "missing");
-          backupKey = null;
-        } else {
-          const bytes = await verifiedPart(env.EVIDENCE_SOURCE, target.target_key, target.sha256, target.size_bytes);
-          await immutable(env.EVIDENCE_BACKUPS, backupKey, bytes, "application/octet-stream");
-        }
+        head = await env.EVIDENCE_SOURCE.head(target.target_key);
+      }
+      if (markerHead(head)) {
+        await verifyMarker(env.EVIDENCE_SOURCE, target.target_key, "missing");
+      } else {
+        const observed = await observedPart(env.EVIDENCE_SOURCE, target.target_key);
+        await immutable(
+          env.EVIDENCE_BACKUPS, supplementalKey, observed.bytes, "application/octet-stream",
+        );
+        copy = {
+          key: target.target_key,
+          backupKey: supplementalKey,
+          sha256: observed.sha256,
+          sizeBytes: observed.sizeBytes,
+        };
       }
     }
     const value: RetirementReceipt = {
@@ -426,11 +511,19 @@ async function retireTarget(
       partIndex: target.part_index,
       sha256: target.sha256,
       sizeBytes: target.size_bytes,
-      outcome: backupKey === null ? "missing" : "backed",
-      backupKey,
+      outcome: copy === undefined
+        ? "missing"
+        : copy.sha256 === target.sha256 && copy.sizeBytes === target.size_bytes
+          ? "backed"
+          : "changed",
+      backupKey: copy?.backupKey ?? null,
+      observedSha256: copy?.sha256 ?? null,
+      observedSizeBytes: copy?.sizeBytes ?? null,
     };
     const bytes = encoder.encode(JSON.stringify(value));
-    const digest = await immutable(env.EVIDENCE_BACKUPS, key, bytes, "application/json");
+    const digest = await immutable(
+      env.EVIDENCE_BACKUPS, key, bytes, "application/json",
+    );
     receipt = { value, digest };
   }
   validateRetirement(receipt.value, day, target.target_key, snapshotSha256);
@@ -438,30 +531,52 @@ async function retireTarget(
     receipt.value.partIndex !== target.part_index ||
     receipt.value.sha256 !== target.sha256 ||
     receipt.value.sizeBytes !== target.size_bytes
-  ) throw new Error("Retirement target differs from its receipt");
+  )
+    throw new Error("Retirement target differs from its receipt");
   if (receipt.value.backupKey !== null)
-    await verifiedPart(env.EVIDENCE_BACKUPS, receipt.value.backupKey, target.sha256, target.size_bytes);
+    await verifiedPart(
+      env.EVIDENCE_BACKUPS,
+      receipt.value.backupKey,
+      receipt.value.observedSha256!,
+      receipt.value.observedSizeBytes!,
+    );
   if (receipt.value.outcome === "missing") {
     // A missing receipt is published only after its create-only fence wins.
     // Never replace a later raw object on the strength of that old receipt.
     await verifyMarker(env.EVIDENCE_SOURCE, target.target_key, "missing");
   } else {
-    await writeMarker(env, target.target_key, "backed", false);
+    await writeMarker(env, target.target_key, receipt.value.outcome, false);
   }
   await env.EVIDENCE_DATABASE.prepare(
     `INSERT OR IGNORE INTO vetting_evidence_target_retirements
-     (target_key,outcome,backup_day,backup_key,observed_at)
-     VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-  ).bind(target.target_key, receipt.value.outcome, day, receipt.value.backupKey).run();
+     (target_key,outcome,backup_day,backup_key,observed_sha256,observed_size_bytes,observed_at)
+     VALUES(?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+  ).bind(target.target_key, receipt.value.outcome, day, receipt.value.backupKey,
+    receipt.value.observedSha256, receipt.value.observedSizeBytes).run();
   const recorded = await env.EVIDENCE_DATABASE.prepare(
-    "SELECT outcome,backup_day,backup_key FROM vetting_evidence_target_retirements WHERE target_key=?",
-  ).bind(target.target_key).first<{ outcome: string; backup_day: string; backup_key: string | null }>();
-  if (!recorded || recorded.outcome !== receipt.value.outcome || recorded.backup_day !== day || recorded.backup_key !== receipt.value.backupKey)
+    "SELECT outcome,backup_day,backup_key,observed_sha256,observed_size_bytes FROM vetting_evidence_target_retirements WHERE target_key=?",
+  ).bind(target.target_key).first<{
+    outcome: string; backup_day: string; backup_key: string | null;
+    observed_sha256: string | null; observed_size_bytes: number | null;
+  }>();
+  if (
+    !recorded ||
+    recorded.outcome !== receipt.value.outcome ||
+    recorded.backup_day !== day ||
+    recorded.backup_key !== receipt.value.backupKey ||
+    recorded.observed_sha256 !== receipt.value.observedSha256 ||
+    recorded.observed_size_bytes !== receipt.value.observedSizeBytes
+  )
     throw new Error("Target retirement was not recorded exactly");
 }
 
-/** False means the frozen target inventory needs another bounded queue turn. */
-async function retireGeneration(env: BackupEnvironment, day: string, snapshotSha256: string, generation: string) {
+/** Pending keeps the frozen inventory on this cursor for another queue turn. */
+async function retireGeneration(
+  env: BackupEnvironment,
+  day: string,
+  snapshot: { value: Complete; digest: string },
+  generation: string,
+) {
   await env.EVIDENCE_DATABASE.prepare(
     `UPDATE vetting_evidence_generations SET state='retiring'
      WHERE id=? AND state='active' AND NOT EXISTS (
@@ -486,7 +601,11 @@ async function retireGeneration(env: BackupEnvironment, day: string, snapshotSha
        AND NOT EXISTS (SELECT 1 FROM vetting_evidence_target_retirements r WHERE r.target_key=t.target_key)
      ORDER BY t.target_key LIMIT 16`,
   ).bind(generation).all<GenerationTarget>()).results;
-  for (const target of targets) await retireTarget(env, day, snapshotSha256, target);
+  const copies = await snapshotCopies(
+    env.EVIDENCE_BACKUPS, day, snapshot, new Set(targets.map(target => target.target_key)),
+  );
+  for (const target of targets)
+    await retireTarget(env, day, snapshot.digest, target, copies.get(target.target_key));
   await env.EVIDENCE_DATABASE.prepare(
     `UPDATE vetting_evidence_generations SET state='retired',retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
      WHERE id=? AND state='retiring' AND NOT EXISTS (
@@ -511,7 +630,7 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
     .first<{ phase: string; cleanup_after: string | null }>();
   if (cycle?.phase === "complete") return;
   if (cycle?.phase !== "cleanup") throw new Error("Snapshot is not complete");
-  const snapshot = await jsonRecord(env.EVIDENCE_BACKUPS, `${root(day)}/complete.json`);
+  const snapshot = await jsonRecord<Complete>(env.EVIDENCE_BACKUPS, `${root(day)}/complete.json`);
   if (!snapshot)
     throw new Error("Snapshot completion receipt is missing");
   if (env.EVIDENCE_RETENTION_MODE === "enabled") {
@@ -565,7 +684,7 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
       }
       if (row.storage !== "content" || !/^[A-Za-z0-9_-]{1,100}$/u.test(row.storage_generation))
         throw new Error("Invalid evidence storage generation");
-      const retired = await retireGeneration(env, day, snapshot.digest, row.storage_generation);
+      const retired = await retireGeneration(env, day, snapshot, row.storage_generation);
       if (retired === "pending") {
         await enqueueCleanup(env, day);
         return;
@@ -642,42 +761,11 @@ export async function restoreCheck(
 ) {
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(checkId))
     throw new Error("Invalid restore check identity");
-  const complete = await jsonRecord<{
-    pages: number;
-    lastPageSha256: string;
-    objects: number;
-    bytes: number;
-  }>(backups, `${root(day)}/complete.json`);
-  if (
-    !complete ||
-    !Number.isSafeInteger(complete.value.pages) ||
-    complete.value.pages < 1
-  )
-    throw new Error("Backup is incomplete");
-  let previous: string | null = null;
-  let found: Copy | undefined;
-  let objects = 0,
-    bytes = 0;
-  for (let page = 0; page < complete.value.pages; page++) {
-    const record = await jsonRecord<Page>(backups, pageKey(day, page));
-    if (!record || record.value.previous !== previous)
-      throw new Error("Backup receipt chain is incomplete");
-    previous = record.digest;
-    for (const object of record.value.objects) {
-      objects++;
-      bytes += object.sizeBytes;
-      if (object.key === sourceKey) {
-        if (found) throw new Error("Backup contains a duplicate object");
-        found = object;
-      }
-    }
-  }
-  if (
-    previous !== complete.value.lastPageSha256 ||
-    objects !== complete.value.objects ||
-    bytes !== complete.value.bytes
-  )
-    throw new Error("Backup completion does not match its receipts");
+  const complete = await jsonRecord<Complete>(backups, `${root(day)}/complete.json`);
+  if (!complete) throw new Error("Backup is incomplete");
+  let found = (
+    await snapshotCopies(backups, day, complete, new Set([sourceKey]))
+  ).get(sourceKey);
   const supplemental = await jsonRecord<RetirementReceipt>(
     backups,
     await retirementKey(day, sourceKey),
@@ -685,16 +773,23 @@ export async function restoreCheck(
   if (supplemental) {
     validateRetirement(supplemental.value, day, sourceKey, complete.digest);
     const value = supplemental.value;
-    if (value.outcome === "backed" && value.backupKey !== null) {
-      if (found && (found.sha256 !== value.sha256 || found.sizeBytes !== value.sizeBytes || found.backupKey !== value.backupKey))
+    if (value.outcome !== "missing" && value.backupKey !== null) {
+      if (
+        found &&
+        (found.sha256 !== value.observedSha256 ||
+          found.sizeBytes !== value.observedSizeBytes ||
+          found.backupKey !== value.backupKey)
+      )
         throw new Error("Snapshot and retirement backup disagree");
       found = {
         key: sourceKey,
         backupKey: value.backupKey,
-        sha256: value.sha256,
-        sizeBytes: value.sizeBytes,
+        sha256: value.observedSha256!,
+        sizeBytes: value.observedSizeBytes!,
       };
-    } else if (found) throw new Error("Missing retirement conflicts with snapshot backup");
+    } else if (found) {
+      throw new Error("Missing retirement conflicts with snapshot backup");
+    }
   }
   if (!found) throw new Error("Object has no verified backup receipt");
   const data = await verifiedPart(
@@ -705,7 +800,12 @@ export async function restoreCheck(
   );
   const key = `restore-checks/${checkId}/${sourceKey}`;
   await immutable(destination, key, data, "application/octet-stream");
-  return { key, sha256: found.sha256, sizeBytes: found.sizeBytes };
+  return {
+    key,
+    sha256: found.sha256,
+    sizeBytes: found.sizeBytes,
+    retirementOutcome: supplemental?.value.outcome ?? null,
+  };
 }
 
 /** Calendar-year retention uses the database clock, not a caller-supplied date. */

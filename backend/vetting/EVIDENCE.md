@@ -173,8 +173,10 @@ A new run after retirement selects a new physical generation.
 Retirement of physical targets and complete backup of a run are different
 outcomes. Missing declared parts keep a `retention-missing` audit and never
 receive a complete deletion receipt. Legacy and currently shared generations
-keep a `retention-held` audit. Corrupt bytes without a verified exact backup,
-failed storage operations and unknown outcomes remain incomplete and retryable.
+keep a `retention-held` audit. Changed raw bytes are backed up under their observed digest and remain
+distinct from valid declared evidence. They never satisfy a complete per-run
+evidence deletion receipt. Unreadable bytes, failed storage operations and
+unknown outcomes remain incomplete and retryable.
 See the [backup worker](../../workers/vetting-backup/README.md) for the bounded
 collector, supplemental backup receipts and restoration contract.
 

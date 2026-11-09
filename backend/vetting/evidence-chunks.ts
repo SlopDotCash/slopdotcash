@@ -151,6 +151,48 @@ export async function verifiedPart(
   }
 }
 
+/**
+ * Back up the actual bounded R2 body even if its declared evidence digest is
+ * wrong. The returned digest describes observed bytes, never scan clearance.
+ */
+export async function observedPart(bucket: R2Bucket, key: string) {
+  const object = await bucket.get(key);
+  if (!object)
+    throw Object.assign(new Error("Evidence backup source is missing"), {
+      status: 404,
+      code: "evidence_missing",
+    });
+  const reader = object.body.getReader();
+  try {
+    if (object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] === EVIDENCE_RETIREMENT_METADATA_VALUE)
+      throw Object.assign(new Error("Evidence target has retired"), {
+        status: 410,
+        code: "evidence_retired",
+      });
+    if (!Number.isSafeInteger(object.size) || object.size < 0 || object.size > EVIDENCE_CHUNK_BYTES)
+      throw new Error("Evidence backup source exceeds bounded part size");
+    const bytes = new Uint8Array(object.size);
+    let offset = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (offset + value.byteLength > bytes.byteLength)
+        throw new Error("Evidence backup source length changed");
+      bytes.set(value, offset);
+      offset += value.byteLength;
+    }
+    if (offset !== bytes.byteLength)
+      throw new Error("Evidence backup source length changed");
+    return { bytes, sha256: bytesToHex(sha256(bytes)), sizeBytes: bytes.byteLength };
+  } catch (error) {
+    try { await reader.cancel(); }
+    catch { /* error-policy:J3 preserve the original backup refusal. */ }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** Whole-file integrity is the SHA of ordered original bytes, never part hashes. */
 export async function verifyParts(
   bucket: R2Bucket,

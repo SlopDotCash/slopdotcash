@@ -51,11 +51,15 @@ CREATE TABLE vetting_evidence_heads (
 ) STRICT;
 CREATE TABLE vetting_evidence_target_retirements (
   target_key TEXT PRIMARY KEY REFERENCES vetting_evidence_targets(target_key),
-  outcome TEXT NOT NULL CHECK(outcome IN ('backed','missing')),
+  outcome TEXT NOT NULL CHECK(outcome IN ('backed','changed','missing')),
   backup_day TEXT NOT NULL,
   backup_key TEXT,
+  observed_sha256 TEXT,
+  observed_size_bytes INTEGER,
   observed_at TEXT NOT NULL,
-  CHECK((outcome='backed')=(backup_key IS NOT NULL))
+  CHECK((outcome='missing' AND backup_key IS NULL AND observed_sha256 IS NULL AND observed_size_bytes IS NULL)
+    OR (outcome IN ('backed','changed') AND backup_key IS NOT NULL AND length(observed_sha256)=64
+      AND observed_size_bytes BETWEEN 0 AND 8388608))
 ) STRICT;
 
 CREATE TRIGGER vetting_evidence_target_reservation
@@ -94,6 +98,9 @@ BEFORE INSERT ON vetting_evidence_target_retirements
 WHEN NOT EXISTS (
   SELECT 1 FROM vetting_evidence_targets t JOIN vetting_evidence_generations g ON g.id=t.generation_id
   WHERE t.target_key=NEW.target_key AND g.state='retiring'
+    AND (NEW.outcome='missing'
+      OR (NEW.outcome='backed' AND NEW.observed_sha256=t.sha256 AND NEW.observed_size_bytes=t.size_bytes)
+      OR (NEW.outcome='changed' AND (NEW.observed_sha256<>t.sha256 OR NEW.observed_size_bytes<>t.size_bytes)))
 )
 BEGIN SELECT RAISE(ABORT,'evidence generation is not retiring'); END;
 CREATE TRIGGER vetting_evidence_target_retirements_no_update

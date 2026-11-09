@@ -11,6 +11,9 @@
 // Every rejection then attempts cancellation, preserves its primary error if
 // cancellation fails, and releases the reader. A failed cancellation does not
 // prove the source closed. Missing objects and invalid sizes own no reader.
+// This models the default evidence read: an explicit retirement marker refuses
+// before metadata/byte verification, even when the original object was empty.
+// The worker's opt-in canonical marker verification is a separate protocol.
 // bucket.get either rejects, returns null, or supplies a fresh unlocked R2
 // body whose getReader operation succeeds; prelocked/invalid adapter objects
 // are outside that storage input contract.
@@ -57,6 +60,9 @@ module vetting_verified_parts {
     s' = s.with("phase", "metadata").with("readerOwned", true)
       .with("acquisitions", s.acquisitions + 1).with("sourceClosed", false)
       .with("cancelTried", false).with("cancelFailed", false) }
+  action retirementMarker = all { s.phase == "metadata",
+    s' = s.with("phase", "cancel").with("primary", "retired")
+      .with("preserved", "retired") }
   action metadata(matches: bool): bool = all { s.phase == "metadata",
     s' = if (matches) s.with("phase", "read")
       else s.with("phase", "cancel").with("primary", "metadata")
@@ -107,7 +113,7 @@ module vetting_verified_parts {
     nondet mode = Set("part", "whole").oneOf()
     nondet yes = Set(false, true).oneOf()
     nondet length = Set(1, 2, 3).oneOf()
-    any { begin(mode, yes), emptyPart, get(yes), fetchError, acquire, metadata(yes), fragment(length, yes),
+    any { begin(mode, yes), emptyPart, get(yes), fetchError, acquire, retirementMarker, metadata(yes), fragment(length, yes),
       readError, wrongExpectedDigest, eof, cancelStart, cancelResult(yes), release, finishError,
       feed, wholeHash(yes), callerCancel, s' = s }
   }
@@ -144,6 +150,11 @@ module vetting_verified_parts {
     .expect(s.primary == "digest" and s.outcome == "error" and invariant)
   run metadataRefusalCancelsWithoutReadingTest = init.then(part).then(metadata(false)).then(rejectCleanup(true))
     .expect(s.offset == 0 and s.cancelTried and s.sourceClosed and s.primary == "metadata" and invariant)
+  run retiredMarkerCancelsAndReleasesWithoutReadingTest = init.then(part).then(retirementMarker).then(rejectCleanup(true))
+    .expect(s.offset == 0 and s.cancelTried and s.sourceClosed and s.releases == 1 and s.primary == "retired" and invariant)
+  run retiredMarkerCleanupFailurePreservesRefusalTest = init.then(begin("part", true)).then(emptyPart).then(get(true)).then(acquire)
+    .then(retirementMarker).then(rejectCleanup(false))
+    .expect(s.offset == 0 and s.primary == "retired" and s.verified == Set() and s.cancelFailed and s.releases == 1 and invariant)
   run metadataCleanupFailurePreservesPrimaryTest = init.then(part).then(metadata(false)).then(rejectCleanup(false))
     .expect(s.cancelFailed and not(s.sourceClosed) and s.primary == "metadata" and s.releases == 1 and invariant)
   run overflowCleanupFailurePreservesPrimaryTest = init.then(part).then(metadata(true)).then(fragment(3, true)).then(rejectCleanup(false))

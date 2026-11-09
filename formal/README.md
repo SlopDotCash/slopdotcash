@@ -154,7 +154,8 @@ the reviewed PR; earlier per-branch results do not certify the combined source.
 | Payment-child selection and submitted recovery | `ui/ui_bounty_payment_parent.qnt`, `ui/ui_submitted_payment_recovery.qnt` | The same EVM and Solana payment suites |
 | Private case ordering, Inbox mutation and Admin draft ownership | `ui/ui_private_case_revisions.qnt`, `ui/ui_inbox_mutation_focus.qnt`, `ui/ui_admin_editor_lifetime.qnt`, `ui/ui_admin_mutation_identity.qnt` | `tests/e2e/private-case-ordering.spec.ts`, `tests/e2e/inbox-response-owner.spec.ts`, `tests/e2e/admin-editor-lifetime.spec.ts` |
 | Admin vetting request ownership | `ui/ui_admin_vetting_requests.qnt` | `tests/e2e/admin-vetting-request-ownership.spec.ts` |
-| Evidence registration, inventory and upload completion | `vetting/vetting_evidence_registration.qnt`, `vetting/vetting_evidence_inventory.qnt`, `vetting/vetting_upload_completion.qnt`, `vetting/vetting_object_lifecycle.qnt` | `scripts/vetting-api.test.ts`; the cleanup race below remains unresolved |
+| Evidence registration, inventory and upload completion | `vetting/vetting_evidence_registration.qnt`, `vetting/vetting_evidence_inventory.qnt`, `vetting/vetting_upload_completion.qnt`, `vetting/vetting_object_lifecycle.qnt` | `scripts/vetting-api.test.ts`; legacy and execution limits below remain open |
+| Generation storage, raw backup and retirement | `vetting/vetting_generation_storage.qnt`, `vetting/vetting_observed_part.qnt`, `vetting/vetting_generation_retirement.qnt` | `scripts/vetting-api.test.ts`, `workers/vetting-backup/generation-retirement-workflow.mjs` |
 | Payment preparation and recovery at commit | `payments/direct_preparation_completion.qnt`, `payments/direct_recovery_completion.qnt` | `backend/security/direct-payments.integration.ts` with migrated SQLite and local Anvil |
 | Monthly owner authority at commit | `rewards/monthly_owner_completion.qnt` | `backend/payments/monthly.test.ts` with actual SQLite writes |
 | Registry snapshot and browser evidence publication | `release/registry_snapshot_publication.qnt`, `release/ci_browser_evidence.qnt` | Registry sync checks; separate normal and private-intake browser reports |
@@ -873,48 +874,57 @@ the same operator again after its list audit. Per-object observations can
 straddle expiry; the result is not an atomic storage snapshot. A route regression
 definition revokes the real session while the committed list audit reply waits.
 
-Content-addressed upload repair now requires an explicit missing or corrupt
-observation. Missing copies retry create-only. Corrupt copies require the
-ETag from that failed verification, and R2 must compare it before writing.
-Unknown read failures and absent ETags authorize no replacement. Conditional
-write results still require fresh byte verification. The local workerd and
-development adapters pass through the real ETag and conditional operation.
-Chunk upload and finalization reread retention after storage verification and
-before recording acceptance. These are observation boundaries, not atomic
-time reservations through later SQL or response delivery. The upload model
-has 27 scenarios over two runs, two parts and two sequential requests, with
-four ETag classes. It separates durable bytes, per-run completion, audits and
-lost replies. Metadata-only repair may preserve an ETag; that value cannot
-prove a unique storage generation. Seven route regression definitions cover
-transport failure, conditional repair, concurrent replacement and expiry across
-I/O. The models and regression definitions have not run.
+Migration 0119 binds new evidence rows to immutable physical generations.
+Registration reserves or selects the active generation in the same batch as
+the run, objects and audit. Replaying a run preserves its original generation;
+it cannot borrow a later generation's bytes. Legacy rows keep their recorded
+locations and remain distinct from new generated storage.
 
-Physical evidence cleanup still has an unresolved race. The D1 cleanup claim
-blocks new object references but does not stop an already admitted R2 write.
-That write can finish after deletion, the absent-object read and the deletion
-receipt, restoring raw bytes. The object lifecycle and upload models now expose
-this trace instead of assuming atomic upload exclusion. This is consistent with
-[R2's documented concurrent-write behavior](https://developers.cloudflare.com/r2/reference/consistency/):
-the last completed write wins. A separate storage generation per immutable D1
-binding is a candidate design, but it also needs recovery for writes whose
-outcome is unknown. An ETag-only fence can confuse identical bytes restored by
-a later generation; the [Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
-does not provide a version-match condition. No generation or writer-fencing
-repair is implemented here. Current cleanup receipts therefore do not prove
-that no delayed writer can restore the bytes.
+`vetting_generation_storage` has 32 authored scenarios over two callers, two
+generations, two exact part descriptors per generation and four physical
+targets. Every generated write reserves its immutable target before R2 I/O.
+Initial upload and corruption repair are both create-only. A repair writes a
+fresh candidate and compares the complete descriptor and previous pointer
+before publishing. Losing or uncertain publication rereads and verifies the
+current winner. Unpublished and failed candidates remain in the inventory.
+The model separates database commit/reply, conditional PUT settlement, current
+pointer observations and the final active-generation check. These observations
+are not atomic response delivery or continuous authorization.
 
-Cleanup also traverses only the selected final reference's declared layout.
-An earlier reference can have declared another part key before whole-file
-verification. Its bytes, or its delayed upload, remain outside that traversal.
-The retention model's 19 scenarios bound three references, two selected part
-keys, one historical-only key, two admitted uploads and three cleanup
-selections. They distinguish shared logical retirement, verified backups,
-partial deletes, absent-part audits and lost replies. Its receipts describe
-observations rather than permanent absence.
-A complete repair must reserve and fence every physical write target, including
-repair candidates, then retain those targets' history. New references and
-repairs must not reopen retired keys. Legacy unconditional writers need a
-separate migration boundary; neither new source nor a later read cancels them.
+The collector freezes the generation before traversing every reserved target,
+including earlier layouts and repair candidates. Backed bytes are replaced by
+permanent non-evidence markers. Missing targets first compete with a create-only
+marker: a late body that wins must be backed before replacement. This preserves
+backup ordering as well as blocking writes that finish after retirement.
+Supplemental backup receipts bind newly observed targets to the completed
+snapshot. Ordinary readers refuse markers, including for empty originals.
+The reader model now has 22 scenarios covering ownership, marker refusal,
+primary errors and cancellation. Its bounds remain one part or two ordered
+parts with zero/two byte units and bounded fragments.
+The separate observed-body model has 18 scenarios over one body with zero/two
+byte units, invalid size classes and an overflowing third unit. The retirement
+model has 28 scenarios over two references, two declared slots, three reserved
+targets, two retries and one successor-generation target. It distinguishes
+backed, changed and missing data and retains the historical unsafe-marker trace
+outside the current transition relation.
+
+Legacy same-key repair remains conditional on its observed ETag, and missing
+copies retry create-only. The 27-scenario upload model covers those legacy
+rows; ETags can repeat and are never unique generation identifiers. The old
+physical DELETE counterexamples are retained as historical negative models.
+The new collector holds legacy storage instead of using a claim or absent
+HEAD as proof that an earlier writer has stopped. Old receipts are not upgraded
+to the new guarantee. Legacy writer quiescence and migration recovery remain
+separate operational acceptance work.
+
+Storage generations change no retention duration or permanent-admission policy.
+Backups bind the bytes actually observed, including changed raw content.
+Changed content remains distinct from a valid declared part and cannot satisfy
+a complete per-run evidence deletion receipt. Unreadable storage, ambiguous
+outcomes and missing declared slots remain explicit. A complete generation retirement is distinct from a
+complete per-run backup/deletion receipt. The new D1/R2/API workflow is wired
+into the integration runner, but it and the authored route regressions have
+not run. No new model has been parsed, simulated or verified in this lane.
 
 This branch includes the changes from merged PR
 [#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) through development

@@ -49,6 +49,11 @@ const drivers = [
   ],
   ["vetting-backup", "node", ["workers/vetting-backup/workflow.mjs"]],
   [
+    "vetting-generation-retirement",
+    "node",
+    ["workers/vetting-backup/generation-retirement-workflow.mjs"],
+  ],
+  [
     "vetting-qualification",
     "node",
     ["workers/vetting-backup/qualification-workflow.mjs"],

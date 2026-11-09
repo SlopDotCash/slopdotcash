@@ -14,7 +14,8 @@
 // Upload admission and R2 completion are separate. An admitted request can
 // finish after expiry, physical deletion and its receipt; the current claim
 // fences registration, not an already submitted write. lateResurrection is a
-// diagnostic of this unresolved storage-generation boundary, not an invariant.
+// historical diagnostic, not an invariant. The primary step excludes this
+// retired DELETE protocol; current legacy cleanup holds its bytes instead.
 module vetting_object_lifecycle {
   var s: { manifest: int, aRead: bool, bRead: bool, aResult: str, bResult: str,
     refs: Set[int], expired: Set[int], completed: Set[int], deleted: Set[int],
@@ -57,9 +58,12 @@ module vetting_object_lifecycle {
       .with("safeDeletion", s.safeDeletion and activeRefs == Set(s.claim) and s.expired.contains(s.claim)) }
   action recordDelete = all { s.claim != 0, not(s.present), s.backup,
     s' = s.with("deleted", s.deleted.union(Set(s.claim))).with("claim", 0) }
-  action step = { nondet ref = Set(1, 2, 3).oneOf(); nondet payload = Set(1, 2).oneOf()
+  action historicalStep = { nondet ref = Set(1, 2, 3).oneOf(); nondet payload = Set(1, 2).oneOf()
     any { readA, readB, commitA, commitB(payload), registerShared(ref), startUpload(ref), finishUpload(ref), corrupt,
       finalize(ref), expire(ref), verifiedBackup, retireShared(ref), claimDelete(ref), deleteBytes, recordDelete, s' = s } }
+  action step = { nondet ref = Set(1, 2, 3).oneOf(); nondet payload = Set(1, 2).oneOf()
+    any { readA, readB, commitA, commitB(payload), registerShared(ref), startUpload(ref), finishUpload(ref), corrupt,
+      finalize(ref), expire(ref), verifiedBackup, s' = s } }
   val invariant = all { s.safeDeletion, s.completed.subseteq(s.refs), s.deleted.subseteq(s.expired),
     s.claim != 0 implies s.refs.contains(s.claim) and s.expired.contains(s.claim),
     s.aResult == "created" implies s.manifest == 1,
