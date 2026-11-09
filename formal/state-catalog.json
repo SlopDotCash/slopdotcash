@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "90ed63f58db66066c004c9c82a1fb12be27dcf9e80f75f2d38832bc27e14908a",
+  "inventorySha256": "d2887bd95e9688bb66e924d8d1cd7ec6ec995ebb0b204da41389d7037412ad3c",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -41,7 +41,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 862,
+      "line": 860,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -57,7 +57,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1342,
+      "line": 1340,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -86,7 +86,7 @@
     },
     {
       "path": "backend/points/x.ts",
-      "line": 26,
+      "line": 22,
       "name": "status",
       "kind": "string-union",
       "values": ["cancelled", "connected", "failed"],
@@ -249,6 +249,36 @@
       "review": "candidate-only"
     },
     {
+      "path": "backend/security/case-store.ts",
+      "line": 106,
+      "name": "submission_state",
+      "kind": "string-union",
+      "values": ["claimed", "link-rejected", "verified"],
+      "models": [
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/case-store.ts",
+      "line": 672,
+      "name": "PvrState",
+      "kind": "string-union",
+      "values": ["disabled", "forbidden", "ready", "unavailable"],
+      "models": [
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["disabled", "forbidden", "ready"],
+      "review": "candidate-only"
+    },
+    {
       "path": "backend/security/direct-solana-recovery.ts",
       "line": 93,
       "name": "state",
@@ -275,46 +305,6 @@
       "review": "candidate-only"
     },
     {
-      "path": "backend/security/handler.ts",
-      "line": 174,
-      "name": "submission_state",
-      "kind": "string-union",
-      "values": ["claimed", "link-rejected", "verified"],
-      "models": [
-        "formal/models/api/api_bounty_reservation.qnt",
-        "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_roles.qnt",
-        "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/direct_preparation_completion.qnt",
-        "formal/models/payments/direct_recovery_completion.qnt",
-        "formal/models/payments/security_payment_projection.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt",
-        "formal/models/ui/ui_private_case_revisions.qnt"
-      ],
-      "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
-      "review": "candidate-only"
-    },
-    {
-      "path": "backend/security/handler.ts",
-      "line": 4001,
-      "name": "PvrState",
-      "kind": "string-union",
-      "values": ["disabled", "forbidden", "ready", "unavailable"],
-      "models": [
-        "formal/models/api/api_bounty_reservation.qnt",
-        "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_roles.qnt",
-        "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/payments/direct_preparation_completion.qnt",
-        "formal/models/payments/direct_recovery_completion.qnt",
-        "formal/models/payments/security_payment_projection.qnt",
-        "formal/models/payments/security_rail_exclusivity.qnt",
-        "formal/models/ui/ui_private_case_revisions.qnt"
-      ],
-      "lexicallyUnmentionedValues": ["disabled", "forbidden"],
-      "review": "candidate-only"
-    },
-    {
       "path": "backend/security/intake-grant.ts",
       "line": 46,
       "name": "mode",
@@ -328,24 +318,8 @@
       "review": "candidate-only"
     },
     {
-      "path": "backend/security/report-intake.ts",
-      "line": 67,
-      "name": "review_decision",
-      "kind": "string-union",
-      "values": ["forward", "request-information"],
-      "models": [
-        "formal/models/api/api_private_assessment.qnt",
-        "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_report_forward_revision.qnt",
-        "formal/models/api/api_submission_recovery.qnt"
-      ],
-      "lexicallyUnmentionedValues": [],
-      "review": "candidate-only"
-    },
-    {
-      "path": "backend/security/submissions.ts",
-      "line": 77,
+      "path": "backend/security/submission-store.ts",
+      "line": 9,
       "name": "SubmissionState",
       "kind": "string-union",
       "values": [
@@ -357,6 +331,19 @@
         "submitting",
         "uncertain"
       ],
+      "models": [
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/submission-store.ts",
+      "line": 288,
+      "name": "review_decision",
+      "kind": "string-union",
+      "values": ["forward", "request-information"],
       "models": [
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt"
@@ -413,7 +400,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "line": 577,
+      "line": 576,
       "name": "recordResult",
       "kind": "string-union",
       "values": ["conflict", "recorded"],
@@ -1822,18 +1809,18 @@
       "review": "candidate-only"
     },
     {
-      "path": "scripts/escrow-acceptance/upgrade-verification.ts",
-      "line": 50,
+      "path": "scripts/escrow-acceptance/upgrade-qualification.ts",
+      "line": 25,
       "name": "mode",
       "kind": "string-union",
       "values": ["local", "public-testnet"],
-      "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
+      "models": [],
       "lexicallyUnmentionedValues": ["local", "public-testnet"],
       "review": "candidate-only"
     },
     {
-      "path": "scripts/escrow-acceptance/upgrade-verification.ts",
-      "line": 83,
+      "path": "scripts/escrow-acceptance/upgrade-qualification.ts",
+      "line": 58,
       "name": "status",
       "kind": "string-union",
       "values": [
@@ -1844,8 +1831,15 @@
         "planned",
         "waiting"
       ],
-      "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
-      "lexicallyUnmentionedValues": ["failed", "passed", "waiting"],
+      "models": [],
+      "lexicallyUnmentionedValues": [
+        "executed",
+        "executing",
+        "failed",
+        "passed",
+        "planned",
+        "waiting"
+      ],
       "review": "candidate-only"
     },
     {
@@ -2522,7 +2516,7 @@
     },
     {
       "path": "src/lib/allocation-funding.ts",
-      "line": 33,
+      "line": 31,
       "name": "fundingState",
       "kind": "string-union",
       "values": ["committed", "pledged"],
@@ -2663,7 +2657,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4619,
+      "line": 4570,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -3014,7 +3008,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 25,
+      "line": 24,
       "name": "ConversionState",
       "kind": "string-union",
       "values": [
@@ -3041,7 +3035,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 41,
+      "line": 40,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3059,7 +3053,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 300,
+      "line": 299,
       "name": "status",
       "kind": "string-union",
       "values": ["locked", "not_converted", "ran"],
@@ -3169,7 +3163,7 @@
     },
     {
       "path": "workers/payment-executor/core.ts",
-      "line": 109,
+      "line": 77,
       "name": "AttemptMode",
       "kind": "string-union",
       "values": ["none", "required"],
@@ -3437,7 +3431,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2763,
+      "line": 2761,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
@@ -3454,7 +3448,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2837,
+      "line": 2835,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -3471,7 +3465,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2900,
+      "line": 2898,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -3524,7 +3518,7 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "line": 64,
+      "line": 60,
       "name": "result",
       "kind": "string-union",
       "values": ["policySha", "sourceDigest"],

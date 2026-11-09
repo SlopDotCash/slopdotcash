@@ -148,7 +148,7 @@
     },
     {
       "path": "backend/fee-conversions/handler.ts",
-      "sha256": "c21119000c0bdc1e792b9d68fefe1cf83eeb92019d7ce41dd1ee75940b2ce404",
+      "sha256": "319b8f2a306801ee5c87e8eefdaa0179d8c2075f861d9c865fa5c84e249941d4",
       "models": ["formal/models/fees/fee_conversion.qnt"],
       "candidateLines": [46, 71, 116, 126, 148, 158, 164, 166, 169, 192],
       "review": "mapped-abstraction"
@@ -171,7 +171,7 @@
     },
     {
       "path": "backend/http.ts",
-      "sha256": "0aaa2fccef61b3e6deef81fa5e0df55d2b75dfc2c3b781750aaff20c06229241",
+      "sha256": "167aeab425cfdddde1db8b73fab69b05d9e3cc8985493fde00f1f72a387def33",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/api_request_composition.qnt"
@@ -184,21 +184,21 @@
     },
     {
       "path": "backend/identity-assertion.ts",
-      "sha256": "0ae7a1d11ea5c66c179bc6fb29f7fcded38b02e6d3d8ca343aacace8b08084bf",
+      "sha256": "41891b107de4c8c017c4e905f03305aa10e9bed5e8eeded377ee4522933c87a2",
       "models": ["formal/models/api/api_accounts.qnt"],
       "candidateLines": [32],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/notifications/email-destinations.ts",
-      "sha256": "4d581a77e585cb0192c8ee77337c31fc262700496ee945cac02b05e4aad44ecb",
+      "sha256": "8b6f844d5fe2683a96d30277e91d6da22a30b3e175952a410bb953c121651d9d",
       "models": ["formal/models/api/api_email_consent.qnt"],
       "candidateLines": [120],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/notifications/email.ts",
-      "sha256": "4407051c3087756a75cd3ff182bdcdce23b597e5fdeef7514413a696aed4e484",
+      "sha256": "d638f73f8e7fcf7f0bffe1b8a3caa6405b302aba9528fae16de0127fe3857bdb",
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt"
@@ -211,7 +211,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "2ae9338d3d87dda7043773cbe2ef9887f6cf7e35cab68dd062fac09d94019e3b",
+      "sha256": "add7bb997bec2e9d2ad5579466bf3c2663a16f5dd7c9c82d502e383a24e66df0",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt"
@@ -249,7 +249,7 @@
     },
     {
       "path": "backend/payments/chain-awards.ts",
-      "sha256": "7c40dca97ccfdae847afd77cb9bba5646c4b1051f3b94c00c28c9ff8aea924de",
+      "sha256": "d19c437a53481c049fe0a4c207a53c55d9104eca9e6a7f0a1a1ef1d9e9daa5ad",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
@@ -287,7 +287,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "b8494ec10f40d1a77f60a07cfd3b4754ec438a4f48cf5bc05cd8103228a903da",
+      "sha256": "d88a63a760037ea70703fc161daa5a5d0983779ac0b8fdc104557da50dc58bff",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -314,35 +314,43 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/payments/monthly-attestation-types.ts",
+      "sha256": "85a061fece0c7c8931583922701299547590be1348b8f97b46c2e664ee934f90",
+      "models": [],
+      "candidateLines": [22, 32],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declarations of the monthly attestation request, plan and authorization; no runtime code or state transition."
+    },
+    {
       "path": "backend/payments/monthly-attestation.ts",
-      "sha256": "79098d0677e905395578c75354b2aaf857b093885901af4752287a0185266e29",
+      "sha256": "daac95f9f90891383f50e92d50c942701275bb2b50702585f72174418cfa1fd3",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
-      "candidateLines": [55, 101, 339],
+      "candidateLines": [82, 320],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/payments/monthly-publication.ts",
-      "sha256": "a19fcb537cc09242714565f16caa2766655b0879f0ee28619705f3d1afeb0d28",
+      "sha256": "a591cad7a8a77df889b15b40cf8b7401f0118601834e77b89e6f4c619fef3fc7",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
-      "candidateLines": [103, 118, 149],
+      "candidateLines": [105, 120, 151],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/payments/monthly-reserve-release.ts",
-      "sha256": "1fdaa0a58899efd180590704079d57b90f7a4e30b21073cb01ce3af34b38615b",
+      "sha256": "b4cd262bfbf138ae690f93db08926f89881adc7eff1cf682102d8f353b3f8aa9",
       "models": ["formal/models/rewards/monthly_release.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "8be798422a39b6e51ea711b65e61849a009c609ceb7a2b1bc7a3a18d9982a1b3",
+      "sha256": "8bad5778e31d929c9f81c4caaa52ad8ff28d547fe8bba24f3529f250ce00b453",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
@@ -351,9 +359,9 @@
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
-        73, 115, 123, 229, 321, 432, 461, 463, 477, 487, 496, 502, 520, 628,
-        632, 655, 660, 683, 730, 757, 766, 786, 862, 979, 1033, 1074, 1136,
-        1217, 1239, 1248, 1261, 1267, 1298, 1324, 1330, 1334, 1389, 1406
+        73, 115, 123, 229, 319, 430, 459, 461, 475, 485, 494, 500, 518, 626,
+        630, 653, 658, 681, 728, 755, 764, 784, 860, 977, 1031, 1072, 1134,
+        1215, 1237, 1246, 1259, 1265, 1296, 1322, 1328, 1332, 1387, 1404
       ],
       "review": "mapped-abstraction"
     },
@@ -369,9 +377,9 @@
     },
     {
       "path": "backend/payments/public-records.ts",
-      "sha256": "420289fc912f34fc39d1e6da7c4c92c272823b2e0a794cdd206a4896e4586b84",
+      "sha256": "84cfe037dcf98628bbd5602a3f6a2af00d3a35a3c9cf2403266baada1d77fecd",
       "models": ["formal/models/payments/payment_history.qnt"],
-      "candidateLines": [24, 63, 81, 88, 173, 210, 214, 222, 245, 246],
+      "candidateLines": [28, 67, 85, 92, 177, 216, 217],
       "review": "mapped-abstraction"
     },
     {
@@ -383,7 +391,7 @@
     },
     {
       "path": "backend/payments/vault-snapshots.ts",
-      "sha256": "1e385f301c8d112de8e2ec2fdefd58caab8ed1c10916e363e91131f0b58c0230",
+      "sha256": "1e8f8bbc7a3834b589e3457bc8d3da36e8b2b769ac5e0ac8039c0145a8c371cf",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/rewards/monthly_coordinator.qnt"
@@ -417,6 +425,14 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/points/dependencies.ts",
+      "sha256": "c2664ddbc8d9b30bd7a5f3aa4f8a0b2989b9d233be322f00128ccfa3fb6106e4",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declarations of the points API dependencies and X configuration; no runtime code or state transition."
+    },
+    {
       "path": "backend/points/disputes.ts",
       "sha256": "93280e129dd89424bcffcd2d0dbb7c7b4c2111655b8881fc79e6246a962be3b4",
       "models": ["formal/models/api/api_points_disputes.qnt"],
@@ -425,7 +441,7 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "42e5b63cef64789c55a40262e36a4d35f1a907eacec473ab98bf6b2f724c9eac",
+      "sha256": "be8e92b7e274cf91946b9e776dd3d2318742b8300c88c12a450e609c5e0d655b",
       "models": [
         "formal/models/api/api_accounts.qnt",
         "formal/models/points/pr_review_identities.qnt",
@@ -433,18 +449,18 @@
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        41, 42, 135, 235, 240, 245, 249, 319, 347, 351, 354, 357, 360, 365, 370,
-        374, 397, 413
+        21, 22, 115, 215, 220, 225, 229, 299, 327, 331, 334, 337, 340, 345, 350,
+        354, 377, 393
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/points/x.ts",
-      "sha256": "c31c3104f0497e6fd27dd3210853f6fe35ed69408d5f1d0f35a9ab3fbc79a24c",
+      "sha256": "fd934280ce97eb030c3524242ba81b5de58288692968b5374f6c77b305c54452",
       "models": ["formal/models/api/api_x_connection.qnt"],
       "candidateLines": [
-        17, 18, 26, 28, 30, 61, 98, 103, 104, 111, 119, 122, 159, 178, 198, 211,
-        231, 274, 276, 286, 290, 309, 320, 323, 338
+        13, 14, 22, 24, 26, 57, 94, 99, 100, 107, 115, 118, 155, 174, 194, 207,
+        227, 270, 272, 282, 286, 305, 316, 319, 334
       ],
       "review": "mapped-abstraction"
     },
@@ -487,7 +503,7 @@
     },
     {
       "path": "backend/projects/enforcement.ts",
-      "sha256": "e714033f9ac234cbfe264132ee54a4eb9191c5945082724aab1f0e7951ce5015",
+      "sha256": "46cb54c4a4757d62401e14881bde0381b0b04208efa3e1ad9aba36890221c60e",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt"
@@ -599,7 +615,7 @@
     },
     {
       "path": "backend/referrals/cache.ts",
-      "sha256": "9031218a03aac229924caffcea92862d91f4387ac274aa3671a188a6df9421e3",
+      "sha256": "a070a255b8d4f132904a2d45f37b225a67dcaf3759e24168141b3d819fca6926",
       "models": [
         "formal/models/referrals/referral_claim_cache.qnt",
         "formal/models/referrals/referral_distribution.qnt"
@@ -639,7 +655,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "sha256": "936a108a48d3b9438fc5b1e09b8f47eb71a16ade520072df6c1df6ed1fd1cad0",
+      "sha256": "1db9a9f29040dc9f7913c21a93dcd7bcc8b072ac16f11f7ff98a01a96c5cca09",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -662,6 +678,21 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/security/case-store.ts",
+      "sha256": "9b37364d75ba884ba040ff07aa13257ed1196539221d000b6cce6c358d3becab",
+      "models": [
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt"
+      ],
+      "candidateLines": [
+        131, 167, 171, 195, 207, 208, 256, 374, 395, 465, 508, 527, 532, 561,
+        642, 660, 706, 709
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/security/direct-evm-balances.ts",
       "sha256": "50bd41f5be8f2c59dd87692c3ba0a4fb07344bbb4dee124a1cf5271577ad5664",
       "models": ["formal/models/payments/transaction_balance_proof.qnt"],
@@ -673,7 +704,7 @@
     },
     {
       "path": "backend/security/direct-evm.ts",
-      "sha256": "a6945961158f58320e441fcc5c3b65809df54e364b08ce309265bf6acf4dceb2",
+      "sha256": "20a9771dbdd45747a91961243a61717f3526118628b12970ff161d888a21b8bd",
       "models": ["formal/models/api/api_award_recovery.qnt"],
       "candidateLines": [
         44, 52, 129, 156, 174, 229, 242, 245, 256, 257, 265, 266, 272, 274, 312
@@ -682,7 +713,7 @@
     },
     {
       "path": "backend/security/direct-payments.ts",
-      "sha256": "c91675a3603482438ed8c1b3eafd67b9a372a37ebe20159ad946688209af6fa8",
+      "sha256": "72b209a7216b33aa79f63abc5ebb92a158d86c84b5520b1efed3fb4eab6640b4",
       "models": [
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/bounty_payment.qnt",
@@ -740,7 +771,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "e75218ca95b836481bb4ece2f7c1cb348dc5f06b6730284645ae4e4be71b216a",
+      "sha256": "716c52ce3f19e714738eca9225de8f415e17a72a4ee42633b208c7b698e14ef3",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -753,20 +784,19 @@
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
       "candidateLines": [
-        199, 281, 285, 370, 382, 383, 431, 566, 587, 683, 684, 735, 737, 744,
-        797, 805, 807, 880, 945, 1012, 1018, 1040, 1042, 1050, 1068, 1134, 1300,
-        1326, 1474, 1517, 1536, 1541, 1570, 1659, 1677, 1738, 1758, 1791, 1797,
-        1813, 1943, 1985, 1986, 1988, 1990, 2010, 2112, 2135, 2154, 2251, 2252,
-        2267, 2280, 2305, 2376, 2380, 2425, 2450, 2649, 2774, 3134, 3160, 3185,
-        3238, 3405, 3408, 3409, 3448, 3457, 3477, 3523, 3574, 3575, 3577, 3620,
-        3682, 3711, 3717, 3723, 3753, 3790, 3801, 3819, 3825, 3906, 3914, 3916,
-        3931, 4038, 4041, 4073, 4082, 4088, 4100, 4103, 4104, 4132, 4136, 4139
+        298, 299, 350, 352, 359, 412, 420, 422, 495, 560, 627, 633, 655, 657,
+        665, 683, 749, 901, 927, 1070, 1090, 1123, 1129, 1145, 1275, 1317, 1318,
+        1320, 1322, 1342, 1444, 1467, 1486, 1583, 1584, 1599, 1612, 1637, 1708,
+        1712, 1757, 1782, 1981, 2106, 2466, 2492, 2517, 2570, 2737, 2740, 2741,
+        2780, 2789, 2809, 2855, 2906, 2907, 2909, 2952, 3014, 3043, 3049, 3055,
+        3085, 3122, 3133, 3151, 3157, 3238, 3246, 3248, 3263, 3356, 3365, 3371,
+        3383, 3386, 3387, 3415, 3419, 3422
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/security/intake-grant.ts",
-      "sha256": "2866cdd4d68f3bdf729038dfc9777570623f00fdc93b456bc3268042cf18f92f",
+      "sha256": "b3e2f94ee0855875bd5cf71deebeba402f41a0945f44df8f557aa06a8e209b53",
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt"
@@ -796,7 +826,7 @@
     },
     {
       "path": "backend/security/program-funds.ts",
-      "sha256": "0a22344652343b12f44166ecb2986747d6035f582cc6f105ac82d82fab484f89",
+      "sha256": "f367daf7b91b4b442b8bf9df89792d88b4839c2b9cc0857d13ce93b2624b162c",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt"
@@ -826,7 +856,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "8ce02c58f6fdfa40279297cc77b1657d9a6189a44e2efb6b40d12178c1bbcebb",
+      "sha256": "efc577e8a71a0e4a55be819a91ed3d87b21cdaef33cd9261e29131ca7ee578fa",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
@@ -835,10 +865,10 @@
         "formal/models/api/api_submission_recovery.qnt"
       ],
       "candidateLines": [
-        81, 118, 145, 164, 169, 199, 206, 223, 230, 270, 379, 386, 467, 480,
-        522, 532, 547, 554, 572, 583, 596, 598, 624, 659, 669, 671, 851, 869,
-        880, 885, 890, 959, 1096, 1174, 1189, 1229, 1265, 1271, 1285, 1290,
-        1302, 1307, 1312
+        65, 102, 129, 148, 153, 174, 181, 198, 205, 245, 354, 361, 442, 455,
+        497, 507, 522, 529, 547, 558, 571, 573, 599, 634, 644, 646, 826, 844,
+        855, 860, 865, 934, 1071, 1149, 1164, 1204, 1240, 1246, 1260, 1265,
+        1277, 1282, 1287
       ],
       "review": "mapped-abstraction"
     },
@@ -853,20 +883,31 @@
       "review": "mapped-abstraction"
     },
     {
-      "path": "backend/security/submissions.ts",
-      "sha256": "7c4bc01fc81b37c954cc4fc2f0e4589405413ec4d544c23d21365269840d50ec",
+      "path": "backend/security/submission-store.ts",
+      "sha256": "fdc4ddd0dc1d4a8a9253ee718b31fca370d3e9d4a8fbd0e647773af1eb3bd5eb",
       "models": [
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt"
       ],
       "candidateLines": [
-        13, 94, 154, 165, 172, 185, 188, 201, 226, 246, 257, 264, 268, 271, 276,
-        282, 294, 339, 346, 350, 352, 357, 364, 367, 370, 426, 428, 429, 430,
-        433, 456, 461, 463, 553, 567, 568, 582, 599, 617, 661, 713, 725, 728,
-        734, 737, 767, 799, 805, 820, 861, 862, 912, 930, 958, 972, 975, 988,
-        1006, 1012, 1014, 1017, 1018, 1023, 1052, 1090, 1102, 1113, 1129, 1153,
-        1155, 1167, 1227, 1238, 1240, 1243, 1252, 1271, 1279, 1287, 1308, 1320,
-        1324
+        26, 60, 67, 80, 83, 96, 110, 130, 141, 148, 152, 155, 160, 166, 178,
+        223, 230, 234, 236, 241, 248, 251, 254
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/submissions.ts",
+      "sha256": "74487fe9ca03e86b98e6d36cafe1bb04baba1454b60fa61662dbbe87ceaaeb4e",
+      "models": [
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_submission_recovery.qnt"
+      ],
+      "candidateLines": [
+        13, 118, 178, 180, 181, 182, 185, 208, 213, 215, 305, 319, 320, 334,
+        351, 369, 413, 465, 477, 480, 486, 489, 519, 551, 557, 572, 613, 614,
+        664, 682, 710, 724, 727, 740, 758, 764, 766, 769, 770, 775, 804, 842,
+        854, 865, 881, 905, 907, 919, 979, 990, 992, 995, 1004, 1023, 1031,
+        1039, 1060, 1072, 1076
       ],
       "review": "mapped-abstraction"
     },
@@ -895,7 +936,7 @@
     },
     {
       "path": "backend/slopbot/summary.ts",
-      "sha256": "3b0bec677d40f395c0ea3e17aab33d67822480066a3b378e5f6ca770fb47f8ae",
+      "sha256": "00c25ce1f5c06d6d639f2284d8b65ed075de1e79dc7374ce3e942a2c4f7a799d",
       "models": ["formal/models/api/api_public_summary.qnt"],
       "candidateLines": [23, 24, 36, 39],
       "review": "mapped-abstraction"
@@ -909,7 +950,7 @@
     },
     {
       "path": "backend/trace/auth.ts",
-      "sha256": "4f910eb11ca0743fe3ea20e98b051977382b1a4b90e04010f8fb14dd9cf8f1fb",
+      "sha256": "72fc7a32af9df1ab599675b24ee7a68af7806a666b8d5362e1077d6e71370a23",
       "models": ["formal/models/api/api_trace.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1008,7 +1049,7 @@
     },
     {
       "path": "backend/vetting/flags.ts",
-      "sha256": "68c874b895946a0ceed35aa017bda679c4f5781047dddb8e43c07ae8f10a5c88",
+      "sha256": "a41e76574d4336093e9b87db24cc192d4f2e1435a88ae0784ac99a7203888eba",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/vetting/vetting_flag_admission.qnt",
@@ -1040,14 +1081,14 @@
     },
     {
       "path": "backend/vetting/live-pin.ts",
-      "sha256": "328340a8acd35c2b245b97399989a5cd6c7e2277d1156d13f3a2964b62ce6ce2",
+      "sha256": "b355be0b9165b9628d550b139ee09fd88fe644f78c134851b14e8b6ac0798de0",
       "models": ["formal/models/vetting/vetting_admission_lineage.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "sha256": "ae3406f7085a386e5ca8b3dccb2aec5168149a2bd6ca117565168dfb01b2c2b1",
+      "sha256": "9f368aafe14bfe735f761961a392d767a138568187d49928ef6d8b003cb88d7e",
       "models": [
         "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_admission_lineage.qnt",
@@ -1057,22 +1098,22 @@
         "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "candidateLines": [
-        68, 91, 100, 117, 161, 167, 227, 302, 346, 383, 423, 449, 500, 512, 524,
-        525, 526, 529, 564, 565, 649, 650, 688, 699, 777, 858, 862, 870, 910,
-        922, 957, 965, 977, 979, 980, 983, 992, 999, 1001, 1006, 1011, 1024,
-        1027, 1029, 1031, 1032
+        67, 90, 99, 116, 160, 166, 226, 301, 345, 382, 422, 448, 499, 511, 523,
+        524, 525, 528, 563, 564, 648, 649, 687, 698, 776, 857, 861, 869, 909,
+        921, 956, 964, 976, 978, 979, 982, 991, 998, 1000, 1005, 1010, 1023,
+        1026, 1028, 1030, 1031
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/vetting/result.ts",
-      "sha256": "5b636abe6478bd65d6a1d3743e57611d29d6a6a8558e60f2b86efb739e7db8b7",
+      "sha256": "a5b95cba5613c5d257f91de25dd4f59e0920acfdbdf557d281c1982ea125a9e0",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "candidateLines": [
-        54, 85, 97, 150, 285, 300, 399, 403, 405, 427, 512, 546, 555
+        51, 82, 94, 147, 282, 297, 396, 400, 402, 424, 509, 543, 552
       ],
       "review": "mapped-abstraction"
     },
@@ -1085,7 +1126,7 @@
     },
     {
       "path": "backend/vetting/scan-result.ts",
-      "sha256": "d8c8d79b27df2f887e11c8113abf906c8497ec25562aa068f629ab11d533b3c1",
+      "sha256": "f7129ca958bfc32a0f469e553700a60b82aa1a4562f17c81c0b6d4701b002772",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt"
@@ -1117,13 +1158,13 @@
     },
     {
       "path": "contracts/evm/adapter.ts",
-      "sha256": "c7b853367460c16e4c0b50cfd9742f86c98f26d07b6184e7c602b09924510c03",
+      "sha256": "d9ad1ad8d79bd57c48a76ddd2a7d6dcaaf1f0cce607ee649fe899d7e4b641c25",
       "models": ["formal/models/payments/chain_evidence.qnt"],
       "candidateLines": [
-        14, 71, 85, 201, 237, 266, 294, 309, 341, 507, 561, 649, 656, 657, 659,
-        660, 984, 987, 996, 1002, 1006, 1010, 1039, 1082, 1090, 1099, 1107,
-        1127, 1130, 1172, 1244, 1262, 1274, 1279, 1280, 1304, 1330, 1433, 1445,
-        1489, 1491, 1500, 1504, 1506, 1526, 1527
+        14, 71, 85, 201, 237, 256, 284, 299, 331, 497, 551, 639, 646, 647, 649,
+        650, 974, 977, 986, 992, 996, 1000, 1029, 1072, 1080, 1089, 1097, 1117,
+        1120, 1162, 1234, 1252, 1264, 1269, 1270, 1294, 1320, 1422, 1434, 1478,
+        1480, 1489, 1493, 1495, 1515, 1516
       ],
       "review": "mapped-abstraction"
     },
@@ -1174,14 +1215,14 @@
     },
     {
       "path": "contracts/evm/integration/upgrade.ts",
-      "sha256": "3f0d2757fed908f18a27c6ca5371676ab3c99aeb70221035b28d950da8479de9",
+      "sha256": "68f2302a92c4697d1c45de534b3a5b54e8ffa2422d112a4719054fcdf5a41b7c",
       "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
       "candidateLines": [33, 56, 336],
       "review": "mapped-abstraction"
     },
     {
       "path": "contracts/evm/monthly-reserve.ts",
-      "sha256": "c3b648865493048536d4ce0b3f78d04da65ca44fcbe1160d4976d52cd0c740f5",
+      "sha256": "e0508db9544286bba4a3339738422d1839ef5dc418b7d5eba121a81f9b69eee2",
       "models": [
         "formal/models/rewards/monthly_release.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
@@ -1215,7 +1256,7 @@
     },
     {
       "path": "contracts/evm/script/DeployEscrowFactory.sol",
-      "sha256": "9e31fe748fff3e0c0f532225a4f232c3f736540b328ec4052a745d9104f29c7e",
+      "sha256": "d3a7ff5b3bb6962fa622ce8f7f189ffb82c210dfc5d6cc24310aa207e275112b",
       "models": ["formal/models/contracts/evm_proxy_lifecycle.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1395,7 +1436,7 @@
     },
     {
       "path": "contracts/solana/adapter.ts",
-      "sha256": "ed78e40d7c603061ff03cefd39628b139d619937f16fa5d9f0ca2939e297bd7e",
+      "sha256": "b67b18d9e5dbd8aa141ac68726ace061cf8e076a124e4ebb540528893cf11730",
       "models": ["formal/models/payments/chain_evidence.qnt"],
       "candidateLines": [
         47, 68, 73, 75, 184, 200, 227, 235, 254, 262, 276, 286, 304, 347, 366,
@@ -1406,7 +1447,7 @@
     },
     {
       "path": "contracts/solana/commitment.ts",
-      "sha256": "71d228810a4fa1048e9685457b29295cc6fa645442ff6ce4eb8092436a6b3275",
+      "sha256": "6a2f7f65dc27434f7477e864360ee0a161cc1d51c06f41124eae57c5b77030aa",
       "models": ["formal/models/contracts/solana_owner_action.qnt"],
       "candidateLines": [118, 122, 162, 179, 181],
       "review": "mapped-abstraction"
@@ -1471,14 +1512,14 @@
     },
     {
       "path": "contracts/solana/monthly-commitment.ts",
-      "sha256": "c377f840a3d347111f1b233908360b8cf92d900955f56cbe52dcce8be4860cb8",
+      "sha256": "d8907d3546117dc0f9cd604237d70583e4483d526225c5110dd378f63abadccb",
       "models": ["formal/models/rewards/monthly_reserve.qnt"],
       "candidateLines": [92, 102, 115, 140, 152],
       "review": "mapped-abstraction"
     },
     {
       "path": "contracts/solana/monthly-reserve.ts",
-      "sha256": "e6959d4a95ac3253907602c589ae5408b2dfbb3f87fac63350d4b0a69734e031",
+      "sha256": "543d4ca777266b3209b3ecf18ec142b194d251331dfd84e970df61ce10306059",
       "models": [
         "formal/models/rewards/monthly_release.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
@@ -1649,7 +1690,7 @@
     },
     {
       "path": "contracts/solana/token-extensions.ts",
-      "sha256": "02589c30e097f75b55c35748df1f61c220de92aafbe74c88ed4731cd53315aca",
+      "sha256": "b456ced40e9d0a985a8fe029059a8ad325dea1abb2533d8d3695e29706c703e0",
       "models": ["formal/models/contracts/token_admission.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -2841,7 +2882,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "060ad3a35e755fb7c0ee457093c507e0d25df232df1e67ba9839120dbc93a4f7",
+      "sha256": "b2b526471d50e6efd3c300d717f3299e7e8f43a1b6b4a2f1dee02917b5b86340",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [76, 80, 82, 83],
       "review": "mapped-abstraction"
@@ -3053,7 +3094,7 @@
     },
     {
       "path": "scripts/dev-backend-notify.ts",
-      "sha256": "e7327a2639760361860ed35fdb60bfaa7c112624520283fefdea4dd3b71ae12f",
+      "sha256": "21a102b61f63ad7101d24899d0b94c7b7cdd569c18b044a36c0e4e8568a16534",
       "models": ["formal/models/tooling/development_stack.qnt"],
       "candidateLines": [91, 94, 118],
       "review": "mapped-abstraction"
@@ -3156,7 +3197,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/evm-extended.ts",
-      "sha256": "e7c6286468439fcfba8df2f095d80052ab35eab8371e2e7f1560231dae978b07",
+      "sha256": "4f06af2734ea598d789176f91c1f870d222f6c4135d2e1a38e185279354509a4",
       "models": ["formal/models/contracts/acceptance_run.qnt"],
       "candidateLines": [
         277, 278, 323, 824, 1054, 1056, 1057, 1059, 1122, 1134, 1149, 1177,
@@ -3168,22 +3209,22 @@
     },
     {
       "path": "scripts/escrow-acceptance/evm-upgrade.ts",
-      "sha256": "32e5d712f44ac994d70045296088e07baca8c98f77c3562f6055ed8409fbcb14",
+      "sha256": "a638e8ddea71d40dc3cf586d9ee59a35e98b7b6eaf7642e627f23b9a7e840ca9",
       "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
       "candidateLines": [
-        11, 95, 97, 99, 234, 251, 254, 333, 356, 359, 360, 362, 363, 367, 370,
-        374, 378, 379, 382, 391, 393, 394, 395, 396
+        11, 93, 95, 97, 232, 249, 252, 331, 354, 357, 358, 360, 361, 365, 368,
+        372, 376, 377, 380, 389, 391, 392, 393, 394
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/escrow-acceptance/evm.ts",
-      "sha256": "5d20a7269187c425309321ad0ec028245e2fa1153e37fe145c582a923f5996e9",
+      "sha256": "565b3ddc4e963e183e83293b6c8982c5c6e8faeb4b870194b84a54f0ef4dd531",
       "models": ["formal/models/contracts/acceptance_run.qnt"],
       "candidateLines": [
-        142, 190, 193, 203, 207, 208, 219, 222, 226, 273, 327, 330, 331, 338,
-        507, 760, 766, 788, 792, 798, 834, 1081, 1084, 1085, 1087, 1122, 1162,
-        1163, 1178, 1189, 1217, 1226, 1232, 1244, 1302, 1352, 1359
+        140, 188, 191, 201, 205, 206, 217, 220, 224, 271, 325, 328, 329, 336,
+        505, 758, 764, 786, 790, 796, 832, 1079, 1082, 1083, 1085, 1120, 1160,
+        1161, 1176, 1187, 1215, 1224, 1230, 1242, 1300, 1350, 1357
       ],
       "review": "mapped-abstraction"
     },
@@ -3202,7 +3243,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "sha256": "10f32deacd74ca021b9c01f09b25319aee705f62bfc589a9d7f368d60ac7387f",
+      "sha256": "7a147cbb52362c20a866795e0ed7506ff4e1224b7d5f5287b356ed9c3c5e2f44",
       "models": ["formal/models/contracts/acceptance_run.qnt"],
       "candidateLines": [
         199, 219, 231, 251, 301, 329, 381, 384, 406, 479, 482, 487, 505, 518,
@@ -3215,30 +3256,38 @@
     },
     {
       "path": "scripts/escrow-acceptance/solana-local.ts",
-      "sha256": "56718c86a8f6a67e8d011a028181d2218901e6c14084ed36fab075d414af0441",
+      "sha256": "1fa7a232735d6a13a2d68f86ab1e2467cf50b13464cbbdede215bba76e637f25",
       "models": ["formal/models/contracts/local_solana_acceptance.qnt"],
       "candidateLines": [58, 59, 60, 61, 72, 117, 207],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/escrow-acceptance/upgrade-payments.ts",
-      "sha256": "b731a953db3338bd66dab1fd4e54d79755627a7eacd29f8c91e6dedcce4ac9a5",
+      "sha256": "a9b6cad98dbaba314bd832a6e14fd60edaee52ebc87c406964d4e7bf9bfdddb0",
       "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/escrow-acceptance/upgrade-qualification.ts",
+      "sha256": "2fe4bbd6e6ce0172d9a386c365d2a801ea03a36fb0a6a116e1c7440938204052",
+      "models": [],
+      "candidateLines": [57, 65],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "One schema constant and upgrade qualification record types; no I/O or state transition."
+    },
+    {
       "path": "scripts/escrow-acceptance/upgrade-verification.ts",
-      "sha256": "c88bbddf55b759a3591d22dac001b00e333f4a65c8bbc09931ecc129a0061b55",
+      "sha256": "a4db1c0dce1d2144071c8e6f79d942f745f0e396986c5b789aad8c77ad14c64c",
       "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
-      "candidateLines": [82, 90, 175, 176, 254, 301, 347, 374, 382, 388],
+      "candidateLines": [116, 117, 195, 242, 288, 315, 323, 329],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/escrow-acceptance/upgrade-verify.ts",
-      "sha256": "8b4276beffe2e8447f9c4c08ad83c0e98068e066abb473814c79955161788e4d",
+      "sha256": "7eb1847458777d07665a224a25ec647dfe2d08e54fa127a78f2e3fade0afd17e",
       "models": ["formal/models/contracts/evm_upgrade_qualification.qnt"],
-      "candidateLines": [4, 33, 84],
+      "candidateLines": [4, 30, 81],
       "review": "mapped-abstraction"
     },
     {
@@ -3250,7 +3299,7 @@
     },
     {
       "path": "scripts/evidence-contract.mjs",
-      "sha256": "2b4bafc9054e2ff96d35a66d4ec1a1812800cf2e2cab645c489964ee805a6690",
+      "sha256": "dd9235b6bde9a7bc68f382575d690dc10d42a1e7dd4ad9fc7194ec114a1e564c",
       "models": ["formal/models/tooling/evidence_capture.qnt"],
       "candidateLines": [291, 292, 293, 316, 443, 477],
       "review": "mapped-abstraction"
@@ -3264,7 +3313,7 @@
     },
     {
       "path": "scripts/formal-models.mjs",
-      "sha256": "9f0468f37d0fd8c40ddeadb85c9e79b573806dacc0838cbc90014d1a999f5442",
+      "sha256": "223b2d3e8405e3e00ec19b05491a5ada585505b1e18879862d4ed5cd0944df15",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -3388,7 +3437,7 @@
     },
     {
       "path": "scripts/lemmascript-source-directories.mjs",
-      "sha256": "9d048aa9db390c14f2153a962f88943cdcfcd436978fcae0effb7afa10b327f7",
+      "sha256": "39a82b1fb66e20095185079525375a6a963a825188f1aa6c48ecffeed72ec812",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -3419,7 +3468,7 @@
     },
     {
       "path": "scripts/payment-keeper/budget.ts",
-      "sha256": "94c24295169deb7b70e7e3339344f275b8f1c67613fd394130b8e756cfa6a531",
+      "sha256": "4e94ae2f6cdbea21d8dcb9148c66d1d70dc8895b5e21a0c009d02fa5c77ca253",
       "models": ["formal/models/payments/operator_keeper.qnt"],
       "candidateLines": [
         30, 84, 116, 154, 181, 231, 235, 245, 251, 289, 290, 293, 305, 327, 353,
@@ -3430,14 +3479,14 @@
     },
     {
       "path": "scripts/payment-keeper/keeper.ts",
-      "sha256": "b304a02790f6cb2b892eb965d63f749e4ca56bcb2840adf175179c4f19bd881f",
+      "sha256": "188959981875144d819a0d6a73495b34ba48622cdd1f061b1b0db524864370b7",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        98, 99, 123, 247, 310, 410, 420, 428, 466, 478, 490, 517, 524, 537, 558,
-        562, 563, 565, 574, 583
+        100, 101, 125, 249, 312, 412, 422, 430, 468, 480, 492, 519, 526, 539,
+        560, 564, 565, 567, 576, 585
       ],
       "review": "mapped-abstraction"
     },
@@ -3457,19 +3506,19 @@
     },
     {
       "path": "scripts/payment-keeper/storage.ts",
-      "sha256": "8d232b6c4f7aa06d39850b8962e484da2f24f28106a37b07f4af5f1b6326b459",
+      "sha256": "e35ee7f391fb65cbda40d088f4d47e2d8958305e6ae70c8651d66dc557d8e6e1",
       "models": ["formal/models/payments/operator_keeper.qnt"],
       "candidateLines": [72],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/payment-keeper/store.ts",
-      "sha256": "205af6bd479c555530b0f022e7230844a1b2444fae865abab8e3b4458786c117",
+      "sha256": "6d14b8d7ae1b30fa4e55ae27d80ab85142575e356ec49d8317917fc0740e6b1a",
       "models": [
         "formal/models/contracts/acceptance_run.qnt",
         "formal/models/payments/operator_keeper.qnt"
       ],
-      "candidateLines": [91],
+      "candidateLines": [89],
       "review": "mapped-abstraction"
     },
     {
@@ -3500,7 +3549,7 @@
     },
     {
       "path": "scripts/prepare-e2e-fixture.mjs",
-      "sha256": "4b4ee2f430a526e3a7c7ec46a4cd078949d9ac1fa6e540ccd6fd71779d920f89",
+      "sha256": "035f2c6761df7bbc92455a9573c789356577741b90f593732c403df844f7f04c",
       "models": [
         "formal/models/tooling/dev_server_lifecycle.qnt",
         "formal/models/tooling/runner_cancellation.qnt"
@@ -3558,9 +3607,9 @@
     },
     {
       "path": "scripts/prepare-pr-ledger.ts",
-      "sha256": "4c69935217061005567c489df881c3f98aabf3fe8fd225519203ed8c4e5fd053",
+      "sha256": "928b3746261538268c90fba7e515a2f99f1654f661e033932079a7919e2b5626",
       "models": ["formal/models/points/journal_publication.qnt"],
-      "candidateLines": [7, 116, 224, 421, 509, 512],
+      "candidateLines": [7, 118, 226, 423, 511, 514],
       "review": "mapped-abstraction"
     },
     {
@@ -3600,7 +3649,7 @@
     },
     {
       "path": "scripts/prior-cycle-accrual.ts",
-      "sha256": "94e7a28d8dba5701be6b5da5d2e3bef0f6cba655f8159ee13c63e33620cbd7f0",
+      "sha256": "37780a83d90c1c000e30eed5b35d1588f7b72fc7e075775483366723fd638892",
       "models": [
         "formal/models/payments/unsafe_destination_history.qnt",
         "formal/models/rewards/prior_cycle_carry.qnt"
@@ -3732,7 +3781,7 @@
     },
     {
       "path": "scripts/readme-proof-binding.ts",
-      "sha256": "e602760eddf7cacd59b78422fcafabac88890340e2b620ed6adb2108f8989fbc",
+      "sha256": "8a05111c52cc8d8d8a855d4ab3a81be2e5fde5f29be892af8e5236a2dc38e9f2",
       "models": ["formal/models/release/readme_proof_binding.qnt"],
       "candidateLines": [6],
       "review": "mapped-abstraction"
@@ -3847,7 +3896,7 @@
     },
     {
       "path": "scripts/run-receipt-crypto.ts",
-      "sha256": "70b4ec8801908dd0ca036ce37f86ff48405e8a2e7e3c254991c8c10adbdf7aee",
+      "sha256": "b11380d93aa739a90d002def4d6c4a75d9638912b560fa307eb54bba7228c77f",
       "models": [],
       "candidateLines": [36],
       "review": "reviewed-no-independent-state",
@@ -3996,7 +4045,7 @@
     },
     {
       "path": "scripts/unsafe-destination-hold.ts",
-      "sha256": "770dc5a670d50d0807da33d89460358b08f13347907efcfe68e30cb98061392d",
+      "sha256": "c70c05467be741703e68d5618dfbbe50f3ef801ed4ce22c38c468cfaf6321b8c",
       "models": ["formal/models/payments/unsafe_destination_history.qnt"],
       "candidateLines": [15, 68, 95, 131],
       "review": "mapped-abstraction"
@@ -4010,7 +4059,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "b065d0724fcc50e3492ac0ffa87b8c6c3d5608f3004fc9cab833200b6c67aab1",
+      "sha256": "2540b17918f66827d83a7b585360e4ecd5acbdcd59afe4d3d272193dad45f641",
       "models": [
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
@@ -4023,23 +4072,23 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "e7a2b399fed3bc3fa1292c24c75df63fd7baf2953f6f4372fb7091daebc1d346",
+      "sha256": "ce0323479cef6dbb2b3d11313e454b20c059c0df874c2d0d2b62d7733b5ca4b3",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/value-merge-objects.ts",
-      "sha256": "892a800e97251cac1422a45a4c00dab8056908d685c3c9540d08c42f9f8d7c77",
+      "sha256": "17aa4e44da1b372b524948bcd6bffab6722465781cdb0815f01f90b32001a387",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/value-merge-resolution.ts",
-      "sha256": "250b0bb234a5e1f57024a12e3b80e05f9d39a43d48449ac648159464402809ad",
+      "sha256": "f8d88f04c1460db7820a3eadb688098c47424034de4a0c89393aa282e9b2c365",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [140, 176, 222, 228, 251, 272, 274],
+      "candidateLines": [142, 178, 224, 230, 253, 274, 276],
       "review": "mapped-abstraction"
     },
     {
@@ -4312,13 +4361,13 @@
     },
     {
       "path": "src/EscrowFunding.tsx",
-      "sha256": "badd7573b1ce77f202c358eaf7c11561bbf7afa69001c236c61b026e1d2b4456",
+      "sha256": "a4483c985009bcf2dd0f432060cbc1a6d6fda4881e95b7a11664ed356fa2577c",
       "models": ["formal/models/ui/ui_resources.qnt"],
       "candidateLines": [
         2, 132, 133, 134, 136, 142, 146, 157, 183, 188, 192, 193, 194, 195, 196,
         199, 200, 204, 216, 218, 227, 236, 237, 239, 240, 241, 243, 244, 247,
-        252, 254, 255, 256, 258, 263, 265, 266, 275, 277, 282, 285, 290, 293,
-        297, 298, 335, 337, 338, 341, 352, 363, 373
+        252, 254, 255, 256, 258, 261, 263, 264, 273, 275, 280, 283, 288, 291,
+        295, 296, 333, 335, 336, 339, 350, 361, 371
       ],
       "review": "mapped-abstraction"
     },
@@ -4577,15 +4626,15 @@
     },
     {
       "path": "src/Presentation.tsx",
-      "sha256": "2a963a06e809765b35e2e941a6207eb51c0283f1c6cffd9ce9a9a95f6ed086bd",
+      "sha256": "8ceb4392aeb2d594eef93483b0c0da1ba9fb3e5d9ff77c117f3c796f59e2bb2e",
       "models": [
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_record_deadlines.qnt"
       ],
       "candidateLines": [
         2, 43, 45, 170, 232, 233, 235, 236, 238, 240, 245, 250, 251, 257, 259,
-        261, 262, 263, 269, 271, 273, 352, 433, 443, 444, 449, 463, 465, 470,
-        473, 477, 485, 489, 508, 596, 604, 608, 612, 614, 622, 624, 721
+        261, 262, 263, 269, 271, 273, 351, 432, 442, 443, 448, 462, 464, 469,
+        472, 476, 484, 488, 507, 595, 603, 607, 611, 613, 621, 623, 720
       ],
       "review": "mapped-abstraction"
     },
@@ -4601,7 +4650,7 @@
     },
     {
       "path": "src/PrivateReportSummary.tsx",
-      "sha256": "e3539cbfcb5c4d00dabd3cc465dcd1891c009cffa918761273604342fbe056df",
+      "sha256": "2488382977f0123740df981bde08cf2d460eecee70c31f644321cd049480050d",
       "models": [
         "formal/models/ui/ui_private_intake.qnt",
         "formal/models/ui/ui_private_report_projection.qnt",
@@ -4900,9 +4949,9 @@
     },
     {
       "path": "src/lib/allocation-funding.ts",
-      "sha256": "66e41405b80b1b4bfb68c2aadf5b0f7fa4e19145b5b9a3b4870bd8d43b72533e",
+      "sha256": "34e3471c47d626f506f2c70c62a6b0abe0720ba0d98e093d32de34db534e8f46",
       "models": ["formal/models/rewards/allocation_funding.qnt"],
-      "candidateLines": [72],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -4985,7 +5034,7 @@
     },
     {
       "path": "src/lib/contribution-quality.ts",
-      "sha256": "23d3ed1c47488a55fe61b04c10d7f800f5ead3f1096376138b4f07cd95383fe1",
+      "sha256": "fa3fa2cdb5c81c57ded954c04b8c14c4db68bfd0abdd0dc77cc16b3c43cdb80e",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5044,7 +5093,7 @@
     },
     {
       "path": "src/lib/escrow-policy.mjs",
-      "sha256": "b2c82c16d3a3b8288467955d43efc761b3a82709fb3b766b1a1791b37209592c",
+      "sha256": "e230228240d5826aa3dff2c8db22b04fb44fd889b74b33268d5fb18bc29b5d4d",
       "models": [
         "formal/models/rewards/escrow_policy_history.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt"
@@ -5054,12 +5103,12 @@
     },
     {
       "path": "src/lib/evaluator-awards.ts",
-      "sha256": "4120c9206d4c5574a5eeda73b65d5e69ba806fa50de66360e885a7bc756ee35d",
+      "sha256": "972fb8ec1c9d9705b5bb72193d85152c265c740d301b1879a177ce231cde253d",
       "models": [
         "formal/models/rewards/evaluated_award_import.qnt",
         "formal/models/ui/ui_review_admission.qnt"
       ],
-      "candidateLines": [449, 543],
+      "candidateLines": [447, 541],
       "review": "mapped-abstraction"
     },
     {
@@ -5076,7 +5125,7 @@
     },
     {
       "path": "src/lib/external-sources.ts",
-      "sha256": "1e41d1d1628da22e29a7ccf7634f5af5c92db941b23c951ad6880f329c9af720",
+      "sha256": "39223e2eafe9644152711082d586cee8d53917782adc5de8a8f839714b7a4885",
       "models": [],
       "candidateLines": [42, 133, 141],
       "review": "reviewed-no-independent-state",
@@ -5186,13 +5235,21 @@
     },
     {
       "path": "src/lib/intake-drafts.ts",
-      "sha256": "3b0318b31ee735338a61e65e59f4aa18d95d9e1b540d42608c0ad36a66143828",
+      "sha256": "400ae102e4241308d24b2c13beda3ac61f9c132fbfd65d8c9a9ca1384b8c43f5",
       "models": [
         "formal/models/ui/ui_private_intake.qnt",
         "formal/models/ui/ui_submission_controls.qnt"
       ],
       "candidateLines": [41, 71],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/leaderboard-constants.ts",
+      "sha256": "74fc4bd1b11fb63d118284b84dd340809217c5703c35a5b2483eee3e928b748f",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Immutable snapshot identity constants and the closed review-exclusion list; no state transition."
     },
     {
       "path": "src/lib/leaderboard-transport.mjs",
@@ -5203,7 +5260,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "c77900db9b96b610b910eceafd84a6e8fd5b09ca1acab79a8bf10c4561b5d37b",
+      "sha256": "c7962ed31958c9e2e99799451093993e24224cfe25df4036d76141d79867350e",
       "models": [],
       "candidateLines": [
         71, 76, 269, 291, 339, 371, 429, 490, 498, 505, 545, 645, 676, 738, 765
@@ -5213,7 +5270,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "ffb8ec2c6a4be05ed08716f4d650a2e4ad142f302e9f849cefbbed251a53aeaa",
+      "sha256": "ad19c2ec7afaefc4451f05265e8a634bd4a884135d78343c12faa3b8806b021c",
       "models": [
         "formal/models/points/legacy_score_caps.qnt",
         "formal/models/ui/ui_review_pool.qnt",
@@ -5222,21 +5279,21 @@
         "formal/models/ui/ui_snapshot_contract.qnt"
       ],
       "candidateLines": [
-        294, 295, 319, 325, 966, 1029, 1055, 1266, 1327, 1337, 1343, 1345, 1347,
-        1349, 1356, 1441, 1475, 1480, 1498, 1595, 2137, 2155, 2227, 2236, 2254,
-        2263, 2271, 2293, 2308, 2317, 2325, 2369, 2419, 2469, 2522, 2539, 2540,
-        2543, 2544, 2648, 2650, 2651, 2655, 2658, 2666, 2668, 2686, 2941, 2996,
-        3172, 3363, 3388, 3460, 3469, 3565, 3631, 3968, 3979, 4008, 4069, 4083,
-        4406, 4619, 4820, 4933, 4958, 5083, 5089, 5795, 5797, 5820, 5824, 5828,
-        5833, 5971, 5980, 5990, 5991, 6039, 6074, 6080, 6100, 6105, 6112, 6120,
-        6122, 6148, 6151, 6165, 6167, 6188, 6190, 6194, 6197, 6202, 6392, 6394,
-        6653, 6697, 6760, 6761, 7561, 7577, 7587, 7598, 7651, 7652, 7679, 7886
+        247, 248, 272, 278, 917, 980, 1006, 1217, 1278, 1288, 1294, 1296, 1298,
+        1300, 1307, 1392, 1426, 1431, 1449, 1546, 2088, 2106, 2178, 2187, 2205,
+        2214, 2222, 2244, 2259, 2268, 2276, 2320, 2370, 2420, 2473, 2490, 2491,
+        2494, 2495, 2599, 2601, 2602, 2606, 2609, 2617, 2619, 2637, 2892, 2947,
+        3123, 3314, 3339, 3411, 3420, 3516, 3582, 3919, 3930, 3959, 4020, 4034,
+        4357, 4570, 4771, 4884, 4909, 5034, 5040, 5746, 5748, 5771, 5775, 5779,
+        5784, 5922, 5931, 5941, 5942, 5990, 6025, 6031, 6051, 6056, 6063, 6071,
+        6073, 6099, 6102, 6116, 6118, 6139, 6141, 6145, 6148, 6153, 6343, 6345,
+        6604, 6648, 6711, 6712, 7512, 7528, 7538, 7549, 7602, 7603, 7630, 7837
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/local-signin.ts",
-      "sha256": "02c612d060892549506a1d6f8a22f922343f1ac731ca7de101c15cf0332b28b7",
+      "sha256": "84db999137f7de123c31d35e9a745b8dc49b27a90cc3282647a253bfccd5242b",
       "models": ["formal/models/ui/ui_session.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5257,14 +5314,14 @@
     },
     {
       "path": "src/lib/model-outcomes.ts",
-      "sha256": "962309f9c6a40b56ec14a244ef8ceec4e12951fdfd8a136eba5ced74a7da13b8",
+      "sha256": "1d021354f1d7be103f7612c45a5665b7b8257d70cdff472f4d74f34c36048f89",
       "models": ["formal/models/ui/ui_model_outcomes.qnt"],
-      "candidateLines": [108],
+      "candidateLines": [105],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/monthly-commitment-actions.ts",
-      "sha256": "218cbb1e8b14d98756db3f2bb9bf64418a31ef9b16c9e039c4f7e3eb080e2844",
+      "sha256": "63461a8c606952d4f7d5fedeeb9104e4fda09b996213ec103e51ae20656cbdaf",
       "models": [
         "formal/models/contracts/solana_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt"
@@ -5313,7 +5370,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "sha256": "1cbdd4d41ff5b4eb4d51ed0bc04c3f105eb60f354585203e5db77517af6b1d1c",
+      "sha256": "7c983e8c182416f3ee59cffb7d8a2afd06063ef7bf3cb02f31f72a79ef6a5866",
       "models": [
         "formal/models/fees/ordinary_fee.qnt",
         "formal/models/rewards/escrow_balances.qnt"
@@ -5391,14 +5448,6 @@
       "review": "mapped-abstraction"
     },
     {
-      "path": "src/lib/platform-fee-recipients.mjs",
-      "sha256": "17b9e10c1258687aa058a2cb76940d3a21d36ad4c818c78fd081eb70fa5db787",
-      "models": [],
-      "candidateLines": [],
-      "review": "reviewed-no-independent-state",
-      "statelessReason": "One immutable configured recipient constant; no state transition."
-    },
-    {
       "path": "src/lib/points-summary.ts",
       "sha256": "d76e32eb79853776299155aa7b78fd18041091ee2dae10eb321625bc11a7d276",
       "models": [],
@@ -5429,14 +5478,14 @@
     },
     {
       "path": "src/lib/profiles.ts",
-      "sha256": "007dcdebd8af0abb95152511f290946074fe4381034480286b38763da058d27d",
+      "sha256": "3cc4ed403b2baf0c3d55f015cd46887aa8d1f82bfd2f0874987d9cbf63f55230",
       "models": ["formal/models/ui/ui_profile_history.qnt"],
       "candidateLines": [49, 55, 196, 242, 249, 261, 263, 265, 269, 272],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "5f5a8f66c2c9b80d7e4d37fff3df81882d53b7308e3cd0d475f4b079afca90ac",
+      "sha256": "195eafcb0e95935cbb82077ccbfd66fd802a71efa680cce6badade717113d864",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -5541,7 +5590,7 @@
     },
     {
       "path": "src/lib/project-reward-summary.ts",
-      "sha256": "b022920d28c18d8c60653fff07b459d6f673f194fbd7ab3a685adb8c55113ddf",
+      "sha256": "eeee0c077ebf5897b048e4e5b3f5b667d7a895c06a2970b90f757238e3120d7b",
       "models": [],
       "candidateLines": [19, 89],
       "review": "reviewed-no-independent-state",
@@ -5549,7 +5598,7 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "e6e82e40e65e8a44e96837fc0bffa689277263bb144ae04aef63c89a43891cb3",
+      "sha256": "bf68e6b1d422f38c5e27b0492cc8327fc8b79abf8d7b668200199606653c65a1",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
       "candidateLines": [
         126, 331, 342, 347, 351, 352, 411, 417, 423, 426, 430, 434, 535, 538,
@@ -5561,7 +5610,7 @@
     },
     {
       "path": "src/lib/project-skill-publication.mjs",
-      "sha256": "018c55491513e60535abcc6bcc7f50e658dd9fafc39b0a0d90e949a7d2f59fc3",
+      "sha256": "1a245b6f76ebf638988a7d4ccf61dc750dd629e1646a5fbeb834a94b8fbc2fce",
       "models": ["formal/models/contributor/skill_installation.qnt"],
       "candidateLines": [31, 277, 290],
       "review": "mapped-abstraction"
@@ -5589,9 +5638,9 @@
     },
     {
       "path": "src/lib/received-totals.ts",
-      "sha256": "624c336aa5bb46df86d14fc4ce02300d7ab6f95fa16758eb35a92b8fa6db9738",
+      "sha256": "e222e5a7d10cb3970ec32b97249d0658864ef347fcc7a336024ac488dab29a5b",
       "models": [],
-      "candidateLines": [],
+      "candidateLines": [6, 10, 18],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure supplied-response shape/arithmetic validator and reviewed USD-asset predicate. No fetch, mutable cache or payment transition; actual receipt indexing and public aggregation remain payment ledger responsibilities."
     },
@@ -5633,7 +5682,7 @@
     },
     {
       "path": "src/lib/reward-amount.ts",
-      "sha256": "877287d16dc38ff0898bd5e1ba265bf935aed0900f6276a13d72c66c8b1dc8af",
+      "sha256": "defb8a419fd7a455d189551346117b9e726fad6887a75ff94abac3d14b792d59",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -5682,7 +5731,7 @@
     },
     {
       "path": "src/lib/run-receipts.ts",
-      "sha256": "897264274e92bc00f3b02e934d092af63e9f1ac2ce14a6a6a0a9fc5df98a0a18",
+      "sha256": "d23befb43fac4729ec84b729a7322ef4aca0591a43516bf54c8b87f1b15b9f1e",
       "models": ["formal/models/contributor/skill_run_local.qnt"],
       "candidateLines": [88, 93, 125, 135],
       "review": "mapped-abstraction"
@@ -5706,7 +5755,7 @@
     },
     {
       "path": "src/lib/scoring-policy.ts",
-      "sha256": "ee21a065359fb1999b09ab9e647923abe5be7339a6113d318d33d95d060e6314",
+      "sha256": "cc5956ebeba9965aa703d074cb75e2d1b9df3e9e825a392e71d3668bc73735b9",
       "models": [
         "formal/models/rewards/review_credit.qnt",
         "formal/models/ui/ui_review_pool.qnt"
@@ -5716,7 +5765,7 @@
     },
     {
       "path": "src/lib/security-bounty-proposal.ts",
-      "sha256": "29d972bc17b339a943b74df110f23cf9d5320811835a9eb876b4f76ffd3e586c",
+      "sha256": "361c3c4050f5d7aacc14f05a427a2f2dd171ec670a84acc3a0952f75cf437988",
       "models": [],
       "candidateLines": [87, 94],
       "review": "reviewed-no-independent-state",
@@ -6086,7 +6135,7 @@
     },
     {
       "path": "src/lib/wallets.ts",
-      "sha256": "62efa3086e17fe626fcd6d5b444933ca56492d15d9e4f2a8d7ccd149b2f5fecb",
+      "sha256": "daab8185e616c3e8f8d143d3215aee61863ea59651b0f9f1a249fe36f3b387f3",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -6133,7 +6182,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "sha256": "5b6a03382eb4680dee9bfcbc5fafcdf11ad50d64e5ea18bd5d2c8af3a23f9d1e",
+      "sha256": "ea110a82e22ffcd9ae3a1aca4707a19d79081d9197ef820cd78275779972dc46",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
@@ -6144,15 +6193,23 @@
         "formal/models/payments/signed_send.qnt"
       ],
       "candidateLines": [
-        27, 31, 37, 61, 138, 141, 143, 166, 229, 239, 240, 244, 250, 252, 254,
-        261, 300, 316, 318, 319, 377, 383, 385, 389, 390, 401, 403, 404, 405,
-        408, 424, 425, 426, 427, 431, 432, 443, 444, 449, 450, 451, 454, 462,
-        463, 464, 469, 470, 552, 556, 557, 562, 563, 595, 596, 610, 614, 627,
-        634, 637, 640, 641, 664, 699, 735, 750, 753, 770, 892, 900, 916, 917,
-        971, 983, 984, 985, 990, 995, 997, 998, 1008, 1036, 1052, 1054, 1056,
-        1057, 1070, 1072, 1102, 1110, 1111, 1115, 1133, 1134
+        26, 30, 36, 60, 137, 140, 142, 165, 228, 238, 239, 243, 249, 251, 253,
+        260, 299, 315, 316, 321, 323, 324, 382, 388, 390, 394, 395, 406, 408,
+        409, 410, 413, 429, 430, 431, 432, 436, 437, 448, 449, 454, 455, 456,
+        459, 467, 468, 469, 474, 475, 557, 561, 562, 567, 568, 600, 601, 615,
+        619, 632, 639, 642, 645, 646, 669, 704, 740, 755, 758, 775, 897, 905,
+        921, 922, 976, 988, 989, 990, 995, 1000, 1002, 1003, 1013, 1041, 1057,
+        1059, 1061, 1062, 1075, 1077, 1107, 1115, 1116, 1120, 1138, 1139
       ],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/fee-converter/d1.ts",
+      "sha256": "89c4df4c34079d309fbbb46b6180a814463a85aced27a52fcd09fe2961e4f97a",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declarations of the minimal D1 statement surface; no runtime code or state transition."
     },
     {
       "path": "workers/fee-converter/direct-fees-fixture.ts",
@@ -6173,7 +6230,7 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "5e50021e78b38171f928ca4e7684cb1927f4718eddfa1a7c760ea7988d0ac8c8",
+      "sha256": "130a3482d9f2279cae3b8443e1241fa77c4720775d1abaaaa96ec9e2b2e37c6d",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
@@ -6191,13 +6248,13 @@
     },
     {
       "path": "workers/fee-converter/index.ts",
-      "sha256": "acfd505b2ab888f6a5cc74972dbe447532db85bf878e608ce3e7ddd96cd76e7b",
+      "sha256": "679554e7a6445e5ebda44d017d7fb418514e99afbd411f0236ea171efd01d79e",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/payment_worker_run.qnt"
       ],
-      "candidateLines": [206],
+      "candidateLines": [202],
       "review": "mapped-abstraction"
     },
     {
@@ -6209,7 +6266,7 @@
     },
     {
       "path": "workers/fee-converter/jupiter-route.ts",
-      "sha256": "4f29d76d370c758aed8b3280e5d5e4f8d32bd4b8a0886c6260882d3da4f1af9d",
+      "sha256": "e5b03f7a6258cca2cf71d3c0c85c0865c7fbfa9161e3c220fda0069a898d29a1",
       "models": [
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/solana_route.qnt"
@@ -6233,7 +6290,7 @@
     },
     {
       "path": "workers/fee-converter/native-gas.ts",
-      "sha256": "8dd1fe5e36dd34c6f9d94512bc3e392d7e34ba1b1a6b0c5289e33b1ab06b82f7",
+      "sha256": "9949cfe0f4a32a841b40ff2c778f4ac810360d5580bc090db24fa22215c54e71",
       "models": [
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -6249,9 +6306,9 @@
     },
     {
       "path": "workers/fee-converter/solana-accounts.ts",
-      "sha256": "d8512880f38542a0e3b7cbbc49684994b2f62591bb2f96c682f1728188df292c",
+      "sha256": "dc928cc330a4488e2a2f91c08d1e46976af19148d13eb450eb4692f751265f52",
       "models": ["formal/models/fees/solana_route.qnt"],
-      "candidateLines": [163, 184, 194],
+      "candidateLines": [165, 186, 196],
       "review": "mapped-abstraction"
     },
     {
@@ -6263,25 +6320,25 @@
     },
     {
       "path": "workers/fee-converter/solana-native-route.ts",
-      "sha256": "280b69d9abdef4329741cc78c6928e812d71217dd416465ae0ea804cc0dd3813",
+      "sha256": "f95dd05bd0edbb9db7e22fd375d21b071040ed678b2956ea736e8facb1247dd2",
       "models": ["formal/models/fees/solana_route.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/solana-route-accounts.ts",
-      "sha256": "f5ed816f86323392fcdb3788bd537b78ae403fe3ae1abb7bcb9f5d2bfacc28b4",
+      "sha256": "a2f777efa35551cf3e32a5075e4fbf49c07d6000b4fc9a7e9de061fcf3279f3c",
       "models": ["formal/models/fees/solana_route.qnt"],
       "candidateLines": [
-        50, 104, 105, 106, 109, 110, 111, 113, 158, 169, 172, 177, 180, 183,
-        184, 185, 186, 187, 220, 221, 226, 229, 230, 232, 234, 235, 237, 240,
-        242, 244, 255, 257, 258, 259, 282, 292, 336, 350, 366
+        42, 96, 97, 98, 101, 102, 103, 105, 150, 161, 164, 169, 172, 175, 176,
+        177, 178, 179, 212, 213, 218, 221, 222, 224, 226, 227, 229, 232, 234,
+        236, 247, 249, 250, 251, 274, 284, 328, 342, 358
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/solana-route-receipt.ts",
-      "sha256": "5490550996082c00f11aa2b79687e89a0d0100d5b2a3c7ac472da88c22843ce2",
+      "sha256": "320be0037a87dbd3c9daa671c321d482e9f03929b8a7703cf4490fd00a7eb451",
       "models": ["formal/models/fees/solana_route.qnt"],
       "candidateLines": [
         64, 70, 83, 94, 102, 106, 116, 174, 177, 180, 194, 206
@@ -6289,24 +6346,39 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/fee-converter/solana-route-types.ts",
+      "sha256": "cbc73b5da0a579faa26bc3ad932d58f80ca2b39d3ecae03ee8969f7d2654f10e",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declarations of the route expectation and account observation records; no runtime code or state transition."
+    },
+    {
+      "path": "workers/fee-converter/solana-transaction.ts",
+      "sha256": "cf9ccc2dfc04f7ca9cb48a75d5f432c8d86f14bbdcbfdd6caf8ea79e3c5ec215",
+      "models": ["formal/models/fees/solana_route.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/fee-converter/solana.ts",
-      "sha256": "d2cb0851f04309e9e99001d6fedf13502eb61914ca3838107e825045df885a0b",
+      "sha256": "16666bdd253ff34574254aaca4f4f10b17dfdef284f0e356b0509a8fdb7f3d0e",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"
       ],
       "candidateLines": [
-        23, 120, 129, 381, 409, 411, 425, 630, 687, 695, 706, 716, 852, 855,
-        858, 859, 1012, 1014, 1023, 1026, 1095, 1096, 1098, 1099, 1102, 1104,
-        1142, 1159, 1187, 1188, 1385, 1398, 1399, 1400, 1401, 1402, 1419, 1424,
-        1426, 1443, 1449, 1452, 1462, 1465, 1471, 1473
+        22, 123, 132, 318, 346, 348, 362, 567, 624, 632, 643, 653, 789, 792,
+        795, 796, 949, 951, 960, 963, 1032, 1033, 1035, 1036, 1039, 1041, 1079,
+        1096, 1124, 1125, 1322, 1335, 1336, 1337, 1338, 1339, 1356, 1361, 1363,
+        1380, 1386, 1389, 1399, 1402, 1408, 1410
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/store.ts",
-      "sha256": "f50ddedc4bf51a509b962ec90ccbbe37cd24158b5b2e11b11e281923eeb16886",
+      "sha256": "5b7f24321375e7629be194ce617ce6354b2c811066f4ab85c794377ba13f5300",
       "models": [
         "formal/models/fees/earned_fee_history.qnt",
         "formal/models/fees/fee_conversion.qnt",
@@ -6315,8 +6387,8 @@
         "formal/models/fees/native_budget.qnt"
       ],
       "candidateLines": [
-        53, 54, 83, 207, 209, 219, 226, 234, 236, 243, 256, 265, 269, 278, 282,
-        285, 292, 345, 355, 391, 412, 418, 422, 423, 428, 472, 492
+        68, 192, 194, 204, 211, 219, 221, 228, 241, 250, 254, 263, 267, 270,
+        277, 330, 340, 376, 397, 403, 407, 408, 413, 457, 477
       ],
       "review": "mapped-abstraction"
     },
@@ -6402,7 +6474,7 @@
     },
     {
       "path": "workers/identity/contracts.ts",
-      "sha256": "0fc7f0a08caeb5958fed0f677655bbb2c5d9cc9b5a9f1ec8a3043d088965d2ef",
+      "sha256": "752fb2bc679dfaee1e15bd276b319a7477d2b21986f95b97cd2c2adaeb53a047",
       "models": ["formal/models/api/api_identity.qnt"],
       "candidateLines": [21, 34],
       "review": "mapped-abstraction"
@@ -6450,7 +6522,7 @@
     },
     {
       "path": "workers/identity/rate-limit.ts",
-      "sha256": "807e247b1f0c69247efe4221241828ab6e524b7865079eb88052a2190306cab7",
+      "sha256": "950b7d27384fd5cabd6a4303b73d4178bcdc7816c927681bf3304622f3432844",
       "models": ["formal/models/api/api_identity_admission.qnt"],
       "candidateLines": [43, 46, 85],
       "review": "mapped-abstraction"
@@ -6473,7 +6545,7 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "ed1541e320ec29e99486b0250a31f106f850428fa2c84350357b1ac164e0648c",
+      "sha256": "fcadcb78b6d5d13632fd74c357091be9a7813ca676e3384b7f5d2511b8ca4127",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_delivery.qnt"
@@ -6490,7 +6562,7 @@
     },
     {
       "path": "workers/notify/enrollment.ts",
-      "sha256": "0fc346476417fd177e212520403158a208f7c1c4f1fa0a68ddb3ead77fe67d04",
+      "sha256": "2995f3889da8c6886d1704ac03a5a072b40737fe1a9fb1afd0996733879a60e8",
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt"
@@ -6500,31 +6572,31 @@
     },
     {
       "path": "workers/notify/handler.ts",
-      "sha256": "aca77a5c8b48564c20f11d645f9958058cdff822062a3de783943ea6b7bd0f21",
+      "sha256": "15fd79fd2b2ed36681601f8c6de5043c6c98c7865529fcea03f87a7eaaef733e",
       "models": ["formal/models/api/api_mail_delivery.qnt"],
       "candidateLines": [67, 72, 188, 190, 191, 192, 193, 195, 198, 262, 404],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/notify/index.ts",
-      "sha256": "2e1872d85db095a2115095295848c307e37d98114326c437682a2497ebae456f",
+      "sha256": "08cda26562908497fb89feb0c18000830a5a28292ed5c045d6496d1ba183ce5f",
       "models": ["formal/models/api/api_mail_delivery.qnt"],
       "candidateLines": [139, 180, 182, 215, 217],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/notify/security.ts",
-      "sha256": "108cebb38a1e07b69e1f9a343420e6029c4594eb39f76904b31485c920dc631b",
+      "sha256": "52cab787895ab4934635295ac63decf3093f51c0d65b34380a8e9b90ac6b082f",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_delivery.qnt",
         "formal/models/api/notification_escalation.qnt"
       ],
       "candidateLines": [
-        51, 146, 147, 150, 152, 156, 160, 161, 204, 212, 214, 217, 219, 224,
-        235, 238, 247, 248, 312, 324, 399, 400, 406, 413, 423, 424, 425, 429,
-        431, 432, 446, 447, 458, 459, 473, 474, 475, 482, 509, 552, 566, 567,
-        575, 581, 583
+        50, 145, 146, 149, 151, 155, 159, 160, 203, 211, 213, 216, 218, 223,
+        234, 237, 246, 247, 311, 323, 398, 399, 405, 412, 422, 423, 424, 428,
+        430, 431, 445, 446, 457, 458, 472, 473, 474, 481, 508, 551, 565, 566,
+        574, 580, 582
       ],
       "review": "mapped-abstraction"
     },
@@ -6576,12 +6648,24 @@
     },
     {
       "path": "workers/payment-executor/binding-recovery.ts",
-      "sha256": "46e375574df060f44c36678e755714ba4675d4f6c99c24ed18470ebd8b5b7e19",
+      "sha256": "4571075cad04b5e0adca344272912ea1194c57d03c701c589da1baa52592a349",
       "models": ["formal/models/payments/binding_cancellation.qnt"],
       "candidateLines": [
         81, 105, 120, 146, 159, 160, 163, 170, 190, 206, 212, 216, 217, 218,
         313, 317, 319, 325, 327, 330
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/payment-executor/binding-shared.ts",
+      "sha256": "50c3d1cee85ae20ecfacef34c587adad8a43169597a2c69fd422dd847c212bd3",
+      "models": [
+        "formal/models/payments/binding_cancellation.qnt",
+        "formal/models/payments/binding_consent_renewal.qnt",
+        "formal/models/payments/payment_binding.qnt",
+        "formal/models/payments/signed_send.qnt"
+      ],
+      "candidateLines": [320, 321],
       "review": "mapped-abstraction"
     },
     {
@@ -6603,7 +6687,7 @@
     },
     {
       "path": "workers/payment-executor/core.ts",
-      "sha256": "95c93a23099d03eedbabdb50c504bc4bb2ea1daa2ac9e5762de92ecb29efbf5a",
+      "sha256": "b22c01612005c03c1d4ae0f9317becae99b9cc9838d5b96a449cfd840ccfbcc1",
       "models": [
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
@@ -6614,14 +6698,14 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        214, 224, 254, 407, 408, 410, 411, 453, 455, 461, 462, 463, 464, 471,
-        473, 474, 479, 481, 482, 483, 484, 485, 489, 509, 514, 517, 837, 948,
-        955, 957, 971, 1313, 1314, 1463, 1495, 1504, 1507, 1517, 1542, 1621,
-        1622, 1623, 1624, 1630, 1638, 1746, 1751, 1752, 1753, 1759, 1763, 1764,
-        1765, 1768, 1769, 1772, 1813, 1821, 1823, 1831, 1955, 1956, 1957, 1978,
-        1998, 2004, 2008, 2025, 2030, 2052, 2053, 2060, 2079, 2080, 2084, 2100,
-        2101, 2246, 2247, 2277, 2278, 2284, 2288, 2395, 2434, 2445, 2452, 2453,
-        2462, 2505, 2512, 2539, 2569, 2570, 2615, 2625, 2723, 2725, 2726, 2730
+        109, 119, 146, 208, 209, 211, 212, 254, 256, 262, 263, 264, 265, 272,
+        274, 275, 280, 282, 283, 284, 285, 286, 290, 310, 315, 318, 568, 679,
+        686, 688, 702, 1044, 1045, 1194, 1226, 1235, 1238, 1248, 1273, 1352,
+        1353, 1354, 1355, 1361, 1369, 1477, 1482, 1483, 1484, 1490, 1494, 1495,
+        1496, 1499, 1500, 1503, 1544, 1552, 1554, 1562, 1686, 1687, 1688, 1709,
+        1729, 1735, 1739, 1756, 1761, 1783, 1784, 1791, 1810, 1811, 1815, 1969,
+        1970, 2000, 2001, 2007, 2011, 2118, 2157, 2168, 2175, 2176, 2185, 2228,
+        2235, 2262, 2292, 2293, 2338, 2348, 2446, 2448, 2449, 2453
       ],
       "review": "mapped-abstraction"
     },
@@ -6634,12 +6718,12 @@
     },
     {
       "path": "workers/payment-executor/index.ts",
-      "sha256": "c06068dedf97c2755a661743b4df0fb2ff3e70a8df20cb3f4fd48bb19db0f40f",
+      "sha256": "04013b3bdfb9fb7f81222bf2aad1b7ac853594c5981d66794278fe4b13ab881a",
       "models": ["formal/models/payments/binding_cancellation.qnt"],
       "candidateLines": [
-        107, 113, 128, 139, 147, 155, 156, 165, 174, 175, 178, 195, 200, 209,
-        228, 236, 265, 284, 301, 316, 327, 331, 359, 390, 394, 471, 476, 477,
-        479, 481, 485, 508, 528, 545, 555, 595, 601, 676, 680, 823
+        111, 117, 132, 143, 151, 159, 160, 169, 178, 179, 182, 199, 204, 213,
+        232, 240, 269, 288, 305, 320, 331, 335, 363, 394, 398, 475, 480, 481,
+        483, 485, 489, 512, 532, 549, 559, 599, 605, 680, 684, 827
       ],
       "review": "mapped-abstraction"
     },
@@ -6652,7 +6736,7 @@
     },
     {
       "path": "workers/payment-executor/monthly-release.ts",
-      "sha256": "08078844417d001e7dae0d49f08eb7f7a08cc03b943f496e7fd57904e72bc76a",
+      "sha256": "c164a6b2e1a694a2f561a90ad819a99105feee2732c6835481b3b088c20cbb16",
       "models": ["formal/models/rewards/monthly_release.qnt"],
       "candidateLines": [
         132, 152, 169, 184, 201, 210, 226, 257, 265, 273, 301, 302, 305, 306,
@@ -6662,12 +6746,12 @@
     },
     {
       "path": "workers/payment-executor/monthly.ts",
-      "sha256": "2120de16090bbf27c5ee2e1143823043686df366aba7401c986c83deee9b9956",
+      "sha256": "cadf8fe152a30da4899219716ff59d3472387043bf250772bff3805df565c392",
       "models": [
         "formal/models/rewards/monthly_execution_recovery.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
-      "candidateLines": [23, 53, 57, 60],
+      "candidateLines": [43, 47, 50],
       "review": "mapped-abstraction"
     },
     {
@@ -6703,7 +6787,7 @@
     },
     {
       "path": "workers/payment-executor/solana-monthly.ts",
-      "sha256": "f633c2ae24a66ded1eddd954624e0c0cd13e908e26b32343285b86fed2e27a2d",
+      "sha256": "334719c74d00678e8a5576e98e4a7d5864ef89ff414f1e37e29fca0d72056d15",
       "models": [
         "formal/models/rewards/monthly_execution_recovery.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
@@ -6716,7 +6800,7 @@
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "f94511f6606f4ab1609fa19d625cc7d8fd2d666ad69b0f51f7560487e85b2b1e",
+      "sha256": "1b15f625d12b431e54835ab314e687edf1647ec41d07dfc597efa9f6648bbe02",
       "models": [
         "formal/models/payments/payment_binding.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
@@ -6729,30 +6813,38 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/payments/deployment-types.ts",
+      "sha256": "0a42a7655acde6f5bfa285537a3e1c1943366d36c7bc65d203bd3c8148724f1b",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declarations of payment deployment records and per-step views; no runtime code or state transition."
+    },
+    {
       "path": "workers/payments/deployments.ts",
-      "sha256": "aab9208729df7febd9c693c7a80faa562ed1a6238bd74a5c44eb9b797f8af9e2",
+      "sha256": "207caeb93e20adb2880c3aea26db81f4c8f557c1beccd4dc2c91f98fb34ccce2",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "a3c2a182f53fddd832ca836d370355e8f2d04425a094c71e048b7ef0e9ee4c74",
+      "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        80, 107, 124, 127, 133, 134, 138, 165, 175, 179, 181, 185, 187, 198,
-        199, 201, 203, 205, 211, 214, 217, 221, 233, 234, 236, 237, 242, 292,
-        339, 350, 371, 379, 382, 413, 493, 593, 594, 653, 654
+        66, 93, 110, 113, 119, 120, 124, 151, 161, 165, 167, 171, 173, 184, 185,
+        187, 189, 191, 197, 200, 203, 207, 219, 220, 222, 223, 228, 278, 325,
+        336, 357, 365, 368, 399, 479, 579, 580, 639, 640
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/payments/reconcile.ts",
-      "sha256": "469b4fc463c93d0a0cf725210c72c8d68e1525df5a81a0a4daabbbd5b26f9a7e",
+      "sha256": "3e9926d64c6cb7e0810912ce06a46643764dba2d696b7575ed708b6cbb18d827",
       "models": ["formal/models/payments/payment_dispatch.qnt"],
       "candidateLines": [
         7, 22, 27, 28, 47, 48, 52, 63, 101, 109, 115, 125, 133
@@ -6761,14 +6853,14 @@
     },
     {
       "path": "workers/payments/registry-database.mjs",
-      "sha256": "36fdf5e44a5c4fc4360ce5fb925351c7507d790a072134b6e232b7115c7a4733",
+      "sha256": "3b78cec84306e6e6de8a6cffa09e88cee51def8c48f17e624ed8f2b6756764d0",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/payments/scanner.ts",
-      "sha256": "80d0a5c5b25c4931b0f0063680071eb32de500d51bab84f9d4b35ce391cf1039",
+      "sha256": "881dc96f75bc40a278e70c1590a329d525b721f7d0a195b89863922cdd5a4790",
       "models": [
         "formal/models/payments/chain_range_scan.qnt",
         "formal/models/payments/evm_scan_checkpoint.qnt",
@@ -6790,7 +6882,7 @@
     },
     {
       "path": "workers/referral-accrual/config.ts",
-      "sha256": "b51f6491d58103058ac1df9493bfa56007cddf65f0f137ae320f4f5b6c0a885f",
+      "sha256": "cd32c8196ef0566e0f7f6a7fd8656cba996c92cb5a650647490677fb29d97a5f",
       "models": ["formal/models/referrals/referral_accrual.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -6835,7 +6927,7 @@
     },
     {
       "path": "workers/referral-accrual/merkle.ts",
-      "sha256": "3e024edff1742646a193c4a6b62e6b75c07c09eedc6c16f80cdada6220205b42",
+      "sha256": "126d17070016922b3229d96cd3adb74446ade2b584965236986cff8f70272d40",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -6843,7 +6935,7 @@
     },
     {
       "path": "workers/referral-accrual/poster.ts",
-      "sha256": "3607efca70251004aa8b2dd49104de202c38699a375f5eb8ec17e0e11bac46c3",
+      "sha256": "2c4da549f455de5ba7631242894cf1e9b956f952411603ff316d855a486d277c",
       "models": [
         "formal/models/referrals/referral_distribution.qnt",
         "formal/models/referrals/referral_posting.qnt"
@@ -6895,7 +6987,7 @@
     },
     {
       "path": "workers/slopbot/appeals.ts",
-      "sha256": "d825b1a32837758276633372f6138e4ed76e9e2ca2e1309373d9e54e9622d64f",
+      "sha256": "bfc2dbfd8158dd9012f26f5f2b55d13aa6556431682f1c35484c58d233d64caf",
       "models": ["formal/models/slopbot/bot_appeal.qnt"],
       "candidateLines": [1, 84, 118, 135, 149, 181, 215],
       "review": "mapped-abstraction"
@@ -6909,7 +7001,7 @@
     },
     {
       "path": "workers/slopbot/close-attempts.ts",
-      "sha256": "c0711815255590c3c29579b55e52a9ca4e9c60439c61893994f3cd114b76a495",
+      "sha256": "c79ea00fae3ced4c3f97c6ee08f05a6413ebb4038df2eb09d6dda41583984d7b",
       "models": [
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -6922,7 +7014,7 @@
     },
     {
       "path": "workers/slopbot/closure-eligibility.ts",
-      "sha256": "e7bc00d9960be689b331ce9256a8858a6074e9cbd95b610f0e5ed087daed99e9",
+      "sha256": "aed1c0f53dd75f4ed37aaa6c5c1e65bf2868a18f9cceff7b2ec6cbfa707b1681",
       "models": [
         "formal/models/slopbot/bot_closure_membership.qnt",
         "formal/models/slopbot/bot_moderation.qnt"
@@ -6932,7 +7024,7 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "sha256": "a761599308b2102914f025093eb9590f1d1e1f0a21761319f7ee27a31efd01b2",
+      "sha256": "e27306cb586fca28312b24495089be109bbe930e3e756a39dd7f2165925b3977",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -6992,7 +7084,7 @@
     },
     {
       "path": "workers/slopbot/maintainer-holds.ts",
-      "sha256": "14df0736402c7abf8d70e744b0df2521224f1701cdefdbe9603e487c3917ca17",
+      "sha256": "526b12a26b034913407f3409fcbef0171bd21261116e862dc851a75f008665a3",
       "models": ["formal/models/slopbot/bot_moderation.qnt"],
       "candidateLines": [37, 38, 42, 47, 86, 142],
       "review": "mapped-abstraction"
@@ -7009,7 +7101,7 @@
     },
     {
       "path": "workers/slopbot/penalties.ts",
-      "sha256": "1b1b2367f6dc6b9b78163a65de5865e15479efb286d07df5e81ad37871b35c29",
+      "sha256": "0ca11c771f1424bc8d559cc11480bbf8253ad495c3672d9c9d2d9bddf8794622",
       "models": [
         "formal/models/slopbot/bot_appeal.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt"
@@ -7019,7 +7111,7 @@
     },
     {
       "path": "workers/slopbot/persistence.ts",
-      "sha256": "551afb522ba32518a9ce8ad7a3ed3616343a6f84064eed362f6c8c62489ce1a4",
+      "sha256": "c614fa593a195345e9711a134ff0f8065405ed487e858ec415d586c19eb0af90",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -7047,7 +7139,7 @@
     },
     {
       "path": "workers/slopbot/quality.ts",
-      "sha256": "f61d66c65a8d4b36531ee763ecc2ca622ea8e95b8c8b7a27ecce1d81c63131ab",
+      "sha256": "2a0fdd222b02b3ee559c3cbc04a1774fffdf4ab39882ccc95b7ac7775aa3ae31",
       "models": ["formal/models/slopbot/bot_quality_receipt.qnt"],
       "candidateLines": [112, 165, 167],
       "review": "mapped-abstraction"
@@ -7061,7 +7153,7 @@
     },
     {
       "path": "workers/slopbot/reopen-source.ts",
-      "sha256": "2fc441375ac23a0e1c952a5260484c2615c60b5c05f5efa184145f24ab62e1b6",
+      "sha256": "cd455deb045d7218691bf66d59989510855f127b139412208cd7bb7c3d3fbfd3",
       "models": ["formal/models/slopbot/bot_moderation.qnt"],
       "candidateLines": [59, 98],
       "review": "mapped-abstraction"
@@ -7089,17 +7181,17 @@
     },
     {
       "path": "workers/slopbot/repository-access.ts",
-      "sha256": "158ea6bf6256df5fb154201401836be84fef4d504fea3806d2e1c750d68dcf99",
+      "sha256": "ce183489255fb1b0f9e7578148869937545b13fa4776945d0b5d7f4dffec17c0",
       "models": ["formal/models/slopbot/bot_repository_access.qnt"],
       "candidateLines": [
-        28, 29, 31, 55, 57, 72, 83, 108, 109, 127, 128, 130, 203, 224, 263, 272,
-        274, 275, 282, 283, 285, 296, 302, 303, 306, 315
+        25, 26, 28, 52, 54, 69, 80, 105, 106, 124, 125, 127, 200, 221, 260, 269,
+        271, 272, 279, 280, 282, 293, 299, 300, 303, 312
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "2c319dba6320d71ad903d44218b26fa5289f0d3d154f6521a24cceb2e2e14251",
+      "sha256": "453ccdf749b0d8025be0949c68eb493ca5186de9d1c1c7ca66eda0e60f5f8b19",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -7109,19 +7201,19 @@
         "formal/models/slopbot/bot_penalty_once.qnt"
       ],
       "candidateLines": [
-        3, 153, 267, 282, 291, 301, 304, 496, 650, 799, 828, 838, 973, 978, 983,
-        985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
-        1090, 1141, 1163, 1164, 1172, 1177, 1266, 1268, 1288, 1307, 1384, 1389,
-        1460, 1575, 1582, 1583, 1618, 1635, 1638, 1639, 1801, 1806, 1868, 1881,
-        1886, 1893, 1894, 1898, 1899, 1907, 1923, 1973, 2120, 2180, 2186, 2197,
-        2225, 2250, 2258, 2281, 2286, 2362, 2363, 2405, 2440, 2491, 2636, 2893,
-        2968, 3134, 3145, 3153, 3251, 3252, 3292, 3342, 3356, 3372
+        3, 153, 267, 282, 291, 301, 304, 496, 650, 797, 826, 836, 971, 976, 981,
+        983, 986, 988, 989, 1000, 1003, 1005, 1062, 1063, 1065, 1066, 1082,
+        1088, 1139, 1161, 1162, 1170, 1175, 1264, 1266, 1286, 1305, 1382, 1387,
+        1458, 1573, 1580, 1581, 1616, 1633, 1636, 1637, 1799, 1804, 1866, 1879,
+        1884, 1891, 1892, 1896, 1897, 1905, 1921, 1971, 2118, 2178, 2184, 2195,
+        2223, 2248, 2256, 2279, 2284, 2360, 2361, 2403, 2438, 2489, 2634, 2891,
+        2966, 3132, 3143, 3151, 3249, 3250, 3290, 3340, 3354, 3370
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/routing.ts",
-      "sha256": "98db28acdd4768c5e7e2ee9b12e6f398fdf01f1f98d8c23b7fe2378e7cac27f1",
+      "sha256": "e560d8c4c1ececeafb7cf7d5bf58d3f17e59ad7243c17e4f8ddafd9a284be382",
       "models": [
         "formal/models/slopbot/bot_closure_membership.qnt",
         "formal/models/slopbot/bot_review_admission.qnt"
@@ -7138,7 +7230,7 @@
     },
     {
       "path": "workers/slopbot/value-accepted-commit-census.ts",
-      "sha256": "c5fb559a232d2b5ac0ba8b303e179f324b6e8389322dca86553623a358b5bcab",
+      "sha256": "a2b623fe0f651448768b7a4fb454b665731e0272f1308cfa84a50215fbb40ecf",
       "models": [
         "formal/models/slopbot/bot_accepted_census.qnt",
         "formal/models/slopbot/bot_commit_census_fallback.qnt"
@@ -7148,28 +7240,28 @@
     },
     {
       "path": "workers/slopbot/value-accepted-range.ts",
-      "sha256": "b3c3cf1304f3ed18f034046c5558b470d00ad5fc65c5f1264b9bf83af2e9595a",
+      "sha256": "1c1e3497f38fb59a1a08164f90c2face0a767155928ac922133335bccf12b2ac",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
-      "candidateLines": [48, 61, 92, 106],
+      "candidateLines": [40, 53, 84, 98],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-binary.ts",
-      "sha256": "0660f88c39f9e784f67f96bc4aa929f5137fc56c1be2335a129530e4dc18eda6",
+      "sha256": "a03626983b21feb35b323f73f456f1d7c2081f9775b8d0cab397a82e77f85ddc",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
-      "candidateLines": [58],
+      "candidateLines": [42],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-blob.ts",
-      "sha256": "0e040a1e477da8eec5915dfa11f3e6e4a591a5486f3e2693a8a25c56bcbc6924",
+      "sha256": "758ec1167fd428076efe081ad0d09e54d4eb4759f946e6432912b89b0f0ee5f6",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-branch-policy.ts",
-      "sha256": "cb6c41ca76a80326fd65449d8e81cc402c6539e3f9ecfb74db7bfe235f761c50",
+      "sha256": "212ab7e78569ea6ce06e1b1d728019eda536bbee865007114ed695367a85d37c",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -7203,7 +7295,7 @@
     },
     {
       "path": "workers/slopbot/value-consumption.ts",
-      "sha256": "8042fe487ab9ee7dbe3bbd28c467125901bb433efff2a2d591b6bdb71edaa3c6",
+      "sha256": "7aea9c52ded47438a77577902a6d2fb201a06a3137eee38be3f0a82a56116a80",
       "models": [
         "formal/models/slopbot/bot_value_budget.qnt",
         "formal/models/slopbot/bot_value_history.qnt"
@@ -7213,43 +7305,49 @@
     },
     {
       "path": "workers/slopbot/value-context.ts",
-      "sha256": "4eaa63aa8c53fec3ff83b31940f203d53fd8f156395b10840f173eaa94b83986",
+      "sha256": "e7f2b9df5e105397f84a085d1f35acacf8ab7046035d763c9b6380090ad2b63f",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-disputes.ts",
-      "sha256": "2a6bd2dcc402ae5d8f00ba7678179ad19567746a08eea054a8403196254696b4",
+      "sha256": "adce62d9a33a190f2086458f576fb4816437983635bbd65ed6eb302124afc5ba",
       "models": ["formal/models/slopbot/bot_value_dispute_binding.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-evidence-types.ts",
+      "sha256": "815d88f9b9e556b742f8d09d1ebc217f5d7814a1703cfec7c7d996fe972d1983",
+      "models": [],
+      "candidateLines": [14, 69, 89],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declarations of value evidence and its proof records; no runtime code or state transition."
+    },
+    {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "c06f19d8aa30ca72aba0ac63727cdf6112f4098ddd056395ae1f6240ce9f24c3",
+      "sha256": "61654b6a3f007703f470f03db8fbd094a2a1945579bda94b8c214355b4390d09",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
-      "candidateLines": [
-        76, 95, 110, 156, 167, 176, 190, 664, 684, 727, 736, 755, 1096, 1115
-      ],
+      "candidateLines": [61, 72, 81, 95, 517, 537, 580, 589, 608, 949, 968],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-file-comparisons.ts",
-      "sha256": "2682d6e54f757678edf393d814f021099cac7bca446a2c01a06a4db15a8db5db",
+      "sha256": "8207b1c2c486982bf8536e45f777bf20c44c99368f41fcc031fdad0e8e617207",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [18, 35, 42, 65, 66, 89, 142],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-group-collection.ts",
-      "sha256": "6d7bd57b9f6d30efe0b68936afc86a83605523498030672e6b7091a396002dd5",
+      "sha256": "7716103fdde8636e09dde97e2e3d81531c26c103ee920b49d8173ece4de2446f",
       "models": [
         "formal/models/slopbot/bot_accepted_census.qnt",
         "formal/models/slopbot/bot_source_leases.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt"
       ],
-      "candidateLines": [59, 73, 105, 171],
+      "candidateLines": [54, 68, 100, 166],
       "review": "mapped-abstraction"
     },
     {
@@ -7261,23 +7359,23 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "d891eba4082dac549e2096fe1c475ced753d3d1fdca4b1bdfc38da4d6d0a1538",
+      "sha256": "4144a20f2b4a030e98d123bea0eec25a1ca380bc450142112d84b828b5743223",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-indirect-retention.ts",
-      "sha256": "157d15037f63e82d9edd80a0f11476e8441058453a40b0b7d504e34117a11200",
+      "sha256": "4582bf92d7a2c44964782af1f0458b1bf3886daf61f76d7f5b7167a91ba9f16e",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
-      "candidateLines": [35, 37, 42, 45, 53, 100, 103],
+      "candidateLines": [28, 30, 35, 38, 46, 93, 96],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-indirect.ts",
-      "sha256": "82666c1fc791f5004e7ef263031d0bc5cf1b9f8342c3ae87030e4ce2ae2fdae3",
+      "sha256": "be8a7abd92d46a37ba78d8e2ded5b949a8b029d7a37cdec4fc168ce98dfe8463",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
-      "candidateLines": [27, 50, 119, 125],
+      "candidateLines": [13, 36, 105, 111],
       "review": "mapped-abstraction"
     },
     {
@@ -7293,7 +7391,7 @@
     },
     {
       "path": "workers/slopbot/value-journal.ts",
-      "sha256": "3e1e7312a881ac00c92e60f24f29a901172ecb4abfb7b63efca587f4029f33e1",
+      "sha256": "da81cd120713c2d73ed44ac24f1f6c6c4f18c2ceac5d356e8033556807826f4f",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_journal.qnt"
@@ -7303,56 +7401,56 @@
     },
     {
       "path": "workers/slopbot/value-manifest-identity.ts",
-      "sha256": "170fce1d086b6b453713049092d7dd96c51aeba90ff5fba21683524229a3b7d5",
+      "sha256": "37255e152e95e9e3146ac31e0127d4a252d2f1344142b17527d8ce861cef65fa",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
       "candidateLines": [70],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-merge-profile.ts",
-      "sha256": "b4aa7591f498d140d4ea7252a2cbb0c0a7517de86aa0ba91ac5c5c4a667036ef",
+      "sha256": "3e70f86c28e39bd47f58590f4a3d6cad82a38fe7c97f9e395a358b790b6ac294",
       "models": ["formal/models/slopbot/bot_value_freshness.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-merge-resolution.ts",
-      "sha256": "9596654aed690a16f4ed13cf0d4424b7b6b64980ad391436bda1f810c97464ae",
+      "sha256": "bd8889156f15c3ed08fe5979097867c0b12ffa7bc30f5cab8570e1c4345b303a",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-model-source.ts",
-      "sha256": "50650e527e2f1fff64374ceed942c364f3933b5fa302b1ff0187b340bcda6909",
+      "sha256": "ae4c38a443e6c158f5219a615db6f8f7994d6114ba7c3b1f5c98a9e910ac9ae7",
       "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
       "candidateLines": [17],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-no-change-promotion.ts",
-      "sha256": "49aed91946cd64aad21a200e76aeb26cc4c3a91ec393cabf36e4517ed2907e94",
+      "sha256": "6f8680776dea9f2e784fb1bfac2bff7e9fd46f4bd41f6471b624ba942ef760f2",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-patch-replay.ts",
-      "sha256": "0c9c194fb20835b426f41ad50647a1899a9a9b26a67d4e96fdc685b88c2af497",
+      "sha256": "0a50ec809d356b1a97fb8b6afe659dfa06a42edf587fb71826aae53666d82153",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
-      "candidateLines": [60, 63, 230, 231, 293, 302],
+      "candidateLines": [50, 53, 220, 221, 283, 292],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-patch.ts",
-      "sha256": "04da27f8304282259174da469daf69321a3e57f12ff3b25865ba6c752a6dffc3",
+      "sha256": "734c46c390a5b84e5c871f7ed10d61e85b45246396306bdb7a9475ffed67360e",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
       "candidateLines": [7, 28, 97],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-processing.ts",
-      "sha256": "1b7a074415c41fab9b84d6809e4d618cfee1c71a0c552c761ef4e6edf3a264e7",
+      "sha256": "808a5d182562f3fea664e68873770670ed1a016c1361af98d52fee327dfaad1e",
       "models": [
         "formal/models/api/api_incomplete_assessments.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt",
@@ -7385,12 +7483,12 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "sha256": "f44fd6e58170bb6a9c857b4f08bf933a8d298f514af2b767f0f2cbb6615961d4",
+      "sha256": "6366992757d653cfdb8c40fc96547bd88f59d2639fa36922f429368996586ea8",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt"
       ],
-      "candidateLines": [111, 242, 244, 247, 249, 252, 263, 266, 268],
+      "candidateLines": [107, 238, 240, 243, 245, 248, 259, 262, 264],
       "review": "mapped-abstraction"
     },
     {
@@ -7402,21 +7500,21 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "e9271369f017d8abff3d46afca66efa7cde9af47dfbf256c0884ec157042f265",
+      "sha256": "ea75bb8b113c645e87199ede5605a3a8c4d5a4077a8492814954ed43f71bcd5d",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
       "candidateLines": [30, 57, 177, 183, 207, 241],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-retained-reference.ts",
-      "sha256": "a668c55882e9f0d00b75b0adf0139093cbab311762c7331f890ff4f3fac7dd78",
+      "sha256": "23a49fdb7dcdcfb4819b8870e8dd6f2d6f39d748827a3df0ff05f9aca635e6ef",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
-      "candidateLines": [87, 112],
+      "candidateLines": [84, 109],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-review.ts",
-      "sha256": "864c8328b8ba40359b0839fc909cae19e592d2e10c133604fc91812084907c12",
+      "sha256": "d56e43c51a76a609894896e33ecc69ef0bf05ac2f09c244c1337cc3a3ffe2fec",
       "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
       "candidateLines": [98],
       "review": "mapped-abstraction"
@@ -7440,32 +7538,32 @@
     },
     {
       "path": "workers/slopbot/value-tree.ts",
-      "sha256": "668cc4caffde5a7bffb8afef9b9772a8f2ae62f08bb4c6ef189bfbe0a5470f4d",
+      "sha256": "8da93d0b1b2184dc70921a1559cf09e2a5cd31e1e431506157b4954ac927c191",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-work-unit-consumption.ts",
-      "sha256": "a563e09ca245e841b6f6112c42e9cdec29853040f258dd6d32e3655c598e0105",
+      "sha256": "23b9e0421a5cfe004fcd7d0d8afebbd56da0f258d99505cd688d1bafde7c5844",
       "models": ["formal/models/slopbot/bot_value_history.qnt"],
-      "candidateLines": [210, 281, 284, 290, 307, 335, 336],
+      "candidateLines": [208, 279, 282, 288, 305, 333, 334],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-work-unit-journal.ts",
-      "sha256": "bbf30dc42565f5b0c904244b318d6613f2e9517d0461c646ae25cec7ae10e9a9",
+      "sha256": "d72d1ade9688cd6604d898f58c437fb0a28e2ed8283bf15555659536a1dca9ff",
       "models": [
         "formal/models/slopbot/bot_joint_journal.qnt",
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt"
       ],
-      "candidateLines": [94, 219, 242],
+      "candidateLines": [92, 217, 240],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-work-unit-publication.ts",
-      "sha256": "763bdf0bc5f6eeb6a150224013975fd6f44a62565ae8d5329d0487ba622fcf56",
+      "sha256": "48c9fd759c2f440205d8767d58edd17aa493c0e132049dc14ac06c3f45d4543a",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
@@ -7476,7 +7574,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-review.ts",
-      "sha256": "3f7cdbd18fb5d5e7e91ac20366efa87e0eeb970bffbb5c30b8dc4132d7dbab3d",
+      "sha256": "537febb5fe4eb6fe34723ade113de3617ff83edc3c7239ed803ab5d434399d1b",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt"
@@ -7485,13 +7583,21 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-work-unit-types.ts",
+      "sha256": "f809d39f26e992316248336aee8b36c6df4573d5e3fa79e85cc1346a705c4273",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declarations of joint value work-unit records; no runtime code or state transition."
+    },
+    {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "34e129c5ac4e9fda8b79caa9c82cdf54c8a43b4e4ab4d515d1ebe33ce4673ebe",
+      "sha256": "5b752c8152aab698af3490a4700c9f6351e17971071c58446f684a77fb2ef817",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt"
       ],
-      "candidateLines": [124],
+      "candidateLines": [98],
       "review": "mapped-abstraction"
     },
     {
@@ -7554,9 +7660,9 @@
     {
       "path": "workers/verified-fee-replacement.ts",
       "sha256": "5f86bfeba7c82067678c890b5a07ba7978c9971162ccea0139172c2c0a17083f",
-      "models": [],
+      "models": ["formal/models/payments/signed_send.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure bigint same-nonce EIP-1559 fee replacement step and caps. No I/O or journal state; replacement attempts and their retention belong to the payment keeper and fee-converter callers."
     },
     {
@@ -7747,7 +7853,7 @@
     },
     {
       "path": "workers/vetting/acquire.ts",
-      "sha256": "18bc557ad29fdac24f6138cbb6954de1f484d14adaf411966294921e2e73c727",
+      "sha256": "fc9b675e131b0e1b3e8b0b170cccb745e1e8bb7aca1c4f2de4b890611bb340f9",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
@@ -7759,14 +7865,14 @@
     },
     {
       "path": "workers/vetting/assembly-manifest.ts",
-      "sha256": "e45e455ec1b5d0aee9bf5ceb514160b1eb9bd8b0be4648e60267c45937f3f8a4",
+      "sha256": "06359ce90f3d61150ac87e68204463cde9d5a4ea1d55253409006ec6a88b1ba8",
       "models": ["formal/models/vetting/vetting_acquisition.qnt"],
-      "candidateLines": [58, 65, 75, 103],
+      "candidateLines": [57, 64, 74, 102],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "779da62e2a1c44aaf02dc360fff543117006edb9cd60351816208645377386db",
+      "sha256": "12e1ccf0ba6c81120f8c43a91d40b6173794da1e7f4e08311001166602ad7c52",
       "models": ["formal/models/vetting/vetting_disposition.qnt"],
       "candidateLines": [
         241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050
@@ -7803,9 +7909,9 @@
     },
     {
       "path": "workers/vetting/publication-journal.ts",
-      "sha256": "e718bde01e7fb914a1d34a13f678479af23a90f7bc601e962a06417a98c5dd33",
+      "sha256": "ae0d34d87f825e008db51195ffc8673ae82a90b9108ac6c0eeaefcdc276f6500",
       "models": ["formal/models/vetting/vetting_publication.qnt"],
-      "candidateLines": [1, 43, 49, 64, 97],
+      "candidateLines": [1, 36, 42, 57, 90],
       "review": "mapped-abstraction"
     },
     {
@@ -7820,17 +7926,17 @@
     },
     {
       "path": "workers/vetting/queue.ts",
-      "sha256": "8e5d299fafd776236af6d43504c70ec6c19ee1309d1045304be2127754528ffa",
+      "sha256": "1c37af2959a3049de7749c39b0bf37d4f785c43c0164747d3f603f51aa1cc107",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "candidateLines": [2, 104, 174, 201, 217, 219, 226, 347, 363, 380, 392],
+      "candidateLines": [2, 97, 167, 194, 210, 212, 219, 340, 356, 373, 385],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "0e0083bcb1277f643816960f24c915ba985cf520f8a00f0cb28707b670d59b53",
+      "sha256": "c32d1f4b540c24baa6c02044c0a937de87452cd3b7966a55ae50ae7e5536df69",
       "models": [
         "formal/models/vetting/pr_review_retry.qnt",
         "formal/models/vetting/vetting_acquisition.qnt",
@@ -7845,7 +7951,7 @@
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "cd7794f011b780bb3869c3fc6602948ef72263f543fa391da659b47aa64e1745",
+      "sha256": "92b7a4e292731d5a69ce7e8ea0029d67c8ba37ad1fc17b5428f404b8090b8491",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
@@ -7865,7 +7971,7 @@
     },
     {
       "path": "workers/vetting/scanners.ts",
-      "sha256": "40fe229371ff89b97b1dfe58c32c4900277926d3f376489922b9cb73378c9bed",
+      "sha256": "685d17b263ea5fa51eb9ebd44e3563cfd43e1bd9133de3f2ac22364f23008d6d",
       "models": [
         "formal/models/vetting/vetting_review_batches.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
@@ -8143,10 +8249,11 @@
     },
     {
       "path": "formal/models/api/api_private_case.qnt",
-      "sha256": "8a157e59f9a98a2751cf8c94a3b521c11058d20bdd73f5c3e84e7010c258b024",
+      "sha256": "d124e54b681d2586e684115a68288e47051cbe1ea7901bcc2a03bb680815a406",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/award-asset.ts",
+        "backend/security/case-store.ts",
         "backend/security/handler.ts",
         "backend/security/project-access.ts",
         "backend/security/report-analysis.ts",
@@ -8172,8 +8279,9 @@
     },
     {
       "path": "formal/models/api/api_private_case_roles.qnt",
-      "sha256": "959fc2b40c46724da402264b429e3480a854f7fa12e5a29dd185ea5924ac568e",
+      "sha256": "e0711f2e01ae83b5866b5f2ec2eb63ec0dd121aa8c0d7451f018017f40cd5bbb",
       "sources": [
+        "backend/security/case-store.ts",
         "backend/security/handler.ts",
         "backend/security/project-access.ts"
       ],
@@ -8196,9 +8304,10 @@
     },
     {
       "path": "formal/models/api/api_private_case_transaction.qnt",
-      "sha256": "f91b1c3db1fc02cab364b72868a82f3838417f2cbdd0fa964bc1e0c7c22d6ced",
+      "sha256": "d9b67541e8d745c394d209a335f3f7865e54eeb6345680a65a723a764f38bd53",
       "sources": [
         "backend/security/analysis.ts",
+        "backend/security/case-store.ts",
         "backend/security/handler.ts",
         "backend/security/report-intake.ts",
         "backend/security/verified-intake.ts",
@@ -8218,12 +8327,14 @@
     },
     {
       "path": "formal/models/api/api_private_intake.qnt",
-      "sha256": "558a791a8c490160686e0a7cfcecc538cd997cbfc3370031092b3cd099962c83",
+      "sha256": "2e51bbd5bc16e44c5d4444a2a8e0e1b99fcefa65a890615b076e5429bcff9269",
       "sources": [
+        "backend/security/case-store.ts",
         "backend/security/github-advisories.ts",
         "backend/security/intake-grant.ts",
         "backend/security/report-intake.ts",
         "backend/security/reporting-readiness.ts",
+        "backend/security/submission-store.ts",
         "backend/security/submissions.ts",
         "backend/security/verified-intake.ts",
         "migrations/0059_private_security_submissions.sql",
@@ -8364,9 +8475,10 @@
     },
     {
       "path": "formal/models/api/api_submission_recovery.qnt",
-      "sha256": "d0884aae1094f35e7b6548bdebea1d08a128d37c1a464fbf143467989f601681",
+      "sha256": "518ead8a14da89753f663dbde6afd0efc43684f84c0375ee670857d87c0044ae",
       "sources": [
         "backend/security/report-intake.ts",
+        "backend/security/submission-store.ts",
         "backend/security/submissions.ts",
         "backend/security/verified-intake.ts",
         "migrations/0059_private_security_submissions.sql",
@@ -9291,7 +9403,7 @@
     },
     {
       "path": "formal/models/fees/solana_route.qnt",
-      "sha256": "c15ae163243e4b5ce73956ead32204906a5a4b057b36ffc0f4952f4f11894f75",
+      "sha256": "ac6101ab6f07102bbe6ffe253aee16715a92d80701c68ca534393cad3fa68cc4",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/fee-converter/jupiter-route-schema.ts",
@@ -9302,6 +9414,7 @@
         "workers/fee-converter/solana-native-route.ts",
         "workers/fee-converter/solana-route-accounts.ts",
         "workers/fee-converter/solana-route-receipt.ts",
+        "workers/fee-converter/solana-transaction.ts",
         "workers/fee-converter/verified-jupiter-policy.ts",
         "workers/fee-converter/verified-jupiter-wire.ts",
         "workers/fee-converter/verified-route-credit.ts"
@@ -9333,9 +9446,10 @@
     },
     {
       "path": "formal/models/payments/binding_cancellation.qnt",
-      "sha256": "2cff62582aacc8973ea47f55e3ea24b427656546c1d004a7e8fadab6df6dca82",
+      "sha256": "9503d81d700ea9327f8db0d01b3cfd04e522688fc782294d4ea0195bed68ce9d",
       "sources": [
         "workers/payment-executor/binding-recovery.ts",
+        "workers/payment-executor/binding-shared.ts",
         "workers/payment-executor/core.ts",
         "workers/payment-executor/index.ts"
       ],
@@ -9348,10 +9462,11 @@
     },
     {
       "path": "formal/models/payments/binding_consent_renewal.qnt",
-      "sha256": "a00eb805da2dbea61db5ae5c07c6601e2b6844e6a3faf268d34873f173237fa2",
+      "sha256": "bbc28c8bbfd3de5170dc6dd9db7404e2cae7b14da2266b585c1688d6f534ce2a",
       "sources": [
         "backend/payments/handler.ts",
         "migrations/0016_binding_authorizations.sql",
+        "workers/payment-executor/binding-shared.ts",
         "workers/payment-executor/core.ts"
       ],
       "scenarios": [
@@ -9648,10 +9763,11 @@
     },
     {
       "path": "formal/models/payments/payment_binding.qnt",
-      "sha256": "12d01530ec60457eb03b5cf78febb51f7f9704c09cd3ef7a5d5e49105edbc31c",
+      "sha256": "0808408613a3d693ab528fec4109b8a378c80093bc60368511f4d732632ed206",
       "sources": [
         "backend/payments/possession.ts",
         "backend/payments/wallet-registration.ts",
+        "workers/payment-executor/binding-shared.ts",
         "workers/payment-executor/core.ts",
         "workers/payment-executor/solana.ts"
       ],
@@ -9812,13 +9928,15 @@
     },
     {
       "path": "formal/models/payments/signed_send.qnt",
-      "sha256": "6e4e92cc0a52da6769b60cc0eef9335a0c0f97a2a545c3e6e302b3e365d04185",
+      "sha256": "e0378788df77b2dd4a36a15363073374849edb64edb291efa6e772ccd9eb1199",
       "sources": [
         "migrations/0087_fee_send_replacements.sql",
         "workers/fee-converter/core.ts",
         "workers/fee-converter/evm.ts",
         "workers/fee-converter/verified-arithmetic.ts",
-        "workers/payment-executor/core.ts"
+        "workers/payment-executor/binding-shared.ts",
+        "workers/payment-executor/core.ts",
+        "workers/verified-fee-replacement.ts"
       ],
       "scenarios": [
         "beforeJournalRefusedTest",
