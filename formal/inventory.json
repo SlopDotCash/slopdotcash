@@ -3075,9 +3075,9 @@
     },
     {
       "path": "scripts/dev-identity-bridge.ts",
-      "sha256": "9af7feb88e3c4d5c0a908b51aa34e02bae4a0f541b6a13ca60599fa6a8cee89d",
+      "sha256": "c3bdd12d78824e18bcaeb1f145f4bf6a885f47e5256ce06886765bd684f6d164",
       "models": ["formal/models/tooling/dev_registry_import.qnt"],
-      "candidateLines": [19, 20, 32, 71, 133, 135, 145, 160],
+      "candidateLines": [19, 20, 32, 71, 133, 135, 145, 164],
       "review": "mapped-abstraction"
     },
     {
@@ -4571,6 +4571,7 @@
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
+        "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -5255,7 +5256,10 @@
     {
       "path": "src/lib/identity-flow.ts",
       "sha256": "13eb3a2af6ea663007783f1050975aaf34ee6fd5aea728a5d7a180eb30f45bd5",
-      "models": ["formal/models/ui/ui_session.qnt"],
+      "models": [
+        "formal/models/ui/ui_identity_poll_protocol.qnt",
+        "formal/models/ui/ui_session.qnt"
+      ],
       "candidateLines": [38, 59, 107, 135, 146, 147],
       "review": "mapped-abstraction"
     },
@@ -5327,7 +5331,10 @@
     {
       "path": "src/lib/local-signin.ts",
       "sha256": "02c612d060892549506a1d6f8a22f922343f1ac731ca7de101c15cf0332b28b7",
-      "models": ["formal/models/ui/ui_session.qnt"],
+      "models": [
+        "formal/models/ui/ui_identity_poll_protocol.qnt",
+        "formal/models/ui/ui_session.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6050,11 +6057,11 @@
     {
       "path": "src/lib/verified-frontend.ts",
       "sha256": "b451d8e4be7ece5d92d7e2098386e044b53f50e40dc260c093afe1b24956d95e",
-      "models": [],
+      "models": ["formal/models/ui/ui_identity_poll_protocol.qnt"],
       "candidateLines": [
         26, 28, 29, 30, 43, 47, 49, 50, 52, 54, 70, 74, 76, 81, 82, 83, 84
       ],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Seven pure argument-to-result decisions with explicit preconditions/postconditions; no retained state, request, timer, storage or mutation. Caller workflows remain in the corresponding UI models."
     },
     {
@@ -6449,9 +6456,10 @@
     },
     {
       "path": "workers/identity/contracts.ts",
-      "sha256": "0fc7f0a08caeb5958fed0f677655bbb2c5d9cc9b5a9f1ec8a3043d088965d2ef",
+      "sha256": "5399ae3b50a07e6831cae0a64e71b04ad77cd79cf075d317e4bdb007f886cd2d",
       "models": [
         "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_assertion_lifecycle.qnt",
         "formal/models/api/identity_callback_completion.qnt"
       ],
       "candidateLines": [21, 34],
@@ -6460,23 +6468,27 @@
     {
       "path": "workers/identity/crypto.ts",
       "sha256": "d128e583ecca64d160f9616d0a3ddf3793f4208d04f03a41a1257fdacfc50965",
-      "models": ["formal/models/api/api_identity.qnt"],
+      "models": [
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_assertion_lifecycle.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/identity/handler.ts",
-      "sha256": "963a2787493d5170a5d18995e9cbbdc2ef151cac61c2ef389c2dc8a3d41512fe",
+      "sha256": "541dee633fddf62dd0e92ff3e5bb59a423e949f3849250f22172adcf7b207b0e",
       "models": [
         "formal/models/api/api_identity.qnt",
         "formal/models/api/github_identity_exchange.qnt",
+        "formal/models/api/identity_assertion_lifecycle.qnt",
         "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/pr_review_signin.qnt"
       ],
       "candidateLines": [
         58, 60, 87, 93, 104, 108, 114, 115, 116, 191, 205, 210, 222, 238, 239,
         244, 266, 274, 276, 284, 291, 293, 304, 426, 428, 431, 434, 437, 454,
-        497, 582, 583, 584, 585, 586, 593, 594, 597, 642, 680
+        500, 585, 586, 587, 588, 589, 596, 597, 600, 645, 683
       ],
       "review": "mapped-abstraction"
     },
@@ -6498,15 +6510,16 @@
     },
     {
       "path": "workers/identity/persistence.ts",
-      "sha256": "7535abbcc24daaf8eff90863b4e1f0021bfe34c7a05a0db71adace672c9dcd82",
+      "sha256": "8897e7283e2d1861fb1490f4854d0e7c0e863a662d895b02dc82b1edad8f5b1f",
       "models": [
         "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_assertion_lifecycle.qnt",
         "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
         17, 46, 77, 79, 90, 109, 123, 130, 131, 132, 148, 149, 151, 169, 170,
-        197, 236, 237, 238, 252, 263, 267, 271, 275, 279
+        198, 202, 208, 248, 249, 250, 264, 275, 279, 283, 287, 291
       ],
       "review": "mapped-abstraction"
     },
@@ -8656,6 +8669,49 @@
         "unsupportedTokenTypeReturnsNullTest",
         "userBodyFailureOccursAfterLocalClearTest",
         "userFetchFailureKeepsLocalTokenUntilFinallyTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/identity_assertion_lifecycle.qnt",
+      "sha256": "6bf9e9a0864c9506f30949f498f3cb56dd15b0f3d1babe6f735230e4e1366911",
+      "sources": [
+        "workers/identity/contracts.ts",
+        "workers/identity/crypto.ts",
+        "workers/identity/handler.ts",
+        "workers/identity/persistence.ts"
+      ],
+      "scenarios": [
+        "badConsumeInputSendsNoDatabaseWriteTest",
+        "browserPollReturnsOneConsumableTokenTest",
+        "capturedIssueStampCanCommitAfterClockExpiryTest",
+        "cleanupBeforeReadbackMakesAssertionUnavailableTest",
+        "concurrentConsumesHaveOneWinnerTest",
+        "conflictingInsertReusesOriginalTimestampsTest",
+        "consumeFailureBeforeCommitCanRetryTest",
+        "consumedCommitSurvivesLostReplyTest",
+        "consumedReadbackCannotRearmExistingRowTest",
+        "delayedPollMayReturnExpiredAssertionTest",
+        "expiredFlowRefusesFreshIssueStampTest",
+        "expiredOrphanIsNotRefreshedByConflictTest",
+        "failedCallbackCannotIssueTest",
+        "fixedParentFencePreventsTokenResurrectionTest",
+        "futureCreatedReadbackRefusesEarlierPollTest",
+        "historicalUnfencedRecreationPermitsReplayNegativeControlTest",
+        "insertedAssertionCanSurviveFailedInsertReplyTest",
+        "invalidTimestampReadbackRefusesTest",
+        "localPollRequiresNodeIdentityTest",
+        "localPollReturnsIdentityWithoutPlatformAssertionTest",
+        "lostIssueReplyDoesNotReopenFlowTest",
+        "malformedConsumeBodySendsNoDatabaseWriteTest",
+        "mismatchedIdentityReadbackRefusesTest",
+        "missingIssueCountKeepsCommittedIssuedStateTest",
+        "parentCanRecreateExpiredUnissuedAssertionAfterCleanupTest",
+        "pendingCallbackReturnsPendingTest",
+        "repeatedPollAfterIssueIsGoneTest",
+        "replayedConsumeIsRefusedTest",
+        "wrongAudienceDoesNotConsumeTest",
+        "wrongPollModeCannotIssueTest",
+        "wrongTokenDoesNotTouchAssertionTest"
       ]
     },
     {
@@ -12756,6 +12812,51 @@
         "diagnosticUsageTest",
         "emptyTest",
         "immutableArchiveTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_identity_poll_protocol.qnt",
+      "sha256": "fd340aafbf7393befc1b10831ea32ad294d22a40878c311c1b8ced5f0ce8b52a",
+      "sources": [
+        "src/Points.tsx",
+        "src/lib/identity-flow.ts",
+        "src/lib/local-signin.ts",
+        "src/lib/verified-frontend.ts"
+      ],
+      "scenarios": [
+        "abortAfterResolvedStartDoesNotInventRollbackTest",
+        "abortDuringPollCannotStartParentExchangeTest",
+        "absentStartBodyFailsBeforeHooksTest",
+        "assertionExpiredAtReceiptIsRejectedTest",
+        "authorizationHookFailureRetainsOnlyIntentTest",
+        "clearHookFailureDoesNotReturnAssertionTest",
+        "clearHookMaySynchronouslyCancelParentTest",
+        "excessiveStartExpiryFailsTest",
+        "expiredStartFailsTest",
+        "expiryCheckDoesNotBoundCallerHookDurationTest",
+        "expiryDuringDelaySendsNoPollTest",
+        "freshFlowAuthorizesAndReturnsAssertionTest",
+        "invalidCapabilityFailsTest",
+        "invalidFlowIdFailsTest",
+        "invalidInitialIntervalFailsTest",
+        "invalidOriginHasNoRequestsTest",
+        "liveAssertionCanArriveAfterFlowExpiryTest",
+        "malformedAssertionCannotReachParentExchangeTest",
+        "malformedPollStopsWithoutClearingAuthorizationTest",
+        "noStorageHookDoesNotClaimErasureTest",
+        "nonRecordResumeFailsBeforeHooksTest",
+        "pendingPrefixDoesNotInventApplicationRetryLimitTest",
+        "pendingReplySchedulesAnotherDelayTest",
+        "pollRequestFailureDoesNotAssumeServerRollbackTest",
+        "resumeSkipsStartAndAuthorizationTest",
+        "retainHookFailureStopsBeforeAuthorizationTest",
+        "retryIntervalAboveTenIsRejectedTest",
+        "retryIntervalBelowInitialIsRejectedTest",
+        "retryMayDecreaseButNotBelowInitialTest",
+        "startRequestFailureHasNoAuthorizationTest",
+        "startResponseAtExpiryIsRejectedTest",
+        "timerAbortStopsBeforePollTest",
+        "unboundAuthorizationUrlFailsTest"
       ]
     },
     {
