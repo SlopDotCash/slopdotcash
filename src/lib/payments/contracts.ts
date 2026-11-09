@@ -265,6 +265,20 @@ export function reservedGross(snapshot: {
 /** A snapshot older than this is shown with a stale warning. Cron runs every 5 minutes. */
 export const VAULT_SNAPSHOT_STALE_MS = 30 * 60 * 1000;
 
+/** Mainnet block-explorer origins of the EVM networks. */
+export const EVM_EXPLORER_ORIGIN = {
+  base: "https://basescan.org",
+  robinhood: "https://robinhoodchain.blockscout.com",
+  ethereum: "https://etherscan.io",
+} as const;
+
+/** The mainnet explorer of an EVM network; Ethereum for any other network. */
+export function evmExplorerOrigin(network: string): string {
+  return Object.hasOwn(EVM_EXPLORER_ORIGIN, network)
+    ? EVM_EXPLORER_ORIGIN[network as keyof typeof EVM_EXPLORER_ORIGIN]
+    : EVM_EXPLORER_ORIGIN.ethereum;
+}
+
 /** Public explorer link for a payment transaction, or null when none exists. */
 export function transactionUrl(
   network: string,
@@ -274,17 +288,17 @@ export function transactionUrl(
   if (network === "base-sepolia")
     return `https://sepolia.basescan.org/tx/${encodeURIComponent(id)}`;
   if (network === "base-mainnet")
-    return `https://basescan.org/tx/${encodeURIComponent(id)}`;
+    return `${EVM_EXPLORER_ORIGIN.base}/tx/${encodeURIComponent(id)}`;
   if (network === "solana-mainnet")
     return `https://explorer.solana.com/tx/${encodeURIComponent(id)}`;
   if (network === "solana-devnet" || network === "solana-testnet")
     return `https://explorer.solana.com/tx/${encodeURIComponent(id)}?cluster=${network.slice(7)}`;
   if (network === "ethereum")
-    return `https://etherscan.io/tx/${encodeURIComponent(id)}`;
+    return `${EVM_EXPLORER_ORIGIN.ethereum}/tx/${encodeURIComponent(id)}`;
   if (network === "ethereum-sepolia")
     return `https://sepolia.etherscan.io/tx/${encodeURIComponent(id)}`;
   if (network === "robinhood-mainnet")
-    return `https://robinhoodchain.blockscout.com/tx/${encodeURIComponent(id)}`;
+    return `${EVM_EXPLORER_ORIGIN.robinhood}/tx/${encodeURIComponent(id)}`;
   if (network === "robinhood-testnet")
     return `https://explorer.testnet.chain.robinhood.com/tx/${encodeURIComponent(id)}`;
   return null;
