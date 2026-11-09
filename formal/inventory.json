@@ -4035,9 +4035,9 @@
     },
     {
       "path": "scripts/profile-issue-census.ts",
-      "sha256": "8dc300e3cd466cc68bd6fbd5db7b5236ed4039ab5b273841fe958ac1006d2306",
+      "sha256": "0a1943598a4faab950f949da9e2b63d88e3cdd11d8963ff4bfeb84ad8c48aea3",
       "models": ["formal/models/points/github_census.qnt"],
-      "candidateLines": [24, 52, 98, 170, 178, 199],
+      "candidateLines": [25, 53, 99, 171, 179, 200],
       "review": "mapped-abstraction"
     },
     {
@@ -6012,9 +6012,9 @@
     },
     {
       "path": "src/lib/profiles.ts",
-      "sha256": "3cc4ed403b2baf0c3d55f015cd46887aa8d1f82bfd2f0874987d9cbf63f55230",
+      "sha256": "01ff0599634f3766ade4b545ec480daf49631be631838c89f8ea141fa3f03ef5",
       "models": ["formal/models/ui/ui_profile_history.qnt"],
-      "candidateLines": [49, 55, 196, 242, 249, 261, 263, 265, 269, 272],
+      "candidateLines": [49, 55, 201, 247, 254, 266, 268, 270, 274, 277],
       "review": "mapped-abstraction"
     },
     {
