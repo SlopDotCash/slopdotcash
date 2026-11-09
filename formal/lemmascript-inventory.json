@@ -11668,11 +11668,11 @@
 {"name":"<ArrowFunction@523>","kind":"ArrowFunction","line":523,"sha256":"524ee0dccb918057bd0cd957d995645cef96873b9da11ad2b540660be88d27d6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"reviewScan","kind":"FunctionDeclaration","line":569,"sha256":"34974c965ca1cd1c617bdf5bb6e4d88304cbbc2076d9cdd4022c70ac980233cc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/vetting/service.ts","sha256":"b4e307805447c248d120922f0e31e77dc4e08c2ca5a0f48a13494b80dc4efb1e","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/vetting/service.ts","sha256":"6292b8db2deb24925a552fd8ffc8cab2eae6c48ff5cd9e318ac0a067b94699d2","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"serviceOrigin","kind":"FunctionDeclaration","line":22,"sha256":"6a33c05a4d1b612477b1bd7d7e9adef51d103fe7dffbb4717c9c811e36cdb3b0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"vettingServiceSigner","kind":"FunctionDeclaration","line":40,"sha256":"d1219991c7e72e77246c31540048daa033cccdf299b6d997cfec02cd442e797e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
-{"name":"signedVettingFetch","kind":"FunctionDeclaration","line":78,"sha256":"de0ee1e2b27dd8a72ee39932aafba32da086adfcc60ed6d873bc36c8babd93c2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"signedServiceHeaders","kind":"FunctionDeclaration","line":107,"sha256":"6473d3373987040d8c7dc64bce1dfc0fbcec84e976cc53c082b2db410d31666d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]}
+{"name":"signedVettingFetch","kind":"FunctionDeclaration","line":78,"sha256":"faa61cc8b73d89079f913fdc3ba975a3e7d5b7f640a82eb7948696cc9c2e7880","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
+{"name":"signedServiceHeaders","kind":"FunctionDeclaration","line":118,"sha256":"f97ad32f95a3cfa240526f4f9a0af1dd9555e0484154d0126f7b17e587f2c65e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]}
 ]},
 {"path":"workers/vetting/verified-review-batches.ts","sha256":"6123018135c43674e0025cd974be0238023c435c668676b804bdcaece0bf7172","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"jsonStringBytes","kind":"FunctionDeclaration","line":23,"sha256":"aea357bfbe7fa8cc81d575fc4c83219f00d85b05bd5e968b153b2d9156bdf1a7","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},

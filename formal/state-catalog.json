@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8b6313cde8ecf966a086d723c01eea1280202cbea64eb0dc81570e7791bcfc83",
+  "inventorySha256": "203238c7ee3768d9ab88c891b5138fa9f7bb6d4a5307f559cf530448a4100009",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -470,7 +470,8 @@
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
         "formal/models/vetting/vetting_refresh_queue.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
-        "formal/models/vetting/vetting_scan_request.qnt"
+        "formal/models/vetting/vetting_scan_request.qnt",
+        "formal/models/vetting/vetting_service_queue.qnt"
       ],
       "lexicallyUnmentionedValues": ["recorded"],
       "review": "candidate-only"
@@ -731,7 +732,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["clean", "incomplete", "malicious", "pending"],
-      "models": ["formal/models/vetting/vetting_result_atomic.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_result_atomic.qnt",
+        "formal/models/vetting/vetting_service_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -741,7 +745,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["blocked", "quarantined", "released"],
-      "models": ["formal/models/vetting/vetting_result_atomic.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_result_atomic.qnt",
+        "formal/models/vetting/vetting_service_queue.qnt"
+      ],
       "lexicallyUnmentionedValues": ["blocked", "quarantined", "released"],
       "review": "candidate-only"
     },
@@ -2270,7 +2277,8 @@
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
-        "formal/models/ui/ui_session.qnt"
+        "formal/models/ui/ui_session.qnt",
+        "formal/models/ui/ui_standings_view.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2290,7 +2298,8 @@
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
-        "formal/models/ui/ui_session.qnt"
+        "formal/models/ui/ui_session.qnt",
+        "formal/models/ui/ui_standings_view.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2310,7 +2319,8 @@
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
-        "formal/models/ui/ui_session.qnt"
+        "formal/models/ui/ui_session.qnt",
+        "formal/models/ui/ui_standings_view.qnt"
       ],
       "lexicallyUnmentionedValues": ["preview"],
       "review": "candidate-only"

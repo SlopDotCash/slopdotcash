@@ -1309,7 +1309,9 @@
         "formal/models/vetting/vetting_result_atomic.qnt",
         "formal/models/vetting/vetting_scan_request.qnt",
         "formal/models/vetting/vetting_scan_reuse.qnt",
-        "formal/models/vetting/vetting_service_auth.qnt"
+        "formal/models/vetting/vetting_service_auth.qnt",
+        "formal/models/vetting/vetting_service_keys.qnt",
+        "formal/models/vetting/vetting_service_queue.qnt"
       ],
       "candidateLines": [
         258, 275, 277, 333, 391, 393, 400, 418, 554, 585, 668, 678, 683, 716,
@@ -1338,7 +1340,8 @@
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
         "formal/models/vetting/vetting_refresh_queue.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
-        "formal/models/vetting/vetting_scan_request.qnt"
+        "formal/models/vetting/vetting_scan_request.qnt",
+        "formal/models/vetting/vetting_service_queue.qnt"
       ],
       "candidateLines": [
         67, 90, 99, 116, 160, 166, 226, 301, 345, 382, 422, 448, 499, 511, 523,
@@ -2294,7 +2297,10 @@
     {
       "path": "migrations/0025_community_security_vetting.sql",
       "sha256": "7e78809c5df42e1f225bc061d98ec38b7eb3c5d44ad5e8657121c33f2d6a8a2e",
-      "models": ["formal/models/vetting/vetting_result_atomic.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_result_atomic.qnt",
+        "formal/models/vetting/vetting_service_queue.qnt"
+      ],
       "candidateLines": [
         13, 14, 26, 34, 37, 41, 49, 53, 55, 56, 61, 62, 63, 64, 78, 90, 92, 97,
         102, 103, 108, 109, 115, 116, 119
@@ -3054,7 +3060,8 @@
       "sha256": "516b68744a0e7a2eccc10223d144255a18dce3eca31d01f07b0f2ed027b933be",
       "models": [
         "formal/models/vetting/vetting_admission_lineage.qnt",
-        "formal/models/vetting/vetting_scan_request.qnt"
+        "formal/models/vetting/vetting_scan_request.qnt",
+        "formal/models/vetting/vetting_service_queue.qnt"
       ],
       "candidateLines": [1, 9, 10, 11, 15],
       "review": "mapped-abstraction"
@@ -5180,7 +5187,8 @@
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
-        "formal/models/ui/ui_session.qnt"
+        "formal/models/ui/ui_session.qnt",
+        "formal/models/ui/ui_standings_view.qnt"
       ],
       "candidateLines": [
         14, 19, 87, 102, 103, 104, 106, 112, 122, 131, 134, 142, 143, 145, 146,
@@ -5230,7 +5238,8 @@
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_project_authority.qnt",
-        "formal/models/ui/ui_record_deadlines.qnt"
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_standings_view.qnt"
       ],
       "candidateLines": [
         2, 43, 45, 170, 232, 233, 235, 236, 238, 240, 245, 250, 251, 257, 259,
@@ -6709,6 +6718,7 @@
       "models": [
         "formal/models/ui/ui_resources.qnt",
         "formal/models/ui/ui_snapshot_cache.qnt",
+        "formal/models/ui/ui_standings_view.qnt",
         "formal/models/ui/ui_time_boundary.qnt"
       ],
       "candidateLines": [
@@ -8987,8 +8997,11 @@
     },
     {
       "path": "workers/vetting/service.ts",
-      "sha256": "b4e307805447c248d120922f0e31e77dc4e08c2ca5a0f48a13494b80dc4efb1e",
-      "models": ["formal/models/vetting/vetting_service_auth.qnt"],
+      "sha256": "6292b8db2deb24925a552fd8ffc8cab2eae6c48ff5cd9e318ac0a067b94699d2",
+      "models": [
+        "formal/models/vetting/vetting_service_request.qnt",
+        "formal/models/vetting/vetting_service_signer.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -19369,6 +19382,56 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_standings_view.qnt",
+      "sha256": "cf046630dbeb5cb9da8b752b0384a10ff15ee4ab9c605f715fe640e461f7aa74",
+      "sources": [
+        "src/Points.tsx",
+        "src/Presentation.tsx",
+        "src/lib/use-snapshot.ts"
+      ],
+      "scenarios": [
+        "compactAwardCalendarMonthSurvivesUrlEffectTest",
+        "currentSnapshotNameOverridesJournalNameTest",
+        "decimalPrefixPageIsAcceptedTest",
+        "departureHasNoVisibleRowsTest",
+        "emptyQueryKeepsValidDisplayPageTest",
+        "failedRetryRestoresVerifiedJournalTest",
+        "failedSnapshotRefreshKeepsCurrentNameTest",
+        "failedSnapshotUsesJournalNameTest",
+        "fullStandingsCalendarPeriodFallsBackToMonthTest",
+        "globalPointsOrderTest",
+        "hashChangeDoesNotRewriteStandingsFiltersTest",
+        "hiddenStandingsReadStillCompletesTest",
+        "initialLoadingHasNoRankedRowsTest",
+        "invalidPageStartsAtFirstPageTest",
+        "invalidProjectDoesNotBecomeScopeTest",
+        "journalFailureIsNotAnEmptyRankingTest",
+        "legacyNewPeriodCanonicalizesToLifetimeTest",
+        "lifetimeSurvivesMonthRolloverTest",
+        "monthRolloverRemovesPriorMonthPointsTest",
+        "narrowedQueryClampsWithoutLosingRequestedPageTest",
+        "negativePageStartsAtFirstPageTest",
+        "nextPageUsesFilteredSliceTest",
+        "oversizedPageClampsWithoutChangingRequestTest",
+        "periodButtonResetsRequestedPageTest",
+        "previousUsesClampedPageTest",
+        "projectCompetitionRanksPreserveTieGapsTest",
+        "projectPropWinsBeforeRetainedFiltersResetTest",
+        "projectUrlDoesNotRetainCompetingProjectQueryTest",
+        "queryUsesRankBeforeFilteringTest",
+        "renamedCurrentActorKeepsPointsAndRankTest",
+        "retryLoadingHidesOldRowsTest",
+        "returnFromPeopleKeepsLoadedJournalTest",
+        "samePeriodButtonAlsoResetsPageTest",
+        "snapshotFailureDoesNotHideVerifiedPointsTest",
+        "staleVerifiedJournalKeepsRankingTest",
+        "unknownPeriodCanonicalizesToMonthTest",
+        "unrelatedUrlFieldsSurviveCanonicalizationTest",
+        "whitespaceQueryIsNotTrimmedTest",
+        "zeroPageStartsAtFirstPageTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_submission_controls.qnt",
       "sha256": "5cc14ddc19b83e64019b45fe0e67d3592bb5f26a0b11cef87db6c8f3f2adc728",
       "sources": [
@@ -20607,12 +20670,123 @@
     },
     {
       "path": "formal/models/vetting/vetting_service_auth.qnt",
-      "sha256": "cd54610b044ad8f3101638016793544d9bf0e8f774463c5ad10fd24bda45338d",
-      "sources": ["backend/vetting/handler.ts", "workers/vetting/service.ts"],
+      "sha256": "8bcd1e7ca3ceef44fe789689bbdb7b822d0f27c1af1eaeba4902dc5f2778e397",
+      "sources": ["backend/vetting/handler.ts"],
       "scenarios": [
-        "changedBytesRefusedTest",
-        "signedReplayReliesOnWriteIdempotencyTest",
-        "staleSignatureRefusedTest"
+        "badLengthTest",
+        "changedBodyTest",
+        "changedMethodTest",
+        "changedPathTest",
+        "changedQueryTest",
+        "configurationBeforeHeadersTest",
+        "grammarRefusedTest",
+        "inFlightKeySnapshotTest",
+        "invalidSignatureShapeTest",
+        "malformedConfigurationTest",
+        "missingConfigurationTest",
+        "newerRefusedTest",
+        "newestBoundaryTest",
+        "nonfiniteTimestampTest",
+        "olderRefusedTest",
+        "oldestBoundaryTest",
+        "overLimitTest",
+        "providerFailureTest",
+        "replayAfterExpiryTest",
+        "replayAfterRevocationTest",
+        "replayHasNoNonceStoreTest",
+        "slowBodyRetainsWindowTest",
+        "streamFailureTest",
+        "unknownKeyTest",
+        "validRequestTest",
+        "wrongSignatureTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_service_keys.qnt",
+      "sha256": "253a4a124a24485115a5e260f296c93889cacbd135cd7ac2b1bb0e085741906b",
+      "sources": ["backend/vetting/handler.ts"],
+      "scenarios": [
+        "badBase64Test",
+        "badByteLengthTest",
+        "badFirstDiscardsLaterTest",
+        "badLaterDiscardsEarlierTest",
+        "cryptoFailureDiscardsEarlierTest",
+        "cryptoImportRejectionTest",
+        "duplicateKeysRetainedTest",
+        "ignoredEmptyTest",
+        "leadingEmptyTest",
+        "noKeysTest",
+        "oneKeyTest",
+        "trailingEmptyTest",
+        "twoKeysTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_service_queue.qnt",
+      "sha256": "f04e136ecb7726a7faa69d35b9047251b8c4a3a82f8db9a12ab3686f6ed0c4e8",
+      "sources": [
+        "backend/vetting/handler.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0025_community_security_vetting.sql",
+        "migrations/0099_vetting_queue_current_pin.sql"
+      ],
+      "scenarios": [
+        "absentEvidencePreventsQueueReadTest",
+        "capAppliesAfterProjectDeduplicationTest",
+        "completionAfterReadDoesNotRewriteSnapshotTest",
+        "concurrentReadersCanObserveDifferentSnapshotsTest",
+        "concurrentReadersReceiveSameAssignmentTest",
+        "databaseFailureReturnsNoAssignmentsTest",
+        "emptyQueueReturnsSuccessTest",
+        "exactAssignmentSurvivesProjectionTest",
+        "latestCleanSuppressesHistoricalPendingTest",
+        "latestIncompleteSuppressesHistoricalPendingTest",
+        "latestMaliciousSuppressesHistoricalPendingTest",
+        "latestRowidWinsOverRequestTimeTest",
+        "lostResponseLeavesPendingWorkTest",
+        "nextPollObservesCompletionTest",
+        "nextPollObservesReplacementTest",
+        "readinessIsOneObservationTest",
+        "readsRetainEveryHistoricalAssignmentTest",
+        "replacementAfterReadDoesNotRewriteSnapshotTest",
+        "replayDoesNotClaimWorkTest",
+        "requestOriginOwnsBothReadUrlsTest",
+        "requestedTimeSortsBeforeInsertionTest",
+        "rowidBreaksRequestTimeTiesTest",
+        "signatureRefusalDoesNotReadStorageTest",
+        "unavailableKeysPrecedeEvidenceRefusalTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_service_request.qnt",
+      "sha256": "48ef0c55dfebd9de5917c5c5396aefdd8d3eb331711fbbcc1435d3df870d9478",
+      "sources": ["workers/vetting/service.ts"],
+      "scenarios": [
+        "cryptoFailureNeverDispatchesTest",
+        "directHeadersSnapshotTest",
+        "fetchMutationAfterDigestTest",
+        "fetchMutationDuringExportTest",
+        "getOmitsAndSignsEmptyBodyTest",
+        "invalidOriginNeverDispatchesTest",
+        "invalidPathNeverSignsTest",
+        "putRetainsBytesTest",
+        "refusedBodyRemainsCallerOwnedTest",
+        "successfulBodyRemainsCallerOwnedTest",
+        "transportFailureDoesNotRetryTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_service_signer.qnt",
+      "sha256": "36d349075b0fa2db89184813f8107269233ce539269a9f0e242a0e180f2bfef3",
+      "sources": ["workers/vetting/service.ts"],
+      "scenarios": [
+        "challengeSignFailureRefusesTest",
+        "malformedJsonOrSchemaRefusesTest",
+        "matchingPairReturnsNonextractableSignerTest",
+        "mismatchedPairNeverReturnsTest",
+        "privateImportFailureRefusesTest",
+        "publicImportFailureRefusesTest",
+        "verificationExceptionRefusesTest"
       ]
     },
     {

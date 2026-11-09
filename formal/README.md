@@ -1411,6 +1411,40 @@ tested or verified here:
   A captured overview may be stale, and queue controls do not confer authority
   or prove a scan result. This batch changes no runtime or interface code.
 
+
+- `vetting_service_auth` now has 26 scenarios for configured-key admission,
+  exact signed fields, the inclusive five-minute timestamp window, body errors
+  and repeated authentication. `vetting_service_keys` adds 13 scenarios for
+  empty entries, ordered imports, retained duplicates and whole-configuration
+  refusal. The models capture the actual one-time checks before body reading:
+  later time or configuration changes do not retroactively revoke that request.
+  Thirty-three real-verifier regression cases are unexecuted. Cryptographic
+  correctness and endpoint idempotency remain separate contracts.
+- `vetting_service_request` and `vetting_service_signer` add 11 and 7 scenarios
+  for request ownership, path/origin admission, key-pair import, response
+  ownership and failures. The client now captures mutable request bytes,
+  method/path, keys and transport configuration before awaiting signing. A GET
+  signs its absent transport body. Previously a caller mutation during signing
+  could make the transmitted request differ from its signature. Nine regression
+  definitions are unexecuted. The [WebCrypto byte-copy steps](https://w3c.github.io/webcrypto/#SubtleCrypto-method-digest)
+  describe the native operation's input snapshot; the application must also
+  retain the same bytes across its separate signing and transport operations.
+  Ordinary objects are modeled; hostile getters, shared-memory writers and
+  mutation by an injected transport are outside this bounded model.
+- `vetting_service_queue` adds 24 scenarios for latest-row selection, terminal
+  suppression, ordering, capped projection, private-field exclusion and
+  concurrent readers. Seventeen signed-handler/migrated-SQL regression cases
+  are unexecuted, including the actual 100-row boundary. A poll grants no lease:
+  readers can receive the same assignment, and a captured response can outlive
+  completion or replacement. Evidence readiness is one prior observation, not
+  continuous availability or a scan result.
+- `ui_standings_view` adds 39 scenarios for URL restoration, rank-before-query,
+  ties, current actor names, retained requested pages, clamped displayed pages,
+  project scope, compact views and hidden-view lifetime. Ten browser cases are
+  unexecuted. Four actors, two projects/months and reduced page sizes bound the
+  model; journal/snapshot validation, timer delivery and URL encoding retain
+  separate contracts. No interface code changes in this batch.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

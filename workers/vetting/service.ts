@@ -1,4 +1,4 @@
-/** Shared private-service signing. This helper never sends or publishes a request. */
+/** Shared private-service signing and transport. */
 
 import { vettingSignedMessage } from "../../backend/vetting/handler";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
@@ -85,22 +85,33 @@ export async function signedVettingFetch(
     timeoutMs: number;
   },
 ): Promise<Response> {
-  const body = request.body ?? new Uint8Array();
-  return (connection.fetch ?? fetch)(`${connection.origin}${request.path}`, {
-    method: request.method,
+  // Callers retain these mutable objects while signing awaits native crypto.
+  // Own one request snapshot, including the bytes the transport will send.
+  const { method, path, contentType, timeoutMs } = request;
+  const body =
+    method === "GET"
+      ? new Uint8Array()
+      : new Uint8Array(request.body ?? new Uint8Array());
+  const { privateKey, publicKey, now } = connection;
+  const origin = serviceOrigin(connection.origin, true);
+  const fetcher = connection.fetch ?? fetch;
+  const signal = AbortSignal.timeout(timeoutMs);
+  const headers = await signedServiceHeaders({
+    signer: { privateKey, publicKey },
+    method,
+    pathAndQuery: path,
+    body,
+    at: now?.(),
+  });
+  return fetcher(`${origin}${path}`, {
+    method,
     redirect: "error",
-    signal: AbortSignal.timeout(request.timeoutMs),
+    signal,
     headers: {
-      ...(request.contentType ? { "content-type": request.contentType } : {}),
-      ...(await signedServiceHeaders({
-        signer: connection,
-        method: request.method,
-        pathAndQuery: request.path,
-        body,
-        at: connection.now?.(),
-      })),
+      ...(contentType ? { "content-type": contentType } : {}),
+      ...headers,
     },
-    ...(request.method === "GET" ? {} : { body: new Uint8Array(body) }),
+    ...(method === "GET" ? {} : { body }),
   });
 }
 
@@ -111,26 +122,29 @@ export async function signedServiceHeaders(input: {
   body: Uint8Array;
   at?: Date;
 }): Promise<Record<string, string>> {
-  const path = new URL(input.pathAndQuery, "https://signer.invalid");
+  const { method, pathAndQuery } = input;
+  const { privateKey, publicKey } = input.signer;
+  const body = new Uint8Array(input.body);
+  const path = new URL(pathAndQuery, "https://signer.invalid");
   if (
     path.origin !== "https://signer.invalid" ||
-    `${path.pathname}${path.search}` !== input.pathAndQuery ||
+    `${path.pathname}${path.search}` !== pathAndQuery ||
     !path.pathname.startsWith("/api/v1/vetting/")
   )
     throw new Error("Invalid vetting service path");
   const timestamp = (input.at ?? new Date()).toISOString();
   const rawKey = new Uint8Array(
-    await crypto.subtle.exportKey("raw", input.signer.publicKey),
+    await crypto.subtle.exportKey("raw", publicKey),
   );
   const signature = new Uint8Array(
     await crypto.subtle.sign(
       "Ed25519",
-      input.signer.privateKey,
+      privateKey,
       vettingSignedMessage(
-        input.method,
-        input.pathAndQuery,
+        method,
+        pathAndQuery,
         timestamp,
-        await sha256Hex(input.body),
+        await sha256Hex(body),
       ) as Uint8Array<ArrayBuffer>,
     ),
   );

@@ -38,7 +38,18 @@ const contributors = [
   },
 ];
 
-async function fixtures(page: Page, paymentRead = () => {}) {
+const paginatedContributors = Array.from({ length: 28 }, (_, index) => ({
+  projectId: "slopdotcash",
+  id: `U_navigation_page_${String(index + 1).padStart(2, "0")}`,
+  login: `page-person-${String(index + 1).padStart(2, "0")}`,
+  points: 300 - index,
+}));
+
+async function fixtures(
+  page: Page,
+  paymentRead = () => {},
+  records = contributors,
+) {
   await page.clock.setFixedTime(new Date(instant));
   await page.route(`${site}/**`, (route) =>
     route.fulfill({
@@ -79,7 +90,7 @@ async function fixtures(page: Page, paymentRead = () => {}) {
   });
   const journal = appendPointAwards(
     emptyPointsJournal(instant),
-    contributors.map((entry) => {
+    records.map((entry) => {
       const sourceId = `PR_${entry.id}`;
       const repository = PROJECTS.find(
         (project) => project.id === entry.projectId,
@@ -299,4 +310,177 @@ test("legacy project and contributor URLs keep points-only ranking", async ({
   ).toHaveAttribute("aria-sort", "descending");
   await expect(page).not.toHaveURL(/sort=money/u);
   await expectAccessible(page);
+});
+
+// Source-only additions: these definitions have not been run in this audit.
+test("a contributor query retains the rank from the selected whole leaderboard", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.goto(`${site}/points?period=lifetime&q=synthetic-eliza`);
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
+    exact: true,
+  });
+  await expect(standings.locator("tbody tr")).toHaveCount(1);
+  await expect(standings.locator("tbody tr td:first-child")).toHaveText(["3"]);
+  await page.goto(
+    `${site}/points?period=lifetime&project=eliza&q=synthetic-eliza`,
+  );
+  await expect(standings.locator("tbody tr")).toHaveCount(1);
+  await expect(standings.locator("tbody tr td:first-child")).toHaveText(["1"]);
+});
+
+test("an oversized page clamps its rows until Previous replaces the requested page", async ({
+  page,
+}) => {
+  await fixtures(page, undefined, paginatedContributors);
+  await page.goto(`${site}/points?period=lifetime&page=99`);
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
+    exact: true,
+  });
+  await expect(standings.locator("tbody tr")).toHaveCount(3);
+  await expect(standings.locator("tbody tr").first()).toContainText(
+    "page-person-26",
+  );
+  await expect(standings.getByText("Page 2 of 2", { exact: true })).toBeVisible();
+  await expect(standings.getByRole("button", { name: "Next", exact: true }))
+    .toBeDisabled();
+  await expect(page).toHaveURL(/page=99/u);
+  await standings.getByRole("button", { name: "Previous", exact: true }).click();
+  await expect(standings.locator("tbody tr")).toHaveCount(25);
+  await expect(standings.locator("tbody tr").first()).toContainText(
+    "page-person-01",
+  );
+  await expect(page).not.toHaveURL(/[?&]page=/u);
+});
+
+for (const [rawPage, firstLogin, rowCount] of [
+  ["0", "page-person-01", 25],
+  ["-9", "page-person-01", 25],
+  ["invalid", "page-person-01", 25],
+  ["2tail", "page-person-26", 3],
+] as const) {
+  test(`page ${rawPage} follows the saved URL integer-prefix rule`, async ({
+    page,
+  }) => {
+    await fixtures(page, undefined, paginatedContributors);
+    await page.goto(`${site}/points?period=lifetime&page=${rawPage}`);
+    const standings = page.getByRole("region", {
+      name: "Contributor standings",
+      exact: true,
+    });
+    await expect(standings.locator("tbody tr")).toHaveCount(rowCount);
+    await expect(standings.locator("tbody tr").first()).toContainText(firstLogin);
+    if (rawPage === "2tail") await expect(page).toHaveURL(/[?&]page=2(?:&|$)/u);
+    else await expect(page).not.toHaveURL(/[?&]page=/u);
+  });
+}
+
+test("changing period resets a clamped requested page and preserves unrelated URL fields", async ({
+  page,
+}) => {
+  await fixtures(page, undefined, paginatedContributors);
+  await page.goto(
+    `${site}/points?period=lifetime&page=99&q=page-person&campaign=retained#rules`,
+  );
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
+    exact: true,
+  });
+  await expect(standings.locator("tbody tr")).toHaveCount(3);
+  await page.getByRole("button", { name: "This month", exact: true }).click();
+  await expect(standings.locator("tbody tr")).toHaveCount(25);
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return {
+      period: url.searchParams.get("period"),
+      page: url.searchParams.get("page"),
+      query: url.searchParams.get("q"),
+      campaign: url.searchParams.get("campaign"),
+      hash: url.hash,
+    };
+  }).toEqual({
+    period: null,
+    page: null,
+    query: "page-person",
+    campaign: "retained",
+    hash: "#rules",
+  });
+});
+
+test("history restoration clamps a narrowed query without erasing its requested page", async ({
+  page,
+}) => {
+  await fixtures(page, undefined, paginatedContributors);
+  await page.goto(`${site}/points?period=lifetime&page=2`);
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
+    exact: true,
+  });
+  await expect(standings.locator("tbody tr")).toHaveCount(3);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/points?period=lifetime&page=99&q=page-person-28");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(standings.locator("tbody tr")).toHaveCount(1);
+  await expect(standings.locator("tbody tr td:first-child")).toHaveText(["28"]);
+  await expect(standings.getByRole("button", { name: "Next", exact: true }))
+    .toHaveCount(0);
+  await expect(page).toHaveURL(/page=99/u);
+  await page.evaluate(() => history.back());
+  await expect(standings.locator("tbody tr")).toHaveCount(3);
+  await expect(standings.locator("tbody tr").first()).toContainText(
+    "page-person-26",
+  );
+  await expect(page).toHaveURL(/[?&]page=2(?:&|$)/u);
+});
+
+test("an empty query result has no pager even with an oversized saved page", async ({
+  page,
+}) => {
+  await fixtures(page, undefined, paginatedContributors);
+  await page.goto(`${site}/points?period=lifetime&page=99&q=no-match`);
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
+    exact: true,
+  });
+  await expect(standings.locator("tbody tr")).toHaveCount(0);
+  await expect(standings.getByText("No contributors match this view."))
+    .toBeVisible();
+  await expect(standings.getByRole("button", { name: "Previous", exact: true }))
+    .toHaveCount(0);
+  await expect(page).toHaveURL(/page=99/u);
+});
+
+test("a compact project keeps its award month while applying ten-row pagination", async ({
+  page,
+}) => {
+  await fixtures(page, undefined, paginatedContributors);
+  await page.goto(
+    `${site}/projects/slopdotcash?period=2026-10&page=2&project=eliza`,
+  );
+  const standings = page.getByRole("region", {
+    name: "Contributor standings",
+    exact: true,
+  });
+  await expect(standings.locator("tbody tr")).toHaveCount(10);
+  await expect(standings.locator("tbody tr").first()).toContainText(
+    "page-person-11",
+  );
+  await expect(standings.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return {
+      period: url.searchParams.get("period"),
+      project: url.searchParams.get("project"),
+    };
+  }).toEqual({ period: "2026-10", project: null });
+  await standings.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(standings.locator("tbody tr")).toHaveCount(8);
+  await expect(standings.locator("tbody tr").first()).toContainText(
+    "page-person-21",
+  );
+  await expect(page).toHaveURL(/period=2026-10/u);
 });
