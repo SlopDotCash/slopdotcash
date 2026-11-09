@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8ef84a01f051ce8a19a1fb369a53d5ffc3a5c256cb5246a8ba3bbaace5126218",
+  "inventorySha256": "2bfbb5b592590a52b4f9fc728f084705a1ee49d2f4ffa75df3cde74316d1a51d",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -96,7 +96,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2267,
+      "line": 2265,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -113,7 +113,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2471,
+      "line": 2469,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -329,7 +329,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "line": 66,
+      "line": 67,
       "name": "review_decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -345,7 +345,7 @@
     },
     {
       "path": "backend/security/submissions.ts",
-      "line": 72,
+      "line": 77,
       "name": "SubmissionState",
       "kind": "string-union",
       "values": [
@@ -1753,7 +1753,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "line": 194,
+      "line": 199,
       "name": "status",
       "kind": "string-union",
       "values": ["reverted", "success"],
@@ -1763,7 +1763,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "line": 214,
+      "line": 219,
       "name": "status",
       "kind": "string-union",
       "values": ["passed", "pending"],
@@ -1773,7 +1773,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "line": 226,
+      "line": 231,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "passed", "pending"],
@@ -1783,7 +1783,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "line": 239,
+      "line": 244,
       "name": "mode",
       "kind": "string-union",
       "values": ["local", "public-testnet"],
@@ -1793,7 +1793,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "line": 246,
+      "line": 251,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "passed", "running", "waiting"],
@@ -1803,7 +1803,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "line": 520,
+      "line": 479,
       "name": "status",
       "kind": "string-union",
       "values": ["active", "paused"],
@@ -1813,7 +1813,7 @@
     },
     {
       "path": "scripts/escrow-acceptance/shared.ts",
-      "line": 582,
+      "line": 541,
       "name": "status",
       "kind": "string-union",
       "values": ["active", "paused"],
@@ -1920,7 +1920,7 @@
     },
     {
       "path": "scripts/prior-cycle-accrual.ts",
-      "line": 36,
+      "line": 37,
       "name": "PriorCycleNotReadyReason",
       "kind": "string-union",
       "values": ["under-review", "unresolved-proposals"],
@@ -1943,7 +1943,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 410,
+      "line": 422,
       "name": "outcomes",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2497,7 +2497,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1610,
+      "line": 1617,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -2679,7 +2679,7 @@
     },
     {
       "path": "src/lib/monthly-release-actions.ts",
-      "line": 51,
+      "line": 52,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -2902,7 +2902,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 97,
+      "line": 98,
       "name": "reason",
       "kind": "string-union",
       "values": [
@@ -2922,7 +2922,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 130,
+      "line": 131,
       "name": "status",
       "kind": "string-union",
       "values": ["closed", "live"],
@@ -3077,7 +3077,7 @@
     },
     {
       "path": "workers/fee-converter/native-gas.ts",
-      "line": 43,
+      "line": 44,
       "name": "state",
       "kind": "string-union",
       "values": ["abandoned", "reserved", "signed"],
@@ -3113,7 +3113,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "line": 44,
+      "line": 45,
       "name": "PrivateIntakeSkipReason",
       "kind": "string-union",
       "values": [
@@ -3338,7 +3338,7 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 230,
+      "line": 188,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
