@@ -238,7 +238,10 @@
     {
       "path": "backend/payments/chain-awards.ts",
       "sha256": "7c40dca97ccfdae847afd77cb9bba5646c4b1051f3b94c00c28c9ff8aea924de",
-      "models": ["formal/models/rewards/monthly_source_conflict.qnt"],
+      "models": [
+        "formal/models/rewards/monthly_coordinator.qnt",
+        "formal/models/rewards/monthly_source_conflict.qnt"
+      ],
       "candidateLines": [2, 8, 13, 38],
       "review": "mapped-abstraction"
     },
@@ -254,6 +257,7 @@
       "sha256": "fce0c6562bed2596cea0a876d5ebeafe44855e891fef54e3fcae8dbb1017d447",
       "models": [
         "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt"
       ],
       "candidateLines": [
@@ -288,7 +292,10 @@
     {
       "path": "backend/payments/ledger.ts",
       "sha256": "b35c578b2293d454a04e23ef63a49e1118d9549151ed4da3286e1c5879b0f542",
-      "models": ["formal/models/payments/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_reopen_landing.qnt"
+      ],
       "candidateLines": [
         39, 94, 174, 182, 197, 261, 274, 279, 295, 315, 325, 332, 339
       ],
@@ -365,7 +372,10 @@
     {
       "path": "backend/payments/vault-snapshots.ts",
       "sha256": "1e385f301c8d112de8e2ec2fdefd58caab8ed1c10916e363e91131f0b58c0230",
-      "models": ["formal/models/payments/chain_evidence.qnt"],
+      "models": [
+        "formal/models/payments/chain_evidence.qnt",
+        "formal/models/rewards/monthly_coordinator.qnt"
+      ],
       "candidateLines": [12, 62, 124, 136, 142],
       "review": "mapped-abstraction"
     },
@@ -435,24 +445,25 @@
     },
     {
       "path": "backend/projects/cloudflare-persistence.ts",
-      "sha256": "b8974aec5c881881db3c59b0cc8a58139b63dfece4a0595f0e7e32a4471d68c3",
+      "sha256": "184b62c14a177fb8ba5faf4c7f54831fb9bc0cbc0d1f6c6094d6a1f4ca72c01f",
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
-        "formal/models/referrals/referrer_attribution.qnt"
+        "formal/models/referrals/referrer_attribution.qnt",
+        "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "candidateLines": [
-        27, 50, 63, 65, 82, 112, 199, 233, 251, 388, 404, 419, 437, 440, 446,
-        449, 463, 464, 480, 481, 487, 488, 490, 519, 529, 550, 551, 556, 570,
-        586, 594, 728, 743, 753, 761, 781, 782, 787
+        26, 32, 33, 43, 66, 79, 81, 98, 128, 215, 249, 267, 404, 420, 435, 453,
+        456, 462, 465, 479, 480, 496, 497, 503, 504, 506, 539, 555, 576, 577,
+        582, 596, 612, 620, 764, 779, 789, 797, 817, 818, 823
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/projects/contracts.ts",
-      "sha256": "5cbb2f0acfb38797e3eb5922d6fbe1012f95f385e88a7c5fb36e428d9168de17",
+      "sha256": "bbd42b6dd91582baf291015148a70a1f7d1c5bd2156265a6a5e05997b59cf421",
       "models": ["formal/models/api/api_project_registry.qnt"],
-      "candidateLines": [19, 20, 54],
+      "candidateLines": [19, 20, 54, 68],
       "review": "mapped-abstraction"
     },
     {
@@ -484,12 +495,14 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "f5879ad8e9b6926cb7f3dfa844352c197ee190c907ab66aae8afaec28390f230",
+      "sha256": "3d0d2e0139ab878ed2ae276a9f68be871e330f1ac019e616d636a845311d4136",
       "models": [
+        "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
-        "formal/models/ui/ui_owner_bounty_funds.qnt"
+        "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "candidateLines": [
         155, 160, 170, 174, 232, 257, 262, 289, 290, 292, 294, 343, 427, 434,
@@ -498,9 +511,9 @@
         1144, 1146, 1151, 1152, 1153, 1154, 1166, 1167, 1168, 1170, 1175, 1213,
         1307, 1341, 1359, 1426, 1507, 1518, 1531, 1534, 1554, 1596, 1602, 1606,
         1612, 1618, 1654, 1662, 1665, 1666, 1711, 1712, 1713, 1730, 1776, 1783,
-        1795, 1832, 1851, 1855, 2029, 2033, 2060, 2080, 2081, 2088, 2092, 2128,
-        2146, 2163, 2195, 2204, 2348, 2374, 2523, 2580, 2620, 2631, 2632, 2745,
-        2753, 2771, 2965
+        1795, 1832, 1851, 1855, 2029, 2033, 2060, 2081, 2082, 2093, 2097, 2136,
+        2154, 2171, 2203, 2212, 2356, 2382, 2531, 2588, 2628, 2639, 2640, 2753,
+        2761, 2779, 2973
       ],
       "review": "mapped-abstraction"
     },
@@ -527,7 +540,10 @@
     {
       "path": "backend/projects/skill-publication.ts",
       "sha256": "ead86b008c0c4b908f886a656f6099a58539e631aa8a67ceda644ae755158022",
-      "models": ["formal/models/api/api_project_registry.qnt"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/vetting/vetting_admission_clearance.qnt"
+      ],
       "candidateLines": [
         138, 140, 150, 175, 193, 203, 230, 233, 241, 259, 264, 300
       ],
@@ -658,6 +674,7 @@
       "models": [
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/bounty_payment.qnt",
+        "formal/models/payments/direct_payer_nonce.qnt",
         "formal/models/payments/direct_payment_recovery.qnt",
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
@@ -720,6 +737,7 @@
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/security_payment_projection.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
       "candidateLines": [
@@ -747,10 +765,7 @@
     {
       "path": "backend/security/payment-database.ts",
       "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
-      "models": [
-        "formal/models/api/api_award_recovery.qnt",
-        "formal/models/payments/bounty_payment.qnt"
-      ],
+      "models": ["formal/models/api/api_award_recovery.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -759,8 +774,8 @@
       "sha256": "040dd1a89a9e8863d3d9d7d0497f34b4bf44175d9dc170d66ea0031943c2594b",
       "models": [
         "formal/models/api/api_award_recovery.qnt",
-        "formal/models/payments/bounty_payment.qnt",
-        "formal/models/payments/security_payment_projection.qnt"
+        "formal/models/payments/security_payment_projection.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
       ],
       "candidateLines": [
         13, 18, 35, 72, 184, 193, 207, 240, 250, 251, 291, 292, 294, 298, 315
@@ -846,7 +861,10 @@
     {
       "path": "backend/security/verified-direct-recovery.ts",
       "sha256": "72569734be958001bb636d2b057ce8e33fc9bff944d261b242317a65f25c6e49",
-      "models": ["formal/models/payments/direct_payment_recovery.qnt"],
+      "models": [
+        "formal/models/payments/bounty_payment.qnt",
+        "formal/models/payments/direct_payment_recovery.qnt"
+      ],
       "candidateLines": [29, 31, 32, 37, 47, 52, 56, 71, 75, 83, 88, 89],
       "review": "mapped-abstraction"
     },
@@ -980,6 +998,7 @@
       "path": "backend/vetting/flags.ts",
       "sha256": "330edd700538980bd3d15c8bc9635af9c350e2100a5518a79dc6d5dd7b1427f7",
       "models": [
+        "formal/models/api/api_project_enforcement.qnt",
         "formal/models/vetting/vetting_flag_admission.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt"
       ],
@@ -1018,6 +1037,7 @@
       "path": "backend/vetting/persistence.ts",
       "sha256": "ae3406f7085a386e5ca8b3dccb2aec5168149a2bd6ca117565168dfb01b2c2b1",
       "models": [
+        "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_admission_lineage.qnt",
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
@@ -1666,7 +1686,7 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "a34b176340bd83988f0f80cf607275ffbde2f8be5f61fdc75ab5591a0ef70fc7",
+      "sha256": "63d136b66375f7274f19b6949a20168868b8757b4a743e4ddc9091b77e6aac46",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1801,7 +1821,10 @@
     {
       "path": "migrations/0014_direct_payments.sql",
       "sha256": "18fc4e4252ee81f6b95c5caa0a7d6bdc612d0f00db853db183e24fca5b797c54",
-      "models": ["formal/models/payments/historical_disclosure.qnt"],
+      "models": [
+        "formal/models/payments/historical_disclosure.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
+      ],
       "candidateLines": [3, 19, 27, 35],
       "review": "mapped-abstraction"
     },
@@ -1905,7 +1928,8 @@
       "sha256": "ecbbe09c5185d69ee0e7bbb5ef1775cb971a295bf4d52d1043f54f0e493019f6",
       "models": [
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
       ],
       "candidateLines": [
         38, 84, 85, 91, 92, 124, 125, 130, 131, 137, 154, 155, 173, 174, 179,
@@ -1949,7 +1973,11 @@
     {
       "path": "migrations/0031_project_vetting_reinstatements.sql",
       "sha256": "a7c82904c9771f11df662709b47b9fbe75bb80b8ed067ebec2b499958f1b3360",
-      "models": ["formal/models/vetting/vetting_malicious_reinstatement.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_fixed_exemption.qnt",
+        "formal/models/vetting/vetting_malicious_reinstatement.qnt"
+      ],
       "candidateLines": [11, 12, 17, 24, 31, 32, 36, 37],
       "review": "mapped-abstraction"
     },
@@ -2181,7 +2209,7 @@
     {
       "path": "migrations/0057_private_security_payments.sql",
       "sha256": "99bfc406d747e486db01f59ce9456a958dcbf56322dbf34903e6939c9bfc0026",
-      "models": ["formal/models/payments/bounty_payment.qnt"],
+      "models": ["formal/models/payments/security_rail_exclusivity.qnt"],
       "candidateLines": [
         13, 20, 57, 88, 94, 96, 98, 101, 104, 105, 110, 113, 117, 137, 139, 150,
         152
@@ -2211,7 +2239,10 @@
     {
       "path": "migrations/0060_contributor_flags.sql",
       "sha256": "fe212f83a64ae2ea37a335f4f129823c6100fc6fac82974d023b4c6af5d47e8e",
-      "models": ["formal/models/vetting/vetting_flag_reinstatement.qnt"],
+      "models": [
+        "formal/models/api/api_project_enforcement.qnt",
+        "formal/models/vetting/vetting_flag_reinstatement.qnt"
+      ],
       "candidateLines": [
         27, 127, 148, 149, 158, 159, 164, 165, 196, 202, 203, 204, 205, 206,
         211, 212, 217, 218, 224, 225, 226, 227, 238, 239, 246, 247, 252, 261,
@@ -2264,7 +2295,10 @@
     {
       "path": "migrations/0064_slopbot_penalties_appeals.sql",
       "sha256": "1249f072c6bb6df922148eb7e9c5052a4a9330d094bf89aac78ad74b0ed81e3a",
-      "models": ["formal/models/slopbot/bot_appeal.qnt"],
+      "models": [
+        "formal/models/slopbot/bot_appeal.qnt",
+        "formal/models/slopbot/bot_penalty_once.qnt"
+      ],
       "candidateLines": [24, 32, 60, 68],
       "review": "mapped-abstraction"
     },
@@ -2360,7 +2394,10 @@
     {
       "path": "migrations/0075_vetting_grandfathered_projects.sql",
       "sha256": "9e0ff18e6956c3be857945a99622d46ed0456a27e85abe335f1577196f0562cc",
-      "models": ["formal/models/vetting/vetting_fixed_exemption.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_fixed_exemption.qnt"
+      ],
       "candidateLines": [9, 11, 12, 14, 15, 17, 18],
       "review": "mapped-abstraction"
     },
@@ -2618,7 +2655,10 @@
     {
       "path": "migrations/0102_owner_admission_exemptions.sql",
       "sha256": "7cc01d177a26fc7cc755ca853157a295b62187bee8c20d3b46b756c643181389",
-      "models": ["formal/models/vetting/vetting_admission_lineage.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_admission_lineage.qnt"
+      ],
       "candidateLines": [30, 32, 34, 36],
       "review": "mapped-abstraction"
     },
@@ -2685,7 +2725,8 @@
       "sha256": "1817d33ede23156d39a187b33916f19abce13b53c3601ab10114a5ccd45622f0",
       "models": [
         "formal/models/payments/bounty_payment.qnt",
-        "formal/models/payments/direct_preparation_completion.qnt"
+        "formal/models/payments/direct_preparation_completion.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
       ],
       "candidateLines": [
         11, 12, 13, 16, 25, 26, 27, 30, 44, 45, 46, 47, 57, 58, 62
@@ -2695,7 +2736,10 @@
     {
       "path": "migrations/0109_direct_payment_transfer_receipts.sql",
       "sha256": "c62d89b77d59ce8d51ea46e31283650d52ce6562856e70fbe70fcd9af487bd09",
-      "models": ["formal/models/payments/bounty_payment.qnt"],
+      "models": [
+        "formal/models/payments/bounty_payment.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
+      ],
       "candidateLines": [1, 15, 19, 25, 30, 32],
       "review": "mapped-abstraction"
     },
@@ -2721,6 +2765,8 @@
       "path": "migrations/0112_direct_payment_recovery.sql",
       "sha256": "739362237b182f25304949778bf40581c07d395cbc7c813f51c3490a305c65ec",
       "models": [
+        "formal/models/payments/bounty_payment.qnt",
+        "formal/models/payments/direct_payer_nonce.qnt",
         "formal/models/payments/direct_payment_recovery.qnt",
         "formal/models/payments/direct_recovery_completion.qnt"
       ],
@@ -2731,6 +2777,8 @@
       "path": "migrations/0113_direct_unpaid_leg_recovery.sql",
       "sha256": "00ddc180aa92460cbaf2b350797351791accfff0033c3d490521bf12b76aa7b5",
       "models": [
+        "formal/models/payments/bounty_payment.qnt",
+        "formal/models/payments/direct_payer_nonce.qnt",
         "formal/models/payments/direct_payment_recovery.qnt",
         "formal/models/payments/direct_recovery_completion.qnt"
       ],
@@ -2766,9 +2814,17 @@
       "sha256": "6487ff6d92813182b24e0be2c60090bb05095a0d0fb0774be6993f0f6a959eb8",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
-        "formal/models/slopbot/bot_close_capacity.qnt"
+        "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_close_recorded_key.qnt"
       ],
       "candidateLines": [2, 13, 18, 19, 20, 21, 24, 26, 28, 29, 30, 37, 38, 40],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0118_slopbot_zero_call_reconciliation.sql",
+      "sha256": "c2995b5626a8b1a4912332eb393e217ac4c003d316b426294e39ea1af95e5543",
+      "models": ["formal/models/slopbot/bot_value_budget.qnt"],
+      "candidateLines": [13, 15, 17, 19],
       "review": "mapped-abstraction"
     },
     {
@@ -2840,13 +2896,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "d2115157a2ff561c56ca62e86e9cf60861c07601dd394785ec0d9db02a06d30f",
+      "sha256": "f6646a1c7732c740f2a51a951e57618040aef11dbb67972ff154867e993ca13c",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [33, 42, 66, 163, 165, 167, 214, 221, 273],
+      "candidateLines": [33, 41, 65, 162, 164, 166, 213, 220, 272],
       "review": "mapped-abstraction"
     },
     {
@@ -4385,12 +4441,16 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "5597cc5dbbed211cae48e2f234740c48cc8e1a63b46287de2aa64003747fd29a",
-      "models": ["formal/models/ui/ui_transaction.qnt"],
+      "sha256": "4ce387ec31a4ffe8933efd2ee1adbba318f948ac7b227ae5c95308baf19e38e6",
+      "models": [
+        "formal/models/ui/ui_owner_vault_setup_storage.qnt",
+        "formal/models/ui/ui_transaction.qnt"
+      ],
       "candidateLines": [
-        1, 26, 49, 51, 57, 60, 91, 93, 95, 98, 100, 104, 105, 106, 107, 108,
-        109, 112, 113, 114, 115, 125, 126, 128, 130, 182, 190, 309, 317, 330,
-        336, 337, 341, 357, 378, 381, 562, 573, 592, 607, 619
+        1, 14, 33, 56, 58, 64, 67, 99, 101, 103, 106, 110, 112, 119, 123, 124,
+        125, 126, 127, 128, 131, 132, 133, 134, 144, 145, 147, 149, 203, 216,
+        305, 355, 372, 387, 393, 394, 398, 414, 435, 438, 621, 632, 651, 668,
+        680
       ],
       "review": "mapped-abstraction"
     },
@@ -5275,6 +5335,7 @@
       "sha256": "fea0028bcea89742229ca0aea868e32380a961d976dd8ea3eb9ea3fa95d7d5ad",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
+        "formal/models/ui/ui_owner_vault_setup_storage.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt"
       ],
       "candidateLines": [39, 63],
@@ -5354,11 +5415,11 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "sha256": "13ba85f93d980366cb676c9a50df621f309fc807339f4c44d8046a41d5b70151",
+      "sha256": "d074be79127eb311468602829078abe824e6b5386de3da1b755bae1a32487876",
       "models": [],
       "candidateLines": [
-        10, 30, 31, 44, 159, 185, 186, 197, 198, 306, 307, 308, 322, 331, 332,
-        337, 341, 356, 365, 405, 406
+        10, 30, 31, 44, 164, 190, 191, 202, 203, 311, 312, 313, 327, 336, 337,
+        342, 346, 361, 370, 410, 411
       ],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
@@ -5768,6 +5829,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/vault-setup-attempt.ts",
+      "sha256": "3a399100cc034c3864fc28f894c6047d158b5d1fec1ccd044134dc311d1af615",
+      "models": ["formal/models/ui/ui_owner_vault_setup_storage.qnt"],
+      "candidateLines": [6],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/vault-setup.ts",
       "sha256": "5b1728c03318a4f85bf684db47451cc04ab183e86ebcece23fae94cd5c045b8f",
       "models": ["formal/models/contracts/vault_creation.qnt"],
@@ -5960,6 +6028,7 @@
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_value_caps.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
@@ -6014,6 +6083,7 @@
       "path": "workers/fee-converter/index.ts",
       "sha256": "acfd505b2ab888f6a5cc74972dbe447532db85bf878e608ce3e7ddd96cd76e7b",
       "models": [
+        "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/payment_worker_run.qnt"
       ],
@@ -6129,7 +6199,9 @@
       "sha256": "a0d4b5a9a80e49dba33bb0ce2828928f6b4df00890133d3b534bbcd879187c47",
       "models": [
         "formal/models/fees/earned_fee_history.qnt",
+        "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/fee_value_caps.qnt",
         "formal/models/fees/native_budget.qnt"
       ],
       "candidateLines": [
@@ -6141,7 +6213,11 @@
     {
       "path": "workers/fee-converter/verified-arithmetic.ts",
       "sha256": "c0d71754715e7b089388cd8e30db43615a9bf8269c0c59acea52a95af60610ed",
-      "models": ["formal/models/fees/native_budget.qnt"],
+      "models": [
+        "formal/models/fees/fee_value_caps.qnt",
+        "formal/models/fees/native_budget.qnt",
+        "formal/models/payments/signed_send.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure bigint rounding, slippage, remaining-cap, rescaling, spendable balance and gas/impact arithmetic. No quote fetch, signing, journal or payment state; those transitions remain fee conversion models."
@@ -6391,10 +6467,7 @@
     {
       "path": "workers/payment-executor/binding-recovery.ts",
       "sha256": "46e375574df060f44c36678e755714ba4675d4f6c99c24ed18470ebd8b5b7e19",
-      "models": [
-        "formal/models/payments/binding_cancellation.qnt",
-        "formal/models/payments/signed_send.qnt"
-      ],
+      "models": ["formal/models/payments/binding_cancellation.qnt"],
       "candidateLines": [
         81, 105, 120, 146, 159, 160, 163, 170, 190, 206, 212, 216, 217, 218,
         313, 317, 319, 325, 327, 330
@@ -6553,6 +6626,7 @@
       "path": "workers/payments/index.ts",
       "sha256": "a3c2a182f53fddd832ca836d370355e8f2d04425a094c71e048b7ef0e9ee4c74",
       "models": [
+        "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -6658,7 +6732,6 @@
       "path": "workers/referral-accrual/poster.ts",
       "sha256": "3607efca70251004aa8b2dd49104de202c38699a375f5eb8ec17e0e11bac46c3",
       "models": [
-        "formal/models/payments/signed_send.qnt",
         "formal/models/referrals/referral_distribution.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
@@ -6726,6 +6799,7 @@
       "sha256": "c0711815255590c3c29579b55e52a9ca4e9c60439c61893994f3cd114b76a495",
       "models": [
         "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_close_recorded_key.qnt",
         "formal/models/slopbot/bot_close_recovery_claim.qnt"
       ],
       "candidateLines": [
@@ -6803,14 +6877,20 @@
     {
       "path": "workers/slopbot/models.ts",
       "sha256": "1595aa393d13b76d286029c5a44a1abd482ae8e27187dd85ef113f50b3cee156",
-      "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
+      "models": [
+        "formal/models/slopbot/bot_producer_provenance.qnt",
+        "formal/models/slopbot/bot_value_budget.qnt"
+      ],
       "candidateLines": [79, 83, 88, 173, 195, 196, 318, 320],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/penalties.ts",
       "sha256": "1b1b2367f6dc6b9b78163a65de5865e15479efb286d07df5e81ad37871b35c29",
-      "models": ["formal/models/slopbot/bot_appeal.qnt"],
+      "models": [
+        "formal/models/slopbot/bot_appeal.qnt",
+        "formal/models/slopbot/bot_penalty_once.qnt"
+      ],
       "candidateLines": [73, 95, 119, 153],
       "review": "mapped-abstraction"
     },
@@ -6819,6 +6899,7 @@
       "sha256": "551afb522ba32518a9ce8ad7a3ed3616343a6f84064eed362f6c8c62489ce1a4",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
+        "formal/models/slopbot/bot_close_recorded_key.qnt",
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_provider_cost_history.qnt",
@@ -6895,21 +6976,23 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "87dd18eef36a2b1fd0b4d3ad12d7c1d321e054667d36b2738e4fe7cd7cc17963",
+      "sha256": "2c319dba6320d71ad903d44218b26fa5289f0d3d154f6521a24cceb2e2e14251",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
+        "formal/models/slopbot/bot_close_recorded_key.qnt",
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
-        "formal/models/slopbot/bot_moderation.qnt"
+        "formal/models/slopbot/bot_moderation.qnt",
+        "formal/models/slopbot/bot_penalty_once.qnt"
       ],
       "candidateLines": [
         3, 153, 267, 282, 291, 301, 304, 496, 650, 799, 828, 838, 973, 978, 983,
         985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
-        1090, 1141, 1163, 1164, 1173, 1262, 1264, 1284, 1303, 1380, 1385, 1456,
-        1571, 1578, 1579, 1614, 1631, 1634, 1635, 1797, 1802, 1864, 1877, 1882,
-        1889, 1890, 1894, 1895, 1903, 1919, 1969, 2116, 2176, 2182, 2193, 2221,
-        2246, 2254, 2277, 2282, 2358, 2359, 2401, 2436, 2487, 2632, 2889, 2964,
-        3130, 3141, 3149, 3247, 3248, 3288, 3338, 3352, 3368
+        1090, 1141, 1163, 1164, 1172, 1177, 1266, 1268, 1288, 1307, 1384, 1389,
+        1460, 1575, 1582, 1583, 1618, 1635, 1638, 1639, 1801, 1806, 1868, 1881,
+        1886, 1893, 1894, 1898, 1899, 1907, 1923, 1973, 2120, 2180, 2186, 2197,
+        2225, 2250, 2258, 2281, 2286, 2362, 2363, 2405, 2440, 2491, 2636, 2893,
+        2968, 3134, 3145, 3153, 3251, 3252, 3292, 3342, 3356, 3372
       ],
       "review": "mapped-abstraction"
     },
@@ -6970,9 +7053,9 @@
     },
     {
       "path": "workers/slopbot/value-budget.ts",
-      "sha256": "eb3ba2cfd4f605baf79ec632e9dd849c709e1cfccf36b0830fda63d7c8daaeb8",
+      "sha256": "2154d6b5195cd474a43b680981384002c80673b433ce21871be31fd1cca12b33",
       "models": ["formal/models/slopbot/bot_value_budget.qnt"],
-      "candidateLines": [11, 46, 83],
+      "candidateLines": [11, 46, 89],
       "review": "mapped-abstraction"
     },
     {
@@ -7076,13 +7159,13 @@
     },
     {
       "path": "workers/slopbot/value-inference.ts",
-      "sha256": "ac6a6bbe223a64e97f95007385c3d539f630e694ec7f776a14b3507fff3f69d3",
+      "sha256": "5a1136f1e18be8bde2c3c9210d1b1252dc7ef8ce18a3bcf6575fb58f506c130b",
       "models": [
         "formal/models/slopbot/bot_inference_retention.qnt",
         "formal/models/slopbot/bot_value_budget.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt"
       ],
-      "candidateLines": [69, 78, 100, 238, 240],
+      "candidateLines": [69, 78, 100, 236, 238],
       "review": "mapped-abstraction"
     },
     {
@@ -7927,7 +8010,7 @@
     },
     {
       "path": "formal/models/api/api_private_case.qnt",
-      "sha256": "c738fcdea56195af3ddec369b9e370b740b50628aacb336a4c13614adfb163cd",
+      "sha256": "8a157e59f9a98a2751cf8c94a3b521c11058d20bdd73f5c3e84e7010c258b024",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/award-asset.ts",
@@ -7938,7 +8021,21 @@
         "migrations/0028_security_case_related_party.sql",
         "migrations/0061_security_automatic_intake.sql"
       ],
-      "scenarios": ["appealTest", "disclosureTest", "relatedAwardTest"]
+      "scenarios": [
+        "approvedAwardNotAppealableTest",
+        "awardDeciderCannotDecideAppealTest",
+        "capacityWaitSurvivesReturnTest",
+        "disclosureTest",
+        "duplicateUpheldTest",
+        "openAppealBlocksAwardTest",
+        "originalDeciderCannotDecideAppealTest",
+        "refusedAwardReturnedReopensTest",
+        "rejectionReturnedTest",
+        "relatedAwardTest",
+        "relatedReviewerMustBeIndependentTest",
+        "secondAppealNeedsNewReviewerTest",
+        "upheldCapacityWaitCanStillBeAwardedTest"
+      ]
     },
     {
       "path": "formal/models/api/api_private_case_roles.qnt",
@@ -7988,7 +8085,7 @@
     },
     {
       "path": "formal/models/api/api_private_intake.qnt",
-      "sha256": "0e5833d145c3e3db761d0186a069dd5f78ee806fc94f59228b50d16cb16526d3",
+      "sha256": "558a791a8c490160686e0a7cfcecc538cd997cbfc3370031092b3cd099962c83",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/intake-grant.ts",
@@ -7999,24 +8096,55 @@
         "migrations/0059_private_security_submissions.sql",
         "migrations/0101_durable_security_intake.sql"
       ],
-      "scenarios": ["storedReceiptTest", "uncertainTest"]
+      "scenarios": [
+        "emptyReconcileReopensDraftTest",
+        "expiredGrantRefusesReconcileTest",
+        "forwardOverridesSpamTest",
+        "forwardedReportNotRescreenedTest",
+        "freshRunningScreenNotReclaimedTest",
+        "heldReportCannotSendTest",
+        "heldReportRevisedAndRequeuedTest",
+        "legitimateRoutesAndForwardsTest",
+        "otherAccountGrantRefusedTest",
+        "rateLimitedReopensDraftTest",
+        "renewedGrantReconcilesTest",
+        "requestInformationBlocksSendTest",
+        "sendWithoutGrantRefusedTest",
+        "staleScreenCannotOverwriteRetryTest",
+        "unavailableScreenRetriesTest"
+      ]
     },
     {
       "path": "formal/models/api/api_project_enforcement.qnt",
-      "sha256": "c4389791a9d097467058bbbfd5ab9128b1ebbe20fab61a5fe36779d40882dcee",
+      "sha256": "c476dd41b6379a449b603f474d8f7e8052c603093a399dcb2b88d648bc5c799d",
       "sources": [
         "backend/projects/account-bans.ts",
         "backend/projects/edge-cache.ts",
         "backend/projects/enforcement.ts",
+        "backend/projects/handler.ts",
         "backend/projects/verified-enforcement.ts",
+        "backend/vetting/flags.ts",
         "migrations/0023_project_enforcements.sql",
         "migrations/0027_project_enforcement_owner_appeals.sql",
         "migrations/0032_project_system_enforcement.sql",
+        "migrations/0060_contributor_flags.sql",
         "migrations/0066_project_maintainer_bans.sql",
         "migrations/0070_banned_account_appeals.sql",
         "migrations/0072_account_reinstatements.sql"
       ],
-      "scenarios": ["accountSeparationTest", "flagsTest"]
+      "scenarios": [
+        "accountSeparationTest",
+        "dependentModeratorRefusedTest",
+        "flagDuringScanBlocksReinstatementTest",
+        "flagWhileRestrictedDoesNotRepauseTest",
+        "flagsTest",
+        "maliciousConfirmationTest",
+        "maliciousDecisionBansMaintainerTest",
+        "moderatorBanWithoutMaliceTest",
+        "moderatorQuarantineNeedsModeratorTest",
+        "moderatorReinstatementNeedsFreshScanTest",
+        "scanBeforePauseIsStaleTest"
+      ]
     },
     {
       "path": "formal/models/api/api_project_registry.qnt",
@@ -8300,7 +8428,7 @@
     },
     {
       "path": "formal/models/contracts/binding_veto_policy.qnt",
-      "sha256": "9637a02ac5ff1c5cea08b99fc67ea1b26f0804b70b94bc8b63eaf8a1196ecb8c",
+      "sha256": "46ba8d011f135b32d07fb1abe2afc0636ef260b7fd9b50d3a0a48e0fe578b5b1",
       "sources": [
         "contracts/evm/src/ProjectEscrow.sol",
         "contracts/solana/programs/slop-escrow/src/lib.rs"
@@ -8847,7 +8975,7 @@
     },
     {
       "path": "formal/models/fees/fee_conversion.qnt",
-      "sha256": "d1a0eac761496a8150d5b135dea46f763aac43c72d009b4780c9300bd0fc5510",
+      "sha256": "ebad773db5d3113ccab6c9335d6aeb2ee0c1c9f0d0dfb4c8ec0967e79edea66e",
       "sources": [
         "backend/fee-conversions/handler.ts",
         "migrations/0022_fee_conversions.sql",
@@ -8859,12 +8987,23 @@
         "workers/fee-converter/core.ts",
         "workers/fee-converter/dry-run.ts",
         "workers/fee-converter/evm.ts",
+        "workers/fee-converter/index.ts",
         "workers/fee-converter/solana.ts",
+        "workers/fee-converter/store.ts",
         "workers/fee-converter/verified-solana-wire.ts"
       ],
       "scenarios": [
         "convertedTest",
         "dryRunCannotSignTest",
+        "dryRunReconcilesOnlyTest",
+        "legacyQuotedClosedTest",
+        "liveReplacesTest",
+        "modeChangeMidRunTest",
+        "offDuringSendRetainsTest",
+        "offDuringSendStateTest",
+        "offRunsNothingTest",
+        "openRowBlocksNewSendTest",
+        "pendingDustTest",
         "robinhoodRetainedTest",
         "staleLeaseRefusedTest"
       ]
@@ -8932,6 +9071,24 @@
         "migrations/0088_fee_approval_journal.sql"
       ],
       "scenarios": ["preservedAcrossAllRebuildsTest"]
+    },
+    {
+      "path": "formal/models/fees/fee_value_caps.qnt",
+      "sha256": "92731e7bb1bb386a41a8e23c008d9d9fa633925183f95af0d439273402b41d61",
+      "sources": [
+        "workers/fee-converter/core.ts",
+        "workers/fee-converter/store.ts",
+        "workers/fee-converter/verified-arithmetic.ts"
+      ],
+      "scenarios": [
+        "agedRowsFreeBudgetTest",
+        "dayCapAcrossRunsTest",
+        "dryRunNotCountedLaterTest",
+        "failedSendFreesBudgetTest",
+        "leaseLossCountedNextRunTest",
+        "leaseLossEndsRunTest",
+        "runCapStopsTest"
+      ]
     },
     {
       "path": "formal/models/fees/fee_wallet_handoff.qnt",
@@ -9070,19 +9227,27 @@
     },
     {
       "path": "formal/models/payments/bounty_payment.qnt",
-      "sha256": "1386ca4b98f9ad76281168a4f7977c00150f9d63d2349c23f385fe870ef8b7eb",
+      "sha256": "85fa4b7aba4200aa746dde1acace2af81989b17f341199e7879c9570d6b9abad",
       "sources": [
         "backend/security/direct-payments.ts",
-        "backend/security/payment-database.ts",
-        "backend/security/payments.ts",
-        "migrations/0057_private_security_payments.sql",
+        "backend/security/verified-direct-recovery.ts",
         "migrations/0108_private_direct_payments.sql",
-        "migrations/0109_direct_payment_transfer_receipts.sql"
+        "migrations/0109_direct_payment_transfer_receipts.sql",
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql"
       ],
       "scenarios": [
+        "cancelledResearcherRequestPaysNewWalletOnceTest",
         "completeTest",
+        "feeLegCannotRedirectTest",
+        "lowerNonceBlocksFeeCancellationTest",
         "noResendAfterPaidTest",
-        "partialRemainsUnpaidTest"
+        "paidResearcherLegNotReissuedTest",
+        "partialRemainsUnpaidTest",
+        "researcherSuccessorAfterCancellationTest",
+        "successorWithoutCancellationRefusedTest",
+        "unpaidFeeLegSuccessorTest",
+        "unverifiedLandedLegBlocksSuccessorTest"
       ]
     },
     {
@@ -9149,9 +9314,11 @@
     },
     {
       "path": "formal/models/payments/direct_bounty_journal.qnt",
-      "sha256": "549580117b331f06f8bb0950211c650c84a7fbffbcb51045812f0c26d3e38fa3",
+      "sha256": "3020aebd3ca62801dace69ab002c49c19fa9bdb71723b435b72d0e204d824dd0",
       "sources": ["src/DirectBountyPayment.tsx"],
       "scenarios": [
+        "canonicalFreshIdsExhaustAfterThreeTest",
+        "canonicalFreshIdsReachSameNonceAbaTest",
         "checkAfterFailedHashWriteKeepsKnownHashTest",
         "clearedInputCannotSubmitStoredCandidateTest",
         "departedCompletionStillMergesOwnedEvidenceTest",
@@ -9167,6 +9334,23 @@
         "localHashCannotReplaceNewerStoredHashTest",
         "noPromptAfterDepartureTest",
         "oldRejectionCannotDeleteNewSameNonceTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/direct_payer_nonce.qnt",
+      "sha256": "7efdb9f6324627a9940495713ac4f725a55fc80441951a53888a85dd1d18c397",
+      "sources": [
+        "backend/security/direct-payments.ts",
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql"
+      ],
+      "scenarios": [
+        "concurrentReadSecondInsertRefusedTest",
+        "pendingAboveReservationsTest",
+        "renewalKeepsNoncesTest",
+        "retryAfterConflictTakesFreshNoncesTest",
+        "staleSuccessorReadRefusedTest",
+        "successorReservesOnlyChangedLegTest"
       ]
     },
     {
@@ -9342,7 +9526,7 @@
     },
     {
       "path": "formal/models/payments/payment_dispatch.qnt",
-      "sha256": "42eca2c80f310b671ca7fe922a31ba249cfb23d1863b3d97cf7ddf00eec83e94",
+      "sha256": "6f3a3c3f6b9ee355da51f017d5be962fa8001d6a951c57d8a2de64c297c04cd6",
       "sources": [
         "backend/payments/dispatch.ts",
         "backend/payments/ledger.ts",
@@ -9357,7 +9541,12 @@
       "scenarios": [
         "ambiguousRetryTest",
         "conflictingResponseTest",
+        "externalPaidBesideRecordedTxTest",
+        "externalPaidWithoutRecordedTxTest",
         "lateOriginalAfterWalletReplacementTest",
+        "noResponseAfterPaidTest",
+        "noSecondReceiptAfterExternalPaidTest",
+        "paidIsAbsorbingTest",
         "staleConflictCannotHoldCompletedTest",
         "staleFailurePreservesSubmittedSuccessorTest",
         "staleLeaseRefusedTest"
@@ -9374,6 +9563,25 @@
       "scenarios": [
         "appendDoesNotMoveReadBoundaryTest",
         "freshReadFindsLaterTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/payment_reopen_landing.qnt",
+      "sha256": "edd0a54e66b10d8d5168820502aa48b56ab7c840adf576388e913d9f98de4dde",
+      "sources": [
+        "backend/payments/dispatch.ts",
+        "backend/payments/ledger.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "expiredOldBytesNeverLandTest",
+        "expiredReplacementPaysOnceTest",
+        "landedBytesCannotBeReplacedTest",
+        "paidStopsReopenTest",
+        "reopenResendsSameBytesTest",
+        "replaceRequiresExpiryProofTest",
+        "staleNotSeenAfterLandingTest",
+        "staleReopenThenExternalPaidTest"
       ]
     },
     {
@@ -9443,21 +9651,47 @@
       ]
     },
     {
+      "path": "formal/models/payments/security_rail_exclusivity.qnt",
+      "sha256": "fa2120421497b1ab9753a11aca213c3487f6dca6e04ee5ba559110160e1a696e",
+      "sources": [
+        "backend/security/handler.ts",
+        "backend/security/payments.ts",
+        "migrations/0014_direct_payments.sql",
+        "migrations/0026_private_security_cases.sql",
+        "migrations/0057_private_security_payments.sql",
+        "migrations/0108_private_direct_payments.sql",
+        "migrations/0109_direct_payment_transfer_receipts.sql"
+      ],
+      "scenarios": [
+        "bothLegsPaidTest",
+        "directBlocksVaultForRootCauseTest",
+        "directPaymentBlocksSettlementTest",
+        "oneTransactionOneLegTest",
+        "ordinaryTransferCannotBeReceiptTest",
+        "receiptCannotBeOrdinaryTest",
+        "settlementBlocksDirectPaymentTest",
+        "vaultBlocksDirectForRootCauseTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/signed_send.qnt",
-      "sha256": "5579c8db86b8033fce9165c57fda305815f2e12d91aa871948825eb3175111c0",
+      "sha256": "6e4e92cc0a52da6769b60cc0eef9335a0c0f97a2a545c3e6e302b3e365d04185",
       "sources": [
         "migrations/0087_fee_send_replacements.sql",
         "workers/fee-converter/core.ts",
         "workers/fee-converter/evm.ts",
-        "workers/payment-executor/binding-recovery.ts",
-        "workers/payment-executor/core.ts",
-        "workers/referral-accrual/poster.ts"
+        "workers/fee-converter/verified-arithmetic.ts",
+        "workers/payment-executor/core.ts"
       ],
       "scenarios": [
         "beforeJournalRefusedTest",
+        "escalationRefusedAtCapTest",
+        "executorCeilingTest",
+        "minedAttemptStopsReplacementTest",
         "missingReceiptKeepsBytesTest",
         "originalCanWinTest",
-        "replacementWinsTest"
+        "replacementWinsTest",
+        "smallOriginalCapTest"
       ]
     },
     {
@@ -9793,14 +10027,15 @@
     },
     {
       "path": "formal/models/referrals/referral_root_history.qnt",
-      "sha256": "8f05967a2547934d1a5e2b7a394a354da9b09102c1d1bd17f156054f415ab52b",
+      "sha256": "e97134024c87daf153f11215c83e6981b38abc56fe0beb356e9bf7a41fa8b43e",
       "sources": ["contracts/evm/src/ReferralDistributor.sol"],
       "scenarios": [
         "olderHighSurvivesLowerEpochsTest",
         "repeatedVoidPreservesHighTest",
         "sealedLatestCannotVoidTest",
         "spacingFollowsLatestLiveTimeTest",
-        "voidFirstRestoresEmptyMarksTest"
+        "voidFirstRestoresEmptyMarksTest",
+        "voidedEpochKeepsSlotAndCanonicalFieldsTest"
       ]
     },
     {
@@ -10157,11 +10392,13 @@
     },
     {
       "path": "formal/models/rewards/monthly_coordinator.qnt",
-      "sha256": "af18ff83c76db5b1ef1266b21d212f502b4c543f9bb5a2e0b739aa6e29f651f7",
+      "sha256": "e7fa50fe0a820a125b0c53a57b08f46d895b74a43347f3ef40238ad47932b779",
       "sources": [
+        "backend/payments/chain-awards.ts",
         "backend/payments/monthly-attestation.ts",
         "backend/payments/monthly-publication.ts",
         "backend/payments/monthly.ts",
+        "backend/payments/vault-snapshots.ts",
         "migrations/0062_monthly_allocations.sql",
         "migrations/0071_monthly_ban_exclusions.sql",
         "migrations/0081_monthly_asset_amount_range.sql",
@@ -10172,9 +10409,16 @@
         "src/lib/verified-monthly-replacement.ts"
       ],
       "scenarios": [
+        "bannedBeforeCreationExcludedTest",
+        "concurrentMonthsFencedTest",
         "fundedBanDoesNotEraseTest",
+        "openMonthRefusedTest",
+        "ownerFreezeIgnoresAutomaticTest",
+        "refreshedSnapshotMissesTest",
         "registryRaceTest",
+        "secondMonthNeedsBothTest",
         "settingsRaceTest",
+        "staleSnapshotOvercommitTest",
         "underfundedWaitTest"
       ]
     },
@@ -10383,7 +10627,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_close_capacity.qnt",
-      "sha256": "5c89fce331cdd89a14075e86d4e783270378b498d4bca8ad61cbb310e61910ed",
+      "sha256": "4b53415043785f240722ce703ddfc43c0768472d5fa37d5f7444c6b9fe1b0a5c",
       "sources": [
         "migrations/0117_slopbot_close_attempts.sql",
         "workers/slopbot/close-attempts.ts",
@@ -10399,7 +10643,26 @@
         "confirmedHistoryDoesNotDoubleCountTest",
         "definitiveRefusalReleasesSlotAndKeepsHistoryTest",
         "lateCompletionReconcilesWithoutResendingTest",
+        "reopenedItemMayCloseNewHeadNextDayTest",
         "timeoutDoesNotFreeSlotTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/bot_close_recorded_key.qnt",
+      "sha256": "79f25f2e246d42d0bf72dbb9f3aa628dbb8a517d84b4d27b26815379a89cb81b",
+      "sources": [
+        "migrations/0117_slopbot_close_attempts.sql",
+        "workers/slopbot/close-attempts.ts",
+        "workers/slopbot/persistence.ts",
+        "workers/slopbot/review.ts"
+      ],
+      "scenarios": [
+        "definitiveRefusalReleasesWithoutPenaltyTest",
+        "deliveredCloseCannotRecoverAgainTest",
+        "humanCloseKeepsSlotPendingTest",
+        "lostResponseRecoversAfterKeyChangeTest",
+        "lostResponseRecoversUnderSameKeyTest",
+        "openItemKeepsUnknownAttemptPendingTest"
       ]
     },
     {
@@ -10550,6 +10813,23 @@
       ]
     },
     {
+      "path": "formal/models/slopbot/bot_penalty_once.qnt",
+      "sha256": "03c5ceac9d07e7c3efbfa0a9cc912de940470d8879b63b987ddcc2897fc9ad85",
+      "sources": [
+        "migrations/0064_slopbot_penalties_appeals.sql",
+        "workers/slopbot/penalties.ts",
+        "workers/slopbot/review.ts"
+      ],
+      "scenarios": [
+        "appealUpholdReversesCoveredDebitTest",
+        "newerHeadDebitSurvivesOlderAppealTest",
+        "reopenBeforeRecordWritesNoDebitTest",
+        "reopenReversesRecordedDebitOnceTest",
+        "secondCloseNeverDebitsAgainTest",
+        "spamCloseDebitsOnceAcrossReplaysTest"
+      ]
+    },
+    {
       "path": "formal/models/slopbot/bot_producer_provenance.qnt",
       "sha256": "a1b78f6afc7ec212c4e9b006c9f2c0ef25a312e53735aa1d390c73014723b623",
       "sources": [
@@ -10672,16 +10952,20 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_budget.qnt",
-      "sha256": "41f49a5f47a4e0973e2c050074d5d0dac0938dc30da5bae0b18ff68dc0547565",
+      "sha256": "0a86ef1870365998b1c8a1bbd30b3f421848f2ccbd106b2ef99ce9485378dab7",
       "sources": [
         "migrations/0051_slopbot_value_budget.sql",
         "migrations/0077_slopbot_alerts_only.sql",
         "migrations/0084_slopbot_attempt_accounting.sql",
+        "migrations/0118_slopbot_zero_call_reconciliation.sql",
+        "workers/slopbot/models.ts",
         "workers/slopbot/value-budget.ts",
         "workers/slopbot/value-consumption.ts",
         "workers/slopbot/value-inference.ts"
       ],
       "scenarios": [
+        "alertsRefusalBeforeCallRestoresCappedModeTest",
+        "authorityRefusalBeforeCallReleasesHoldTest",
         "exactReconciliationReleasesCapacityTest",
         "providerOverchargeRemainsHeldTest",
         "unknownAlertsBlockCappedModeTest",
@@ -10741,7 +11025,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_pipeline.qnt",
-      "sha256": "b8ffb82e9bb2d89754bb95b5de7b1870d2065ef82933748da9766cb2a93b07d9",
+      "sha256": "8fc4ecf1dc5f0eb6c81d75a3ee313f6fac0bd45b71439ba4e107edb834e9b110",
       "sources": [
         "migrations/0046_slopbot_work_unit_journal.sql",
         "migrations/0053_slopbot_value_source_leases.sql",
@@ -11674,6 +11958,25 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_owner_vault_setup_storage.qnt",
+      "sha256": "35d6bb19ba9e94a6a897e06f523d3ff69ea99066473e2f34abc2fd3ba2fe41dd",
+      "sources": [
+        "src/OwnerVaultSetup.tsx",
+        "src/lib/pending-attempt.ts",
+        "src/lib/vault-setup-attempt.ts"
+      ],
+      "scenarios": [
+        "declineClearsOwnRequestTest",
+        "lateDeclineKeepsNewerRequestTest",
+        "lateHashAfterClearKeepsSlotEmptyTest",
+        "lateHashKeepsNewerRequestTest",
+        "legacyLateDeclineErasedNewerRequestTest",
+        "legacyLateHashRecreatedClearedSlotTest",
+        "occupiedSlotRefusesNewAttemptTest",
+        "sentAndRegisteredTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_payout_consent.qnt",
       "sha256": "e8b60bb1f1b267de75f4a722e69e5bbcb81064ac244e78d6a7ba0b4e14a43948",
       "sources": ["src/PayoutConsent.tsx", "src/lib/payout-consent.ts"],
@@ -11927,7 +12230,7 @@
     },
     {
       "path": "formal/models/ui/ui_review_pool.qnt",
-      "sha256": "5cd74fbdf2e9b71acf5fb0d2fb7965a19b6d671906bd1c825a52dc47dc4dd67e",
+      "sha256": "b243881ac334f6cd5372b5f99ce31895ce0595bb49beed77954508ed7c5f8dae",
       "sources": [
         "src/lib/leaderboard.ts",
         "src/lib/points.ts",
@@ -11941,6 +12244,7 @@
         "advancingWindowKeepsSharesTest",
         "currentWindowDoesNotRedistributeTest",
         "firstTimeIdAndRemainderTieTest",
+        "orderedIngestionReachesSameAllocationTest",
         "outsideAllocationTakesNoSlotTest",
         "outsideOnlyTakesNoSlotTest",
         "sampledPoolTest"
@@ -12044,7 +12348,7 @@
     },
     {
       "path": "formal/models/ui/ui_solana_payment_pending.qnt",
-      "sha256": "4c711fb15061665b9883e4232b158189233000744ee4364e54e6ee19c419b6ca",
+      "sha256": "7213372f99f895930b9ba7f57989a21dffd9ca4c6961c5d2c3f044b3d9152f13",
       "sources": [
         "src/SecurityBounty.tsx",
         "src/SolanaBountyPayment.tsx",
@@ -12061,15 +12365,19 @@
         "departedWalletCanSaveOwnSignatureTest",
         "earlierCandidateSurvivesWalletTailMergeTest",
         "explicitEmptyDoesNotReuseWalletSignatureTest",
+        "explicitEmptyIsReplacedLikeInvalidDraftTest",
         "failedCandidateSaveDoesNotVerifyTest",
         "failedCreationPreventsPromptTest",
         "failedSignatureSaveUsesAcknowledgedSnapshotTest",
+        "invalidDraftIsReplacedLikeExplicitEmptyTest",
+        "invalidDraftMatchesExplicitEmptyTest",
         "invalidEditorInputDoesNotStartVerificationTest",
         "legacyExactSnapshotStillVerifiesTest",
         "occupiedSlotPreventsPromptTest",
         "reloadFindsReturnedSignatureAfterConflictTest",
         "replacementIsNotOverwrittenTest",
-        "staleCandidateCannotEraseReturnedSignatureTest"
+        "staleCandidateCannotEraseReturnedSignatureTest",
+        "untrackedWarningsLeaveOtherFieldsTest"
       ]
     },
     {
@@ -12096,7 +12404,7 @@
     },
     {
       "path": "formal/models/ui/ui_submitted_payment_recovery.qnt",
-      "sha256": "e3679a163af9556b67d689564d453a9c68e4f61ff78b5677ec1bb7b0e6aeaf12",
+      "sha256": "fd6ab4b416e1a17765ac0573b6e99deed7c196e4fe6ce0d69cb1d35ada5fa1be",
       "sources": [
         "src/BountySubmittedPayments.tsx",
         "src/SecurityBounty.tsx",
@@ -12300,6 +12608,31 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_admission_clearance.qnt",
+      "sha256": "d50db8eab651d19142e09f0ad2eb2ea9148c9bd8d02c37f2d4a4720c4b0e60f1",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/handler.ts",
+        "backend/projects/skill-publication.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0031_project_vetting_reinstatements.sql",
+        "migrations/0075_vetting_grandfathered_projects.sql",
+        "migrations/0102_owner_admission_exemptions.sql"
+      ],
+      "scenarios": [
+        "grandfatheredIgnoresInvestigationTest",
+        "investigationDuringActivationFencedTest",
+        "laterAssessmentUncoversExemptionTest",
+        "lostClearanceWithholdsSkillsTest",
+        "maliceOverridesGrandfatheredTest",
+        "ordinaryActivationTest",
+        "revocationDuringActivationFencedTest",
+        "revocationRestoresOrdinaryAdmissionTest",
+        "staleCleanCannotWaiveTest",
+        "waiverRestoresGrandfatheredTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_admission_lineage.qnt",
       "sha256": "e7b47e9a90db2f947a25c6d69dd454ef60d616ebb6877a0c5fca7b14a6cfb5ca",
       "sources": [
@@ -12428,14 +12761,18 @@
     },
     {
       "path": "formal/models/vetting/vetting_fixed_exemption.qnt",
-      "sha256": "ad5f318e51bb0531eef97b7d76f6bd17e41ab6f4d64c383e8956c8763331ab1e",
+      "sha256": "a804026494d47dc6e5c913bcbd5cf60b864c9406b328838ba6f9578cae1b5195",
       "sources": [
         "backend/vetting/persistence.ts",
+        "migrations/0031_project_vetting_reinstatements.sql",
         "migrations/0075_vetting_grandfathered_projects.sql"
       ],
       "scenarios": [
         "laterProjectNotGrandfatheredTest",
-        "maliceOverridesExemptionTest"
+        "maliceOverridesExemptionTest",
+        "waiverNeedsFreshScanTest",
+        "waiverNeverGrandfathersLaterProjectTest",
+        "waiverRestoresExemptionTest"
       ]
     },
     {
@@ -12452,7 +12789,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_flag_reinstatement.qnt",
-      "sha256": "bbbaa37db58e31b44d19ac365732374a2d54828a1d2fbaa299c5fa497e56c8e1",
+      "sha256": "378a1dee3cac87a18d07139f36984c2ad7a7ff1e73b2e45019c2706ac539813f",
       "sources": [
         "backend/projects/enforcement.ts",
         "backend/projects/verified-enforcement.ts",
@@ -12464,8 +12801,12 @@
         "cleanScanDoesNotUndoBanTest",
         "duplicateReporterTest",
         "exemptionDoesNotOverrideRestrictionTest",
+        "expiryAllowsRefileTest",
         "freshScanReinstatesTest",
-        "newFlagPreventsReinstatementTest",
+        "refiledIdDuringScanKeepsPauseTest",
+        "reusedCleanResolvesButKeepsPauseTest",
+        "scanBeforePauseDoesNotReinstateTest",
+        "staleRevisionDoesNotReinstateTest",
         "withdrawalDoesNotReinstateTest"
       ]
     },
