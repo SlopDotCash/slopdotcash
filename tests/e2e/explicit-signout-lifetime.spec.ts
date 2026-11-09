@@ -454,6 +454,7 @@ test("header signout retires a pending owner awards refresh", async ({
         period: path.split("/").at(-1),
         manifestSha256: "a".repeat(64),
         automatic: false,
+        canManage: true,
         cutoffAt: null,
         deployment: null,
         asset: null,

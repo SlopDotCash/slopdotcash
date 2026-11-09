@@ -6,7 +6,9 @@ import { enqueueReopen } from "../../tests/slopbot-reopen-fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { Job } from "./contracts";
 import worker from "./index";
+import { activePenalty, recordPenalty, reversePenalty } from "./penalties";
 import {
+  confirmedReopenCoverage,
   confirmedReopenFor,
   confirmReopen,
   reopenSource,
@@ -156,6 +158,58 @@ test("only a confirmed bound receipt can supersede a hold on its exact revision"
     expect(await confirmedReopenFor(f.db, "I_local", source.revision)).toBe(
       true,
     );
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("a late reopen check of an older revision cannot reverse a later head's debit", async () => {
+  const f = fixture();
+  try {
+    await enqueueReopen(f.env, f.job, f.item);
+    const source = await reopenSource(f.db, f.job);
+    if (!source) throw new Error("source missing");
+    await confirmReopen(f.db, f.job.deliveryId);
+    // The author pushed a second revision, which Slopbot closed and debited
+    // after the maintainer reopened the first one.
+    const closedAt = new Date(Date.parse(f.item.updated_at) + 3_600_000);
+    f.sqlite.run(
+      `INSERT INTO slopbot_reviews
+       (review_key,installation_id,repository_id,item_kind,item_number,item_node_id,
+        author_id,revision,content_digest,policy_digest,status,created_at)
+       VALUES ('rev2-close',1,?,'issue',5,'I_local',42,'rev2','d','p','completed',?)`,
+      [f.job.repositoryId, closedAt.toISOString()],
+    );
+    await recordPenalty(f.db, {
+      itemNodeId: "I_local",
+      repositoryId: f.job.repositoryId,
+      projectId: "asi",
+      authorId: 42,
+      category: "spam",
+      reviewKey: "rev2-close",
+      closedAt,
+    });
+    expect(await activePenalty(f.db, "I_local")).not.toBeNull();
+    // The first revision's close job finds its reopen only after recording.
+    const coverage = await confirmedReopenCoverage(
+      f.db,
+      "I_local",
+      source.revision,
+    );
+    expect(coverage).toEqual({
+      revision: source.revision,
+      occurredAt: new Date(f.item.updated_at).toISOString(),
+    });
+    expect(await confirmedReopenCoverage(f.db, "I_local", "rev2")).toBeNull();
+    expect(
+      await reversePenalty(
+        f.db,
+        "I_local",
+        "maintainer_reopen",
+        coverage ?? undefined,
+      ),
+    ).toBe(false);
+    expect(await activePenalty(f.db, "I_local")).not.toBeNull();
   } finally {
     f.sqlite.close();
   }

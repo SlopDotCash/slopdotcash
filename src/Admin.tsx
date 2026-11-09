@@ -61,6 +61,7 @@ import {
   type ContributionField,
   PROJECT_SKILL_TEMPLATES,
 } from "./lib/project-schema.mjs";
+import { CANONICAL_UINT, isRecord } from "./lib/record-validation.mjs";
 import {
   NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
@@ -1265,14 +1266,45 @@ type FeeConversionReport = {
   }[];
 };
 
-const loadFeeConversions = async (actorId: string, signal: AbortSignal) => {
-  const { routes, totals } = await readAdminResource<FeeConversionReport>(
-    "admin/fee-conversions",
-    actorId,
-    signal,
+/** Validate the fields this view reads before publishing a ready report. */
+function parseFeeConversionReport(value: unknown): FeeConversionReport {
+  const text = (field: unknown) =>
+    typeof field === "string" && field.length > 0;
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.routes) ||
+    !Array.isArray(value.totals) ||
+    value.routes.some(
+      (row) =>
+        !isRecord(row) ||
+        !text(row.network) ||
+        !(
+          (row.status === "usdc" && text(row.targetToken)) ||
+          (row.status === "not_converted" && row.targetToken === null)
+        ),
+    ) ||
+    value.totals.some(
+      (row) =>
+        !isRecord(row) ||
+        !text(row.network) ||
+        !text(row.token) ||
+        !text(row.targetToken) ||
+        !Number.isSafeInteger(row.conversions) ||
+        (row.conversions as number) <= 0 ||
+        typeof row.amountIn !== "string" ||
+        !CANONICAL_UINT.test(row.amountIn) ||
+        typeof row.amountOut !== "string" ||
+        !CANONICAL_UINT.test(row.amountOut),
+    )
+  )
+    throw new TypeError("The fee conversion report is invalid.");
+  return { routes: value.routes, totals: value.totals } as FeeConversionReport;
+}
+
+const loadFeeConversions = async (actorId: string, signal: AbortSignal) =>
+  parseFeeConversionReport(
+    await readAdminResource<unknown>("admin/fee-conversions", actorId, signal),
   );
-  return { routes, totals };
-};
 
 function networkName(network: string): string {
   return Object.hasOwn(NETWORK_NAMES, network)

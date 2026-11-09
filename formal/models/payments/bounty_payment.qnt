@@ -11,7 +11,11 @@
 // after a finalized cancellation consumed that leg's current nonce
 // (direct-payments.ts retirement). A paid leg is never reissued, and the fee
 // transfer (`transfers[1]`) is fixed. Payer nonces are consumed in order, so a
-// higher nonce waits for every lower one (`blockedByLower`).
+// higher nonce waits for every lower one (`lowerConsumed`). The initial
+// preparation reserves base and base+1 and passes them reversed
+// (direct-payments.ts `[nonces[1], nonces[0]]`), so the researcher leg
+// (transactions[0], leg_index 0) holds base+1 and the fee leg holds base: the
+// researcher transfer waits for the fee nonce.
 //
 // Ghost state: `issued` holds every signed request ever released as
 // (nonce, leg, recipient); `consumed` records how the chain used each nonce as
@@ -36,8 +40,8 @@ module bounty_payment {
   action bindWallet = all { not(s.wallet), s' = s.with("wallet", true) }
   // 0108/0112: the intent and both nonce reservations are inserted together.
   action prepare = all { s.approved, s.wallet, not(s.prepared),
-    s' = s.with("prepared", true).with("nonce0", 1).with("nonce1", 2).with("next", 3)
-      .with("issued", Set((1, 0, 1), (2, 1, 0))) }
+    s' = s.with("prepared", true).with("nonce0", 2).with("nonce1", 1).with("next", 3)
+      .with("issued", Set((2, 0, 1), (1, 1, 0))) }
   // Chain: any released request may execute at its unconsumed nonce, in order.
   action execute(n: int, leg: int, recipient: int): bool = all {
     s.issued.contains((n, leg, recipient)), not(isConsumed(n)), lowerConsumed(n),
@@ -80,24 +84,27 @@ module bounty_payment {
     s.generation <= 2, s.next <= 5 }
 
   run preparedRun = init.then(approve).then(bindWallet).then(prepare)
-  run partialRemainsUnpaidTest = preparedRun.then(execute(1, 0, 1)).then(verify(0))
+  // The fee leg holds the lower nonce, so the fee transfer lands first.
+  run partialRemainsUnpaidTest = preparedRun.then(execute(1, 1, 0)).then(verify(1))
     .then(reconcile.fail())
-  run completeTest = preparedRun.then(execute(1, 0, 1)).then(execute(2, 1, 0)).then(verify(0))
+  run researcherWaitsForFeeNonceTest = preparedRun.then(execute(2, 0, 1).fail())
+  run completeTest = preparedRun.then(execute(1, 1, 0)).then(execute(2, 0, 1)).then(verify(0))
     .then(verify(1)).then(reconcile).expect(s.paid and invariant)
-  run noResendAfterPaidTest = preparedRun.then(execute(1, 0, 1)).then(execute(2, 1, 0)).then(verify(0))
+  run noResendAfterPaidTest = preparedRun.then(execute(1, 1, 0)).then(execute(2, 0, 1)).then(verify(0))
     .then(verify(1)).then(reconcile).then(cancel(3).fail())
   run successorWithoutCancellationRefusedTest = preparedRun.then(successor(0, 2).fail())
-  run researcherSuccessorAfterCancellationTest = preparedRun.then(cancel(1)).then(execute(2, 1, 0))
-    .then(verify(1)).then(successor(0, 2)).then(execute(1, 0, 1).fail())
-  run cancelledResearcherRequestPaysNewWalletOnceTest = preparedRun.then(cancel(1)).then(execute(2, 1, 0))
-    .then(verify(1)).then(successor(0, 2)).then(execute(3, 0, 2)).then(verify(0)).then(reconcile)
+  run researcherSuccessorAfterCancellationTest = preparedRun.then(execute(1, 1, 0)).then(verify(1))
+    .then(cancel(2)).then(successor(0, 2)).then(execute(2, 0, 1).fail())
+  run cancelledResearcherRequestPaysNewWalletOnceTest = preparedRun.then(execute(1, 1, 0)).then(verify(1))
+    .then(cancel(2)).then(successor(0, 2)).then(execute(3, 0, 2)).then(verify(0)).then(reconcile)
     .expect(s.paid and s.transfers == Set((0, 2), (1, 0)) and invariant)
-  run paidResearcherLegNotReissuedTest = preparedRun.then(execute(1, 0, 1)).then(verify(0))
-    .then(cancel(2)).then(successor(0, 2).fail())
-  run unpaidFeeLegSuccessorTest = preparedRun.then(execute(1, 0, 1)).then(verify(0)).then(cancel(2))
-    .then(successor(1, 0)).then(execute(3, 1, 0)).then(verify(1)).then(reconcile)
+  run paidResearcherLegNotReissuedTest = preparedRun.then(execute(1, 1, 0)).then(execute(2, 0, 1))
+    .then(verify(0)).then(successor(0, 2).fail())
+  run unpaidFeeLegSuccessorTest = preparedRun.then(cancel(1)).then(successor(1, 0))
+    .then(execute(2, 0, 1)).then(execute(3, 1, 0)).then(verify(0)).then(verify(1)).then(reconcile)
     .expect(s.paid and s.generation == 1 and invariant)
-  run feeLegCannotRedirectTest = preparedRun.then(execute(1, 0, 1)).then(cancel(2)).then(successor(1, 2).fail())
-  run lowerNonceBlocksFeeCancellationTest = preparedRun.then(cancel(2).fail())
-  run unverifiedLandedLegBlocksSuccessorTest = preparedRun.then(execute(1, 0, 1)).then(successor(0, 2).fail())
+  run feeLegCannotRedirectTest = preparedRun.then(cancel(1)).then(successor(1, 2).fail())
+  run lowerNonceBlocksResearcherCancellationTest = preparedRun.then(cancel(2).fail())
+  run unverifiedLandedLegBlocksSuccessorTest = preparedRun.then(execute(1, 1, 0))
+    .then(successor(1, 0).fail())
 }

@@ -15,7 +15,6 @@ import {
 } from "./lib/owner-commitment-actions";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import {
-  clearPendingAttempt,
   type PendingAttempt,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
@@ -95,10 +94,9 @@ export default function OwnerCommitment({
     saved,
     storedPending,
     pending,
-    setPending,
     storageError,
-    remember,
     clear,
+    submit,
     clearUnreadable,
   } = usePendingWalletAttempt<Pending>(
     key,
@@ -185,51 +183,20 @@ export default function OwnerCommitment({
         decimals: review.decimals,
         ...(solanaPlan ? { solanaPlan } : {}),
       };
-      let requested = false;
-      try {
-        const beforeSend = () => {
-          if (!mounted.current)
-            throw new Error(
-              "The wallet view was closed. Review before sending.",
-            );
-          if (!remember(intent))
-            throw new Error(
-              "The saved request changed. Reload before continuing.",
-            );
-          requested = true;
-        };
-        const hash = solanaPlan
-          ? await sendSolanaCommitment(current, wallet, solanaPlan, beforeSend)
-          : await sendEvmCommitment(current, wallet, beforeSend);
-        const submitted = { ...intent, hash };
-        if (mounted.current) setReview(null);
-        try {
-          if (!remember(submitted, intent) && mounted.current)
-            setNotice(
-              `Submitted ${hash}. Keep this hash; the saved request changed.`,
-            );
-        } catch {
-          if (mounted.current) {
-            setPending(submitted);
-            setNotice(
-              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
-            );
-          }
-        }
-      } catch (reason) {
-        if ((reason as { code?: unknown } | null)?.code === 4001) {
-          if (requested) {
-            if (mounted.current) clear(intent);
-            else clearPendingAttempt(key, intent);
-          }
-          throw new Error("You declined the wallet request. Nothing was sent.");
-        }
-        if (requested)
-          throw new Error(
+      await submit(
+        intent,
+        (beforeSend) =>
+          solanaPlan
+            ? sendSolanaCommitment(current, wallet, solanaPlan, beforeSend)
+            : sendEvmCommitment(current, wallet, beforeSend),
+        {
+          submitted: (hash) => ({ ...intent, hash }),
+          notify: setNotice,
+          unclear:
             "The wallet result is unclear. Check wallet activity and enter the transaction hash before another attempt.",
-          );
-        throw reason;
-      }
+        },
+      );
+      if (mounted.current) setReview(null);
     });
   const check = () =>
     run(async () => {

@@ -39,6 +39,35 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Install pinned tools without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Restore the Apalache distribution
+        # The local translator checks the approved JAR digest on every use.
+        id: apalache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.quint/apalache-dist-0.62.4
+          key: apalache-0.62.4-e5223915
+      - name: Download the pinned Apalache distribution with retries
+        if: steps.apalache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if node -e '
+              const { dirname, join } = require("node:path");
+              const root = dirname(require.resolve("@informalsystems/quint/package.json"));
+              const { fetchApalache } = require(join(root, "dist/src/apalache.js"));
+              fetchApalache("0.62.4", 0).then((result) => {
+                if (result.isLeft()) {
+                  console.error(result.value);
+                  process.exit(1);
+                }
+              });
+            '; then
+              exit 0
+            fi
+            echo "::warning::Apalache download attempt $attempt failed."
+            sleep $((attempt * 10))
+          done
+          exit 1
       - name: Refuse false proofs with full-state and safety-view checks
         env:
           SLOP_QUINT_TRANSLATOR_TEST: "1"
@@ -76,6 +105,35 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Install pinned tools without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Restore the Apalache distribution
+        # The local translator checks the approved JAR digest on every use.
+        id: apalache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.quint/apalache-dist-0.62.4
+          key: apalache-0.62.4-e5223915
+      - name: Download the pinned Apalache distribution with retries
+        if: steps.apalache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if node -e '
+              const { dirname, join } = require("node:path");
+              const root = dirname(require.resolve("@informalsystems/quint/package.json"));
+              const { fetchApalache } = require(join(root, "dist/src/apalache.js"));
+              fetchApalache("0.62.4", 0).then((result) => {
+                if (result.isLeft()) {
+                  console.error(result.value);
+                  process.exit(1);
+                }
+              });
+            '; then
+              exit 0
+            fi
+            echo "::warning::Apalache download attempt $attempt failed."
+            sleep $((attempt * 10))
+          done
+          exit 1
       - name: Check scenarios and explore finite state graphs
         env:
           SHARD_INDEX: ${{ strategy.job-index }}

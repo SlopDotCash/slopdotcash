@@ -892,9 +892,13 @@ export async function handlePaymentsApi(
             body.claimId,
             member.githubId,
           ),
+        // A hold the dispatcher parked under an uncertain attempt on another
+        // claim stays held until recovery reconciles that attempt (the same
+        // guard as workers/security-payments). Releasing it here only lets the
+        // next dispatch park it again and repeat the held notices.
         deps.db
           .prepare(
-            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
+            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' AND NOT EXISTS(SELECT 1 FROM payment_attempts attempt WHERE attempt.obligation_id=o.id AND attempt.state IN ('prepared','unknown','submitted') AND attempt.claim_id<>w.id) ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
           )
           .bind(now, body.claimId, member.githubId),
       ]);

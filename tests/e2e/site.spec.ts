@@ -26,6 +26,7 @@ import {
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+import { adminProjectRecord } from "./project-maintainer-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -1340,31 +1341,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({
       json: {
-        projects: [
-          {
-            id: project.id,
-            status: project.status,
-            revision: 1,
-            manifest,
-            manifestSha256: "a".repeat(64),
-            createdAt: "2026-10-22T00:00:00.000Z",
-            updatedAt: "2026-10-22T00:00:00.000Z",
-            sourceApplicationId: null,
-            enforcement: {
-              state: "clear",
-              appeal: "none",
-              projectAppeal: "none",
-              since: null,
-              restrictedBy: [],
-              nextSequence: 1,
-              revisionPending: false,
-              moderation: "unconfigured",
-              decisionRequired: false,
-              bannedMaintainers: [],
-              records: [],
-            },
-          },
-        ],
+        projects: [adminProjectRecord(project, { manifest })],
       },
     }),
   );
@@ -1804,6 +1781,25 @@ for (const route of [
           "href",
           `/projects/${project.participation.successorProjectId}`,
         );
+      } else if (project.participation?.state !== "permission-required") {
+        const start = page.locator("#start");
+        await expect(
+          start.getByRole("heading", { name: "Project paused", exact: true }),
+        ).toBeVisible();
+        await expect(
+          start.getByText(
+            "Do not install this project's skill or start work.",
+            {
+              exact: true,
+            },
+          ),
+        ).toBeVisible();
+        await expect(
+          start.getByRole("link", {
+            name: "Project owner: review setup",
+            exact: true,
+          }),
+        ).toHaveAttribute("href", `/projects/${project.slug}/manage`);
       }
 
       await test.info().attach(`${project.id}-paused-project`, {

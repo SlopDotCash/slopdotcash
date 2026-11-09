@@ -2,7 +2,10 @@ import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
-import { serveProjectMaintainer } from "./project-maintainer-fixture";
+import {
+  adminProjectRecord,
+  serveProjectMaintainer,
+} from "./project-maintainer-fixture";
 
 function privateProjectRecord() {
   const project = PROJECTS.find((entry) => entry.id === "asi");
@@ -63,29 +66,8 @@ for (const retryStatus of [200, 401, 403]) {
     let retried = false;
     let saves = 0;
     let manifest = project;
-    const record = () => ({
-      id: project.id,
-      status: project.status,
-      revision: afterSave ? 2 : 1,
-      manifest,
-      manifestSha256: "a".repeat(64),
-      createdAt: "2026-10-22T00:00:00.000Z",
-      updatedAt: "2026-10-22T00:00:00.000Z",
-      sourceApplicationId: null,
-      enforcement: {
-        state: "clear",
-        appeal: "none",
-        projectAppeal: "none",
-        since: null,
-        restrictedBy: [],
-        nextSequence: 1,
-        revisionPending: false,
-        moderation: "unconfigured",
-        decisionRequired: false,
-        bannedMaintainers: [],
-        records: [],
-      },
-    });
+    const record = () =>
+      adminProjectRecord(project, { manifest, revision: afterSave ? 2 : 1 });
     await page.route("**/api/v1/admin/vetting?**", (route) =>
       route.fulfill({
         json: {

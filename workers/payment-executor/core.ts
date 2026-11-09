@@ -1716,11 +1716,15 @@ export type BindingOutcome =
  * that the attester can still submit. One row per contributor and vault,
  * because a binding belongs to the actor, not to one award. D1 reads only:
  * no RPC and no secret.
+ *
+ * Every eligible contributor is returned, oldest award first, read in pages
+ * of `pageSize`. The scheduled run then picks the least recently checked, so
+ * a page cap must not hide newer contributors behind older ones.
  */
 export async function bindingCandidates(
   env: Pick<ExecutorEnvironment, "PAYMENTS_DB" | "PAYMENT_DEPLOYMENTS">,
   now = new Date(),
-  limit = 500,
+  pageSize = 500,
 ): Promise<BindingCandidate[]> {
   const pinned = JSON.parse(env.PAYMENT_DEPLOYMENTS) as {
     network: string;
@@ -1728,17 +1732,28 @@ export async function bindingCandidates(
   }[];
   const candidates: BindingCandidate[] = [];
   for (const deployment of pinned) {
-    const row = await env.PAYMENTS_DB.prepare(
-      "SELECT json_group_array(json_object('obligationId',obligationId,'network',network,'vault',vault,'githubUserId',githubUserId,'claimId',claimId,'claimDigest',claimDigest,'destination',destination)) items FROM (SELECT MIN(o.id) obligationId,o.network network,o.vault vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id WHERE o.state='reserved' AND o.network=? AND lower(o.vault)=? AND w.source='d1_registry' AND EXISTS(SELECT 1 FROM payment_binding_authorizations b WHERE b.claim_id=w.id AND b.github_user_id=o.github_user_id AND b.network=o.network AND b.vault=lower(o.vault) AND CAST(b.expires_at AS INTEGER)>?) GROUP BY o.github_user_id,w.id ORDER BY MIN(o.created_at) LIMIT ?)",
-    )
-      .bind(
-        deployment.network,
-        deployment.vault.toLowerCase(),
-        Math.floor(now.getTime() / 1000) + 600,
-        limit,
+    let after: [string, string, string] | null = null;
+    for (;;) {
+      const row: { items: string } | null = await env.PAYMENTS_DB.prepare(
+        "SELECT json_group_array(json_object('obligationId',obligationId,'network',network,'vault',vault,'githubUserId',githubUserId,'claimId',claimId,'claimDigest',claimDigest,'destination',destination,'firstCreatedAt',firstCreatedAt)) items FROM (SELECT MIN(o.id) obligationId,o.network network,o.vault vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,MIN(o.created_at) firstCreatedAt FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=o.github_user_id WHERE o.state='reserved' AND o.network=?1 AND lower(o.vault)=?2 AND w.source='d1_registry' AND EXISTS(SELECT 1 FROM payment_binding_authorizations b WHERE b.claim_id=w.id AND b.github_user_id=o.github_user_id AND b.network=o.network AND b.vault=lower(o.vault) AND CAST(b.expires_at AS INTEGER)>?3) GROUP BY o.github_user_id,w.id HAVING ?5 IS NULL OR (MIN(o.created_at),o.github_user_id,w.id)>(?5,?6,?7) ORDER BY MIN(o.created_at),o.github_user_id,w.id LIMIT ?4)",
       )
-      .first<{ items: string }>();
-    candidates.push(...(JSON.parse(row?.items ?? "[]") as BindingCandidate[]));
+        .bind(
+          deployment.network,
+          deployment.vault.toLowerCase(),
+          Math.floor(now.getTime() / 1000) + 600,
+          pageSize,
+          ...(after ?? [null, null, null]),
+        )
+        .first<{ items: string }>();
+      const page = JSON.parse(row?.items ?? "[]") as (BindingCandidate & {
+        firstCreatedAt: string;
+      })[];
+      for (const { firstCreatedAt: _, ...candidate } of page)
+        candidates.push(candidate);
+      const last = page.at(-1);
+      if (!last || page.length < pageSize) break;
+      after = [last.firstCreatedAt, last.githubUserId, last.claimId];
+    }
   }
   return candidates;
 }

@@ -223,6 +223,7 @@ test("automatic owner allocations stop accepting edits at the cutoff without ref
           period: "2026-11",
           manifestSha256: "a".repeat(64),
           automatic: true,
+          canManage: true,
           cutoffAt,
           deployment: null,
           asset: {

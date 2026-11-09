@@ -578,3 +578,82 @@ test("a provider spending denial waits as a budget block and uses no paid attemp
     sqlite.close();
   }
 });
+
+/** An attempt whose route stopped at its authority recheck before the first
+ * provider request is reconciled with zero calls. It was never paid, so it
+ * must not use one of the attempts and end the request as attempts-exhausted.
+ */
+test("attempts stopped before any provider call do not use the attempt limit", async () => {
+  const { db, sqlite } = sqliteD1(MIGRATIONS);
+  let requests = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      requests++;
+      const input = (await request.json()) as { model: string };
+      return Response.json(
+        {
+          id: `local-${requests}`,
+          type: "message",
+          role: "assistant",
+          model: input.model,
+          content: [{ type: "text", text: '{"accepted":true}' }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 10 },
+        },
+        { headers: { "x-si-buyer-cost-micro": "1000" } },
+      );
+    },
+  });
+  const env = {
+    SURPLUS_API_KEY: "local-only",
+    SURPLUS_BASE_URL: `http://127.0.0.1:${server.port}`,
+  };
+  // The first check (before reservation) passes; the route's recheck before
+  // its first request refuses, fails transiently, or passes.
+  const attempt = (recheck: "refuse" | "fail" | "pass") => {
+    let checks = 0;
+    return runValueInference(
+      env,
+      prompt,
+      output("d".repeat(64)),
+      async () => {
+        if (checks++ === 0 || recheck === "pass") return true;
+        if (recheck === "refuse") return false;
+        throw new Error("GitHub authority unavailable");
+      },
+      {
+        db,
+        installationId: 1,
+        attemptId: `value:${crypto.randomUUID()}`,
+        maximumMicroUsd: null,
+        approvedMonthlyMicroUsd: null,
+      },
+    );
+  };
+  try {
+    for (let i = 0; i <= VALUE_INFERENCE_ATTEMPT_LIMIT; i++) {
+      expect((await attempt("refuse")).blockReason).toBe("authority");
+      await expect(attempt("fail")).rejects.toThrow(
+        "GitHub authority unavailable",
+      );
+    }
+    expect(requests).toBe(0);
+    expect(
+      sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM slopbot_value_budget_reconciliations WHERE call_count=0",
+        )
+        .get(),
+    ).toEqual({ n: 2 * (VALUE_INFERENCE_ATTEMPT_LIMIT + 1) });
+    const admitted = await attempt("pass");
+    expect(admitted.blockReason).toBeNull();
+    expect(admitted.verdict).toEqual({ accepted: true });
+    expect(requests).toBe(1);
+  } finally {
+    server.stop(true);
+    sqlite.close();
+  }
+});

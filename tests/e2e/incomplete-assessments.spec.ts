@@ -72,6 +72,8 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     .bind(at, at)
     .run();
   diagnostics.allowCanceledBackgroundReads();
+  // The deliberate account swap can also reject the parent Inbox refresh.
+  diagnostics.allowResponse(403, "GET", "/api/v1/notifications");
   diagnostics.allowResponse(
     403,
     "GET",

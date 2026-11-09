@@ -214,6 +214,50 @@ describe("summarize findings location classification", () => {
     completedAt: at,
     result: null,
   };
+  const scanResult = (
+    findings: VettingScanResult["findings"],
+  ): VettingScanResult => ({
+    schemaVersion: "slop-vetting-result-v2",
+    assessmentId: dummyAssessment.id,
+    projectId: dummyAssessment.projectId,
+    revision: 1,
+    manifestSha256: dummyAssessment.manifestSha256,
+    disposition: "incomplete",
+    policyVersion: "1",
+    assessed: {
+      repository: "owner/repo",
+      commitSha: dummyAssessment.commitSha,
+      templateSha256: dummyAssessment.templateSha256,
+      inputManifestSha256: "i".repeat(64),
+      dependencyLocks: [],
+    },
+    scan: {
+      runId: "r1",
+      startedAt: at,
+      completedAt: at,
+      reportSha256: "r".repeat(64),
+    },
+    coverage: {} as unknown as VettingScanResult["coverage"],
+    checks: {} as unknown as VettingScanResult["checks"],
+    visibilityGaps: [],
+    execution: null,
+    reusedAssessmentId: null,
+    primaryReview: {
+      provider: "p",
+      model: "m",
+      promptPolicyRevision: "1",
+      inputManifestSha256: "i".repeat(64),
+      runId: "r",
+      status: "completed",
+      verdict: "findings",
+      risk: "high",
+      findingCount: findings.length,
+    },
+    specialistReview: null,
+    artifacts: [],
+    findings,
+    confirmation: null,
+  });
 
   test.each([
     ["slop-skill-template/skills/SKILL.md:10", "template"],
@@ -223,55 +267,14 @@ describe("summarize findings location classification", () => {
     (evidence, location) => {
       const summary = summarize({
         ...dummyAssessment,
-        result: {
-          schemaVersion: "slop-vetting-result-v2",
-          assessmentId: dummyAssessment.id,
-          projectId: dummyAssessment.projectId,
-          revision: 1,
-          manifestSha256: dummyAssessment.manifestSha256,
-          disposition: "incomplete",
-          policyVersion: "1",
-          assessed: {
-            repository: "owner/repo",
-            commitSha: dummyAssessment.commitSha,
-            templateSha256: dummyAssessment.templateSha256,
-            inputManifestSha256: "i".repeat(64),
-            dependencyLocks: [],
+        result: scanResult([
+          {
+            severity: "high",
+            category: "unsafe-execution",
+            summary: "Command injection in skill template bootstrap",
+            evidence,
           },
-          scan: {
-            runId: "r1",
-            startedAt: at,
-            completedAt: at,
-            reportSha256: "r".repeat(64),
-          },
-          coverage: {} as unknown as VettingScanResult["coverage"],
-          checks: {} as unknown as VettingScanResult["checks"],
-          visibilityGaps: [],
-          execution: null,
-          reusedAssessmentId: null,
-          primaryReview: {
-            provider: "p",
-            model: "m",
-            promptPolicyRevision: "1",
-            inputManifestSha256: "i".repeat(64),
-            runId: "r",
-            status: "completed",
-            verdict: "findings",
-            risk: "high",
-            findingCount: 1,
-          },
-          specialistReview: null,
-          artifacts: [],
-          findings: [
-            {
-              severity: "high",
-              category: "unsafe-execution",
-              summary: "Command injection in skill template bootstrap",
-              evidence,
-            },
-          ],
-          confirmation: null,
-        },
+        ]),
       });
       expect(summary.findingsLocation).toBe(location);
       const result = status({ state: "quarantined", assessment: summary });
@@ -287,55 +290,14 @@ describe("summarize findings location classification", () => {
   test("classifies repository location for repository findings", () => {
     const summary = summarize({
       ...dummyAssessment,
-      result: {
-        schemaVersion: "slop-vetting-result-v2",
-        assessmentId: dummyAssessment.id,
-        projectId: dummyAssessment.projectId,
-        revision: 1,
-        manifestSha256: dummyAssessment.manifestSha256,
-        disposition: "incomplete",
-        policyVersion: "1",
-        assessed: {
-          repository: "owner/repo",
-          commitSha: dummyAssessment.commitSha,
-          templateSha256: dummyAssessment.templateSha256,
-          inputManifestSha256: "i".repeat(64),
-          dependencyLocks: [],
+      result: scanResult([
+        {
+          severity: "high",
+          category: "credential-theft",
+          summary: "Hardcoded secret in src/config.ts",
+          evidence: "src/config.ts:42",
         },
-        scan: {
-          runId: "r1",
-          startedAt: at,
-          completedAt: at,
-          reportSha256: "r".repeat(64),
-        },
-        coverage: {} as unknown as VettingScanResult["coverage"],
-        checks: {} as unknown as VettingScanResult["checks"],
-        visibilityGaps: [],
-        execution: null,
-        reusedAssessmentId: null,
-        primaryReview: {
-          provider: "p",
-          model: "m",
-          promptPolicyRevision: "1",
-          inputManifestSha256: "i".repeat(64),
-          runId: "r",
-          status: "completed",
-          verdict: "findings",
-          risk: "high",
-          findingCount: 1,
-        },
-        specialistReview: null,
-        artifacts: [],
-        findings: [
-          {
-            severity: "high",
-            category: "credential-theft",
-            summary: "Hardcoded secret in src/config.ts",
-            evidence: "src/config.ts:42",
-          },
-        ],
-        confirmation: null,
-      },
+      ]),
     });
     expect(summary.findingsLocation).toBe("repository");
   });
@@ -343,55 +305,14 @@ describe("summarize findings location classification", () => {
   test("does not misclassify repository findings as template when summary mentions skill template", () => {
     const summary = summarize({
       ...dummyAssessment,
-      result: {
-        schemaVersion: "slop-vetting-result-v2",
-        assessmentId: dummyAssessment.id,
-        projectId: dummyAssessment.projectId,
-        revision: 1,
-        manifestSha256: dummyAssessment.manifestSha256,
-        disposition: "incomplete",
-        policyVersion: "1",
-        assessed: {
-          repository: "owner/repo",
-          commitSha: dummyAssessment.commitSha,
-          templateSha256: dummyAssessment.templateSha256,
-          inputManifestSha256: "i".repeat(64),
-          dependencyLocks: [],
+      result: scanResult([
+        {
+          severity: "high",
+          category: "credential-theft",
+          summary: "Secret near skill template install path",
+          evidence: "src/config.ts:42",
         },
-        scan: {
-          runId: "r1",
-          startedAt: at,
-          completedAt: at,
-          reportSha256: "r".repeat(64),
-        },
-        coverage: {} as unknown as VettingScanResult["coverage"],
-        checks: {} as unknown as VettingScanResult["checks"],
-        visibilityGaps: [],
-        execution: null,
-        reusedAssessmentId: null,
-        primaryReview: {
-          provider: "p",
-          model: "m",
-          promptPolicyRevision: "1",
-          inputManifestSha256: "i".repeat(64),
-          runId: "r",
-          status: "completed",
-          verdict: "findings",
-          risk: "high",
-          findingCount: 1,
-        },
-        specialistReview: null,
-        artifacts: [],
-        findings: [
-          {
-            severity: "high",
-            category: "credential-theft",
-            summary: "Secret near skill template install path",
-            evidence: "src/config.ts:42",
-          },
-        ],
-        confirmation: null,
-      },
+      ]),
     });
     expect(summary.findingsLocation).toBe("repository");
   });
@@ -399,55 +320,14 @@ describe("summarize findings location classification", () => {
   test("does not misclassify repository paths with skills substring as template", () => {
     const summary = summarize({
       ...dummyAssessment,
-      result: {
-        schemaVersion: "slop-vetting-result-v2",
-        assessmentId: dummyAssessment.id,
-        projectId: dummyAssessment.projectId,
-        revision: 1,
-        manifestSha256: dummyAssessment.manifestSha256,
-        disposition: "incomplete",
-        policyVersion: "1",
-        assessed: {
-          repository: "owner/repo",
-          commitSha: dummyAssessment.commitSha,
-          templateSha256: dummyAssessment.templateSha256,
-          inputManifestSha256: "i".repeat(64),
-          dependencyLocks: [],
+      result: scanResult([
+        {
+          severity: "high",
+          category: "unsafe-execution",
+          summary: "Unsafe exec",
+          evidence: "packages/skills/runner.ts:1",
         },
-        scan: {
-          runId: "r1",
-          startedAt: at,
-          completedAt: at,
-          reportSha256: "r".repeat(64),
-        },
-        coverage: {} as unknown as VettingScanResult["coverage"],
-        checks: {} as unknown as VettingScanResult["checks"],
-        visibilityGaps: [],
-        execution: null,
-        reusedAssessmentId: null,
-        primaryReview: {
-          provider: "p",
-          model: "m",
-          promptPolicyRevision: "1",
-          inputManifestSha256: "i".repeat(64),
-          runId: "r",
-          status: "completed",
-          verdict: "findings",
-          risk: "high",
-          findingCount: 1,
-        },
-        specialistReview: null,
-        artifacts: [],
-        findings: [
-          {
-            severity: "high",
-            category: "unsafe-execution",
-            summary: "Unsafe exec",
-            evidence: "packages/skills/runner.ts:1",
-          },
-        ],
-        confirmation: null,
-      },
+      ]),
     });
     expect(summary.findingsLocation).toBe("repository");
   });
@@ -455,61 +335,20 @@ describe("summarize findings location classification", () => {
   test("classifies both when both locations have findings", () => {
     const summary = summarize({
       ...dummyAssessment,
-      result: {
-        schemaVersion: "slop-vetting-result-v2",
-        assessmentId: dummyAssessment.id,
-        projectId: dummyAssessment.projectId,
-        revision: 1,
-        manifestSha256: dummyAssessment.manifestSha256,
-        disposition: "incomplete",
-        policyVersion: "1",
-        assessed: {
-          repository: "owner/repo",
-          commitSha: dummyAssessment.commitSha,
-          templateSha256: dummyAssessment.templateSha256,
-          inputManifestSha256: "i".repeat(64),
-          dependencyLocks: [],
+      result: scanResult([
+        {
+          severity: "high",
+          category: "unsafe-execution",
+          summary: "Command injection in skill template",
+          evidence: "slop-skill-template/skills/SKILL.md:10",
         },
-        scan: {
-          runId: "r1",
-          startedAt: at,
-          completedAt: at,
-          reportSha256: "r".repeat(64),
+        {
+          severity: "high",
+          category: "credential-theft",
+          summary: "Exfiltration in lib/drain.ts",
+          evidence: "lib/drain.ts:5",
         },
-        coverage: {} as unknown as VettingScanResult["coverage"],
-        checks: {} as unknown as VettingScanResult["checks"],
-        visibilityGaps: [],
-        execution: null,
-        reusedAssessmentId: null,
-        primaryReview: {
-          provider: "p",
-          model: "m",
-          promptPolicyRevision: "1",
-          inputManifestSha256: "i".repeat(64),
-          runId: "r",
-          status: "completed",
-          verdict: "findings",
-          risk: "high",
-          findingCount: 2,
-        },
-        specialistReview: null,
-        artifacts: [],
-        findings: [
-          {
-            severity: "high",
-            category: "unsafe-execution",
-            summary: "Command injection in skill template",
-            evidence: "slop-skill-template/skills/SKILL.md:10",
-          },
-          {
-            severity: "high",
-            category: "credential-theft",
-            summary: "Exfiltration in lib/drain.ts",
-            evidence: "lib/drain.ts:5",
-          },
-        ],
-        confirmation: null,
-      },
+      ]),
     });
     expect(summary.findingsLocation).toBe("both");
   });
@@ -517,55 +356,14 @@ describe("summarize findings location classification", () => {
   test("classifies project's own skills directory at repository root as repository finding", () => {
     const summary = summarize({
       ...dummyAssessment,
-      result: {
-        schemaVersion: "slop-vetting-result-v2",
-        assessmentId: dummyAssessment.id,
-        projectId: dummyAssessment.projectId,
-        revision: 1,
-        manifestSha256: dummyAssessment.manifestSha256,
-        disposition: "incomplete",
-        policyVersion: "1",
-        assessed: {
-          repository: "owner/repo",
-          commitSha: dummyAssessment.commitSha,
-          templateSha256: dummyAssessment.templateSha256,
-          inputManifestSha256: "i".repeat(64),
-          dependencyLocks: [],
+      result: scanResult([
+        {
+          severity: "high",
+          category: "unsafe-execution",
+          summary: "Command execution in project skill",
+          evidence: "skills/my-agent-skill/SKILL.md:15",
         },
-        scan: {
-          runId: "r1",
-          startedAt: at,
-          completedAt: at,
-          reportSha256: "r".repeat(64),
-        },
-        coverage: {} as unknown as VettingScanResult["coverage"],
-        checks: {} as unknown as VettingScanResult["checks"],
-        visibilityGaps: [],
-        execution: null,
-        reusedAssessmentId: null,
-        primaryReview: {
-          provider: "p",
-          model: "m",
-          promptPolicyRevision: "1",
-          inputManifestSha256: "i".repeat(64),
-          runId: "r",
-          status: "completed",
-          verdict: "findings",
-          risk: "high",
-          findingCount: 1,
-        },
-        specialistReview: null,
-        artifacts: [],
-        findings: [
-          {
-            severity: "high",
-            category: "unsafe-execution",
-            summary: "Command execution in project skill",
-            evidence: "skills/my-agent-skill/SKILL.md:15",
-          },
-        ],
-        confirmation: null,
-      },
+      ]),
     });
     expect(summary.findingsLocation).toBe("repository");
   });
@@ -576,5 +374,60 @@ describe("summarize findings location classification", () => {
       result: null,
     });
     expect(summary.findingsLocation).toBeUndefined();
+  });
+});
+
+describe("paused project with a cleared scan", () => {
+  const cleared: VettingClearance = {
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  };
+  function paused(withSkillFields: boolean) {
+    const manifest = applicationManifest("paused-test", "example/paused-test", {
+      status: "paused",
+    }) as unknown as ProjectDefinition & { contribution?: unknown };
+    if (!withSkillFields) delete manifest.contribution;
+    const record: ProjectRecord = {
+      ...project,
+      id: "paused-test",
+      status: "paused",
+      manifest,
+    };
+    return projectSetupStatus({
+      project: record,
+      restriction: projectRestriction(record.id, []),
+      authority: { state: "verified", message: "Fixture authority check." },
+      access: {
+        state: "read",
+        access: {
+          installation: "installed",
+          installationId: 123,
+          permission: "admin",
+          roleName: "admin",
+        },
+      },
+      clearance: cleared,
+      scanRequest: null,
+      activatedRevision: null,
+      checkedAt: at,
+    });
+  }
+
+  test("an owner revision that kept the pause asks for a setup check, not a scan", () => {
+    const result = paused(true);
+    expect(result.state).toBe("action_required");
+    expect(result.nextAction.kind).toBe("activate_project");
+    expect(result.nextAction.message).toContain("Check again to activate it.");
+    expect(result.nextAction.message).not.toContain("queue");
+  });
+
+  test("a manifest without generated skill fields asks the owner to complete them", () => {
+    const result = paused(false);
+    expect(result.state).toBe("action_required");
+    expect(result.nextAction.kind).toBe("complete_skill_fields");
+    expect(result.nextAction.message).toContain(
+      "contributor guide and skill fields are complete",
+    );
   });
 });

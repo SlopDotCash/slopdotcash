@@ -1,6 +1,7 @@
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+import { adminProjectRecord } from "./project-maintainer-fixture";
 
 test("admin distinguishes retained admission from the current revision and can request an investigation", async ({
   page,
@@ -34,29 +35,12 @@ test("admin distinguishes retained admission from the current revision and can r
     route.fulfill({
       json: {
         projects: [
-          {
-            id: project.id,
+          adminProjectRecord(project, {
             status: "active",
             revision: 4,
-            manifest: project,
             manifestSha256: "c".repeat(64),
             createdAt: now,
-            updatedAt: now,
-            sourceApplicationId: null,
-            enforcement: {
-              state: "clear",
-              appeal: "none",
-              projectAppeal: "none",
-              since: null,
-              restrictedBy: [],
-              nextSequence: 1,
-              revisionPending: false,
-              moderation: "unconfigured",
-              decisionRequired: false,
-              bannedMaintainers: [],
-              records: [],
-            },
-          },
+          }),
         ],
       },
     }),

@@ -50,3 +50,56 @@ export async function serveProjectMaintainer(
     route.fulfill({ json: { project: currentProject(), revision: 1 } }),
   );
 }
+
+/** The enforcement summary of an unrestricted project. */
+export function clearProjectEnforcement(
+  moderation: "moderator" | "unconfigured" = "unconfigured",
+) {
+  return {
+    state: "clear",
+    appeal: "none",
+    projectAppeal: "none",
+    since: null,
+    restrictedBy: [],
+    nextSequence: 1,
+    revisionPending: false,
+    moderation,
+    decisionRequired: false,
+    bannedMaintainers: [],
+    records: [],
+  };
+}
+
+/** One unrestricted project as the admin projects API returns it. */
+export function adminProjectRecord(
+  project: ProjectDefinition,
+  {
+    manifest = project,
+    status = project.status,
+    revision = 1,
+    manifestSha256 = "a".repeat(64),
+    createdAt = "2026-10-22T00:00:00.000Z",
+    updatedAt = createdAt,
+    moderation = "unconfigured",
+  }: {
+    manifest?: ProjectDefinition;
+    status?: string;
+    revision?: number;
+    manifestSha256?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    moderation?: "moderator" | "unconfigured";
+  } = {},
+) {
+  return {
+    id: project.id,
+    status,
+    revision,
+    manifest,
+    manifestSha256,
+    createdAt,
+    updatedAt,
+    sourceApplicationId: null,
+    enforcement: clearProjectEnforcement(moderation),
+  };
+}

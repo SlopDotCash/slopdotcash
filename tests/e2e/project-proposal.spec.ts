@@ -1478,3 +1478,205 @@ for (const [name, expectedId] of [
     });
   });
 }
+
+test("a failed repository list retries and then offers the maintainer's repositories", async ({
+  diagnostics,
+  page,
+}) => {
+  const failed = diagnostics.allowResponse(
+    503,
+    "GET",
+    "/api/v1/project-github/owned-repositories",
+  );
+  let reads = 0;
+  await page.route("**/api/v1/project-github/owned-repositories", (route) => {
+    reads += 1;
+    return route.fulfill(
+      reads === 1
+        ? {
+            status: 503,
+            json: {
+              error: "github_unavailable",
+              message: "GitHub is temporarily unavailable.",
+            },
+          }
+        : {
+            json: {
+              repositories: [
+                { repository: "example/open-protein", description: null },
+              ],
+            },
+          },
+    );
+  });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await expect(
+    page.getByText("GitHub is temporarily unavailable.", { exact: false }),
+  ).toBeVisible();
+  // Manual entry stays available while the list is unavailable.
+  await expect(
+    page.getByRole("textbox", { name: "GitHub repository", exact: true }),
+  ).toBeEditable();
+  expect(diagnostics.count(failed)).toBe(1);
+  await expectAccessible(page);
+  await page
+    .getByRole("button", { name: "Retry repositories", exact: true })
+    .click();
+  const picker = page.getByRole("combobox", {
+    name: "GitHub repository",
+    exact: true,
+  });
+  await expect(
+    picker.locator('option[value="example/open-protein"]'),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Retry repositories", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("GitHub is temporarily unavailable.", { exact: false }),
+  ).toHaveCount(0);
+  expect(reads).toBe(2);
+  await expectAccessible(page);
+});
+
+test("a saved application change publishes after a retry and reports its setup", async ({
+  diagnostics,
+  page,
+}) => {
+  const application = (id: string, name: string, revision?: number) => ({
+    id,
+    projectId: id.replace(/^app-/u, ""),
+    repository: `example/${id.replace(/^app-/u, "")}`,
+    manifest: { name },
+    manifestSha256: "b".repeat(64),
+    acceptanceCriteria: "Accepted outcomes only.",
+    applicant: { githubId: "4242", githubLogin: "example-maintainer" },
+    submittedAt: "2026-10-18T00:00:00.000Z",
+    status: "pending",
+    adminNotification: "sent",
+    adminNotificationAt: null,
+    decidedAt: null,
+    decidedBy: null,
+    decisionReason: null,
+    githubCheck: null,
+    referrer: null,
+    ...(revision === undefined
+      ? {}
+      : { expectedRevision: revision, changeReason: "Update the scope." }),
+  });
+  const listFailed = diagnostics.allowResponse(
+    503,
+    "GET",
+    "/api/v1/project-setup",
+  );
+  const publishFailed = diagnostics.allowResponse(
+    409,
+    "POST",
+    "/api/v1/project-applications/app-open-protein/publish",
+  );
+  await page.route("**/api/v1/project-github/owned-repositories", (route) =>
+    route.fulfill({ json: { repositories: [] } }),
+  );
+  let listReads = 0;
+  await page.route("**/api/v1/project-setup", (route) => {
+    listReads += 1;
+    return route.fulfill(
+      listReads === 1
+        ? {
+            status: 503,
+            json: {
+              error: "unavailable",
+              message: "Saved applications are temporarily unavailable.",
+            },
+          }
+        : {
+            json: {
+              projects: [],
+              applications: [
+                application("app-open-protein", "Open Protein", 3),
+                application("app-new-lab", "New Lab"),
+                {
+                  ...application("app-decided", "Decided"),
+                  status: "published",
+                },
+              ],
+            },
+          },
+    );
+  });
+  const publishes: { url: string; body: unknown }[] = [];
+  await page.route("**/api/v1/project-applications/*/publish", (route) => {
+    publishes.push({
+      url: new URL(route.request().url()).pathname,
+      body: route.request().postDataJSON(),
+    });
+    return route.fulfill(
+      publishes.length === 1
+        ? {
+            status: 409,
+            json: {
+              error: "slopbot_required",
+              message: "Install Slopbot on example/open-protein first.",
+            },
+          }
+        : {
+            json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+          },
+    );
+  });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  const pending = page.getByRole("region", {
+    name: "Pending applications",
+    exact: true,
+  });
+  await expect(pending.getByRole("alert")).toHaveText(
+    "Saved applications are temporarily unavailable.",
+  );
+  await pending.getByRole("button", { name: "Retry", exact: true }).click();
+  const change = pending.getByRole("article", {
+    name: "Pending application: Open Protein",
+    exact: true,
+  });
+  await expect(change).toBeVisible();
+  // A new project's saved application offers creation instead.
+  await expect(
+    pending
+      .getByRole("article", { name: "Pending application: New Lab" })
+      .getByRole("button", { name: "Create this project", exact: true }),
+  ).toBeVisible();
+  // Decided applications are not offered again.
+  await expect(
+    pending.getByRole("article", { name: "Pending application: Decided" }),
+  ).toHaveCount(0);
+  expect(listReads).toBe(2);
+  expect(diagnostics.count(listFailed)).toBe(1);
+
+  await change
+    .getByRole("button", { name: "Publish this change", exact: true })
+    .click();
+  await expect(change.getByRole("alert")).toContainText(
+    "Install Slopbot on example/open-protein first.",
+  );
+  await expect(
+    change.getByRole("link", { name: "Install Slopbot", exact: true }),
+  ).toHaveAttribute("href", /github\.com\/apps\/slopdotcash/u);
+  expect(diagnostics.count(publishFailed)).toBe(1);
+  await expectAccessible(page);
+
+  await change.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    change.getByRole("link", { name: "Open Protein", exact: true }),
+  ).toHaveAttribute("href", "/projects/open-protein/manage");
+  await expect(change.getByRole("alert")).toHaveCount(0);
+  await expect(
+    change.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
+  await expect(change).toContainText(
+    "The security scan is queued. Nothing is needed from you.",
+  );
+  expect(publishes).toEqual([
+    { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },
+    { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },
+  ]);
+  await expectAccessible(page);
+});

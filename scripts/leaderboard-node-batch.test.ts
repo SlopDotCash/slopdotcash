@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, spyOn, test } from "bun:test";
 import {
   executeNodeBatch,
   GitHubGraphqlClient,
@@ -110,4 +110,135 @@ test("the client reports an exhausted 502/504 gateway answer as an upstream erro
   );
   expect(plain).toBeInstanceOf(Error);
   expect(plain).not.toBeInstanceOf(GraphqlUpstreamError);
+});
+
+/** A GraphQL transport whose rate-limit answers follow `answers` in order. */
+function rateLimitedTransport(
+  answers: { remaining: number; resetAt: string }[],
+) {
+  const requests: number[] = [];
+  const fetcher = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push(Date.now());
+    const answer = answers[Math.min(requests.length, answers.length) - 1];
+    const { variables } = JSON.parse(String(init?.body));
+    return Response.json({
+      data: {
+        nodes: (variables.ids as string[]).map((id) => ({ id })),
+        rateLimit: { cost: 1, limit: 5000, ...answer },
+      },
+    });
+  };
+  return { fetcher, requests };
+}
+
+test("a window drained by another consumer waits for the reported reset instead of failing", async () => {
+  const resetAt = Date.now() + 200;
+  const { fetcher, requests } = rateLimitedTransport([
+    { remaining: 99, resetAt: new Date(resetAt).toISOString() },
+    {
+      remaining: 4999,
+      resetAt: new Date(resetAt + 3_600_000).toISOString(),
+    },
+  ]);
+  const client = new GitHubGraphqlClient("fixture-token", fetcher);
+  await client.execute(QUERY, { ids: ["PR_1"] });
+  await client.execute(QUERY, { ids: ["PR_2"] });
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toBeGreaterThanOrEqual(resetAt + 1_000);
+  expect(client.getRateLimit().remaining).toBe(4999);
+});
+
+test("a window still exhausted after its reported reset fails closed", async () => {
+  const resetAt = new Date(Date.now() + 200).toISOString();
+  const still = rateLimitedTransport([{ remaining: 99, resetAt }]);
+  const client = new GitHubGraphqlClient("fixture-token", still.fetcher);
+  await client.execute(QUERY, { ids: ["PR_1"] });
+  await client.execute(QUERY, { ids: ["PR_2"] });
+  await expect(client.execute(QUERY, { ids: ["PR_3"] })).rejects.toThrow(
+    `safety budget exceeded after waiting for the reset at ${resetAt}`,
+  );
+  expect(still.requests).toHaveLength(2);
+});
+
+test("a full window drained by another consumer during the run waits instead of failing", async () => {
+  const resetAt = Date.now() + 200;
+  const { fetcher, requests } = rateLimitedTransport([
+    { remaining: 4999, resetAt: new Date(resetAt).toISOString() },
+    { remaining: 50, resetAt: new Date(resetAt).toISOString() },
+    {
+      remaining: 4999,
+      resetAt: new Date(resetAt + 3_600_000).toISOString(),
+    },
+  ]);
+  const client = new GitHubGraphqlClient("fixture-token", fetcher);
+  await client.execute(QUERY, { ids: ["PR_1"] });
+  await client.execute(QUERY, { ids: ["PR_2"] });
+  await client.execute(QUERY, { ids: ["PR_3"] });
+  expect(requests).toHaveLength(3);
+  expect(requests[2]).toBeGreaterThanOrEqual(resetAt + 1_000);
+  expect(client.getRateLimit().remaining).toBe(4999);
+});
+
+test("multiple valid reset windows can exceed an hour of total waiting", async () => {
+  const start = new Date("2026-11-09T00:00:00.000Z").getTime();
+  const nativeSetTimeout = globalThis.setTimeout;
+  const waits: number[] = [];
+  setSystemTime(start);
+  // Keep the native overloads and promisified entry point; only long delays
+  // use the controlled clock, and every handler is delegated unchanged.
+  const advanceTimeout = Object.assign(
+    (
+      ...[callback, delay, ...args]: Parameters<typeof globalThis.setTimeout>
+    ) => {
+      if (delay !== undefined && delay >= 60_000) {
+        waits.push(delay);
+        setSystemTime(Date.now() + delay);
+        return nativeSetTimeout(callback, 0, ...args);
+      }
+      return nativeSetTimeout(callback, delay, ...args);
+    },
+    { __promisify__: nativeSetTimeout.__promisify__ },
+  ) as typeof globalThis.setTimeout;
+  const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+    advanceTimeout,
+  );
+  try {
+    const resetAt = (minutes: number) =>
+      new Date(start + minutes * 60_000).toISOString();
+    const { fetcher, requests } = rateLimitedTransport([
+      { remaining: 99, resetAt: resetAt(40) },
+      { remaining: 99, resetAt: resetAt(80) },
+      { remaining: 4999, resetAt: resetAt(120) },
+    ]);
+    const client = new GitHubGraphqlClient("fixture-token", fetcher, {
+      requestTimeoutMs: 10_000,
+    });
+    await client.execute(QUERY, { ids: ["PR_1"] });
+    await client.execute(QUERY, { ids: ["PR_2"] });
+    await client.execute(QUERY, { ids: ["PR_3"] });
+    expect(requests).toHaveLength(3);
+    expect(waits).toHaveLength(2);
+    expect(waits.reduce((total, wait) => total + wait, 0)).toBeGreaterThan(
+      60 * 60_000,
+    );
+    expect(client.getRateLimit().remaining).toBe(4999);
+  } finally {
+    timers.mockRestore();
+    setSystemTime();
+  }
+});
+
+test("this run's own window overspend still fails immediately", async () => {
+  const { fetcher } = rateLimitedTransport([
+    {
+      remaining: 4000,
+      resetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    },
+  ]);
+  const client = new GitHubGraphqlClient("fixture-token", fetcher, {
+    maxGenerationCost: 0,
+  });
+  await expect(client.execute(QUERY, { ids: ["PR_1"] })).rejects.toThrow(
+    "safety budget exceeded (1/0 points consumed",
+  );
 });

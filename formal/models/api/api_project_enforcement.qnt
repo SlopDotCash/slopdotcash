@@ -25,12 +25,12 @@ module api_project_enforcement {
   type S = { phase: str, byFlags: bool, flags: Set[int], covered: bool,
     appeal: str, confirmedMalice: bool, deciding: bool, moderatorBan: bool,
     scan: str, scanAfterRestriction: bool, freshClean: bool,
-    accountBanned: bool, obligation: int }
+    accountBanned: bool }
   var s: S
   action init = s' = { phase: "clear", byFlags: false, flags: Set(), covered: false,
     appeal: "none", confirmedMalice: false, deciding: false, moderatorBan: false,
     scan: "none", scanAfterRestriction: false, freshClean: false,
-    accountBanned: false, obligation: 1 }
+    accountBanned: false }
   // Any new restriction makes every earlier or in-flight scan stale.
   def restrict(x: S, phase: str, byFlags: bool): S =
     x.with("phase", phase).with("byFlags", byFlags).with("freshClean", false)
@@ -85,7 +85,6 @@ module api_project_enforcement {
     appeal, autoReinstate, moderatorReinstate(true), moderatorReinstate(false),
     deny(true), deny(false), clearAccount(true), clearAccount(false) }
   val invariant = all {
-    s.obligation == 1,
     s.phase == "clear" implies s.flags.size() < 2,
     s.phase == "clear" implies not(s.confirmedMalice or s.deciding or s.byFlags),
     s.phase == "banned" implies (s.confirmedMalice or s.moderatorBan),

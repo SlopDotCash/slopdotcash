@@ -1009,6 +1009,84 @@ test("maintainers can verify or reject a manually linked private report @registr
   });
 });
 
+test("a reporter confirms a legacy linked report with GitHub @registry", async ({
+  page,
+  request,
+}) => {
+  const id = `legacy-link-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  const advisory = "GHSA-4c5f-6g7h-8j9m";
+  await listProject(request, TOKENS.security, repository, id, {});
+  const claimed = await api(
+    request,
+    "POST",
+    "security-cases",
+    TOKENS["reporter-a"],
+    { mode: "claim", projectId: id, advisory, idempotencyKey: key() },
+  );
+  expect(claimed.status, JSON.stringify(claimed.body)).toBe(201);
+  const claim = claimed.body.case as {
+    id: string;
+    revision: number;
+    submissionState: string;
+  };
+  expect(claim.submissionState).toBe("claimed");
+  // GitHub now holds the reporter's private report for that advisory.
+  const receivedAt = new Date(Date.now() - 120_000).toISOString();
+  await githubReport(request, repository, advisory, "reporter-a", receivedAt);
+
+  await signIn(page, TOKENS["reporter-a"]);
+  await page.goto("/security", { waitUntil: "networkidle" });
+  await page
+    .getByRole("button", { name: new RegExp(`${id} ${advisory}`) })
+    .click();
+  const detail = page.locator(`[aria-labelledby="case-${claim.id}"]`);
+  const confirm = detail.getByRole("button", {
+    name: "Confirm with GitHub",
+    exact: true,
+  });
+  await expect(confirm).toBeVisible();
+  const checks: Record<string, unknown>[] = [];
+  page.on("request", (sent) => {
+    if (
+      sent.method() === "POST" &&
+      new URL(sent.url()).pathname ===
+        `/api/v1/security-cases/${claim.id}/actions`
+    )
+      checks.push(sent.postDataJSON() as Record<string, unknown>);
+  });
+  const answered = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/security-cases/${claim.id}/actions`,
+  );
+  await confirm.click();
+  expect((await answered).status()).toBe(200);
+  // The reloaded, settled case no longer offers the legacy check.
+  await expect(
+    detail.getByRole("button", { name: /^(?:Confirm with|Checking) GitHub/u }),
+  ).toHaveCount(0);
+  await expect(detail.getByRole("alert")).toHaveCount(0);
+  expect(checks).toHaveLength(1);
+  expect(checks[0]).toMatchObject({
+    action: "check-receipt",
+    expectedRevision: claim.revision,
+  });
+  const settled = await api(
+    request,
+    "GET",
+    `security-cases/${claim.id}`,
+    TOKENS["reporter-a"],
+  );
+  expect(settled.body.case).toMatchObject({
+    submissionState: "verified",
+    receivedAt: new Date(receivedAt).toISOString(),
+    receivedAtSource: "github-verified",
+  });
+  await expectAccessible(page);
+});
+
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
   diagnostics,
