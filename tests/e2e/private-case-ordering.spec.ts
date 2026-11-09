@@ -23,6 +23,29 @@ function deferred() {
   return { wait, release, started, requested };
 }
 
+async function releaseAction(
+  page: Page,
+  held: ReturnType<typeof deferred>,
+  expectedRevision: number,
+) {
+  const response = page.waitForResponse(
+    (value) =>
+      new URL(value.url()).pathname === `${casePath}/actions` &&
+      value.request().method() === "POST" &&
+      value.request().postDataJSON().expectedRevision === expectedRevision,
+  );
+  held.release();
+  await (await response).finished();
+  // Wait for the response callback and React's next rendered frame. A page
+  // that was already network-idle can otherwise pass before the late reply.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+
 /** Real private-case components; only authority and HTTP scheduling are fixtures. */
 async function privateCase(page: Page, diagnostics: Diagnostics) {
   const actor = { githubId: "42", githubLogin: "case-maintainer" };
@@ -207,7 +230,7 @@ test("private case refuses an older action after a newer accepted revision", asy
     await expect(fixture.detail.locator(".security-next-step")).toContainText(
       "Case revision 3",
     );
-    oldAction.release();
+    await releaseAction(page, oldAction, 1);
     await page.waitForLoadState("networkidle");
     await expect(fixture.detail.locator(".security-next-step")).toContainText(
       "Case revision 3",
@@ -241,7 +264,7 @@ test("an equal private case action joins its current fresh read", async ({
       .click();
     await fresh.requested;
     const readCount = fixture.reads;
-    oldAction.release();
+    await releaseAction(page, oldAction, 1);
     await expect(
       fixture.detail
         .getByRole("status")
@@ -281,7 +304,7 @@ test("a departed private case callback does not start another case read", async 
       .click();
     await expect(fixture.detail).toHaveCount(0);
     const readCount = fixture.reads;
-    oldAction.release();
+    await releaseAction(page, oldAction, 1);
     await page.waitForLoadState("networkidle");
     expect(fixture.reads).toBe(readCount);
     await expect(fixture.detail).toHaveCount(0);
