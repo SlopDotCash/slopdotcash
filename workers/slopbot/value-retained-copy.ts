@@ -3,8 +3,7 @@
  */
 
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { ValueEvidence } from "./value-evidence";
-import type { FileChange } from "./value-evidence-types";
+import type { FileChange, ValueEvidence } from "./value-evidence-types";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
   hasCompleteValuePatch,

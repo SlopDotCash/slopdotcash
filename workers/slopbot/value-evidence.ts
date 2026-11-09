@@ -3,10 +3,7 @@ import {
   findRegisteredRepositoryById,
   type TargetRepository,
 } from "../../src/lib/repositories.mjs";
-import {
-  type AcceptedValueRange,
-  collectAcceptedValueRange,
-} from "./value-accepted-range";
+import { collectAcceptedValueRange } from "./value-accepted-range";
 import {
   addedBinaryRecovery,
   binarySourceLimitations,
@@ -15,10 +12,25 @@ import {
 import {
   collectBranchPolicy,
   matchesHistoricalIntegrationBranch,
-  type ValueBranchPolicy,
 } from "./value-branch-policy";
 import { githubLinkDestinations } from "./value-commit-hints";
-import type { EvidenceClient, FileChange } from "./value-evidence-types";
+import type {
+  AcceptedPatchReplay,
+  AcceptedValueRange,
+  Actor,
+  Comment,
+  Commit,
+  CommitAttribution,
+  CommitChangeEvidence,
+  EvidenceClient,
+  FileChange,
+  NoChangePromotionProof,
+  Pull,
+  RelatedPullRequest,
+  Review,
+  ValueBranchPolicy,
+  ValueEvidence,
+} from "./value-evidence-types";
 import {
   needsAddedValueComparison,
   needsFullValueComparison,
@@ -28,15 +40,10 @@ import {
   recoverRemovedValueComparisons,
   recoverUnchangedValueRenames,
 } from "./value-file-comparisons";
-import {
-  collectIndirectValueAcceptance,
-  type IndirectValueAcceptance,
-} from "./value-indirect";
-import type { ValueMergeResolution } from "./value-merge-resolution";
+import { collectIndirectValueAcceptance } from "./value-indirect";
 import {
   collectNoChangePromotion,
   NO_CHANGE_PROMOTION_CONTEXT,
-  type NoChangePromotionProof,
 } from "./value-no-change-promotion";
 import {
   addedValuePatchRecovery,
@@ -45,78 +52,9 @@ import {
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
-import {
-  type AcceptedPatchReplay,
-  collectAcceptedPatchReplay,
-} from "./value-patch-replay";
-import {
-  collectRetainedMergeReferences,
-  type RetainedMergeReference,
-} from "./value-retained-reference";
+import { collectAcceptedPatchReplay } from "./value-patch-replay";
+import { collectRetainedMergeReferences } from "./value-retained-reference";
 
-interface Actor {
-  node_id: string;
-  login: string;
-  type: string;
-}
-interface Pull {
-  node_id: string;
-  number: number;
-  html_url: string;
-  title: string;
-  body: string | null;
-  user: Actor;
-  merged_by: Actor | null;
-  state: string;
-  merged_at: string | null;
-  closed_at: string | null;
-  merge_commit_sha: string | null;
-  updated_at: string;
-  head: { sha: string };
-  base: { sha: string; ref: string };
-  changed_files: number;
-  comments: number;
-  review_comments: number;
-  commits: number;
-}
-interface Review {
-  node_id: string;
-  id: number;
-  html_url: string;
-  body: string;
-  user: Actor | null;
-  submitted_at: string | null;
-  state: string;
-  commit_id: string;
-}
-interface Comment {
-  node_id: string;
-  html_url: string;
-  body: string;
-  user: Actor | null;
-  created_at: string;
-  updated_at: string;
-  pull_request_review_id?: number;
-}
-interface Commit {
-  sha: string;
-  html_url: string;
-  author: Actor | null;
-  committer: Actor | null;
-  parents: { sha: string }[];
-  commit: {
-    message: string;
-    author: { date: string };
-    committer: { date: string };
-  };
-}
-interface CommitChangeEvidence {
-  sha: string;
-  html_url: string;
-  parents: { sha: string }[];
-  stats: { additions: number; deletions: number; total: number };
-  files: FileChange[];
-}
 function fileChange({
   filename,
   previous_filename,
@@ -284,21 +222,6 @@ async function collectCommitChanges(
     );
   }
   return { commit, limitations };
-}
-export interface CommitAttribution {
-  sha: string;
-  actorNodeIds: string[];
-  changedPaths: string[] | null;
-  // Private source evidence for retained-copy reconciliation. Paths alone
-  // cannot establish which original changes survived a cherry-pick.
-  files?: FileChange[];
-  limitations: string[];
-}
-interface RelatedPullRequest {
-  id: string;
-  number: number;
-  url: string;
-  repository: string;
 }
 async function relatedPullRequests(
   client: EvidenceClient,
@@ -500,43 +423,6 @@ export function valueEvidenceMatchesRepository(
   );
 }
 
-export interface ValueEvidence {
-  repository: string;
-  repositoryPolicy: Pick<
-    TargetRepository,
-    "id" | "projectId" | "integrationBranch" | "expectedNodeId"
-  > | null;
-  repositoryNodeId: string;
-  repositoryDatabaseId: number;
-  collectedAt: string;
-  pull: Pull;
-  files: FileChange[];
-  mergeCommitEvidence: CommitChangeEvidence | null;
-  acceptedRange?: AcceptedValueRange;
-  acceptedPatchReplay?: AcceptedPatchReplay;
-  indirectAcceptance?: IndirectValueAcceptance;
-  commits: Commit[];
-  reviews: Review[];
-  comments: Comment[];
-  reviewComments: Comment[];
-  limitations: string[];
-  evidenceUrls: string[];
-  eligibleReviewIds: string[];
-  implementationActorNodeIds: string[];
-  historicalBranchPolicy?: ValueBranchPolicy;
-  noChangePromotion?: NoChangePromotionProof;
-  commitAttribution: CommitAttribution[];
-  mergeResolutions?: ValueMergeResolution[];
-  retainedMergeReferences?: RetainedMergeReference[];
-  relatedPullRequests: RelatedPullRequest[];
-  contextFiles?: {
-    path: string;
-    ref: string;
-    blobSha: string;
-    text: string;
-    url: string;
-  }[];
-}
 async function pages<T>(client: EvidenceClient, path: string): Promise<T[]> {
   const values: T[] = [];
   for (let page = 1; ; page++) {

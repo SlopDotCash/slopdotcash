@@ -1,7 +1,9 @@
 /** A server-created collection recipe, not uploaded resolution evidence. */
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import type { ValueEvidence } from "./value-evidence";
-import type { ValueMergeResolution } from "./value-merge-resolution";
+import type {
+  ValueEvidence,
+  ValueMergeResolution,
+} from "./value-evidence-types";
 
 export const MERGE_GIT_VERSION = "git version 2.56.0" as const;
 export const LEGACY_MERGE_PROFILE = "git-2.56.0-v1" as const;

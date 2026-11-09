@@ -1,6 +1,9 @@
 import { valueFileReader } from "./value-blob";
-import type { ValueEvidence } from "./value-evidence";
-import type { EvidenceClient, FileChange } from "./value-evidence-types";
+import type {
+  EvidenceClient,
+  FileChange,
+  ValueEvidence,
+} from "./value-evidence-types";
 import { readValueTreeProof } from "./value-tree";
 
 const oid = /^[a-f0-9]{40}$/u;

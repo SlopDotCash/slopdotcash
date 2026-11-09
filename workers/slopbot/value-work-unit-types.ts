@@ -1,5 +1,5 @@
 /** Joint value work-unit records shared by the work-unit builder, model source and retained-copy checks. */
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import type { ValueMergeRecipe } from "./value-merge-profile";
 
 export interface WorkUnitSource {

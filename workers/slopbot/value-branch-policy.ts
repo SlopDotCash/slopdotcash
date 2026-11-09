@@ -1,11 +1,4 @@
-import type { EvidenceClient } from "./value-evidence-types";
-
-/** Historical authority comes from accepted base policy, never a PR's head. */
-export interface ValueBranchPolicy {
-  baseSha: string;
-  path: "CONTRIBUTING.md";
-  text: string;
-}
+import type { EvidenceClient, ValueBranchPolicy } from "./value-evidence-types";
 
 function declaredIntegrationBranch(text: string): string | null {
   // Recognize an explicit policy sentence, not examples in fenced code blocks.

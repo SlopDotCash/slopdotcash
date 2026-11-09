@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import type { ValueEvidence } from "../workers/slopbot/value-evidence";
+import type { ValueEvidence } from "../workers/slopbot/value-evidence-types";
 import { LEGACY_MERGE_PROFILE } from "../workers/slopbot/value-merge-profile";
 import { collectMergeResolutions } from "./value-merge-resolution";
 

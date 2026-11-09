@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import { collectValueGroup } from "./value-group-collection";
 import {
   collectNoChangePromotion,

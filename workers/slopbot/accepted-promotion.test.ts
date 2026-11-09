@@ -6,7 +6,7 @@ import {
   repository as binaryRepository,
   collect as collectBinaryFixture,
 } from "../../tests/value-binary-fixture";
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import {
   collectNoChangePromotion,
   NO_CHANGE_PROMOTION_CONTEXT,
