@@ -5,6 +5,7 @@
 // @source migrations/0026_private_security_cases.sql
 // @source migrations/0101_durable_security_intake.sql
 // @source backend/security/case-store.ts
+// @source migrations/0118_security_receipt_check_lease.sql
 // Case + intake CAS composition, with report-version, analysis, assigned role,
 // human decision, refusal appeal and later funded obligation. Three report
 // versions/eight case revisions are bounds. Repository role proof is assumed;

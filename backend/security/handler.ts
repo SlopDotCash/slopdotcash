@@ -99,6 +99,7 @@ import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
 } from "./project-access";
+import { admitPublicWork } from "./rate-limit";
 import {
   analysisDependencies,
   scheduleAnalysis,
@@ -1302,6 +1303,41 @@ async function rejectUnconfirmedClaims(
 }
 
 /**
+ * A receipt check pulls every private report for the project from GitHub.
+ * One project runs at most one reconcile per minute: the lease row is the
+ * last reconcile that started, and it is kept (not deleted) so it doubles
+ * as a short cooldown against back-to-back full pulls. A crashed run frees
+ * itself when the row ages out.
+ */
+const RECEIPT_CHECK_COOLDOWN_MS = 60_000;
+
+async function acquireReceiptCheckLease(
+  deps: Pick<SecurityApiDependencies, "db" | "now">,
+  projectId: string,
+  actorGithubId: string,
+): Promise<boolean> {
+  const now = deps.now().getTime();
+  try {
+    await deps.db.batch([
+      deps.db
+        .prepare(
+          "DELETE FROM security_receipt_check_leases WHERE project_id = ? AND started_at <= ?",
+        )
+        .bind(projectId, now - RECEIPT_CHECK_COOLDOWN_MS),
+      deps.db
+        .prepare(
+          "INSERT INTO security_receipt_check_leases (project_id, started_at, actor_github_id) VALUES (?, ?, ?)",
+        )
+        .bind(projectId, now, actorGithubId),
+    ]);
+    return true;
+  } catch (error) {
+    if (/UNIQUE/iu.test(constraintError(error))) return false;
+    throw error;
+  }
+}
+
+/**
  * Reconciles a program with GitHub: records the private reports that have no
  * case yet and settles older unconfirmed links. `own` limits it to the
  * signed-in reporter's reports. `unavailable` writes nothing and never means
@@ -1463,6 +1499,36 @@ async function createCase(
       "advisory_already_recorded",
       "This advisory already has a verified case.",
     );
+  }
+  if (mode === "claim") {
+    // A manual claim is public work too: it shares the intake budget, so
+    // one actor cannot mint unlimited claimed cases by swapping advisories.
+    // Admission runs after the replay check above, so replaying a claim
+    // costs no budget.
+    await admitPublicWork(deps, actor.githubId);
+    // A claim links a GitHub private report. When a reader is configured,
+    // refuse a claim GitHub cannot show: receipt reconciliation would
+    // reject the link later, after the case and its maintainer inbox
+    // notices already exist. When no reader is configured (the production
+    // wiring leaves advisories null without the GitHub App), the claim
+    // keeps the existing manual-verification path and a maintainer still
+    // has to verify the link. Authorship is enforced at receipt time (a
+    // claim only adopts a report with the same advisory and author, and
+    // anything else is link-rejected), so a claim for another reporter's
+    // advisory stays possible here and is settled then, as the
+    // uncertain-forward tests cover.
+    if (deps.advisories) {
+      const lookup = await deps.advisories.privateReport(
+        terms.intake.repository,
+        advisory,
+      );
+      if (lookup.state !== "found")
+        fail(
+          503,
+          "advisory_unavailable",
+          "Slop could not verify the GitHub advisory right now. Try again later.",
+        );
+    }
   }
   const insert = caseInsertStatement(deps, {
     id,
@@ -3112,6 +3178,12 @@ async function automaticAction(
   );
   if (action === "check-receipt") {
     requireAction(row, roles, action);
+    if (!(await acquireReceiptCheckLease(deps, row.project_id, actor.githubId)))
+      fail(
+        409,
+        "receipt_check_running",
+        "A receipt check for this project is already running or ran very recently. Try again shortly.",
+      );
     const result = await reconcileProgram(
       deps,
       row.project_id,

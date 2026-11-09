@@ -1,6 +1,7 @@
 // @source migrations/0059_private_security_submissions.sql
 // @source migrations/0101_durable_security_intake.sql
 // @source backend/security/report-intake.ts
+// @source backend/security/rate-limit.ts
 // @source backend/security/verified-intake.ts
 // @source backend/security/submissions.ts
 // @source backend/security/intake-grant.ts

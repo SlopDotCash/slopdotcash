@@ -486,6 +486,12 @@ function open(securityBounty: Record<string, unknown> = OPEN_PROGRAM) {
     reinstateProgram,
     retireProgram,
     claim,
+    /** A private GitHub report the stub advisories reader can return. */
+    addReport: (author: Account, createdAt = "2026-10-19T09:10:00.000Z") => {
+      const entry = report(author, createdAt);
+      reports.push(entry);
+      return entry;
+    },
     checkPvr,
     sqlite,
     fund,
@@ -2301,5 +2307,101 @@ describe("reporter payment state against the payout queue", () => {
     const view = await reporterView(env, id);
     expect(view.settlement?.submittedTransactionId).toBe("0xabc");
     env.sqlite.close();
+  });
+});
+
+describe("manual case claim limits", () => {
+  const claim = async (
+    env: ReturnType<typeof open>,
+    account: typeof REPORTER,
+    ghsa: string,
+  ) =>
+    env.call(account, "POST", "security-cases", {
+      mode: "claim",
+      projectId: PROJECT,
+      advisory: ghsa,
+      idempotencyKey: env.key(),
+    });
+
+  test("one actor cannot claim more than ten advisories in an hour", async () => {
+    const env = open();
+    try {
+      const entries = Array.from({ length: 11 }, () => env.addReport(REPORTER));
+      for (let index = 0; index < 10; index++)
+        expect((await claim(env, REPORTER, entries[index].ghsa)).status).toBe(
+          201,
+        );
+      const refused = await claim(env, REPORTER, entries[10].ghsa);
+      expect(refused.status).toBe(429);
+      expect(refused.body.error).toBe("intake_rate_limited");
+      expect(
+        (
+          env.sqlite
+            .query("SELECT COUNT(*) AS n FROM security_cases")
+            .get() as { n: number }
+        ).n,
+      ).toBe(10);
+      env.advance(3_600_001);
+      expect((await claim(env, REPORTER, entries[10].ghsa)).status).toBe(201);
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a claim for an advisory GitHub does not know is refused", async () => {
+    const env = open();
+    try {
+      const refused = await claim(env, REPORTER, "GHSA-2c3f-4g5h-6j7m");
+      expect(refused.status).toBe(503);
+      expect(refused.body.error).toBe("advisory_unavailable");
+      expect(
+        (
+          env.sqlite
+            .query("SELECT COUNT(*) AS n FROM security_cases")
+            .get() as { n: number }
+        ).n,
+      ).toBe(0);
+      env.setReportsAvailable(false);
+      const entry = env.addReport(REPORTER);
+      const down = await claim(env, REPORTER, entry.ghsa);
+      expect(down.status).toBe(503);
+      expect(down.body.error).toBe("advisory_unavailable");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a receipt check cannot run twice within a minute for one project", async () => {
+    const env = open();
+    try {
+      const first = env.addReport(REPORTER);
+      const second = env.addReport(OTHER);
+      env.claim("sc_lockfirst", first.ghsa, REPORTER);
+      env.claim("sc_locksecond", second.ghsa, OTHER);
+      expect(
+        (
+          await env.act(REPORTER, "sc_lockfirst", {
+            action: "check-receipt",
+          })
+        ).status,
+      ).toBe(200);
+      // The second case is still claimed, so the state guard passes and the
+      // project-level lease is what refuses it.
+      const refused = await env.act(OTHER, "sc_locksecond", {
+        action: "check-receipt",
+      });
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toBe("receipt_check_running");
+      env.advance(60_001);
+      expect(
+        (
+          await env.act(OTHER, "sc_locksecond", {
+            action: "check-receipt",
+          })
+        ).status,
+      ).toBe(200);
+    } finally {
+      env.sqlite.close();
+    }
   });
 });
