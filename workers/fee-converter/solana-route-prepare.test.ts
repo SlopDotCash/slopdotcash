@@ -545,6 +545,11 @@ test("a v0 Token-2022 swap signs only after account review and retains the revie
     expect(await restarted.status(row)).toEqual({ kind: "pending" });
     f.loseSignatureHistory();
     expect(await restarted.status(row)).toEqual({ kind: "pending" });
+    // A legacy send without a native-gas reservation is not failed on one
+    // provider's missing status after expiry either.
+    expect(
+      await restarted.status({ ...row, nativeGasId: null, expiresAt: 1 }),
+    ).toEqual({ kind: "pending" });
   } finally {
     f.sqlite.close();
   }
