@@ -389,3 +389,165 @@ for (const outcome of ["refused", "temporary", "changed-actor"] as const) {
     }
   });
 }
+
+test("a confirmed setup identity mismatch retains the observed installation", async ({
+  page,
+}) => {
+  const api = await accessFixture(page);
+  const reason = "Repository or steward facts do not match GitHub";
+  await page.route("**/api/v1/project-setup/eliza/check", async (route) => {
+    const response = await accessResponse(api, route);
+    const body = (await response.json()) as { setup: ProjectSetupStatus };
+    await route.fulfill({
+      json: {
+        setup: {
+          ...body.setup,
+          state: "action_required",
+          nextAction: { kind: "ask_maintainer", message: reason, href: null },
+          checks: {
+            ...body.setup.checks,
+            authority: { state: "denied", message: reason },
+          },
+        },
+      },
+    });
+  });
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    const panel = page.locator(".project-setup-status");
+    await expect(
+      panel.getByRole("heading", {
+        name: "Setup status: Action needed",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      panel.getByRole("status").filter({ hasText: reason }),
+    ).toBeVisible();
+    await expect(panel.getByText("Installed", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Unavailable", { exact: true })).toHaveCount(0);
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+  } finally {
+    await api.dispose();
+  }
+});
+
+test("committed setup unmount retires a preflight before it can send another check", async ({
+  page,
+}) => {
+  const api = await accessFixture(page);
+  let checks = 0;
+  await page.route("**/api/v1/project-setup/eliza/check", async (route) => {
+    checks += 1;
+    const response = await accessResponse(api, route);
+    const body = (await response.json()) as { setup: ProjectSetupStatus };
+    await route.fulfill({
+      json: {
+        setup: {
+          ...body.setup,
+          state: "waiting",
+          nextAction: {
+            kind: "wait_for_scan",
+            message: "Fixture scan is queued.",
+            href: null,
+          },
+          checks: {
+            ...body.setup.checks,
+            scan: { state: "queued", message: "Fixture scan is queued." },
+          },
+        },
+      },
+    });
+  });
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    const panel = page.locator(".project-setup-status");
+    await expect(
+      panel.getByRole("button", { name: "Check again", exact: true }),
+    ).toBeEnabled();
+    expect(checks).toBe(1);
+    await page.evaluate(() => {
+      type HeldSetupRead = {
+        waiting: boolean;
+        released: boolean;
+        removed: boolean;
+        release: () => void;
+      };
+      const state: HeldSetupRead = {
+        waiting: false,
+        released: false,
+        removed: false,
+        release: () => {},
+      };
+      (window as typeof window & { heldSetupRead: HeldSetupRead }).heldSetupRead =
+        state;
+      const readJson = Response.prototype.json;
+      Response.prototype.json = async function (this: Response) {
+        const value = await readJson.call(this);
+        if (!state.waiting && this.url.endsWith("/api/v1/project-session")) {
+          state.waiting = true;
+          await new Promise<void>((resolve) => {
+            state.release = () => {
+              state.released = true;
+              resolve();
+            };
+          });
+        }
+        return value;
+      };
+      // Mutation observers run after DOM commit, before the next passive
+      // cleanup task. Release the already parsed body at that exact boundary.
+      const observer = new MutationObserver(() => {
+        if (state.waiting && !document.querySelector(".project-setup-status")) {
+          state.removed = true;
+          state.release();
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+    // Seed same-document history while leaving the current route unchanged.
+    // Native Back then schedules the route outside a discrete React click;
+    // its DOM-removal observer can run before passive effect cleanup.
+    await page.evaluate(() => {
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", "/projects/eliza/manage");
+    });
+    await panel
+      .getByRole("button", { name: "Check again", exact: true })
+      .click();
+    await page.waitForFunction(
+      () =>
+        (window as typeof window & { heldSetupRead: { waiting: boolean } })
+          .heldSetupRead.waiting,
+    );
+    await page.goBack();
+    await page.waitForFunction(() => {
+      const state = (
+        window as typeof window & {
+          heldSetupRead: { removed: boolean; released: boolean };
+        }
+      ).heldSetupRead;
+      return state.removed && state.released;
+    });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    await expect(panel).toHaveCount(0);
+    await expect(page).toHaveURL(/\/how-it-works$/u);
+    expect(checks).toBe(1);
+  } finally {
+    await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            heldSetupRead?: { release: () => void };
+          }
+        ).heldSetupRead?.release(),
+    );
+    await api.dispose();
+  }
+});

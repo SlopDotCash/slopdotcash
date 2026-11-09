@@ -7,7 +7,7 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "./Link";
 import "./owner-review.css";
 import { errorMessage } from "./lib/errors";
@@ -121,7 +121,7 @@ function ProjectSetupStatusForActor({
   const mounted = useRef(true);
   const generation = useRef(0);
   const inFlight = useRef<number | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;

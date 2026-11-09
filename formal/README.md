@@ -214,6 +214,10 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Generated project skill publication | `project_skill_publication` | `backend/projects/skill-publication.ts`, `src/lib/project-skill-publication.mjs`, `scripts/project-registry-api.test.ts` |
 | Retained value-dispute evidence and triage | `bot_value_dispute_binding`, `bot_value_dispute_read`, `bot_value_dispute_actor`, `bot_value_dispute_draft` | `workers/slopbot/value-disputes.ts`, `workers/slopbot/penalty-appeal.test.ts` |
 | Archive filters, clocks and historical detail | `ui_cycle_archive`, `ui_cycle_publication`, `ui_record_deadlines` | `src/CyclePages.tsx`, `src/App.tsx`, `tests/e2e/site.spec.ts`, `tests/e2e/ui-clock-transitions.spec.ts` |
+| Setup status and activation | `api_project_setup_check`, `ui_setup_check_lifetime` | `backend/projects/setup.ts`, `backend/projects/handler.ts`, `scripts/project-self-service.test.ts`, `tests/e2e/project-access-retry.spec.ts` |
+| Private submission claim ownership | `api_submission_recovery`, `api_private_intake` | `backend/security/submissions.ts`, `backend/security/submissions.test.ts` |
+| Retained-copy binding and historical import | `retained_copy_bindings`, `historical_subscription_intake` | `workers/slopbot/value-retained-copy.ts`, `workers/slopbot/value-import.ts`, existing promotion and publication-fence workflows |
+| Owner vault infrastructure selection | `vault_setup_resolution`, `vault_creation` | `backend/projects/vault-setup.ts`, existing EVM/Solana vault setup workflows |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -623,6 +627,50 @@ projects/records, two index generations, one snapshot bundle and four clock
 positions. Browser regression definitions cover these transitions but remain
 unexecuted. The separate risk-flag component is unmounted; its local model does
 not establish an available UI flow.
+
+Setup status preserves a successful installation observation when the
+repository or steward identity is known to mismatch. That result asks for
+maintainer action rather than reporting an installation outage. Write routes
+retain their existing 422 refusal. Unexpected provider failures remain retry
+states. The setup panel retires request ownership during layout cleanup, before
+an old preflight can send a new request after committed departure. Its server
+model separates access, identity, scan, queue and activation observations, with
+one check, two revisions and a concurrent restriction. It does not turn those
+observations into an atomic provider snapshot or require funding for activation.
+
+A submission transition returns only the exact next revision and state it
+committed. A newer row observed after the batch cannot become an older sender's
+claim. The [D1 batch contract](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)
+covers the SQL transaction; a later read and provider POST are separate effects.
+The recovery model retains two sender slots, two attempts/copies and twelve
+revisions. A lost reply or absent changes metadata does not erase a committed
+row, event or external copy. An observed empty listing is not proof that no
+copy will arrive later. Existing route-level regression definitions now delay
+the claim readback across uncertain, reconciled and replacement-claim states;
+they remain unexecuted. No exactly-once external delivery is claimed.
+
+Retained-copy binding separates same-author reopening from an authenticated
+acceptance comment, and exact edits from manifest or ancestor-hunk matches.
+Multiple candidates and competing originals can return a partial map together
+with limitations; that is not permission to publish. The import model keeps
+HTTP admission, source collection, optional reconstruction, refreshed source
+and registry checks, and journal insertion separate. Joint source, claim and
+predecessor indexes commit atomically with their record. A later lost receipt
+does not undo that commit; a retry can return the first stored result. These
+models bound two originals/candidates and two import requests respectively.
+Existing tests cover selected promotion and publication boundaries; direct
+HTTP-to-RPC import conformance remains missing.
+
+Vault registration now checks the exact creation transaction while selecting
+each reviewed factory or program. A valid first candidate that did not create
+the transaction cannot hide a matching later candidate. Candidate mismatch
+continues the search; an unavailable RPC remains a 503, a matching failed
+transaction remains a 422, and a pending transaction remains pending. If no
+candidate matches, the first transaction-verification error is retained. The
+resolution model covers both rails, two candidates and one captured wallet
+claim. Registry attachment, continuous wallet authority and chain truth remain
+separate boundaries. The EVM and Solana API/adapter regression definitions are
+unexecuted.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.

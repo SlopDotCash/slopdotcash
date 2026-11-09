@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "e979e5de5e7e48fd61fcf9d8d4e40cd2a3b86e2709dfdbd43fcd3d9823616ead",
+  "inventorySha256": "49c46c859feca2e50f8714a0c78189728beb5ccc406e749222528b178f99e01f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -103,7 +103,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2296,
+      "line": 2303,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -111,6 +111,7 @@
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
@@ -128,7 +129,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2500,
+      "line": 2507,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -136,6 +137,7 @@
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
@@ -157,8 +159,11 @@
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
-      "models": ["formal/models/api/api_project_registry.qnt"],
-      "lexicallyUnmentionedValues": ["already_queued", "queued"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_setup_check.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["already_queued"],
       "review": "candidate-only"
     },
     {
@@ -1685,7 +1690,7 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt"
       ],
-      "lexicallyUnmentionedValues": ["none", "open", "returned", "upheld"],
+      "lexicallyUnmentionedValues": ["open", "returned", "upheld"],
       "review": "candidate-only"
     },
     {
@@ -3670,7 +3675,8 @@
       "values": ["policySha", "sourceDigest"],
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
-        "formal/models/slopbot/bot_value_freshness.qnt"
+        "formal/models/slopbot/bot_value_freshness.qnt",
+        "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
       "lexicallyUnmentionedValues": ["policySha", "sourceDigest"],
       "review": "candidate-only"
