@@ -12,7 +12,7 @@ import {
 } from "../../workers/notify/activity";
 import { reconcileSecurityMail } from "../../workers/notify/security";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
-import type { SecurityD1Database } from "../security/handler";
+import type { SecurityD1Database } from "../security/case-store";
 import { ProjectFlagStore } from "../vetting/flags";
 import { handleEmailPreferences } from "./email";
 import { notifyProjectEnforcement, notifyVettingBanAudience } from "./events";
