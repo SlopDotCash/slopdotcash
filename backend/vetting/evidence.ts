@@ -33,11 +33,11 @@ import {
   EvidenceCorruptionError,
   type EvidenceChunk,
   evidenceLocation,
-  evidenceObjectKey,
   verifiedPart,
-  verifyParts,
+  verifyPartSequence,
 } from "./evidence-chunks";
 import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "./evidence-retention";
+import { EvidenceStorage } from "./evidence-storage";
 import type { VettingResult } from "./result";
 import {
   isScanResult,
@@ -177,12 +177,23 @@ type ObjectRow = {
   chunks: string | null;
   /** "content" since migration 0107; earlier rows are run-scoped. */
   storage?: string | null;
+  /** Immutable physical generation; null identifies pre-0119 evidence. */
+  storage_generation?: string | null;
 };
 const headers = { ...JSON_HEADERS, "x-robots-tag": "noindex" };
 const json = (status: number, body: unknown) =>
   jsonResponse(status, body, { headers: { "x-robots-tag": "noindex" } });
 export class VettingEvidence {
   constructor(readonly deps: EvidenceDependencies) {}
+  private storage() {
+    const { bucket } = this.configuration();
+    return new EvidenceStorage(
+      this.deps.db,
+      bucket,
+      () => this.deps.now(),
+      () => this.deps.randomId(),
+    );
+  }
   private signed(request: Request, maximum: number) {
     if (!this.deps.signed)
       fail(
@@ -355,23 +366,18 @@ export class VettingEvidence {
     }
   }
   async bytes(row: ObjectRow, run: Run): Promise<Uint8Array> {
-    const bucket = this.readable(run);
+    this.readable(run);
     if (row.size_bytes > EVIDENCE_CHUNK_BYTES)
       fail(
         413,
         "evidence_oversize",
         "Large evidence requires a streamed download",
       );
-    return verifiedPart(
-      bucket,
-      evidenceLocation(row),
-      row.sha256,
-      row.size_bytes,
-    );
+    return this.storage().readPart(row);
   }
   async verify(row: ObjectRow, run: Run, requireComplete = true) {
-    const bucket = this.readable(run),
-      chunks = this.layout(row);
+    this.readable(run);
+    const chunks = this.layout(row);
     if (!chunks) {
       await this.bytes(row, run);
       return;
@@ -390,7 +396,10 @@ export class VettingEvidence {
         "evidence_pending",
         "Chunked evidence has not completed whole-file verification",
       );
-    await verifyParts(bucket, evidenceLocation(row), chunks, row.sha256);
+    const storage = this.storage();
+    await verifyPartSequence(chunks, row.sha256, (part) =>
+      storage.readPart(row, part),
+    );
   }
   /**
    * The complete bytes of a JSON report or inventory that the intake must
@@ -420,17 +429,13 @@ export class VettingEvidence {
         "evidence_pending",
         "Chunked evidence has not completed whole-file verification",
       );
-    const bucket = this.readable(run);
+    this.readable(run);
+    const storage = this.storage();
     const whole = new Uint8Array(row.size_bytes);
     let offset = 0;
     for (const chunk of chunks) {
       whole.set(
-        await verifiedPart(
-          bucket,
-          chunkKey(evidenceLocation(row), chunk),
-          chunk.sha256,
-          chunk.sizeBytes,
-        ),
+        await storage.readPart(row, chunk),
         offset,
       );
       offset += chunk.sizeBytes;
@@ -1219,7 +1224,7 @@ export class VettingEvidence {
       return json(200, {
         manifestSha256: digest,
         replayed: true,
-        stored: await this.stored(objects),
+        stored: await this.stored(assessment, runId),
       });
     };
     const registered = () =>
@@ -1251,10 +1256,11 @@ export class VettingEvidence {
             ).toISOString(),
             input.assemblySha256 ?? null,
           ),
-        ...objects.map((o) =>
+        ...objects.flatMap((o) => [
+          ...this.storage().registrationStatements(o.sha256, at.toISOString()),
           this.deps.db
             .prepare(
-              "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,?,?,?,?,?,?,?,?,'content')",
+              "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage,storage_generation) VALUES(?,?,?,?,?,?,?,?,?,'content',(SELECT id FROM vetting_evidence_generations WHERE sha256=? AND state='active'))",
             )
             .bind(
               assessment,
@@ -1266,8 +1272,9 @@ export class VettingEvidence {
               o.contentType,
               `vetting/${assessment}/${runId}/${o.sha256}`,
               o.chunks ? JSON.stringify(o.chunks) : null,
+              o.sha256,
             ),
-        ),
+        ]),
         this.deps.db
           .prepare(
             "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,created_at) VALUES(?,?,?,?,?,?)",
@@ -1296,7 +1303,7 @@ export class VettingEvidence {
     }
     return json(201, {
       manifestSha256: digest,
-      stored: await this.stored(objects),
+      stored: await this.stored(assessment, runId),
     });
   }
   /**
@@ -1307,30 +1314,30 @@ export class VettingEvidence {
    * still needs this run's finalization.
    */
   private async stored(
-    objects: { sha256: string; sizeBytes: number; chunks?: EvidenceChunk[] }[],
+    assessment: string,
+    runId: string,
   ): Promise<string[]> {
-    const { bucket } = this.configuration();
+    const storage = this.storage();
+    const objects = (
+      await this.deps.db
+        .prepare(
+          "SELECT * FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? ORDER BY sha256",
+        )
+        .bind(assessment, runId)
+        .all<ObjectRow>()
+    ).results ?? [];
     // Reread and hash each part (one part buffered at a time), so a missing
     // or corrupt copy is uploaded again instead of referenced.
-    const present = (key: string, sha: string, size: number) =>
-      verifiedPart(bucket, key, sha, size).then(
+    const present = (row: ObjectRow, part?: EvidenceChunk) =>
+      storage.readPart(row, part).then(
         () => true,
         () => false,
       );
     const stored: string[] = [];
     for (const object of objects) {
-      const key = evidenceObjectKey(object.sha256);
       let complete = true;
-      for (const part of object.chunks ?? [
-        { index: -1, sha256: object.sha256, sizeBytes: object.sizeBytes },
-      ])
-        if (
-          !(await present(
-            part.index === -1 ? key : chunkKey(key, part),
-            part.sha256,
-            part.sizeBytes,
-          ))
-        ) {
+      for (const part of this.layout(object) ?? [undefined])
+        if (!(await present(object, part))) {
           complete = false;
           break;
         }
@@ -1408,15 +1415,20 @@ export class VettingEvidence {
         "digest_mismatch",
         "Upload must match the complete declared bytes",
       );
-    await this.store(
-      bucket,
-      evidenceLocation(object),
-      body,
-      sha,
-      object.content_type,
-      object.storage === "content",
-    );
+    if (object.storage_generation) {
+      await this.storage().storePart(object, body, undefined, object.content_type);
+    } else {
+      await this.store(
+        bucket,
+        evidenceLocation(object),
+        body,
+        sha,
+        object.content_type,
+        object.storage === "content",
+      );
+    }
     await this.bytes(object, run);
+    this.readable(await this.run(assessment, runId));
     await this.audit(`service:${keySha256}`, "upload", assessment, runId, sha);
     return json(200, { sha256: sha, sizeBytes: body.byteLength });
   }
@@ -1446,15 +1458,18 @@ export class VettingEvidence {
         "digest_mismatch",
         "Upload must match the exact declared chunk bytes",
       );
-    const key = chunkKey(evidenceLocation(object), chunk);
-    await this.store(
-      bucket,
-      key,
-      body,
-      chunk.sha256,
-      "application/octet-stream",
-      object.storage === "content",
-    );
+    if (object.storage_generation) {
+      await this.storage().storePart(object, body, chunk, "application/octet-stream");
+    } else {
+      await this.store(
+        bucket,
+        chunkKey(evidenceLocation(object), chunk),
+        body,
+        chunk.sha256,
+        "application/octet-stream",
+        object.storage === "content",
+      );
+    }
     // Storage may have waited across the access deadline. Re-read closure
     // state before recording an accepted upload; retained bytes are separate.
     this.readable(await this.run(assessment, runId));
@@ -1553,6 +1568,7 @@ export class VettingEvidence {
       const objects = [];
       for (const row of rows) {
         const chunks = this.layout(row);
+        const key = chunks ? null : await this.storage().partKey(row);
         const head = chunks
           ? await this.deps.db
               .prepare(
@@ -1560,7 +1576,7 @@ export class VettingEvidence {
               )
               .bind(run.assessment_id, run.run_id, row.sha256)
               .first<{ completed_at: string }>()
-          : await bucket.head(evidenceLocation(row));
+          : key === null ? null : await bucket.head(key);
         const state =
           run.expires_at !== null &&
           Date.parse(run.expires_at) <= this.deps.now().getTime()
@@ -1863,7 +1879,7 @@ export class VettingEvidence {
             await authorizePart();
             if (ended) return;
             const currentRun = await this.run(assessment, runId);
-            const bucket = this.readable(currentRun);
+            this.readable(currentRun);
             if (index >= (chunks?.length ?? 1)) {
               if (ended) return;
               // Claim the terminal outcome before yielding to the audit write.
@@ -1880,12 +1896,7 @@ export class VettingEvidence {
             }
             const part = chunks?.[index];
             const bytes = part
-              ? await verifiedPart(
-                  bucket,
-                  chunkKey(evidenceLocation(object), part),
-                  part.sha256,
-                  part.sizeBytes,
-                )
+              ? await this.storage().readPart(object, part)
               : await this.bytes(object, currentRun);
             if (ended) return;
             if (!started) {
