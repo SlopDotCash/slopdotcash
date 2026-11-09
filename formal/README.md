@@ -204,6 +204,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Trace token validation and request admission | `trace_bearer_tokens`, `trace_route_authorization` | `backend/trace/auth.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, the binding-recovery path in `backend/security/payments.integration.ts` |
 | Trace creation, progress events and finalization | `trace_run_creation`, `trace_event_finalization` | `backend/trace/cloudflare-persistence.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, `scripts/project-self-service.test.ts` |
 | Wallet-claim publication and possession evidence | `wallet_claim_publication`, `wallet_possession_completion` | `backend/trace/handler.ts`, `backend/trace/cloudflare-persistence.ts`, `src/lib/wallet-possession.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `scripts/wallet-possession.test.ts` |
+| Payment-wallet registration and activation | `payment_wallet_registration`, `payment_wallet_activation`, `api_payment_wallet_protocol` | `backend/payments/wallet-registration.ts`, `backend/payments/handler.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `backend/payments/wallet-replacement.test.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -380,6 +381,25 @@ names the retired `protocol/wallet-possession.md` document precisely, preserving
 the runtime and callers that the recorded owner decision kept. These models
 remain unexecuted. A valid inactive map index also replaces the creation model's
 out-of-domain sentinel; that source-only correction has not been parsed here.
+
+Payment registration now refuses a same-address historical claim that wins a
+concurrent append. That record cannot pass the registry-only challenge query.
+The previous conflict-recovery branch returned it as success. A retry can now
+append the required registry successor. The new regression interleaves the
+real payment and authorized historical-claim handlers against migrated SQLite,
+then follows the retry through challenge and authorization; it has not run here.
+The registration model preserves the distinct login-insensitive payment no-op,
+the current-tip reread, and the prior condition as a negative control outside
+the permitted transitions.
+
+The activation model starts after the existing protocol model's signature and
+one-time challenge checks. It separates authorization/outbox commit from reply
+and effective-wallet readback. Only matching reserved obligations with absent
+or held outbox rows become ready. Processing, submitted and paid rows remain
+unchanged. An unsigned successor leaves a prior authorized wallet effective;
+an authorized successor changes future readback without erasing history. The
+model has two claims, two requests and two obligations; it does not send or
+mark a payment paid. All new scenarios remain unexecuted.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
