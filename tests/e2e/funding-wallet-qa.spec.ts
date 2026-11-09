@@ -278,6 +278,97 @@ function vaultSnapshot(freeBalance: string, observedAt: number) {
   };
 }
 
+test("a pending vault refresh keeps the last totals and rejects a different project's snapshot", async ({ diagnostics, page }) => {
+  diagnostics.allowPreviewApiMisses();
+  const project = baseVaultProject();
+  const start = Date.now();
+  await page.clock.install({ time: start });
+  await page.route(/\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/, (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await serveProjectCycleIndex(page, [project.id]);
+  await page.route("**/api/v1/project-session", (route) => route.fulfill({ json: { session: null } }));
+  let reads = 0;
+  let release = () => {};
+  let entered = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  await page.route("**/api/v1/payments/projects/eliza/vault", async (route) => {
+    reads += 1;
+    const current = reads;
+    if (current === 2) { entered(); await held; }
+    const snapshot = vaultSnapshot(current >= 3 ? "800000000" : "600000000", start - 60_000);
+    await route.fulfill({ json: {
+      projectId: project.id,
+      snapshots: [{ ...snapshot, projectId: current === 2 ? "another-project" : project.id }],
+      staleAfterMs: 60_000,
+      servedAt: new Date(start).toISOString(),
+    } });
+  });
+  await page.goto("/projects/eliza/funding");
+  const section = page.getByRole("region", { name: "Project escrow" });
+  const available = section.locator(".vault-stat").filter({ hasText: "Available" });
+  await expect(available).toContainText("600 USDC");
+  await page.waitForLoadState("networkidle");
+  try {
+    await page.clock.fastForward(61_000);
+    await started;
+    await expect(section.locator(".vault-totals")).toHaveAttribute("aria-busy", "true");
+    await expect(available).toContainText("600 USDC");
+    release();
+    await expect(section.getByRole("alert")).toContainText("The vault totals could not be verified.");
+    await expect(available).toContainText("600 USDC");
+    await expect(section.locator(".vault-totals")).not.toHaveAttribute("aria-busy", "true");
+    expect(reads).toBe(2);
+    await section.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(available).toContainText("800 USDC");
+    await expect(section.getByRole("alert")).toHaveCount(0);
+    expect(reads).toBe(3);
+  } finally { release(); }
+});
+
+test("a hidden vault timer fires once and visible return starts the next read", async ({ diagnostics, page }) => {
+  diagnostics.allowPreviewApiMisses();
+  const project = baseVaultProject();
+  const start = Date.now();
+  await page.clock.install({ time: start });
+  await page.route(/\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/, (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await serveProjectCycleIndex(page, [project.id]);
+  await page.route("**/api/v1/project-session", (route) => route.fulfill({ json: { session: null } }));
+  let reads = 0;
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) => {
+    reads += 1;
+    return route.fulfill({ json: {
+      projectId: project.id,
+      snapshots: [vaultSnapshot(reads === 1 ? "600000000" : "900000000", start - 60_000)],
+      staleAfterMs: 60_000,
+      servedAt: new Date(start).toISOString(),
+    } });
+  });
+  await page.goto("/projects/eliza/funding");
+  const available = page.getByRole("region", { name: "Project escrow" })
+    .locator(".vault-stat").filter({ hasText: "Available" });
+  await expect(available).toContainText("600 USDC");
+  await page.waitForLoadState("networkidle");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.clock.fastForward(61_000);
+  expect(reads).toBe(1);
+  await page.clock.fastForward(61_000);
+  expect(reads).toBe(1);
+  await expect(available).toContainText("600 USDC");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(available).toContainText("900 USDC");
+  expect(reads).toBe(2);
+});
+
 test("vault totals stay current without a refresh button and keep each state distinct", async ({
   diagnostics,
   page,

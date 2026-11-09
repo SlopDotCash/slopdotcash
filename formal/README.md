@@ -1273,6 +1273,37 @@ tested or verified here:
   retirement and calendar navigation retain separate models. This batch changes
   no runtime or interface code.
 
+- `payment_worker_orchestration` adds 15 scenarios for the scheduled parent:
+  fatal registry/RPC parsing, the snapshot join, sequential scans, five ordered
+  child jobs and accumulated failures. Returned registry problems do not skip
+  later work; a thrown preflight does. Eight real-entrypoint regression cases
+  use separate migrated registry/payment databases and remain unexecuted.
+  Captured scan configuration does not replace each child's own later reads.
+  An aggregate failure neither rolls back prior effects nor proves that a
+  payment occurred.
+- `vault_snapshot_store` adds 22 scenarios for pre-read comparisons, conditional
+  writes, independent cumulative counters, current balances, preserved legacy
+  fees, lost replies and later readback. `vault_snapshot_refresh` adds 14 for
+  four shared-index workers, continued work after failure and error ordering.
+  Durable writes are separate from successfully returned rows: a failed item
+  can still have committed its snapshot. Five real-store/refresh regression
+  cases are unexecuted. Decimal grammar, chain observations and D1 atomicity
+  retain their stated contracts; the caller supplies a valid observation Date.
+- `payment_recovery_observation` and `payment_dispatch_queue` add 19 and 17
+  scenarios for captured selection, status/cancellation responses, late paid
+  or failed rows, lost batch replies, queue bounds, lease expiry and per-item
+  continuation. Existing detailed retirement/reopen/dispatch models remain
+  separate. Eleven migrated-SQLite regression cases are unexecuted and cover
+  actual recovery and dispatch selection; executor registry matching currently
+  has source/model evidence only. Status observations do not prove finality.
+- `ui_vault_totals` adds 27 scenarios for project-bound last-good values,
+  successful empty reads, refresh failures, pending requests, one-shot stale
+  timers and return events. Hidden expiry does not rearm the timer by itself;
+  unchanged observations do not reinstall it. Two browser regression definitions
+  are unexecuted. Timestamp parsing/minimum derivation, formatting and request
+  retirement have separate contracts. Retained displayed totals do not promise
+  a current balance. This batch changes no runtime or interface code.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

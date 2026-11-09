@@ -43,6 +43,163 @@ const totals = (overrides: Partial<VaultTotals> = {}): VaultTotals => ({
 });
 const observed = "2026-10-18T10:05:00.000Z";
 
+// Delay or lose the replies around the real migrated-SQLite statements. These
+// hooks do not replace the conditional INSERT or its affected-row result.
+function snapshotDatabase(
+  db: D1Database,
+  hooks: {
+    beforeFirst?: (sql: string) => Promise<void>;
+    beforeRun?: (sql: string) => Promise<void>;
+    afterRun?: (sql: string) => Promise<void>;
+  },
+): D1Database {
+  return {
+    ...db,
+    prepare(sql) {
+      const wrap = (statement: ReturnType<D1Database["prepare"]>): ReturnType<D1Database["prepare"]> => ({
+        bind: (...values) => wrap(statement.bind(...values)),
+        first: async <T>() => {
+          await hooks.beforeFirst?.(sql);
+          return statement.first<T>();
+        },
+        run: async () => {
+          await hooks.beforeRun?.(sql);
+          const result = await statement.run();
+          await hooks.afterRun?.(sql);
+          return result;
+        },
+      });
+      return wrap(db.prepare(sql));
+    },
+  };
+}
+
+test("a lost snapshot write reply retains the committed row and allows an exact retry", async () => {
+  const { db, sqlite } = sqliteD1();
+  let lost = false;
+  const wrapped = snapshotDatabase(db, {
+    afterRun: async (sql) => {
+      if (!lost && sql.startsWith("INSERT INTO vault_snapshots")) {
+        lost = true;
+        throw new Error("snapshot reply lost after commit");
+      }
+    },
+  });
+  try {
+    await expect(storeVaultSnapshot(wrapped, deployment, totals(), observed))
+      .rejects.toThrow("snapshot reply lost after commit");
+    const committed = sqlite.query("SELECT * FROM vault_snapshots").get();
+    expect(committed).toMatchObject({ block_number: "1000", total_deposited: "500000000", observed_at: observed });
+    expect(await storeVaultSnapshot(wrapped, deployment, totals(), observed)).toBe("stored");
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(committed);
+  } finally { sqlite.close(); }
+});
+
+test("refresh reports a lost store reply without undoing its durable snapshot", async () => {
+  const { db, sqlite } = sqliteD1();
+  let lost = false;
+  const wrapped = snapshotDatabase(db, {
+    afterRun: async (sql) => {
+      if (!lost && sql.startsWith("INSERT INTO vault_snapshots")) {
+        lost = true;
+        throw new Error("refresh store reply lost");
+      }
+    },
+  });
+  const refresh = () => refreshVaultSnapshots(wrapped, [deployment],
+    { "base-sepolia": "http://rpc.invalid" }, async () => totals(), new Date(observed));
+  try {
+    const failure = await refresh().then(() => null, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.map((error: Error) => error.message))
+      .toEqual(["refresh store reply lost"]);
+    const committed = sqlite.query("SELECT * FROM vault_snapshots").get();
+    expect(committed).toMatchObject({ block_number: "1000", observed_at: observed });
+    await refresh();
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(committed);
+  } finally { sqlite.close(); }
+});
+
+test("a failed no-change readback leaves the winning snapshot untouched", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    await storeVaultSnapshot(db, deployment, totals(), observed);
+    const committed = sqlite.query("SELECT * FROM vault_snapshots").get();
+    const wrapped = snapshotDatabase(db, {
+      beforeFirst: async (sql) => {
+        if (sql.startsWith("SELECT block_number,observed_at FROM vault_snapshots"))
+          throw new Error("snapshot readback unavailable");
+      },
+    });
+    await expect(storeVaultSnapshot(wrapped, deployment, totals(), "2026-10-18T10:04:59.000Z"))
+      .rejects.toThrow("snapshot readback unavailable");
+    expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(committed);
+  } finally { sqlite.close(); }
+});
+
+test("a later readback can classify a refused stale counter write as older", async () => {
+  const { db, sqlite } = sqliteD1();
+  const deferred = () => {
+    let resolve = () => {};
+    const promise = new Promise<void>((done) => { resolve = done; });
+    return { promise, resolve: () => resolve() };
+  };
+  const writing = deferred(), releaseWrite = deferred(), reading = deferred(), releaseRead = deferred();
+  const wrapped = snapshotDatabase(db, {
+    beforeRun: async (sql) => {
+      if (sql.startsWith("INSERT INTO vault_snapshots")) { writing.resolve(); await releaseWrite.promise; }
+    },
+    beforeFirst: async (sql) => {
+      if (sql.startsWith("SELECT block_number,observed_at FROM vault_snapshots")) { reading.resolve(); await releaseRead.promise; }
+    },
+  });
+  let pending: Promise<"stored" | "older"> | undefined;
+  try {
+    await storeVaultSnapshot(db, deployment, totals(), observed);
+    pending = storeVaultSnapshot(wrapped, deployment, totals({ blockNumber: "1001", totalDeposited: "600000000" }), observed);
+    await writing.promise;
+    await storeVaultSnapshot(db, deployment, totals({ blockNumber: "1001", totalDeposited: "700000000" }), observed);
+    releaseWrite.resolve();
+    await reading.promise;
+    await storeVaultSnapshot(db, deployment, totals({ blockNumber: "1002", totalDeposited: "800000000" }), observed);
+    releaseRead.resolve();
+    expect(await pending).toBe("older");
+    expect(sqlite.query("SELECT block_number,total_deposited FROM vault_snapshots").get())
+      .toEqual({ block_number: "1002", total_deposited: "800000000" });
+  } finally {
+    releaseWrite.resolve(); releaseRead.resolve();
+    await pending?.catch(() => {});
+    sqlite.close();
+  }
+});
+
+test("refresh reports missing RPC and store failures in input order while retaining older and healthy results", async () => {
+  const { db, sqlite } = sqliteD1();
+  const selected = [
+    { ...deployment, projectId: "missing-rpc", network: "unconfigured" },
+    { ...deployment, projectId: "bad-totals" },
+    { ...deployment, projectId: "older-vault" },
+    { ...deployment, projectId: "healthy-vault" },
+  ];
+  const reads: string[] = [];
+  try {
+    await storeVaultSnapshot(db, selected[2], totals(), observed);
+    const failure = await refreshVaultSnapshots(db, selected,
+      { "base-sepolia": "http://rpc.invalid" },
+      async (item) => {
+        reads.push(item.projectId);
+        return item.projectId === "bad-totals" ? totals({ vault: "wrong-vault" }) :
+          item.projectId === "older-vault" ? totals({ blockNumber: "999" }) : totals();
+      }, new Date(observed)).then(() => null, (error: unknown) => error);
+    expect(reads).toEqual(["bad-totals", "older-vault", "healthy-vault"]);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.map((error: Error) => error.message))
+      .toEqual(["Private RPC configuration unavailable", "Vault totals differ from the reviewed deployment"]);
+    expect(sqlite.query("SELECT project_id,block_number FROM vault_snapshots ORDER BY project_id").all())
+      .toEqual([{ project_id: "healthy-vault", block_number: "1000" }, { project_id: "older-vault", block_number: "1000" }]);
+  } finally { sqlite.close(); }
+});
+
 test("chronological and duplicate observations preserve the complete finalized row", async () => {
   const { db, sqlite } = sqliteD1();
   try {

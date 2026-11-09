@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "9978ee84738461b7c2de85a40322cd6b74668464c6aafa2ec0a4d8a6f91b56d8",
+  "inventorySha256": "8fcfe96d23590c3a2c5c87e06d14d03cf611cd849802ae033742b2bbac9dee01",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -89,7 +89,8 @@
       "values": ["immutable-mismatch", "payout-mismatch", "ready"],
       "models": [
         "formal/models/payments/chain_evidence.qnt",
-        "formal/models/payments/payment_dispatch.qnt"
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/vault_snapshot_store.qnt"
       ],
       "lexicallyUnmentionedValues": ["immutable-mismatch", "payout-mismatch"],
       "review": "candidate-only"

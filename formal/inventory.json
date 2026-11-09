@@ -462,6 +462,8 @@
       "sha256": "1e8f8bbc7a3834b589e3457bc8d3da36e8b2b769ac5e0ac8039c0145a8c371cf",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/vault_snapshot_refresh.qnt",
+        "formal/models/payments/vault_snapshot_store.qnt",
         "formal/models/rewards/monthly_coordinator.qnt"
       ],
       "candidateLines": [12, 62, 124, 136, 142],
@@ -472,7 +474,8 @@
       "sha256": "7618a7ced8cd7e408ba7255e0bf838891b7cf20202e31d409cd8d1b97876470f",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
-        "formal/models/payments/payment_dispatch.qnt"
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/vault_snapshot_store.qnt"
       ],
       "candidateLines": [94, 134, 135, 150],
       "review": "mapped-abstraction"
@@ -4878,7 +4881,8 @@
       "sha256": "a4483c985009bcf2dd0f432060cbc1a6d6fda4881e95b7a11664ed356fa2577c",
       "models": [
         "formal/models/ui/ui_project_authority.qnt",
-        "formal/models/ui/ui_resources.qnt"
+        "formal/models/ui/ui_resources.qnt",
+        "formal/models/ui/ui_vault_totals.qnt"
       ],
       "candidateLines": [
         2, 132, 133, 134, 136, 142, 146, 157, 183, 188, 192, 193, 194, 195, 196,
@@ -6642,7 +6646,8 @@
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_resource_deadline.qnt",
-        "formal/models/ui/ui_resources.qnt"
+        "formal/models/ui/ui_resources.qnt",
+        "formal/models/ui/ui_vault_totals.qnt"
       ],
       "candidateLines": [
         1, 7, 8, 9, 14, 16, 19, 24, 28, 40, 41, 42, 47, 58, 71, 79, 83, 93, 112
@@ -7674,6 +7679,8 @@
       "path": "workers/payments/deployments.ts",
       "sha256": "207caeb93e20adb2880c3aea26db81f4c8f557c1beccd4dc2c91f98fb34ccce2",
       "models": [
+        "formal/models/payments/payment_dispatch_queue.qnt",
+        "formal/models/payments/payment_worker_orchestration.qnt",
         "formal/models/payments/payment_worker_run.qnt",
         "formal/models/payments/payout_readiness.qnt",
         "formal/models/payments/solana_binding_api.qnt"
@@ -7685,8 +7692,11 @@
       "path": "workers/payments/index.ts",
       "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
       "models": [
+        "formal/models/payments/payment_dispatch_queue.qnt",
+        "formal/models/payments/payment_recovery_observation.qnt",
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
+        "formal/models/payments/payment_worker_orchestration.qnt",
         "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -12768,6 +12778,33 @@
       ]
     },
     {
+      "path": "formal/models/payments/payment_dispatch_queue.qnt",
+      "sha256": "537138ff63e7d12d0f935a3ffa0679b100c6214c9bc79456145fb4057d1c7747",
+      "sources": [
+        "workers/payments/deployments.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "batchLimitLeavesLaterCandidateForAnotherRunTest",
+        "configuredExecutorRequiredBeforeSelectionTest",
+        "exactUniqueDeploymentRequiredTest",
+        "expiredLeaseIsSelectedTest",
+        "leaseAtSelectionInstantIsNotExpiredTest",
+        "malformedNetworksRefuseBeforeSelectionTest",
+        "malformedTransactionDoesNotBecomeSubmissionTest",
+        "oneChildFailureDoesNotStopNextTest",
+        "otherNetworkNotSelectedTest",
+        "registryRereadForEachSubmissionTest",
+        "selectedWorkGetsFreshClockTest",
+        "selectionFailureStartsNoChildTest",
+        "serviceFailureContinuesToLaterWorkTest",
+        "submittedResponseDoesNotProvePaymentTest",
+        "unavailableChildDoesNotReadRegistryTest",
+        "unavailableChildIsNotAggregateFailureTest",
+        "unrelatedRegistryFailuresDoNotRejectMatchedSubmissionTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/payment_history.qnt",
       "sha256": "92cd0250eaf23395a4e4ac5058bb001cab62742933db48181e4c4831babd8ada",
       "sources": [
@@ -12805,6 +12842,32 @@
         "unknownOrNoncanonicalCursorIsRejectedTest",
         "visibilityChangeBetweenCountAndPageCanFailClientTest",
         "visibilityChangeBetweenPagesCanChangeTotalTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/payment_recovery_observation.qnt",
+      "sha256": "2a64256880111044f7f667359d501547773e5237e8bbf8efc380f26ddd4420f5",
+      "sources": ["workers/payments/index.ts"],
+      "scenarios": [
+        "bothRowsContinueAfterFirstFailureTest",
+        "conflictingTransactionDoesNotReplaceReceiptTest",
+        "invalidCancellationDoesNotRetireTest",
+        "lateFailureDoesNotResubmitAttemptTest",
+        "latePaidStillRetainsStatusButNeverUnpaysTest",
+        "lostWriteReplyRetainsCommittedStatusTest",
+        "malformedStatusIsNotSubmissionTest",
+        "nullWithoutSuccessorSkipsCancellationTest",
+        "paidRowNotSelectedTest",
+        "retirementPreservesLiveLeaseTest",
+        "selectionErrorPreventsServiceCallsTest",
+        "serviceMissingIsPerRowFailureTest",
+        "signedEvmRowNotSelectedTest",
+        "signedSolanaRowSelectedTest",
+        "sourceOrderNotPromisedTest",
+        "successorCancellationCanReturnSignedAttemptTest",
+        "successorCancellationCanReturnUnsubmittedBytesTest",
+        "unservedNetworkNotSelectedTest",
+        "writeFailureDoesNotPreventNextRowTest"
       ]
     },
     {
@@ -12903,6 +12966,31 @@
         "retryConvertsHistoricalWinnerToRegistryTest",
         "sameAddressHistoricalWinnerNowRefusesTest",
         "sameAddressIgnoresRenamedLoginTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/payment_worker_orchestration.qnt",
+      "sha256": "4cb1a51656c4905852ac13205304b2663bedc694e94c6dfc4f05d3fdda38f9f8",
+      "sources": [
+        "workers/payments/deployments.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "allJobFailuresAreReportedInCallOrderTest",
+        "emptyRegistryStillRunsJobsTest",
+        "errorDoesNotRollBackJobEffectTest",
+        "firstScanFailureDoesNotSkipNextScanTest",
+        "jobsDoNotOverlapTest",
+        "jobsWaitForSyncReturnTest",
+        "laterMalformedConfigurationCanStillReachDispatchTest",
+        "registryFailureAbortsBeforeJobsTest",
+        "registryProblemsDoNotStopJobsTest",
+        "retryDoesNotErasePriorDurableEffectsTest",
+        "rpcParseFailureAbortsBeforeSnapshotsTest",
+        "scanWaitsForSnapshotJoinTest",
+        "snapshotFailureStillScansEveryDeploymentTest",
+        "successfulReturnDoesNotRequirePaymentEffectsTest",
+        "syncReturnsFailuresInsteadOfThrowingTest"
       ]
     },
     {
@@ -13471,6 +13559,59 @@
         "reportAloneCannotHoldTest",
         "signedHoldClearsApprovalTest",
         "substitutedWalletRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/vault_snapshot_refresh.qnt",
+      "sha256": "8818143d1fd38bd3e6acddcc7a141e152ba695b2c557c23e03fe8741a604fab8",
+      "sources": ["backend/payments/vault-snapshots.ts"],
+      "scenarios": [
+        "completeBatchRetainsHealthyRowsOnAggregateErrorTest",
+        "emptyInputSucceedsWithoutWorkersTest",
+        "failedStoreReplyCanRetainDurableRowTest",
+        "failureOrderFollowsInputsNotCompletionTest",
+        "fourPendingCallsBoundConcurrencyTest",
+        "interruptionRetainsCompletedWritesTest",
+        "missingRpcSkipsReaderAndContinuesTest",
+        "olderSnapshotIsSuccessfulWithoutWriteTest",
+        "oneWorkerForOneDeploymentTest",
+        "pendingReadPreventsReportTest",
+        "pendingStorePreventsReportTest",
+        "readFailureReleasesSlotTest",
+        "slotReusedOnlyAfterStoreCompletesTest",
+        "storeFailureDoesNotStopNextDeploymentTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/vault_snapshot_store.qnt",
+      "sha256": "19a027a4eec5c3ecd0934c0f2377f967be4f103921f9ed836cc46a595db84926",
+      "sources": [
+        "backend/payments/vault-snapshots.ts",
+        "backend/payments/verified-evidence.ts"
+      ],
+      "scenarios": [
+        "changedAssetRefusedTest",
+        "changedDecimalsRefusedTest",
+        "concurrentLaterObservationWinsTest",
+        "currentCounterMayDecreaseOrBeNullTest",
+        "duplicateExactWriteStillStoredTest",
+        "failedPriorReadDoesNotWriteTest",
+        "failedReadbackKeepsWinningRowTest",
+        "firstCounterDecreaseRefusedTest",
+        "firstWriteStartsLegacyAtZeroTest",
+        "invalidTotalsRefuseBeforeReadTest",
+        "laterReadbackCanReclassifyConflictAsOlderTest",
+        "lostWriteReplyAllowsExactRetryTest",
+        "lostWriteReplyKeepsCommittedRowTest",
+        "newerBlockWinsDespiteOlderObservationTest",
+        "normalStoredTest",
+        "olderBlockPrecedesCounterCheckTest",
+        "sameBlockEarlierObservationReturnsOlderTest",
+        "secondCounterDecreaseRefusedTest",
+        "storedReplyDoesNotProveLatestRowTest",
+        "updateKeepsHistoricalServiceFeesTest",
+        "writeGuardCatchesConcurrentCounterChangeTest",
+        "writeGuardChecksChainTest"
       ]
     },
     {
@@ -18962,6 +19103,40 @@
         "unreadableResetIsUserAssertionNotFinalityTest",
         "unrelatedEvidenceRefusedBeforeMatchingFinalityTest",
         "walletReturnedEvidenceCannotBeEditedTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_vault_totals.qnt",
+      "sha256": "5e4eb26e94b6b3bf4d108153c1dcce2de2fc9dcf020399fac1395a06fa1f8cc3",
+      "sources": ["src/EscrowFunding.tsx", "src/lib/use-public-resource.ts"],
+      "scenarios": [
+        "cleanupRemovesTimerAndReturnListenerTest",
+        "currentProjectGoodReplyReplacesPriorProjectTest",
+        "emptyLastGoodKeepsFailureVisibleTest",
+        "emptyReadIsDistinctFromLoadingTest",
+        "emptySnapshotUsesStaleWindowTest",
+        "errorRetryTimerUsesDefaultWindowTest",
+        "freshSnapshotTimerHasOneSecondMarginTest",
+        "hiddenTimerExpiresWithoutRetryOrRearmTest",
+        "hugeTimerIsClampedTest",
+        "initialFailureShowsNoValueTest",
+        "initialLoadingNeverMeansZeroTest",
+        "invalidPayloadCannotReplaceLastGoodTest",
+        "mismatchedProjectDoesNotInstallTimerTest",
+        "nonpositiveServerWindowStillWaitsOneMinuteTest",
+        "otherProjectLastGoodCannotHideErrorTest",
+        "otherProjectReadyPayloadHiddenBeforeEffectTest",
+        "refreshFailureKeepsValueAndErrorTest",
+        "refreshRetainsPreviousValueTest",
+        "returnAtCacheWindowRequestsRetryTest",
+        "returnBeforeCacheWindowDoesNotRetryTest",
+        "staleSnapshotUsesFullRetryWindowTest",
+        "successfulEmptyRefreshReplacesPreviousValueTest",
+        "timerOnlyRejectsHiddenVisibilityTest",
+        "unchangedObservationDoesNotRearmTimerTest",
+        "undeployedSuppressesRetainedDataTest",
+        "visibilityMustBeVisibleForReturnRetryTest",
+        "visibleReturnAfterHiddenExpiryRetriesTest"
       ]
     },
     {
