@@ -4276,17 +4276,17 @@
     },
     {
       "path": "src/AutomaticMonthlyPayment.tsx",
-      "sha256": "c5c1b89d81aab94e982f22d5ec18feab138295b7094af4618402f55409b419ae",
+      "sha256": "f0b0d31435fc74cb0c58dbe12db103c3af4bcd6a0cc15dcb60423d8f11b983e0",
       "models": [
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 30, 34, 39, 49, 51, 81, 100, 106, 111, 112, 113, 114, 115, 132, 134,
-        154, 155, 189, 221, 228, 231, 232, 240, 245, 246, 247, 248, 270, 271,
-        272, 286, 287, 288, 302, 308, 328, 345, 361, 367, 370, 373, 380, 383,
-        390, 391, 456, 475
+        1, 28, 32, 37, 47, 49, 79, 98, 104, 109, 110, 111, 112, 113, 130, 132,
+        152, 153, 183, 190, 193, 194, 202, 207, 208, 209, 210, 222, 223, 224,
+        238, 239, 240, 254, 260, 280, 297, 313, 319, 322, 325, 332, 335, 342,
+        343, 408, 427
       ],
       "review": "mapped-abstraction"
     },
@@ -4500,16 +4500,16 @@
     },
     {
       "path": "src/OwnerCommitment.tsx",
-      "sha256": "c84fe9f9d2aa1ae8d1eeeae3bd4992d29bc44cdb7d1119ea4638b8633685c7c7",
+      "sha256": "e83ea2ec527b16d83645b356031cdf4116a160f096ea07500eb2758bcf4f5d40",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_tab_scope.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 21, 31, 39, 48, 51, 67, 77, 97, 103, 106, 134, 135, 140, 141, 154,
-        160, 161, 166, 180, 236, 240, 241, 243, 245, 247, 250, 252, 253, 259,
-        261, 264, 265, 266, 273, 288, 296, 298, 300, 303, 310, 337, 342, 399
+        1, 20, 30, 38, 47, 50, 66, 76, 96, 101, 104, 132, 133, 138, 139, 152,
+        158, 159, 164, 178, 203, 207, 208, 210, 212, 214, 217, 219, 220, 226,
+        228, 231, 232, 233, 240, 255, 263, 265, 267, 270, 277, 304, 309, 366
       ],
       "review": "mapped-abstraction"
     },
@@ -4904,7 +4904,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "78801f634ec77ffb8d9dbb3e9afa6acee8c95adb90ffa1805a06948b376eacdd",
+      "sha256": "898c1106b8c558d59d1239c28bc62730eed4cf746811819e9c9ad8d8a31c801f",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -4912,10 +4912,10 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 29, 38, 44, 57, 59, 112, 118, 123, 126, 127, 129, 130, 131, 132, 149,
-        151, 155, 192, 214, 263, 295, 302, 309, 310, 311, 318, 319, 321, 325,
-        326, 327, 328, 350, 351, 352, 361, 369, 382, 396, 423, 439, 444, 447,
-        454, 457, 464, 465, 471, 609
+        2, 27, 36, 42, 55, 57, 110, 116, 121, 124, 125, 127, 128, 129, 130, 147,
+        149, 153, 190, 212, 261, 268, 275, 276, 277, 284, 285, 287, 291, 292,
+        293, 294, 306, 307, 308, 317, 325, 338, 352, 379, 395, 400, 403, 410,
+        413, 420, 421, 427, 565
       ],
       "review": "mapped-abstraction"
     },
@@ -5892,14 +5892,14 @@
     },
     {
       "path": "src/lib/use-pending-wallet-attempt.ts",
-      "sha256": "31cd26cf8b6e0838491ced11b398964ea5faa9ba02f0ac5948cc3b53fc54f8db",
+      "sha256": "83046822ecb1bb2b2376ecd566cc3eb64ee10d83bdfe86367327895748865caf",
       "models": [
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
-      "candidateLines": [1, 7, 10, 21, 27, 31, 32, 34, 37, 38, 39, 69],
+      "candidateLines": [1, 8, 11, 22, 28, 32, 33, 35, 38, 39, 40, 144],
       "review": "mapped-abstraction"
     },
     {

@@ -23,9 +23,7 @@ import {
   transactionUrl,
 } from "./lib/payments/contracts";
 import {
-  clearPendingAttempt,
   type PendingAttempt,
-  updatePendingRecord,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -98,10 +96,10 @@ export function AutomaticMonthlyPayment({
     saved,
     storedPending,
     pending,
-    setPending,
     storageError,
-    remember,
     clear,
+    submit,
+    recordRecoveryHash,
     clearUnreadable,
   } = usePendingWalletAttempt<Pending>(
     key,
@@ -164,57 +162,21 @@ export function AutomaticMonthlyPayment({
           ? { solanaBlockhash: review.solanaPlan.transaction.blockhash }
           : {}),
       };
-      let requested = false;
-      try {
-        const beforeSend = () => {
-          if (!mounted.current)
-            throw new Error(
-              "The wallet view was closed. Review before sending.",
-            );
-          if (!remember(intent))
-            throw new Error(
-              "The saved request changed. Reload before continuing.",
-            );
-          if (mounted.current) setRecoveryHash("");
-          requested = true;
-        };
-        const hash = solana
-          ? await sendSolanaMonthlySetting(
-              deployment,
-              wallet,
-              review,
-              beforeSend,
-            )
-          : await sendEvmMonthlySetting(deployment, wallet, review, beforeSend);
-        const submitted: Pending = { ...intent, hash, hashSource: "wallet" };
-        try {
-          if (!remember(submitted, intent) && mounted.current)
-            setNotice(
-              `Submitted ${hash}. Keep this hash; the saved request changed.`,
-            );
-        } catch {
-          if (mounted.current) {
-            setPending(submitted);
-            setNotice(
-              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
-            );
-          }
-        }
-        if (mounted.current) setReview(null);
-      } catch (caught) {
-        if ((caught as { code?: unknown } | null)?.code === 4001) {
-          if (requested) {
-            if (mounted.current) clear(intent);
-            else clearPendingAttempt(key, intent);
-          }
-          throw new Error("You declined the wallet request. Nothing was sent.");
-        }
-        if (requested)
-          throw new Error(
+      await submit(
+        intent,
+        (beforeSend) =>
+          solana
+            ? sendSolanaMonthlySetting(deployment, wallet, review, beforeSend)
+            : sendEvmMonthlySetting(deployment, wallet, review, beforeSend),
+        {
+          submitted: (hash) => ({ ...intent, hash, hashSource: "wallet" }),
+          notify: setNotice,
+          onBeforeSend: () => setRecoveryHash(""),
+          unclear:
             "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
-          );
-        throw caught;
-      }
+        },
+      );
+      if (mounted.current) setReview(null);
     });
   const check = () =>
     run(async () => {
@@ -249,22 +211,12 @@ export function AutomaticMonthlyPayment({
             hash,
             hashSource: "recovery",
           };
-          let stored: boolean;
-          try {
-            stored = updatePendingRecord(key, captured, candidate);
-          } catch {
-            setPending(candidate);
+          if (!recordRecoveryHash(captured, candidate)) {
             setNotice(
               `Not saved on this device. Keep this ${solana ? "signature" : "hash"}: ${hash}.`,
             );
             return;
           }
-          if (!stored)
-            throw new Error(
-              "The saved request changed. Reload before continuing.",
-            );
-          storedPending.current = candidate;
-          setPending(candidate);
         }
         setNotice(
           pending.hashSource === "wallet"
