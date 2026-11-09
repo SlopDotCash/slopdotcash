@@ -6,6 +6,7 @@ import {
   claimDueDeliveries,
   reconcileSecurityMail,
   recordDelivery,
+  retryWithoutProviderCall,
 } from "../../workers/notify/security";
 
 function fixture() {
@@ -160,6 +161,76 @@ test("delivery model: a stale worker cannot overwrite ambiguity and a failed evi
     h.sqlite.exec("DROP TRIGGER fail_delivery_append");
     expect(await reconcileSecurityMail(h.deps, proof, "activity")).toBe(true);
     expect(h.row()).toMatchObject({ state: "delivered" });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("delivery model: a stale worker's retry cannot move the backoff of a reconciled row", async () => {
+  const h = fixture();
+  try {
+    const first = (await h.claim())[0];
+    h.sqlite
+      .query(
+        "UPDATE activity_notification_outbox SET destination_digest=? WHERE id=?",
+      )
+      .run("a".repeat(64), h.id);
+    h.advance(300_001);
+    expect(await h.claim()).toHaveLength(0);
+    expect(
+      await reconcileSecurityMail(
+        h.deps,
+        {
+          deliveryId: h.id,
+          attempt: 1,
+          destinationDigest: "a".repeat(64),
+          evidenceReference: "not-accepted-proof",
+          outcome: "not-accepted",
+        },
+        "activity",
+      ),
+    ).toBe(true);
+    const due = () =>
+      h.sqlite
+        .query(
+          "SELECT state,next_attempt_at FROM activity_notification_outbox WHERE id=?",
+        )
+        .get(h.id);
+    const reconciled = due();
+    expect(reconciled).toMatchObject({ state: "retrying" });
+    h.advance(3_600_000);
+    expect(
+      await retryWithoutProviderCall(h.deps, first, "activity"),
+    ).toBe("retrying");
+    expect(due()).toEqual(reconciled);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM activity_notification_delivery_events WHERE state='retrying' AND evidence_reference IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("delivery model: the current claim's retry records its backoff", async () => {
+  const h = fixture();
+  try {
+    const first = (await h.claim())[0];
+    await retryWithoutProviderCall(h.deps, first, "activity");
+    expect(
+      h.sqlite
+        .query(
+          "SELECT state,attempts,next_attempt_at FROM activity_notification_outbox WHERE id=?",
+        )
+        .get(h.id),
+    ).toEqual({
+      state: "retrying",
+      attempts: 1,
+      next_attempt_at: "2026-11-08T00:01:00.000Z",
+    });
   } finally {
     h.sqlite.close();
   }

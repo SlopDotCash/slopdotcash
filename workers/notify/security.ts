@@ -232,15 +232,18 @@ export async function retryWithoutProviderCall(
   channel: "security" | "activity" = "security",
 ): Promise<"retrying" | "exhausted"> {
   const state = row.attempts + 1 >= MAX_ATTEMPTS ? "exhausted" : "retrying";
+  // Fenced like recordDelivery: a stale claim (already marked ambiguous and
+  // possibly reconciled under a newer attempt) must not move the backoff.
   await deps.db
     .prepare(
-      `UPDATE ${channel}_notification_outbox SET next_attempt_at = ? WHERE id = ?`,
+      `UPDATE ${channel}_notification_outbox SET next_attempt_at = ? WHERE id = ? AND state = 'sending' AND attempts = ?`,
     )
     .bind(
       new Date(
         deps.now().getTime() + Math.min(3600, 60 * 2 ** row.attempts) * 1000,
       ).toISOString(),
       row.id,
+      row.attempts + 1,
     )
     .run();
   await recordDelivery(deps, row, state, null, channel);
