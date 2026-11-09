@@ -220,21 +220,44 @@ export async function indexPaymentEvent(
     throw new Error("Unknown or duplicate payout");
   // A payout to a wallet the contributor never authorized means the identity
   // authority was misused. Fail closed so it is investigated, not recorded.
+  // The destination must be the contributor's currently effective wallet, or
+  // the wallet a dispatched attempt for this exact transaction paid: a
+  // payment submitted before a wallet replacement finalizes afterwards (the
+  // Quint late-original case), so the superseded wallet stays payable for
+  // that transaction only.
   if (event.kind === "paid") {
     if (!event.destination) throw new Error("Payout destination missing");
+    const isEvm = chainFamily(event.chain) === "evm" ? 1 : 0;
     const authorized = await db
       .prepare(
-        "SELECT 1 ok FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.github_user_id=? AND w.chain=? AND (CASE WHEN ?=1 THEN lower(w.wallet_address)=lower(?) ELSE w.wallet_address=? END)",
+        "SELECT 1 ok FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.github_user_id=? AND w.chain=? AND (CASE WHEN ?=1 THEN lower(w.wallet_address)=lower(?) ELSE w.wallet_address=? END)",
       )
       .bind(
         event.githubUserId,
         event.chain,
-        chainFamily(event.chain) === "evm" ? 1 : 0,
+        isEvm,
         event.destination,
         event.destination,
       )
       .first<{ ok: number }>();
-    if (!authorized)
+    const dispatched =
+      authorized === null
+        ? await db
+            .prepare(
+              "SELECT 1 ok FROM payment_attempts a JOIN wallet_claims w ON w.id=a.claim_id WHERE a.obligation_id=? AND a.transaction_id=? AND w.github_user_id=? AND w.chain=? AND (CASE WHEN ?=1 THEN lower(w.wallet_address)=lower(?) ELSE w.wallet_address=? END)",
+            )
+            .bind(
+              event.obligationId,
+              event.transactionId,
+              event.githubUserId,
+              event.chain,
+              isEvm,
+              event.destination,
+              event.destination,
+            )
+            .first<{ ok: number }>()
+        : null;
+    if (!authorized && !dispatched)
       throw new Error(
         "Payout destination is not an authorized contributor wallet",
       );
