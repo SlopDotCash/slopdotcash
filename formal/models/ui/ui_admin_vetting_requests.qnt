@@ -3,7 +3,11 @@
 // @source src/Admin.tsx
 // @source backend/vetting/handler.ts
 // @evidence tests/e2e/admin-vetting-request-ownership.spec.ts
+// @evidence tests/e2e/admin-editor-lifetime.spec.ts
 // Two read slots, two actor identities, two parent lifetimes, one mutation.
+// The read ownership applies to VettingSection and ActivationClearance alike;
+// clearance's layout generation fence retires a passive load without moving
+// its network start or status publication into the layout phase.
 // Committed layout cleanup retires the parent and its child mutation. Each
 // identity observation, helper return and caller use is a separate transition.
 // Admin role and cookie identity can change independently; server admission
@@ -277,6 +281,9 @@ module ui_admin_vetting_requests {
     .then(dispatchMutation).then(admitMutation(true))
   run readHelperReturnCannotDispatchAfterCommitTest = init.then(beginRead(1))
     .then(observeReadIdentity(1)).then(returnReadIdentity(1)).then(depart).then(useReadIdentity(1))
+    .then(dispatchRead(1).fail())
+  run clearanceReadCannotStartAfterCommittedRemovalTest = init.then(beginRead(1))
+    .then(observeReadIdentity(1)).then(depart).then(returnReadIdentity(1)).then(useReadIdentity(1))
     .then(dispatchRead(1).fail())
   run observedMutationCannotStartAfterCommitTest = init.then(loaded).then(beginMutation)
     .then(observeMutationIdentity).then(depart).then(returnMutationIdentity).then(useMutationIdentity)

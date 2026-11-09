@@ -40,6 +40,19 @@ export type EvidenceChunk = {
   sizeBytes: number;
 };
 
+/** Only our verified read may bind corruption to the observed R2 ETag. */
+export class EvidenceCorruptionError extends Error {
+  readonly status = 409;
+  readonly code = "evidence_corrupt";
+  readonly observedEtag: string | undefined;
+
+  constructor(message: string, etag: unknown) {
+    super(message);
+    this.observedEtag =
+      typeof etag === "string" && etag.length > 0 ? etag : undefined;
+  }
+}
+
 export function chunkLayout(value: unknown, size: number): EvidenceChunk[] {
   // No total size limit (owner decision, 28 October 2026); only each part is
   // bounded.
@@ -95,28 +108,25 @@ export async function verifiedPart(
   const reader = object.body.getReader();
   try {
     if (object.size !== size || object.customMetadata?.sha256 !== digest)
-      throw Object.assign(new Error("Evidence metadata changed"), {
-        status: 409,
-        code: "evidence_corrupt",
-      });
+      throw new EvidenceCorruptionError(
+        "Evidence metadata changed",
+        object.etag,
+      );
     const result = new Uint8Array(size);
     let offset = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (offset + value.byteLength > size)
-        throw Object.assign(new Error("Evidence length changed"), {
-          status: 409,
-          code: "evidence_corrupt",
-        });
+        throw new EvidenceCorruptionError(
+          "Evidence length changed",
+          object.etag,
+        );
       result.set(value, offset);
       offset += value.byteLength;
     }
     if (offset !== size || bytesToHex(sha256(result)) !== digest)
-      throw Object.assign(new Error("Evidence bytes changed"), {
-        status: 409,
-        code: "evidence_corrupt",
-      });
+      throw new EvidenceCorruptionError("Evidence bytes changed", object.etag);
     return result;
   } catch (error) {
     // Rejecting metadata or a body must relinquish the acquired R2 stream.

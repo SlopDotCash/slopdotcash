@@ -11,7 +11,6 @@ import { CircleAlert, ExternalLink, History, ShieldCheck } from "lucide-react";
 import {
   type FormEvent,
   Fragment,
-  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -140,7 +139,7 @@ export function ProjectEnforcementPanel({
   const headingId = useId();
   const mounted = useRef(true);
   const inFlight = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;

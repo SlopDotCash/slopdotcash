@@ -14,6 +14,8 @@
 // bucket.get either rejects, returns null, or supplies a fresh unlocked R2
 // body whose getReader operation succeeds; prelocked/invalid adapter objects
 // are outside that storage input contract.
+// Own corruption errors carry that response's optional ETag. Repair CAS and
+// missing-ETag refusal are covered by vetting_upload_completion, not here.
 // verifyParts feeds only fully verified original bytes to the whole-file hash,
 // in list order, and destroys that hash on both success and failure. Individual
 // part hashes alone cannot prove the declared whole digest.

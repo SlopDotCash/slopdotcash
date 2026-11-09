@@ -30,6 +30,7 @@ import {
   chunkKey,
   chunkLayout,
   EVIDENCE_CHUNK_BYTES,
+  EvidenceCorruptionError,
   type EvidenceChunk,
   evidenceLocation,
   evidenceObjectKey,
@@ -1339,11 +1340,11 @@ export class VettingEvidence {
   }
   /**
    * Create-only write of bytes already checked against `sha`, then a full
-   * reread. A content-addressed key holds only the bytes its digest names, so
-   * when the existing copy is missing or fails verification it is replaced
-   * with these verified bytes. An observed valid copy needs no repair; a
-   * concurrent repair can still win before this unconditional repair write.
-   * Run-scoped keys keep the strict create-only rule.
+   * reread. Only bytes verified against the key's digest may be written.
+   * A missing or corrupt copy can be repaired with these verified bytes.
+   * Repair compares the ETag of the actual corrupt
+   * response; missing copies retry create-only. Unknown reads authorize no
+   * replacement. Run-scoped keys keep the strict create-only rule.
    */
   private async store(
     bucket: R2Bucket,
@@ -1364,21 +1365,19 @@ export class VettingEvidence {
     try {
       await verifiedPart(bucket, key, sha, body.byteLength);
     } catch (error) {
-      if (
-        !content ||
-        !(error instanceof Error) ||
-        !["evidence_missing", "evidence_corrupt"].includes(
-          (error as Error & { code?: string }).code ?? "",
-        )
-      )
-        throw error;
-      // The one deliberate overwrite: verified bytes replace a missing or
-      // corrupt copy at the key their own digest names.
-      await bucket.put(
-        key,
-        body,
-        options as unknown as Parameters<R2Bucket["put"]>[2],
-      );
+      if (!content || !(error instanceof Error)) throw error;
+      let onlyIf: Parameters<R2Bucket["put"]>[2]["onlyIf"];
+      if (error instanceof EvidenceCorruptionError) {
+        if (error.observedEtag === undefined) throw error;
+        onlyIf = { etagMatches: error.observedEtag };
+      } else if (
+        (error as Error & { code?: string }).code === "evidence_missing"
+      ) {
+        onlyIf = { etagDoesNotMatch: "*" };
+      } else throw error;
+      await bucket.put(key, body, { ...options, onlyIf });
+      // A concurrent writer may have won the condition. Accept only a fresh
+      // verified copy, never the success/missing result of the PUT alone.
       await verifiedPart(bucket, key, sha, body.byteLength);
     }
   }
