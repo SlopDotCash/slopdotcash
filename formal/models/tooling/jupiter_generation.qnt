@@ -1,6 +1,6 @@
 // @source scripts/generate-jupiter-decoder.mjs
 // @source scripts/check-lemmascript.mjs
-// @evidence docs/lemmascript-jupiter-research.md
+// @evidence https://github.com/SlopDotCash/slopdotcash/blob/ebf468873147a7ec119858915deca6cb3177eb0d/docs/lemmascript-jupiter-research.md
 // Three output classes and two input epochs bound partial writes and drift.
 // This models command/control behavior, not generator or compiler correctness.
 // baselinePresent means readable emission shape, not fresh compiler output.

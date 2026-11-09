@@ -96,8 +96,7 @@ Slop shows one public measure: Points. Slopbot reviews each accepted pull
 request, estimates its size and value, and assigns accepted-work Points. A
 maintainer `slop-score` record can correct that assessment. Useful reviews earn
 separate credit. Usage evidence is diagnostic and never changes Points, rank,
-reward share, or payment. See the [scoring contract](protocol/scoring-v2.md)
-and the [Points rules](protocol/points-v1.md).
+reward share, or payment. See the [Points and scoring rules](docs/slop-product-requirements.md#7-points-discovery-and-clear-pages).
 
 ## What the public record means
 

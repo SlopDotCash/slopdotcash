@@ -10,7 +10,7 @@ const { ts } = createRequire(import.meta.resolve("lemmascript/package.json"))(
   "ts-morph",
 );
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const outputPath = join(root, "docs/lemmascript-inventory.json");
+const outputPath = join(root, "formal/lemmascript-inventory.json");
 const arguments_ = process.argv.slice(2);
 if (
   arguments_.some((argument) => !["--write", "--check"].includes(argument)) ||
