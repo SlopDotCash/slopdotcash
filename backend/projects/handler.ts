@@ -1008,6 +1008,7 @@ async function currentAuthority(
   deps: ProjectApiDependencies,
   manifest: ProjectDefinition,
   actor: GithubActor,
+  identityMismatch: "throw" | "deny" = "throw",
 ): Promise<{ authority: SetupAuthority; access: AccessCheck }> {
   const access = await readRepositoryAccess(
     deps.repositoryAccess,
@@ -1031,8 +1032,14 @@ async function currentAuthority(
       access: { state: "retry", message },
     };
   }
-  if (control.state === "mismatch")
+  if (control.state === "mismatch") {
+    if (identityMismatch === "deny")
+      return {
+        authority: { state: "denied", message: control.reason },
+        access,
+      };
     fail(422, "invalid_manifest", control.reason);
+  }
   return { authority, access };
 }
 
@@ -1120,16 +1127,16 @@ async function runSetupCheck(
   let checked = options.authority;
   if (checked === undefined) {
     try {
-      checked = await currentAuthority(deps, project.manifest, actor);
+      checked = await currentAuthority(deps, project.manifest, actor, "deny");
     } catch (error) {
-      // A repository that no longer matches its manifest is a denial here,
-      // shown with its reason, not a failed status read.
+      // A known identity mismatch returns denied with its observed access.
+      // An unexpected reader failure remains unavailable, never a denial.
       const message =
         typeof error === "object" && error !== null && "message" in error
           ? String(error.message)
-          : "GitHub repository facts do not match this project";
+          : "GitHub could not be checked. Try again.";
       checked = {
-        authority: { state: "denied", message },
+        authority: { state: "retry", message },
         access: { state: "retry", message },
       };
     }

@@ -602,6 +602,79 @@ test("setup activates a project only with installation write access and a clean 
   expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
 });
 
+test("setup distinguishes a confirmed identity mismatch from a provider outage without weakening write refusals", async () => {
+  const t = registry();
+  try {
+    await t.create("identity-status", "example/identity-status");
+    t.state.clearance = CLEARED;
+    t.state.scans = [];
+    const initial = await t.persistence.getProject("identity-status");
+    if (!initial) throw new Error("Project missing");
+    const reason = "Repository or steward facts do not match GitHub";
+    t.state.control = { state: "mismatch", reason };
+    const denied = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(denied.status).toBe(200);
+    expect(denied.body.setup).toMatchObject({
+      revision: 1,
+      status: "paused",
+      state: "action_required",
+      nextAction: { kind: "ask_maintainer", message: reason },
+      checks: {
+        authority: { state: "denied", message: reason },
+        installation: { state: "installed" },
+      },
+      activatedRevision: null,
+    });
+    const write = await t.call("PUT", "projects/identity-status", OWNER, {
+      expectedRevision: initial.revision,
+      manifest: { ...initial.manifest, headline: "A changed project headline." },
+    });
+    expect(write.status).toBe(422);
+    expect(write.body.error).toBe("invalid_manifest");
+
+    t.deps.repositoryControl = async () => {
+      throw new Error("Synthetic GitHub outage");
+    };
+    const unavailable = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(unavailable.status).toBe(200);
+    expect(unavailable.body.setup).toMatchObject({
+      state: "retry",
+      nextAction: { kind: "retry_installation" },
+      checks: {
+        authority: { state: "retry" },
+        installation: { state: "retry" },
+      },
+      activatedRevision: null,
+    });
+    expect(t.state.scans).toEqual([]);
+    expect((await t.persistence.getProject(initial.id))?.revision).toBe(1);
+    t.deps.repositoryControl = async () => ({ state: "matched" });
+    const recovered = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(recovered.body.setup).toMatchObject({
+      state: "ready",
+      revision: 2,
+      activatedRevision: 2,
+    });
+  } finally {
+    t.sqlite.close();
+  }
+});
+
 test("an owner records and revokes explicit closure consent with current authority and immutable revisions", async () => {
   const { persistence, call, create, state } = registry();
   await create("open-registry", "example/open-registry");

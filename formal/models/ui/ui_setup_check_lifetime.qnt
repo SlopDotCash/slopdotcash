@@ -6,6 +6,8 @@
 // @source backend/http.ts
 // @evidence tests/e2e/project-access-retry.spec.ts
 // Setup-check request ownership, not the server's setup/activation policy.
+// Layout cleanup retires ownership at committed departure, before passive
+// effects; a preflight released by that DOM removal cannot dispatch a POST.
 // Two actors, projects, request IDs and component lifetimes; unexecuted.
 module ui_setup_check_lifetime {
   type Request = { phase: str, actor: int, project: int, lifetime: int,

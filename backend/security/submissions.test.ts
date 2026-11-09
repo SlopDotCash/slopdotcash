@@ -1548,6 +1548,133 @@ describe("private intake: send outcomes", () => {
     expect(t.github.counts.posts).toBe(0);
   });
 
+  for (const advancedTo of ["uncertain", "draft", "new-claim"] as const)
+    test(`a delayed send claim readback cannot borrow ${advancedTo}`, async () => {
+      const t = setup();
+      const submission = await t.ready();
+      let enteredOld!: () => void;
+      let enteredNew!: () => void;
+      let releaseOld!: () => void;
+      let releaseNew!: () => void;
+      const oldEntered = new Promise<void>((resolve) => {
+        enteredOld = resolve;
+      });
+      const newEntered = new Promise<void>((resolve) => {
+        enteredNew = resolve;
+      });
+      const oldGate = new Promise<void>((resolve) => {
+        releaseOld = resolve;
+      });
+      const newGate = new Promise<void>((resolve) => {
+        releaseNew = resolve;
+      });
+      let oldHeld = false;
+      let newHeld = false;
+      const prepare = t.db.prepare.bind(t.db);
+      const intercepted = spyOn(t.db, "prepare").mockImplementation((sql) => {
+        const wrap = (
+          statement: ReturnType<typeof t.db.prepare>,
+          values: unknown[],
+        ): ReturnType<typeof t.db.prepare> => new Proxy(statement, {
+          get(target, property, receiver) {
+            if (property === "bind")
+              return (...next: unknown[]) => wrap(target.bind(...next), next);
+            if (property === "first")
+              return async () => {
+                if (
+                  sql.includes("FROM security_submissions WHERE id = ?") &&
+                  values[0] === submission.id &&
+                  t.row(submission.id).state === "submitting"
+                ) {
+                  if (!oldHeld && t.row(submission.id).attempt === 1) {
+                    oldHeld = true;
+                    enteredOld();
+                    await oldGate;
+                  } else if (
+                    advancedTo === "new-claim" &&
+                    !newHeld &&
+                    t.row(submission.id).attempt === 2
+                  ) {
+                    newHeld = true;
+                    enteredNew();
+                    await newGate;
+                  }
+                }
+                return target.first();
+              };
+            return Reflect.get(target, property, receiver);
+          },
+        });
+        return wrap(prepare(sql), []);
+      });
+      let older: ReturnType<typeof t.send> | undefined;
+      let newer: ReturnType<typeof t.send> | undefined;
+      try {
+        older = t.send(submission.id, submission.revision);
+        await Promise.race([
+          oldEntered,
+          older.then(() => {
+            throw new Error("The old send finished before its claim readback");
+          }),
+        ]);
+        expect(t.github.counts.posts).toBe(0);
+        t.advance(61_000);
+        const listed = await t.call(REPORTER, "GET", "security-submissions");
+        expect(
+          (listed.body.submissions as Body["submission"][])[0]?.state,
+        ).toBe("uncertain");
+        if (advancedTo !== "uncertain") {
+          t.advance(RECONCILE_QUIET_MS);
+          const reconciled = await t.reconcile(
+            submission.id,
+            Number(t.row(submission.id).revision),
+          );
+          expect(reconciled.body.submission?.state).toBe("draft");
+        }
+        if (advancedTo === "new-claim") {
+          newer = t.send(submission.id, Number(t.row(submission.id).revision));
+          await Promise.race([
+            newEntered,
+            newer.then(() => {
+              throw new Error("The new send finished before its claim readback");
+            }),
+          ]);
+        }
+        const retained = t.row(submission.id);
+        releaseOld();
+        const refused = await older;
+        expect(refused.status).toBe(409);
+        expect(refused.body.error).toBe("stale_revision");
+        expect(t.github.counts.posts).toBe(0);
+        expect(t.row(submission.id)).toEqual(retained);
+        if (advancedTo === "new-claim") {
+          releaseNew();
+        } else {
+          if (advancedTo === "uncertain") {
+            t.advance(RECONCILE_QUIET_MS);
+            const reconciled = await t.reconcile(
+              submission.id,
+              Number(t.row(submission.id).revision),
+            );
+            expect(reconciled.body.submission?.state).toBe("draft");
+          }
+          newer = t.send(submission.id, Number(t.row(submission.id).revision));
+        }
+        if (newer === undefined) throw new Error("Missing recovery send");
+        const recovered = await newer;
+        expect(recovered.body.submission?.state).toBe("receipt-verified");
+        expect(t.github.counts.posts).toBe(1);
+        expect(t.github.advisories).toHaveLength(1);
+        expect(t.cases()).toHaveLength(1);
+      } finally {
+        releaseOld();
+        releaseNew();
+        await Promise.allSettled([older, newer]);
+        intercepted.mockRestore();
+        t.sqlite.close();
+      }
+    });
+
   test("an empty listing right after the attempt keeps it uncertain, and a late copy is then adopted", async () => {
     const t = setup();
     const submission = await t.ready();

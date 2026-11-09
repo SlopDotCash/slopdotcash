@@ -291,7 +291,7 @@ function transitionStatements(
   ];
 }
 
-/** Commits a transition; returns the new row, or null when it was stale. */
+/** Commits a transition; returns only its exact row, or null when it was stale. */
 async function transition(
   deps: SecurityApiDependencies,
   row: SubmissionRow,
@@ -313,7 +313,12 @@ async function transition(
     throw error;
   }
   if ((results[0]?.meta?.changes ?? 0) !== 1) return null;
-  return loadSubmission(deps, row.id);
+  const updated = await loadSubmission(deps, row.id);
+  // A later transition may win while this readback waits. Its revision is not
+  // this caller's authority, especially when the caller is about to send.
+  return updated?.revision === row.revision + 1 && updated.state === next.state
+    ? updated
+    : null;
 }
 
 /**
