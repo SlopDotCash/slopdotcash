@@ -5341,15 +5341,15 @@
     },
     {
       "path": "src/SecurityProgramEditor.tsx",
-      "sha256": "be63cd61f1e0f5a853f4dc663441bc4dcfd77ed71e487e0a14ef8a8b02badc65",
+      "sha256": "1ce740842431d8aaac54d97f6dac6cb700ce75f5a17fc7cf637ed67eb0530a99",
       "models": [
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt"
       ],
       "candidateLines": [
-        1, 55, 79, 87, 152, 153, 154, 156, 163, 173, 174, 179, 184, 191, 203,
-        241, 252, 253, 301, 328, 365, 430, 432, 433, 436, 440, 443, 444, 606,
-        641, 647
+        1, 55, 79, 87, 150, 151, 153, 160, 170, 171, 176, 181, 188, 200, 238,
+        249, 250, 298, 325, 362, 410, 412, 413, 415, 418, 421, 422, 577, 612,
+        617
       ],
       "review": "mapped-abstraction"
     },
