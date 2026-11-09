@@ -397,6 +397,9 @@ async function exerciseNativeSolana(
         exact: true,
       })
       .click();
+    await expect(
+      pay.getByRole("button", { name: "Pay approved award", exact: true }),
+    ).toBeEnabled();
     const holdRead = async (ordinal: number) => {
       let count = 0;
       let reached = () => {};
