@@ -185,7 +185,8 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt",
         "formal/models/vetting/vetting_admin_actor.qnt",
         "formal/models/vetting/vetting_evidence_access.qnt",
-        "formal/models/vetting/vetting_evidence_delivery.qnt"
+        "formal/models/vetting/vetting_evidence_delivery.qnt",
+        "formal/models/vetting/vetting_evidence_inventory.qnt"
       ],
       "candidateLines": [
         6, 7, 9, 44, 49, 106, 109, 114, 118, 129, 130, 131, 132, 133, 135, 136,
@@ -1083,8 +1084,10 @@
       "sha256": "aacd83f4bd303976add3ba19a9d8a904adf6db850183d24a04ce8ee0a826dbeb",
       "models": [
         "formal/models/vetting/vetting_backup_chain.qnt",
+        "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_evidence_upload.qnt",
         "formal/models/vetting/vetting_retention.qnt",
+        "formal/models/vetting/vetting_upload_completion.qnt",
         "formal/models/vetting/vetting_verified_parts.qnt"
       ],
       "candidateLines": [92, 99, 109, 117, 145, 155],
@@ -1095,6 +1098,7 @@
       "sha256": "71066395bd3c702145b0a00254a701e0b1dbf08ef34bcd335a9cd209f116407d",
       "models": [
         "formal/models/vetting/vetting_evidence_delivery.qnt",
+        "formal/models/vetting/vetting_evidence_inventory.qnt",
         "formal/models/vetting/vetting_object_lifecycle.qnt",
         "formal/models/vetting/vetting_retention.qnt"
       ],
@@ -1103,20 +1107,23 @@
     },
     {
       "path": "backend/vetting/evidence.ts",
-      "sha256": "edbcd4428e0a15b052e94aa96eef59e59e89a8824fe685c1c1343c52275e542c",
+      "sha256": "a9ee60b2e58c54e0c679dc05c7cdfda859b8306ef70804ba72a90fc7a3bf732d",
       "models": [
         "formal/models/vetting/vetting_download_stream.qnt",
         "formal/models/vetting/vetting_evidence_access.qnt",
         "formal/models/vetting/vetting_evidence_delivery.qnt",
+        "formal/models/vetting/vetting_evidence_inventory.qnt",
+        "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_evidence_upload.qnt",
         "formal/models/vetting/vetting_object_lifecycle.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt",
+        "formal/models/vetting/vetting_upload_completion.qnt",
         "formal/models/vetting/vetting_verified_parts.qnt"
       ],
       "candidateLines": [
         181, 182, 216, 274, 275, 277, 278, 279, 289, 294, 441, 515, 530, 579,
-        604, 638, 746, 747, 764, 1074, 1076, 1238, 1256, 1272, 1292, 1487, 1492,
-        1497, 1552, 1558, 1577, 1582, 1593, 1600, 1667, 1682, 1729, 2015
+        604, 638, 746, 747, 764, 1074, 1076, 1238, 1256, 1272, 1292, 1460, 1500,
+        1505, 1510, 1565, 1571, 1590, 1595, 1606, 1613, 1684, 1699, 1746, 2032
       ],
       "review": "mapped-abstraction"
     },
@@ -1148,6 +1155,7 @@
         "formal/models/ui/ui_admin_vetting_requests.qnt",
         "formal/models/vetting/vetting_admin_actor.qnt",
         "formal/models/vetting/vetting_admission_lineage.qnt",
+        "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
         "formal/models/vetting/vetting_scan_reuse.qnt",
@@ -2176,6 +2184,7 @@
       "sha256": "586132ecb803496f64096b138199d691fff021ef6ad0e643bb13b123ffb0f7d6",
       "models": [
         "formal/models/vetting/vetting_evidence_delivery.qnt",
+        "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_evidence_upload.qnt",
         "formal/models/vetting/vetting_object_lifecycle.qnt"
       ],
@@ -2185,7 +2194,10 @@
     {
       "path": "migrations/0035_vetting_evidence_chunks.sql",
       "sha256": "1d2e629afdff009689cd7712330963a753447b6a825ce7be8258ace4f7366c07",
-      "models": ["formal/models/vetting/vetting_evidence_upload.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_evidence_upload.qnt",
+        "formal/models/vetting/vetting_upload_completion.qnt"
+      ],
       "candidateLines": [11, 12],
       "review": "mapped-abstraction"
     },
@@ -2193,6 +2205,7 @@
       "path": "migrations/0036_vetting_evidence_assembly.sql",
       "sha256": "c7e0cfe6bba253a3be642d31e136c9f267de03c4d171b00a8dd51ab2eb85ed62",
       "models": [
+        "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_evidence_upload.qnt",
         "formal/models/vetting/vetting_object_lifecycle.qnt"
       ],
@@ -2889,8 +2902,10 @@
       "path": "migrations/0107_vetting_content_addressed_evidence.sql",
       "sha256": "36b5037350dcfeb146335ff18b811b10f90c3e8b4d761788deb5ee110876e4a8",
       "models": [
+        "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_object_lifecycle.qnt",
-        "formal/models/vetting/vetting_retention.qnt"
+        "formal/models/vetting/vetting_retention.qnt",
+        "formal/models/vetting/vetting_upload_completion.qnt"
       ],
       "candidateLines": [18, 19],
       "review": "mapped-abstraction"
@@ -4361,17 +4376,17 @@
     },
     {
       "path": "src/AdminVetting.tsx",
-      "sha256": "9588c42adfc17247b3e4d15f017a63345010fbd3a4cbbbc97404872a5f42d928",
+      "sha256": "5fd4737a1baf5301bf69a09b7ffa4fd6de345080365411d182fe00a3f50e52dc",
       "models": [
         "formal/models/ui/ui_admin_review.qnt",
         "formal/models/ui/ui_admin_vetting_requests.qnt"
       ],
       "candidateLines": [
-        24, 49, 56, 66, 67, 72, 90, 102, 106, 108, 117, 150, 151, 152, 197, 198,
-        199, 388, 473, 476, 478, 483, 571, 572, 580, 585, 691, 718, 719, 720,
-        721, 722, 723, 730, 740, 744, 752, 766, 770, 771, 774, 776, 778, 783,
-        786, 789, 790, 792, 796, 799, 802, 804, 821, 828, 830, 831, 844, 850,
-        852, 858, 860, 874, 880, 888, 894, 919, 987, 990, 991, 1023
+        24, 49, 56, 66, 67, 72, 90, 102, 106, 108, 117, 150, 151, 197, 198, 199,
+        388, 473, 476, 478, 483, 571, 572, 580, 585, 691, 718, 719, 720, 721,
+        722, 723, 730, 740, 744, 759, 766, 770, 771, 774, 776, 778, 783, 786,
+        789, 790, 792, 796, 799, 802, 804, 821, 828, 830, 831, 844, 850, 852,
+        858, 860, 874, 880, 888, 894, 919, 987, 990, 991, 1023
       ],
       "review": "mapped-abstraction"
     },
@@ -7958,7 +7973,8 @@
         "formal/models/vetting/vetting_audit_retention.qnt",
         "formal/models/vetting/vetting_backup_chain.qnt",
         "formal/models/vetting/vetting_object_lifecycle.qnt",
-        "formal/models/vetting/vetting_retention.qnt"
+        "formal/models/vetting/vetting_retention.qnt",
+        "formal/models/vetting/vetting_upload_completion.qnt"
       ],
       "candidateLines": [
         16, 99, 277, 334, 335, 339, 360, 363, 406, 412, 421, 428, 431, 441, 509,
@@ -14197,7 +14213,7 @@
     },
     {
       "path": "formal/models/ui/ui_admin_vetting_requests.qnt",
-      "sha256": "c5f7b4719925b6dd89fd682b77176d33739c2ce89d8a2be8ff1c22f57ec474a0",
+      "sha256": "426f860ee566fbfc8795559c1e34275d79a58310de7b2521a846729d8a0d3aaa",
       "sources": [
         "backend/vetting/handler.ts",
         "src/Admin.tsx",
@@ -14206,12 +14222,15 @@
       ],
       "scenarios": [
         "acceptedDepartureStartsNoRefreshTest",
+        "acceptedMutationRetainsWriteAfterPostflightReturnAndDepartureTest",
         "acceptedOldLifetimeCannotRefreshNewActorTest",
         "alreadyAcceptedDepartureRetainsWriteTest",
         "changedMutationPreflightSendsNothingTest",
         "changedPreflightCannotDispatchReadTest",
         "currentReadPublishesTest",
         "currentSuccessRefreshesOnceTest",
+        "departedCallbackCannotStartParentReadTest",
+        "departedErrorHelperCannotInvalidateReplacementTest",
         "departedPreflightCannotSendMutationTest",
         "departedReadDoesNotPublishTest",
         "dispatchCookieMismatchRefusesServerWriteTest",
@@ -14219,9 +14238,16 @@
         "duplicateMutationRefusesTest",
         "forbiddenMutationClearsPrivateParentTest",
         "newerReadWinsTest",
+        "observedMutationCannotStartAfterCommitTest",
+        "oldPassiveCallbackCouldRefreshAfterRemovalTest",
+        "oldPassivePreflightCouldQueueAfterRemovalTest",
+        "parentRefreshRetiresChildBeforePreflightUseTest",
         "readForbiddenClearsParentTest",
+        "readHelperReturnCannotDispatchAfterCommitTest",
         "readPostflightMismatchClearsParentTest",
         "refreshRechecksActorBeforeSendingTest",
+        "returnedMutationCannotStartAfterCommitTest",
+        "sameActorWithoutAdminCannotQueueTest",
         "submittedPayloadRemainsCapturedTest",
         "temporaryMutationFailureKeepsPrivateViewTest",
         "temporaryReadFailureAllowsRetryTest",
@@ -16411,6 +16437,80 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_evidence_inventory.qnt",
+      "sha256": "8da77a19efdc8cbe5bdbc95029d03d9b092c37d48f41cda498fbd4e189febb6c",
+      "sources": [
+        "backend/http.ts",
+        "backend/vetting/evidence-retention.ts",
+        "backend/vetting/evidence.ts"
+      ],
+      "scenarios": [
+        "absentChunkCompletionIsPendingTest",
+        "assemblyFailureDoesNotHideInventoryTest",
+        "assemblyRetentionStillIsNotScanReadinessTest",
+        "completionDoesNotProveCurrentBytesTest",
+        "emptyQueryReturnsAuditedEmptyInventoryTest",
+        "expiredMetadataRemainsListableTest",
+        "failedListAuditRefusesResponseTest",
+        "failedObjectQueryReturnsNoInventoryTest",
+        "invalidLayoutIsExplicit409Test",
+        "laterRevocationDoesNotRewritePreparedResponseTest",
+        "lostListAuditReplyRetainsCommittedAuditTest",
+        "missingRunIs404Test",
+        "missingSingleObjectIsMetadataStateTest",
+        "nonoperatorInventoryRefusesTest",
+        "otherOperatorCannotBorrowCapturedInventoryTest",
+        "partialQueryRefusesBeforeRunReadTest",
+        "perObjectReadsCanStraddleExpiryTest",
+        "refusedInventoryCanRetryWithFreshSessionTest",
+        "revokedDuringListAuditCannotReceiveInventoryTest",
+        "signedOutInventoryRefusesTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_evidence_registration.qnt",
+      "sha256": "945435ff3920ebef15cef773ccd73f724ed6471b2b4a999556e702e6ca373747",
+      "sources": [
+        "backend/vetting/evidence-chunks.ts",
+        "backend/vetting/evidence.ts",
+        "backend/vetting/handler.ts",
+        "migrations/0034_vetting_private_evidence.sql",
+        "migrations/0036_vetting_evidence_assembly.sql",
+        "migrations/0107_vetting_content_addressed_evidence.sql"
+      ],
+      "scenarios": [
+        "absentStorageRefusesBeforeSignatureTest",
+        "admittedReferencePreventsNewCleanupClaimTest",
+        "assemblyDigestMustNameDeclaredManifestObjectTest",
+        "capturedRegistrationTimeSurvivesDelayedBatchTest",
+        "changedImmutableDeclarationConflictsTest",
+        "changedManifestConcurrentLoserConflictsTest",
+        "cleanupReleaseAllowsLaterRegistrationTest",
+        "cleanupTriggerRollsBackRunObjectsAndAuditTest",
+        "configuredSignedRegistrationCommitsOneCompleteBatchTest",
+        "duplicateDigestsCannotRegisterTest",
+        "failedCatchReadKeepsCommittedHistoryTest",
+        "failedHintReadOmitsObjectWithoutUndoingCommitTest",
+        "foreignKeyRefusesDeletedAssessmentAfterLookupTest",
+        "genericFailureWithNoWinnerKeepsNoPartialRegistrationTest",
+        "independentRunsKeepSeparateObjectReferencesTest",
+        "invalidChunkLayoutCannotRegisterTest",
+        "invalidJsonPrecedesMissingAssessmentTest",
+        "invalidSignatureNeverReadsAssessmentTest",
+        "lostBatchReplyCanReadBackOwnCommittedRegistrationTest",
+        "lostResponseRetriesAsReplayWithoutAnotherAuditTest",
+        "missingAssessmentPrecedesInvalidObjectTest",
+        "missingDeclaredTraceCannotRegisterTest",
+        "partHintsDoNotProveWholeFileCompletionTest",
+        "registrationSucceedsWithNoStoredBytesTest",
+        "reorderedInputReplaysCanonicalManifestTest",
+        "sameManifestConcurrentLoserReplaysWinnerTest",
+        "signedBodyBoundRefusesOversizeTest",
+        "storedHintCanBeStaleBeforeResponseTest",
+        "winnerReadbackPrecedesOriginalCleanupErrorTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_evidence_upload.qnt",
       "sha256": "1b241cd326864ff008ae3948a7baa572c61e19830298e0827107a694cf219873",
       "sources": [
@@ -16540,7 +16640,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_object_lifecycle.qnt",
-      "sha256": "589f98dab779edd98ccb4d7474a20e21e59a3968c0b0098853d6c5b56d6aa6bb",
+      "sha256": "b50c1267bee774bd0f2905a6f83130fe686df4071042be99ed3bfb7d2b11a94e",
       "sources": [
         "backend/vetting/evidence-retention.ts",
         "backend/vetting/evidence.ts",
@@ -16551,6 +16651,7 @@
         "workers/vetting-backup/core.ts"
       ],
       "scenarios": [
+        "admittedUploadCanFinishAfterRetirementTest",
         "cleanupFenceBlocksNewReferenceTest",
         "concurrentChangedRegistrationConflictsTest",
         "concurrentIdenticalRegistrationReplaysTest",
@@ -16678,6 +16779,42 @@
         "repositoryOutageRemainsPendingTest",
         "serviceFailureMayRecoverTest",
         "specialistDeclineIsIncompleteTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_upload_completion.qnt",
+      "sha256": "bae33075550bb521b31a71a856fa0c0268148cf55c1c0f5b5d02d6026fae1fff",
+      "sources": [
+        "backend/vetting/evidence-chunks.ts",
+        "backend/vetting/evidence.ts",
+        "migrations/0035_vetting_evidence_chunks.sql",
+        "migrations/0107_vetting_content_addressed_evidence.sql",
+        "workers/vetting-backup/core.ts"
+      ],
+      "scenarios": [
+        "chunkExpiryDuringIoRefusesReceiptTest",
+        "completionBatchFailureIsAtomicTest",
+        "completionDoesNotProveCurrentBytesTest",
+        "completionReplayRechecksBytesWithoutNewAuditTest",
+        "concurrentRepairMayBeOverwrittenWithSameBytesTest",
+        "delayedWriterCanResurrectRetiredStorageTest",
+        "expiredRunWritesNothingTest",
+        "expiryAfterLastCheckIsNotAtomicClockReservationTest",
+        "finalizationExpiryDuringIoRefusesCompletionTest",
+        "invalidBodyWritesNothingTest",
+        "knownCorruptionCanBeRepairedTest",
+        "legacyCorruptionIsNotOverwrittenTest",
+        "lostCompletionReplyRetainsHistoryTest",
+        "lostRepairReplyKeepsRepairedBytesTest",
+        "missingPartCannotFinalizeTest",
+        "partHashesDoNotProveWholeTest",
+        "putCommitWithLostReplyKeepsBytesTest",
+        "retryAfterLostPutReplyAcceptsSameCopyTest",
+        "secondRunNeedsOwnCompletionTest",
+        "singleUploadHasAdditionalVerifiedReadTest",
+        "unavailableReadIsNotCorruptionTest",
+        "uploadAuditFailureDoesNotUndoBytesTest",
+        "validExistingCopyIsNotRepairedTest"
       ]
     },
     {

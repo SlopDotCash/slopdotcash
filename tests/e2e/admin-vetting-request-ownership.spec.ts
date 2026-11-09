@@ -7,6 +7,11 @@
 import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { expect, test } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 type MutationKind = "scan" | "grant";
 const TEST_COOKIE = "vetting_test_actor";
@@ -268,6 +273,36 @@ async function vettingFixture(page: Page, baseURL: string | undefined) {
 }
 
 for (const kind of ["scan", "grant"] as const) {
+  test(
+    `${kind}: committed departure during preflight starts no mutation`,
+    async ({ page, baseURL, diagnostics }) => {
+      diagnostics.allowPreviewApiMisses();
+      const fixture = await vettingFixture(page, baseURL);
+      try {
+        const { button } = await fixture.prepare(kind);
+        const reads = fixture.readCount();
+        await holdProjectSessionUntilUnmount(
+          page,
+          `[aria-label="Security vetting for ${fixture.projectId}"]`,
+        );
+        await page.evaluate(() => {
+          const current = window.location.href;
+          window.history.replaceState(window.history.state, "", "/how-it-works");
+          window.history.pushState({}, "", current);
+        });
+        await button.click();
+        await leaveEditorWithHeldSession(page);
+        expect(fixture.posts).toHaveLength(0);
+        expect(fixture.accepted).toHaveLength(0);
+        expect(fixture.readCount()).toBe(reads);
+        await expect(fixture.card).toHaveCount(0);
+      } finally {
+        await releaseHeldEditorSession(page);
+        fixture.release();
+      }
+    },
+  );
+
   test(
     `${kind}: accepted reply after SPA departure starts no vetting refresh`,
     async ({ page, baseURL, diagnostics }) => {

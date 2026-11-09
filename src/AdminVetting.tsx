@@ -21,7 +21,7 @@ import {
   ShieldCheck,
   ShieldOff,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   checkedAdminActionFailure,
   isAdminActionAccessLoss,
@@ -149,7 +149,7 @@ function useVettingMutation(actorId: string, onAccessLost: () => void) {
   const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -749,14 +749,14 @@ export function VettingSection({
       },
     );
   }, [actorId, onAccessLost]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
-    load();
     return () => {
       mounted.current = false;
       generation.current += 1;
     };
   }, [load]);
+  useEffect(load, [load]);
   return (
     <section aria-labelledby="admin-vetting" className="admin-section">
       <div className="admin-section-heading">

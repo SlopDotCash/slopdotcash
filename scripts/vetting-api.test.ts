@@ -1842,6 +1842,109 @@ for (const boundary of ["r2", "read-audit"] as const) {
   }, 30000);
 }
 
+test("evidence inventory refuses a session revoked after its list audit commits", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const runId = "inventory-session-revoked";
+  await retained.retain(id, runId);
+  const token = `inventory_evidence_session_${"a".repeat(40)}`;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const actorId = "inventory-evidence-operator";
+  sqlite.run(
+    "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)",
+    [
+      actorId,
+      EVIDENCE_OWNER_GITHUB_ID,
+      "fixture-operator",
+      new Date().toISOString(),
+    ],
+  );
+  sqlite.run(
+    "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
+    [tokenHash, actorId, new Date(Date.now() + 3600000).toISOString()],
+  );
+  const db = retained.evidence.deps.db;
+  const prepare = db.prepare.bind(db);
+  let signalStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve;
+  });
+  let resume: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  db.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (!sql.startsWith("INSERT INTO vetting_evidence_audit")) return statement;
+    const bind = statement.bind.bind(statement);
+    statement.bind = (...values) => {
+      const bound = bind(...values);
+      if (values[2] !== "list") return bound;
+      const run = bound.run.bind(bound);
+      bound.run = async () => {
+        const result = await run();
+        signalStarted();
+        await gate;
+        return result;
+      };
+      return bound;
+    };
+    return statement;
+  };
+  const env = {
+    SLOP_DB: db,
+    TRACE_AUTH_SECRET: "test-only-trace-rate-limit-secret-long-enough",
+    VETTING_EVIDENCE: retained.evidence.deps.bucket,
+  } as unknown as Parameters<typeof onRequest>[0]["env"];
+  const cookie = `__Host-slop_points=${token}`;
+  let pending: Promise<Response> | undefined;
+  try {
+    pending = onRequest({
+      env,
+      request: new Request(
+        `${ORIGIN}/api/v1/operator/vetting-evidence?assessmentId=${id}&runId=${runId}`,
+        { headers: { cookie } },
+      ),
+    });
+    await started;
+    const signout = await onRequest({
+      env,
+      request: new Request(`${ORIGIN}/api/v1/points/signout`, {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/json",
+          cookie,
+        },
+        body: "{}",
+      }),
+    });
+    expect(signout.status).toBe(200);
+    expect(
+      sqlite
+        .query("SELECT COUNT(*) n FROM points_sessions WHERE token_hash=?")
+        .get(tokenHash),
+    ).toEqual({ n: 0 });
+    resume();
+    const response = await pending;
+    expect(response.status).toBe(401);
+    const body = await response.text();
+    expect(body).not.toContain(runId);
+    expect(body).not.toContain(VETTING_TRACE_SHA);
+    expect(
+      sqlite
+        .query(
+          "SELECT COUNT(*) n FROM vetting_evidence_audit WHERE action='list' AND actor=?",
+        )
+        .get(EVIDENCE_OWNER_GITHUB_ID),
+    ).toEqual({ n: 1 });
+  } finally {
+    resume();
+    await pending?.catch(() => undefined);
+    db.prepare = prepare;
+  }
+}, 30000);
+
 // EVIDENCE.md requires current authorization for each streamed part. Use the
 // real Pages session resolver and signout mutation while a local R2 read waits.
 test("native evidence download stops when its session is revoked during a part read", async () => {
@@ -2143,4 +2246,150 @@ for (const failure of ["metadata", "overflow", "read"] as const) {
       if (body && !body.locked) await body.cancel().catch(() => {});
     }
   }, 30000);
+}
+
+test("an unavailable content read does not authorize overwrite, while verified corruption can be repaired", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const runId = "content-repair-classification";
+  await retained.retain(id, runId);
+  const path = `/api/v1/vetting/evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+  const key = `vetting/objects/${VETTING_TRACE_SHA}`;
+  const bytes = new TextEncoder().encode(VETTING_TRACE_BODY);
+  const bucket = retained.evidence.deps.bucket!;
+  const writes: boolean[] = [];
+  let unavailable = true;
+  const uploadAudits = () => sqlite.query(
+    "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
+  ).get(id, runId);
+  const before = uploadAudits();
+  retained.evidence.deps.bucket = {
+    ...bucket,
+    put: async (target, value, options) => {
+      writes.push(options.onlyIf?.etagDoesNotMatch === "*");
+      return bucket.put(target, value, options);
+    },
+    get: async (target) => {
+      if (target === key && unavailable) {
+        unavailable = false;
+        throw new Error("Transient R2 read failure");
+      }
+      return bucket.get(target);
+    },
+  };
+  const upload = async () => (await retained.evidence.handle(
+    await retained.request("PUT", path, bytes),
+  ))!;
+  try {
+    expect((await upload()).status).toBe(500);
+    expect(writes).toEqual([true]);
+    expect(uploadAudits()).toEqual(before);
+    const retainedObject = await bucket.get(key);
+    expect(await new Response(retainedObject!.body).text()).toBe(VETTING_TRACE_BODY);
+    expect((await upload()).status).toBe(200);
+    expect(writes).toEqual([true, true]);
+
+    // Corrupt storage is different evidence from a failed read. The original
+    // verified upload bytes can repair a shared content-addressed object.
+    await retained.bucket.delete(key);
+    await bucket.put(key, new Uint8Array(bytes.length), {
+      onlyIf: { etagDoesNotMatch: "*" },
+      customMetadata: { sha256: VETTING_TRACE_SHA },
+      httpMetadata: { contentType: "text/plain" },
+    });
+    expect((await upload()).status).toBe(200);
+    expect(writes).toEqual([true, true, true, false]);
+    const repaired = await bucket.get(key);
+    expect(await new Response(repaired!.body).text()).toBe(VETTING_TRACE_BODY);
+  } finally {
+    retained.evidence.deps.bucket = bucket;
+  }
+}, 30000);
+
+for (const operation of ["upload-chunk", "finalize"] as const) {
+  test(`${operation} crossing evidence expiry cannot record an accepted outcome`, async () => {
+    await listPausedProject();
+    const id = await queueScan();
+    const result = await fixture(id, "incomplete");
+    expect((await postResult(result)).status).toBe(200);
+    const close = await retained.evidence.handle(new Request(
+      `${ORIGIN}/api/v1/operator/vetting-evidence/${id}/close`, {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/json",
+          "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+        },
+        body: JSON.stringify({ reason: "Finish the synthetic exception case" }),
+      },
+    ));
+    expect(close?.status).toBe(200);
+    const runId = `expiry-${operation}`;
+    const path = `/api/v1/vetting/evidence/${id}/${runId}`;
+    const bytes = new Uint8Array(EVIDENCE_CHUNK_BYTES + 17).fill(21);
+    const hash = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
+    const sha = hash(bytes);
+    const chunks = [0, 1].map((index) => {
+      const part = bytes.subarray(index * EVIDENCE_CHUNK_BYTES, (index + 1) * EVIDENCE_CHUNK_BYTES);
+      return { index, sizeBytes: part.length, sha256: hash(part) };
+    });
+    const send = async (method: string, suffix: string, body: string | Uint8Array) =>
+      (await retained.evidence.handle(await retained.request(method, `${path}${suffix}`, body)))!;
+    const registered = await send("POST", "", JSON.stringify({
+      traceSha256: sha,
+      objects: [{ sha256: sha, sizeBytes: bytes.length, kind: "trace", label: "Expiry race", contentType: "application/octet-stream", chunks }],
+    }));
+    expect(registered.status).toBe(201);
+    if (operation === "finalize") {
+      for (const chunk of chunks)
+        expect((await send("PUT", `/${sha}/chunks/${chunk.index}`, bytes.subarray(
+          chunk.index * EVIDENCE_CHUNK_BYTES,
+          chunk.index * EVIDENCE_CHUNK_BYTES + chunk.sizeBytes,
+        ))).status).toBe(200);
+    }
+    const target = chunks[operation === "upload-chunk" ? 0 : 1];
+    const targetKey = `vetting/objects/${sha}/chunks/${target.index}/${target.sha256}`;
+    const bucket = retained.evidence.deps.bucket!;
+    let entered: () => void = () => {};
+    const reading = new Promise<void>((resolve) => { entered = resolve; });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    retained.evidence.deps.bucket = {
+      ...bucket,
+      get: async (key) => {
+        const object = await bucket.get(key);
+        if (key === targetKey) {
+          entered();
+          await gate;
+        }
+        return object;
+      },
+    };
+    const before = sqlite.query(
+      "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action=?",
+    ).get(id, runId, operation);
+    try {
+      const pending = operation === "upload-chunk"
+        ? send("PUT", `/${sha}/chunks/0`, bytes.subarray(0, EVIDENCE_CHUNK_BYTES))
+        : send("POST", `/${sha}/finalize`, "{}");
+      await reading;
+      retained.evidence.deps.now = () => new Date(NOW.getTime() + 90 * 86400_000);
+      release();
+      const refused = await pending;
+      expect(refused.status).toBe(410);
+      expect((await refused.json()).error).toBe("evidence_expired");
+      expect(sqlite.query(
+        "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action=?",
+      ).get(id, runId, operation)).toEqual(before);
+      expect(sqlite.query(
+        "SELECT count(*) AS n FROM vetting_evidence_completions WHERE assessment_id=? AND run_id=?",
+      ).get(id, runId)).toEqual({ n: 0 });
+      // The completed bounded write is retained evidence, not an accepted
+      // upload/finalization receipt and not proof of physical cleanup.
+      expect(await bucket.head(targetKey)).not.toBeNull();
+    } finally {
+      release();
+      retained.evidence.deps.bucket = bucket;
+    }
+  }, 60000);
 }

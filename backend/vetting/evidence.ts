@@ -1341,8 +1341,9 @@ export class VettingEvidence {
    * Create-only write of bytes already checked against `sha`, then a full
    * reread. A content-addressed key holds only the bytes its digest names, so
    * when the existing copy is missing or fails verification it is replaced
-   * with these verified bytes; a valid copy is never overwritten. Run-scoped
-   * keys keep the strict create-only rule.
+   * with these verified bytes. An observed valid copy needs no repair; a
+   * concurrent repair can still win before this unconditional repair write.
+   * Run-scoped keys keep the strict create-only rule.
    */
   private async store(
     bucket: R2Bucket,
@@ -1363,7 +1364,14 @@ export class VettingEvidence {
     try {
       await verifiedPart(bucket, key, sha, body.byteLength);
     } catch (error) {
-      if (!content) throw error;
+      if (
+        !content ||
+        !(error instanceof Error) ||
+        !["evidence_missing", "evidence_corrupt"].includes(
+          (error as Error & { code?: string }).code ?? "",
+        )
+      )
+        throw error;
       // The one deliberate overwrite: verified bytes replace a missing or
       // corrupt copy at the key their own digest names.
       await bucket.put(
@@ -1448,6 +1456,9 @@ export class VettingEvidence {
       "application/octet-stream",
       object.storage === "content",
     );
+    // Storage may have waited across the access deadline. Re-read closure
+    // state before recording an accepted upload; retained bytes are separate.
+    this.readable(await this.run(assessment, runId));
     await this.audit(
       `service:${keySha256}`,
       "upload-chunk",
@@ -1484,6 +1495,8 @@ export class VettingEvidence {
         "Only chunked evidence requires finalization",
       );
     await this.verify(object, run, false);
+    // Whole-file I/O does not reserve the captured run's access window.
+    this.readable(await this.run(assessment, runId));
     // No partial completion state: concurrent/repeated finalization has one immutable receipt.
     const at = this.deps.now().toISOString();
     const [recorded] = await this.deps.db.batch([
@@ -1624,6 +1637,10 @@ export class VettingEvidence {
       null,
       "Inspect registered vetting evidence",
     );
+    // Inventory construction and its audit may outlive the admitting session.
+    const currentActor = await this.operator(request);
+    if (currentActor.githubId !== actor.githubId)
+      fail(403, "forbidden", "The evidence operator changed");
     return json(200, {
       runs: result,
       policy,

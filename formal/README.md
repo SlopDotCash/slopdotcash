@@ -153,6 +153,8 @@ the reviewed PR; earlier per-branch results do not certify the combined source.
 | Direct-payment journal and Solana pending records | `payments/direct_bounty_journal.qnt`, `ui/ui_solana_payment_pending.qnt` | `tests/e2e/bounty-full-flow.spec.ts`, `tests/e2e/bounty-solana-flow.spec.ts` |
 | Payment-child selection and submitted recovery | `ui/ui_bounty_payment_parent.qnt`, `ui/ui_submitted_payment_recovery.qnt` | The same EVM and Solana payment suites |
 | Private case ordering, Inbox mutation and Admin draft ownership | `ui/ui_private_case_revisions.qnt`, `ui/ui_inbox_mutation_focus.qnt`, `ui/ui_admin_editor_lifetime.qnt` | `tests/e2e/private-case-ordering.spec.ts`, `tests/e2e/inbox-response-owner.spec.ts`, `tests/e2e/admin-editor-lifetime.spec.ts` |
+| Admin vetting request ownership | `ui/ui_admin_vetting_requests.qnt` | `tests/e2e/admin-vetting-request-ownership.spec.ts` |
+| Evidence registration, inventory and upload completion | `vetting/vetting_evidence_registration.qnt`, `vetting/vetting_evidence_inventory.qnt`, `vetting/vetting_upload_completion.qnt`, `vetting/vetting_object_lifecycle.qnt` | `scripts/vetting-api.test.ts`; the cleanup race below remains unresolved |
 | Payment preparation and recovery at commit | `payments/direct_preparation_completion.qnt`, `payments/direct_recovery_completion.qnt` | `backend/security/direct-payments.integration.ts` with migrated SQLite and local Anvil |
 | Monthly owner authority at commit | `rewards/monthly_owner_completion.qnt` | `backend/payments/monthly.test.ts` with actual SQLite writes |
 | Registry snapshot and browser evidence publication | `release/registry_snapshot_publication.qnt`, `release/ci_browser_evidence.qnt` | Registry sync checks; separate normal and private-intake browser reports |
@@ -843,6 +845,49 @@ observed socket close; the probe deadline is not a deadline for DNS or the
 whole recorder. Direct-child cleanup is not process-tree containment. Backup
 objects, readback verification, completion records and queue acknowledgment
 remain separate states.
+
+Admin vetting forms retire their request ownership during layout cleanup.
+A session preflight that returns after committed departure cannot start a scan,
+an exemption write or a parent refresh. The request model has 31 scenarios over
+two reads, actors and parent lifetimes, and one mutation. It separates session
+observation, helper return and caller use, and keeps historical passive-cleanup
+failures outside the corrected transition relation. Two browser regression
+definitions hold preflight through DOM removal. They have not run.
+
+Evidence registration preserves canonical manifest identity and commits the
+run, its object references and the registration audit in one D1 batch. Its 29
+scenarios bound two requests with one retry each, two run IDs, two canonical
+manifests, two objects and three parts. Readback can recover a committed request
+after a lost reply. Stored-part hints can become stale and do not prove a whole
+file or completion. The inventory model has 20 scenarios over one request and
+retry, one run, two objects and clock values 0 through 2. Inventory now checks
+the same operator again after its list audit. Per-object observations can
+straddle expiry; the result is not an atomic storage snapshot. A route regression
+definition revokes the real session while the committed list audit reply waits.
+
+Content-addressed upload repair now requires an explicit missing or corrupt
+observation. A storage transport failure does not authorize an overwrite.
+Chunk upload and finalization reread retention after storage verification and
+before recording acceptance. These are observation boundaries, not atomic
+time reservations through later SQL or response delivery. The upload model
+has 23 scenarios over two runs, two parts and two sequential requests. It
+separates durable bytes, per-run completion, audits and lost replies. Three
+route regression definitions cover transport failure, repair and expiry across
+I/O. The models and regression definitions have not run.
+
+Physical evidence cleanup still has an unresolved race. The D1 cleanup claim
+blocks new object references but does not stop an already admitted R2 write.
+That write can finish after deletion, the absent-object read and the deletion
+receipt, restoring raw bytes. The object lifecycle and upload models now expose
+this trace instead of assuming atomic upload exclusion. This is consistent with
+[R2's documented concurrent-write behavior](https://developers.cloudflare.com/r2/reference/consistency/):
+the last completed write wins. A separate storage generation per immutable D1
+binding is a candidate design, but it also needs recovery for writes whose
+outcome is unknown. An ETag-only fence can confuse identical bytes restored by
+a later generation; the [Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
+does not provide a version-match condition. No generation or writer-fencing
+repair is implemented here. Current cleanup receipts therefore do not prove
+that no delayed writer can restore the bytes.
 
 This branch includes the changes from merged PR
 [#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) through development

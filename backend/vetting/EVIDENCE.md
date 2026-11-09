@@ -240,4 +240,11 @@ The API returns a retryable conflict and rolls back that registration.
 The single cleanup consumer keeps the claim across R2 failures and retries;
 there is no expiry that could let a delayed delete race a new registration.
 After deletion, its receipt and claim release commit together. A later run
-must upload the missing bytes instead of reusing the deleted copy.
+must upload bytes if they are still missing.
+
+The claim does not fence an upload admitted before expiry. An R2 write already
+in flight can finish after the deletion receipt and restore bytes. The current
+receipt records an observed deletion, not permanent absence. The Quint object
+lifecycle and upload models expose this unresolved race. A repair must isolate
+storage generations and resolve writes with an unknown outcome before claiming
+physical retirement; a fresh HEAD or an expiry check alone cannot do this.
