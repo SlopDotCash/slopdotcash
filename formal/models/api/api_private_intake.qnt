@@ -6,6 +6,8 @@
 // @source backend/security/intake-grant.ts
 // @source backend/security/github-advisories.ts
 // @source backend/security/reporting-readiness.ts
+// @source backend/security/case-store.ts
+// @source backend/security/submission-store.ts
 module api_private_intake {
   var s: {phase: str, saved: bool, screening: str, reviewed: bool, attempts: int, absenceProved: bool, externalReceipt: bool, private: bool}
   action init = s' = {phase: "draft", saved: false, screening: "queued", reviewed: false, attempts: 0, absenceProved: false, externalReceipt: false, private: true}

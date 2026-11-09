@@ -138,7 +138,7 @@ export function assertEvmNativeCost(
     throw new Error("EVM transaction exceeds native cost limit");
 }
 
-export function hex(bytes: Uint8Array): Hex {
+function hex(bytes: Uint8Array): Hex {
   return `0x${bytesToHex(bytes)}`;
 }
 
@@ -155,7 +155,7 @@ export function same(a: string, b: string) {
 }
 
 /** The one reviewed deployment for this network and vault; no RPC, no secrets. */
-export function selectDeployment(
+function selectDeployment(
   env: Pick<ExecutorEnvironment, "PAYMENT_DEPLOYMENTS">,
   input: Pick<DispatchPayment, "network" | "vault">,
 ): Omit<Deployment, "rpcUrl"> {

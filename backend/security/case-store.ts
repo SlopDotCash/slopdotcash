@@ -215,7 +215,7 @@ export async function currentReportingProject(
  * and after revisions must prove that enforcement caused retirement; an
  * owner's earlier retirement or an unapplied restriction cannot grant it.
  */
-export async function restrictionRetired(
+async function restrictionRetired(
   deps: Pick<SecurityApiDependencies, "db">,
   projectId: string,
 ): Promise<boolean> {
@@ -605,11 +605,7 @@ export function inboxStatements(
 }
 
 /** Case events that can approve and reserve an award in their batch. */
-export const AWARDING_KINDS = new Set([
-  "decide",
-  "award",
-  "decide-related-party",
-]);
+const AWARDING_KINDS = new Set(["decide", "award", "decide-related-party"]);
 
 /**
  * Inserts a new case at revision 1. A verified case freezes its receipt
@@ -673,13 +669,9 @@ export function caseInsertStatement(
     );
 }
 
-export type PvrState = "ready" | "disabled" | "forbidden" | "unavailable";
+type PvrState = "ready" | "disabled" | "forbidden" | "unavailable";
 
-export type AutomaticIntake =
-  | "ready"
-  | "app-not-installed"
-  | "unavailable"
-  | "off";
+type AutomaticIntake = "ready" | "app-not-installed" | "unavailable" | "off";
 
 /** Sensitive requests recheck GitHub even when public observations are stale. */
 export async function pvrState(

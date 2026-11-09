@@ -3,6 +3,7 @@
 // @source backend/security/verified-intake.ts
 // @source migrations/0059_private_security_submissions.sql
 // @source migrations/0101_durable_security_intake.sql
+// @source backend/security/submission-store.ts
 // Optional GitHub forwarding after admission/consent. Two send attempts and
 // eight revisions bound this model, not the service. Age classes: 0=start,
 // 1=exactly60s,2=>60s,3=<300s,4=>=300s,5=>24h. Idle expiry is separate.

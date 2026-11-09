@@ -39,10 +39,10 @@ export type SubmissionRow = {
 export const SUBMISSION_ID = /^ss_[A-Za-z0-9_-]{8,72}$/u;
 
 /** A `submitting` row older than this is treated as interrupted. */
-export const SUBMITTING_TIMEOUT_MS = 60_000;
+const SUBMITTING_TIMEOUT_MS = 60_000;
 
 /** A draft or failed submission idle this long is abandoned. */
-export const IDLE_MS = 24 * 60 * 60 * 1000;
+const IDLE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * An empty listing reopens an uncertain send only this long after the
@@ -106,7 +106,7 @@ export async function loadSubmission(
     .first<SubmissionRow>();
 }
 
-export type Transition = {
+type Transition = {
   state: SubmissionState;
   set?: Partial<
     Pick<

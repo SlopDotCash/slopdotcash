@@ -6,6 +6,7 @@
 // @source backend/security/report-analysis.ts
 // @source backend/security/project-access.ts
 // @source backend/security/award-asset.ts
+// @source backend/security/case-store.ts
 module api_private_case {
   var s: {receipt: str, award: str, related: bool, relatedApproved: bool, appeal: bool, remediation: str, redaction: int, disclosed: int, revision: int}
   action init = s' = {receipt: "received", award: "pending", related: false, relatedApproved: false, appeal: false, remediation: "investigating", redaction: 0, disclosed: 0, revision: 1}

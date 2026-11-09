@@ -4,6 +4,7 @@
 // @source workers/fee-converter/core.ts
 // @source workers/fee-converter/evm.ts
 // @source workers/referral-accrual/poster.ts
+// @source workers/payment-executor/binding-shared.ts
 // payment-executor/core.ts, binding-recovery.ts, fee-converter/core.ts.
 // All replacements keep one nonce/content. Missing receipts retain the send.
 module signed_send {
