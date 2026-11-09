@@ -2540,7 +2540,10 @@
     {
       "path": "migrations/0083_monthly_execution_attempts.sql",
       "sha256": "be50317ebf5b448510041960bd6e7a7ef79acf3d9c08f7c206bbfc9892806ead",
-      "models": ["formal/models/rewards/monthly_execution_recovery.qnt"],
+      "models": [
+        "formal/models/rewards/monthly_commit_cursor.qnt",
+        "formal/models/rewards/monthly_execution_recovery.qnt"
+      ],
       "candidateLines": [17, 19],
       "review": "mapped-abstraction"
     },
@@ -6713,6 +6716,7 @@
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/signed_send.qnt",
+        "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
@@ -6766,6 +6770,7 @@
       "path": "workers/payment-executor/monthly.ts",
       "sha256": "cadf8fe152a30da4899219716ff59d3472387043bf250772bff3805df565c392",
       "models": [
+        "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -6851,6 +6856,7 @@
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
+        "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
@@ -10742,6 +10748,25 @@
         "src/lib/weighted-allocation.ts"
       ],
       "scenarios": ["conservedTest", "sampledAllocationTest", "tieTest"]
+    },
+    {
+      "path": "formal/models/rewards/monthly_commit_cursor.qnt",
+      "sha256": "64da5530e2fda80ecc2182bccc2fa245e104590472cf5edd5aedc36359a695db",
+      "sources": [
+        "migrations/0083_monthly_execution_attempts.sql",
+        "workers/payment-executor/core.ts",
+        "workers/payment-executor/monthly.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "closedWindowNotAdmittedTest",
+        "completeOnlyAfterLeavesTest",
+        "legacyCompletesOnSecondPassTest",
+        "newestFirstReservesBeforeOlderLeafTest",
+        "oldestFirstRevertsReservationTest",
+        "prerequisiteAddedForLruCandidateTest",
+        "prerequisiteFailureStillRunsOriginalTest"
+      ]
     },
     {
       "path": "formal/models/rewards/monthly_coordinator.qnt",
