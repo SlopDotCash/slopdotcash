@@ -15,6 +15,8 @@
  * every other notice is read state only.
  */
 
+import { githubUserIdFromNodeIdSql } from "../github-node-sql";
+
 type Preparer<S> = {
   prepare(query: string): { bind(...values: unknown[]): S };
 };
@@ -66,10 +68,15 @@ export const PROJECT_OWNERS = (project: string) => `(
    WHERE id = ${project}
 )`;
 
-/** Current contribution and retained payment records identify affected people. */
+/**
+ * Current contribution and retained payment records identify affected people.
+ * Membership joins on the numeric GitHub ID, so a legacy or current node
+ * spelling of the same person matches.
+ */
 export const PROJECT_AFFECTED_CONTRIBUTORS = (project: string) => `(
   SELECT m.github_id AS recipient FROM points_revisions r
-    JOIN points_members m ON m.actor_id = json_extract(r.payload, '$.award.actor.id')
+    JOIN points_members m
+      ON m.github_id = ${githubUserIdFromNodeIdSql("json_extract(r.payload, '$.award.actor.id')")}
    WHERE json_extract(r.payload, '$.award.projectId') = ${project}
      AND json_extract(r.payload, '$.award.amount') > 0
      AND NOT EXISTS (SELECT 1 FROM points_revisions successor WHERE successor.previous = r.id)
