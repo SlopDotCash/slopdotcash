@@ -930,7 +930,9 @@
       "sha256": "4f910eb11ca0743fe3ea20e98b051977382b1a4b90e04010f8fb14dd9cf8f1fb",
       "models": [
         "formal/models/api/api_trace.qnt",
-        "formal/models/api/identity_consumer_exchange.qnt"
+        "formal/models/api/identity_consumer_exchange.qnt",
+        "formal/models/api/trace_bearer_tokens.qnt",
+        "formal/models/api/trace_route_authorization.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -960,7 +962,8 @@
       "sha256": "b14e2d0bb714baccceda657eeb0dd61dce7e5c344f338547a23d1e8283c0d6fd",
       "models": [
         "formal/models/api/api_trace.qnt",
-        "formal/models/api/api_trace_intent_admission.qnt"
+        "formal/models/api/api_trace_intent_admission.qnt",
+        "formal/models/api/trace_bearer_tokens.qnt"
       ],
       "candidateLines": [16, 17, 26, 40, 84, 140, 171, 172, 173],
       "review": "mapped-abstraction"
@@ -972,7 +975,9 @@
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
         "formal/models/api/api_wallet_claims.qnt",
-        "formal/models/api/identity_consumer_exchange.qnt"
+        "formal/models/api/identity_consumer_exchange.qnt",
+        "formal/models/api/trace_bearer_tokens.qnt",
+        "formal/models/api/trace_route_authorization.qnt"
       ],
       "candidateLines": [
         87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 438, 510,
@@ -1739,6 +1744,7 @@
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
+        "formal/models/api/trace_route_authorization.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [517, 518, 553, 566],
@@ -5123,9 +5129,9 @@
     {
       "path": "src/lib/deployment.ts",
       "sha256": "acf85bf6e068d2e8558c2cf1028dda6f4115f1895c0904e0c25ab8a5b9cee568",
-      "models": [],
+      "models": ["formal/models/api/trace_route_authorization.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure deployment-tier/origin selection and local-origin predicate; no runtime effect or transition."
     },
     {
@@ -9152,6 +9158,89 @@
       "sha256": "87cb97863a3c7a23370d638dcb9b78e50f9d1c9163ded21950d3e152fe2dbfc8",
       "sources": ["workers/identity/handler.ts"],
       "scenarios": ["completeTest", "decryptFailureTest", "expireTest"]
+    },
+    {
+      "path": "formal/models/api/trace_bearer_tokens.qnt",
+      "sha256": "1c73ce136a5be42bc6963f5ef657332f3b1c055eb8d3e4eba077c1230f3e661f",
+      "sources": [
+        "backend/trace/auth.ts",
+        "backend/trace/contracts.ts",
+        "backend/trace/handler.ts"
+      ],
+      "scenarios": [
+        "beyondFutureSkewRefusesTest",
+        "contributorLifetimeAboveTenMinutesRefusesTest",
+        "cryptoErrorThrowsInsteadOfRefusalTest",
+        "emptyRolesRefuseTest",
+        "expirySkewBoundaryRefusesTest",
+        "futureSkewBoundaryAcceptedTest",
+        "insideExpirySkewAcceptedTest",
+        "invalidBase64RefusesTest",
+        "invalidClaimShapeRefusesTest",
+        "invalidJsonRefusesTest",
+        "invalidSignatureRefusesBeforeJsonTest",
+        "missingBearerRefusesTest",
+        "operatorAboveFiveMinutesRefusesTest",
+        "operatorFiveMinuteBoundaryAcceptedTest",
+        "oversizedBearerRefusesTest",
+        "secretFailurePrecedesBearerInspectionTest",
+        "signerDoesNotCheckCurrentAllowlistTest",
+        "signerDoesNotEnforceVerifierTtlTest",
+        "signingErrorDoesNotReturnTokenTest",
+        "ttlUsesOriginalRolesBeforeFilteringTest",
+        "unlistedOperatorOnlyRefusesTest",
+        "unlistedOperatorRetainsOtherRolesTest",
+        "validContributorReturnsActorTest",
+        "verifierUsesCapturedTimeTest",
+        "wrongSignatureLengthRefusesTest",
+        "zeroLifetimeRefusesTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/trace_route_authorization.qnt",
+      "sha256": "a8108c2c31016781380c2bf2db961a5c11969dc0e673fd337c198f2186293e45",
+      "sources": [
+        "backend/trace/auth.ts",
+        "backend/trace/handler.ts",
+        "functions/api/v1/[[path]].ts",
+        "src/lib/deployment.ts"
+      ],
+      "scenarios": [
+        "acceptedBearerCanStillWaitBeforeDispatchTest",
+        "anotherAllowedBrowserOriginCannotRecoverTest",
+        "contributorBearerAdmitsRunHandlerTest",
+        "contributorCannotUseOperatorFallbackTest",
+        "emptyAuthorizationHeaderPreventsLocalSessionPathTest",
+        "emptyAuthorizationHeaderPreventsSiteSessionPathTest",
+        "emptyPathReturns404BeforeHttpsCheckTest",
+        "filteredOperatorBearerAdmitsFallbackTest",
+        "identityExchangeDoesNotVerifyBearerTest",
+        "insecureNonlocalRouteReturns400BeforeLookupTest",
+        "localSessionRecoveryUsesSameOriginCheckTest",
+        "localhostDoesNotJoinProductionCorsAllowlistTest",
+        "localhostHttpBearerRouteRemainsAvailableTest",
+        "missingBearerOnKnownRouteReturns401Test",
+        "missingSiteSessionReturns401Test",
+        "nonBrowserRouteOptionsReachesNoApplicationHandlerTest",
+        "preflightRejectsUnlistedRequestHeadersTest",
+        "preflightRequiresOriginTest",
+        "projectOwnerBearerAdmitsWalletReadTest",
+        "publicIntakeBypassesBearerVerificationTest",
+        "publicWalletStillUsesBrowserOriginRefusalTest",
+        "publicWalletWrongAuthorityReturns404Test",
+        "randomIdFailureDoesNotDispatchRecoveryTest",
+        "recoveryNeedsExplicitSameOriginHeaderTest",
+        "recoveryRefusesEvenAcceptedOperatorBearerAtApiTest",
+        "removedRouteReturns404BeforeBearerTest",
+        "secretOrCryptoFailureIsNotOrdinaryUnauthorizedTest",
+        "sessionActorStillNeedsAllowlistObservationTest",
+        "sessionReadFailureReturns500Test",
+        "sessionRecoveryCreatesOnlyRequestLocalOperatorRoleTest",
+        "siteOriginCannotUseOrdinaryBearerRouteTest",
+        "stagingApiAndSiteCanUseSessionRecoveryTest",
+        "uploadDelegatesCapabilityBeforeBearerTest",
+        "validPreflightReturns204WithoutAnyAuthenticationTest"
+      ]
     },
     {
       "path": "formal/models/contracts/acceptance_run.qnt",
