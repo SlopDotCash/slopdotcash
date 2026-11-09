@@ -168,10 +168,12 @@
       "sha256": "e651ccb0701b9d09071310442b0a37b34f0aff6740a7ce02c3e465c97b05b6c0",
       "models": [
         "formal/models/api/api_request_composition.qnt",
+        "formal/models/payments/solana_binding_api.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
         "formal/models/ui/ui_owner_private_requests.qnt",
+        "formal/models/ui/ui_payout_consent_lifetime.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
@@ -304,9 +306,11 @@
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt",
         "formal/models/payments/payment_wallet_registration.qnt",
+        "formal/models/payments/solana_binding_api.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
-        "formal/models/ui/ui_earnings_actor_binding.qnt"
+        "formal/models/ui/ui_earnings_actor_binding.qnt",
+        "formal/models/ui/ui_payout_consent_lifetime.qnt"
       ],
       "candidateLines": [
         106, 186, 253, 297, 302, 349, 371, 377, 400, 422, 622, 643, 657, 777,
@@ -1774,6 +1778,7 @@
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/trace_route_authorization.qnt",
+        "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [517, 518, 553, 566],
@@ -4370,17 +4375,18 @@
     },
     {
       "path": "src/Earnings.tsx",
-      "sha256": "a2977b91ef8dff363bde73f58cf76e11fcf0ce88615dea17b3b0241f89a76c1a",
+      "sha256": "6ed98cc111d0c19879c22cc7b96bc8f0f8ef8fad7103f2b5c1a1a0a57906b892",
       "models": [
         "formal/models/ui/ui_earnings_actor_binding.qnt",
         "formal/models/ui/ui_earnings_wallet_lifetime.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
+        "formal/models/ui/ui_payout_consent_lifetime.qnt",
         "formal/models/ui/ui_wallet_choice.qnt"
       ],
       "candidateLines": [
         11, 122, 126, 130, 134, 168, 176, 192, 218, 231, 233, 234, 235, 236,
         237, 238, 239, 240, 249, 265, 278, 286, 291, 351, 359, 395, 422, 473,
-        658, 682, 686, 710, 712, 718, 736, 744, 763, 777, 908, 920, 981
+        658, 682, 686, 710, 712, 718, 736, 744, 763, 777, 908, 920, 990
       ],
       "review": "mapped-abstraction"
     },
@@ -4608,9 +4614,14 @@
     },
     {
       "path": "src/PayoutConsent.tsx",
-      "sha256": "71c83bc9ea12e28b3ee7e1936b6263a909c80fe7f68abca76be1b436c00b1832",
-      "models": ["formal/models/ui/ui_payout_consent.qnt"],
-      "candidateLines": [2, 28, 30, 32, 40, 48, 49, 50, 51, 58, 77, 164, 313],
+      "sha256": "7557e5c9a1e9309cb8be51a2f0bde2f17ee57f853d15330f1237b1770f18030a",
+      "models": [
+        "formal/models/ui/ui_payout_consent.qnt",
+        "formal/models/ui/ui_payout_consent_lifetime.qnt"
+      ],
+      "candidateLines": [
+        2, 38, 44, 48, 50, 55, 65, 66, 67, 68, 76, 103, 122, 234, 276, 278, 398
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -5617,6 +5628,7 @@
         "formal/models/ui/ui_focus_session.qnt",
         "formal/models/ui/ui_inbox_reads.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/ui/ui_payout_consent_lifetime.qnt",
         "formal/models/ui/ui_pending_applications.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
@@ -6801,6 +6813,7 @@
       "sha256": "331682fd24f4da18573910de610f8752b475c97556224feee0228991a3dd6c57",
       "models": [
         "formal/models/payments/payment_worker_run.qnt",
+        "formal/models/payments/solana_binding_api.qnt",
         "formal/models/payments/solana_binding_completion.qnt"
       ],
       "candidateLines": [17, 33, 58],
@@ -6910,7 +6923,10 @@
     {
       "path": "workers/payments/deployments.ts",
       "sha256": "aab9208729df7febd9c693c7a80faa562ed1a6238bd74a5c44eb9b797f8af9e2",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "models": [
+        "formal/models/payments/payment_worker_run.qnt",
+        "formal/models/payments/solana_binding_api.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -10857,6 +10873,54 @@
       ]
     },
     {
+      "path": "formal/models/payments/solana_binding_api.qnt",
+      "sha256": "1357251c3243cb533beb12b3d8f9e6718bfa0befe4ce76d786001d092cb02d38",
+      "sources": [
+        "backend/http.ts",
+        "backend/payments/handler.ts",
+        "functions/api/v1/[[path]].ts",
+        "workers/payment-executor/entrypoint.ts",
+        "workers/payments/deployments.ts"
+      ],
+      "scenarios": [
+        "absentSelectableAttemptReturnsNotReadyTest",
+        "auditReplyFailureKeepsAuditAndSkipsPrivateReadTest",
+        "auditUsesCapturedTimeAcrossAwaitTest",
+        "capturedClaimSurvivesLaterReplacementTest",
+        "closingAttemptAfterSelectionDoesNotRewriteRequestTest",
+        "completeForwardsTransactionWithoutReturningItTest",
+        "completeRequiresBoundedEncodedTransactionTest",
+        "deploymentResolverErrorReturnsUnavailableTest",
+        "duplicateDeploymentRefusesBeforeServiceTest",
+        "expiredSessionRefusesDistinctlyTest",
+        "explicitPrivateRetryAppendsAnotherAuditTest",
+        "forbiddenOriginRefusesBeforeSessionTest",
+        "invalidBodyRefusesBeforeServiceLookupTest",
+        "invalidExpectedActorRefusesTest",
+        "invalidJsonDoesNotUndoRemoteEffectTest",
+        "laterRequestObservesReplacementClaimTest",
+        "lostSuccessReplyPreservesRemoteEffectTest",
+        "malformedOptionalTransactionRefusesEvenOnCompleteTest",
+        "mismatchedExpectedActorRefusesTest",
+        "missingPrivateServiceNeverFallsBackToOrdinaryTest",
+        "missingResolverReturnsPrepareWithoutContextTest",
+        "missingSessionRefusesTest",
+        "noServicesRefusesBeforeAnyLedgerReadTest",
+        "nonOkServiceResponseMapsTo409Test",
+        "ordinaryMatchTakesPriorityOverPrivateFallbackTest",
+        "ordinaryPrepareReturnsSelectedContextAndBytesTest",
+        "prepareIgnoresUnneededTransactionFieldTest",
+        "privateNotReadyStillRetainsReadAuditTest",
+        "privatePrepareUsesPrivateDeploymentContextTest",
+        "privateReadAndDispatchFollowCommittedAuditTest",
+        "privateReadRequiresReporterOwnershipTest",
+        "stringOnlyIdValidationAcceptsEmptyStringTest",
+        "submittedAttemptRemainsSelectableForRetryTest",
+        "thrownFetchCanStillHaveCommittedRemoteEffectTest",
+        "unknownAttemptRemainsSelectableTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/solana_binding_completion.qnt",
       "sha256": "c252954040cf1c11bcd9cb455f96e6e88847873bf2470d226bf98ce855adff98",
       "sources": [
@@ -13887,6 +13951,49 @@
       "sha256": "e8b60bb1f1b267de75f4a722e69e5bbcb81064ac244e78d6a7ba0b4e14a43948",
       "sources": ["src/PayoutConsent.tsx", "src/lib/payout-consent.ts"],
       "scenarios": ["changedAccountTest", "consentTest"]
+    },
+    {
+      "path": "formal/models/ui/ui_payout_consent_lifetime.qnt",
+      "sha256": "9eef8d990061202542ef33eb1f62455deac98498ea0f153eb5d5b5d51e49b1ce",
+      "sources": [
+        "backend/http.ts",
+        "backend/payments/handler.ts",
+        "src/Earnings.tsx",
+        "src/PayoutConsent.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "abortedParentReadCannotRestoreAfterAccessLossTest",
+        "acceptedWriteSurvivesUnmountWithoutNoticeTest",
+        "accountChangeDuringConnectStopsPreparationTest",
+        "accountChangeDuringPreparationStopsSigningTest",
+        "accountChangeDuringSigningStopsAuthorizationTest",
+        "accountLossPrecedesWrongConnectedWalletTest",
+        "admittedOldWriteDoesNotPublishToNewActorTest",
+        "badPreparedBytesStopBeforeWalletTest",
+        "busyControllerRefusesDoubleActivationTest",
+        "busyDialogRefusesUserCancelTest",
+        "changedWalletRefusesPreparationTest",
+        "contextChangeStopsOldPromptTest",
+        "evmAccountLossPrecedesMalformedSignatureTest",
+        "evmConsentCompletesWithoutPaymentClaimTest",
+        "expectedActorHeaderRefusesPostCheckSwapTest",
+        "explicitSignOutStopsWalletContinuationTest",
+        "idleCancelClosesDialogTest",
+        "invalidSolanaSignatureKeepsDialogRetryableTest",
+        "latePromptOldBehaviorNegativeControlTest",
+        "oldReplyDoesNotResetNewOperationTest",
+        "parentRestoreOldBehaviorNegativeControlTest",
+        "postObservationCookieChangeIsCaughtByHeaderTest",
+        "rejectedWalletPromiseKeepsDialogRetryableTest",
+        "solanaConsentCompletesWithoutPaymentClaimTest",
+        "staleSessionReplyStopsBeforeConnectionTest",
+        "unavailableSessionStopsBeforeWalletTest",
+        "unmountDuringConnectionStopsRequestTest",
+        "unmountDuringPrepareStopsPromptTest",
+        "unmountDuringSigningStopsWriteTest",
+        "wrongInitialActorCannotConnectTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_pending_applications.qnt",

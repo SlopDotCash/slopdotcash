@@ -945,6 +945,15 @@ export function EarningsPage({
                           }
                           payment={payment}
                           account={data}
+                          onAccessLost={(signedOut) => {
+                            loadController.current?.abort();
+                            loadController.current = null;
+                            setLoading(false);
+                            clearAccount(signedOut);
+                            setLoadError(
+                              signedOut ? "" : new AccountChangedError().message,
+                            );
+                          }}
                         />
                       </PayoutRow>
                     ))}
