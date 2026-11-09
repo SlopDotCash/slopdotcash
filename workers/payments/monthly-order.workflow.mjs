@@ -60,7 +60,7 @@ if(new URL(request.url).pathname==='/cutoff') {
   };
   const service=monthlyOwnerService({db:wrapped,
     getProject:(id)=>new CloudflareProjectPersistence(env.DB).getProject(id),
-    restricted:async()=>false,networks:()=>['base-sepolia'],verifyAuthority:async()=>{},
+    restricted:async()=>false,networks:()=>['base-sepolia'],verifyAuthority:async()=>true,
     schedule:()=>({firstPeriod:period,cutoffSecondsAfterPeriodEnd:(deadline-Date.UTC(year,month,1))/1000}),
     now:()=>new Date()});
   try {

@@ -48,9 +48,9 @@ function baseUnitsOf(value: string, decimals: number | null) {
   return parseVaultAmount(trimmed, decimals).toString();
 }
 /** A release this browser submitted must stay visible until it settles. */
-function hasSubmittedRelease(projectId: string) {
+function hasSubmittedRelease(projectId: string, suffix = "") {
   try {
-    const prefix = releaseStoragePrefix(projectId);
+    const prefix = `${releaseStoragePrefix(projectId)}${suffix}`;
     return Object.keys(sessionStorage).some((key) => key.startsWith(prefix));
   } catch {
     return false;
@@ -142,6 +142,7 @@ export default function OwnerAwards({
         body.projectId !== project.id ||
         body.period !== month ||
         typeof body.automatic !== "boolean" ||
+        typeof body.canManage !== "boolean" ||
         (body.proposal !== null && !Array.isArray(body.proposal.allocations)) ||
         (body.run !== null && !Array.isArray(body.run.awards))
       )
@@ -463,16 +464,20 @@ export default function OwnerAwards({
                       )}
                     </span>
                   </p>
-                  <button
-                    className="button secondary-button"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void toggleAutomatic()}
-                  >
-                    {view.automatic
-                      ? "Turn off automatic finalization"
-                      : "Turn on automatic finalization"}
-                  </button>
+                  {view.canManage ? (
+                    <button
+                      className="button secondary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void toggleAutomatic()}
+                    >
+                      {view.automatic
+                        ? "Turn off automatic finalization"
+                        : "Turn on automatic finalization"}
+                    </button>
+                  ) : (
+                    <p role="status">View only</p>
+                  )}
                 </div>
                 {authorizationDeployment && (
                   <p className="owner-award-authorization">
@@ -540,70 +545,74 @@ export default function OwnerAwards({
                               fee={amount(fee.toString())}
                               saved
                             />
-                            <div className="owner-award-edit">
-                              <label htmlFor={id}>
-                                <span aria-hidden="true">
-                                  {drafts[view.period]?.[row.githubUserId] ===
-                                  undefined
-                                    ? "Edit gross"
-                                    : "Unsaved gross"}
-                                </span>
-                                <span className="visually-hidden">
-                                  Award for {row.login}
-                                  {decimals === null ? " (base units)" : ""}
-                                </span>
-                              </label>
-                              <input
-                                id={id}
-                                inputMode="decimal"
-                                spellCheck={false}
-                                disabled={busy || cutoffPassed}
-                                value={
-                                  drafts[view.period]?.[row.githubUserId]
-                                    ?.value ??
-                                  editableUnits(row.grossBase, decimals)
-                                }
-                                onChange={(event) =>
-                                  setDrafts({
-                                    ...drafts,
-                                    [view.period]: {
-                                      ...(drafts[view.period] ?? {}),
-                                      [row.githubUserId]: {
-                                        value: event.target.value,
-                                        base: row.grossBase,
-                                      },
-                                    },
-                                  })
-                                }
-                              />
-                              <button
-                                className="button secondary-button"
-                                type="button"
-                                disabled={
-                                  busy ||
-                                  cutoffPassed ||
-                                  drafts[view.period]?.[row.githubUserId] ===
+                            {view.canManage && (
+                              <div className="owner-award-edit">
+                                <label htmlFor={id}>
+                                  <span aria-hidden="true">
+                                    {drafts[view.period]?.[row.githubUserId] ===
                                     undefined
-                                }
-                                aria-label={`Save ${row.login}`}
-                                onClick={() => void save(row.githubUserId)}
-                              >
-                                Save
-                              </button>
-                            </div>
+                                      ? "Edit gross"
+                                      : "Unsaved gross"}
+                                  </span>
+                                  <span className="visually-hidden">
+                                    Award for {row.login}
+                                    {decimals === null ? " (base units)" : ""}
+                                  </span>
+                                </label>
+                                <input
+                                  id={id}
+                                  inputMode="decimal"
+                                  spellCheck={false}
+                                  disabled={busy || cutoffPassed}
+                                  value={
+                                    drafts[view.period]?.[row.githubUserId]
+                                      ?.value ??
+                                    editableUnits(row.grossBase, decimals)
+                                  }
+                                  onChange={(event) =>
+                                    setDrafts({
+                                      ...drafts,
+                                      [view.period]: {
+                                        ...(drafts[view.period] ?? {}),
+                                        [row.githubUserId]: {
+                                          value: event.target.value,
+                                          base: row.grossBase,
+                                        },
+                                      },
+                                    })
+                                  }
+                                />
+                                <button
+                                  className="button secondary-button"
+                                  type="button"
+                                  disabled={
+                                    busy ||
+                                    cutoffPassed ||
+                                    drafts[view.period]?.[row.githubUserId] ===
+                                      undefined
+                                  }
+                                  aria-label={`Save ${row.login}`}
+                                  onClick={() => void save(row.githubUserId)}
+                                >
+                                  Save
+                                </button>
+                              </div>
+                            )}
                           </li>
                         );
                       })}
                     </ul>
                   )}
-                  <button
-                    className="button primary-button"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void finalize()}
-                  >
-                    Finalize awards
-                  </button>
+                  {view.canManage && (
+                    <button
+                      className="button primary-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void finalize()}
+                    >
+                      Finalize awards
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
@@ -690,12 +699,17 @@ export default function OwnerAwards({
               )}
             </div>
           )}
-          {view?.deployment && (
-            <OwnerReserveRelease
-              key={`${view.projectId}:${view.period}:${view.manifestSha256}`}
-              view={view}
-            />
-          )}
+          {view?.deployment &&
+            (view.canManage ||
+              hasSubmittedRelease(
+                project.id,
+                `${view.period}:${view.deployment.network}`,
+              )) && (
+              <OwnerReserveRelease
+                key={`${view.projectId}:${view.period}:${view.manifestSha256}`}
+                view={view}
+              />
+            )}
         </>
       )}
     </section>

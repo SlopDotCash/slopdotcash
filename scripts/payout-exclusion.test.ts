@@ -182,7 +182,7 @@ test("an excluded owner keeps the score, receives nothing, and the other share i
       getProject: (id) => persistence.getProject(id),
       restricted: async () => false,
       networks: () => ["base-sepolia"],
-      verifyAuthority: async () => {},
+      verifyAuthority: async () => true,
       schedule: () => null,
       now: () => new Date(AFTER_NOVEMBER),
     });

@@ -791,6 +791,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
               period: "2026-09",
               manifestSha256: commitment.manifestSha256,
               automatic: true,
+              canManage: true,
               cutoffAt: null,
               deployment,
               asset: null,
