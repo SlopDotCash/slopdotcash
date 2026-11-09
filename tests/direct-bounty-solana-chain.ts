@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { startLocalSolanaValidator } from "../scripts/local-solana-validator.mjs";
 import { SOLANA_NATIVE_ASSET } from "../src/lib/escrow-policy.mjs";
-import { seedVerifiedWalletRows } from "./direct-bounty-chain";
+import { seedVerifiedWalletRows } from "./bounty-wallet-seed";
 
 const fixtureRequire = createRequire(import.meta.url);
 const { REVIEWED_SOLANA_PROGRAMS } = fixtureRequire(

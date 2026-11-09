@@ -225,7 +225,7 @@ test("unrelated documentation does not select native EVM accounting", () => {
 test("Solana fixture and fee changes select their actual chain job", () => {
   for (const path of [
     "scripts/local-solana-validator.mjs",
-    "tests/direct-bounty-chain.ts",
+    "tests/bounty-wallet-seed.ts",
     "tests/direct-bounty-solana-chain.ts",
     "tests/e2e/solana-vault-actions.spec.ts",
     "workers/fee-converter/solana-local.integration.ts",
