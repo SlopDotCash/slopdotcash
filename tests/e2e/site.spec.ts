@@ -22,6 +22,7 @@ import { archivedPaidCycleIndex } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+import { adminProjectRecord } from "./project-maintainer-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -1336,31 +1337,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({
       json: {
-        projects: [
-          {
-            id: project.id,
-            status: project.status,
-            revision: 1,
-            manifest,
-            manifestSha256: "a".repeat(64),
-            createdAt: "2026-10-22T00:00:00.000Z",
-            updatedAt: "2026-10-22T00:00:00.000Z",
-            sourceApplicationId: null,
-            enforcement: {
-              state: "clear",
-              appeal: "none",
-              projectAppeal: "none",
-              since: null,
-              restrictedBy: [],
-              nextSequence: 1,
-              revisionPending: false,
-              moderation: "unconfigured",
-              decisionRequired: false,
-              bannedMaintainers: [],
-              records: [],
-            },
-          },
-        ],
+        projects: [adminProjectRecord(project, { manifest })],
       },
     }),
   );

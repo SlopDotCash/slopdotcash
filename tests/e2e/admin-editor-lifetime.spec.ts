@@ -1,7 +1,10 @@
 import type { Page } from "@playwright/test";
 import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import { expect, expectAccessibleReflow, test } from "./fixtures";
-import { serveProjectMaintainer } from "./project-maintainer-fixture";
+import {
+  adminProjectRecord,
+  serveProjectMaintainer,
+} from "./project-maintainer-fixture";
 
 function gate() {
   let release!: () => void;
@@ -29,29 +32,7 @@ async function editorFixture(page: Page) {
   });
   let revision = 1;
   let manifest = project;
-  const record = () => ({
-    id: project.id,
-    status: project.status,
-    revision,
-    manifest,
-    manifestSha256: "a".repeat(64),
-    createdAt: "2026-10-22T00:00:00.000Z",
-    updatedAt: "2026-10-22T00:00:00.000Z",
-    sourceApplicationId: null,
-    enforcement: {
-      state: "clear",
-      appeal: "none",
-      projectAppeal: "none",
-      since: null,
-      restrictedBy: [],
-      nextSequence: 1,
-      revisionPending: false,
-      moderation: "unconfigured",
-      decisionRequired: false,
-      bannedMaintainers: [],
-      records: [],
-    },
-  });
+  const record = () => adminProjectRecord(project, { manifest, revision });
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({ json: { projects: [record()] } }),
   );

@@ -4,15 +4,9 @@
 // the browser must rebuild and verify the exact same message before signing.
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { handlePaymentsApi } from "../backend/payments/handler";
-import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
-import {
-  handleProjectApi,
-  type ProjectApiDependencies,
-} from "../backend/projects/handler";
-import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import {
   CONFIG_DISCRIMINATOR,
   CONFIG_SIZE,
@@ -32,7 +26,6 @@ import {
 import { ata, bytes } from "../contracts/solana/transactions";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
-import { sha256Hex } from "../src/lib/sha256";
 import {
   reviewSolanaVaultAction,
   sendSolanaVaultAction,
@@ -43,7 +36,7 @@ import {
   type VaultSetupReview,
 } from "../src/lib/vault-setup";
 import { applicationManifest } from "../tests/project-application-manifest";
-import { sqliteD1 } from "../tests/sqlite-d1";
+import { vaultSetupHarness } from "../tests/vault-setup-harness";
 
 const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };
@@ -204,11 +197,6 @@ const rpc = Bun.serve({
 afterAll(() => rpc.stop(true));
 const rpcUrl = `http://127.0.0.1:${rpc.port}`;
 
-const { db, sqlite } = sqliteD1(
-  readdirSync(new URL("../migrations/", import.meta.url))
-    .filter((name) => name.endsWith(".sql"))
-    .sort(),
-);
 const manifest = applicationManifest(
   "metadata-vault",
   "example/metadata-vault",
@@ -238,74 +226,18 @@ const manifest = applicationManifest(
     },
   },
 );
-const manifestText = JSON.stringify(manifest);
-sqlite
-  .prepare(
-    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('metadata-vault',1,?,?,'Fixture',?)",
-  )
-  .run(manifestText, sha256Hex(manifestText), NOW);
-sqlite
-  .prepare(
-    "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('metadata-vault','paused',1,?,?,?,?)",
-  )
-  .run(manifestText, sha256Hex(manifestText), NOW, NOW);
-sqlite
-  .prepare(
-    "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(?,?,?,?,'d1_registry',?,?,?,?,'solana')",
-  )
-  .run(
-    CLAIM,
-    OWNER.githubId,
-    OWNER.githubLogin,
-    OWNER_WALLET,
-    "a".repeat(64),
-    NOW,
-    "b".repeat(64),
-    NOW,
-  );
-sqlite
-  .prepare(
-    "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES('challenge-1',?,?,'fixture',?,?)",
-  )
-  .run(CLAIM, OWNER.githubId, NOW, NOW);
-sqlite
-  .prepare(
-    "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,'challenge-1','0x00')",
-  )
-  .run(CLAIM, OWNER.githubId, NOW);
-
-const persistence = new CloudflareProjectPersistence(db);
-const projectDeps: ProjectApiDependencies = {
-  persistence,
-  adminGithubIds: new Set(),
-  moderatorGithubIds: new Set(),
-  now: () => new Date(NOW),
-  randomId: () => crypto.randomUUID(),
-  sessionActor: async () => OWNER,
-  readTokenMetadata: async () => {
-    throw new Error("No asset edit in this workflow");
-  },
-  github: {
-    fetch: async () => {
-      throw new Error("Unexpected public lookup");
-    },
-  },
-  vettingClearance: async () => ({ state: "unscanned" }),
-  repositoryControl: async () => ({ state: "matched" }),
-  repositoryAccess: async () => ({
-    installation: "installed",
-    installationId: 42,
-    permission: "admin",
-    roleName: "admin",
-  }),
-  vaultSetup: ownerVaultSetupService({
-    db,
-    projects: () => persistence.listProjects(),
-    networks: () => ["solana-mainnet"],
-    rpcUrl: () => rpcUrl,
-    programs: [program],
-  }),
-};
+const { db, vaultSetup } = vaultSetupHarness({
+  projectId: "metadata-vault",
+  manifest,
+  chain: "solana",
+  claim: CLAIM,
+  owner: OWNER,
+  ownerWallet: OWNER_WALLET,
+  now: NOW,
+  network: "solana-mainnet",
+  rpcUrl: () => rpcUrl,
+  reviewed: { programs: [program] },
+});
 
 test("browser vault setup and funding reviews preserve the verified Token-2022 program", async () => {
   const input = {
@@ -314,26 +246,13 @@ test("browser vault setup and funding reviews preserve the verified Token-2022 p
     automatic: true,
     payoutPolicy: "ordinary" as const,
   };
-  const setupResponse = await handleProjectApi(
-    new Request("https://slop.cash/api/v1/project-vaults/metadata-vault", {
-      method: "POST",
-      headers: {
-        origin: "https://slop.cash",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        ...input,
-        step: "review",
-        expectedRevision: 1,
-      }),
-    }),
-    projectDeps,
-  );
-  if (!setupResponse) throw new Error("The project API did not answer");
+  const setupResponse = await vaultSetup({
+    ...input,
+    step: "review",
+    expectedRevision: 1,
+  });
   expect(setupResponse.status).toBe(200);
-  const { review } = (await setupResponse.json()) as {
-    review: VaultSetupReview;
-  };
+  const { review } = setupResponse.body as { review: VaultSetupReview };
   if (review.family !== "solana") throw new Error("Expected Solana review");
   expect(review.creation.tokenProgram).toBe(TOKEN_2022_PROGRAM);
 

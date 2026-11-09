@@ -4,6 +4,7 @@ import {
   createPendingAttempt,
   type PendingAttempt,
   updatePendingAttempt,
+  updatePendingRecord,
 } from "./pending-attempt";
 
 /**
@@ -54,6 +55,80 @@ export function usePendingWalletAttempt<P extends PendingAttempt>(
     setPending(null);
     return true;
   };
+  /**
+   * Sends one wallet request for `intent`. The record is saved just before
+   * the wallet prompt; the returned hash replaces it with `submitted(hash)`.
+   * A declined prompt removes the record, and an error after the prompt
+   * keeps it, because the wallet may still have sent the transaction.
+   * `notify` receives the warning when the hash itself could not be saved.
+   */
+  const submit = async (
+    intent: P,
+    send: (beforeSend: () => void) => Promise<string>,
+    options: {
+      submitted: (hash: string) => P;
+      notify: (message: string) => void;
+      onBeforeSend?: () => void;
+      unclear: string;
+    },
+  ) => {
+    let requested = false;
+    try {
+      const hash = await send(() => {
+        if (!mounted.current)
+          throw new Error("The wallet view was closed. Review before sending.");
+        if (!remember(intent))
+          throw new Error(
+            "The saved request changed. Reload before continuing.",
+          );
+        options.onBeforeSend?.();
+        requested = true;
+      });
+      const submitted = options.submitted(hash);
+      try {
+        if (!remember(submitted, intent) && mounted.current)
+          options.notify(
+            `Submitted ${hash}. Keep this hash; the saved request changed.`,
+          );
+      } catch {
+        if (mounted.current) {
+          setPending(submitted);
+          options.notify(
+            `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
+          );
+        }
+      }
+      return hash;
+    } catch (caught) {
+      if ((caught as { code?: unknown } | null)?.code === 4001) {
+        if (requested) {
+          if (mounted.current) clear(intent);
+          else clearPendingAttempt(key, intent);
+        }
+        throw new Error("You declined the wallet request. Nothing was sent.");
+      }
+      if (requested) throw new Error(options.unclear);
+      throw caught;
+    }
+  };
+  /**
+   * Saves a hash the owner entered for the record `captured`. Returns false,
+   * keeping the hash in this view only, when browser storage fails.
+   */
+  const recordRecoveryHash = (captured: P, candidate: P) => {
+    let stored: boolean;
+    try {
+      stored = updatePendingRecord(key, captured, candidate);
+    } catch {
+      setPending(candidate);
+      return false;
+    }
+    if (!stored)
+      throw new Error("The saved request changed. Reload before continuing.");
+    storedPending.current = candidate;
+    setPending(candidate);
+    return true;
+  };
   /** Removes the unreadable record only if this tab did not change it. */
   const clearUnreadable = () => {
     if (!mounted.current) return;
@@ -71,6 +146,8 @@ export function usePendingWalletAttempt<P extends PendingAttempt>(
     storageError,
     remember,
     clear,
+    submit,
+    recordRecoveryHash,
     clearUnreadable,
   };
 }

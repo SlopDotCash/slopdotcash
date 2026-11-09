@@ -15,6 +15,7 @@ on:
       - 'scripts/local-solana-validator.*'
       - 'scripts/escrow-acceptance.ts'
       - 'scripts/escrow-acceptance/**'
+      - 'tests/bounty-wallet-seed.ts'
       - 'tests/direct-bounty-solana-chain.ts'
       - 'tests/e2e/solana-vault-actions.spec.ts'
       - '.github/workflows/escrow-tests.yml'

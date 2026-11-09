@@ -1,6 +1,6 @@
 /** The browser must not accept edits that a pending correction will discard. */
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import { expect, expectAccessible, routeReporterInbox, test } from "./fixtures";
 
 for (const failFirst of [false, true]) {
   test(
@@ -55,78 +55,45 @@ for (const failFirst of [false, true]) {
       const requests: { expectedRevision: number; report: typeof stored }[] =
         [];
       let release: (() => void) | undefined;
-      await page.route("**/api/v1/**", async (route) => {
-        const path = new URL(route.request().url()).pathname.slice(
-          "/api/v1/".length,
-        );
-        if (path === "project-session")
-          return route.fulfill({
-            json: {
-              session: { githubId: "42", githubLogin: "fixture-reporter" },
-            },
-          });
-        if (path === "projects")
-          return route.fulfill({
-            json: { schemaVersion: "1", projects: [] },
-          });
-        if (path === "notifications")
-          return route.fulfill({
-            json: {
-              recipientGithubId: "42",
-              notifications: [],
-              unread: 0,
-            },
-          });
-        if (path === "security-cases")
-          return route.fulfill({
-            json: {
-              viewer: { githubId: "42", githubLogin: "fixture-reporter" },
-              cases: [],
-              programs: [],
-            },
-          });
-        if (path === "security-submissions")
-          return route.fulfill({
-            json: {
-              recipientGithubId: "42",
-              automatic: false,
-              submissions: [submission],
-            },
-          });
-        if (path === `security-submissions/${id}`)
-          return route.fulfill({ json: { submission, report: stored } });
-        if (
-          path === `security-submissions/${id}/report` &&
-          route.request().method() === "POST"
-        ) {
-          const body = route.request().postDataJSON();
-          requests.push(body);
-          await new Promise<void>((resolve) => {
-            release = resolve;
-          });
-          if (failFirst && requests.length === 1)
-            return route.fulfill({
-              status: 503,
-              json: {
-                error: "fixture_unavailable",
-                message: "The correction could not be saved. Retry.",
-              },
+      await routeReporterInbox(page, {
+        submission: () => submission,
+        automatic: false,
+        onRequest: async (route, path) => {
+          if (path === `security-submissions/${id}`)
+            return route.fulfill({ json: { submission, report: stored } });
+          if (
+            path === `security-submissions/${id}/report` &&
+            route.request().method() === "POST"
+          ) {
+            const body = route.request().postDataJSON();
+            requests.push(body);
+            await new Promise<void>((resolve) => {
+              release = resolve;
             });
-          stored = body.report;
-          submission = {
-            ...submission,
-            revision: 3,
-            intake: {
-              ...submission.intake,
+            if (failFirst && requests.length === 1)
+              return route.fulfill({
+                status: 503,
+                json: {
+                  error: "fixture_unavailable",
+                  message: "The correction could not be saved. Retry.",
+                },
+              });
+            stored = body.report;
+            submission = {
+              ...submission,
               revision: 3,
-              state: "queued",
-              reason: "",
-              canRevise: false,
-            },
-          };
-          return route.fulfill({ json: { submission } });
-        }
-        throw new Error(`Unexpected correction fixture request: ${path}`);
+              intake: {
+                ...submission.intake,
+                revision: 3,
+                state: "queued",
+                reason: "",
+                canRevise: false,
+              },
+            };
+            return route.fulfill({ json: { submission } });
+          }
+          throw new Error(`Unexpected correction fixture request: ${path}`);
+        },
       });
       if (failFirst)
         diagnostics.allowResponse(

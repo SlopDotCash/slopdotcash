@@ -20,6 +20,7 @@ import {
   expect,
   type Page,
   type Request,
+  type Route,
 } from "@playwright/test";
 import type { CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
@@ -96,6 +97,65 @@ export async function serveProjectCycleIndex(
       },
     }),
   );
+}
+
+/**
+ * Serves reporter 42's Inbox reads (session, empty registry, notifications,
+ * cases and the listed private report) and passes every other API path to
+ * `onRequest`.
+ */
+export async function routeReporterInbox(
+  page: Page,
+  {
+    submission,
+    automatic,
+    onRequest,
+  }: {
+    submission: () => unknown;
+    automatic: boolean;
+    onRequest: (route: Route, path: string) => Promise<void>;
+  },
+) {
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname.slice(
+      "/api/v1/".length,
+    );
+    if (path === "project-session")
+      return route.fulfill({
+        json: {
+          session: { githubId: "42", githubLogin: "fixture-reporter" },
+        },
+      });
+    if (path === "projects")
+      return route.fulfill({
+        json: { schemaVersion: "1", projects: [] },
+      });
+    if (path === "notifications")
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          notifications: [],
+          unread: 0,
+        },
+      });
+    if (path === "security-cases")
+      return route.fulfill({
+        json: {
+          viewer: { githubId: "42", githubLogin: "fixture-reporter" },
+          cases: [],
+          programs: [],
+        },
+      });
+    if (path === "security-submissions")
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          automatic,
+          submissions: [submission()],
+        },
+      });
+    return onRequest(route, path);
+  });
 }
 
 /** Escapes a literal for a RegExp source. */

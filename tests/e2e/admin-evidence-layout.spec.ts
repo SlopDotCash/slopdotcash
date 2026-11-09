@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+import { adminProjectRecord } from "./project-maintainer-fixture";
 
 async function session(page: Page, signedIn = () => true) {
   await page.route("**/api/v1/project-session", (route) =>
@@ -75,31 +76,7 @@ test("selected admin project can queue after a superseded pending scan and prese
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({
       json: {
-        projects: [
-          {
-            id: project.id,
-            status: project.status,
-            revision: 1,
-            manifest: project,
-            manifestSha256: "a".repeat(64),
-            createdAt: "2026-10-22T00:00:00.000Z",
-            updatedAt: "2026-10-22T00:00:00.000Z",
-            sourceApplicationId: null,
-            enforcement: {
-              state: "clear",
-              appeal: "none",
-              projectAppeal: "none",
-              since: null,
-              restrictedBy: [],
-              nextSequence: 1,
-              revisionPending: false,
-              moderation: "unconfigured",
-              decisionRequired: false,
-              bannedMaintainers: [],
-              records: [],
-            },
-          },
-        ],
+        projects: [adminProjectRecord(project)],
       },
     }),
   );

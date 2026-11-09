@@ -1,6 +1,5 @@
 /** Disposable native-SOL wallet for the real Pages/D1 browser workflow. */
-import { execFileSync } from "node:child_process";
-import { createHash, createPrivateKey, sign } from "node:crypto";
+import { createPrivateKey, sign } from "node:crypto";
 import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -9,6 +8,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { startLocalSolanaValidator } from "../scripts/local-solana-validator.mjs";
 import { SOLANA_NATIVE_ASSET } from "../src/lib/escrow-policy.mjs";
+import { seedVerifiedWalletRows } from "./bounty-wallet-seed";
 
 const fixtureRequire = createRequire(import.meta.url);
 const { REVIEWED_SOLANA_PROGRAMS } = fixtureRequire(
@@ -240,42 +240,12 @@ export function seedVerifiedSolanaBountyWallets(
   persistTo: string,
   actors: { githubId: string; githubLogin: string; address: string }[],
 ) {
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const hash = (value: string) =>
-    createHash("sha256").update(value).digest("hex");
-  const statements: string[] = [];
-  for (const actor of actors) {
-    if (
-      !/^[1-9]\d{0,19}$/u.test(actor.githubId) ||
-      decodeBase58Bytes(actor.address).length !== 32
-    )
-      throw new Error("Invalid disposable Solana wallet actor");
-    const id = `direct-solana-browser-${actor.githubId}`,
-      challenge = `${id}-challenge`,
-      at = new Date().toISOString();
-    statements.push(
-      `INSERT OR IGNORE INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(${[id, actor.githubId, actor.githubLogin, actor.address, "d1_registry", hash(id), at, hash(`${id}:${actor.address}`), at, "solana"].map(quote).join(",")});`,
-    );
-    statements.push(
-      `INSERT OR IGNORE INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(${[challenge, id, actor.githubId, "disposable browser fixture", new Date(Date.now() + 86_400_000).toISOString(), at].map(quote).join(",")});`,
-    );
-    statements.push(
-      `INSERT OR IGNORE INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(${[id, actor.githubId, at, challenge, "disposable verified wallet fixture"].map(quote).join(",")});`,
-    );
-  }
-  execFileSync(
-    "node",
-    [
-      "node_modules/wrangler/bin/wrangler.js",
-      "d1",
-      "execute",
-      "slop-private",
-      "--local",
-      "--persist-to",
-      persistTo,
-      "--command",
-      statements.join("\n"),
-    ],
-    { stdio: "pipe", maxBuffer: 4 * 1024 * 1024 },
-  );
+  seedVerifiedWalletRows(persistTo, actors, {
+    chain: "solana",
+    idPrefix: "direct-solana-browser-",
+    valid: (actor) =>
+      /^[1-9]\d{0,19}$/u.test(actor.githubId) &&
+      decodeBase58Bytes(actor.address).length === 32,
+    invalidMessage: "Invalid disposable Solana wallet actor",
+  });
 }

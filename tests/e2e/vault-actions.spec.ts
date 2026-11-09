@@ -31,7 +31,7 @@ import {
   CONTRIBUTION,
 } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
-import { selectAwardMonth } from "./award-month";
+import { routeMonthlyAwardReview, selectAwardMonth } from "./award-month";
 import {
   escapeRegExp,
   expect,
@@ -41,6 +41,10 @@ import {
   test,
 } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
+import {
+  connectVaultSetupServer,
+  spawnVaultSetupServer,
+} from "./vault-setup-server";
 
 test.skip(
   process.env.SLOP_E2E_VAULT_ACTIONS !== "1",
@@ -585,89 +589,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   // verification use the actual local contract and canonical finalized blocks.
   forceFailedTransaction = false;
   ambiguous = false;
-  const commitment = {
-    schemaVersion: "2",
-    projectId: "eliza",
-    cycleId: "2026-09",
-    manifestSha256: "a".repeat(64),
-    snapshotSha256: "b".repeat(64),
-    deployment,
-    award: {
-      githubUserId: "1234",
-      login: "local-contributor",
-      sourceDigest: "d".repeat(64),
-      gross: "2000000",
-      fee: "40000",
-      net: "1960000",
-    },
-  };
-  let reviewAvailable = true;
-  let reviewReads = 0;
-  await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-09",
-    (route) => {
-      reviewReads++;
-      return route.fulfill({
-        status: reviewAvailable ? 200 : 503,
-        json: reviewAvailable
-          ? {
-              projectId: "eliza",
-              period: "2026-09",
-              manifestSha256: commitment.manifestSha256,
-              automatic: true,
-              canManage: true,
-              cutoffAt: null,
-              deployment,
-              asset: null,
-              proposal: {
-                capBase: "2000000",
-                allocationSequence: 0,
-                allocations: [
-                  {
-                    githubUserId: "1234",
-                    login: "local-contributor",
-                    grossBase: "2000000",
-                    proposedGrossBase: "2000000",
-                    sourceDigest: commitment.award.sourceDigest,
-                  },
-                ],
-              },
-              run: {
-                trigger: "automatic",
-                frozenAt: "2026-10-03T00:00:00.000Z",
-                snapshotSha256: commitment.snapshotSha256,
-                totalGrossBase: "2000000",
-                network: deployment.network,
-                vault: deployment.vault,
-                funded: true,
-                awards: [
-                  {
-                    githubUserId: "1234",
-                    login: "local-contributor",
-                    grossBase: "2000000",
-                    feeBase: "40000",
-                    netBase: "1960000",
-                    state: "awaiting-reservation",
-                  },
-                ],
-              },
-            }
-          : { message: "Review temporarily unavailable" },
-      });
-    },
-  );
-  await page.route(
-    "**/api/v1/payments/projects/eliza/monthly/2026-09/commitment",
-    (route) => {
-      expect(route.request().postDataJSON()).toEqual({
-        network: deployment.network,
-        githubUserId: "1234",
-        manifestSha256: commitment.manifestSha256,
-        snapshotSha256: commitment.snapshotSha256,
-      });
-      return route.fulfill({ json: commitment });
-    },
-  );
+  const { review } = await routeMonthlyAwardReview(page, deployment);
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
   await selectAwardMonth(page, "2026-09");
@@ -774,7 +696,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   expect(
     await page.evaluate((key) => sessionStorage.getItem(key), commitmentKey),
   ).toBe(retainedRetry);
-  reviewAvailable = false;
+  review.available = false;
   const unavailableReview = diagnostics.allowResponse(
     503,
     "GET",
@@ -795,7 +717,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       name: "Authorize this award in wallet",
     }),
   ).toHaveCount(0);
-  expect(reviewReads).toBe(2);
+  expect(review.reads).toBe(2);
   expect(diagnostics.count(unavailableReview)).toBe(1);
   await ownerActions.getByLabel("Commitment transaction hash").fill(sends[1]);
   await ownerActions.getByRole("button", { name: "Check commitment" }).click();
@@ -955,7 +877,6 @@ test("owner turns automatic monthly payment on by default, then opts out", async
         period: new URL(route.request().url()).pathname.split("/").at(-1),
         manifestSha256: "a".repeat(64),
         automatic: false,
-        canManage: true,
         cutoffAt: null,
         deployment,
         asset: null,
@@ -1213,44 +1134,21 @@ test("owner creates, registers and funds a vault through the real API", async ({
   };
   const fixturePath = join(temporary, "projects.json");
   writeFileSync(fixturePath, JSON.stringify({ project: target, factory }));
-  let output = "";
-  const server = spawn(
-    "bun",
+  const { server, output } = spawnVaultSetupServer(
     [
       "scripts/vault-setup-browser-server.ts",
       fixturePath,
       String(apiPort),
       rpcUrl,
     ],
-    { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: process.env },
+    { cwd: root, env: process.env },
   );
-  server.stdout?.on("data", (s) => {
-    output += String(s);
-  });
-  server.stderr?.on("data", (s) => {
-    output += String(s);
-  });
   try {
-    await expect
-      .poll(() => output, { timeout: 30_000 })
-      .toContain("Vault setup API ready");
-    const initial = await (
-      await page.request.get(`${origin}/__fixture`)
-    ).json();
-    const headers = {
+    const { initial, headers, api } = await connectVaultSetupServer(
+      page,
       origin,
-      cookie: `__Host-slop_points=${initial.token}`,
-      "content-type": "application/json",
-    };
-    const api = async (path: string, data: unknown) => {
-      const response = await page.request.post(`${origin}/api/v1/${path}`, {
-        headers,
-        data,
-      });
-      const body = await response.json();
-      expect(response.ok(), JSON.stringify(body)).toBe(true);
-      return body;
-    };
+      output,
+    );
     // Confirm the owner wallet through the shipped claim and challenge routes.
     const claim = await api("payments/wallets/register", {
       chain: "base",
@@ -1804,7 +1702,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
     await info.attach("vault-setup-api.log", {
-      body: output,
+      body: output(),
       contentType: "text/plain",
     });
   }
@@ -1910,44 +1808,21 @@ test("owner registers a separate bounty vault through the API and funds it priva
       template: { ...project, securityBounty: undefined },
     }),
   );
-  let output = "";
-  const server = spawn(
-    "bun",
+  const { server, output } = spawnVaultSetupServer(
     [
       "scripts/vault-setup-browser-server.ts",
       fixturePath,
       String(apiPort),
       rpcUrl,
     ],
-    { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: process.env },
+    { cwd: root, env: process.env },
   );
-  server.stdout?.on("data", (s) => {
-    output += String(s);
-  });
-  server.stderr?.on("data", (s) => {
-    output += String(s);
-  });
   try {
-    await expect
-      .poll(() => output, { timeout: 30_000 })
-      .toContain("Vault setup API ready");
-    const initial = await (
-      await page.request.get(`${origin}/__fixture`)
-    ).json();
-    const headers = {
+    const { initial, headers, api } = await connectVaultSetupServer(
+      page,
       origin,
-      cookie: `__Host-slop_points=${initial.token}`,
-      "content-type": "application/json",
-    };
-    const api = async (path: string, data: unknown) => {
-      const response = await page.request.post(`${origin}/api/v1/${path}`, {
-        headers,
-        data,
-      });
-      const body = await response.json();
-      expect(response.ok(), JSON.stringify(body)).toBe(true);
-      return body;
-    };
+      output,
+    );
     const privatePath = `${origin}/api/v1/project-vaults/${id}?purpose=security-bounty`;
     expect((await page.request.get(privatePath)).status()).toBe(401);
     await page.request.post(`${origin}/__fixture`, {
@@ -2229,7 +2104,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
     await info.attach("bounty-vault-api.log", {
-      body: output,
+      body: output(),
       contentType: "text/plain",
     });
   }
