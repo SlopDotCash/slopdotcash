@@ -1500,6 +1500,9 @@ function secondaryRateLimitDelayMs(
   return 60_000;
 }
 
+// Total time one run may spend waiting for GraphQL window resets.
+const MAX_RATE_LIMIT_RESET_WAIT_MS = 60 * 60_000;
+
 async function retryDelay(milliseconds: number): Promise<void> {
   await new Promise<void>((resolveDelay) => {
     setTimeout(resolveDelay, milliseconds);
@@ -1610,6 +1613,8 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   #consumedCost = 0;
   #windowConsumedCost = 0;
   #startingRemaining: number | null = null;
+  #waitedResetAt: number | null = null;
+  #resetWaitedMs = 0;
 
   #effectiveMaxGenerationCost(): number {
     if (!this.#rateLimit) {
@@ -1665,8 +1670,15 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `Required GitHub GraphQL cost ${requiredCost} exceeds the safe per-window budget ${effectiveMaxGenerationCost}`,
       );
     }
+    // The window cap also counts points other consumers of the shared token
+    // spent since this run's first response in the window.
+    const windowDrain =
+      this.#startingRemaining === null
+        ? 0
+        : this.#startingRemaining - this.#rateLimit.remaining;
     const available = Math.min(
-      effectiveMaxGenerationCost - this.#windowConsumedCost,
+      effectiveMaxGenerationCost -
+        Math.max(this.#windowConsumedCost, windowDrain),
       this.#rateLimit.remaining - this.#minimumRateLimitReserve,
     );
     if (requiredCost <= available) return;
@@ -1675,7 +1687,25 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (!Number.isFinite(resetAt)) {
       throw new Error("GitHub GraphQL returned an invalid rate-limit resetAt");
     }
-    await retryDelay(Math.max(0, resetAt - Date.now() + 1_000));
+    // Another consumer of the shared token can drain the window. Wait for the
+    // reported reset while this run's total reset waiting stays within 60
+    // minutes; a window still exhausted after the reset it waited for fails
+    // closed.
+    const budgetSummary = `${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${this.#rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve}`;
+    if (this.#waitedResetAt === resetAt) {
+      throw new Error(
+        `GitHub GraphQL safety budget exceeded after waiting for the reset at ${this.#rateLimit.resetAt} (${budgetSummary})`,
+      );
+    }
+    const waitMs = Math.max(0, resetAt - Date.now() + 1_000);
+    if (this.#resetWaitedMs + waitMs > MAX_RATE_LIMIT_RESET_WAIT_MS) {
+      throw new Error(
+        `GitHub GraphQL safety budget exceeded and waiting for the reset at ${this.#rateLimit.resetAt} would exceed 60 minutes of total reset waiting (${budgetSummary})`,
+      );
+    }
+    this.#waitedResetAt = resetAt;
+    this.#resetWaitedMs += waitMs;
+    await retryDelay(waitMs);
     this.#windowConsumedCost = 0;
     this.#startingRemaining = null;
     this.#rateLimit = {
@@ -1896,19 +1926,16 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     this.#startingRemaining =
       this.#startingRemaining ?? rateLimit.remaining + rateLimit.cost;
     this.#consumedCost += rateLimit.cost;
-    this.#windowConsumedCost = Math.max(
-      this.#windowConsumedCost + rateLimit.cost,
-      this.#startingRemaining - rateLimit.remaining,
-    );
+    this.#windowConsumedCost += rateLimit.cost;
     this.#rateLimit = {
       ...rateLimit,
       consumedDuringRun: this.#consumedCost,
     };
+    // Only this run's own reported window cost fails here. Points other
+    // consumers spent, and a remaining balance below the reserve, are answered
+    // by the next ensureBudget call, which waits for the reported reset.
     const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
-    if (
-      this.#windowConsumedCost > effectiveMaxGenerationCost ||
-      rateLimit.remaining < this.#minimumRateLimitReserve
-    ) {
+    if (this.#windowConsumedCost > effectiveMaxGenerationCost) {
       throw new Error(
         `${apiLabel} safety budget exceeded (${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
       );

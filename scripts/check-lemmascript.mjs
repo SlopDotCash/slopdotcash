@@ -248,7 +248,9 @@ try {
         "check",
         "--backend=dafny",
         "--time-limit=30",
-        "--extra-flags=--isolate-assertions",
+        // Modules run one at a time; Dafny otherwise uses half the cores.
+        // Core count changes scheduling only, never the proof result.
+        "--extra-flags=--isolate-assertions --cores=100%",
         file,
       ],
       label,

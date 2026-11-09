@@ -30,6 +30,13 @@ jobs:
           bun-version: "1.3.14"
       - name: Install pinned dependencies
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Restore the verified Dafny archive
+        # Caches the official archive, not the extracted tree, so the setup
+        # script checks its pinned SHA-256 on every run before unpacking it.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .tools/dafny-4.11.0.zip
+          key: dafny-4.11.0-a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179
       - name: Install pinned prover
         run: bun run lemmascript:setup
       - name: Check inventory, source contracts, and proof integrity

@@ -296,7 +296,9 @@ by `bun run test:e2e`.
 CI selects browser coverage from the changed files: preview and Pages for UI,
 registry for API changes, and a short smoke pass for documentation and release
 promotion. Installer and isolated-sandbox checks run when their sources change.
-The fast type, lint, unit, integration and build gates remain in place.
+Pushes to `development` and `main` run every browser lane, the installer and the
+isolated sandbox. The fast type, lint, unit, integration and build gates remain
+in place.
 
 When GitHub cannot return a merged pull request's file list, the collector
 reads the complete changes from public Git objects with the pinned Git tool.
