@@ -81,6 +81,24 @@ function resolvedWallet(
     : null;
 }
 
+/**
+ * The historical committed review budget available to a cycle: the smaller of
+ * the committed amount and the monthly cap, once the budget is committed,
+ * enabled and effective by the cycle start; otherwise zero.
+ */
+export function activeReviewBudgetCap(
+  policy: ProjectDefinition["reward"]["reviewBudget"],
+  cycleFrom: string,
+): bigint {
+  return policy?.fundingState === "committed" &&
+    policy.paymentMode === "enabled" &&
+    Date.parse(policy.effectiveAt) <= Date.parse(cycleFrom)
+    ? BigInt(policy.committedMinor) < BigInt(policy.monthlyCapMinor)
+      ? BigInt(policy.committedMinor)
+      : BigInt(policy.monthlyCapMinor)
+    : 0n;
+}
+
 export function allocateReviewBudgetMinor(
   totalMinor: bigint,
   contributors: readonly { actorId: string; scoreThirds: number }[],
@@ -289,15 +307,10 @@ export function createRewardCycleProposal(
     ) + carriedOnlyMinor
   ).toString();
   const reviewPolicy = view.project.reward.reviewBudget;
-  const reviewBudgetTotal =
-    reviewPolicy?.fundingState === "committed" &&
-    reviewPolicy.paymentMode === "enabled" &&
-    Date.parse(reviewPolicy.effectiveAt) <= Date.parse(view.cycle.from)
-      ? BigInt(reviewPolicy.committedMinor) <
-        BigInt(reviewPolicy.monthlyCapMinor)
-        ? BigInt(reviewPolicy.committedMinor)
-        : BigInt(reviewPolicy.monthlyCapMinor)
-      : 0n;
+  const reviewBudgetTotal = activeReviewBudgetCap(
+    reviewPolicy,
+    view.cycle.from,
+  );
   const excluded = new Set(
     view.leaders
       .filter((leader) => leader.payoutExclusion !== null)

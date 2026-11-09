@@ -10,6 +10,7 @@ import {
   createPaymentProjectView,
 } from "../project-view";
 import {
+  activeReviewBudgetCap,
   additiveReviewBudgetWeights,
   allocateReviewBudgetMinor,
   ensureCompleteCycle,
@@ -81,16 +82,10 @@ export function buildEscrowCycle(
   if (view.reward.kind !== "monthly-pool")
     throw new Error("Expected monthly pool");
   const cap = BigInt(view.reward.capMinor);
-  const reviewPolicy = project.reward.reviewBudget;
-  const reviewCap =
-    reviewPolicy?.fundingState === "committed" &&
-    reviewPolicy.paymentMode === "enabled" &&
-    Date.parse(reviewPolicy.effectiveAt) <= Date.parse(view.cycle.from)
-      ? BigInt(reviewPolicy.committedMinor) <
-        BigInt(reviewPolicy.monthlyCapMinor)
-        ? BigInt(reviewPolicy.committedMinor)
-        : BigInt(reviewPolicy.monthlyCapMinor)
-      : 0n;
+  const reviewCap = activeReviewBudgetCap(
+    project.reward.reviewBudget,
+    view.cycle.from,
+  );
   if (cap < 0n || cap + reviewCap > MAX_BASE_UNITS)
     throw new Error("Gross cap exceeds supported range");
   const reviewAllocations = allocateReviewBudgetMinor(
