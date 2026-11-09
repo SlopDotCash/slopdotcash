@@ -1,6 +1,6 @@
 // Test-only doubles shared by the payment relayer and executor tests: an
 // in-memory signer journal and a local JSON-RPC node.
-import type { JournalStore } from "./binding-shared";
+import type { JournalStore } from "../workers/payment-executor/binding-shared";
 
 /** An in-memory journal that clones values like durable storage would. */
 export function memoryJournal(): JournalStore {

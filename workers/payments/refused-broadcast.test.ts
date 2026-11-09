@@ -23,9 +23,9 @@ import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
+import { memoryJournal, serveJsonRpc } from "../../tests/payment-test-journal";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { PaymentSignerJournal } from "../payment-executor/index";
-import { memoryJournal, serveJsonRpc } from "../payment-executor/test-journal";
 import { recoverUncertainAttempts, runPaymentDispatch } from "./index";
 import { reconcileFailedAttempts } from "./reconcile";
 

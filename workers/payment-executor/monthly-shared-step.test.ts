@@ -32,13 +32,13 @@ import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
+import { memoryJournal, serveJsonRpc } from "../../tests/payment-test-journal";
 import type { Attempt } from "./binding-shared";
 import {
   type PublicEvmExecutorEnvironment,
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "./core";
-import { memoryJournal, serveJsonRpc } from "./test-journal";
 
 const keeper = privateKeyToAccount(`0x${"7".repeat(64)}`);
 const identity = privateKeyToAccount(`0x${"6".repeat(64)}`);

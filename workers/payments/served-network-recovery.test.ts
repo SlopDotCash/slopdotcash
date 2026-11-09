@@ -17,10 +17,10 @@ import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
+import { memoryJournal } from "../../tests/payment-test-journal";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { lookupAttempt } from "../payment-executor/core";
 import { PaymentSignerJournal } from "../payment-executor/index";
-import { memoryJournal } from "../payment-executor/test-journal";
 import { recoverUncertainAttempts } from "./index";
 
 const at = "2026-10-01T00:00:00.000Z";

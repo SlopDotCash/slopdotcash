@@ -32,7 +32,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "693bf34637fd5f7deca03003d05db6a5234c08ca037a384444891ca41d5ed6a5",
+      "sha256": "10b0625c6765df47a9d7e5fa92991d86cb225409ac74583d138bdf3e6bb7c537",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -3019,7 +3019,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "b0fac598b4b3b43a0e1e7cf9ead21cc5e4f5ab9ea8372ca36599671e24d05568",
+      "sha256": "9bdf69d86f4c1db051e1f4b7cd0b994bcadaad68e64f30c6f99bbde6506918a5",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -4099,14 +4099,6 @@
         50, 55, 59, 75, 79, 136, 161, 261, 286, 301, 304, 307, 314
       ],
       "review": "mapped-abstraction"
-    },
-    {
-      "path": "scripts/vault-setup-test-harness.ts",
-      "sha256": "6028ce803eb9e7473b4f8187fef5505b10fd683ef5ac90124d185550aa7640e8",
-      "models": [],
-      "candidateLines": [40, 45, 51, 66, 71, 91, 92, 122],
-      "review": "reviewed-no-independent-state",
-      "statelessReason": "Test-only harness: seeds an in-memory SQLite project revision and verified owner wallet and returns the project API dependencies for the owner vault-setup tests. It owns no production state; the vault-setup lifecycle is modeled where ownerVaultSetupService is mapped."
     },
     {
       "path": "scripts/verify-identity-schedules.mjs",
@@ -6818,14 +6810,6 @@
         453, 473, 522, 528, 631, 642, 652, 720, 721, 735, 748, 759
       ],
       "review": "mapped-abstraction"
-    },
-    {
-      "path": "workers/payment-executor/test-journal.ts",
-      "sha256": "119002b025a871d59c4555c46273fbee765c29a526f5c4d2125f4827b4ecf44c",
-      "models": [],
-      "candidateLines": [],
-      "review": "reviewed-no-independent-state",
-      "statelessReason": "Test-only doubles: an in-memory journal map and a local JSON-RPC server whose answers come from the calling test. No production code imports it; the signer journal and attempt lifecycles are modeled where PaymentSignerJournal and the executor are mapped."
     },
     {
       "path": "workers/payments/deployment-types.ts",

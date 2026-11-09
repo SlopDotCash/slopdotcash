@@ -14,7 +14,7 @@ import {
 import type { ReviewedSolanaProgram } from "../contracts/solana/programs";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
-import { vaultSetupHarness } from "./vault-setup-test-harness";
+import { vaultSetupHarness } from "../tests/vault-setup-harness";
 
 const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };

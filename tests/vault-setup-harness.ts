@@ -12,7 +12,7 @@ import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import type { ReviewedEvmFactory } from "../contracts/evm/factories";
 import type { ReviewedSolanaProgram } from "../contracts/solana/programs";
 import { sha256Hex } from "../src/lib/sha256";
-import { sqliteD1 } from "../tests/sqlite-d1";
+import { sqliteD1 } from "./sqlite-d1";
 
 export function vaultSetupHarness(options: {
   projectId: string;
