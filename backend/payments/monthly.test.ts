@@ -18,6 +18,7 @@ import {
 } from "../../contracts/evm/adapter";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { monthlyBasesSql } from "../../scripts/prepare-monthly-rewards";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
@@ -28,7 +29,6 @@ import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";

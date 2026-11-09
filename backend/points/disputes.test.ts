@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { type PointRevision, pointRevisionId } from "../../src/lib/points";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import { escalateAppeal } from "../../workers/slopbot/appeals";
 import { handleNotificationsApi } from "../notifications/handler";
 import { handlePointsApi } from "./handler";

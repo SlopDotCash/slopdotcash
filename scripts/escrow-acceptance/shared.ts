@@ -23,6 +23,7 @@ import {
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import { projectVaultSnapshots } from "../../backend/payments/vault-snapshots";
 import type { VaultTotals } from "../../contracts/vault-totals";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -37,7 +38,6 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import paymentsWorker, {
   type PaymentDeployment,

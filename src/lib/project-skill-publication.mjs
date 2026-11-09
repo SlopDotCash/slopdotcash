@@ -17,8 +17,6 @@ import {
   renderProjectSkill,
 } from "./project-skill.mjs";
 
-export { sha256Hex } from "./async-sha256.mjs";
-
 export const SOURCE_REPOSITORY = "SlopDotCash/slopdotcash";
 /** Generated skills always name the canonical site as their authority. */
 export const PUBLIC_SITE_ORIGIN = "https://slop.cash";

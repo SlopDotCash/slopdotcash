@@ -162,5 +162,3 @@ export async function readLimitedBody(
     throw error;
   }
 }
-
-export { sha256Hex } from "../../src/lib/async-sha256.mjs";

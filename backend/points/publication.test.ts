@@ -1,8 +1,8 @@
 // PRD section 3: publication happens on authenticated sign-in, never a read.
 import { expect, test } from "bun:test";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { ME, seedAccountClosure } from "../../tests/account-closure-fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import { handleIdentityRequest } from "../../workers/identity/handler";
 import { D1IdentityPersistence } from "../../workers/identity/persistence";
 import { handlePointsApi, type PointsDependencies } from "./handler";

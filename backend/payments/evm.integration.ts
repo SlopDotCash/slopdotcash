@@ -27,7 +27,7 @@ import {
   verifyBinding,
 } from "../../contracts/evm/adapter";
 import { sqliteJournalStore } from "../../scripts/payment-keeper/store";
-import { sha256Hex } from "../../workers/identity/crypto";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   assertEvmMonthlySources,
   createEvmAttester,
