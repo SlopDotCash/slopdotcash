@@ -237,6 +237,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Polling, assertion storage and one-time consumption | `identity_assertion_lifecycle`, `ui_identity_poll_protocol` | `workers/identity/handler.ts`, `workers/identity/persistence.ts`, `src/lib/identity-flow.ts`, `workers/identity/expiry-boundary.test.ts`, existing login and account-closure browser workflows |
 | Local identity handoff | `dev_identity_bridge` | `scripts/dev-identity-bridge.ts`, `scripts/dev-identity-bridge.test.ts`; remote and local persistence are separate authorities |
 | Service-binding identity and contributor-token exchange | `identity_consumer_exchange` | `backend/identity-assertion.ts`, `backend/points/handler.ts`, `backend/trace/handler.ts`, `backend/trace/auth.ts`, existing publication and account-closure workflows |
+| Trace token validation and request admission | `trace_bearer_tokens`, `trace_route_authorization` | `backend/trace/auth.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, the binding-recovery path in `backend/security/payments.integration.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -354,6 +355,26 @@ It does not issue operator authority or a database session row. A signed token's
 expiry remains based on its captured issuance time, even if signing or delivery
 is delayed. General bearer verification and later authenticated actions are
 separate boundaries. These new models remain unexecuted here.
+
+Trace token validation separates secret configuration, bearer shape, decoding,
+HMAC verification, JSON and claim checks, time admission and role filtering.
+The verifier permits the existing 30-second skew and applies the 300-second
+operator lifetime or 600-second ordinary lifetime before removing an unlisted
+operator role. A remaining contributor or project-owner role can still be
+accepted. The signer validates structure without granting route admission or
+performing the verifier's time and allowlist checks. The
+[Web Cryptography HMAC contract](https://www.w3.org/TR/2017/REC-WebCryptoAPI-20170126/#hmac-operations)
+defines the underlying signature operations; the model assumes their
+authenticity and does not prove their implementation.
+
+The dispatcher model preserves route lookup and authority checks before bearer
+verification. Public, identity and capability routes keep their own downstream
+checks. Wallet-binding recovery accepts the separate same-origin session path
+only when the Authorization header is absent; an empty header is still present.
+Session and allowlist observations create only a request-local operator role.
+Admission does not prove the delegated operation succeeds, and an observation
+does not imply continuous knowledge of current global policy. Both new models
+are source-only and unexecuted.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.

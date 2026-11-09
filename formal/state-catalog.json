@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "d92cc313bbcd251f0454e9a8bcfe6b6173f0e8817bdac499e2c5398fd60d7cbb",
+  "inventorySha256": "04d215ccd77bc2e4e0de2d807ef1776b52eabdb0300d6b5a63622a13845623bc",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -412,7 +412,8 @@
       "values": ["awaiting_trace", "finalized", "trace_uploaded"],
       "models": [
         "formal/models/api/api_trace.qnt",
-        "formal/models/api/api_trace_intent_admission.qnt"
+        "formal/models/api/api_trace_intent_admission.qnt",
+        "formal/models/api/trace_bearer_tokens.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
